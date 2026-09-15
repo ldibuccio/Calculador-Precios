@@ -43,6 +43,37 @@ RANGO_HISTORIAL_DIAS = 40
 VENTANA_INCIDENCIA_DIAS = 30
 
 
+def unidades_incompatibles(ficha: dict) -> bool:
+    """True si esta ficha se VENDE en otra unidad que la que se COMPRA el artículo.
+
+    Cuando eso pasa, ESTE MÓDULO NO PUEDE COSTEAR la ficha y se niega, en vez
+    de devolver un número mal. La razón está en la cuenta: `_costear_compras`
+    divide plata por `cajones × contenido_por_cajon`, y ese contenido está en
+    unidad de COMPRA — el resultado se llama "costo por unidad de venta" y lo
+    es solo mientras las dos unidades sean la misma. No hay ninguna conversión
+    en el sistema, y su ausencia es un OBJETIVO DE DISEÑO, no un olvido: lo
+    dice el primer párrafo de core.motor_costeo.calcular_costo_por_unidad_medida
+    ("sin usar ningún factor de conversión").
+
+    Un mango que se compra por unidad y se le vende por kilo a un cliente
+    necesita saber cuánto pesa un mango, y eso el sistema no lo sabe. Mientras
+    no lo sepa, el único número honesto es NINGUNO.
+
+    `unidad_compra` en NULL es "no se sabe en qué se compra", no un conflicto:
+    ahí se costea como siempre. Es la misma condición que la alerta
+    `unidades_que_difieren` (_SQL_UNIDADES_QUE_DIFIEREN en app/db.py), y lo
+    cuida un test que las compara en los dos sentidos.
+
+    LA ÚNICA DIFERENCIA CON LA ALERTA ES `a.activo`, Y ESTÁ DECIDIDA (no
+    heredada): la alerta pregunta qué vale la pena mostrarle a alguien, y un
+    artículo dado de baja no vale. Esto pregunta si el número se puede
+    sostener, y el de un artículo inactivo está igual de mal. Por eso acá no
+    se mira `activo`.
+    """
+    unidad_compra = ficha.get("unidad_compra")
+    return unidad_compra is not None and unidad_compra != ficha["unidad_venta"]
+
+
 def _costear_compras(compras: list[dict]) -> tuple[float | None, float, int]:
     """La cuenta única de costeo, sobre una lista de compras ya filtrada a UN artículo y UNA ventana.
 
@@ -448,7 +479,26 @@ def _listado_para_negociar_precios(
 
         ventana1_desde = f1 - timedelta(days=1)
         compras_ventana1 = [c for c in compras_articulo if ventana1_desde <= c["fecha_operacion"] <= f1]
-        costo_actual, _, sin_precio = _costear_compras(compras_ventana1)
+
+        # LA FICHA QUE SE VENDE EN OTRA UNIDAD NO SE COSTEA (ver
+        # unidades_incompatibles). La negativa va ACÁ y no después de
+        # calcular: un costo en la unidad equivocada no se muestra ni
+        # "por las dudas", y así tampoco queda un `costo_anterior` suelto
+        # que la pantalla podría pintar. Todo lo de abajo ya está guardado
+        # por `costo_actual is not None`, así que el precio sugerido, la
+        # utilidad y el costo de envase se apagan solos.
+        #
+        # Y apagar el envase NO es un efecto colateral: es la segunda
+        # cuenta que mezcla las unidades. `_envases_por_unidad_ponderado`
+        # compara `contenido_compra <= contenido_ficha` para decidir
+        # descartable o caja chica, y con las unidades distintas eso
+        # compara kilos contra unidades. Al no llamarse, esa comparación
+        # no ocurre.
+        sin_conversion_de_unidad = unidades_incompatibles(ficha)
+        if sin_conversion_de_unidad:
+            costo_actual, sin_precio = None, 0
+        else:
+            costo_actual, _, sin_precio = _costear_compras(compras_ventana1)
         # Sobre compras_ventana1, la MISMA lista: ver _promedios_por_cajon.
         importe_por_cajon, contenido_por_cajon = _promedios_por_cajon(compras_ventana1)
 
@@ -456,7 +506,7 @@ def _listado_para_negociar_precios(
 
         costo_anterior = None
         variacion = None
-        if fresco:
+        if fresco and not sin_conversion_de_unidad:
             fechas_anteriores = [c["fecha_operacion"] for c in compras_articulo if c["fecha_operacion"] < ventana1_desde]
             if fechas_anteriores:
                 f2 = max(fechas_anteriores)
@@ -534,7 +584,18 @@ def _listado_para_negociar_precios(
                 # todo lo que agrupa y ordena por artículo.
                 "ficha_nombre": (ficha.get("nombre_cliente") or "").strip() or ficha["articulo_nombre"],
                 "unidad_venta": ficha["unidad_venta"],
+                # Al lado de la de venta, siempre, no solo cuando difieren:
+                # las dos juntas son lo que deja decir POR QUÉ no hay costo
+                # sin que la pantalla tenga que ir a buscar el artículo.
+                "unidad_compra": ficha.get("unidad_compra"),
                 "fresco": fresco,
+                # POR QUÉ no hay costo, cuando no lo hay. Sin esto, la ficha
+                # que no se puede costear se ve idéntica a la que no tuvo
+                # compras recientes — y las dos piden cosas opuestas: una
+                # espera una compra, la otra espera que el sistema aprenda a
+                # convertir. La Rentabilidad Real lo usa para no contarla
+                # bajo un motivo falso.
+                "sin_conversion_de_unidad": sin_conversion_de_unidad,
                 "costo_actual": costo_actual,
                 "costo_anterior": costo_anterior,
                 "variacion": variacion,

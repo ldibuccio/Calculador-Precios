@@ -518,7 +518,15 @@ def listar_fichas_por_cliente(cliente_id: int) -> list[dict]:
                 """
                 SELECT fl.id, fl.articulo_id, a.nombre AS articulo_nombre, a.grupo AS articulo_grupo,
                        fl.envase_id, e.nombre AS envase_nombre,
-                       fl.contenido_caja, fl.unidad_venta, fl.envase_variable, fl.nombre_cliente, fl.codigo_cliente
+                       fl.contenido_caja, fl.unidad_venta, fl.envase_variable, fl.nombre_cliente, fl.codigo_cliente,
+                       -- La unidad en que se COMPRA el artículo, al lado de la
+                       -- de venta de la ficha. El costeo divide plata por un
+                       -- contenido que está en unidad de compra y llama al
+                       -- resultado "costo por unidad de venta": si las dos no
+                       -- coinciden, esa división mezcla unidades. Viaja con la
+                       -- ficha para que quien costea pueda NEGARSE, que es lo
+                       -- único honesto mientras no haya conversión.
+                       a.unidad_compra
                 FROM fichas_logistica fl
                 JOIN articulos a ON a.id = fl.articulo_id
                 LEFT JOIN envases e ON e.id = fl.envase_id
@@ -7050,17 +7058,37 @@ _SQL_UNIDADES_QUE_DIFIEREN = """
 def contar_unidades_que_diferen() -> int:
     """Pares artículo-ficha donde la unidad de compra y la de venta no coinciden.
 
-    SIN VENTANA DE TIEMPO, y a propósito: no es un hecho que pase y se
-    resuelva solo, es una configuración que queda mal hasta que alguien la
-    arregla. Con ventana se apagaría sola a los dos días dejando el costo
-    torcido para siempre.
+    NO ES "ESTÁ MAL CARGADO", Y ESA PREMISA ESTUVO ACÁ ESCRITA HASTA EL
+    15/09. Un artículo se le puede vender a un cliente por unidad y a otro
+    por kilo, y entonces los pares difieren porque el negocio es así: el
+    mango se compra una vez y va a dos clientes que lo quieren distinto.
+    Decir "configuración que queda mal" mandaba a ALINEAR la ficha, y
+    alinearla le hace decir que ese cliente compra en una unidad en la que
+    no compra — o sea, borra el único dato con el que algún día se podría
+    convertir. Un aviso que propone destruir la información que hace falta
+    para arreglarlo es peor que no tener aviso.
 
-    Y NO MIRA SI SE USA. La primera versión contaba solo los pares con
-    compras: un par dormido no rompe ninguna cuenta hoy. Pero el día que se
-    compre ese artículo, el costo sale mal desde la primera compra y nadie
-    va a estar mirando — el aviso llega cuando ya no sirve. El que se usa y
-    el que duerme se distinguen en el DETALLE, que es donde se decide cuál
-    atender primero.
+    LO QUE LA ALERTA DICE HOY es la consecuencia, que es un hecho y no una
+    hipótesis: estas fichas NO SE COSTEAN. Desde el 15/09 el costeo se niega
+    (app.costeo.unidades_incompatibles) en vez de dividir plata por un
+    contenido que está en otra unidad, así que no hay costo, ni precio
+    sugerido, ni utilidad para esas fichas — y sus bultos salen aparte en la
+    Rentabilidad Real, con su motivo propio.
+
+    QUÉ HACER CON CADA UNA LO DICE EL DETALLE, no esta cuenta, y son dos
+    cosas opuestas: si el artículo tiene fichas en DOS unidades distintas,
+    es real y no hay nada que alinear —queda sin costear hasta que el
+    sistema aprenda a convertir—; si todas sus fichas dicen lo mismo y solo
+    difieren de la compra, ahí sí hay una sola cosa mal cargada.
+
+    SIN VENTANA DE TIEMPO, y a propósito: no es un hecho que pase y se
+    resuelva solo. Con ventana se apagaría sola a los dos días dejando las
+    fichas sin costear para siempre y sin avisar.
+
+    Y NO MIRA SI SE USA. Un par dormido no le falta a nadie hoy, pero el día
+    que se compre ese artículo la ficha queda sin costo desde la primera
+    compra y nadie va a estar mirando. El que se usa y el que duerme se
+    distinguen en el DETALLE, que es donde se decide cuál atender primero.
     """
     conexion = obtener_conexion()
     try:
@@ -7096,7 +7124,16 @@ def listar_unidades_que_diferen() -> list[dict]:
                        (SELECT COUNT(*) FROM precios_venta_historial v
                          WHERE v.ficha_id = f.id) AS precios,
                        (SELECT COUNT(*) FROM pedidos_renglones r
-                         WHERE r.ficha_id = f.id AND r.anulado_el IS NULL) AS renglones
+                         WHERE r.ficha_id = f.id AND r.anulado_el IS NULL) AS renglones,
+                       -- CUÁNTAS unidades de venta distintas tiene este
+                       -- artículo entre TODAS sus fichas. Más de una es el
+                       -- caso real (dos clientes, dos unidades) y ninguna
+                       -- alineación lo arregla; una sola es una cosa mal
+                       -- cargada. Los dos se veían idénticos hasta el
+                       -- 15/09, y el link mandaba a alinear los dos.
+                       (SELECT COUNT(DISTINCT f2.unidad_venta)
+                          FROM fichas_logistica f2
+                         WHERE f2.articulo_id = a.id) AS unidades_de_venta
                 """
                 + _SQL_UNIDADES_QUE_DIFIEREN
                 + " ORDER BY a.nombre, f.id"

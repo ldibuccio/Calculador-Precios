@@ -21,8 +21,9 @@ fórmula del motor (core/motor_costeo.utilidad_real_multi_concepto):
 
 Invariante duro: lo que no se puede calcular NO suma como cero. Va
 aparte, con su motivo y su peso en bultos, y el total dice cuánto quedó
-afuera. Cuatro motivos: sin identificar, sin conversión en la ficha,
-sin costo (sin compras recientes), sin precio de venta vigente.
+afuera. CINCO motivos: sin identificar, sin conversión de bultos en la
+ficha, unidades distintas entre compra y venta, sin costo (sin compras
+recientes), sin precio de venta vigente.
 """
 
 ETIQUETAS_GRUPO = {"fruta": "Fruta", "hortaliza": "Hortaliza", "hoja": "Hoja", "pesada": "Pesada"}
@@ -30,9 +31,17 @@ ETIQUETA_SIN_GRUPO = "Sin grupo"
 # El orden fijo de las secciones del reporte (None = artículos sin grupo, al final).
 ORDEN_GRUPOS = ["fruta", "hortaliza", "hoja", "pesada", None]
 
+# `sin_conversion` y `unidades_distintas` son DOS COSAS y no se fusionan, por
+# más que los dos nombres hablen de convertir. El primero es que falta el
+# contenido por caja (no se sabe cuántas unidades trae un bulto). El segundo
+# es que el artículo se compra en una unidad y esta ficha se vende en otra, y
+# el sistema no sabe pasar de una a la otra — nunca lo supo, y no saberlo es
+# una decisión de diseño (ver app.costeo.unidades_incompatibles). Juntarlos
+# daría un motivo que manda a cargar un contenido que ya está.
 ETIQUETAS_MOTIVO = {
     "sin_identificar": "Renglón sin identificar (no matchea ninguna ficha)",
     "sin_conversion": "Sin conversión de bultos en la ficha (contenido por caja)",
+    "unidades_distintas": "Se compra en una unidad y se vende en otra: el sistema no puede costearla",
     "sin_precio": "Sin precio de venta vigente a la fecha del pedido",
     "sin_costo": "Sin compras recientes para costear (misma regla que Márgenes por Artículo)",
 }
@@ -129,6 +138,13 @@ def calcular_rentabilidad_de_pedidos(
         # si el artículo no está (sin compras recientes) o está sin costo,
         # no hay contra qué medir — mismo veredicto que daría esa pantalla.
         margen = margenes_por_fecha.get(fecha, {}).get(renglon["ficha_id"])
+        # ANTES que sin_costo, y el orden es lo único que lo hace verdadero:
+        # las dos llegan acá con costo_actual en None, así que preguntando al
+        # revés estos bultos saldrían como "sin compras recientes" — que es
+        # falso y manda a esperar una compra que no va a arreglar nada.
+        if margen and margen.get("sin_conversion_de_unidad"):
+            _sumar_no_calculable("unidades_distintas", renglon, bultos)
+            continue
         costo_unidad = _numero(margen.get("costo_actual")) if margen else None
         if costo_unidad is None:
             _sumar_no_calculable("sin_costo", renglon, bultos)

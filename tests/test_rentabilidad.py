@@ -12,6 +12,10 @@ FICHAS = [
     {"id": 901, "articulo_id": 1, "articulo_nombre": "Banana", "articulo_grupo": "fruta", "contenido_caja": 20.0, "unidad_venta": "kilo"},
     {"id": 902, "articulo_id": 2, "articulo_nombre": "Batata", "articulo_grupo": "hortaliza", "contenido_caja": 18.0, "unidad_venta": "kilo"},
     {"id": 903, "articulo_id": 3, "articulo_nombre": "Rúcula", "articulo_grupo": "hoja", "contenido_caja": None, "unidad_venta": "unidad"},
+    # CON contenido_caja cargado a propósito: si le faltara, caería en
+    # sin_conversion y este fixture no podría distinguir los dos motivos —
+    # sería el guardián del bug que viene a cuidar (corolario 22).
+    {"id": 904, "articulo_id": 4, "articulo_nombre": "Mango", "articulo_grupo": "fruta", "contenido_caja": 10.0, "unidad_venta": "kilo"},
 ]
 
 
@@ -27,13 +31,20 @@ def _renglon(fecha, articulo_id, nombre, grupo, bultos, ficha_id=None):
     }
 
 
-def _margen(precio_vigente, costo_actual, envase=0.0, denominador=1.0):
-    """Una fila de calcular_listado_para_negociar_precios, reducida a lo que usa rentabilidad."""
+def _margen(precio_vigente, costo_actual, envase=0.0, denominador=1.0, sin_unidad=False):
+    """Una fila de calcular_listado_para_negociar_precios, reducida a lo que usa rentabilidad.
+
+    `sin_unidad` es la marca que trae el listado cuando se NIEGA a costear
+    porque la ficha se vende en otra unidad que la de compra. Va con
+    costo_actual en None, igual que "sin compras recientes" — y esa igualdad
+    es justamente por qué hace falta la marca.
+    """
     return {
         "precio_vigente": precio_vigente,
         "costo_actual": costo_actual,
         "costo_envase_unidad_venta": envase,
         "denominador_tasas": denominador,
+        "sin_conversion_de_unidad": sin_unidad,
     }
 
 
@@ -125,15 +136,18 @@ def test_rentabilidad_agrupa_por_grupo_con_subtotales_y_orden_fijo():
 
 
 def test_rentabilidad_los_no_calculables_van_aparte_con_su_motivo():
-    # Los CUATRO motivos, cada uno aparte y con su peso en bultos — jamás
-    # sumando como cero en silencio.
+    # LOS CINCO motivos, cada uno aparte y con su peso en bultos — jamás
+    # sumando como cero en silencio. (Eran cuatro hasta el 15/09, cuando el
+    # costeo empezó a negarse con las unidades distintas y eso necesitó su
+    # motivo propio: sin él esos bultos salían como "sin compras recientes".)
     renglones = [
         _renglon(FECHA_1, None, None, None, 3),          # sin identificar
         _renglon(FECHA_1, 3, "Rúcula", "hoja", 6),       # ficha sin contenido_caja
         _renglon(FECHA_1, 2, "Batata", "hortaliza", 4),  # con costo pero sin precio vigente
         _renglon(FECHA_1, 1, "Banana", "fruta", 10),     # sin fila de Márgenes (sin compras)
+        _renglon(FECHA_1, 4, "Mango", "fruta", 7),       # se compra por unidad, se vende por kilo
     ]
-    margenes = {FECHA_1: {902: _margen(None, 30.0)}}
+    margenes = {FECHA_1: {902: _margen(None, 30.0), 904: _margen(None, None, sin_unidad=True)}}
 
     resultado = calcular_rentabilidad_de_pedidos(renglones, FICHAS, margenes)
 
@@ -144,9 +158,10 @@ def test_rentabilidad_los_no_calculables_van_aparte_con_su_motivo():
         ("sin_conversion", "Rúcula"): 6,
         ("sin_precio", "Batata"): 4,
         ("sin_costo", "Banana"): 10,
+        ("unidades_distintas", "Mango"): 7,
     }
-    assert resultado["totales"]["no_calculables_casos"] == 4
-    assert resultado["totales"]["no_calculables_bultos"] == 23
+    assert resultado["totales"]["no_calculables_casos"] == 5
+    assert resultado["totales"]["no_calculables_bultos"] == 30
     assert resultado["totales"]["venta_neta"] == 0
 
 
@@ -234,3 +249,63 @@ def test_rentabilidad_articulo_sin_grupo_va_en_su_seccion_al_final():
     resultado = calcular_rentabilidad_de_pedidos(renglones, fichas, margenes)
 
     assert [g["etiqueta"] for g in resultado["grupos"]] == ["Fruta", "Sin grupo"]
+
+
+def test_las_unidades_distintas_NO_se_cuentan_como_SIN_COMPRAS_RECIENTES():
+    """El orden de las dos preguntas es lo único que lo hace verdadero.
+
+    Las dos llegan con `costo_actual` en None, así que preguntando al revés
+    estos bultos salen bajo "sin compras recientes" — un motivo FALSO que
+    manda a esperar una compra que no va a arreglar nada, porque lo que
+    falta no es una compra sino saber convertir la unidad.
+
+    Es la familia del `{% else %}` que afirma algo: un motivo por defecto
+    que dice "no hay compras" es más peligroso que uno que dice "no sé",
+    porque el que lo lee actúa.
+    """
+    renglones = [_renglon(FECHA_1, 4, "Mango", "fruta", 7)]
+    margenes = {FECHA_1: {904: _margen(None, None, sin_unidad=True)}}
+
+    resultado = calcular_rentabilidad_de_pedidos(renglones, FICHAS, margenes)
+
+    motivos = [e["motivo"] for e in resultado["no_calculables"]]
+    assert motivos == ["unidades_distintas"]
+    assert "sin_costo" not in motivos
+
+    # Y el control: la MISMA fila sin la marca sí es "sin compras recientes".
+    # Sin este par, un test que solo mira el caso positivo lo pasaría igual
+    # una versión que mandara TODO a unidades_distintas (corolario 53).
+    sin_marca = {FECHA_1: {904: _margen(None, None)}}
+    resultado_control = calcular_rentabilidad_de_pedidos(renglones, FICHAS, sin_marca)
+    assert [e["motivo"] for e in resultado_control["no_calculables"]] == ["sin_costo"]
+
+
+def test_todo_motivo_que_el_CODIGO_produce_tiene_su_etiqueta_y_al_reves():
+    """El conjunto ENCONTRADO contra el DECIDIDO, no la lista propia.
+
+    Un test que recorriera su propia lista de motivos solo confirmaría lo
+    que ya sabía. Comparar los dos conjuntos falla en las DOS direcciones:
+    cuando aparece un motivo que nadie etiquetó (saldría en pantalla con su
+    nombre interno) y cuando queda una etiqueta de un motivo que ya no se
+    produce (corolario 60).
+    """
+    import ast
+    import io
+
+    from core.rentabilidad import ETIQUETAS_MOTIVO
+
+    arbol = ast.parse(io.open("core/rentabilidad.py", encoding="utf-8").read())
+    producidos = {
+        nodo.args[0].value
+        for nodo in ast.walk(arbol)
+        if isinstance(nodo, ast.Call)
+        and isinstance(nodo.func, ast.Name)
+        and nodo.func.id == "_sumar_no_calculable"
+        and nodo.args
+        and isinstance(nodo.args[0], ast.Constant)
+    }
+    assert producidos, "el barrido no encontró ninguna llamada: mira lo que no es"
+    assert producidos == set(ETIQUETAS_MOTIVO), (
+        f"producidos sin etiqueta: {producidos - set(ETIQUETAS_MOTIVO)} · "
+        f"etiquetas sin uso: {set(ETIQUETAS_MOTIVO) - producidos}"
+    )

@@ -4148,10 +4148,14 @@ def test_las_alertas_de_COMERCIAL_ahora_TRAEN_SU_DETALLE():
         assert "comercial" in por_codigo[codigo].modulos, codigo
 
 
+# `unidades_de_venta` va porque en producción va: es el conteo de unidades
+# distintas entre TODAS las fichas del artículo, y es lo que separa el caso
+# real (dos clientes, dos unidades) del mal cargado. Uno solo = alineable,
+# que es la forma del Kiwi de Palmala.
 FILA_UNIDADES = {"articulo": "EJEMPLO Kiwi", "unidad_compra": "kilo",
                  "cliente": "EJEMPLO Cliente", "unidad_venta": "cubeta",
-                 "compras": 0, "precios": 0, "renglones": 0}
-TITULO_UNIDADES = "Artículos que se compran en una unidad y se venden en otra"
+                 "compras": 0, "precios": 0, "renglones": 0, "unidades_de_venta": 1}
+TITULO_UNIDADES = "Fichas sin costear: se compran en una unidad y se venden en otra"
 
 
 def _bloque_de(marcado, titulo):
@@ -27546,20 +27550,22 @@ def test_la_alerta_de_unidades_va_a_LOS_DOS_sectores_que_la_pueden_arreglar():
 
 
 def test_el_detalle_de_unidades_DISTINGUE_el_par_dormido_del_que_ya_se_usa():
-    """Es la columna que decide qué hacer: un par sin usar se corrige y listo;
-    uno con compras encima es plata ya calculada dividiendo entre unidades
-    distintas, y eso no se arregla cambiando la unidad.
+    """"Uso" decide el ORDEN: un par dormido no le falta a nadie hoy; uno con
+    compras encima es una ficha que HOY no tiene costo ni precio sugerido.
 
-    Sin esa columna los dos casos se leen igual y el que llega no tiene con
-    qué priorizar.
+    (Este docstring decía "plata ya calculada dividiendo entre unidades
+    distintas". Dejó de ser cierto el 15/09, cuando el costeo pasó a negarse:
+    ya no hay número mal, hay número que falta.)
     """
     from app.main import _detalle_unidades_que_diferen
 
     filas = [
         {"articulo": "EJEMPLO Uno", "unidad_compra": "kilo", "cliente": "EJEMPLO Dos",
-         "unidad_venta": "cubeta", "ficha_id": 1, "compras": 0, "precios": 0, "renglones": 0},
+         "unidad_venta": "cubeta", "ficha_id": 1, "compras": 0, "precios": 0, "renglones": 0,
+         "unidades_de_venta": 1},
         {"articulo": "EJEMPLO Tres", "unidad_compra": "kilo", "cliente": "EJEMPLO Dos",
-         "unidad_venta": "unidad", "ficha_id": 2, "compras": 7, "precios": 1, "renglones": 0},
+         "unidad_venta": "unidad", "ficha_id": 2, "compras": 7, "precios": 1, "renglones": 0,
+         "unidades_de_venta": 1},
     ]
     with patch("app.main.listar_unidades_que_diferen", return_value=filas):
         detalle = _detalle_unidades_que_diferen()
@@ -27570,6 +27576,45 @@ def test_el_detalle_de_unidades_DISTINGUE_el_par_dormido_del_que_ya_se_usa():
     # Las dos unidades van en la misma fila: el par es el hallazgo, no cada
     # una por su lado.
     assert detalle["filas"][0][1] == "kilo" and detalle["filas"][0][3] == "cubeta"
+
+
+def test_el_detalle_dice_CUAL_NO_HAY_QUE_ALINEAR_y_es_lo_que_evita_el_dano():
+    """La columna del 15/09, y es la razón de ser del arreglo de la alerta.
+
+    Los dos casos llegan acá idénticos —un par cuya unidad de venta no es la
+    de compra— y piden lo CONTRARIO: con dos unidades en el artículo, alinear
+    borra el dato de en qué unidad compra ese cliente; con una sola, hay algo
+    mal cargado y se revisa. Hasta el 15/09 el detalle no los distinguía y el
+    link mandaba a los dos a la pantalla de editar.
+
+    El caso multiunidad se PLANTA, porque hoy no existe en ninguna de las dos
+    bases (`kiwi_1` sobre Frutamax: 0 de 34 pares). Sin plantarlo, este test
+    verde no diría nada — es el corolario 36.
+    """
+    from app.main import QUE_ES_ALINEABLE, QUE_ES_MULTIUNIDAD, _detalle_unidades_que_diferen
+
+    filas = [
+        # El artículo va a DOS clientes en dos unidades: el caso real.
+        {"articulo": "EJEMPLO Mango", "unidad_compra": "unidad", "cliente": "EJEMPLO Uno",
+         "unidad_venta": "kilo", "ficha_id": 1, "compras": 3, "precios": 1, "renglones": 0,
+         "unidades_de_venta": 2},
+        # Todas sus fichas dicen lo mismo, y no es la unidad de compra.
+        {"articulo": "EJEMPLO Kiwi", "unidad_compra": "kilo", "cliente": "EJEMPLO Dos",
+         "unidad_venta": "cubeta", "ficha_id": 2, "compras": 0, "precios": 0, "renglones": 0,
+         "unidades_de_venta": 1},
+    ]
+    with patch("app.main.listar_unidades_que_diferen", return_value=filas):
+        detalle = _detalle_unidades_que_diferen()
+
+    assert "Qué es" in detalle["columnas"]
+    columna = detalle["columnas"].index("Qué es")
+    assert detalle["filas"][0][columna] == QUE_ES_MULTIUNIDAD
+    assert detalle["filas"][1][columna] == QUE_ES_ALINEABLE
+    # Y los dos textos tienen que decir cosas distintas, o la columna no
+    # separa nada: es exactamente el detector que no puede dar las dos
+    # respuestas (corolario 53).
+    assert QUE_ES_MULTIUNIDAD != QUE_ES_ALINEABLE
+    assert "NO alinear" in QUE_ES_MULTIUNIDAD
 
 
 def test_movimientos_DICE_A_QUIEN_se_le_devolvio_y_no_solo_que_se_devolvio():
@@ -27640,3 +27685,67 @@ def test_la_consulta_de_movimientos_TRAE_el_proveedor_de_la_devolucion():
     # Y la compra misma, que es con lo que se reclama.
     assert "m.compra_devolucion_id," in consulta
     assert "cd.fecha_operacion AS compra_devolucion_fecha" in consulta
+
+
+# --- LA PANTALLA DICE POR QUÉ NO HAY COSTO (15/09) ---
+
+def _fila_negociacion(**extra):
+    """Una fila del listado, con lo que el cuadro de negociación mira."""
+    base = {
+        "ficha_id": 950, "articulo_id": 1, "articulo_nombre": "EJEMPLO Mango",
+        "ficha_nombre": "EJEMPLO Mango", "unidad_venta": "kilo", "unidad_compra": "unidad",
+        "fresco": True, "sin_conversion_de_unidad": True,
+        "costo_actual": None, "costo_anterior": None, "variacion": None,
+        "fecha_ultima_compra": date(2026, 9, 15), "precio_vigente": 900.0,
+        "precio_sugerido": None, "utilidad_aproximada": None,
+        "compras_sin_precio_excluidas": 0, "costo_envase_unidad_venta": None,
+        "denominador_tasas": 1.0, "importe_por_cajon": 40000.0, "contenido_por_cajon": 40.0,
+    }
+    base.update(extra)
+    return base
+
+
+def _negociar_con(filas):
+    with (
+        patch("app.main.listar_clientes", return_value=CLIENTES_DE_PRUEBA),
+        patch("app.main.listar_fichas_por_cliente", return_value=FICHAS_NEGOCIAR_DE_PRUEBA),
+        patch("app.main.calcular_listado_para_negociar_precios", return_value=filas),
+        patch("app.main.facturacion_por_ficha", return_value=FACTURACION_DE_PRUEBA),
+    ):
+        return cliente.get("/negociar?cliente_id=1")
+
+
+def test_la_pantalla_DICE_POR_QUE_no_hay_costo_y_nombra_LAS_DOS_unidades():
+    """Sin esto la fila sale con guiones y se lee igual que "falta cargarle el
+    precio a la compra" — que es otra cosa y se arregla de otra manera.
+
+    El aviso nombra el artículo y las DOS unidades: el recorte viaja adentro
+    de la afirmación, no en un párrafo aparte que se lee una vez.
+
+    El caso se PLANTA: sobre Frutamax hay 0 pares que difieran de 34, así que
+    sin plantarlo este test pasaría sin ejercitar nada (corolario 36).
+    """
+    respuesta = _negociar_con([_fila_negociacion()])
+    assert respuesta.status_code == 200
+    marcado = respuesta.text
+
+    assert "EJEMPLO Mango" in marcado
+    assert "se compra por unidad y se le vende por kilo" in marcado
+    assert "no calcula su costo" in marcado
+    # Y la fila lo dice también donde falta el número, no solo arriba.
+    assert 'class="sin-costear"' in marcado
+
+
+def test_el_aviso_NO_SALE_cuando_todas_las_fichas_se_pueden_costear():
+    """El control, y es lo que separa el aviso de un cartel que sale siempre.
+
+    Misma fila con una sola cosa cambiada; si el aviso saliera igual, sería
+    un detector que no puede dar la otra respuesta (corolario 53).
+    """
+    respuesta = _negociar_con([
+        _fila_negociacion(sin_conversion_de_unidad=False, unidad_venta="unidad",
+                          costo_actual=1000.0, precio_sugerido=1200.0)
+    ])
+    assert respuesta.status_code == 200
+    assert "no calcula su costo" not in respuesta.text
+    assert 'class="sin-costear"' not in respuesta.text

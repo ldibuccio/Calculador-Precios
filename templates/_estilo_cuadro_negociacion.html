@@ -25,6 +25,22 @@
      y son CERO en las cuatro, así que acá no se lleva puesta ninguna
      función. El buscador de "Todos los artículos" vive AFUERA de la tabla
      y no lo toca nada de esto. */
+  /* El aviso de las fichas que no se pueden costear y su marca en la fila.
+     Gris y no rojo a propósito: no es un error de nadie ni algo que se
+     pueda arreglar apretando algo — es una cuenta que el sistema no sabe
+     hacer. Pintarlo de alarma mandaría a buscar qué se cargó mal. */
+  .aviso-sin-costear {
+    margin: 0 0 0.75rem;
+    padding: 0.7rem 0.8rem;
+    background: #f3f4f6;
+    border-left: 3px solid #9ca3af;
+    border-radius: 6px;
+    font-size: 0.9rem;
+    line-height: 1.45;
+    color: #374151;
+  }
+  .sin-costear { color: #6b7280; font-style: italic; }
+
   @media (max-width: 700px) {
     /* El scroll se apaga: si quedara, una tarjeta ancha volvería a correr
        la pantalla al costado y el arreglo sería invisible. */

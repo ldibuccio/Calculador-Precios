@@ -1333,3 +1333,140 @@ def test_incidencia_queda_en_los_cuatro_cuadros_con_el_mismo_numero():
     assert grupos["subas"][0]["incidencia"] == 0.25
     assert {f["ficha_id"]: f["incidencia"] for f in grupos["bajo_objetivo"]} == {2: 0.25, 3: 0.5}
     assert {f["ficha_id"]: f["incidencia"] for f in grupos["todos"]} == {1: 0.25, 2: 0.25, 3: 0.5}
+
+
+# --- LA FICHA QUE SE VENDE EN OTRA UNIDAD NO SE COSTEA (15/09) ---
+#
+# El costeo divide plata por `cajones × contenido_por_cajon`, y ese contenido
+# está en unidad de COMPRA. Llamar al resultado "costo por unidad de venta"
+# vale solo mientras las dos unidades sean la misma; cuando no lo son, el
+# número sale mal y no lo dice. Desde el 15/09 el sistema se NIEGA.
+#
+# TODOS ESTOS TESTS PLANTAN EL CASO, y no es una formalidad: corrida `kiwi_1`
+# sobre Frutamax el 15/09 dio `pares_que_difieren 0` sobre 34 pares — el caso
+# NO EXISTE en la base. Un test que no lo planta pasa en verde sin haber
+# ejercitado una sola línea de esto (corolario 36).
+
+FICHA_MANGO_POR_UNIDAD = {
+    "id": 950, "articulo_id": 1, "articulo_nombre": "Articulo A",
+    "unidad_venta": "unidad", "unidad_compra": "unidad",
+    "envase_id": None, "contenido_caja": 6, "envase_variable": False,
+}
+# LA MISMA ficha con una sola cosa cambiada: se le vende por kilo. Cambiar una
+# sola cosa por vez es lo que deja atribuir la diferencia a la unidad y no a
+# otra parte del fixture.
+FICHA_MANGO_VENDIDO_POR_KILO = {**FICHA_MANGO_POR_UNIDAD, "unidad_venta": "kilo"}
+# Y la tercera: el artículo viejo al que nadie le cargó la unidad de compra.
+FICHA_SIN_UNIDAD_DE_COMPRA = {**FICHA_MANGO_VENDIDO_POR_KILO, "unidad_compra": None}
+
+
+def _fila_de(ficha):
+    filas, _, _ = _calcular_negociacion(fichas=[ficha])
+    assert len(filas) == 1, "el fixture tiene que dar exactamente una fila"
+    return filas[0]
+
+
+def test_la_ficha_que_se_vende_en_OTRA_unidad_NO_SE_COSTEA():
+    """Y el control al lado, que es lo único que lo vuelve legible.
+
+    Las dos fichas son idénticas salvo `unidad_venta`. Sin el control, un
+    `costo_actual is None` se lee igual que un fixture sin compras — es el
+    detector que no puede dar las dos respuestas (corolario 53).
+    """
+    coincide = _fila_de(FICHA_MANGO_POR_UNIDAD)
+    difiere = _fila_de(FICHA_MANGO_VENDIDO_POR_KILO)
+
+    assert coincide["costo_actual"] is not None, "la que coincide se costea como siempre"
+    assert coincide["sin_conversion_de_unidad"] is False
+
+    assert difiere["costo_actual"] is None
+    assert difiere["precio_sugerido"] is None
+    assert difiere["utilidad_aproximada"] is None
+    assert difiere["costo_anterior"] is None, "tampoco el anterior: está en la misma unidad equivocada"
+    assert difiere["sin_conversion_de_unidad"] is True
+
+
+def test_el_COSTO_DE_ENVASE_tampoco_se_calcula_y_esa_es_la_cuenta_ESCONDIDA():
+    """La segunda cuenta que mezcla las unidades, y no está en el camino del costo.
+
+    `_envases_por_unidad_ponderado` decide descartable o caja chica con
+    `contenido_compra <= contenido_ficha` — el primero en unidad de compra y
+    el segundo en unidad de venta. Con las unidades distintas eso compara
+    kilos contra unidades, y de ahí sale un COSTO, no un cartel.
+
+    Buscando "el problema de las unidades" nadie grepea la función de los
+    envases: se encuentra preguntando dónde se DIVIDE o se COMPARA un número
+    de la compra contra uno de la ficha.
+    """
+    difiere = _fila_de({**FICHA_MANGO_VENDIDO_POR_KILO, "envase_variable": True})
+    assert difiere["costo_envase_unidad_venta"] is None
+
+
+def test_sin_unidad_de_compra_cargada_se_costea_COMO_SIEMPRE():
+    """"No se sabe en qué se compra" no es un conflicto.
+
+    Es la misma condición que la alerta (`unidad_compra IS NOT NULL`), y
+    tratarlo como conflicto dejaría sin costo a todo artículo viejo al que
+    nadie le completó la unidad — un apagón masivo por un campo vacío.
+    """
+    fila = _fila_de(FICHA_SIN_UNIDAD_DE_COMPRA)
+    assert fila["costo_actual"] is not None
+    assert fila["sin_conversion_de_unidad"] is False
+
+
+def test_la_fila_lleva_LAS_DOS_unidades_para_poder_decir_por_que():
+    """Sin las dos, la pantalla no puede nombrar el motivo sin ir a buscar el artículo."""
+    fila = _fila_de(FICHA_MANGO_VENDIDO_POR_KILO)
+    assert fila["unidad_compra"] == "unidad"
+    assert fila["unidad_venta"] == "kilo"
+
+
+def test_la_regla_de_PYTHON_y_la_de_la_ALERTA_son_LA_MISMA(  ):
+    """Escrita dos veces se separa, y el modo de falla es feo: el costeo
+    seguiría negándose sobre un conjunto y la alerta avisando sobre otro, así
+    que habría fichas sin costo que nadie nombra — o al revés, un aviso sobre
+    fichas que sí se costean.
+
+    No se puede unificar en una expresión: una corre sobre un dict en memoria
+    y la otra sobre la base entera. Lo que sí se puede es exigir que digan lo
+    mismo, y eso es lo que hace este test — LEYENDO el SQL de app/db.py, no
+    copiándolo, porque una copia envejece en silencio.
+
+    LA ÚNICA DIFERENCIA PERMITIDA ES `a.activo`, y está decidida, no heredada
+    (ver el docstring de `unidades_incompatibles`): la alerta pregunta qué
+    vale la pena mostrar y esto pregunta si el número se sostiene.
+    """
+    import io
+    import re
+
+    from app.costeo import unidades_incompatibles
+    from app.db import _SQL_UNIDADES_QUE_DIFIEREN
+
+    # Las NUEVE combinaciones, más las dos que no son un conflicto. Que estén
+    # las nueve es lo que impide un predicado que acierte de casualidad sobre
+    # el par que a uno se le ocurrió.
+    UNIDADES = ("kilo", "unidad", "cubeta")
+    for compra in UNIDADES:
+        for venta in UNIDADES:
+            ficha = {"unidad_compra": compra, "unidad_venta": venta}
+            assert unidades_incompatibles(ficha) is (compra != venta), (compra, venta)
+    assert unidades_incompatibles({"unidad_compra": None, "unidad_venta": "kilo"}) is False
+    assert unidades_incompatibles({"unidad_venta": "kilo"}) is False, "sin la clave tampoco"
+
+    # Y el SQL dice las mismas dos cosas. Se compara sobre el texto sin
+    # comentarios ni espacios de más: un cambio de indentación no es un
+    # cambio de regla, pero sacar una condición sí.
+    condicion = " ".join(
+        linea.split("--")[0].strip()
+        for linea in _SQL_UNIDADES_QUE_DIFIEREN.splitlines()
+    )
+    condicion = re.sub(r"\s+", " ", condicion).lower()
+    assert "a.unidad_compra is not null" in condicion
+    assert "a.unidad_compra is distinct from f.unidad_venta" in condicion
+    # La diferencia decidida está, y está NOMBRADA como tal en el docstring
+    # del predicado: si alguien la saca de uno de los dos lados, que tenga
+    # que venir a mirar acá.
+    assert "a.activo" in condicion
+    fuente = io.open("app/costeo.py", encoding="utf-8").read()
+    assert "activo" in unidades_incompatibles.__doc__, "la diferencia va explicada donde se decide"
+    assert fuente.count("def unidades_incompatibles") == 1, "la regla vive en UN solo lugar"

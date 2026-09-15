@@ -3231,6 +3231,17 @@ ellas el mismo hallazgo habría mandado a revisar meses de costos.
 Como Kiwi estaba dormido, la dirección en que se alineó no cambia ningún
 número viejo — no hay compras ni precios que recalcular.
 
+**Y "alinear" NO ES EL ARREGLO EN GENERAL, que es lo que este párrafo se
+lee como diciendo. Corregido el 15/09.** Alinear vale solo cuando todas las
+fichas del artículo dicen la misma unidad de venta y esa unidad no es la de
+compra: ahí hay UNA cosa mal cargada. Cuando el artículo va a dos clientes en
+dos unidades, alinear le hace decir a una ficha que ese cliente compra en una
+unidad en la que no compra — apaga el aviso y borra el dato. La alerta no
+distinguía los dos casos y su link mandaba a los dos a la misma pantalla; **el
+detalle los separa desde el 15/09** (columna "Qué es"). De Kiwi no quedó
+rastro para saber cuál de los dos era: `kiwi_1` sobre Frutamax da hoy cero en
+todo. Palmala no se corrió.
+
 **Y la verificación no hay que acordarse de correrla**, que es el punto de
 haberla puesto como alerta y no como cartel: `unidades_que_difieren`
 recalcula sola cada seis horas y se apaga cuando el par deja de diferir. Si
@@ -4762,14 +4773,32 @@ en el galpón y no midiendo de nuevo.
 **Y si la respuesta es "depende del día", la propuesta del dueño es la
 correcta** y esta tabla no la contradice — dice cuándo cada una.
 
-### El orden que queda
+### MEDIDO Y DECIDIDO (15/09): el caso NO está cargado, y por eso se hicieron DOS cosas y no cuatro
 
-1. Correr `kiwi_1` en las dos bases. Si `arts_multiunidad` es 0, no hay nada
-   que construir y la alerta está bien como está.
-2. Preguntar en el galpón si el kilaje por unidad es estable. Eso elige la
-   columna de la tabla.
-3. Recién ahí decidir. **Y antes de tocar la alerta**, acordarse de que su
-   problema no es que cuente de más: es que su LINK manda a romper el dato.
+`kiwi_1` en **Frutamax**: `arts_con_ficha 33 · arts_multiunidad 0 ·
+arts_alineables 0 · pares_que_difieren 0 · pares_totales 34 · última compra
+14/09`. **Cero en todo.** El hecho del negocio es real —el dueño lo describe
+y pasa con mango, kiwi y palta— pero **no hay una sola ficha cargada que lo
+necesite.**
+
+Decisión del dueño, y el criterio vale más que el caso: **el modelo de datos
+no se toca.** Ni las dos magnitudes por compra ni el factor por artículo. Se
+construyeron solo las dos cosas que sirven el día que cargue la ficha, y que
+hoy no le cuestan nada:
+
+1. **La alerta dejó de mandar a alinear.**
+2. **El costeo se NIEGA** cuando las unidades no coinciden, en vez de dar un
+   número mal.
+
+**Y la razón de hacer la 1 aunque el caso no exista es del dueño**: *"el día
+que yo cargue la ficha de un cliente que compra mango por kilo, esa alerta va
+a saltar y me va a proponer romperla"*. Un aviso que propone destruir el dato
+está mal aunque hoy dispare cero veces — y arreglarlo cuando dispara cero es
+gratis.
+
+Lo que queda abierto: cuando exista la ficha, decidir entre el factor y las
+dos magnitudes, con la respuesta del galpón sobre si un mango pesa siempre lo
+mismo. **No antes.**
 
 ### Las cuentas que dependen de que la unidad sea UNA, enumeradas (15/09)
 
@@ -4889,3 +4918,109 @@ ficha — decir que no se puede costear en esa unidad.
 Si los artículos son tres, **puede ser la solución entera**: con tres
 artículos, el que pone el precio hace la cuenta de cabeza. Lo que no puede
 hacer es darse cuenta de que el número que tiene adelante está mal.
+
+## Corolario 64: un aviso se arregla cuando dispara CERO, que es cuando es gratis
+
+Del 15/09, y el criterio es del dueño. Medido `kiwi_1` sobre Frutamax: **0
+pares que difieran sobre 34**. El caso que la alerta `unidades_que_difieren`
+describe no está cargado en la base.
+
+La conclusión fácil era "entonces no hay nada que hacer". La del dueño fue la
+contraria, y es la que vale: *"el día que yo cargue la ficha de un cliente que
+compra mango por kilo, esa alerta va a saltar y me va a proponer romperla"*.
+
+**Un aviso cuyo link propone destruir el dato está mal aunque hoy dispare cero
+veces.** Y cero disparos es exactamente cuando arreglarlo es gratis: no hay
+filas que revisar, no hay nadie mirando la pantalla vieja, no hay que
+comunicar un cambio. El día que dispare, arreglarlo cuesta además el caso que
+ya se rompió.
+
+**Y el cero es lo que decidió QUÉ NO construir**, que es la otra mitad: el
+modelo de datos no se tocó —ni las dos magnitudes por compra ni el factor por
+artículo— porque para eso el número sí manda. Es el corolario 23 y la regla de
+las fichas borradas puestos uno al lado del otro, y esta vez separados a
+propósito:
+
+> **Medir antes de construir la CURA; no antes de cerrar la PUERTA.**
+
+Acá la puerta son dos: que el aviso no proponga romper, y que el costeo no
+entregue un número mal. Las dos valen con cero casos. La cura —enseñarle al
+sistema a convertir— espera a que haya uno.
+
+## Corolario 65: el mock hace que el test no vea QUÉ COLUMNA pide la consulta, y acá eso apagaba la guarda entera
+
+Del 15/09, y es el corolario 40 en su forma más cara hasta ahora.
+
+Diez canarios sobre el arreglo de las unidades: **ocho mordieron y dos dieron
+cero**, y los dos eran del SQL:
+
+```
+[0] la consulta del detalle deja de traer la clasificacion
+[0] la ficha deja de traer unidad_compra de la base
+```
+
+La causa es la del 40: **todos los tests mockean la consulta**, así que el
+valor lo entrega el fixture sin mirar una letra del SQL. `unidad_compra`
+llegaba en el dict del fixture con la columna sacada del SELECT.
+
+**Y la consecuencia es la peor de las cuatro lecturas del canario en cero**,
+porque no es que el test sea flojo sobre un detalle: sin esa columna,
+`ficha.get("unidad_compra")` devuelve `None`, la regla contesta "no hay
+conflicto" **para todas las fichas del sistema**, y el costeo vuelve a dividir
+mezclando unidades. La guarda entera queda apagada, en producción, **sin un
+solo test en rojo y sin nada en la pantalla que se vea raro** — porque lo que
+se vería es exactamente lo que se veía antes.
+
+Es la familia del `except Exception` que sostiene un `NameError` (corolario
+51): una degradación permanente que se ve igual que el funcionamiento normal.
+Con el agravante de que acá no hay ni un `logger.exception` gritando en los
+logs — no hay error ninguno, la consulta corre bien y trae una columna menos.
+
+**La regla, que el 40 ya decía y acá se confirma**: cuando lo que cambia es
+QUÉ COLUMNA pide la consulta, el test tiene que mirar el TEXTO del SQL. El
+valor no alcanza porque el valor no viene de la consulta.
+
+**Y la señal para saber DÓNDE hace falta**, que es lo que el 40 no daba: si
+una guarda de Python lee un campo de un dict que viene de la base, esa lectura
+tiene DOS mitades —que la consulta lo traiga y que el código lo use— y los
+tests de la guarda solo pueden ver la segunda. La primera se prueba leyendo el
+SQL, y es la que apaga todo cuando falta.
+
+El ancla va **sin los comentarios** (corolario 59): un comentario de SQL
+existe para nombrar la columna que el test busca, así que la colisión está
+garantizada por construcción.
+
+## Corolario 66: la cuenta que sobra se apaga sola cuando la guarda va ANTES, y eso hay que decirlo o alguien la vuelve a prender
+
+Del 15/09, y es del lado bueno.
+
+`_envases_por_unidad_ponderado` es la segunda cuenta que mezcla las unidades
+—compara `contenido_compra <= contenido_ficha` para decidir descartable o caja
+chica— y era el hallazgo del análisis: nadie grepea la función de los ENVASES
+buscando un problema de unidades.
+
+**No hizo falta tocarla.** La negativa se puso donde se produce `costo_actual`,
+y todo lo de abajo ya estaba guardado por `if costo_actual is not None` —
+incluida la llamada al envase. Al no llamarse, la comparación no ocurre.
+
+Eso es lo cómodo y también el riesgo: **una cuenta que quedó bien por el orden
+de las guardas y no por una condición propia se rompe el día que alguien mueve
+la guarda**, y no hay nada en la función del envase que diga que dependía de
+eso. Es la familia del corolario 21 —una operación correcta por convención
+entre dos lugares, no por construcción— con la vuelta de que acá la convención
+es un `if` que está treinta líneas más arriba.
+
+Por eso van las dos cosas, y hacen falta las dos:
+
+1. **El comentario en la guarda dice que apagar el envase NO es un efecto
+   colateral**, sino la segunda razón por la que la guarda está ahí.
+2. **Un test propio del envase** (`test_el_COSTO_DE_ENVASE_tampoco_se_calcula_y_
+   esa_es_la_cuenta_ESCONDIDA`), que no pasa por el costo: afirma directo que
+   con las unidades distintas no sale costo de envase. Si mañana alguien mueve
+   la negativa más abajo, el costo sigue dando None y ese test es el único que
+   cae.
+
+**La señal**: cuando un arreglo apaga de yapa una segunda cosa que uno no
+tocó, esa segunda cosa se queda sin test propio — porque el que uno escribe
+mira lo que sí tocó. Y el día que se reordene, la de yapa vuelve sin que nada
+avise.

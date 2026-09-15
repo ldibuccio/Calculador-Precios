@@ -8779,3 +8779,72 @@ def test_el_ON_DELETE_de_las_FK_a_fichas_esta_DECIDIDO_una_por_una():
         "Éstas van en SET NULL a propósito y alguien les copió el arreglo de las otras: "
         f"{dejaron_de_nulearse}"
     )
+
+
+def _sql_de_la_funcion(nombre_funcion):
+    """El SQL que una función de app/db.py le pide a la base, SIN comentarios.
+
+    Sin sacar los `--`, el assert matchea la prosa que explica la columna en
+    vez de la columna: un comentario de SQL existe para NOMBRAR la cosa que
+    el test busca, así que la colisión está garantizada por construcción
+    (corolario 59).
+    """
+    import ast
+    import io
+    import re
+
+    arbol = ast.parse(io.open("app/db.py", encoding="utf-8").read())
+    funcion = next(
+        (n for n in ast.walk(arbol) if isinstance(n, ast.FunctionDef) and n.name == nombre_funcion),
+        None,
+    )
+    assert funcion is not None, f"no existe la función {nombre_funcion}"
+    literales = [
+        texto
+        for nodo in ast.walk(funcion)
+        if (texto := _sql_del_nodo(nodo)) and "SELECT" in texto.upper()
+    ]
+    assert literales, f"{nombre_funcion} no tiene ninguna consulta: el barrido mira lo que no es"
+    sin_comentarios = " ".join(
+        linea.split("--")[0] for texto in literales for linea in texto.splitlines()
+    )
+    return re.sub(r"\s+", " ", sin_comentarios)
+
+
+def test_la_ficha_TRAE_la_unidad_de_compra_del_articulo():
+    """Lo que decide si el costeo se puede negar, y ningún test de costeo lo ve.
+
+    `unidades_incompatibles` lee `ficha["unidad_compra"]`, y todos los tests
+    de app/costeo.py le pasan fichas de fixture — así que el valor lo pone el
+    fixture, no la consulta. Medido con un canario el 15/09: sacar
+    `a.unidad_compra` del SELECT hace caer CERO tests.
+
+    Y el modo de falla es el peor: sin la columna, `ficha.get("unidad_compra")`
+    devuelve None, la regla contesta "no hay conflicto" para todo, el costeo
+    vuelve a dividir mezclando unidades y NADA avisa. Es la degradación
+    permanente y silenciosa, con el agravante de que acá ni siquiera hay un
+    `except` que la explique.
+
+    Por eso este test mira el TEXTO de la consulta y no un valor (corolario
+    40): lo que cambia es QUÉ COLUMNA se pide.
+    """
+    consulta = _sql_de_la_funcion("listar_fichas_por_cliente")
+    assert "a.unidad_compra" in consulta
+    # Calificada con el alias del artículo, no suelta: `fichas_logistica` no
+    # tiene esa columna, así que sin el alias el assert podría pasar sobre
+    # una consulta que la pide de la tabla equivocada (corolario 4).
+    assert "unidad_compra" not in consulta.replace("a.unidad_compra", "")
+
+
+def test_el_detalle_de_la_alerta_TRAE_cuantas_unidades_de_venta_tiene_el_articulo():
+    """La columna que separa "no alinear" de "revisar cuál está mal".
+
+    Mismo caso que la de arriba y mismo canario en cero: el detalle se prueba
+    con `listar_unidades_que_diferen` mockeada, así que el conteo lo entrega
+    el fixture. Si la consulta deja de traerlo, el detalle diría "revisar cuál
+    está mal" para TODOS — que es volver a mandar a alinear el caso que no hay
+    que alinear, sin un solo test en rojo.
+    """
+    consulta = _sql_de_la_funcion("listar_unidades_que_diferen")
+    assert "COUNT(DISTINCT f2.unidad_venta)" in consulta
+    assert "AS unidades_de_venta" in consulta

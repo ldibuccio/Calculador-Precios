@@ -162,6 +162,23 @@
 <p class="vacio">Ningún artículo con precio vigente está por debajo del objetivo.</p>
 {% endif %}
 
+{# LAS QUE EL SISTEMA NO PUEDE COSTEAR, dichas antes de la tabla donde van a
+   salir con guiones. No es un cartel de error: es lo único que distingue
+   "falta el precio de la compra" de "no se puede convertir la unidad", que
+   en la tabla se ven idénticos y se arreglan de maneras opuestas.
+
+   Nombra el artículo y LAS DOS unidades: el recorte viaja adentro de la
+   afirmación, así no se puede leer sin saber sobre qué se está hablando. #}
+{% if sin_costear_por_unidad %}
+<p class="aviso-sin-costear">
+  {% for f in sin_costear_por_unidad %}
+  <strong>{{ f.articulo }}</strong> se compra por {{ f.compra }} y se le vende por {{ f.venta }}.{% if not loop.last %}<br>{% endif %}
+  {% endfor %}
+  <br>El sistema no sabe pasar de una unidad a la otra, así que no calcula su costo
+  ni su precio sugerido. El precio de esas fichas se pone a mano.
+</p>
+{% endif %}
+
 <h2>Todos los artículos</h2>
 {% if todos %}
 <label for="buscar-todos-articulos" class="etiqueta-buscar-todos">Buscar artículo</label>
@@ -186,7 +203,7 @@
         <td><span class="nombre-articulo">{{ a.articulo_nombre }}</span></td>
         <td class="col-venta">{% if a.incidencia is not none %}{{ a.incidencia|porcentaje }}{% else %}—{% endif %}</td>
         <td>{{ a.precio_vigente|moneda if a.precio_vigente is not none else "—" }}</td>
-        <td>{{ a.precio_sugerido|moneda if a.precio_sugerido is not none else "—" }}</td>
+        <td>{% if a.sin_conversion_de_unidad %}<span class="sin-costear">sin costear</span>{% else %}{{ a.precio_sugerido|moneda if a.precio_sugerido is not none else "—" }}{% endif %}</td>
         <td>
           {% if a.utilidad_aproximada is none %}—
           {% elif a.utilidad_aproximada < 0 %}<span class="utilidad-negativa">{{ a.utilidad_aproximada|porcentaje }}</span>

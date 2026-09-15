@@ -5325,6 +5325,17 @@ def _calcular_cuadro_negociacion(cliente: dict, cliente_id: int, fichas_cliente:
         # artículo con compra en los últimos 15 días, tampoco.
         "sin_fichas": len(fichas_cliente) == 0,
         "sin_articulos_recientes": len(fichas_cliente) > 0 and len(articulos) == 0,
+        # LAS QUE NO SE PUEDEN COSTEAR, CON NOMBRE Y LAS DOS UNIDADES. Sin
+        # esto, la fila sale con guiones en Sugerido y Utilidad y se lee
+        # igual que "todavía no le cargaron el precio a la compra" — que es
+        # otra cosa y se arregla de otra manera. El renglón nombra el
+        # artículo y las dos unidades porque el recorte tiene que viajar
+        # adentro de la afirmación, no en un párrafo aparte.
+        "sin_costear_por_unidad": [
+            {"articulo": a["articulo_nombre"], "venta": a["unidad_venta"], "compra": a["unidad_compra"]}
+            for a in articulos
+            if a.get("sin_conversion_de_unidad")
+        ],
     }
 
 
@@ -11648,15 +11659,35 @@ def _detalle_kilos_faltantes() -> dict:
         "nota": medido,
     }
 
+# Las dos únicas cosas que puede ser un par que difiere, y piden lo
+# CONTRARIO una de la otra. El texto va acá y no suelto en la función para
+# que el que lo cambie vea los dos al lado y no pueda dejarlos diciendo lo
+# mismo — que es como se volvería a leer "alinear" en los dos casos.
+QUE_ES_MULTIUNIDAD = "Dos unidades en este artículo: NO alinear"
+QUE_ES_ALINEABLE = "Una sola unidad de venta: revisar cuál está mal"
+
+
 def _detalle_unidades_que_diferen() -> dict:
     """Los pares donde la unidad de compra y la de venta no coinciden.
 
-    LA COLUMNA "USO" ES LA QUE DECIDE QUÉ HACER, y por eso va y no se
-    resume en un número: un par que nunca se compró ni se vendió es un dato
-    dormido —se corrige y listo—; uno con compras o precios encima es plata
-    ya calculada dividiendo entre unidades distintas, y eso no se arregla
-    cambiando la unidad. Sin esa columna, los dos casos se leen igual y el
-    que llega no tiene con qué priorizar.
+    LA COLUMNA "QUÉ ES" ES LA QUE EVITA EL DAÑO, y es del 15/09. Hasta ese
+    día los dos casos se veían idénticos y el link mandaba a los dos al
+    mismo lado, a alinear:
+
+    - **Dos unidades en el artículo** (a un cliente por unidad y a otro por
+      kilo): es real. Alinear una de las dos fichas le hace decir que ese
+      cliente compra en una unidad en la que no compra, apaga el aviso y
+      borra el dato. No hay nada que alinear — queda sin costear hasta que
+      el sistema sepa convertir.
+    - **Una sola unidad de venta** y distinta de la de compra: ahí sí hay
+      UNA cosa mal cargada, y se revisa cuál de las dos.
+
+    LA COLUMNA "USO" DECIDE EL ORDEN, que es otra pregunta: un par dormido
+    no le falta a nadie hoy; uno con compras o precios encima es una ficha
+    que HOY no tiene costo ni precio sugerido. (Hasta el 15/09 este
+    docstring decía que era "plata ya calculada dividiendo entre unidades
+    distintas". Dejó de serlo el mismo día: el costeo ahora se niega, así
+    que ya no hay número mal — hay número que falta.)
     """
     renglones = []
     for fila in listar_unidades_que_diferen():
@@ -11666,11 +11697,12 @@ def _detalle_unidades_que_diferen() -> dict:
             fila["unidad_compra"],
             fila["cliente"],
             fila["unidad_venta"],
+            QUE_ES_MULTIUNIDAD if (fila["unidades_de_venta"] or 0) > 1 else QUE_ES_ALINEABLE,
             (f'{fila["compras"]} compras · {fila["precios"]} precios · '
              f'{fila["renglones"]} renglones') if usado else "sin usar",
         ])
     return {
-        "columnas": ["Artículo", "Se compra por", "Cliente", "Se vende por", "Uso"],
+        "columnas": ["Artículo", "Se compra por", "Cliente", "Se vende por", "Qué es", "Uso"],
         "filas": renglones,
         "resumen": f"{len(renglones)} par{'es' if len(renglones) != 1 else ''}",
     }
@@ -12002,8 +12034,14 @@ ALERTAS = [
     ),
     DefinicionAlerta(
         codigo="unidades_que_difieren",
-        titulo="Artículos que se compran en una unidad y se venden en otra",
-        titulo_corto="Unidad de compra ≠ unidad de venta",
+        # EL TÍTULO DICE LA CONSECUENCIA, no el diagnóstico. "Se compran en
+        # una unidad y se venden en otra" describe algo que puede ser
+        # perfectamente correcto —dos clientes, dos unidades— así que como
+        # título solo se lee como "esto está mal". Lo que sí es un hecho es
+        # que esas fichas no se costean, y eso es lo que el que mira
+        # necesita saber.
+        titulo="Fichas sin costear: se compran en una unidad y se venden en otra",
+        titulo_corto="Fichas sin costear por la unidad",
         # A LOS DOS SECTORES porque la mitad la arregla cada uno: la unidad de
         # compra se edita en Artículos (Compras) y la de venta en Fichas
         # (Comercial). En uno solo, el que la ve no siempre puede tocarla.
