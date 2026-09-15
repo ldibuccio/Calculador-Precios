@@ -18,6 +18,47 @@ El sistema lo usa principalmente una sola persona, desde el **celular** — no d
 
 Esto aplica a toda pantalla nueva, no solo a las de compras.
 
+## El rótulo hace la PREGUNTA, la ayuda da un EJEMPLO
+
+Del 15/09, y es del dueño. Vale para toda pantalla, igual que el mobile-first.
+
+**Un rótulo no nombra el mecanismo del sistema: hace la pregunta del negocio.**
+"Se cuenta además en" describe que existe una segunda magnitud — el que carga
+un artículo de cero no tiene por qué saber que eso existe. Lo que sí sabe es
+si el cajón se pesa o se pesa Y se cuenta:
+
+    ¿Además de pesarlo, se cuenta?
+      No, solo se pesa
+      Sí, se cuentan unidades
+      Sí, se cuentan cubetas
+
+**Y la ayuda da un ejemplo, no una explicación.** "El mango se pesa y además se
+cuentan los mangos. El tomate solo se pesa." La versión vieja contaba cómo
+funciona por dentro (*"cada compra va a pedir las dos magnitudes"*), que es
+cierto y no le sirve a nadie para contestar.
+
+**Cómo se reconoce un rótulo del lado equivocado**: nombra una cosa del
+sistema (una magnitud, un campo, un estado, una tabla) en vez de algo del
+galpón. Si para entenderlo hay que saber cómo guardamos el dato, está mal.
+
+**Y el test pregunta por la jerga que NO puede aparecer**, no solo por el
+texto bueno: `"segunda magnitud" not in marcado`. Afirmar el texto nuevo pasa
+igual si la jerga quedó tres líneas más abajo — es el conjunto ENCONTRADO
+contra el DECIDIDO (corolario 60) aplicado al vocabulario.
+
+### Y el género viaja con la unidad, o sale "¿Cuántos unidades?"
+
+Detalle chico y lo agarró el test, no la lectura. La pregunta se armó pegando
+`"Cuántos " ~ plural`, y el plural de los dos conteos es femenino mientras que
+el de kilos es masculino. Leído se ve bien: la línea dice `¿Cuántos {{ plural }}`
+y uno lee "¿Cuántos kilos", que es el caso que tenía en la cabeza.
+
+El arreglo es que el mapa lleve **las dos palabras juntas**
+(`{"unidad": ("unidades", "Cuántas")}`) en vez de que el género sea un acuerdo
+tácito entre dos lugares — corolario 21 en una frase: el día que aparezca un
+conteo masculino hay dónde ponerlo, en vez de que el texto salga mal y nadie
+lo note porque nadie relee un rótulo.
+
 ## SQL para el editor de Supabase (obligatorio)
 
 Todo el SQL de este proyecto se corre a mano, pegado en el editor SQL de
@@ -5133,6 +5174,9 @@ día por mí, y la respuesta honesta a "¿está deprecada?" era NO:
    deprecación: es lo que la columna pasó a hacer.** Un registro que dice en
    qué unidad está lo viejo sirve exactamente para negar lo que lo
    re-etiquetaría.
+5. Y **en qué magnitud cae `contenido_referencia` al precargarse** — que es
+   la que no estaba en esta lista y la encontró el dueño mirando la pantalla.
+   Ver abajo.
 
 **Y no se puede borrar**, por una razón que es la misma de todo este modelo:
 los cuatro artículos que se compran contados tienen su historia de
@@ -5191,6 +5235,47 @@ sobra una columna sin regla y si sobra una regla sin columna.
 ese commit. Es el corolario 18 exacto —al corregir se escribe rápido y con
 la sensación de estar arreglando— y lo único que lo agarró fue ir a mirar el
 CSS en vez de confiar en la memoria de qué había tocado.
+
+### Un campo que significaba UNA cosa mientras hubo una sola magnitud
+
+Del 15/09, y es el costo escondido del modelo de las dos magnitudes.
+
+`articulos.contenido_referencia` se precarga en **un** campo de la compra
+—`contenido_por_cajon`— y cuál de las dos magnitudes es ése lo decide
+`unidad_compra`: kilos en casi todo el catálogo, el CONTEO en los que ya se
+compraban contados. **La segunda magnitud (`segunda_por_cajon`) no se precarga
+nunca**: el JS le toca la visibilidad, el `required` y el rótulo, y lo único
+que le escribe es el vacío.
+
+Mientras hubo UNA magnitud eso era exacto y el rótulo "Contenido de referencia
+del cajón" alcanzaba. Con dos, **el mismo campo, con el mismo rótulo, significa
+unidades en un artículo y kilos en el de al lado** — y lo que los separa es
+`unidad_compra`, que el 15/09 sacamos de la pantalla a propósito.
+
+**Hoy no hay ningún número mal puesto, y es por construcción**: `unidad_conteo`
+se dedujo copiando `unidad_compra`, así que en los contados las dos columnas
+dicen lo mismo y la referencia cae en el campo rotulado con su unidad.
+
+**El riesgo es del caso que la pantalla nueva estrena**: un artículo que reciba
+`unidad_conteo` de ahora en adelante queda en `unidad_compra = 'kilo'` —la
+edición ni la nombra— así que su referencia cae en KILOS y su campo de conteo
+no se precarga nunca. Dos significados, ninguna señal.
+
+**Lo que se hizo, que es lo seguro**: el rótulo NOMBRA la magnitud
+("¿Cuántos kilos suele traer un cajón?" / "¿Cuántas unidades..."). No cambia
+un dato; hace visible cuál es.
+
+**Lo que NO se hizo, y por qué**: clavar la referencia en kilos —que es lo que
+la dejaría con un solo significado en todo el catálogo— **re-etiqueta en
+silencio** la de los contados que tengan una cargada. Es exactamente lo que nos
+negamos a hacer al deprecar `unidad_compra`. Se decide con
+`db/referencia_1_en_que_magnitud_esta.sql`: si `contados_CON_referencia` da 0,
+no hay nada que re-etiquetar y clavarla sale gratis.
+
+**Y una segunda referencia para el conteo no va todavía**: el conteo es
+justamente lo que cambia con el formato (el mango viene en 40, 12 y 10, que es
+por lo que su referencia se vació). Precargar sirve con un valor DOMINANTE, y
+ahí no lo hay — precargar mal es lo que invita a aceptar mal.
 
 #### Y una cuenta que NO estaba en la lista y es la que nadie iba a buscar
 

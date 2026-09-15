@@ -555,6 +555,69 @@ def test_un_articulo_que_se_compra_por_KILO_sigue_viendo_LAS_DOS_opciones():
     assert '<option value="unidad"' in respuesta.text
 
 
+def test_el_ROTULO_DE_LA_REFERENCIA_dice_EN_QUE_MAGNITUD_esta_ese_numero():
+    """Desde que la compra declara DOS, "contenido de referencia" no dice de cuál habla.
+
+    La referencia se precarga en UN solo campo de la compra
+    (`contenido_por_cajon`), y cuál de las dos magnitudes es ése lo decide
+    `unidad_compra`: kilos en casi todo el catálogo, y el CONTEO en los pocos
+    que ya se compraban contados. O sea que el mismo campo, con el mismo
+    rótulo, significaba unidades en el mango y kilos en el de al lado — y lo
+    que los separa es una columna que no está en la pantalla.
+
+    El rótulo nombrando la magnitud es lo único que lo deja ver. Y se prueba
+    en LOS DOS sentidos (corolario 60): que el contado diga su conteo y que el
+    de kilos diga kilos. Con uno solo, un rótulo fijo pasa la mitad.
+    """
+    contado = {"id": 7, "nombre": "EJEMPLO Uno", "unidad_compra": "unidad",
+               "unidad_conteo": "unidad", "contenido_referencia": 40, "grupo": "fruta"}
+    with patch("app.main.obtener_articulo", return_value=contado):
+        marcado = cliente.get("/compras/articulos/7/editar").text
+    assert "¿Cuántas unidades suele traer un cajón?" in marcado
+    assert "kilos suele traer un cajón" not in marcado, \
+        "su referencia NO está en kilos: cae en el campo de unidades"
+
+    por_kilo = dict(contado, unidad_compra="kilo", unidad_conteo=None)
+    with patch("app.main.obtener_articulo", return_value=por_kilo):
+        marcado = cliente.get("/compras/articulos/7/editar").text
+    assert "kilos suele traer un cajón" in marcado
+    assert "unidades suele traer un cajón" not in marcado
+
+
+def test_los_ROTULOS_de_la_pantalla_de_articulo_PREGUNTAN_y_no_explican_el_sistema():
+    """El que carga un artículo de cero no sabe que existe una "segunda magnitud".
+
+    Sabe si el cajón se pesa o se pesa Y se cuenta. El rótulo viejo —"Se
+    cuenta además en"— nombraba el mecanismo del sistema, y la ayuda contaba
+    cómo funciona por dentro ("cada compra va a pedir las dos magnitudes").
+
+    Se afirma sobre el marcado y no sobre el documento entero: las dos
+    plantillas EXPLICAN en un comentario por qué el rótulo cambió, y ese
+    comentario nombra el texto viejo — la colisión está garantizada por
+    construcción (corolario 38/59).
+    """
+    articulo = {"id": 7, "nombre": "EJEMPLO Uno", "unidad_compra": "kilo",
+                "unidad_conteo": None, "contenido_referencia": 16, "grupo": "fruta"}
+    with (
+        patch("app.main.obtener_articulo", return_value=articulo),
+        patch("app.main.listar_articulos", return_value=[articulo]),
+    ):
+        pantallas = {
+            "alta": cliente.get("/compras/articulos").text,
+            "edición": cliente.get("/compras/articulos/7/editar").text,
+        }
+
+    for nombre, texto in pantallas.items():
+        marcado = texto.split("</style>")[-1]
+        assert "¿Además de pesarlo, se cuenta?" in marcado, nombre
+        assert ">No, solo se pesa<" in marcado, nombre
+        assert ">Sí, se cuentan unidades<" in marcado, nombre
+        assert "se cuentan los mangos" in marcado, f"{nombre}: la ayuda no da el ejemplo"
+        # El vocabulario del sistema no llega a la pantalla.
+        for jerga in ("segunda magnitud", "magnitudes", "Se cuenta además en"):
+            assert jerga not in marcado, f"{nombre}: quedó jerga del sistema ({jerga})"
+
+
 def test_editar_articulo_error_de_base_muestra_mensaje_claro():
     with patch("app.main.actualizar_articulo", side_effect=Exception("no se pudo conectar")):
         respuesta = cliente.post("/compras/articulos/1/editar", data={"nombre": "Frutilla", "unidad_compra": "kilo"})

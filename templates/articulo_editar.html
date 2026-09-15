@@ -99,21 +99,37 @@
          (`_negar_si_el_conteo_contradice_la_unidad_de_compra`, app/db.py),
          porque un POST armado a mano no pasa por esta pantalla. #}
       {% set conteo_fijo = articulo.unidad_compra if articulo.unidad_compra and articulo.unidad_compra != "kilo" else None %}
-      <label for="unidad_conteo">Se cuenta además en (opcional)</label>
+      {# El plural Y el género viajan juntos: "¿Cuántos unidades?" es lo que sale
+         si se arma la pregunta pegando "Cuántos" + el plural. El día que aparezca
+         un conteo masculino, acá hay dónde ponerlo en vez de un acuerdo tácito. #}
+      {% set CONTEO_EN_PALABRAS = {"unidad": ("unidades", "Cuántas"), "cubeta": ("cubetas", "Cuántas")} %}
+      {# EL RÓTULO HACE LA PREGUNTA DEL NEGOCIO, no la del sistema. "Se cuenta
+         además en" describe el mecanismo —que hay una segunda magnitud— y el
+         que carga un artículo de cero no tiene por qué saber que eso existe.
+         Lo que sí sabe es si el cajón se pesa o se pesa Y se cuenta. #}
+      <label for="unidad_conteo">¿Además de pesarlo, se cuenta?</label>
       <select id="unidad_conteo" name="unidad_conteo">
-        <option value="" {% if not articulo.unidad_conteo %}selected{% endif %}>Sin conteo: solo kilos</option>
-        {% for valor, rotulo in [("unidad", "Unidad"), ("cubeta", "Cubeta")] %}{% if not conteo_fijo or conteo_fijo == valor %}
+        <option value="" {% if not articulo.unidad_conteo %}selected{% endif %}>No, solo se pesa</option>
+        {% for valor, rotulo in [("unidad", "Sí, se cuentan unidades"), ("cubeta", "Sí, se cuentan cubetas")] %}{% if not conteo_fijo or conteo_fijo == valor %}
         <option value="{{ valor }}" {% if articulo.unidad_conteo == valor %}selected{% endif %}>{{ rotulo }}</option>
         {% endif %}{% endfor %}
       </select>
-      <p class="ayuda-conteo">Además de los kilos, que van siempre. Dejalo vacío si este artículo se compra solo por kilo. Con conteo cargado, cada compra va a pedir las dos magnitudes — y las fichas que vendan así van a poder costear.</p>
+      <p class="ayuda-conteo">El mango se pesa y además se cuentan los mangos. El tomate solo se pesa.</p>
       {% if conteo_fijo %}
-      <p class="ayuda-conteo">Este artículo ya se compraba contado en <strong>{{ conteo_fijo }}</strong>, y el contenido del cajón de sus compras viejas está expresado en eso. Por eso el otro conteo no está: elegirlo haría costear esos números en la unidad equivocada.</p>
+      <p class="ayuda-conteo">Este artículo ya viene contándose en {{ CONTEO_EN_PALABRAS[conteo_fijo][0] }} desde antes, así que no se puede pasar al otro conteo.</p>
       {% endif %}
 
-      <label for="contenido_referencia">Contenido de referencia del cajón (opcional)</label>
+      {# LA MAGNITUD VA EN EL RÓTULO. La referencia se precarga en UN campo de
+         la compra —`contenido_por_cajon`— y cuál de las dos magnitudes es ése
+         lo decide `unidad_compra`: kilos en todo el catálogo, y el conteo en
+         los pocos que ya se compraban contados. Un "contenido de referencia"
+         a secas no dice de cuál habla, y desde que la compra declara dos eso
+         dejó de ser un detalle. #}
+      {% set plural_referencia, cuantos = CONTEO_EN_PALABRAS[conteo_fijo] if conteo_fijo else ("kilos", "Cuántos") %}
+      <label for="contenido_referencia">¿{{ cuantos }} {{ plural_referencia }} suele traer un cajón? (opcional)</label>
       <input type="number" id="contenido_referencia" name="contenido_referencia" min="0" step="0.01"
              value="{% if articulo.contenido_referencia is not none %}{{ articulo.contenido_referencia }}{% endif %}">
+      <p class="ayuda-conteo">El cajón de tomate trae 16 kilos. Dejalo vacío si viene en formatos distintos: el mango viene en cajas de 40, de 12 y de 10.</p>
 
       <label for="grupo">Grupo (opcional)</label>
       <select id="grupo" name="grupo">
