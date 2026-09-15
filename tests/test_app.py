@@ -461,16 +461,99 @@ def test_la_edicion_de_un_articulo_NO_TOCA_la_unidad_de_compra():
     # para explicar por qué no se toca. Preguntarle al texto haría que el
     # test pasara con la columna de vuelta en el SET (corolario 59).
     cuerpo = funcion.body[1:] if ast.get_docstring(funcion) else funcion.body
-    sql = " ".join(
+    sentencias = [
         nodo.value
         for rama in cuerpo
         for nodo in ast.walk(rama)
         if isinstance(nodo, ast.Constant) and isinstance(nodo.value, str)
-    )
+    ]
+    sql = " ".join(sentencias)
 
     assert "SET nombre" in sql, "cambió la forma del UPDATE: este test dejó de mirar algo"
     assert "unidad_conteo = %s" in sql
-    assert "unidad_compra" not in sql
+
+    # `unidad_compra` SE LEE y NO SE ESCRIBE, y la diferencia es la posición:
+    # la función la trae con un SELECT para negar el conteo que la contradiga,
+    # así que un `"unidad_compra" not in sql` a secas fallaría por la lectura
+    # correcta. Lo que hay que exigir es que ninguna sentencia que ESCRIBA la
+    # nombre (corolario 59: se pregunta por la posición, no por el nombre).
+    #
+    # Y la posición es CÓMO EMPIEZA la sentencia, no que la palabra aparezca:
+    # `FOR UPDATE` es una cláusula de bloqueo adentro de un SELECT, y un
+    # `"UPDATE" in s.upper()` la cuenta como escritura. Ésa fue la primera
+    # versión de este filtro y falló contra el SELECT de la guarda.
+    escrituras = [
+        s for s in sentencias if s.strip().upper().startswith(("UPDATE", "INSERT"))
+    ]
+    assert escrituras, "no quedó ninguna escritura: este test dejó de mirar algo"
+    for sentencia in escrituras:
+        assert "unidad_compra" not in sentencia, sentencia
+
+def test_el_conteo_que_CONTRADICE_la_historia_sale_400_y_no_500():
+    """Un dato mal pedido, no una base caída, y la diferencia manda a otro lado.
+
+    Sin esta rama lo agarra el `except Exception` de abajo y sale como "No se
+    pudo guardar el artículo: ...", que le dice al que lo lee que mire la
+    conexión. El motivo tiene que llegar a la pantalla: es lo único que
+    explica por qué la opción que eligió no se puede.
+    """
+    motivo = (
+        "Este artículo se compra contado en unidad, y su historia de contenido"
+        " por cajón está expresada en eso: no se puede declarar que se cuenta en cubeta."
+    )
+    with patch("app.main.actualizar_articulo", side_effect=ValueError(motivo)):
+        respuesta = cliente.post(
+            "/compras/articulos/7/editar",
+            data={"nombre": "EJEMPLO Uno", "unidad_conteo": "cubeta"},
+        )
+
+    assert respuesta.status_code == 400
+    assert "se compra contado en unidad" in respuesta.text
+    assert "No se pudo guardar" not in respuesta.text
+
+
+def test_la_pantalla_NO_LISTA_el_conteo_que_la_guarda_va_a_rechazar():
+    """El cajón que no se lista, otra vez: no es una opción peor, es la prohibida.
+
+    Ofrecerla y rechazarla al guardar deja a la vista algo que no se puede
+    elegir, y eso invita a preguntarse por qué está ahí. Y la que sí se puede
+    —sacarle el conteo— tiene que seguir estando: no es lo mismo prohibir que
+    trabar.
+
+    El ancla es el elemento entero y no la palabra: "cubeta" aparece también
+    en el valor seleccionado y en la prosa de ayuda (corolario 57).
+    """
+    articulo = {
+        "id": 7, "nombre": "EJEMPLO Uno", "unidad_compra": "unidad",
+        "unidad_conteo": "unidad", "contenido_referencia": 16, "grupo": "fruta",
+    }
+    with patch("app.main.obtener_articulo", return_value=articulo):
+        respuesta = cliente.get("/compras/articulos/7/editar")
+
+    marcado = respuesta.text
+    assert '<option value="cubeta"' not in marcado
+    assert '<option value="unidad"' in marcado
+    assert '<option value="" ' in marcado, "sacarle el conteo tiene que seguir siendo posible"
+
+
+def test_un_articulo_que_se_compra_por_KILO_sigue_viendo_LAS_DOS_opciones():
+    """El control, y es el que distingue "filtra bien" de "filtra todo".
+
+    Un detector que marca todo se ve igual de trabajador que uno que funciona
+    (corolario 53), y acá la versión rota —esconder el otro conteo siempre—
+    pasaría el test de arriba sin despeinarse. Estos son la mayoría del
+    catálogo: su historia está en kilos y no hay nada que contradecir.
+    """
+    articulo = {
+        "id": 7, "nombre": "EJEMPLO Uno", "unidad_compra": "kilo",
+        "unidad_conteo": None, "contenido_referencia": 16, "grupo": "fruta",
+    }
+    with patch("app.main.obtener_articulo", return_value=articulo):
+        respuesta = cliente.get("/compras/articulos/7/editar")
+
+    assert '<option value="cubeta"' in respuesta.text
+    assert '<option value="unidad"' in respuesta.text
+
 
 def test_editar_articulo_error_de_base_muestra_mensaje_claro():
     with patch("app.main.actualizar_articulo", side_effect=Exception("no se pudo conectar")):

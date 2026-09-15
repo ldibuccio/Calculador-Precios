@@ -5,6 +5,7 @@ from unittest.mock import MagicMock, call, patch
 
 from app import db
 from app.db import (
+    actualizar_articulo,
     crear_articulo,
     actualizar_cantidad_compra,
     anular_ajuste_vacios,
@@ -8973,3 +8974,103 @@ def test_un_articulo_NUEVO_nace_con_la_unidad_del_contenido_en_KILO():
     nombre, unidad_compra, unidad_conteo, referencia, grupo = parametros
     assert unidad_compra == "kilo", "el contenido por cajón de un artículo nuevo se carga en kilos"
     assert unidad_conteo == "unidad", "y lo que además cuenta lo dice la otra columna"
+
+
+# LA COHERENCIA ENTRE EL CONTEO DECLARADO Y LA UNIDAD DE LA HISTORIA.
+#
+# Hoy dispara CERO en las dos bases: los cuatro artículos contados tienen el
+# conteo copiado de `unidad_compra` por la migración. Se arregla justo por
+# eso — un aviso que propone romper, o una guarda que falta, cuestan gratis
+# mientras no haya un caso y cuestan el caso roto después (corolario 64).
+
+
+def test_declarar_un_conteo_que_CONTRADICE_la_unidad_de_compra_se_RECHAZA():
+    """Y el daño que evita no se ve en ninguna pantalla: sale un costo mal.
+
+    El `contenido_por_cajon` de todas las compras viejas de un artículo
+    contado está expresado en `unidad_compra`, y `repartir_magnitudes` lo
+    manda a `cantidad_fraccion`. Con el conteo declarado en OTRA unidad, una
+    ficha que venda en esa otra unidad divide la plata por ese mismo número:
+    cuarenta unidades leídas como cuarenta cubetas. No se descuadra nada, no
+    hay error, y el costo sale mal.
+    """
+    conexion, cursor = _conexion_falsa([("unidad",)])
+
+    with patch("app.db.obtener_conexion", return_value=conexion):
+        with pytest.raises(ValueError) as error:
+            actualizar_articulo(7, "EJEMPLO Uno", 16.0, "fruta", "cubeta")
+
+    assert "unidad" in str(error.value) and "cubeta" in str(error.value)
+
+    # Y NO ESCRIBIÓ. Que levante no alcanza: si el UPDATE ya corrió, el
+    # `raise` llega tarde y lo único que cambia es el mensaje.
+    escrituras = [ll for ll in cursor.execute.call_args_list if "UPDATE articulos" in ll.args[0]]
+    assert escrituras == []
+    conexion.commit.assert_not_called()
+
+
+def test_el_MISMO_conteo_que_la_unidad_de_compra_ENTRA():
+    """El control, y es el que distingue "la guarda funciona" de "la guarda siempre frena".
+
+    Una batería de casos negativos sale toda en verde con una guarda que
+    aborta siempre (corolario 30): el caso feliz es el único que los separa.
+    """
+    conexion, cursor = _conexion_falsa([("unidad",)])
+
+    with patch("app.db.obtener_conexion", return_value=conexion):
+        actualizar_articulo(7, "EJEMPLO Uno", 16.0, "fruta", "unidad")
+
+    consulta, parametros = _sql_y_parametros_que_contienen(cursor, "UPDATE articulos")
+    assert parametros[1] == "unidad"
+    conexion.commit.assert_called_once()
+
+
+def test_el_conteo_VACIO_en_un_articulo_contado_ENTRA_porque_NO_MIENTE():
+    """Deliberado, y es la mitad que la guarda NO cubre.
+
+    Sacarle el conteo a un artículo contado no ensucia ningún número: deja a
+    sus fichas sin costear, y eso SE VE en la pantalla como negativa. Trabar
+    acá sería trabar el caso que se degrada de frente, y dejaría a los cuatro
+    artículos contados sin forma de volver atrás nunca.
+    """
+    conexion, cursor = _conexion_falsa([("unidad",)])
+
+    with patch("app.db.obtener_conexion", return_value=conexion):
+        actualizar_articulo(7, "EJEMPLO Uno", 16.0, "fruta", None)
+
+    consulta, parametros = _sql_y_parametros_que_contienen(cursor, "UPDATE articulos")
+    assert parametros[1] is None
+
+
+@pytest.mark.parametrize("unidad_compra", ["kilo", None])
+def test_un_articulo_cuya_historia_esta_en_KILOS_puede_declarar_CUALQUIER_conteo(unidad_compra):
+    """Los dos valores son lo mismo: el nulo significa kilo desde el 15/09.
+
+    Acá no hay nada que contradecir —el `contenido_por_cajon` está en kilos y
+    el conteo es una magnitud aparte— así que la guarda no tiene por qué
+    opinar. Es la mayoría del catálogo: trabarlos sería trabar el caso normal.
+    """
+    conexion, cursor = _conexion_falsa([(unidad_compra,)])
+
+    with patch("app.db.obtener_conexion", return_value=conexion):
+        actualizar_articulo(7, "EJEMPLO Uno", 16.0, "fruta", "cubeta")
+
+    consulta, parametros = _sql_y_parametros_que_contienen(cursor, "UPDATE articulos")
+    assert parametros[1] == "cubeta"
+
+
+def test_la_guarda_del_conteo_LEE_la_unidad_de_compra_EN_LA_MISMA_TRANSACCION():
+    """Lo que cambia es QUÉ pide la consulta, así que el test mira el TEXTO.
+
+    El valor lo entrega el cursor falso (corolario 40/65): con el SELECT
+    sacado, el fixture seguiría entregando la tupla y los tests de arriba
+    pasarían igual — la guarda quedaría apagada para TODOS los artículos, en
+    producción, sin un solo test en rojo y sin nada raro en la pantalla.
+
+    Y el `FOR UPDATE` no es de adorno: sin él la fila puede cambiar entre la
+    lectura y el UPDATE, que es la ventana que la guarda viene a cerrar.
+    """
+    consulta = _sql_de_la_funcion("actualizar_articulo")
+    assert "unidad_compra" in consulta
+    assert "FROM articulos" in consulta
+    assert "FOR UPDATE" in consulta

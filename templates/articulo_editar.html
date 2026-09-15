@@ -86,13 +86,30 @@
       <label for="nombre">Nombre *</label>
       <input type="text" id="nombre" name="nombre" value="{{ articulo.nombre }}" required>
 
+      {# EL CONTEO QUE CONTRADIRÍA LA HISTORIA NO SE LISTA.
+
+         Cuando el artículo se compra contado, el `contenido_por_cajon` de
+         todas sus compras viejas está expresado en ESA unidad. Declarar la
+         otra haría costear cuarenta unidades como cuarenta cubetas, sin
+         descuadrar nada. Listarla y rechazarla al guardar dejaría a la vista
+         algo que no se puede elegir, que es lo que invita a preguntarse por
+         qué está ahí.
+
+         Y no alcanza con no ofrecerla: la guarda vive donde se ESCRIBE
+         (`_negar_si_el_conteo_contradice_la_unidad_de_compra`, app/db.py),
+         porque un POST armado a mano no pasa por esta pantalla. #}
+      {% set conteo_fijo = articulo.unidad_compra if articulo.unidad_compra and articulo.unidad_compra != "kilo" else None %}
       <label for="unidad_conteo">Se cuenta además en (opcional)</label>
       <select id="unidad_conteo" name="unidad_conteo">
         <option value="" {% if not articulo.unidad_conteo %}selected{% endif %}>Sin conteo: solo kilos</option>
-        <option value="unidad" {% if articulo.unidad_conteo == "unidad" %}selected{% endif %}>Unidad</option>
-        <option value="cubeta" {% if articulo.unidad_conteo == "cubeta" %}selected{% endif %}>Cubeta</option>
+        {% for valor, rotulo in [("unidad", "Unidad"), ("cubeta", "Cubeta")] %}{% if not conteo_fijo or conteo_fijo == valor %}
+        <option value="{{ valor }}" {% if articulo.unidad_conteo == valor %}selected{% endif %}>{{ rotulo }}</option>
+        {% endif %}{% endfor %}
       </select>
       <p class="ayuda-conteo">Además de los kilos, que van siempre. Dejalo vacío si este artículo se compra solo por kilo. Con conteo cargado, cada compra va a pedir las dos magnitudes — y las fichas que vendan así van a poder costear.</p>
+      {% if conteo_fijo %}
+      <p class="ayuda-conteo">Este artículo ya se compraba contado en <strong>{{ conteo_fijo }}</strong>, y el contenido del cajón de sus compras viejas está expresado en eso. Por eso el otro conteo no está: elegirlo haría costear esos números en la unidad equivocada.</p>
+      {% endif %}
 
       <label for="contenido_referencia">Contenido de referencia del cajón (opcional)</label>
       <input type="number" id="contenido_referencia" name="contenido_referencia" min="0" step="0.01"

@@ -1894,6 +1894,27 @@ def editar_articulo(
         actualizar_articulo(
             articulo_id, nombre, contenido_referencia_valor, grupo_valor, unidad_conteo_valor
         )
+    except ValueError as error_de_dato:
+        # El conteo que contradice la unidad en que está escrita la historia
+        # del artículo. Es un dato mal pedido, no una base caída: va 400 con
+        # el motivo adentro. Sin esta rama lo agarraría el `except Exception`
+        # de abajo y saldría como "no se pudo guardar", que manda a mirar la
+        # conexión en vez de la pantalla.
+        return templates.TemplateResponse(
+            request,
+            "articulo_editar.html",
+            {
+                "articulo": {
+                    "id": articulo_id,
+                    "nombre": nombre,
+                    "unidad_conteo": unidad_conteo_valor,
+                    "contenido_referencia": contenido_referencia_valor,
+                    "grupo": grupo_valor,
+                },
+                "error": str(error_de_dato),
+            },
+            status_code=400,
+        )
     except Exception as error:
         return templates.TemplateResponse(
             request,

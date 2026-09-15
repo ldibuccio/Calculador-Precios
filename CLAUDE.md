@@ -4474,6 +4474,30 @@ comentario de al lado la explica— el test tiene que preguntar por la
 ESTRUCTURA: una llamada en el árbol, una tabla en posición de tabla. Nunca
 por el nombre suelto.
 
+### Y "la posición" es cómo EMPIEZA la sentencia, no que la palabra aparezca
+
+Tercera aparición, del 15/09, y esta vez falló **el filtro escrito para
+aplicar el corolario**. `actualizar_articulo` ganó un
+`SELECT unidad_compra ... FOR UPDATE` para la guarda del conteo, y el test que
+exige que el UPDATE no escriba esa columna separaba escrituras de lecturas
+así:
+
+    escrituras = [s for s in sentencias if "UPDATE" in s.upper()]
+
+**`FOR UPDATE` es una cláusula de bloqueo adentro de un SELECT**, así que la
+lectura correcta entró a la lista de escrituras y el test falló contra el
+código bueno.
+
+O sea: **"la palabra UPDATE está en el texto" NO es una posición gramatical** —
+es el mismo `grep` de siempre con otra ropa. La posición es
+`s.strip().upper().startswith(("UPDATE", "INSERT"))`: **cómo EMPIEZA la
+sentencia**, que es lo único que decide si escribe.
+
+Y la señal fue la de siempre, que a esta altura conviene reconocer en un
+segundo: el test falló apenas se tocó el código y la primera lectura fue
+"rompí algo". Lo que había que mirar era QUÉ fragmento matcheó, y el fragmento
+era una consulta de lectura.
+
 ## Corolario 60: una migración que cambia un COMPORTAMIENTO no agrega ninguna columna, y el esquema del repo se queda viejo en silencio
 
 Del 14/09. La FK de los precios pasó a NO ACTION, corrió en las dos bases, y
@@ -5103,6 +5127,12 @@ día por mí, y la respuesta honesta a "¿está deprecada?" era NO:
 2. `segunda_magnitud_del_articulo` — qué pide el campo nuevo del formulario.
 3. `SUFIJOS_UNIDAD_COMPRA` — la `k` / la `u` que etiquetan
    `contenido_por_cajon` en trece plantillas.
+4. Y desde el 15/09, `_negar_si_el_conteo_contradice_la_unidad_de_compra`
+   (app/db.py): la guarda que impide declarar un conteo que no sea la unidad
+   en que está escrita la historia del artículo. **Ésta no es una deuda de la
+   deprecación: es lo que la columna pasó a hacer.** Un registro que dice en
+   qué unidad está lo viejo sirve exactamente para negar lo que lo
+   re-etiquetaría.
 
 **Y no se puede borrar**, por una razón que es la misma de todo este modelo:
 los cuatro artículos que se compran contados tienen su historia de
@@ -5216,7 +5246,14 @@ razón para construir. Acá la razón fue el dueño; el cero solo dijo que no
 había nada que migrar.
 
 Acá la puerta son dos: que el aviso no proponga romper, y que el costeo no
-entregue un número mal. Las dos valen con cero casos. La cura —enseñarle al
+entregue un número mal. Las dos valen con cero casos.
+
+**Y el 15/09 se cerró una tercera con el mismo criterio**: el conteo que
+contradice la unidad de la historia. Cero artículos hoy —los cuatro contados
+tienen el conteo copiado por la migración— y el día que alguien edite uno de
+esos cuatro y elija el otro conteo, sus fichas empiezan a costear cuarenta
+unidades como cuarenta cubetas. No se descuadra nada y no hay pantalla donde
+se vea. Cerrarla con cero casos no cuesta ni una fila que revisar. La cura —enseñarle al
 sistema a convertir— espera a que haya uno.
 
 ## Corolario 65: el mock hace que el test no vea QUÉ COLUMNA pide la consulta, y acá eso apagaba la guarda entera

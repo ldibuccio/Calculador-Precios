@@ -121,6 +121,37 @@ def crear_articulo(
         conexion.close()
 
 
+# EL CONTEO NO PUEDE CONTRADECIR LA UNIDAD EN QUE ESTÁ ESCRITA LA HISTORIA.
+#
+# `unidad_compra` dice en qué unidad está expresado `compras.contenido_por_cajon`
+# de ese artículo, y `repartir_magnitudes` manda ese total a
+# `cantidad_fraccion`. Si `unidad_conteo` declarara OTRA unidad, una ficha que
+# venda en esa otra unidad costearía contra un número que está en la primera:
+# cuarenta UNIDADES leídas como cuarenta CUBETAS. No se descuadra nada, no hay
+# error, y el costo sale mal — que es el modo de falla caro de este modelo.
+#
+# Las dos que NO entran acá, y cada una por su razón:
+#
+# - `unidad_compra` en 'kilo' o en nulo: la historia está en kilos, así que el
+#   conteo es libre y no puede contradecir nada.
+# - El conteo VACÍO en un artículo contado: no miente. Deja sus fichas sin
+#   costear, y eso se VE en la pantalla como negativa. Trabar acá sería trabar
+#   el caso que se degrada de frente.
+def _negar_si_el_conteo_contradice_la_unidad_de_compra(
+    unidad_compra: str | None, unidad_conteo: str | None
+) -> None:
+    """Levanta ValueError si el conteo declarado no es la unidad de la historia."""
+    if not unidad_compra or unidad_compra == "kilo":
+        return
+    if unidad_conteo is None or unidad_conteo == unidad_compra:
+        return
+    raise ValueError(
+        f"Este artículo se compra contado en {unidad_compra}, y su historia de contenido"
+        f" por cajón está expresada en eso: no se puede declarar que se cuenta en"
+        f" {unidad_conteo}. Dejalo en {unidad_compra}, o sin conteo."
+    )
+
+
 def actualizar_articulo(
     articulo_id: int,
     nombre: str,
@@ -135,11 +166,24 @@ def actualizar_articulo(
     `contenido_por_cajon` está expresada en eso. Pisarla con 'kilo' —o
     nulearla— dejaría cada compra vieja de esos artículos etiquetada en la
     unidad equivocada, sin mover un solo número y sin que nada avise. Es la
-    columna que quedó para lo viejo: se lee, no se escribe.
+    columna que quedó para lo viejo: se lee, no se escribe. Acá se LEE, y para
+    una sola cosa: negar el conteo que la contradiga (ver la guarda de arriba).
     """
     conexion = obtener_conexion()
     try:
         with conexion.cursor() as cursor:
+            # La unidad de la historia se lee EN LA MISMA TRANSACCIÓN y con
+            # `FOR UPDATE`: leerla antes, afuera, dejaría una ventana donde
+            # cambia entre la lectura y el UPDATE. Y va SIN agregado a
+            # propósito —un `count(*)` devuelve una fila siempre, así que
+            # `fila is None` dejaría de poder decir "no existe" (corolario 27).
+            cursor.execute(
+                "SELECT unidad_compra FROM articulos WHERE id = %s FOR UPDATE",
+                (articulo_id,),
+            )
+            fila = cursor.fetchone()
+            if fila is not None:
+                _negar_si_el_conteo_contradice_la_unidad_de_compra(fila[0], unidad_conteo)
             cursor.execute(
                 """
                 UPDATE articulos
