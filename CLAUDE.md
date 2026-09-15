@@ -4770,3 +4770,122 @@ correcta** y esta tabla no la contradice — dice cuándo cada una.
    columna de la tabla.
 3. Recién ahí decidir. **Y antes de tocar la alerta**, acordarse de que su
    problema no es que cuente de más: es que su LINK manda a romper el dato.
+
+### Las cuentas que dependen de que la unidad sea UNA, enumeradas (15/09)
+
+La unidad solo importa donde el `importe` se DIVIDE o se COMPARA contra un
+contenido. Todo lo demás trabaja **por bulto**, y un bulto es un bulto
+cualquiera sea su contenido. Son **tres** lugares:
+
+1. **`_costear_compras`** (app/costeo.py), cuatro llamadores. Es todo el
+   camino del costo, el precio sugerido y la utilidad.
+2. **`_envases_por_unidad_ponderado`** (app/costeo.py), dos llamadores. **La
+   que nadie iba a encontrar**, y está abajo.
+3. **`calcular_costo_por_unidad_medida`** en la calculadora de Analizar
+   Artículo (app/main.py).
+
+Y lo que **NO** se toca, verificado y no supuesto:
+
+- **El stock, el FIFO, el cotejo, el remanente y las guías R**: en BULTOS, lo
+  dice el comment de `movimientos_stock`.
+- **La Rentabilidad Real**: `costo_bulto` es `c.importe` DIRECTO (app/db.py),
+  sin dividir por ningún contenido. El importe de una compra es por bulto.
+- **La alerta de kilos faltantes**: compara `contenido_por_cajon` contra
+  `contenido_por_cajon_real` — **las dos en la misma unidad**, sea cual sea.
+  Es una comparación consigo misma y no le afecta nada de esto.
+
+### LA QUE NADIE IBA A ENCONTRAR: el envase variable COMPARA las dos unidades
+
+`_envases_por_unidad_ponderado` decide, para una ficha de envase variable, si
+la mercadería sale descartable o en caja chica. Su docstring lo dice:
+
+> *"si el contenido de ESE cajón es menor o igual al contenido de la ficha,
+> es descartable (0 cajas); si es mayor, es caja chica"*
+
+O sea `contenido_compra <= contenido_ficha`, donde el primero está en unidad
+de COMPRA y el segundo en unidad de VENTA. **Con las unidades distintas, esa
+comparación mezcla kilos con unidades** — 40 unidades contra 6 kilos— y de
+ahí sale un costo de envase, no un cartel.
+
+**Y el docstring nombra al MANGO como el caso de envase variable**, que es
+exactamente el artículo del que salió todo esto.
+
+Lo que hay que llevarse, más allá del caso: **buscando "el problema de las
+unidades" nadie grepea la función de los ENVASES.** El grep que la encuentra
+no es el del concepto ni el de la columna: es preguntarse **dónde se DIVIDE o
+se COMPARA** un número de la compra contra uno de la ficha. Es el corolario
+20 —enumerar el hecho y no la forma que uno espera— aplicado a una operación
+en vez de a un campo.
+
+### Las compras viejas NO se rompen, y las columnas YA ESTÁN
+
+`compras` tiene `cantidad_kilos` **y** `cantidad_fraccion` (más sus gemelas
+`_real`). Hoy guardan **UN** número en una de las dos cajas: `app/main.py`
+calcula `total = cajones × contenido` y lo archiva según `unidad_compra`. Son
+la misma magnitud etiquetada, no dos magnitudes.
+
+Y el CHECK es `cantidad_kilos is not null OR cantidad_fraccion is not null`.
+**Verificado contra el esquema real: la base YA ACEPTA las dos llenas.** Así
+que del lado del guardado no hace falta ninguna migración.
+
+Las compras viejas quedan con una magnitud y NULL en la otra, y **eso no está
+roto: es verdadero e incompleto**, que son cosas distintas. Hoy además nadie
+las lee — el docstring de `listar_compras_para_costeo` dice textual que el
+costeo *"nunca lee cantidad_kilos"*.
+
+**El límite de reusar esas columnas**, y conviene saberlo antes de darlas por
+gratis: `cantidad_fraccion` mete 'unidad' y 'cubeta' en la misma columna, y el
+docstring del motor dice *"nunca ambas a la vez"*. Un artículo que se venda a
+un cliente por unidad y a otro por cubeta **no entra en dos columnas**.
+
+### Y la ausencia de conversión era un OBJETIVO DE DISEÑO, no un olvido
+
+`core/motor_costeo.calcular_costo_por_unidad_medida` lo dice en su primer
+párrafo: la misma función saca el costo por kilo o por fracción *"**sin usar
+ningún factor de conversión**"*.
+
+Eso cambia cómo se discute la propuesta. No es tapar un agujero: es **dar de
+baja una invariante que está escrita**. Puede estar bien darla de baja —el
+mundo tiene artículos que se venden en dos unidades— pero el que lo haga tiene
+que saber que está desarmando algo que alguien decidió, no arreglando un
+descuido. Es el corolario 11 del dato de uso al revés: antes de sacar algo,
+preguntarse de quién salió.
+
+### La asimetría que decide entre las dos opciones
+
+| | arregla el pasado | qué hay que saber |
+|---|---|---|
+| **Dos magnitudes por COMPRA** | **no** — solo desde el día que se empieza a cargar | el que compra tiene que pesar Y contar cada cajón |
+| **Factor por ARTÍCULO** (kg por unidad) | **sí** — convierte el número que ya está guardado | si el kilaje por unidad es estable |
+
+**Esa es la diferencia de fondo y no es de gusto**: un factor se aplica hacia
+atrás sobre todo lo que ya está cargado; una segunda magnitud solo existe
+desde que alguien la tipea. Para el costeo eso pesa menos de lo que parece
+—sus ventanas son de 48 horas, 15 y 30 días, así que lo viejo se cae solo—
+pero para cualquier lectura retroactiva (facturar para atrás, revisar un
+margen del mes pasado) el factor es lo único que contesta.
+
+**Y el factor tiene un borde conocido**: para 'unidad' es plausible que sea
+estable (un mango pesa lo que pesa un mango); **para 'cubeta' es mucho más
+flojo**, porque una cubeta es un recipiente y cuánto entra depende de cómo se
+llene. Puede ser que el factor sirva para unidad↔kilo y no para cubeta↔kilo.
+
+### LA TERCERA OPCIÓN, que es la más barata y no estaba en la mesa
+
+**No convertir: NEGARSE A COSTEAR.** Cuando la unidad de venta de la ficha no
+es la de compra del artículo, no mostrar costo ni precio sugerido para esa
+ficha — decir que no se puede costear en esa unidad.
+
+- **Dato nuevo: ninguno.** Y el camino ya existe: `costo_actual is None`
+  ya devuelve None y la pantalla sabe mostrarlo.
+- **Lo que gana**: convierte un número callado y mal en un hueco visible, que
+  es la preferencia de toda esta casa.
+- **Lo que cuesta**: esas fichas hoy muestran un número y pasarían a no
+  mostrar ninguno. Eso es una pérdida **solo si el número era bueno**, y por
+  construcción no lo es.
+- **Y compone**: se hace ahora y no cierra ninguna puerta. El factor o la
+  segunda magnitud se deciden después, con el dato del galpón.
+
+Si los artículos son tres, **puede ser la solución entera**: con tres
+artículos, el que pone el precio hace la cuenta de cabeza. Lo que no puede
+hacer es darse cuenta de que el número que tiene adelante está mal.

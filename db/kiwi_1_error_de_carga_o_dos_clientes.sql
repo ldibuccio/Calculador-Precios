@@ -1,26 +1,24 @@
--- kiwi_1 · ¿los pares "unidad de compra ≠ unidad de venta" son un ERROR DE
--- CARGA o UNA COMPRA QUE SIRVE A DOS CLIENTES EN DOS UNIDADES?
+-- kiwi_1 · los pares "unidad de compra <> unidad de venta": ¿ERROR DE CARGA
+-- o UNA COMPRA QUE SIRVE A DOS CLIENTES EN DOS UNIDADES?
 --
--- Hasta hoy los dos casos se veían IGUALES: la alerta cuenta pares que
--- difieren y su link manda a alinear. Esto los parte por ARTÍCULO:
+-- La alerta de hoy no los distingue. Esto parte por ARTÍCULO:
+--   multiunidad -> sus fichas NO se ponen de acuerdo ENTRE SÍ. Ninguna
+--                  alineación lo arregla: alinear una haría que la ficha
+--                  mienta sobre lo que ese cliente compra.
+--   alineable   -> todas dicen lo mismo, distinto de la unidad de compra.
+--                  Ahí sí hay UNA cosa mal cargada.
 --
---   multiunidad -> sus fichas NO se ponen de acuerdo ENTRE SÍ (un cliente
---                  por kilo y otro por unidad). NINGUNA alineación lo
---                  arregla: alinear una ficha la haría mentir sobre lo que
---                  ese cliente compra.
---   alineable   -> todas sus fichas dicen lo mismo, distinto de la unidad de
---                  compra. Ahí sí hay UNA cosa mal cargada.
---
--- UNA fila siempre (conteos, no lista), con la población al lado para leer
--- el cociente y los nombres pegados porque son pocos y se decide uno por
--- uno. Correr en LAS DOS bases y pegar LAS DOS filas con la base adelante.
+-- difieren_con_envase_variable mide la OTRA rotura, la del ENVASE. Ver
+-- CLAUDE.md. UNA fila siempre. Correr en LAS DOS bases.
 with por_articulo as (
     select a.id,
            a.nombre,
            a.unidad_compra,
            count(*)                                                  as fichas,
            count(distinct f.unidad_venta)                            as unidades_venta,
-           count(*) filter (where f.unidad_venta <> a.unidad_compra) as difieren
+           count(*) filter (where f.unidad_venta <> a.unidad_compra) as difieren,
+           count(*) filter (where f.unidad_venta <> a.unidad_compra
+                              and f.envase_variable)                  as difieren_env_var
     from articulos a
     join fichas_logistica f on f.articulo_id = a.id
     where a.unidad_compra is not null
@@ -40,6 +38,7 @@ select
     count(*) filter (where caso = 'alineable')   as arts_alineables,
     coalesce(sum(difieren), 0)                   as pares_que_difieren,
     coalesce(sum(fichas), 0)                     as pares_totales,
+    coalesce(sum(difieren_env_var), 0)           as difieren_con_envase_variable,
     string_agg(nombre || ' (compra ' || unidad_compra || ')', ', ')
         filter (where caso = 'multiunidad')      as cuales_multiunidad,
     string_agg(nombre || ' (compra ' || unidad_compra || ')', ', ')
