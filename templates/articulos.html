@@ -135,7 +135,13 @@
       text-align: center;
     }
   }
-  .ayuda-conteo { color: #555; font-size: 0.85rem; margin: -0.4rem 0 0.9rem; line-height: 1.35; }
+  /* SIN margen negativo arriba: en estas dos pantallas los campos no
+     llevan margen inferior —el aire entre uno y otro lo da el
+     `margin-top` de la etiqueta siguiente— así que un `-0.4rem`
+     copiado de otra pantalla no resta nada: pisa el <select> 6,4px.
+     Medido a 390px. El de abajo va en 0 por lo mismo: lo pone la
+     etiqueta que sigue. */
+  .ayuda-conteo { color: #555; font-size: 0.85rem; margin: 0.35rem 0 0; line-height: 1.35; }
 </style>
 </head>
 <body>

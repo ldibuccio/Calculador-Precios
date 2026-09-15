@@ -245,3 +245,167 @@ def test_un_BOTON_de_44px_no_cuenta_como_quebrado():
 
     assert medicion["celdas"] == 1, "tiene que haber mirado el botón"
     assert medicion["quebradas"] == []
+
+
+# --- SOLAPES: la tercera forma de romperse (15/09) -------------------------
+#
+# Ni el quiebre ni el desborde la ven: la celda mide una línea y nada se sale
+# del ancho. El par va completo —el que TIENE que encontrar y el que NO— que
+# es lo único que separa un detector de una herramienta que marca todo
+# (corolario 53). Y el tercero es el que este proyecto ya sufrió dos veces:
+# que los casos plantados se PAREZCAN a donde se va a usar. Acá eso es un
+# FORMULARIO, que NO TIENE FILAS — y es justo la pantalla donde apareció.
+#
+# Con `replace` y no con `.format`, por lo mismo que el fixture de arriba: el
+# CSS tiene llaves.
+_FORMULARIO = """
+<style>
+  label { display: block; margin-top: 0.75rem; }
+  select { width: 100%; padding: 0.65rem; margin-top: 0.25rem; box-sizing: border-box; }
+  .ayuda { font-size: 0.85rem; margin: MARGEN 0 0; }
+</style>
+<form>
+  <label for="a">Uno</label>
+  <select id="a"><option>x</option></select>
+  <p class="ayuda">Una ayuda que explica el campo de arriba.</p>
+  <label for="b">Dos</label>
+  <select id="b"><option>y</option></select>
+</form>
+"""
+_MARGEN_QUE_PISA = "-0.4rem"
+_MARGEN_BUENO = "0.35rem"
+
+
+def test_una_ayuda_con_margen_NEGATIVO_pisa_el_campo_y_se_detecta():
+    """El caso real del 15/09, plantado: un `-0.4rem` copiado de otra pantalla.
+
+    En Editar artículo los campos NO llevan margen inferior —el aire lo da el
+    `margin-top` de la etiqueta siguiente— así que el negativo no restaba
+    nada: se comía 6,4px del <select> de arriba.
+    """
+    medicion = _medir(_FORMULARIO.replace("MARGEN", _MARGEN_QUE_PISA), ancho=390)
+
+    assert medicion["solapes"], "el solape plantado tiene que aparecer"
+    assert "pisa 6.4px" in medicion["solapes"][0]
+    # Y las otras dos mitades siguen diciendo que no pasa nada, que es
+    # exactamente por qué hizo falta la tercera.
+    assert medicion["desborde_pagina"] == 0
+
+
+def test_el_MISMO_formulario_con_el_margen_BUENO_no_marca_nada():
+    """El control, y es la mitad que condena a un detector que marca todo.
+
+    Un test que solo prueba el caso positivo lo pasa igual uno que devuelve
+    todos los pares siempre.
+    """
+    medicion = _medir(_FORMULARIO.replace("MARGEN", _MARGEN_BUENO), ancho=390)
+
+    assert medicion["solapes"] == []
+    assert medicion["pares"] > 0, "si no miró ningún par, el cero de arriba no dice nada"
+
+
+def test_el_solape_se_mide_aunque_la_pantalla_NO_TENGA_FILAS():
+    """Un formulario no tiene filas, y ahí es donde apareció el defecto.
+
+    Con el corte por "sin filas" ANTES del bloque de solapes, esta clase de
+    pantalla devolvía la lista vacía sin haber mirado un solo par — el cero
+    del corolario 47 adentro de la herramienta escrita para el 47. Por eso el
+    bloque va arriba del corte, y por eso este test exige las dos cosas: que
+    el fixture no tenga filas, y que igual conteste.
+    """
+    medicion = _medir(_FORMULARIO.replace("MARGEN", _MARGEN_QUE_PISA), ancho=390)
+
+    assert medicion["filas"] == 0, "el fixture tiene que no tener filas, o no prueba esto"
+    assert medicion["solapes"], "sin filas también hay solapes que mirar"
+
+
+def test_dos_botones_LADO_A_LADO_no_son_un_solape():
+    """El control que le faltaba al par, y por eso está escrito acá.
+
+    Dos elementos en el mismo renglón tienen el borde inferior del primero
+    más abajo que el superior del segundo SIEMPRE — comparten línea, no están
+    uno arriba del otro. La primera versión del detector los marcaba, y los
+    marcaba en una pantalla real (los botones "Editar" y "Eliminar" de cada
+    fila del catálogo): dos falsos positivos por pantalla, que es el
+    corolario 53 exacto.
+
+    Y lo que lo dejó pasar fue que los DOS casos plantados del par —el que
+    pisa y el que no— eran formularios de una columna, donde no existe el
+    lado a lado. Un par que no se parece a donde la herramienta se usa no
+    prueba nada.
+    """
+    html = """
+    <div style="display: flex; gap: 6px">
+      <button style="padding: 6px">Editar</button>
+      <button style="padding: 6px">Eliminar</button>
+    </div>
+    """
+    medicion = _medir(html, ancho=390)
+
+    assert medicion["solapes"] == []
+
+
+def test_lo_POSICIONADO_que_se_pisa_a_PROPOSITO_no_cuenta_como_solape():
+    """Un cartel flotante se pisa por diseño; marcarlo es marcar todo."""
+    html = """
+    <div style="position: relative; height: 60px">
+      <p style="margin: 0">Texto de abajo</p>
+      <p style="position: absolute; top: 0; margin: 0">Cartel encima</p>
+    </div>
+    """
+    medicion = _medir(html, ancho=390)
+
+    assert medicion["solapes"] == []
+
+
+# --- Y LAS PANTALLAS DE VERDAD, que es lo que el canario pidió -------------
+#
+# Los tests de arriba miden un fixture PLANTADO: prueban la herramienta. Con
+# solo esos, devolverle el `margin: -0.4rem` a las dos pantallas de artículos
+# no hace caer nada —medido con el canario el 15/09— o sea que el defecto
+# real podía volver con la suite en verde.
+#
+# Van acá y no en test_app.py porque necesitan navegador, que es opcional en
+# este proyecto: el resto de la suite no lo tiene que necesitar.
+
+
+def _pantalla_de_articulos(ruta):
+    from unittest.mock import patch
+
+    from tests.test_app import cliente
+
+    articulo = {"id": 6, "nombre": "EJEMPLO Uno", "unidad_compra": "unidad",
+                "unidad_conteo": "unidad", "contenido_referencia": 10, "grupo": "fruta"}
+    with (
+        patch("app.main.obtener_articulo", return_value=articulo),
+        patch("app.main.listar_articulos", return_value=[articulo]),
+    ):
+        respuesta = cliente.get(ruta)
+    assert respuesta.status_code == 200, respuesta.status_code
+    return respuesta.text
+
+
+def test_las_DOS_pantallas_de_articulos_no_tienen_nada_que_se_pise_a_390px():
+    """El defecto del 15/09: la ayuda del conteo pisaba 6,4px al <select>.
+
+    El artículo del fixture tiene `unidad_conteo`, que es lo que hace
+    aparecer el campo y su ayuda — sin eso el bloque no se dibuja y el test
+    mediría una pantalla que no tiene el caso.
+    """
+    for ruta in ("/compras/articulos", "/compras/articulos/6/editar"):
+        medicion = _medir(_pantalla_de_articulos(ruta), ancho=390)
+        assert medicion["pares"] > 0, f"{ruta}: no se miró un solo par"
+        assert medicion["solapes"] == [], f"{ruta}: {medicion['solapes']}"
+
+
+def test_el_campo_del_CONTEO_y_su_ayuda_ESTAN_en_las_dos_pantallas():
+    """El control del de arriba: sin el campo, "cero solapes" es cero de nada.
+
+    Se pregunta por el `name` del control y no por el texto de la ayuda: el
+    texto puede aparecer en un comentario de la plantilla (corolario 38) y el
+    atributo entero solo puede ser marcado (corolario 50).
+    """
+    for ruta in ("/compras/articulos", "/compras/articulos/6/editar"):
+        marcado = _pantalla_de_articulos(ruta)
+        assert 'name="unidad_conteo"' in marcado, ruta
+        assert 'class="ayuda-conteo"' in marcado, ruta

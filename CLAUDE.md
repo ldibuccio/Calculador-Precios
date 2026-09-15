@@ -3766,8 +3766,8 @@ Las dos veces el alto promedio bajaba y el número decía que iba mejorando.
 **Las dos se vieron en la CAPTURA, no en el número.**
 
 Por eso, de acá en adelante, **toda medición de layout usa
-`scripts/medir_layout.py`**, que devuelve los tres números juntos: alto,
-QUEBRADAS y desborde. Ya no es un snippet para copiar — está en el repo, con
+`scripts/medir_layout.py`**, que devuelve los números juntos: alto,
+QUEBRADAS, desborde y —desde el 15/09— SOLAPES. Ya no es un snippet para copiar — está en el repo, con
 sus tests, y su docstring cuenta por qué existe.
 
 ```python
@@ -3921,6 +3921,39 @@ el doble que su `line-height` sin haber envuelto nada, así que la medición
 de página entera salía llena de "quebradas" que eran botones. Comparar
 descontando el relleno lo arregla, y es el 53 al pie de la letra: un
 detector que marca todo se ve igual de trabajador que uno que funciona.
+
+### El TERCER límite, del 15/09: no veía que dos cajas se PISARAN
+
+Una ayuda con `margin-top: -0.4rem` le comía 6,4px al `<select>` de arriba
+en Editar artículo. **El detector decía quiebre 0 y desborde 0, y los dos
+eran ciertos**: la celda mide una línea (no envolvió) y nada se sale del
+ancho (sobra a lo alto). Es una tercera forma de romperse y no había número
+que la viera.
+
+Ya son tres límites del mismo módulo y los tres tienen la misma forma —una
+clase de defecto que sus números no pueden expresar— así que lo que conviene
+llevarse no es "faltaba el solape" sino **que la pregunta se hace al revés**:
+antes de creerle a una medición de layout, preguntarse *¿de qué manera puede
+estar rota esta pantalla que ninguno de estos números cambiaría?*
+
+**Y el detector nuevo nació marcando de más, que es el 53 sobre sí mismo.**
+Dos botones LADO A LADO tienen el borde inferior del primero más abajo que
+el superior del segundo SIEMPRE —comparten renglón— así que la primera
+versión marcaba dos falsos positivos por pantalla, en el catálogo de
+Artículos. Se filtra exigiendo que los dos compartan alguna COLUMNA: si sus
+rangos horizontales no se tocan, no están uno abajo del otro.
+
+Lo que lo dejó pasar es lo que el 53 ya se había corregido a sí mismo y no
+alcanzó: **los dos casos plantados del par eran formularios de una columna**,
+donde el lado a lado no existe. El par estaba completo —el que pisa y el que
+no— y no se parecía a la mitad de las pantallas donde se iba a usar.
+
+**Y la otra mitad la dijo el canario, no el test**: devolverle el
+`margin: -0.4rem` a las dos pantallas de artículos hacía caer CERO, porque
+todos mis tests medían un fixture PLANTADO. Probaban la herramienta y no la
+pantalla. La diferencia es el defecto real volviendo con la suite en verde,
+y se cierra con un test que renderiza las dos pantallas de verdad y exige
+`solapes == []` con `pares > 0` al lado.
 
 ## Corolario 54: el total DIMENSIONA, la magnitud unitaria DETECTA
 
