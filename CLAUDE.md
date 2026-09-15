@@ -83,6 +83,25 @@ De acá en adelante:
 3. **Lo que tenga que verse va en UNA sola consulta final que devuelva
    filas** (el editor muestra solo el resultado de la última, y no muestra
    los NOTICE).
+
+   **PERO NUNCA PEGADA A UN `do`, y eso es lo que costó el 15/09.** Un bloque
+   `do` y su verificación **se corren POR SEPARADO**. Pegados en la misma
+   corrida el editor se queda con la última y **el `do` NO SE EJECUTA**: sin
+   un error, sin un NOTICE, y con "no rows"… que es exactamente la salida
+   normal de un `do` que sí corrió. El check de la coherencia del conteo
+   quedó puesto en UNA base y no en la otra, y lo único que lo delató fue la
+   verificación corrida aparte, que dio `guarda 1` de un lado y `guarda 0`
+   del otro.
+
+   Las dos mitades de la regla tiran para lados opuestos y hay que tenerlas
+   juntas: **el que ESCRIBE necesita que algo devuelva filas** (si no, no hay
+   con qué distinguir "corrió" de "no corrió"), y **el que EJECUTA no puede
+   poner esa consulta en la misma corrida que el `do`**. La salida es correr
+   dos veces, no escribir un archivo más prolijo.
+
+   Y por eso la verificación **vale doble cuando se corre en las dos bases**:
+   dos `guarda` distintos son la única forma de ver un `do` que se salteó, y
+   ninguna cantidad de mirar la pantalla del editor lo habría mostrado.
 4. **Los bloques largos se TRUNCAN, y cuando truncan PEGAN SQL AJENO.** Pasó
    el 02/09 con un verificador de 5983 caracteres. El editor lo cortó a la
    mitad —en el medio de un caso— y **le concatenó código propio abajo**: un
@@ -109,6 +128,19 @@ De acá en adelante:
 Esto no es una preferencia de estilo: es el entorno donde el SQL corre de
 verdad. Un script probado en Postgres local puede estar correcto y aun así
 romper —o peor, escribir a medias— en el editor.
+
+**Y el CÓDIGO VA ARRIBA, la explicación al pie.** Corolario del punto 4, del
+15/09: la primera versión de esa migración tenía **1486 caracteres de
+comentario antes del `do`** y 790 de código. Cualquier corte que caiga antes
+del `do` deja un archivo que es **puro comentario** — corre bien, no da error,
+y devuelve "no rows". Medido cortando el archivo a los 1000 caracteres: el
+viejo salía mudo, y el nuevo —con el bloque arriba— da `unterminated
+dollar-quoted string`, que es un error que se lee.
+
+O sea que el orden adentro del archivo decide **de qué manera falla un corte**:
+con el código arriba, un corte rompe ruidosamente o no rompe nada; con los
+comentarios arriba, el caso silencioso existe. No cuesta nada y se elige una
+sola vez.
 
 ## Un `if not exists` sobre CONTENIDO es una trampa, no una protección
 

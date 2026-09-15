@@ -74,7 +74,20 @@ create table articulos (
     unidad_compra         text check (unidad_compra in ('kilo', 'unidad', 'cubeta')),
     unidad_conteo         text check (unidad_conteo is null or unidad_conteo in ('unidad', 'cubeta')),
     contenido_referencia  numeric,
-    grupo                 text
+    grupo                 text,
+    -- EL CONTEO NO PUEDE CONTRADECIR LA UNIDAD EN QUE ESTÁ ESCRITA LA HISTORIA.
+    -- `unidad_compra` dice en qué unidad está expresado el contenido_por_cajon
+    -- de las compras de ese artículo; declarar OTRO conteo haría que una ficha
+    -- que venda así costee cuarenta unidades como cuarenta cubetas, sin
+    -- descuadrar nada. El conteo VACÍO sí entra: no miente, solo deja a esas
+    -- fichas sin costear, y eso se ve en la pantalla.
+    -- De db/conteo_coherente_1_migracion.sql (15/09). Lo ata a la guarda de
+    -- Python test_la_guarda_de_PYTHON_y_el_CHECK_son_LA_MISMA_regla.
+    constraint articulos_conteo_coherente check (
+        coalesce(unidad_compra, 'kilo') = 'kilo'
+        or unidad_conteo is null
+        or unidad_conteo = unidad_compra
+    )
 );
 
 comment on table articulos is 'Catálogo de artículos. La logística por cliente (unidad de venta, envase, contenido) vive en fichas_logistica.';

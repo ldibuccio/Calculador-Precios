@@ -1,10 +1,12 @@
 import inspect
+import io
 from datetime import date, datetime, time
 import pytest
 from unittest.mock import MagicMock, call, patch
 
 from app import db
 from app.db import (
+    _negar_si_el_conteo_contradice_la_unidad_de_compra,
     actualizar_articulo,
     crear_articulo,
     actualizar_cantidad_compra,
@@ -9057,6 +9059,73 @@ def test_un_articulo_cuya_historia_esta_en_KILOS_puede_declarar_CUALQUIER_conteo
 
     consulta, parametros = _sql_y_parametros_que_contienen(cursor, "UPDATE articulos")
     assert parametros[1] == "cubeta"
+
+
+def test_la_guarda_de_PYTHON_y_el_CHECK_son_LA_MISMA_regla():
+    """Las dos rechazan lo mismo, y el test LEE el CHECK del .sql en vez de copiarlo.
+
+    Copiado envejece en silencio: el día que alguien afloje una de las dos, la
+    otra sigue diciendo lo que decía y el que rechaza deja de ser el que el
+    código cree que rechaza. Es el caso de "ruben" al lado de "Rubén" —dos
+    plegados escritos dos veces— con otra columna.
+
+    Se compara en los DOS sentidos sobre la matriz entera, y cada dirección
+    falla distinto: si la base acepta algo que Python niega, un UPDATE a mano
+    entra y el costeo miente; si Python acepta algo que la base niega, la
+    pantalla ofrece algo que revienta al guardar.
+
+    Y las cláusulas del CHECK se RECONOCEN una por una: si aparece una que este
+    test no sabe traducir, falla nombrándola en vez de ignorarla — un barrido
+    que saltea lo que no entiende solo puede confirmar lo que ya sabía.
+    """
+    import re
+
+    esquema = io.open("db/esquema_completo.sql", encoding="utf-8").read()
+    cuerpo = re.search(
+        r"constraint\s+articulos_conteo_coherente\s+check\s*\((.*?)\)\s*\n\s*\);",
+        esquema, re.S)
+    assert cuerpo, "no está el CHECK en el esquema: la migración no se reflejó (corolario 60)"
+
+    # Las líneas de comentario del `check` no son condiciones.
+    texto = " ".join(l.split("--")[0] for l in cuerpo.group(1).splitlines())
+    clausulas = [re.sub(r"\s+", " ", c).strip().lower() for c in texto.split(" or ")]
+    clausulas = [c for c in clausulas if c]
+
+    TRADUCCION = {
+        "coalesce(unidad_compra, 'kilo') = 'kilo'": lambda uc, ucon: (uc or "kilo") == "kilo",
+        "unidad_conteo is null": lambda uc, ucon: ucon is None,
+        "unidad_conteo = unidad_compra": lambda uc, ucon: uc is not None and ucon == uc,
+    }
+    desconocidas = [c for c in clausulas if c not in TRADUCCION]
+    assert not desconocidas, f"el CHECK tiene condiciones que este test no sabe leer: {desconocidas}"
+    assert len(clausulas) == 3, f"el CHECK cambió de forma: {clausulas}"
+
+    def la_base_acepta(uc, ucon):
+        return any(TRADUCCION[c](uc, ucon) for c in clausulas)
+
+    def python_acepta(uc, ucon):
+        try:
+            _negar_si_el_conteo_contradice_la_unidad_de_compra(uc, ucon)
+            return True
+        except ValueError:
+            return False
+
+    matriz = [
+        (uc, ucon)
+        for uc in (None, "kilo", "unidad", "cubeta")
+        for ucon in (None, "unidad", "cubeta")
+    ]
+    discrepancias = [
+        (uc, ucon, la_base_acepta(uc, ucon), python_acepta(uc, ucon))
+        for uc, ucon in matriz
+        if la_base_acepta(uc, ucon) != python_acepta(uc, ucon)
+    ]
+    assert not discrepancias, f"las dos reglas se separaron: {discrepancias}"
+
+    # Y que la matriz tenga los dos resultados: si todo diera aceptado, las dos
+    # coincidirían sin que ninguna rechace nada (corolario 53).
+    aceptados = [1 for uc, ucon in matriz if la_base_acepta(uc, ucon)]
+    assert 0 < len(aceptados) < len(matriz), "la matriz no ejercita las dos respuestas"
 
 
 def test_la_guarda_del_conteo_LEE_la_unidad_de_compra_EN_LA_MISMA_TRANSACCION():

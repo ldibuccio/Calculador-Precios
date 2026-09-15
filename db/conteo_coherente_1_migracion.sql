@@ -1,27 +1,14 @@
--- EL CONTEO NO PUEDE CONTRADECIR LA UNIDAD EN QUE ESTÁ ESCRITA LA HISTORIA.
+-- COHERENCIA DEL CONTEO.
 --
--- `unidad_compra` dice en qué unidad está expresado `compras.contenido_por_cajon`
--- de ese artículo. Si `unidad_conteo` declarara OTRA, una ficha que venda en esa
--- otra unidad costearía contra un número que está en la primera: cuarenta
--- UNIDADES leídas como cuarenta CUBETAS. No se descuadra nada y el costo sale mal.
+-- ESTE BLOQUE SE CORRE SOLO. La verificación va en una corrida APARTE
+-- (`conteo_coherente_2_verificacion.sql`): pegados juntos, el editor corre la
+-- última y EL `do` NO SE EJECUTA — sin un solo error, y devolviendo "no rows",
+-- que es su salida normal. Pasó el 15/09 y dejó el check en una base y no en
+-- la otra.
 --
--- La guarda ya está en Python (`_negar_si_el_conteo_contradice_la_unidad_de_compra`,
--- app/db.py). Esto la pone donde DECIDE: un UPDATE a mano desde el editor no
--- pasa por app/db.py, y una regla que vive en un solo lado se separa.
---
--- CONTENIDO, NO ESTRUCTURA: adentro del check hay literales ('kilo'), así que
--- va `drop if exists` + recrear y NO un `if not exists` — uno idempotente sobre
--- contenido no hace nada y se ve igual que uno que corrió bien.
---
--- PENDIENTE AL CONFIRMAR, y va acá y no en un mensaje porque el que abre este
--- archivo es el que la va a correr: cuando esto salga bien en las DOS bases,
--- el mismo commit tiene que (a) meter el check en `db/esquema_completo.sql`
--- —una migración que cambia un COMPORTAMIENTO no agrega ninguna columna, así
--- que el test de columnas no la ve (corolario 60)— y (b) atar la guarda de
--- Python a este texto con un test, para que las dos no se separen.
---
--- Todo en UN `do`: el editor no sostiene transacciones, y la guarda de ofensores
--- tiene que abortar antes de que el drop deje la tabla sin constraint.
+-- Y el código va ARRIBA con la explicación al pie, por lo mismo del otro lado:
+-- con los comentarios adelante, un corte del editor deja un archivo que es
+-- puro comentario, corre bien y no hace nada.
 do $$
 declare
     v_ofensores integer;
@@ -35,7 +22,7 @@ begin
     if v_ofensores > 0 then
         raise exception
             'Hay % articulo(s) con el conteo contradiciendo su unidad de compra. '
-            'Corregilos antes de poner el check: correr db/referencia_2_cuales_son.sql.',
+            'Corregilos antes del check: correr db/referencia_2_cuales_son.sql.',
             v_ofensores;
     end if;
 
@@ -47,3 +34,23 @@ begin
         or unidad_conteo = unidad_compra
     );
 end $$;
+
+-- POR QUÉ ESTÁ ESCRITO ASÍ (al pie para que ningún corte se coma el código):
+--
+-- Qué impide: `unidad_compra` dice en qué unidad está expresado
+-- `compras.contenido_por_cajon` de ese artículo. Con `unidad_conteo` en OTRA,
+-- una ficha que venda en esa otra unidad costearía contra un número que está
+-- en la primera: cuarenta UNIDADES leídas como cuarenta CUBETAS. No se
+-- descuadra nada y el costo sale mal.
+--
+-- La guarda ya está en Python (`_negar_si_el_conteo_contradice_la_unidad_de_compra`,
+-- app/db.py). Esto la pone donde DECIDE: un UPDATE desde el editor no pasa por
+-- ahí, y una regla que vive en un solo lado se separa.
+--
+-- `drop if exists` + recrear y NO `if not exists`: adentro hay literales, o sea
+-- CONTENIDO, y ahí la idempotencia esconde en vez de proteger.
+--
+-- Todo en UN `do` porque el editor no sostiene transacciones: la guarda tiene
+-- que abortar antes de que el drop deje la tabla sin constraint.
+--
+-- APLICADO Y VERIFICADO EN LAS DOS EL 15/09: guarda 1 · ofensores 0 · contados 4.
