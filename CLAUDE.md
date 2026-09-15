@@ -3220,7 +3220,9 @@ Dos decisiones adentro, las dos con su razón:
 
 - **A LOS DOS SECTORES.** La unidad de compra se edita en Artículos
   (Compras) y la de venta en Fichas (Comercial): en uno solo, el que la ve
-  no siempre puede tocarla.
+  no siempre puede tocarla. (Las dos mitades de esta frase se cayeron el
+  15/09: la alerta pasó a Compras sola, y la unidad de compra dejó de
+  editarse en ningún lado. Lo que se edita ahí ahora es el CONTEO.)
 - **NO FILTRA POR "SE USA".** Un par dormido no rompe ninguna cuenta hoy, y
   la primera versión lo excluía. Pero el día que se compre ese artículo el
   costo sale mal **desde la primera compra**, y nadie va a estar mirando —
@@ -5054,6 +5056,12 @@ Las piezas, y el orden importa porque cada una tapa un agujero distinto:
    regla de siempre: ocho lugares escriben esa columna y re-signficarla es
    como se separan dos reglas. Lo único que sigue diciendo es **en qué unidad
    está expresado `compras.contenido_por_cajon`**.
+
+   **Y ESE MISMO DÍA SE TERMINÓ DE SACAR, hasta donde se puede** — ver
+   "Deprecar una columna que todavía DECIDE" más abajo. Salió de las dos
+   pantallas de Artículos: no se pregunta, no se muestra, no se edita. Un
+   artículo nuevo nace en 'kilo' y la edición directamente no la nombra en su
+   UPDATE. Sigue leyéndose en tres lugares, y los tres son sobre lo VIEJO.
 3. **El formulario pide LA OTRA magnitud por cajón**, en las cinco pantallas
    de carga, y es obligatoria cuando el artículo la declara. Un solo helper
    (`magnitudes_de_la_compra`) reparte entre `cantidad_kilos` y
@@ -5082,6 +5090,77 @@ nueva.
 **Lo único que se dedujo fue `unidad_conteo`**, copiado de `unidad_compra`
 donde decía 'unidad' o 'cubeta'. Eso no es inventar un número: es copiar una
 declaración que ya estaba. Verificado: `sin_copiar 0` en las dos bases.
+
+### Deprecar una columna que todavía DECIDE: se saca de la MANO, no de la base
+
+Del 15/09, y sale de una pregunta del dueño que vale más que el caso: *"no
+quiero una columna deprecada que siga decidiendo"*.
+
+**`unidad_compra` seguía decidiendo tres cosas**, todas escritas ese mismo
+día por mí, y la respuesta honesta a "¿está deprecada?" era NO:
+
+1. `repartir_magnitudes(unidad_compra, ...)` — en qué columna cae cada total.
+2. `segunda_magnitud_del_articulo` — qué pide el campo nuevo del formulario.
+3. `SUFIJOS_UNIDAD_COMPRA` — la `k` / la `u` que etiquetan
+   `contenido_por_cajon` en trece plantillas.
+
+**Y no se puede borrar**, por una razón que es la misma de todo este modelo:
+los cuatro artículos que se compran contados tienen su historia de
+`contenido_por_cajon` expresada en unidades. Sin la columna, esas compras
+quedan etiquetadas en kilos — **sin mover un número y sin que nada avise**.
+Convertirlas necesitaría el factor, que es justo lo que se descartó.
+
+**LO QUE SÍ SE PUEDE, Y ES LO QUE SE HIZO: sacarla de la MANO.** Nadie la
+elige, nadie la ve, nadie la edita. Un artículo nuevo nace en 'kilo' —el
+formulario dejó de preguntar— y el UPDATE de la edición **no la nombra**,
+para que tocarle el nombre a un artículo viejo no le pise la unidad de su
+historia. La columna pasó de ser una decisión a ser un registro.
+
+**La distinción que hay que llevarse**, porque "deprecada" se usa para las
+dos cosas y son opuestas:
+
+| | qué significa | qué se hace |
+|---|---|---|
+| **Deja de DECIDIR hacia adelante** | nadie la carga ni la elige | sacarla de la pantalla, y punto |
+| **Deja de EXISTIR** | ninguna fila vieja depende de ella | recién ahí se borra |
+
+Lo primero es gratis y se hace el día que se decide. **Lo segundo depende de
+si lo viejo se puede releer sin ella**, y acá no se puede. Confundirlos es
+cómo se borra una columna y se re-etiqueta la historia en silencio.
+
+**Y el nulo pasó a SIGNIFICAR kilo**, que es lo que permitió sacar de las
+cinco pantallas de carga la guarda de *"este artículo no tiene la unidad
+configurada, cargala en /articulos"*. Con el campo fuera del formulario, ese
+error mandaba a un callejón. Es seguro porque un artículo sin la columna
+**no pudo tener ninguna compra** —la guarda no lo dejaba— así que no hay
+nada que re-etiquetar. La regla general: **antes de darle un significado al
+nulo, verificar que ninguna fila vieja lo tenga con otro.**
+
+#### La columna que se agrega corre TODO lo que el CSS ubica por índice
+
+El catálogo de Artículos se vuelve tarjeta en celular con reglas
+`td:nth-child(N)`. El 14/09 le agregué una columna y no toqué el CSS: todo
+lo que estaba a la derecha se corrió un lugar. La del conteo se puso el
+rótulo `"ref. "` de la referencia —por eso el dueño vio una columna "ref."
+diciendo "solo kilos"—, la referencia se fue al lugar del grupo, y **los
+botones quedaron sin regla, en 28px**, abajo del mínimo tocable de este
+proyecto. La suite entera en verde.
+
+Es el corolario 3 en CSS: **cuando una estructura gana un campo hay que
+grepear quién la CONSTRUYE.** Y acá el que la construye es una lista de
+ÍNDICES que no nombra ninguna columna, así que ningún `grep` del nombre la
+encuentra — es el caso más puro de "el que falta, por definición, no lo
+nombra".
+
+Lo cuida ahora un test que cuenta los `<th>` de la tabla y los compara
+contra los `nth-child` del CSS, en los dos sentidos (corolario 60): falla si
+sobra una columna sin regla y si sobra una regla sin columna.
+
+**Y de yapa, el mismo desajuste me hizo reportar mal.** Medí el botón de
+28px, lo vi anterior al commit y escribí *"es anterior a esto"*. Era mío, de
+ese commit. Es el corolario 18 exacto —al corregir se escribe rápido y con
+la sensación de estar arreglando— y lo único que lo agarró fue ir a mirar el
+CSS en vez de confiar en la memoria de qué había tocado.
 
 #### Y una cuenta que NO estaba en la lista y es la que nadie iba a buscar
 

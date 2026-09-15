@@ -1437,13 +1437,6 @@ def _validar_unidad_venta(valor: str) -> str | None:
     return None
 
 
-def _validar_unidad_compra(valor: str) -> str | None:
-    """Valida que la unidad de compra sea kilo, unidad o cubeta."""
-    if valor not in UNIDADES_VENTA_VALIDAS:
-        return "Elegí una unidad de compra válida (kilo, unidad o cubeta)."
-    return None
-
-
 # Las unidades en las que se puede CONTAR, que son las de venta menos el kilo:
 # los kilos son la magnitud que va siempre, así que "contar en kilos" no es un
 # conteo — es la otra columna.
@@ -1680,7 +1673,7 @@ def segunda_magnitud_del_articulo(articulo: dict) -> str | None:
     El tercer caso es el normal y es la mayoría: ahí el formulario no pide
     nada nuevo y la pantalla queda como estaba.
     """
-    if articulo.get("unidad_compra") != "kilo":
+    if (articulo.get("unidad_compra") or "kilo") != "kilo":
         return "kilo"
     return articulo.get("unidad_conteo")
 
@@ -1736,7 +1729,13 @@ def magnitudes_de_la_compra(
     # El reparto entre las dos columnas vive en core/magnitudes.py, no acá:
     # Depósito hace exactamente el mismo con lo que pesó y contó, y escrito
     # dos veces son dos reglas.
-    return repartir_magnitudes(articulo.get("unidad_compra"), principal, segunda)
+    # NULO ES KILO, y es lo que permitió sacar `unidad_compra` de la pantalla:
+    # un artículo al que nadie se la cargó nunca no tiene ninguna compra que
+    # pudiera estar expresada en otra cosa —no se podía cargar— así que
+    # tratarlo como kilo de acá en adelante no re-etiqueta nada. Sin esto,
+    # esos artículos quedaban sin forma de arreglarse el día que el campo
+    # dejó de existir en el formulario.
+    return repartir_magnitudes(articulo.get("unidad_compra") or "kilo", principal, segunda)
 
 
 def _validar_codigo_puesto(texto: str) -> tuple[str | None, str | None]:
@@ -1795,15 +1794,11 @@ def ver_articulos(request: Request, error: str | None = None):
 def agregar_articulo(
     request: Request,
     nombre: str = Form(""),
-    unidad_compra: str = Form(""),
     unidad_conteo: str = Form(""),
     contenido_referencia: str = Form(""),
     grupo: str = Form(""),
 ):
     error, nombre = _validar_nombre(nombre)
-
-    if not error:
-        error = _validar_unidad_compra(unidad_compra)
 
     unidad_conteo_valor = None
     if not error:
@@ -1827,7 +1822,7 @@ def agregar_articulo(
         )
 
     try:
-        crear_articulo(nombre, unidad_compra, contenido_referencia_valor, grupo_valor, unidad_conteo_valor)
+        crear_articulo(nombre, contenido_referencia_valor, grupo_valor, unidad_conteo_valor)
     except Exception as error:
         articulos = listar_articulos()
         return templates.TemplateResponse(
@@ -1860,15 +1855,11 @@ def editar_articulo(
     request: Request,
     articulo_id: int,
     nombre: str = Form(""),
-    unidad_compra: str = Form(""),
     unidad_conteo: str = Form(""),
     contenido_referencia: str = Form(""),
     grupo: str = Form(""),
 ):
     error, nombre = _validar_nombre(nombre)
-
-    if not error:
-        error = _validar_unidad_compra(unidad_compra)
 
     unidad_conteo_valor = None
     if not error:
@@ -1890,7 +1881,6 @@ def editar_articulo(
                 "articulo": {
                     "id": articulo_id,
                     "nombre": nombre,
-                    "unidad_compra": unidad_compra,
                     "unidad_conteo": unidad_conteo,
                     "contenido_referencia": contenido_referencia,
                     "grupo": grupo,
@@ -1902,7 +1892,7 @@ def editar_articulo(
 
     try:
         actualizar_articulo(
-            articulo_id, nombre, unidad_compra, contenido_referencia_valor, grupo_valor, unidad_conteo_valor
+            articulo_id, nombre, contenido_referencia_valor, grupo_valor, unidad_conteo_valor
         )
     except Exception as error:
         return templates.TemplateResponse(
@@ -1912,7 +1902,6 @@ def editar_articulo(
                 "articulo": {
                     "id": articulo_id,
                     "nombre": nombre,
-                    "unidad_compra": unidad_compra,
                     "unidad_conteo": unidad_conteo_valor,
                     "contenido_referencia": contenido_referencia_valor,
                     "grupo": grupo_valor,
@@ -2520,9 +2509,12 @@ def _validar_compra_nueva_form(
     """Valida los campos del alta de una compra (cajones × contenido por cajón).
 
     Devuelve (error, valores) con articulo_id, cantidad_cajones, contenido_por_cajon, importe, sena
-    y tipo_retiro ya convertidos (o None/placeholder si hubo error antes de llegar a ese campo). No
-    valida acá si el artículo tiene unidad_compra configurada: eso requiere leerlo de la base, y lo
-    hace la ruta después de esta validación.
+    y tipo_retiro ya convertidos (o None/placeholder si hubo error antes de llegar a ese campo).
+
+    (Hasta el 15/09 la ruta chequeaba después que el artículo tuviera
+    `unidad_compra` cargada. Ese chequeo se fue con el campo: ya no hay nada
+    que configurar — un artículo sin ese valor se carga por kilo, que es lo
+    que ahora significa el nulo.)
 
     `segunda_por_cajon` es la SEGUNDA magnitud —los kilos, o el conteo— y
     acá viaja COMO TEXTO, sin validar, por la misma razón: si hace falta y
@@ -3275,9 +3267,6 @@ async def agregar_compra_manual(
             return _reintentar(f"No se pudo leer el artículo: {error_db}", 500)
         if articulo is None:
             error = "El artículo elegido no es válido."
-        elif not articulo["unidad_compra"]:
-            error = "Este artículo no tiene la unidad de compra configurada. Cargala en /articulos primero."
-
     # LA SEGUNDA MAGNITUD SE VALIDA ACÁ Y NO EN EL FORM, y es por el orden:
     # si hace falta, y en qué unidad está, lo dice el ARTÍCULO, que recién
     # ahora está leído (ver segunda_magnitud_del_articulo).
@@ -3440,9 +3429,6 @@ async def agregar_compra(
 
         if articulo is None:
             error = "El artículo elegido no es válido."
-        elif not articulo["unidad_compra"]:
-            error = "Este artículo no tiene la unidad de compra configurada. Cargala en /articulos primero."
-
     # LA SEGUNDA MAGNITUD SE VALIDA ACÁ Y NO EN EL FORM, y es por el orden:
     # si hace falta, y en qué unidad está, lo dice el ARTÍCULO, que recién
     # ahora está leído (ver segunda_magnitud_del_articulo).
@@ -4029,9 +4015,6 @@ async def confirmar_compra_foto(request: Request):
             articulo = articulos_por_id.get(valores_renglon["articulo_id"])
             if articulo is None:
                 error_renglon = "El artículo elegido no es válido."
-            elif not articulo["unidad_compra"]:
-                error_renglon = "Este artículo no tiene la unidad de compra configurada. Cargala en /articulos primero."
-
             # Ver el comentario gemelo en los otros caminos: la segunda
             # magnitud la define el artículo, así que se valida recién acá.
             if not error_renglon:
@@ -4409,9 +4392,6 @@ def editar_compra(
 
         if articulo is None:
             error = "El artículo elegido no es válido."
-        elif not articulo["unidad_compra"]:
-            error = "Este artículo no tiene la unidad de compra configurada. Cargala en /articulos primero."
-
     # LA SEGUNDA MAGNITUD SE VALIDA ACÁ Y NO EN EL FORM, y es por el orden:
     # si hace falta, y en qué unidad está, lo dice el ARTÍCULO, que recién
     # ahora está leído (ver segunda_magnitud_del_articulo).
@@ -5528,8 +5508,14 @@ def _calcular_cuadro_negociacion(cliente: dict, cliente_id: int, fichas_cliente:
         # otra cosa y se arregla de otra manera. El renglón nombra el
         # artículo y las dos unidades porque el recorte tiene que viajar
         # adentro de la afirmación, no en un párrafo aparte.
+        #
+        # Y LA SEGUNDA UNIDAD ES EL CONTEO, no la de compra: lo que falta es
+        # que el ARTÍCULO declare la unidad en la que ese cliente vende, y
+        # eso lo dice `unidad_conteo`. Decir "se compra por X" mandaba a
+        # mirar un campo que ya no se edita y que no es el que falta.
         "sin_costear_por_unidad": [
-            {"articulo": a["articulo_nombre"], "venta": a["unidad_venta"], "compra": a["unidad_compra"]}
+            {"articulo": a["articulo_nombre"], "venta": a["unidad_venta"],
+             "conteo": a.get("unidad_conteo")}
             for a in articulos
             if a.get("sin_conversion_de_unidad")
         ],
@@ -7726,9 +7712,6 @@ def ingresar_mercaderia(
 
         if articulo is None:
             error = "El artículo elegido no es válido."
-        elif not articulo["unidad_compra"]:
-            error = "Este artículo no tiene la unidad de compra configurada. Cargala en /articulos primero."
-
     # LA SEGUNDA MAGNITUD SE VALIDA ACÁ Y NO EN EL FORM, y es por el orden:
     # si hace falta, y en qué unidad está, lo dice el ARTÍCULO, que recién
     # ahora está leído (ver segunda_magnitud_del_articulo).

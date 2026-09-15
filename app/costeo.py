@@ -722,10 +722,14 @@ def _listado_para_negociar_precios(
                 # todo lo que agrupa y ordena por artículo.
                 "ficha_nombre": (ficha.get("nombre_cliente") or "").strip() or ficha["articulo_nombre"],
                 "unidad_venta": ficha["unidad_venta"],
-                # Al lado de la de venta, siempre, no solo cuando difieren:
-                # las dos juntas son lo que deja decir POR QUÉ no hay costo
-                # sin que la pantalla tenga que ir a buscar el artículo.
-                "unidad_compra": ficha.get("unidad_compra"),
+                # EL CONTEO DEL ARTÍCULO al lado de la unidad de venta de la
+                # ficha, siempre y no solo cuando chocan: las dos juntas son
+                # lo que deja decir POR QUÉ no hay costo sin que la pantalla
+                # tenga que ir a buscar el artículo. Y es el conteo y no
+                # `unidad_compra`, porque lo que falta es que el artículo
+                # declare esa unidad — la de compra dejó de decidir y dejó de
+                # editarse el 15/09.
+                "unidad_conteo": ficha.get("unidad_conteo"),
                 "fresco": fresco,
                 # POR QUÉ no hay costo, cuando no lo hay. Sin esto, la ficha
                 # que no se puede costear se ve idéntica a la que no tuvo

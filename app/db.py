@@ -85,21 +85,36 @@ def obtener_articulo(articulo_id: int) -> dict | None:
         conexion.close()
 
 
+# EN QUÉ UNIDAD NACE `contenido_por_cajon` DE UN ARTÍCULO NUEVO, y es siempre
+# la misma: KILOS. Es lo único que `unidad_compra` todavía dice (ver su
+# comment), y desde el 15/09 no lo elige nadie — el formulario dejó de
+# preguntarlo. Los cuatro artículos viejos que se compran contados conservan
+# su valor y siguen andando igual; lo que se terminó es que alguien cargue
+# uno nuevo.
+UNIDAD_DEL_CONTENIDO_DE_UN_ARTICULO_NUEVO = "kilo"
+
+
 def crear_articulo(
     nombre: str,
-    unidad_compra: str,
     contenido_referencia: float | None,
     grupo: str | None = None,
     unidad_conteo: str | None = None,
 ) -> None:
-    """Inserta un artículo nuevo en la tabla articulos. grupo es opcional: None = sin clasificar todavía."""
+    """Inserta un artículo nuevo en la tabla articulos. grupo es opcional: None = sin clasificar todavía.
+
+    `unidad_compra` NO es un parámetro: se escribe 'kilo' y punto. Dejó de
+    ser una decisión el día que la compra pasó a declarar las dos magnitudes
+    — los kilos van siempre, y lo que el artículo además cuenta lo dice
+    `unidad_conteo`.
+    """
     conexion = obtener_conexion()
     try:
         with conexion.cursor() as cursor:
             cursor.execute(
                 "INSERT INTO articulos (nombre, unidad_compra, unidad_conteo, contenido_referencia, grupo)"
                 " VALUES (%s, %s, %s, %s, %s)",
-                (nombre, unidad_compra, unidad_conteo, contenido_referencia, grupo),
+                (nombre, UNIDAD_DEL_CONTENIDO_DE_UN_ARTICULO_NUEVO, unidad_conteo,
+                 contenido_referencia, grupo),
             )
         conexion.commit()
     finally:
@@ -109,23 +124,30 @@ def crear_articulo(
 def actualizar_articulo(
     articulo_id: int,
     nombre: str,
-    unidad_compra: str,
     contenido_referencia: float | None,
     grupo: str | None = None,
     unidad_conteo: str | None = None,
 ) -> None:
-    """Actualiza nombre, unidad de compra, contenido de referencia y grupo de un artículo existente."""
+    """Actualiza nombre, conteo, contenido de referencia y grupo de un artículo existente.
+
+    `unidad_compra` NO SE TOCA, y es deliberado: los cuatro artículos que se
+    compran contados la tienen en 'unidad' y su historia de
+    `contenido_por_cajon` está expresada en eso. Pisarla con 'kilo' —o
+    nulearla— dejaría cada compra vieja de esos artículos etiquetada en la
+    unidad equivocada, sin mover un solo número y sin que nada avise. Es la
+    columna que quedó para lo viejo: se lee, no se escribe.
+    """
     conexion = obtener_conexion()
     try:
         with conexion.cursor() as cursor:
             cursor.execute(
                 """
                 UPDATE articulos
-                SET nombre = %s, unidad_compra = %s, unidad_conteo = %s,
+                SET nombre = %s, unidad_conteo = %s,
                     contenido_referencia = %s, grupo = %s, actualizado_en = now()
                 WHERE id = %s
                 """,
-                (nombre, unidad_compra, unidad_conteo, contenido_referencia, grupo, articulo_id),
+                (nombre, unidad_conteo, contenido_referencia, grupo, articulo_id),
             )
         conexion.commit()
     finally:

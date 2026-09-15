@@ -1570,9 +1570,15 @@ def test_sin_conteo_cargado_la_ficha_POR_KILO_se_costea_COMO_SIEMPRE():
 
 
 def test_la_fila_lleva_LAS_DOS_unidades_para_poder_decir_por_que():
-    """Sin las dos, la pantalla no puede nombrar el motivo sin ir a buscar el artículo."""
+    """Sin las dos, la pantalla no puede nombrar el motivo sin ir a buscar el artículo.
+
+    Y la segunda es el CONTEO del artículo, no su `unidad_compra`: lo que
+    falta es que el artículo declare la unidad en que ese cliente vende, y
+    eso lo dice `unidad_conteo`. La de compra dejó de decidir y dejó de
+    editarse el 15/09.
+    """
     fila = _fila_de(FICHA_MANGO_POR_CUBETA)
-    assert fila["unidad_compra"] == "unidad"
+    assert fila["unidad_conteo"] == "unidad"
     assert fila["unidad_venta"] == "cubeta"
 
 

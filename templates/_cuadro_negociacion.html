@@ -172,10 +172,13 @@
 {% if sin_costear_por_unidad %}
 <p class="aviso-sin-costear">
   {% for f in sin_costear_por_unidad %}
-  <strong>{{ f.articulo }}</strong> se compra por {{ f.compra }} y se le vende por {{ f.venta }}.{% if not loop.last %}<br>{% endif %}
+  <strong>{{ f.articulo }}</strong> se le vende por {{ f.venta }}, y el artículo
+  {% if f.conteo %}se cuenta en {{ f.conteo }}{% else %}se compra solo por kilo{% endif %}.{% if not loop.last %}<br>{% endif %}
   {% endfor %}
-  <br>El sistema no sabe pasar de una unidad a la otra, así que no calcula su costo
-  ni su precio sugerido. El precio de esas fichas se pone a mano.
+  <br>Una compra declara kilos y —si el artículo lo tiene— un conteo; esa ficha
+  pide otra unidad, así que no hay costo ni precio sugerido. Se arregla
+  cargándole el conteo al artículo, en Artículos. El precio, mientras tanto,
+  se pone a mano.
 </p>
 {% endif %}
 

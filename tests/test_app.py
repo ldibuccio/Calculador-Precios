@@ -214,7 +214,7 @@ def test_agregar_articulo_exitoso_redirige_a_articulos():
 
     assert respuesta.status_code == 303
     assert respuesta.headers["location"] == "/compras/articulos"
-    mock_crear.assert_called_once_with("Kiwi", "unidad", 10.0, None, None)
+    mock_crear.assert_called_once_with("Kiwi", 10.0, None, None)
 
 
 def test_agregar_articulo_sin_contenido_referencia_guarda_none():
@@ -226,7 +226,7 @@ def test_agregar_articulo_sin_contenido_referencia_guarda_none():
         )
 
     assert respuesta.status_code == 303
-    mock_crear.assert_called_once_with("Kiwi", "kilo", None, None, None)
+    mock_crear.assert_called_once_with("Kiwi", None, None, None)
 
 
 def test_agregar_articulo_con_grupo_valido_lo_guarda():
@@ -238,7 +238,7 @@ def test_agregar_articulo_con_grupo_valido_lo_guarda():
         )
 
     assert respuesta.status_code == 303
-    mock_crear.assert_called_once_with("Kiwi", "kilo", None, "fruta", None)
+    mock_crear.assert_called_once_with("Kiwi", None, "fruta", None)
 
 
 def test_agregar_articulo_con_grupo_hoja_lo_guarda():
@@ -250,7 +250,7 @@ def test_agregar_articulo_con_grupo_hoja_lo_guarda():
         )
 
     assert respuesta.status_code == 303
-    mock_crear.assert_called_once_with("Rúcula", "unidad", None, "hoja", None)
+    mock_crear.assert_called_once_with("Rúcula", None, "hoja", None)
 
 
 def test_agregar_articulo_con_grupo_pesada_lo_guarda():
@@ -262,7 +262,7 @@ def test_agregar_articulo_con_grupo_pesada_lo_guarda():
         )
 
     assert respuesta.status_code == 303
-    mock_crear.assert_called_once_with("Zapallo", "kilo", None, "pesada", None)
+    mock_crear.assert_called_once_with("Zapallo", None, "pesada", None)
 
 
 def test_agregar_articulo_grupo_invalido_muestra_error():
@@ -297,13 +297,27 @@ def test_agregar_articulo_nombre_string_vacio_muestra_error_prolijo_no_422():
     mock_crear.assert_not_called()
 
 
-def test_agregar_articulo_unidad_compra_invalida_muestra_error():
-    with patch("app.main.crear_articulo") as mock_crear, patch("app.main.listar_articulos", return_value=[]):
-        respuesta = cliente.post("/compras/articulos/nuevo", data={"nombre": "Kiwi", "unidad_compra": "litro"})
+def test_el_alta_de_un_articulo_NO_PREGUNTA_la_unidad_de_compra_y_escribe_kilo():
+    """`unidad_compra` salió del formulario el 15/09 y dejó de ser una decisión.
 
-    assert respuesta.status_code == 400
-    assert "unidad de compra válida" in respuesta.text
-    mock_crear.assert_not_called()
+    Hasta ese día la pantalla la pedía obligatoria y validaba los tres
+    valores; el test de esa validación vivía acá y se fue con ella. Lo que
+    queda cuidado es lo de ahora: que la ruta NO la acepte del formulario
+    —mandarla no tiene que poder cambiar nada— y que el artículo nuevo nazca
+    en kilo, que es lo único que esa columna todavía dice.
+    """
+    with patch("app.main.crear_articulo") as mock_crear, patch("app.main.listar_articulos", return_value=[]):
+        respuesta = cliente.post(
+            "/compras/articulos/nuevo",
+            # Se manda a propósito: un formulario armado a mano no ve que el
+            # campo dejó de estar, y no tiene que poder colarlo.
+            data={"nombre": "Kiwi", "unidad_compra": "cubeta", "contenido_referencia": ""},
+            follow_redirects=False,
+        )
+
+    assert respuesta.status_code == 303
+    (argumentos, _) = mock_crear.call_args
+    assert "cubeta" not in argumentos, f"la ruta se comió el campo del form: {argumentos}"
 
 
 def test_agregar_articulo_error_de_base_muestra_mensaje_claro():
@@ -364,7 +378,7 @@ def test_editar_articulo_exitoso_redirige_a_articulos():
 
     assert respuesta.status_code == 303
     assert respuesta.headers["location"] == "/compras/articulos"
-    mock_actualizar.assert_called_once_with(1, "Frutilla Premium", "cubeta", 12.0, None, None)
+    mock_actualizar.assert_called_once_with(1, "Frutilla Premium", 12.0, None, None)
 
 
 def test_editar_articulo_con_el_contenido_VACIO_borra_la_referencia():
@@ -388,7 +402,7 @@ def test_editar_articulo_con_el_contenido_VACIO_borra_la_referencia():
         )
 
     assert respuesta.status_code == 303
-    mock_actualizar.assert_called_once_with(1, "Mango", "unidad", None, None, None)
+    mock_actualizar.assert_called_once_with(1, "Mango", None, None, None)
 
 
 def test_editar_articulo_con_grupo_valido_lo_guarda():
@@ -400,7 +414,7 @@ def test_editar_articulo_con_grupo_valido_lo_guarda():
         )
 
     assert respuesta.status_code == 303
-    mock_actualizar.assert_called_once_with(1, "Frutilla", "cubeta", 12.0, "hortaliza", None)
+    mock_actualizar.assert_called_once_with(1, "Frutilla", 12.0, "hortaliza", None)
 
 
 def test_editar_articulo_grupo_invalido_muestra_error():
@@ -424,14 +438,39 @@ def test_editar_articulo_nombre_vacio_muestra_error():
     mock_actualizar.assert_not_called()
 
 
-def test_editar_articulo_unidad_compra_invalida_muestra_error():
-    with patch("app.main.actualizar_articulo") as mock_actualizar:
-        respuesta = cliente.post("/compras/articulos/1/editar", data={"nombre": "Frutilla", "unidad_compra": "litro"})
+def test_la_edicion_de_un_articulo_NO_TOCA_la_unidad_de_compra():
+    """Los cuatro artículos que se compran contados la tienen en 'unidad'.
 
-    assert respuesta.status_code == 400
-    assert "unidad de compra válida" in respuesta.text
-    mock_actualizar.assert_not_called()
+    Su historia de `contenido_por_cajon` está expresada en eso, así que
+    pisarla —o nulearla— dejaría cada compra vieja de esos artículos
+    etiquetada en la unidad equivocada, sin mover un solo número y sin que
+    nada avise. Por eso el UPDATE directamente no la nombra, y eso se
+    verifica sobre el TEXTO del SQL: con la columna sacada del SET, el mock
+    entregaría lo mismo y este test pasaría igual mirando los argumentos
+    (corolario 40).
+    """
+    import ast
 
+    arbol = ast.parse(io.open("app/db.py", encoding="utf-8").read())
+    funcion = next(
+        n for n in ast.walk(arbol)
+        if isinstance(n, ast.FunctionDef) and n.name == "actualizar_articulo"
+    )
+    # SOLO LOS LITERALES, y sin el docstring: `ast.unparse` de la función
+    # devuelve su texto entero, y el docstring de ésta NOMBRA `unidad_compra`
+    # para explicar por qué no se toca. Preguntarle al texto haría que el
+    # test pasara con la columna de vuelta en el SET (corolario 59).
+    cuerpo = funcion.body[1:] if ast.get_docstring(funcion) else funcion.body
+    sql = " ".join(
+        nodo.value
+        for rama in cuerpo
+        for nodo in ast.walk(rama)
+        if isinstance(nodo, ast.Constant) and isinstance(nodo.value, str)
+    )
+
+    assert "SET nombre" in sql, "cambió la forma del UPDATE: este test dejó de mirar algo"
+    assert "unidad_conteo = %s" in sql
+    assert "unidad_compra" not in sql
 
 def test_editar_articulo_error_de_base_muestra_mensaje_claro():
     with patch("app.main.actualizar_articulo", side_effect=Exception("no se pudo conectar")):
@@ -3269,8 +3308,20 @@ def test_ver_nueva_compra_con_proveedor_muestra_las_tres_opciones_de_retiro():
     assert '<option value="Pases"' in respuesta.text
 
 
-def test_agregar_compra_articulo_sin_unidad_compra_configurada_muestra_error():
+def test_un_articulo_SIN_unidad_de_compra_se_carga_por_KILO_y_no_se_traba():
+    """Hasta el 15/09 esto era un 400 que mandaba a /articulos a cargar el campo.
+
+    El campo se fue de esa pantalla, así que ese error mandaba a un callejón:
+    no había forma de arreglarlo. Ahora el nulo SIGNIFICA kilo, y es seguro
+    —un artículo que nadie configuró no pudo tener ninguna compra expresada
+    en otra cosa, porque no se podía cargar— así que no hay nada que
+    re-etiquetar.
+
+    Los dos tests que defendían el 400 se borraron: defendían una decisión
+    que se dio de baja, no un bug (corolario 22 al revés).
+    """
     with (
+        patch("app.main._hoy_argentina", return_value=HOY_DE_PRUEBA),
         patch("app.main.obtener_proveedor", return_value=PROVEEDOR_DE_PRUEBA),
         patch("app.main.obtener_articulo", return_value=ARTICULO_SIN_UNIDAD_COMPRA),
         patch("app.main.crear_compra") as mock_crear,
@@ -3280,19 +3331,18 @@ def test_agregar_compra_articulo_sin_unidad_compra_configurada_muestra_error():
         respuesta = cliente.post(
             "/compras/nueva",
             data={
-                "proveedor_id": "200",
-                "articulo_id": "7",
-                "cantidad_cajones": "10",
-                "contenido_por_cajon": "18",
-                "importe": "50000",
-                "sena": "",
-                "tipo_retiro": "Clark",
+                "proveedor_id": "200", "articulo_id": "7",
+                "cantidad_cajones": "10", "contenido_por_cajon": "18",
+                "importe": "50000", "sena": "", "tipo_retiro": "Clark",
             },
+            follow_redirects=False,
         )
 
-    assert respuesta.status_code == 400
-    assert "no tiene la unidad de compra configurada" in respuesta.text
-    mock_crear.assert_not_called()
+    assert respuesta.status_code == 303
+    # Y los 180 caen en los KILOS, que es lo que "nulo es kilo" significa.
+    (argumentos, _) = mock_crear.call_args
+    assert argumentos[5] == 180.0, f"los kilos tienen que ser 10 × 18: {argumentos}"
+    assert argumentos[6] is None, "sin conteo declarado, la fracción queda en None"
 
 
 def test_agregar_compra_error_de_base_muestra_mensaje_claro():
@@ -11397,30 +11447,6 @@ def test_ingresar_mercaderia_sin_cantidad_cajones_muestra_error():
 
     assert respuesta.status_code == 400
     assert "La cantidad de cajones es obligatoria" in respuesta.text
-    mock_crear.assert_not_called()
-
-
-def test_ingresar_mercaderia_articulo_sin_unidad_compra_configurada_muestra_error():
-    with (
-        patch("app.main.obtener_proveedor", return_value=PROVEEDOR_DE_PRUEBA),
-        patch("app.main.obtener_articulo", return_value=ARTICULO_SIN_UNIDAD_COMPRA),
-        patch("app.main.crear_compra") as mock_crear,
-        patch("app.main.listar_articulos", return_value=ARTICULOS_CON_UNIDAD_COMPRA),
-        patch("app.main.listar_compras_por_fecha_y_proveedor", return_value=[]),
-    ):
-        respuesta = cliente.post(
-            "/deposito/ingresar",
-            data={
-                "proveedor_id": "200",
-                "articulo_id": "7",
-                "cantidad_cajones": "10",
-                "contenido_por_cajon": "18",
-                "tipo_retiro": "Clark",
-            },
-        )
-
-    assert respuesta.status_code == 400
-    assert "no tiene la unidad de compra configurada" in respuesta.text
     mock_crear.assert_not_called()
 
 
@@ -27755,7 +27781,10 @@ def _fila_negociacion(**extra):
     """Una fila del listado, con lo que el cuadro de negociación mira."""
     base = {
         "ficha_id": 950, "articulo_id": 1, "articulo_nombre": "EJEMPLO Mango",
-        "ficha_nombre": "EJEMPLO Mango", "unidad_venta": "kilo", "unidad_compra": "unidad",
+        # El caso que NO se costea con el modelo de dos magnitudes: la ficha
+        # vende en cubeta y el artículo cuenta en unidad — los kilos van
+        # siempre, así que una ficha por kilo SÍ costearía.
+        "ficha_nombre": "EJEMPLO Mango", "unidad_venta": "cubeta", "unidad_conteo": "unidad",
         "fresco": True, "sin_conversion_de_unidad": True,
         "costo_actual": None, "costo_anterior": None, "variacion": None,
         "fecha_ultima_compra": date(2026, 9, 15), "precio_vigente": 900.0,
@@ -27781,8 +27810,9 @@ def test_la_pantalla_DICE_POR_QUE_no_hay_costo_y_nombra_LAS_DOS_unidades():
     """Sin esto la fila sale con guiones y se lee igual que "falta cargarle el
     precio a la compra" — que es otra cosa y se arregla de otra manera.
 
-    El aviso nombra el artículo y las DOS unidades: el recorte viaja adentro
-    de la afirmación, no en un párrafo aparte que se lee una vez.
+    El aviso nombra el artículo, la unidad en que ese cliente compra y el
+    conteo que el artículo declara: el recorte viaja adentro de la
+    afirmación, no en un párrafo aparte que se lee una vez.
 
     El caso se PLANTA: sobre Frutamax hay 0 pares que difieran de 34, así que
     sin plantarlo este test pasaría sin ejercitar nada (corolario 36).
@@ -27792,8 +27822,12 @@ def test_la_pantalla_DICE_POR_QUE_no_hay_costo_y_nombra_LAS_DOS_unidades():
     marcado = respuesta.text
 
     assert "EJEMPLO Mango" in marcado
-    assert "se compra por unidad y se le vende por kilo" in marcado
-    assert "no calcula su costo" in marcado
+    assert "se le vende por cubeta" in marcado
+    assert "se cuenta en unidad" in marcado
+    # Y manda a Artículos, que es donde está el arreglo: cargarle el conteo
+    # al artículo. Hasta el 15/09 decía "se compra por X", que nombraba un
+    # campo que ya no se edita y que no es el que falta.
+    assert "cargándole el conteo al artículo" in marcado
     # Y la fila lo dice también donde falta el número, no solo arriba.
     assert 'class="sin-costear"' in marcado
 
@@ -27896,4 +27930,43 @@ def test_TODA_rama_que_REARMA_el_formulario_conserva_la_segunda_magnitud():
     assert segunda == contenido, (
         f"{contenido} ramas rearman el formulario con el contenido por cajón "
         f"y solo {segunda} conservan la segunda magnitud"
+    )
+
+
+def test_el_CSS_de_celular_del_catalogo_cubre_TODAS_las_columnas_de_la_tabla():
+    """El desajuste del 15/09, y es por construcción: el CSS posiciona por ÍNDICE.
+
+    El catálogo de Artículos se convierte en tarjeta en celular con reglas
+    `td:nth-child(N)`. El 15/09 se le agregó una columna y nadie tocó el CSS:
+    todo lo que estaba a la derecha se corrió un lugar —la del conteo se puso
+    el rótulo "ref." de la referencia, la referencia se fue al lugar del grupo
+    y los BOTONES quedaron sin regla, en 28px, abajo del mínimo tocable— y la
+    suite entera siguió en verde.
+
+    Es el corolario 3 en CSS: cuando una estructura gana un campo hay que ir a
+    buscar quién la CONSTRUYE, no quién nombra el campo. Acá el que la
+    construye es una lista de índices que no nombra ninguna columna.
+
+    Se compara el conjunto ENCONTRADO contra el DECIDIDO (corolario 60): falla
+    si sobra una columna sin regla Y si sobra una regla sin columna.
+    """
+    import re
+
+    plantilla = io.open("templates/articulos.html", encoding="utf-8").read()
+    css, marcado = plantilla.split("</style>", 1)
+
+    cabecera = re.search(r"<thead>(.*?)</thead>", marcado, re.S)
+    assert cabecera, "cambió la forma de la tabla: este test dejó de mirar algo"
+    columnas = len(re.findall(r"<th\b", cabecera.group(1)))
+
+    # Del CSS, y sin comentarios: el comentario de al lado NOMBRA las reglas
+    # para explicarlas, así que contarlas sobre el texto crudo cuenta prosa
+    # (corolario 38).
+    sin_comentarios = re.sub(r"/\*.*?\*/", "", css, flags=re.S)
+    indices = {int(n) for n in re.findall(r"td:nth-child\((\d+)\)", sin_comentarios)}
+
+    assert columnas >= 2, columnas
+    assert indices == set(range(1, columnas + 1)), (
+        f"la tabla tiene {columnas} columnas y el CSS de celular ubica {sorted(indices)}: "
+        "cada columna necesita su regla, y una regla de más apunta a una columna que no existe"
     )

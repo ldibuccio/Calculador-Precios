@@ -114,6 +114,12 @@
     td { border-bottom: none; padding: 0; }
     td:nth-child(1) { grid-area: nombre; font-weight: 800; font-size: 1.05rem; }
     td:nth-child(2) { grid-area: unidad; color: #475569; }
+    /* "unidad" SUELTO debajo del nombre se lee como si el artículo tuviera
+       una unidad, y no la tiene: la de venta la define cada ficha. Acá se
+       dice lo único que sí es del artículo — qué cuenta ADEMÁS de los kilos.
+       El ::before va en el <span> y no en el <td> para que la celda vacía
+       —artículo sin conteo— no escriba el rótulo sola. */
+    td:nth-child(2) .conteo::before { content: "también se cuenta en "; color: #94a3b8; }
     /* "16" SUELTO NO SE EXPLICA: en la tabla lo explica el <th>Contenido
        ref.</th>. El rótulo va como prefijo y solo en celular. */
     td:nth-child(3) { grid-area: conten; color: #475569; }
@@ -160,14 +166,6 @@
       <label for="nombre">Nombre *</label>
       <input type="text" id="nombre" name="nombre" required>
 
-      <label for="unidad_compra">Unidad de compra *</label>
-      <select id="unidad_compra" name="unidad_compra" required>
-        <option value="" selected disabled>Elegí...</option>
-        <option value="kilo">Kilo</option>
-        <option value="unidad">Unidad</option>
-        <option value="cubeta">Cubeta</option>
-      </select>
-
       <label for="unidad_conteo">Se cuenta además en (opcional)</label>
       <select id="unidad_conteo" name="unidad_conteo">
         <option value="" selected>Sin conteo: solo kilos</option>
@@ -200,7 +198,6 @@
         <thead>
           <tr>
             <th>Nombre</th>
-            <th>Unidad de compra</th>
             <th>Cuenta en</th>
             <th>Contenido ref.</th>
             <th>Grupo</th>
@@ -211,8 +208,10 @@
           {% for articulo in articulos %}
           <tr>
             <td>{{ articulo.nombre }}</td>
-            <td>{{ articulo.unidad_compra or "-" }}</td>
-            <td>{% if articulo.unidad_conteo %}{{ articulo.unidad_conteo }}{% else %}<span class="vacio">solo kilos</span>{% endif %}</td>
+            {# VACÍO Y NO "solo kilos": el kilo va siempre, así que un artículo
+               sin conteo no tiene nada que declarar. Escribirlo lo hace parecer
+               una configuración, que es de lo que se venía. #}
+            <td>{% if articulo.unidad_conteo %}<span class="conteo">{{ articulo.unidad_conteo }}</span>{% endif %}</td>
             <td>{{ articulo.contenido_referencia|kilos if articulo.contenido_referencia is not none else "-" }}</td>
             <td>
               {% if articulo.grupo == "fruta" %}Fruta

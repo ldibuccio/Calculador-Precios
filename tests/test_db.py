@@ -5,6 +5,7 @@ from unittest.mock import MagicMock, call, patch
 
 from app import db
 from app.db import (
+    crear_articulo,
     actualizar_cantidad_compra,
     anular_ajuste_vacios,
     anular_vacio_recibido,
@@ -8949,3 +8950,26 @@ def test_el_costeo_TRAE_las_dos_magnitudes_de_cada_compra():
     consulta = _sql_de_la_funcion("listar_compras_para_costeo")
     assert "c.cantidad_fraccion_real, c.cantidad_fraccion" in consulta.replace("COALESCE(", "")
     assert "AS cantidad_fraccion" in consulta
+
+
+def test_un_articulo_NUEVO_nace_con_la_unidad_del_contenido_en_KILO():
+    """Y no en NULL, aunque el código trate el nulo como kilo.
+
+    La diferencia se ve en una pantalla: `SUFIJOS_UNIDAD_COMPRA.get(None, "")`
+    devuelve cadena vacía, así que las compras de un artículo con la columna
+    en NULL saldrían "41 cajones × 16" —sin la "k"— en Buscar Compras, en
+    Movimientos y en el detalle. El sufijo es lo único que dice en qué está
+    expresado ese número.
+
+    Lo encontró un canario: poner la constante en None no hacía caer nada.
+    """
+    conexion, cursor = _conexion_falsa([])
+
+    with patch("app.db.obtener_conexion", return_value=conexion):
+        crear_articulo("EJEMPLO Uno", 16.0, "fruta", "unidad")
+
+    consulta, parametros = _sql_y_parametros_que_contienen(cursor, "INSERT INTO articulos")
+    assert "unidad_compra" in consulta
+    nombre, unidad_compra, unidad_conteo, referencia, grupo = parametros
+    assert unidad_compra == "kilo", "el contenido por cajón de un artículo nuevo se carga en kilos"
+    assert unidad_conteo == "unidad", "y lo que además cuenta lo dice la otra columna"

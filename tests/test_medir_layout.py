@@ -409,3 +409,63 @@ def test_el_campo_del_CONTEO_y_su_ayuda_ESTAN_en_las_dos_pantallas():
         marcado = _pantalla_de_articulos(ruta)
         assert 'name="unidad_conteo"' in marcado, ruta
         assert 'class="ayuda-conteo"' in marcado, ruta
+
+
+def test_en_CELULAR_el_conteo_del_catalogo_se_explica_y_el_vacio_no_dice_nada():
+    """"unidad" suelto debajo del nombre se lee como si el artículo tuviera una unidad.
+
+    No la tiene: la de venta la define cada ficha, y el mismo mango puede ir
+    por unidad a un cliente y por kilo a otro. Lo único que sí es del
+    artículo es qué cuenta ADEMÁS de los kilos, y eso lo dice el rótulo.
+
+    Se mide el `::before` COMPUTADO y no la regla en el texto: el rótulo es
+    un efecto de CSS, y un assert sobre la hoja prueba que la orden se dio,
+    no que se cumpla (corolario 32).
+
+    El artículo SIN conteo va de control: ahí la celda tiene que quedar
+    muda. Con el `::before` en el <td> en vez de en el <span>, escribiría
+    "también se cuenta en " sobre una celda vacía.
+    """
+    from unittest.mock import patch
+
+    from tests.test_app import cliente
+
+    articulos = [
+        {"id": 6, "nombre": "EJEMPLO Con", "unidad_compra": "unidad",
+         "unidad_conteo": "unidad", "contenido_referencia": 10, "grupo": "fruta"},
+        {"id": 7, "nombre": "EJEMPLO Sin", "unidad_compra": "kilo",
+         "unidad_conteo": None, "contenido_referencia": 16, "grupo": "hortaliza"},
+    ]
+    with patch("app.main.listar_articulos", return_value=articulos):
+        html = cliente.get("/compras/articulos").text
+
+    pytest.importorskip("playwright", reason="el rótulo es CSS: hace falta un navegador")
+
+    async def leer(ancho):
+        from playwright.async_api import async_playwright
+
+        from scripts.medir_layout import CHROMIUM
+
+        async with async_playwright() as pw:
+            navegador = await pw.chromium.launch(executable_path=CHROMIUM)
+            pagina = await navegador.new_page(viewport={"width": ancho, "height": 844})
+            await pagina.set_content(html)
+            leido = await pagina.evaluate("""() =>
+              [...document.querySelectorAll('tbody tr')].map(fila => {
+                const celda = fila.children[1];
+                const span = celda.querySelector('.conteo');
+                const antes = span ? getComputedStyle(span, '::before').content : 'none';
+                return ((antes && antes !== 'none' ? antes.replace(/"/g, '') : '')
+                        + celda.textContent.trim()).trim();
+              })""")
+            await navegador.close()
+        return leido
+
+    en_celular = asyncio.run(leer(390))
+    assert en_celular[0] == "también se cuenta en unidad"
+    assert en_celular[1] == "", "el artículo sin conteo no tiene nada que declarar"
+
+    # Y en pantalla ancha el rótulo NO va: ahí lo dice el <th>, y repetirlo
+    # llenaría la celda de prosa.
+    en_ancha = asyncio.run(leer(1200))
+    assert en_ancha[0] == "unidad"

@@ -86,14 +86,6 @@
       <label for="nombre">Nombre *</label>
       <input type="text" id="nombre" name="nombre" value="{{ articulo.nombre }}" required>
 
-      <label for="unidad_compra">Unidad de compra *</label>
-      <select id="unidad_compra" name="unidad_compra" required>
-        <option value="" {% if not articulo.unidad_compra %}selected disabled{% endif %}>Elegí...</option>
-        <option value="kilo" {% if articulo.unidad_compra == "kilo" %}selected{% endif %}>Kilo</option>
-        <option value="unidad" {% if articulo.unidad_compra == "unidad" %}selected{% endif %}>Unidad</option>
-        <option value="cubeta" {% if articulo.unidad_compra == "cubeta" %}selected{% endif %}>Cubeta</option>
-      </select>
-
       <label for="unidad_conteo">Se cuenta además en (opcional)</label>
       <select id="unidad_conteo" name="unidad_conteo">
         <option value="" {% if not articulo.unidad_conteo %}selected{% endif %}>Sin conteo: solo kilos</option>
