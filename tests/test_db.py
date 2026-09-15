@@ -5,6 +5,7 @@ import pytest
 from unittest.mock import MagicMock, call, patch
 
 from app import db
+from app.main import REGEX_CODIGO_PUESTO
 from app.db import (
     _negar_si_el_conteo_contradice_la_unidad_de_compra,
     actualizar_articulo,
@@ -9104,6 +9105,46 @@ def test_un_articulo_cuya_historia_esta_en_KILOS_puede_declarar_CUALQUIER_conteo
 
     consulta, parametros = _sql_y_parametros_que_contienen(cursor, "UPDATE articulos")
     assert parametros[1] == "cubeta"
+
+
+def test_el_FORMATO_del_codigo_de_puesto_de_Python_y_el_de_la_BASE_son_LA_MISMA_regla():
+    """Escrito dos veces: `REGEX_CODIGO_PUESTO` y el check de la columna.
+
+    Hoy son idénticos, y por eso se ata ahora: separadas, la que rechaza deja
+    de ser la que el código cree que rechaza. Cada dirección falla distinto —
+    si Python acepta algo que la base niega, la pantalla ofrece cargar un
+    código que revienta al guardar; si la base acepta algo que Python niega,
+    un INSERT a mano mete un código que las pantallas no dejan tipear y nadie
+    puede corregir (el código es la identidad y no se edita).
+
+    El patrón se LEE del .sql — copiado acá envejece en silencio — y se
+    compara sobre casos, no como texto: dos expresiones distintas pueden
+    aceptar lo mismo, y lo que importa es a quién dejan pasar.
+    """
+    import re
+
+    esquema = io.open("db/esquema_completo.sql", encoding="utf-8").read()
+    escrito = re.search(r"codigo_puesto[^,]*?check\s*\(\s*codigo_puesto\s*~\s*'([^']+)'", esquema)
+    assert escrito, "no está el check del formato en el esquema"
+    de_la_base = re.compile(escrito.group(1))
+
+    CASOS = [
+        "N07P41", "L03P38", "N00P00", "L99P99",          # los buenos
+        "", "7P41", "N7P41", "N07P4", "N07P411",         # largo y forma
+        "X07P41", "n07p41", "N07Q41", "N07P4A",          # letra, caja, separador
+        " N07P41", "N07P41 ", "N07P41\n", "AN07P41",     # bordes y espacios
+    ]
+    discrepancias = [
+        (c, bool(de_la_base.match(c)), bool(REGEX_CODIGO_PUESTO.match(c)))
+        for c in CASOS
+        if bool(de_la_base.match(c)) != bool(REGEX_CODIGO_PUESTO.match(c))
+    ]
+    assert not discrepancias, f"los dos formatos se separaron: {discrepancias}"
+
+    # Y que los casos ejerciten LAS DOS respuestas: si todos fueran malos, dos
+    # patrones cualesquiera que rechacen todo coincidirían (corolario 53).
+    aceptados = [c for c in CASOS if REGEX_CODIGO_PUESTO.match(c)]
+    assert 0 < len(aceptados) < len(CASOS), "los casos no ejercitan las dos respuestas"
 
 
 def test_la_guarda_de_PYTHON_y_el_CHECK_son_LA_MISMA_regla():
