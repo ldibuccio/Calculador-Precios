@@ -1,0 +1,34 @@
+{# LAS DOS MAGNITUDES DE UN CAJÓN, EN UN SOLO LUGAR.
+
+   Una compra declara KILOS siempre y, cuando el artículo se cuenta, también
+   unidades o cubetas. Mostrar solo la de `unidad_compra` deja la mitad del
+   dato afuera, y son SIETE pantallas: escrito en cada una, son siete copias
+   que se separan sin que nadie lo note.
+
+   EL HUECO SE MUESTRA Y NO SE CALLA. Una pantalla que se calla no distingue
+   "no hay dato" de "no se me ocurrió mostrarlo", y acá el hueco es
+   información: dice que esa compra vieja NO va a poder costear en la otra
+   unidad. Se apaga solo en cuanto entren compras con las dos.
+
+   `segunda` viene del server (`_agregar_segunda_por_cajon`), nunca derivada
+   acá: la inversa del reparto vive en core/magnitudes.py y ya estuvo escrita
+   dos veces en Jinja. #}
+{# `real` mueve LAS DOS mitades a la vez —el contenido y la segunda— para
+   que la fila no muestre lo recibido de un lado y lo declarado del otro. #}
+{% macro magnitudes_del_cajon(c, real=false) %}
+{%- set contenido = c.contenido_por_cajon_real if real else c.contenido_por_cajon -%}
+{%- set unidad_compra = c.unidad_compra -%}
+{%- set unidad_conteo = c.unidad_conteo -%}
+{%- set segunda = segunda_por_cajon_de(c, real) -%}
+{# El plural Y su concordancia viajan juntos: armar la frase pegando el
+   sustantivo a un "declarados" fijo da "sin unidades declarados". Es el mismo
+   caso que "¿Cuántos unidades?" en Artículos, y se cierra igual. #}
+{%- set nombre_segunda = ("kilos", "declarados") if (unidad_compra or "kilo") != "kilo"
+                         else (("cubetas", "declaradas") if unidad_conteo == "cubeta"
+                               else ("unidades", "declaradas")) -%}
+<span class="magnitudes">{{ contenido|kilos }}{{ unidad_compra|sufijo_unidad }}{% if segunda is not none %}
+  <span class="magnitud-segunda" style="color:#555">· {{ segunda|kilos }}{{ (("kilo" if (unidad_compra or "kilo") != "kilo" else unidad_conteo))|sufijo_unidad }}</span>
+{%- elif unidad_conteo or (unidad_compra or "kilo") != "kilo" %}
+  <span class="magnitud-hueco" style="color:#b45309;font-style:italic">· sin {{ nombre_segunda[0] }} {{ nombre_segunda[1] }}</span>
+{%- endif %}</span>
+{% endmacro %}

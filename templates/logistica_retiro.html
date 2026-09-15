@@ -1,3 +1,4 @@
+{% from "_magnitudes_del_cajon.html" import magnitudes_del_cajon %}
 <!DOCTYPE html>
 <html lang="es">
 <head>
@@ -221,7 +222,7 @@
       {% for c in guia.compras %}
       <div class="renglon">
         <p class="articulo-nombre">{{ c.articulo_nombre }}</p>
-        <p class="cantidad">{{ c.cantidad_cajones|numero }} cajones × {{ c.contenido_por_cajon|kilos }}{{ c.unidad_compra|sufijo_unidad }}</p>
+        <p class="cantidad">{{ c.cantidad_cajones|numero }} cajones × {{ magnitudes_del_cajon(c) }}</p>
         {# La mercadería a veces se levanta días después: la fecha de la
            compra siempre a la vista, y resaltada cuando tiene más de un
            día para que se note que es vieja. #}

@@ -9147,6 +9147,60 @@ def test_el_FORMATO_del_codigo_de_puesto_de_Python_y_el_de_la_BASE_son_LA_MISMA_
     assert 0 < len(aceptados) < len(CASOS), "los casos no ejercitan las dos respuestas"
 
 
+# Las SEIS consultas que alimentan las pantallas donde se muestran las dos
+# magnitudes del cajón. La lista es lo DECIDIDO; el test la compara contra lo
+# que encuentra, en los dos sentidos (corolario 60).
+CONSULTAS_QUE_MUESTRAN_LAS_DOS_MAGNITUDES = {
+    "obtener_detalle_compra": "Detalle de la compra (comprado y recepcionado)",
+    "listar_compras_sin_precio": "Compras pendientes de precio",
+    "buscar_ingresos_deposito": "Ingresos a Depósito",
+    "listar_compras_procesadas_hoy_retiro": "Retiro, lo procesado hoy",
+    "listar_compras_pendientes_retiro": "Retiro, lo pendiente",
+    "buscar_compras": "Buscar compras",
+}
+
+
+@pytest.mark.parametrize("nombre", sorted(CONSULTAS_QUE_MUESTRAN_LAS_DOS_MAGNITUDES))
+def test_las_consultas_del_CAJON_traen_LAS_DOS_magnitudes_y_el_conteo(nombre):
+    """Lo que cambia es QUÉ COLUMNAS pide la consulta, así que el test lee el SQL.
+
+    El valor lo entrega el mock (corolario 40/65): medido con un canario, sacar
+    `a.unidad_conteo` de la consulta del detalle hace caer CERO tests. Y el modo
+    de falla es mudo — sin el conteo, el macro no puede NOMBRAR la magnitud que
+    falta, así que el hueco no se dibuja y la pantalla vuelve a mostrar una sola
+    magnitud, que es exactamente lo que se veía antes.
+
+    `unidad_conteo` hace falta aunque la cuenta no lo use: no decide el número,
+    decide si hay algo que declarar. Sin él, "sin kilos declarados" y "este
+    artículo no cuenta nada" son la misma pantalla.
+    """
+    consulta = _sql_de_la_funcion(nombre)
+    faltan = [c for c in ("a.unidad_compra", "a.unidad_conteo",
+                          "cantidad_kilos", "cantidad_fraccion")
+              if c not in consulta]
+    assert not faltan, f"{CONSULTAS_QUE_MUESTRAN_LAS_DOS_MAGNITUDES[nombre]}: faltan {faltan}"
+
+
+def test_NINGUNA_pantalla_del_cajon_quedo_afuera_de_esa_lista():
+    """El otro sentido: una pantalla que muestre el macro y no esté en la lista.
+
+    Recorrer solo la lista propia confirma lo que uno ya sabía. Esto busca a
+    los que USAN el macro y exige que su consulta esté decidida — si mañana
+    una séptima pantalla lo importa, el test la nombra en vez de dejarla con
+    una sola magnitud en silencio.
+    """
+    import glob
+
+    usan = sorted(
+        ruta for ruta in glob.glob("templates/*.html")
+        if "magnitudes_del_cajon(" in io.open(ruta, encoding="utf-8").read()
+        and not ruta.endswith("_magnitudes_del_cajon.html")
+    )
+    assert usan, "nadie usa el macro: el test no está mirando nada"
+    assert len(usan) == 6, f"cambió la cantidad de pantallas que lo usan: {usan}"
+    assert len(CONSULTAS_QUE_MUESTRAN_LAS_DOS_MAGNITUDES) == len(usan)
+
+
 def test_la_guarda_de_PYTHON_y_el_CHECK_son_LA_MISMA_regla():
     """Las dos rechazan lo mismo, y el test LEE el CHECK del .sql en vez de copiarlo.
 

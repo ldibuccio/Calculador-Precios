@@ -326,7 +326,11 @@ from app.db import (
     total_reingresos_rechazo,
 )
 from core.conceptos_cliente import calcular_cambio_de_utilidad, calcular_cambios_de_tasas
-from core.magnitudes import repartir_magnitudes
+from core.magnitudes import (
+    magnitudes_por_cajon,
+    repartir_magnitudes,
+    segunda_magnitud_por_cajon,
+)
 from core.exportar_compras import generar_excel_listado_compras, generar_pdf_listado_compras
 from core.exportar_disponibles import generar_excel_disponibles
 from core.exportar_remanente import generar_excel_remanente
@@ -1032,6 +1036,41 @@ def _cajas_en_origen_por_articulo() -> dict:
         return {}
 
 
+def segunda_por_cajon_de(compra, real: bool = False) -> float | None:
+    """La segunda magnitud por cajón de una compra, para la plantilla. None = no la declaró.
+
+    `real` elige entre lo DECLARADO y lo que Depósito pesó y contó, y existe
+    para que las dos mitades del renglón no se puedan separar: la fila real
+    del detalle muestra `contenido_por_cajon_real`, y al lado tiene que ir la
+    segunda magnitud REAL. Con una sola versión, esa fila mostraría lo
+    recibido de un lado y lo declarado del otro, en la misma línea y sin que
+    nada avise.
+
+    Y sin COALESCE al estimado: una compra recepcionada que no declaró la otra
+    magnitud tiene un hueco de verdad, y taparlo con el estimado sería mostrar
+    un número que nadie pesó.
+
+    VA COMO GLOBAL DEL ENTORNO por lo mismo que el catálogo de cajas: las dos
+    magnitudes se muestran en SIETE lugares de seis pantallas, y pasarlas en
+    el contexto de cada render son seis lugares de los que uno se puede
+    olvidar. El que se olvide no ve nada roto — ve una sola magnitud, que es
+    exactamente lo que había antes.
+
+    Y la cuenta NO se hace acá ni en la plantilla: se le pide a
+    core/magnitudes.py, que es donde vive la inversa del reparto. Esto es el
+    cable, no la regla — ya estuvo escrita dos veces en Jinja y con esto iba a
+    ocho.
+    """
+    sufijo = "_real" if real else ""
+    kilos, conteo = magnitudes_por_cajon(
+        compra.get(f"cantidad_kilos{sufijo}"),
+        compra.get(f"cantidad_fraccion{sufijo}"),
+        compra.get(f"cantidad_cajones{sufijo}"),
+    )
+    return segunda_magnitud_por_cajon(compra.get("unidad_compra"), kilos, conteo)
+
+
+templates.env.globals["segunda_por_cajon_de"] = segunda_por_cajon_de
 templates.env.globals["cajas_en_origen_por_articulo"] = _cajas_en_origen_por_articulo
 templates.env.filters["fecha_hora"] = _formatear_fecha_hora
 
@@ -8018,6 +8057,21 @@ def _agrupar_pendientes_por_guia(compras: list[dict]) -> list[dict]:
     return [guias_por_id[guia_id] for guia_id in orden_guias]
 
 
+def _agregar_segunda_por_cajon(compra: dict) -> None:
+    """Le pega a la compra la segunda magnitud por cajón, para que la plantilla no la derive.
+
+    En None significa "esta compra no declaró la otra magnitud" —el estado de
+    todas las anteriores al 15/09— y la pantalla lo muestra como hueco. No es
+    un cero y no se deduce.
+    """
+    kilos, conteo = magnitudes_por_cajon(
+        compra.get("cantidad_kilos"), compra.get("cantidad_fraccion"), compra.get("cantidad_cajones")
+    )
+    compra["segunda_por_cajon_estimada"] = segunda_magnitud_por_cajon(
+        compra.get("unidad_compra"), kilos, conteo
+    )
+
+
 def _renderizar_pantalla_recepcion(
     request: Request,
     *,
@@ -8078,6 +8132,14 @@ def _renderizar_pantalla_recepcion(
     hoy = _hoy_argentina()
     for guia in guias:
         guia["fecha_vieja"] = guia["fecha_operacion"] is not None and guia["fecha_operacion"] < hoy - timedelta(days=1)
+
+    # LA SEGUNDA MAGNITUD POR CAJÓN, calculada ACÁ y no en la plantilla. Estuvo
+    # escrita dos veces en Jinja —dos bloques de este mismo archivo, separados
+    # por 134 líneas— con su propio `if unidad_compra == "kilo"`, que es la
+    # inversa del reparto reescrita a mano. Las DOS listas pasan por la misma
+    # función, así que no se pueden separar entre sí (core/magnitudes.py).
+    for compra in [c for g in guias for c in g["compras"]] + procesados_hoy:
+        _agregar_segunda_por_cajon(compra)
 
     return templates.TemplateResponse(
         request,

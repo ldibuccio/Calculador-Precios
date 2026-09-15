@@ -5350,6 +5350,76 @@ Tiene **test propio, que no pasa por el costo**: la misma compra y la misma
 ficha dan descartable o caja chica según la magnitud. El día que alguien
 mueva esto, el costo va a seguir dando bien y eso es lo único que cae.
 
+## La INVERSA de una regla se reescribe en la plantilla, porque ahí es donde aparece la necesidad
+
+Del 15/09. `core/magnitudes.repartir_magnitudes` decide en qué columna cae
+cada total de una compra, y está escrita UNA vez a propósito. Su **inversa**
+—sacar la segunda magnitud POR CAJÓN de una compra ya guardada— estaba
+escrita **dos veces en Jinja**, en dos bloques de `deposito_recepcion.html`
+separados por 134 líneas, cada uno con su propio `if unidad_compra == "kilo"`.
+
+**Y no es descuido: es que la necesidad aparece en la plantilla.** El que
+escribe la pantalla tiene el `if` en la cabeza, son dos líneas de Jinja, y
+poner una función en `core/` para eso se siente desproporcionado. La regla
+directa la escribió quien diseñaba el modelo; la inversa la escribió quien
+diseñaba una pantalla, que es otro momento y otro archivo.
+
+**La señal, y se hace al escribir el `{% set %}`**: si una plantilla calcula
+algo a partir de dos columnas y un `if` sobre una tercera, eso es una regla,
+no una presentación. La pregunta que la separa: *¿este `if` existe también en
+Python, del otro lado?* Si la respuesta es sí, es la inversa de algo y va al
+lado de su directa.
+
+**Lo que la habría encontrado antes**: el `grep` no del nombre —la plantilla
+no nombra `repartir_magnitudes`— sino de la FORMA del derivado, un total
+dividido los cajones. Eso es lo que una copia nueva no puede evitar escribir,
+y es lo que cuida `test_la_INVERSA_del_reparto_esta_escrita_UNA_sola_vez`.
+
+**Y lo que decidió el momento de arreglarlo fue el CONTEO de copias futuras**:
+con seis pantallas más por mostrar las dos magnitudes, dos copias iban a ocho.
+Ese número es el argumento — no "está feo", sino cuántas van a existir si se
+muestra primero y se limpia después.
+
+### Y cómo llega a las seis pantallas sin seis lugares donde olvidarse
+
+Un macro (`templates/_magnitudes_del_cajon.html`) que toma la compra entera,
+y un GLOBAL DEL ENTORNO (`segunda_por_cajon_de`) que le pide la cuenta a
+`core/magnitudes.py`. El global es el precedente que ya estaba escrito para el
+catálogo de cajas: pasar el dato en el contexto de cada render son seis
+lugares de los que uno se puede olvidar, **y el que se olvide no ve nada roto
+— ve una sola magnitud, que es lo que había antes.**
+
+Dos decisiones adentro, las dos medidas con un canario:
+
+- **`real` mueve LAS DOS mitades a la vez.** La fila de "lo recepcionado"
+  muestra `contenido_por_cajon_real`, y al lado tiene que ir la segunda
+  magnitud REAL. Con una sola versión, esa fila mezclaba lo recibido de un
+  lado con lo declarado del otro, en la misma línea y sin que nada avise.
+- **El estilo va INLINE en el macro.** Las seis plantillas tienen su propio
+  `<style>`: puesto en las seis serían seis copias de la misma regla, que es
+  justo lo que este arreglo vino a terminar.
+
+### El hueco se MUESTRA, y la razón es del dueño
+
+*"Una pantalla que se calla no distingue 'no hay dato' de 'no se me ocurrió
+mostrarlo'."* Y acá el hueco es información: **dice que esa compra vieja no va
+a poder costear en la otra unidad**, que es la pregunta que alguien se va a
+hacer mirando las fichas que no costean. Se apaga solo cuando entren compras
+con las dos.
+
+Con la condición de que el hueco sea VERDADERO: un artículo que se compra solo
+por kilo no tiene segunda magnitud, así que ahí no falta nada y el aviso sería
+un reclamo falso. Lo distingue `unidad_conteo` — y por eso esa columna hace
+falta en las seis consultas **aunque no entre en ninguna cuenta**: no decide el
+número, decide si hay algo que declarar.
+
+**Medido con un canario**: sacarle `a.unidad_conteo` a la consulta del detalle
+hacía caer CERO, y el modo de falla es mudo — sin ella el macro no puede
+nombrar la magnitud que falta, el hueco no se dibuja, y la pantalla vuelve a
+mostrar una sola magnitud, que es exactamente lo que se veía antes. Es el
+corolario 65 por tercera vez, y la tercera no fue más fácil de ver que la
+primera.
+
 ## Corolario 64: un aviso se arregla cuando dispara CERO, que es cuando es gratis
 
 Del 15/09, y el criterio es del dueño. Medido `kiwi_1` sobre Frutamax: **0

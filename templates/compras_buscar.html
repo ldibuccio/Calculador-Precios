@@ -1,3 +1,4 @@
+{% from "_magnitudes_del_cajon.html" import magnitudes_del_cajon %}
 <!DOCTYPE html>
 <html lang="es">
 <head>
@@ -476,7 +477,7 @@
                teclado y no dice que se pueda tocar. El link lo hace visible y
                lo hace funcionar sin JS. #}
             <td><a class="link-detalle" href="/compras/{{ c.id }}/detalle">{{ c.articulo_nombre }}</a></td>
-            <td>{{ c.cantidad_cajones|numero }} cajones × {{ c.contenido_por_cajon|kilos }}{{ c.unidad_compra|sufijo_unidad }}</td>
+            <td>{{ c.cantidad_cajones|numero }} cajones × {{ magnitudes_del_cajon(c) }}</td>
             <td>{% if c.importe is not none %}{{ c.importe|moneda }}{% else %}<span class="sin-precio">SIN PRECIO</span>{% endif %}</td>
             <td>
               {# LAS ACCIONES ADENTRO DE UN MENÚ, y el Detalle AFUERA porque la

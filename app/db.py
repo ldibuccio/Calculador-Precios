@@ -1533,7 +1533,7 @@ def buscar_compras(
         with conexion.cursor() as cursor:
             cursor.execute(
                 f"""
-                SELECT c.id, c.fecha_operacion, a.nombre AS articulo_nombre, a.unidad_compra,
+                SELECT c.id, c.fecha_operacion, a.nombre AS articulo_nombre, a.unidad_compra, a.unidad_conteo,
                        p.nombre AS proveedor_nombre,
                        p.codigo_puesto AS proveedor_codigo_puesto,
                        COALESCE(c.cantidad_cajones_real, c.cantidad_cajones) AS cantidad_cajones,
@@ -2012,10 +2012,12 @@ def obtener_detalle_compra(compra_id: int) -> dict | None:
             cursor.execute(
                 """
                 SELECT c.id, c.fecha_operacion, c.cargado_el,
-                       c.articulo_id, a.nombre AS articulo_nombre, a.unidad_compra,
+                       c.articulo_id, a.nombre AS articulo_nombre, a.unidad_compra, a.unidad_conteo,
                        c.proveedor_id, p.nombre AS proveedor_nombre, p.codigo_puesto AS proveedor_codigo_puesto,
                        c.guia_id, c.guia_punto,
                        c.cantidad_cajones, c.contenido_por_cajon, c.importe, c.sena, c.tipo_retiro,
+                       c.cantidad_kilos, c.cantidad_fraccion,
+                       c.cantidad_kilos_real, c.cantidad_fraccion_real,
                        c.estado_retiro, c.retiro_procesado_el, c.retiro_origen, c.cantidad_cajones_retirada,
                        c.estado, c.procesada_el,
                        c.cantidad_cajones_real, c.contenido_por_cajon_real, c.cantidad_fraccion_real,
@@ -3717,8 +3719,13 @@ def buscar_ingresos_deposito(
                 f"""
                 SELECT c.id, c.fecha_operacion, c.procesada_el, c.guia_id, c.guia_punto, c.estado,
                        c.cantidad_cajones_real, c.contenido_por_cajon_real,
+                       -- Las dos magnitudes REALES: acá se muestra lo que ENTRÓ, no lo
+                       -- declarado. En NULL es "no se declaró", y la pantalla lo muestra
+                       -- como hueco: es lo que explica por qué esa compra no costea en la
+                       -- otra unidad.
+                       c.cantidad_kilos_real, c.cantidad_fraccion_real,
                        c.cantidad_cajones_rechazada, c.motivo_rechazo, c.importe, c.sena,
-                       a.nombre AS articulo_nombre, a.unidad_compra,
+                       a.nombre AS articulo_nombre, a.unidad_compra, a.unidad_conteo,
                        p.nombre AS proveedor_nombre, p.codigo_puesto AS proveedor_codigo_puesto
                 FROM compras c
                 JOIN articulos a ON a.id = c.articulo_id
@@ -4003,7 +4010,7 @@ def listar_compras_pendientes_retiro(tipo_retiro: str) -> list[dict]:
             cursor.execute(
                 """
                 SELECT c.id, c.guia_id, c.guia_punto, c.fecha_operacion,
-                       a.nombre AS articulo_nombre, a.unidad_compra,
+                       a.nombre AS articulo_nombre, a.unidad_compra, a.unidad_conteo,
                        p.nombre AS proveedor_nombre, p.codigo_puesto AS proveedor_codigo_puesto,
                        c.cantidad_cajones, c.contenido_por_cajon, c.cantidad_kilos, c.cantidad_fraccion
                 FROM compras c
@@ -4130,9 +4137,10 @@ def listar_compras_procesadas_hoy_retiro(tipo_retiro: str, fecha) -> list[dict]:
         with conexion.cursor() as cursor:
             cursor.execute(
                 """
-                SELECT c.id, a.nombre AS articulo_nombre, a.unidad_compra,
+                SELECT c.id, a.nombre AS articulo_nombre, a.unidad_compra, a.unidad_conteo,
                        p.nombre AS proveedor_nombre, p.codigo_puesto AS proveedor_codigo_puesto,
                        c.cantidad_cajones, c.contenido_por_cajon, c.cantidad_cajones_retirada,
+                       c.cantidad_kilos, c.cantidad_fraccion,
                        c.estado_retiro, c.retiro_procesado_el, c.estado
                 FROM compras c
                 JOIN articulos a ON a.id = c.articulo_id
@@ -4176,11 +4184,15 @@ def listar_compras_sin_precio() -> list[dict]:
         with conexion.cursor() as cursor:
             cursor.execute(
                 """
-                SELECT c.id, c.fecha_operacion, a.nombre AS articulo_nombre, a.unidad_compra,
+                SELECT c.id, c.fecha_operacion, a.nombre AS articulo_nombre, a.unidad_compra, a.unidad_conteo,
                        p.nombre AS proveedor_nombre,
                        p.codigo_puesto AS proveedor_codigo_puesto,
                        COALESCE(c.cantidad_cajones_real, c.cantidad_cajones) AS cantidad_cajones,
-                       COALESCE(c.contenido_por_cajon_real, c.contenido_por_cajon) AS contenido_por_cajon
+                       COALESCE(c.contenido_por_cajon_real, c.contenido_por_cajon) AS contenido_por_cajon,
+                       -- LAS DOS MAGNITUDES, para que la pantalla no muestre solo la de
+                       -- `unidad_compra`. Mismo COALESCE que arriba: lo recibido manda.
+                       COALESCE(c.cantidad_kilos_real, c.cantidad_kilos) AS cantidad_kilos,
+                       COALESCE(c.cantidad_fraccion_real, c.cantidad_fraccion) AS cantidad_fraccion
                 FROM compras c
                 JOIN articulos a ON a.id = c.articulo_id
                 JOIN proveedores p ON p.id = c.proveedor_id

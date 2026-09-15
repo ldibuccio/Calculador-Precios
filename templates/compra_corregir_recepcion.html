@@ -1,3 +1,4 @@
+{% from "_magnitudes_del_cajon.html" import magnitudes_del_cajon %}
 <!DOCTYPE html>
 <html lang="es">
 <head>
@@ -139,7 +140,7 @@
       Esta compra no está recepcionada, no hay valores reales para corregir.
     </div>
     {% else %}
-    <p class="estimado">Comprado: {{ compra.cantidad_cajones|numero }} cajones × {{ compra.contenido_por_cajon|kilos }}{{ compra.unidad_compra|sufijo_unidad }}</p>
+    <p class="estimado">Comprado: {{ compra.cantidad_cajones|numero }} cajones × {{ magnitudes_del_cajon(compra) }}</p>
 
     {# EL AVISO DEL SEGUNDO TOQUE. Solo aparece cuando la simulación dice que
        algo se rompe: bajar el lote no rompe siempre, y un cartel que aparece

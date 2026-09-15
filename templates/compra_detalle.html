@@ -1,3 +1,4 @@
+{% from "_magnitudes_del_cajon.html" import magnitudes_del_cajon %}
 <!DOCTYPE html>
 <html lang="es">
 <head>
@@ -191,7 +192,7 @@
     </div>
     <div class="dato">
       <span class="etiqueta">Contenido por cajón</span>
-      <span class="valor">{{ compra.contenido_por_cajon|kilos }}{{ compra.unidad_compra|sufijo_unidad }}</span>
+      <span class="valor">{{ magnitudes_del_cajon(compra) }}</span>
     </div>
     <div class="dato">
       <span class="etiqueta">Costo</span>
@@ -259,7 +260,7 @@
     {% if compra.contenido_por_cajon_real is not none %}
     <div class="dato">
       <span class="etiqueta">Contenido por cajón real</span>
-      <span class="valor">{{ compra.contenido_por_cajon_real|kilos }}{{ compra.unidad_compra|sufijo_unidad }}</span>
+      <span class="valor">{{ magnitudes_del_cajon(compra, real=true) }}</span>
     </div>
     {% endif %}
     {# DICE "AL RECIBIR", y eso es del 12/09: desde que existe la devolución

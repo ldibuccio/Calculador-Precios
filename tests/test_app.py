@@ -2252,7 +2252,8 @@ def test_ver_buscar_compras_muestra_contador_y_tabla():
     assert "2 compras encontradas" in respuesta.text
     assert "Tomate Cherry" in respuesta.text
     assert "Saturno (N07P41)" in respuesta.text
-    assert "40 cajones × 20k" in respuesta.text
+    assert "40 cajones ×" in respuesta.text and "20k" in respuesta.text
+    assert 'class="magnitudes"' in respuesta.text
     assert "$45.000" in respuesta.text
     # Sin importe -> "SIN PRECIO" en rojo, mismo criterio que Últimas Compras.
     assert "SIN PRECIO" in respuesta.text
@@ -5981,7 +5982,10 @@ def test_ver_recepcion_agrupa_por_guia_y_muestra_estimado():
     assert "Tomate Cherry" in respuesta.text
     assert "Mango" in respuesta.text
     assert "Frutilla" in respuesta.text
-    assert "40 cajones × 20k" in respuesta.text
+    # Recepción NO usa el macro de las dos magnitudes: acá las dos son dos
+    # CAMPOS del formulario —lo que se pesó y lo que se contó— y el macro
+    # muestra lo declarado. Ponerlo sería decir dos veces lo mismo.
+    assert "40 cajones ×" in respuesta.text and "20k" in respuesta.text
     # Etiquetas según unidad_compra de cada artículo. Las tres piden por
     # cajón/bulto (Depósito mira un bulto por vez -- lo pesa o lo cuenta --
     # nunca toda la carga junta).
@@ -7069,7 +7073,10 @@ def test_ver_compras_pendientes_muestra_la_lista():
     assert "2026" not in respuesta.text
     assert "<td>10</td>" in respuesta.text
     # Regresión: letra de unidad pegada al contenido por cajón.
-    assert "<td>18k</td>" in respuesta.text
+    # El contenido ahora viaja adentro del macro de las dos magnitudes, así
+    # que se afirma el NÚMERO y no el `<td>` pelado.
+    assert "18k" in respuesta.text
+    assert 'class="magnitudes"' in respuesta.text
     # Regresión: mismos encabezados compactos que /compras.
     assert "<th>Cant</th>" in respuesta.text
     assert "<th>K/U</th>" in respuesta.text
@@ -11951,7 +11958,8 @@ def test_ver_ingresos_deposito_agrupa_por_proveedor_con_subtotales_y_total():
         limite=TOPE_FILAS_BUSQUEDA + 1,
     )
     # Cantidades REALES (las de Depósito): 8 × 20k, no lo que cargó el comprador.
-    assert "8 × 20k" in respuesta.text
+    assert "8 ×" in respuesta.text and "20k" in respuesta.text
+    assert 'class="magnitudes"' in respuesta.text
     # El rechazo parcial se ve aparte, para explicar la diferencia: se
     # facturan los 8 aceptados y se muestra que 2 se devolvieron.
     assert "Rechazo parcial (2 rech.)" in respuesta.text
@@ -28135,12 +28143,151 @@ def test_TODOS_los_que_GUARDAN_una_compra_sacan_sus_cantidades_de_UNA_funcion():
 
     # Y el reparto en sí no vive acá: vive en core/magnitudes.py, porque
     # Depósito hace el mismo con lo que pesó y contó.
-    de_main = io.open("app/main.py", encoding="utf-8").read()
-    de_db = io.open("app/db.py", encoding="utf-8").read()
-    assert "from core.magnitudes import repartir_magnitudes" in de_main
-    assert "from core.magnitudes import repartir_magnitudes" in de_db
+    # Se le pregunta al ÁRBOL y no al texto: un `from core.magnitudes import (`
+    # multilínea importa exactamente lo mismo y no matchea la línea escrita a
+    # mano. El test caería contra un cambio que no toca la regla (corolario 59).
+    def importa_de_magnitudes(archivo: str, nombre: str) -> bool:
+        arbol = ast.parse(io.open(archivo, encoding="utf-8").read())
+        return any(
+            isinstance(nodo, ast.ImportFrom)
+            and nodo.module == "core.magnitudes"
+            and any(alias.name == nombre for alias in nodo.names)
+            for nodo in ast.walk(arbol)
+        )
+
+    assert importa_de_magnitudes("app/main.py", "repartir_magnitudes")
+    assert importa_de_magnitudes("app/db.py", "repartir_magnitudes")
     fuente_core = io.open("core/magnitudes.py", encoding="utf-8").read()
     assert fuente_core.count("def repartir_magnitudes") == 1
+
+
+def test_el_HUECO_de_la_segunda_magnitud_SE_MUESTRA_y_no_se_calla():
+    """Una pantalla que se calla no distingue "no hay dato" de "no lo mostré".
+
+    Y acá el hueco es información: dice que esa compra vieja NO va a poder
+    costear en la otra unidad. Es el estado de casi todas hoy —el modelo
+    arrancó el 15/09— y se apaga solo cuando entren compras con las dos.
+
+    El macro se ejercita DIRECTO y no a través de una pantalla: así el caso
+    del hueco se puede plantar sin depender de qué compras tenga el fixture de
+    cada ruta (corolario 36 — para que un cero signifique algo hay que
+    plantar el caso).
+    """
+    from app.main import templates
+
+    macro = templates.env.get_template("_magnitudes_del_cajon.html").module.magnitudes_del_cajon
+    base = {"contenido_por_cajon": 40, "unidad_compra": "unidad",
+            "unidad_conteo": "unidad", "cantidad_cajones": 10, "cantidad_fraccion": 400}
+
+    sin_kilos = str(macro(dict(base, cantidad_kilos=None)))
+    assert "sin kilos declarados" in sin_kilos
+    assert "magnitud-hueco" in sin_kilos
+
+    con_kilos = str(macro(dict(base, cantidad_kilos=160)))
+    assert "16k" in con_kilos, "declaradas las dos, la segunda se muestra"
+    assert "sin kilos" not in con_kilos, "con el dato NO puede quedar el hueco"
+
+    # El artículo que se compra SOLO por kilo no tiene segunda magnitud, así
+    # que no hay nada que declarar y el hueco sería un reclamo falso.
+    solo_kilo = str(macro({"contenido_por_cajon": 16, "unidad_compra": "kilo",
+                           "unidad_conteo": None, "cantidad_cajones": 10,
+                           "cantidad_kilos": 160, "cantidad_fraccion": None}))
+    assert "sin" not in solo_kilo, "sin conteo declarado no falta nada"
+
+    # LA CONCORDANCIA VIAJA CON EL SUSTANTIVO: armar la frase pegando el
+    # plural a un "declarados" fijo da "sin unidades declarados".
+    falta_conteo = str(macro({"contenido_por_cajon": 16, "unidad_compra": "kilo",
+                              "unidad_conteo": "unidad", "cantidad_cajones": 10,
+                              "cantidad_kilos": 160, "cantidad_fraccion": None}))
+    assert "sin unidades declaradas" in falta_conteo
+    assert "declarados" not in falta_conteo
+
+
+def test_la_fila_REAL_mueve_LAS_DOS_mitades_juntas():
+    """Si no, muestra lo recibido de un lado y lo declarado del otro, en la misma línea.
+
+    El detalle tiene dos filas —lo comprado y lo recepcionado— y la segunda
+    magnitud tiene que seguir a la que el renglón está mostrando. Con una sola
+    versión, la fila real mezclaría las dos fuentes sin que nada avise.
+    """
+    from app.main import templates
+
+    macro = templates.env.get_template("_magnitudes_del_cajon.html").module.magnitudes_del_cajon
+    c = {"contenido_por_cajon": 16, "contenido_por_cajon_real": 18,
+         "unidad_compra": "kilo", "unidad_conteo": "unidad",
+         "cantidad_cajones": 10, "cantidad_kilos": 160, "cantidad_fraccion": 400,
+         "cantidad_cajones_real": 10, "cantidad_kilos_real": 180, "cantidad_fraccion_real": 350}
+
+    declarado, real = str(macro(c)), str(macro(c, real=True))
+    assert "16k" in declarado and "40u" in declarado
+    assert "18k" in real and "35u" in real
+    assert "40u" not in real, "la fila real se quedó con la segunda magnitud DECLARADA"
+
+
+def test_magnitudes_por_cajon_es_la_INVERSA_de_repartir_magnitudes():
+    """La vuelta completa tiene que cerrar, sobre la matriz entera.
+
+    Un comentario que dice "esto es la inversa" envejece en silencio; una
+    vuelta que tiene que cerrar, no. Se entra por `repartir_magnitudes`
+    —(principal, segunda) a (kilos, fraccion)— y se sale por las dos de
+    salida, que tienen que devolver exactamente lo que entró.
+
+    Y NO ES LA VUELTA COMPLETA DEL CORQOLARIO 41: ahí el círculo estaba
+    adentro de una pantalla que se preguntaba a sí misma y el número no
+    contestaba nada. Acá las dos mitades son código distinto —una decide en
+    qué columna cae cada total, la otra lee esas columnas— y lo que se afirma
+    es justamente que no se separaron.
+    """
+    from core.magnitudes import (
+        magnitudes_por_cajon, repartir_magnitudes, segunda_magnitud_por_cajon,
+    )
+
+    CAJONES = 10
+    casos = [
+        (unidad, principal, segunda)
+        for unidad in ("kilo", "unidad", "cubeta", None)
+        for principal in (16.0, 40.0)
+        for segunda in (160.0, None)
+    ]
+    for unidad, principal, segunda in casos:
+        kilos, fraccion = repartir_magnitudes(unidad, principal * CAJONES,
+                                              None if segunda is None else segunda * CAJONES)
+        k_cajon, c_cajon = magnitudes_por_cajon(kilos, fraccion, CAJONES)
+        vuelta = segunda_magnitud_por_cajon(unidad, k_cajon, c_cajon)
+        assert vuelta == segunda, f"no cerró para {unidad}, principal={principal}, segunda={segunda}"
+
+    # Y que la matriz ejercite las dos ramas del reparto: con todos los casos
+    # en 'kilo' cualquier inversa que devuelva el conteo pasaría (corolario 53).
+    assert {u for u, _, _ in casos} == {"kilo", "unidad", "cubeta", None}
+
+
+def test_la_INVERSA_del_reparto_esta_escrita_UNA_sola_vez():
+    """Estuvo dos veces en Jinja, en el mismo archivo, a 134 líneas.
+
+    Ninguna de las tres copias nombraba a las otras, así que el día que el
+    reparto cambiara una plantilla no se enteraba. Y con seis pantallas más
+    por mostrar las dos magnitudes, eso iba de dos copias a ocho.
+
+    El barrido pregunta por la FORMA del derivado —un total dividido los
+    cajones— en las plantillas, que es lo único que una copia nueva no puede
+    evitar escribir.
+    """
+    import glob
+
+    ofensores = []
+    for ruta in glob.glob("templates/*.html"):
+        marcado = io.open(ruta, encoding="utf-8").read()
+        sin_comentarios = re.sub(r"\{#.*?#\}", "", marcado, flags=re.S)
+        for patron in (r"cantidad_kilos\s*/\s*\w*\.?cantidad_cajones",
+                       r"cantidad_fraccion\s*/\s*\w*\.?cantidad_cajones"):
+            if re.search(patron, sin_comentarios):
+                ofensores.append(ruta)
+                break
+    assert not ofensores, f"el derivado volvió a las plantillas: {sorted(set(ofensores))}"
+
+    fuente = io.open("core/magnitudes.py", encoding="utf-8").read()
+    assert fuente.count("def magnitudes_por_cajon") == 1
+    assert fuente.count("def segunda_magnitud_por_cajon") == 1
 
 
 def test_TODAS_las_pantallas_de_carga_PIDEN_la_segunda_magnitud():
