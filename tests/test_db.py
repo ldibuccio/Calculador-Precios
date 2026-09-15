@@ -7000,6 +7000,51 @@ def test_obtener_o_crear_proveedor_por_codigo_reactiva_al_que_estaba_de_baja():
     assert (proveedor_id, reactivado) == (7, True)
 
 
+def test_con_pisar_nombre_en_FALSE_el_UPDATE_no_toca_el_nombre():
+    """La mitad que el test de la ruta no puede ver, y la encontró un canario en CERO.
+
+    El de la ruta afirma que la bandera se PASA; con ella ignorada acá, el
+    alta a mano renombraría al proveedor que ya existía —una corrección que
+    nadie pidió— y ningún test caía. Es la forma del corolario 65: la orden
+    dada no prueba que se haya cumplido.
+
+    Se mira el TEXTO del UPDATE y no solo los parámetros: con `nombre = %s`
+    de vuelta en la consulta y el nombre sacado de la tupla, los parámetros
+    también cambiarían, pero una consulta que nombra la columna y no la
+    recibe es un error distinto del que este test cuida.
+    """
+    conexion, cursor = _conexion_falsa(filas_fetchone=[(7, True)])
+
+    with patch("app.db.obtener_conexion", return_value=conexion):
+        proveedor_id, reactivado = obtener_o_crear_proveedor_por_codigo(
+            "N01P02", "EJEMPLO Tipeado", pisar_nombre=False)
+
+    consulta, parametros = cursor.execute.call_args_list[1].args
+    assert "activo = true" in consulta, "tiene que seguir reactivándolo"
+    assert "nombre" not in consulta, "el alta a mano no renombra al que ya estaba"
+    assert "EJEMPLO Tipeado" not in parametros
+    assert parametros == (7,)
+    assert (proveedor_id, reactivado) == (7, False)
+
+
+def test_con_pisar_nombre_en_TRUE_sigue_mandando_la_ultima_correccion():
+    """El control, y es el que distingue la bandera de un UPDATE que nunca pisa.
+
+    Con el `if` roto para el otro lado —que nunca pise— el test de arriba pasa
+    igual. Los dos juntos son lo único que dice que la bandera decide algo.
+    Y éste es el camino de todos los días: llegó mercadería con ese código, y
+    el que la recibió acaba de leer el nombre del remito.
+    """
+    conexion, cursor = _conexion_falsa(filas_fetchone=[(7, True)])
+
+    with patch("app.db.obtener_conexion", return_value=conexion):
+        obtener_o_crear_proveedor_por_codigo("N01P02", "EJEMPLO Del Remito")
+
+    consulta, parametros = cursor.execute.call_args_list[1].args
+    assert "nombre = %s" in consulta
+    assert parametros == ("EJEMPLO Del Remito", 7)
+
+
 def test_obtener_o_crear_proveedor_por_codigo_no_dice_reactivado_si_ya_estaba_activo():
     conexion, cursor = _conexion_falsa(filas_fetchone=[(7, True)])
 

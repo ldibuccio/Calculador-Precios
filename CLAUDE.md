@@ -3997,6 +3997,34 @@ de página entera salía llena de "quebradas" que eran botones. Comparar
 descontando el relleno lo arregla, y es el 53 al pie de la letra: un
 detector que marca todo se ve igual de trabajador que uno que funciona.
 
+### Y el CUARTO no es del detector: es medir la pantalla EQUIVOCADA (15/09)
+
+Midiendo el alta de Proveedores a 390px salió `desborde 0px · solapes: 0 de
+20 pares`. Prolijo, plausible, y **de otra página**: `/compras` está detrás de
+una puerta, y el script corrido fuera de pytest no tenía la cookie — así que
+lo que se midió fue la pantalla de "Falta la clave de Gerencia" (503) y
+después la del 401.
+
+**Ninguno de los tres números del detector puede delatarlo.** El desborde y
+los solapes de la pantalla de la clave son legítimamente cero: es una tarjeta
+con dos párrafos. El `20 pares` incluso suena a una pantalla con contenido.
+
+Lo que lo agarró fue pedir otra cosa al lado: **el status y un conteo de lo
+que esa pantalla TIENE que tener.** `GET 200 · renglones 6` no lo puede dar la
+página de la clave.
+
+Por eso, de acá en adelante, **toda medición de layout imprime al lado la
+identidad de lo que midió**: el código de estado y un conteo de un elemento
+propio de esa pantalla. Es el testigo del corolario 24 en su versión de
+pantalla — un cero sin nada que diga de dónde salió es un cero que tranquiliza
+—, y es el 47 otra vez con el mecanismo corrido: allá el número no podía
+moverse, acá **se movía perfecto y describía otra cosa**.
+
+Y el corolario del corolario, para el que mida una pantalla con puerta: el
+`cliente` de la suite pasa porque los tests le ponen la cookie firmada. Un
+script suelto no, y la diferencia no se ve en el número — se ve en el status,
+que hay que ir a pedir.
+
 ### El TERCER límite, del 15/09: no veía que dos cajas se PISARAN
 
 Una ayuda con `margin-top: -0.4rem` le comía 6,4px al `<select>` de arriba

@@ -1252,11 +1252,50 @@ def listar_todas_las_conversiones() -> list[dict]:
         conexion.close()
 
 
-def obtener_o_crear_proveedor_por_codigo(codigo_puesto: str, nombre: str) -> tuple[int, bool]:
-    """Busca un proveedor por codigo_puesto (la identidad) o lo crea; el nombre siempre se actualiza.
+def buscar_proveedor_por_codigo(codigo_puesto: str) -> dict | None:
+    """El proveedor de ese código, o None. NO crea nada y NO toca el nombre.
+
+    La usa el ALTA a mano para saber si el código ya está antes de decidir qué
+    mostrar. Va SIN agregado a propósito: con un `count(*)` la fila volvería
+    siempre y `fila is None` dejaría de poder decir "no existe" (corolario 27).
+
+    La carrera entre esta consulta y el alta está cubierta y no por suerte: el
+    que crea vuelve a buscar por su cuenta, así que si alguien insertó en el
+    medio toma la rama del que ya existe — y con `pisar_nombre` en False no le
+    pisa nada. El unique de la columna es el piso de todo esto.
+    """
+    conexion = obtener_conexion()
+    try:
+        with conexion.cursor() as cursor:
+            cursor.execute(
+                "SELECT id, codigo_puesto, nombre, activo FROM proveedores WHERE codigo_puesto = %s",
+                (codigo_puesto,),
+            )
+            fila = cursor.fetchone()
+            if fila is None:
+                return None
+            columnas = [d[0] for d in cursor.description]
+        return dict(zip(columnas, fila))
+    finally:
+        conexion.close()
+
+
+def obtener_o_crear_proveedor_por_codigo(
+    codigo_puesto: str, nombre: str, *, pisar_nombre: bool = True
+) -> tuple[int, bool]:
+    """Busca un proveedor por codigo_puesto (la identidad) o lo crea. ÚNICO lugar que lo INSERTA.
 
     "La última corrección manda": si el código ya existe pero con otro nombre guardado, se
     pisa con el nombre recién cargado.
+
+    `pisar_nombre` EXISTE PORQUE LAS DOS FUERZAS SE DECIDEN, NO SE HEREDAN
+    (corolario 26). Pisar es lo correcto cuando LLEGÓ MERCADERÍA con ese
+    código: el que la recibió acaba de leer el nombre del remito y es el dato
+    más fresco que hay. En el ALTA A MANO no llegó nada — alguien está
+    tipeando un código que puede recordar mal, y renombrarle un proveedor que
+    ya existía por eso sería una corrección que nadie pidió. Por eso el alta
+    llama con False, y el default deja a los tres caminos de carga como
+    estaban.
 
     Si el que encuentra estaba DADO DE BAJA, lo vuelve a activar: si llegó
     mercadería con ese código, el proveedor existe, y dejarlo de baja haría
@@ -1274,10 +1313,16 @@ def obtener_o_crear_proveedor_por_codigo(codigo_puesto: str, nombre: str) -> tup
             if fila is not None:
                 proveedor_id, activo = fila
                 reactivado = not activo
-                cursor.execute(
-                    "UPDATE proveedores SET nombre = %s, activo = true, actualizado_en = now() WHERE id = %s",
-                    (nombre, proveedor_id),
-                )
+                if pisar_nombre:
+                    cursor.execute(
+                        "UPDATE proveedores SET nombre = %s, activo = true, actualizado_en = now() WHERE id = %s",
+                        (nombre, proveedor_id),
+                    )
+                else:
+                    cursor.execute(
+                        "UPDATE proveedores SET activo = true, actualizado_en = now() WHERE id = %s",
+                        (proveedor_id,),
+                    )
             else:
                 cursor.execute(
                     "INSERT INTO proveedores (codigo_puesto, nombre) VALUES (%s, %s) RETURNING id",

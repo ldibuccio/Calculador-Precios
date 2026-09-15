@@ -25980,14 +25980,116 @@ def test_abm_proveedores_compras_muestra_codigo_estado_y_cuantas_compras():
     assert "De baja" in respuesta.text
 
 
-def test_abm_proveedores_compras_no_ofrece_alta_de_proveedor_nuevo():
-    # Un proveedor de compras nace solo al cargar una compra con un código
-    # nuevo. Un alta acá crearía códigos sin ninguna compra detrás.
-    with patch("app.main.listar_proveedores_para_abm", return_value=PROVEEDORES_ABM_DE_PRUEBA):
-        respuesta = cliente.get("/compras/proveedores")
+def test_el_ABM_de_proveedores_OFRECE_el_alta():
+    """Reemplaza al test que exigía lo contrario, y por eso está dicho acá.
 
-    assert 'action="/compras/proveedores/nuevo"' not in respuesta.text
-    assert "No se cargan de acá" in respuesta.text
+    Hasta el 15/09 un proveedor de compras solo nacía al cargar una compra, y
+    había un test que afirmaba que la pantalla NO ofrecía alta. Ese test pasó
+    a defender lo que dejamos de querer (corolario 22): tener uno cargado
+    antes de comprarle es un caso real y la única salida era inventar una
+    compra.
+    """
+    with patch("app.main.listar_proveedores_para_abm", return_value=PROVEEDORES_ABM_DE_PRUEBA):
+        marcado = cliente.get("/compras/proveedores").text.split("</style>")[-1]
+
+    assert 'action="/compras/proveedores/nuevo"' in marcado
+    assert 'name="codigo_puesto"' in marcado
+    assert "No se cargan de acá" not in marcado, "la ayuda vieja afirmaba que no había alta"
+
+
+def test_el_alta_de_proveedor_pasa_por_LA_MISMA_PUERTA_que_la_carga_de_compras():
+    """Y sin pisar el nombre, que son las dos mitades y hacen falta las dos.
+
+    El INSERT vive en un solo lugar: con uno propio acá serían dos puertas, y
+    el día que una gane una validación la otra queda vieja sin que nada avise.
+    Y `pisar_nombre=False` porque en el alta no llegó mercadería — el que
+    tipea puede recordar mal el código.
+    """
+    with (
+        patch("app.main.buscar_proveedor_por_codigo", return_value=None),
+        patch("app.main.obtener_o_crear_proveedor_por_codigo", return_value=(7, False)) as puerta,
+        patch("app.main.listar_proveedores_para_abm", return_value=PROVEEDORES_ABM_DE_PRUEBA),
+    ):
+        respuesta = cliente.post(
+            "/compras/proveedores/nuevo",
+            data={"nombre": "EJEMPLO Uno", "codigo_puesto": "n07p41"},
+            follow_redirects=False,
+        )
+
+    assert respuesta.status_code == 303
+    puerta.assert_called_once_with("N07P41", "EJEMPLO Uno", pisar_nombre=False)
+    assert "destacado_id=7" in respuesta.headers["location"]
+
+
+def test_el_alta_NO_TIENE_un_INSERT_propio():
+    """El texto, porque el mock no puede ver si alguien escribió otro camino.
+
+    El test de arriba pasa igual con un INSERT propio al lado del llamado a la
+    puerta: el mock contesta lo que le pidieron, no lo que el código hizo
+    después (corolario 40). Lo único que ve un segundo camino es leer la ruta.
+    """
+    import ast
+
+    arbol = ast.parse(io.open("app/main.py", encoding="utf-8").read())
+    ruta = next(n for n in ast.walk(arbol)
+                if isinstance(n, ast.FunctionDef) and n.name == "crear_proveedor_compras_ruta")
+    llamadas = {n.func.id for n in ast.walk(ruta)
+                if isinstance(n, ast.Call) and isinstance(n.func, ast.Name)}
+    assert "obtener_o_crear_proveedor_por_codigo" in llamadas
+    cuerpo = ast.unparse(ruta).upper()
+    assert "INSERT INTO" not in cuerpo, "el alta se escribió una puerta propia"
+    assert "PROVEEDORES (" not in cuerpo
+
+
+def test_el_FORMATO_mal_y_el_codigo_REPETIDO_dicen_cosas_distintas():
+    """Mandan a hacer cosas distintas: uno se corrige tipeando, el otro ya está.
+
+    Un solo mensaje para los dos —"no se pudo cargar"— deja al que lo lee sin
+    saber si tiene que arreglar el código o dejar de cargarlo.
+    """
+    with (
+        patch("app.main.listar_proveedores_para_abm", return_value=PROVEEDORES_ABM_DE_PRUEBA),
+        patch("app.main.buscar_proveedor_por_codigo") as buscar,
+        patch("app.main.obtener_o_crear_proveedor_por_codigo") as puerta,
+    ):
+        mal_formato = cliente.post(
+            "/compras/proveedores/nuevo", data={"nombre": "EJEMPLO Uno", "codigo_puesto": "7P41"})
+        buscar.assert_not_called(), "con el formato mal no hay que ir a la base"
+
+        buscar.return_value = {"id": 3, "codigo_puesto": "N07P41",
+                               "nombre": "EJEMPLO Otro", "activo": True}
+        repetido = cliente.post(
+            "/compras/proveedores/nuevo", data={"nombre": "EJEMPLO Uno", "codigo_puesto": "N07P41"})
+
+    assert mal_formato.status_code == 400
+    assert "formato" in mal_formato.text and "N07P41" in mal_formato.text
+    assert "ya es de" not in mal_formato.text
+
+    assert repetido.status_code == 400
+    assert "ya es de" in repetido.text and "EJEMPLO Otro" in repetido.text
+    assert "formato" not in repetido.text.split("</style>")[-1]
+    puerta.assert_not_called(), "el repetido NO se crea ni se renombra: se muestra"
+
+
+def test_el_codigo_REPETIDO_se_MUESTRA_destacado_en_la_lista():
+    """Decirlo no alcanza: sin la marca hay que salir a buscarlo en la lista.
+
+    Y si está de baja, el aviso lo dice — si no, el que lo lee no entiende por
+    qué no le aparece para elegir al cargar una compra.
+    """
+    de_baja = dict(PROVEEDORES_ABM_DE_PRUEBA[0], id=1, activo=False)
+    with (
+        patch("app.main.listar_proveedores_para_abm", return_value=[de_baja]),
+        patch("app.main.buscar_proveedor_por_codigo",
+              return_value={"id": 1, "codigo_puesto": "N07P41",
+                            "nombre": de_baja["nombre"], "activo": False}),
+    ):
+        respuesta = cliente.post(
+            "/compras/proveedores/nuevo", data={"nombre": "EJEMPLO Uno", "codigo_puesto": "N07P41"})
+
+    marcado = respuesta.text.split("</style>")[-1]
+    assert "dado de baja" in marcado
+    assert "destacado" in marcado, "el aviso lo nombra y la fila no se marca"
 
 
 def test_abm_proveedores_compras_el_activo_ofrece_baja_y_el_de_baja_ofrece_alta():

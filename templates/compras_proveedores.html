@@ -114,6 +114,41 @@
   .boton-baja { color: #dc2626; border: 1px solid #dc2626; }
   .boton-alta { color: #15803d; border: 1px solid #15803d; }
   .vacio { color: #888; font-style: italic; margin: 0; }
+  form.alta label {
+    display: block;
+    margin-top: 0.75rem;
+    font-size: 0.9rem;
+    color: #444;
+  }
+  form.alta input {
+    width: 100%;
+    padding: 0.65rem;
+    margin-top: 0.25rem;
+    border: 1px solid #ccc;
+    border-radius: 8px;
+    font-size: 1rem;
+    box-sizing: border-box;
+    text-transform: uppercase;
+  }
+  form.alta input#nombre_nuevo { text-transform: none; }
+  form.alta button {
+    margin-top: 1.1rem;
+    width: 100%;
+    padding: 0.8rem;
+    background: #2563eb;
+    color: #fff;
+    border: none;
+    border-radius: 8px;
+    font-size: 1rem;
+    font-weight: 600;
+  }
+  /* EL DESTACADO: cuando el alta rebota porque el código ya estaba, el aviso
+     dice de quién es y ESTO es lo que lo muestra. Sin la marca hay que salir
+     a buscarlo en la lista, que es justo lo que el aviso venía a evitar. */
+  .renglon.destacado {
+    border: 2px solid #1d4ed8;
+    background: #eff6ff;
+  }
   .volver {
     display: block;
     margin-top: 0.75rem;
@@ -139,14 +174,31 @@
   {% endif %}
 
   <!-- Proveedores de COMPRAS (los del Mercado, con codigo de puesto), nada
-       que ver con los proveedores del puesto de /puesto/envases. Acá no hay
-       alta: nacen solos al cargar una compra con un codigo nuevo. -->
+       que ver con los proveedores del puesto de /puesto/envases. Nacen solos
+       al cargar una compra con un codigo nuevo, y desde el 15/09 tambien se
+       pueden cargar de acá, antes de comprarles. -->
+  <div class="tarjeta">
+    <h2>Cargar un proveedor</h2>
+    <p class="ayuda">Para tenerlo cargado antes de comprarle. Si no, nace solo la primera vez que cargás una compra con su código.</p>
+    <form class="alta" method="post" action="/compras/proveedores/nuevo">
+      <label for="nombre_nuevo">Nombre *</label>
+      <input type="text" id="nombre_nuevo" name="nombre" required>
+
+      <label for="codigo_puesto_nuevo">Código de puesto *</label>
+      <input type="text" id="codigo_puesto_nuevo" name="codigo_puesto" required
+             placeholder="N07P41" maxlength="6" autocapitalize="characters" autocomplete="off">
+      <p class="ayuda">Es su identidad y no se puede cambiar después: una letra, dos números, la P y dos números. Por ejemplo N07P41.</p>
+
+      <button type="submit">Cargar proveedor</button>
+    </form>
+  </div>
+
   <div class="tarjeta">
     <h2>Proveedores ({{ proveedores|length }})</h2>
-    <p class="ayuda">No se cargan de acá: un proveedor nace solo cuando se carga una compra con un código nuevo. Editar corrige el nombre mal escrito — sigue siendo el mismo proveedor y sus compras no se mueven. El CÓDIGO no se puede cambiar: es su identidad. Si el código está mal tipeado, el proveedor se da de baja.</p>
+    <p class="ayuda">Editar corrige el nombre mal escrito — sigue siendo el mismo proveedor y sus compras no se mueven. El CÓDIGO no se puede cambiar: es su identidad. Si el código está mal tipeado, el proveedor se da de baja.</p>
     {% if proveedores %}
       {% for p in proveedores %}
-      <div class="renglon{% if not p.activo %} de-baja{% endif %}">
+      <div class="renglon{% if not p.activo %} de-baja{% endif %}{% if destacado_id and p.id == destacado_id|int %} destacado{% endif %}">
         <div class="renglon-arriba">
           <strong>{{ p.nombre }}{% if not p.activo %}<span class="pill-baja">De baja</span>{% endif %}</strong>
           <button type="button" class="boton-editar" onclick="abrirEdicion('{{ p.id }}')">Editar</button>

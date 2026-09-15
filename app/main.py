@@ -306,6 +306,7 @@ from app.db import (
     obtener_detalle_compra,
     obtener_ficha,
     obtener_o_crear_cliente_puesto,
+    buscar_proveedor_por_codigo,
     obtener_o_crear_proveedor_por_codigo,
     obtener_o_crear_proveedor_puesto,
     obtener_proveedor,
@@ -4204,7 +4205,8 @@ def _aviso_proveedor_reactivado(reactivado: bool, nombre: str) -> str | None:
 
 
 def _renderizar_pantalla_proveedores_compras(
-    request: Request, *, error: str | None = None, aviso: str | None = None, status_code: int = 200
+    request: Request, *, error: str | None = None, aviso: str | None = None,
+    destacado_id: int | None = None, status_code: int = 200
 ):
     try:
         proveedores = listar_proveedores_para_abm()
@@ -4214,24 +4216,92 @@ def _renderizar_pantalla_proveedores_compras(
     return templates.TemplateResponse(
         request,
         "compras_proveedores.html",
-        {"proveedores": proveedores, "error": error, "aviso": aviso},
+        {"proveedores": proveedores, "error": error, "aviso": aviso,
+         "destacado_id": destacado_id},
         status_code=status_code,
     )
 
 
 @app.get("/compras/proveedores")
-def ver_proveedores_compras(request: Request, aviso: str | None = None):
-    """Proveedores de compras: corregir el nombre y dar de baja. NO hay alta.
+def ver_proveedores_compras(request: Request, aviso: str | None = None, destacado_id: int | None = None):
+    """Proveedores de compras: darlos de alta, corregir el nombre y dar de baja.
 
-    Un proveedor de compras nace solo, al cargar una compra con un código
-    de puesto nuevo (obtener_o_crear_proveedor_por_codigo). Esta pantalla
-    existe por lo que ESO no permite arreglar: la identidad es
-    codigo_puesto, así que un código mal tipeado crea un proveedor
-    fantasma que no se puede corregir renombrando — la baja lógica es su
-    única salida. El nombre sí se corrige acá (y también solo, cargando
-    otra compra con el mismo código: "la última corrección manda").
+    Un proveedor de compras TAMBIÉN nace solo, al cargar una compra con un
+    código de puesto nuevo (obtener_o_crear_proveedor_por_codigo), y ése
+    sigue siendo el camino de todos los días. El alta de acá es para el que
+    quiere tenerlo cargado ANTES de comprarle, sin inventar una compra.
+
+    Lo que el alta NO arregla: la identidad es codigo_puesto, así que un
+    código mal tipeado crea un proveedor fantasma que no se puede corregir
+    renombrando — la baja lógica sigue siendo su única salida. El nombre sí se
+    corrige acá (y también solo, cargando otra compra con el mismo código:
+    "la última corrección manda").
     """
-    return _renderizar_pantalla_proveedores_compras(request, aviso=aviso)
+    return _renderizar_pantalla_proveedores_compras(request, aviso=aviso, destacado_id=destacado_id)
+
+
+@app.post("/compras/proveedores/nuevo")
+def crear_proveedor_compras_ruta(request: Request, nombre: str = Form(""), codigo_puesto: str = Form("")):
+    """Alta a mano. Pasa por la MISMA puerta que usa la carga de compras.
+
+    El INSERT vive en un solo lugar (`obtener_o_crear_proveedor_por_codigo`):
+    con uno propio acá serían dos puertas, y el día que una gane una
+    validación la otra queda vieja sin que nada avise.
+
+    Y con `pisar_nombre=False`, porque acá no llegó mercadería: el que tipea
+    puede recordar mal el código, y renombrarle un proveedor que ya existía
+    sería una corrección que nadie pidió.
+    """
+    nombre_limpio = re.sub(r"\s+", " ", nombre).strip()
+    if not nombre_limpio:
+        return _renderizar_pantalla_proveedores_compras(
+            request, error="El nombre del proveedor es obligatorio.", status_code=400
+        )
+
+    # LOS DOS MOTIVOS SE DICEN DISTINTO PORQUE MANDAN A HACER COSAS DISTINTAS:
+    # un formato mal es un tipeo para corregir acá mismo; un código repetido no
+    # es un error, es que el proveedor YA ESTÁ.
+    error_formato, codigo_valor = _validar_codigo_puesto(codigo_puesto)
+    if error_formato:
+        return _renderizar_pantalla_proveedores_compras(request, error=error_formato, status_code=400)
+
+    try:
+        ya_estaba = buscar_proveedor_por_codigo(codigo_valor)
+    except Exception as error_db:
+        return _renderizar_pantalla_proveedores_compras(
+            request, error=f"No se pudo leer el proveedor: {error_db}", status_code=500
+        )
+
+    if ya_estaba is not None:
+        # MOSTRARLO Y NO RECHAZARLO: puede estar cargado con otro nombre, y lo
+        # que haga falta sea renombrarlo — que ya se puede desde esta pantalla.
+        # Por eso va como AVISO y con la fila destacada, no como un error que
+        # manda a irse.
+        de_baja = "" if ya_estaba["activo"] else " Está dado de baja: el botón de alta lo vuelve a activar."
+        return _renderizar_pantalla_proveedores_compras(
+            request,
+            aviso=(
+                f'El código {ya_estaba["codigo_puesto"]} ya es de "{ya_estaba["nombre"]}", '
+                f"que está más abajo. Si el nombre está mal, corregilo con Editar.{de_baja}"
+            ),
+            destacado_id=ya_estaba["id"],
+            status_code=400,
+        )
+
+    try:
+        proveedor_id, _ = obtener_o_crear_proveedor_por_codigo(
+            codigo_valor, nombre_limpio, pisar_nombre=False
+        )
+    except Exception as error_db:
+        return _renderizar_pantalla_proveedores_compras(
+            request, error=f"No se pudo guardar el proveedor: {error_db}", status_code=500
+        )
+
+    parametros = urlencode({
+        "aviso": f'Proveedor "{nombre_limpio}" ({codigo_valor}) cargado. Ya se puede elegir al cargar una compra.',
+        "destacado_id": proveedor_id,
+    })
+    return RedirectResponse(url=f"/compras/proveedores?{parametros}", status_code=303)
 
 
 @app.post("/compras/proveedores/{proveedor_id}/renombrar")
