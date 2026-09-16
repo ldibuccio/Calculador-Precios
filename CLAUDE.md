@@ -6210,6 +6210,96 @@ real con el caso plantado:
   únicas que pueden cambiar de resultado son las que comparten artículo y
   fecha con otra.
 
-**Ninguna se corrió todavía contra las bases.** Hasta que salga el número no
+**El techo, corrido el 16/09** (Frutamax, `desde` 18/06, `ultima_guia_r`
+15/09): `comparten_dia 155 · guias_en_la_ventana 307 · dias_con_varias 72 ·
+bultos_en_riesgo 2639 de 5925 · peor_dia 3`. Palmala dio todo en cero y **no
+vota** — es la base parada del corolario 24.
+
+**La mitad de las guías comparten día**, y hay 155 sobre 72 grupos de
+artículo-fecha, o sea de a dos casi siempre y tres como máximo. Eso NO son
+155 casos rotos: compartir día es la CONDICIÓN NECESARIA, no el defecto —
+dos guías del mismo día pueden entrar holgadas en el lote, o tocar lotes
+distintos del mismo artículo. Lo que el techo dice es que el arreglo no es
+un caso de borde: si rebota, va a rebotar seguido, y por eso el número del
+daño real tiene que venir antes de ponerlo.
+
+**`mismo_dia_1` no se corrió todavía contra las bases.** Hasta que salga el número no
 se sabe si esto es un incidente de dos guías o si el costeo viene mal hace
 semanas, y esa diferencia decide si además del freno hace falta un rescate.
+
+## Corolario 74: una respuesta CONGELADA y una DERIVADA a la misma pregunta se separan sin que ninguna esté rota
+
+Del 16/09, y es del dueño: *"las dos cumplen lo que prometen, y nadie las
+pone al lado"*. Salió del corolario 73 pero no es de ese bug — es la forma, y
+este sistema está lleno de pares así.
+
+Cuando 56 bultos salieron de un lote de 40, el sistema quedó diciendo dos
+cosas incompatibles:
+
+```
+lo CONGELADO (reprocesos_consumos)  56 salieron del lote, al costo del lote
+lo DERIVADO  (el rejuego del FIFO)  el lote en 0 y 16 SIN LOTE
+```
+
+**Y las dos son correctas.** `reprocesos_consumos` promete ser *"un documento
+congelado: si después se corrige una recepción, el stock vivo se reacomoda
+pero esta trazabilidad y su costo no se mueven"* — lo dice su propio comment,
+y hace exactamente eso. El rejuego promete recalcular en cada lectura, y hace
+exactamente eso. No hay una línea mal escrita en ninguno de los dos.
+
+### Por qué no hay forma de que se avisen
+
+Las dos propiedades que los hacen útiles son las que impiden la alarma:
+
+- **El congelado no puede cambiar** — si cambiara, no serviría para lo que
+  existe (el costo al que se facturó no se puede mover porque el stock se
+  reacomodó). Así que no puede "enterarse" de nada.
+- **El derivado no guarda nada** — no tiene dónde dejar una marca que diga
+  "esto no coincide con lo que se escribió aquel día".
+
+O sea que la contradicción **no tiene lugar donde vivir**. No es que falte un
+CHECK: un CHECK compara dos cosas en una misma escritura, y acá las dos
+respuestas se producen en momentos distintos y con reglas distintas a
+propósito.
+
+### Y la pantalla las separa, que es lo que lo vuelve invisible
+
+El que abre el detalle de la guía ve un costo completo y prolijo. El que mira
+el stock ve un hueco. **Son dos pantallas distintas y nadie tiene motivo para
+abrirlas juntas** — es el corolario 10 (dos vistas del mismo hecho que dan
+consejos incompatibles se esconden mientras estén separadas) con la vuelta de
+que allá bastó cambiar un orden para que cayeran juntas, y acá viven en
+módulos distintos.
+
+### La señal, y se hace al DISEÑAR, no al depurar
+
+**Cuando un dato se congela "para trazabilidad" y el mismo hecho además se
+deriva en cada lectura, eso es un PAR, y el par necesita quien lo compare.**
+La pregunta que lo detecta: *si estos dos se separaran, ¿qué se rompería?* Si
+la respuesta es "nada, cada uno sigue andando", no hay alarma posible y hay
+que fabricarla.
+
+No es un argumento para dejar de congelar: congelar el costo es correcto y la
+razón está escrita. Es que **el par se elige, y al elegirlo se acepta una
+deuda**: alguien tiene que poder preguntar si siguen coincidiendo.
+
+Los pares que ya existen en este sistema, para que la próxima no se busque de
+cero:
+
+| congelado | derivado | ¿los compara alguien? |
+|---|---|---|
+| `reprocesos_consumos` | el rejuego del FIFO | **no** — es este corolario |
+| `conteos_stock.stock_sistema` | el stock de ahora | sí, y se decidió sacarlo (corolario 25) |
+| `movimientos_stock.stock_sistema` | el stock de ahora | no, y es a propósito: es la foto de auditoría |
+| `movimientos_stock.costo_por_bulto` | el costo del listado | no |
+
+**La comparación más barata no es una pantalla: es una consulta que devuelva
+los dos números en la misma fila** — que es lo que hace `mismo_dia_1` contra
+lo congelado, y lo que le falta del lado derivado. Una fila con los dos al
+lado es lo único que convierte "nadie los pone juntos" en "no coinciden".
+
+**Y el precio de no tener la comparación no es el descuadre: es que el
+descuadre se ve como dos pantallas sanas.** Es la familia entera de este
+archivo —el cero que no puede crecer, la columna que nadie escribe, el campo
+sin consecuencia— dicha una vez más: lo que hace daño no es el dato malo, es
+que se vea igual que el bueno.
