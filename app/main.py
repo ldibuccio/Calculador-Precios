@@ -50,6 +50,7 @@ from app.costeo import (
 # de las tres llamar según qué campo se editó. La cuarta
 # (calcular_costo_por_unidad_medida) es la división importe / kilos, que
 # también es del motor y trae su propia guarda del cero.
+from core.envases import hay_que_reponer
 from core.motor_costeo import (
     calcular_costo_por_unidad_medida,
     costo_objetivo_multi_concepto as calcular_costo_objetivo,
@@ -284,6 +285,8 @@ from app.db import (
     crear_movimiento_envase,
     contar_guias_sin_declarar_el_envase,
     guardar_umbral_de_envase,
+    contar_envases_a_reponer,
+    detallar_envases_a_reponer,
     listar_proveedores_puesto,
     listar_senas_pendientes,
     listar_senas_resueltas,
@@ -4429,16 +4432,11 @@ def _renderizar_pantalla_cajas(request: Request, *, error: str | None = None,
         raise HTTPException(status_code=500, detail=f"Error al conectar con la base de datos: {error_db}") from error_db
 
     for envase in envases:
-        # `bajo` se calcula ACÁ y no en la plantilla: es la misma pregunta que
-        # va a contestar la alerta, y escrita en los dos lugares se separan.
-        # Con stock en None —sin conteo inicial— NO es bajo: no hay número
-        # contra el que comparar, y pintarlo de rojo diría que no quedan cajas
-        # cuando lo que pasa es que la cuenta no arrancó.
-        envase["bajo"] = (
-            envase["stock"] is not None
-            and envase["umbral_reposicion"] is not None
-            and envase["stock"] < envase["umbral_reposicion"]
-        )
+        # LA MISMA función que la alerta, no una condición escrita acá: el
+        # rojo de la tarjeta y el número del banner tienen que contestar la
+        # misma pregunta o el día que una cambie no va a haber forma de saber
+        # cuál tiene razón. La regla vive en core/envases.py.
+        envase["bajo"] = hay_que_reponer(envase)
 
     return templates.TemplateResponse(
         request,
@@ -12384,6 +12382,25 @@ ALERTAS = [
         texto_link="Ver en Recepción",
         modulos=("deposito",),
         contar=lambda: contar_recepciones_pendientes_viejas(_hoy_argentina() - timedelta(days=2)),
+    ),
+    DefinicionAlerta(
+        codigo="cajas_a_reponer",
+        titulo="Cajas nuestras debajo del aviso de reposición",
+        titulo_corto="Cajas por reponer",
+        url="/compras/cajas",
+        texto_link="Ver en Cajas",
+        modulos=("compras",),
+        # LAMBDA Y NO LA REFERENCIA A SECAS, como las otras diecinueve: el
+        # registro se construye al importar el módulo, así que una referencia
+        # captura el objeto de ese momento y deja de seguir al nombre —
+        # parchearla después no la toca, y el test que recorre todas se va a
+        # la base de verdad. Ya pasó una vez.
+        contar=lambda: contar_envases_a_reponer(),
+        # CON DETALLE, y no es un adorno: "3 envases por reponer" no dice
+        # cuáles ni cuántas faltan, y el que lo lee tiene que ir a la pantalla
+        # a buscarlo. Acá el detalle es corto —una fila por envase, y el
+        # catálogo tiene dos— así que la lista ENTERA entra en el aviso.
+        detallar=lambda: detallar_envases_a_reponer(),
     ),
     DefinicionAlerta(
         codigo="stock_vacios_negativo",

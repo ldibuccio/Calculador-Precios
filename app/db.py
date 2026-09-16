@@ -11,7 +11,7 @@ from contextlib import contextmanager
 
 import psycopg2
 
-from core.envases import envase_de_la_guia
+from core.envases import envase_de_la_guia, hay_que_reponer
 from core.magnitudes import repartir_magnitudes
 
 DATABASE_URL_ENV_VAR = "DATABASE_URL"
@@ -12018,3 +12018,55 @@ def guardar_umbral_de_envase(envase_id: int, umbral: int | None) -> None:
         conexion.commit()
     finally:
         conexion.close()
+
+
+def _envases_a_reponer() -> list[dict]:
+    """Los envases debajo de su aviso, con el faltante calculado. Uso interno.
+
+    SALE DEL MISMO `stock_de_envases()` que la pantalla, y el filtro es la
+    MISMA función (`hay_que_reponer`). Una consulta SQL propia para la alerta
+    habría sido más corta y habría sido la regla escrita dos veces: el día que
+    el criterio cambie, el banner y el rojo de la tarjeta dirían cosas
+    distintas del mismo envase.
+
+    Es una consulta sobre un puñado de filas —el catálogo de envases— que se
+    corre cada seis horas. No hay nada que optimizar acá.
+    """
+    return [
+        dict(envase, faltan=envase["umbral_reposicion"] - envase["stock"])
+        for envase in stock_de_envases()
+        if hay_que_reponer(envase)
+    ]
+
+
+def contar_envases_a_reponer() -> dict:
+    """Cuántos envases están debajo de su aviso. Para el registro de alertas.
+
+    Sin `mas_viejo`: un envase no tiene fecha de "cuándo empezó a faltar" —
+    el stock se rejuega en cada lectura y no hay un instante en que cruzó el
+    umbral. Devolver la fecha del conteo inicial sería inventar una
+    antigüedad que no significa eso.
+    """
+    return {"casos": len(_envases_a_reponer()), "mas_viejo": None}
+
+
+def detallar_envases_a_reponer() -> dict:
+    """Cuáles son y cuántas faltan, para la pantalla de Alertas de Compras.
+
+    CUENTA SUS PROPIAS FILAS: el número del banner sale de la foto de hasta
+    seis horas atrás y éste sale de ahora. Que no coincidan no es un bug —son
+    dos instantes— pero el resumen y la lista de ESTA pantalla tienen que
+    salir del mismo lugar, que es lo único que un lector no podría explicar.
+    """
+    filas = _envases_a_reponer()
+    return {
+        "columnas": ["Envase", "Quedan", "Avisa debajo de", "Faltan"],
+        "filas": [
+            [f["nombre"], f["stock"], f["umbral_reposicion"], f["faltan"]]
+            for f in filas
+        ],
+        "resumen": (
+            f"{len(filas)} envase{'s' if len(filas) != 1 else ''} debajo de su aviso"
+            if filas else "Ningún envase debajo de su aviso"
+        ),
+    }

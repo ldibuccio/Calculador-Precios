@@ -88,3 +88,25 @@ def declarado_del_formulario(envase_id, envases_validos) -> tuple[bool | None, i
     if envase_id in envases_validos:
         return True, envase_id
     return False, None
+
+
+def hay_que_reponer(envase: dict) -> bool:
+    """¿Este envase está debajo de su aviso de reposición?
+
+    ESTÁ ACÁ Y NO EN LA PANTALLA NI EN LA ALERTA porque la contestan las dos,
+    y escrita dos veces se separan: el día que una cambie, el banner y el rojo
+    de la tarjeta van a decir cosas distintas del mismo envase y no va a haber
+    forma de saber cuál tiene razón.
+
+    SIN CONTEO INICIAL NO ES "HAY QUE REPONER", y es la mitad que no se ve
+    sola: `stock` en None significa que la cuenta de ese envase no arrancó, no
+    que no queden cajas. Tratarlo como cero lo pondría debajo de cualquier
+    umbral y la alerta saltaría el primer día por todos los envases del
+    catálogo — un aviso que nace disparando es un aviso que nadie va a mirar.
+
+    Sin umbral tampoco: ese envase no se vigila, y es una decisión que se
+    toma en la pantalla dejando el campo vacío.
+    """
+    if envase.get("stock") is None or envase.get("umbral_reposicion") is None:
+        return False
+    return envase["stock"] < envase["umbral_reposicion"]

@@ -12390,6 +12390,7 @@ def test_recalcular_alertas_usa_las_ventanas_de_cada_control():
         "contar_mails_pedido_sin_procesar": VACIO,
         "contar_pedidos_faltantes": VACIO,
         "contar_casillas_sin_revisar": VACIO,
+        "contar_envases_a_reponer": VACIO,
     }
     with ExitStack() as pila:
         pila.enter_context(patch("app.main._hoy_argentina", return_value=HOY_DE_PRUEBA))

@@ -14,6 +14,7 @@ from app.db import COMPARADOR_DESDE_EL_CONTEO, _SQL_STOCK_DE_ENVASES
 from app.main import PUERTA_COMPRAS, app
 from core.envases import (
     SIGNO_POR_TIPO_DE_GUIA,
+    hay_que_reponer,
     cajas_que_mueve_la_guia,
     envase_de_la_guia,
 )
@@ -327,3 +328,107 @@ def test_el_umbral_VACIO_apaga_la_vigilancia_de_ese_envase():
                                  follow_redirects=False)
     assert respuesta.status_code == 303
     escribir.assert_called_once_with(1, None)
+
+
+# ---------------------------------------------------------------------------
+# La alerta de reposición: lo que convierte el umbral en una consecuencia
+# ---------------------------------------------------------------------------
+
+def test_el_rojo_de_la_tarjeta_y_la_ALERTA_contestan_con_LA_MISMA_funcion():
+    """Escrita dos veces se separan, y ahí no hay forma de saber cuál manda.
+
+    El canario mueve `hay_que_reponer` y exige que la PANTALLA lo siga: con
+    el predicado invertido, la tarjeta tiene que dejar de marcar el rojo. Una
+    condición propia en la ruta pasa este test igual, y por eso además se
+    mira que la ruta llame a la función.
+    """
+    fuente = io.open("app/main.py", encoding="utf-8").read()
+    arbol = ast.parse(fuente)
+    funcion = next(n for n in ast.walk(arbol)
+                   if isinstance(n, ast.FunctionDef) and n.name == "_renderizar_pantalla_cajas")
+    llamadas = [n for n in ast.walk(funcion)
+                if isinstance(n, ast.Call) and isinstance(n.func, ast.Name)
+                and n.func.id == "hay_que_reponer"]
+    assert llamadas, "la pantalla usa una condición propia en vez de la función compartida"
+    # Y la de la alerta también: las dos, o no sirve de nada que exista.
+    fuente_db = io.open("app/db.py", encoding="utf-8").read()
+    arbol_db = ast.parse(fuente_db)
+    reponer = next(n for n in ast.walk(arbol_db)
+                   if isinstance(n, ast.FunctionDef) and n.name == "_envases_a_reponer")
+    assert any(isinstance(n, ast.Call) and isinstance(n.func, ast.Name)
+               and n.func.id == "hay_que_reponer" for n in ast.walk(reponer))
+
+
+def test_SIN_CONTEO_INICIAL_no_es_hay_que_reponer():
+    """Si no, la alerta nace disparando por todo el catálogo.
+
+    `stock` en None es "la cuenta no arrancó", no "no quedan cajas". Tratarlo
+    como cero lo pone debajo de cualquier umbral.
+    """
+    assert hay_que_reponer({"stock": None, "umbral_reposicion": 50}) is False
+    # Sin umbral tampoco: ese envase no se vigila, y es una decisión.
+    assert hay_que_reponer({"stock": 3, "umbral_reposicion": None}) is False
+    # Y el caso que SÍ tiene que encontrar, para que el par esté completo.
+    assert hay_que_reponer({"stock": 16, "umbral_reposicion": 50}) is True
+    # El borde: igual al umbral NO dispara — "avisame cuando queden MENOS de".
+    assert hay_que_reponer({"stock": 50, "umbral_reposicion": 50}) is False
+
+
+def test_la_alerta_de_CAJAS_se_registra_con_LAMBDA_y_no_con_la_referencia():
+    """El registro se arma al importar: una referencia congela el objeto.
+
+    Parchearla después no la toca, y el test que recorre las veinte se va a la
+    base de verdad. Ya pasó una vez con `unidades_que_difieren`.
+    """
+    fuente = io.open("app/main.py", encoding="utf-8").read()
+    bloque = fuente.split('codigo="cajas_a_reponer"')[1].split("DefinicionAlerta(")[0]
+    assert "contar=lambda:" in bloque
+    assert "detallar=lambda:" in bloque
+
+
+def test_la_alerta_manda_a_CAJAS_que_es_donde_se_repone():
+    from app.main import ALERTAS
+
+    alerta = next(a for a in ALERTAS if a.codigo == "cajas_a_reponer")
+    assert alerta.modulos == ("compras",)
+    # UN SOLO SECTOR, así que no necesita destinos_por_sector: la acción
+    # (comprar cajas) vive en Compras y no se mueve.
+    assert alerta.destinos_por_sector == {}
+    assert alerta.url == "/compras/cajas"
+
+
+def test_el_detalle_dice_CUANTAS_FALTAN_y_no_solo_cuales():
+    """"3 envases por reponer" manda a la pantalla a hacer la resta."""
+    from app.db import detallar_envases_a_reponer
+
+    bajos = [
+        {"id": 1, "nombre": "Caja Grande", "umbral_reposicion": 50, "stock": 16,
+         "desde": date(2026, 9, 10), "contadas": 100, "declaradas": 0,
+         "por_guias": 0, "liberadas": 0},
+        {"id": 2, "nombre": "Caja Chica", "umbral_reposicion": 20, "stock": 300,
+         "desde": date(2026, 9, 10), "contadas": 300, "declaradas": 0,
+         "por_guias": 0, "liberadas": 0},
+        {"id": 3, "nombre": "Sin arrancar", "umbral_reposicion": 99, "stock": None,
+         "desde": None, "contadas": None, "declaradas": 0,
+         "por_guias": 0, "liberadas": 0},
+    ]
+    with patch("app.db.stock_de_envases", return_value=bajos):
+        detalle = detallar_envases_a_reponer()
+
+    # Solo la primera: la segunda está por encima y la tercera no arrancó.
+    assert detalle["filas"] == [["Caja Grande", 16, 50, 34]]
+    assert detalle["resumen"] == "1 envase debajo de su aviso"
+    assert "Faltan" in detalle["columnas"]
+
+
+def test_el_conteo_de_la_alerta_sale_de_las_MISMAS_filas_que_el_detalle():
+    """Si no, el banner y la pantalla pueden contradecirse sin explicación."""
+    from app.db import contar_envases_a_reponer, detallar_envases_a_reponer
+
+    bajos = [
+        {"id": 1, "nombre": "A", "umbral_reposicion": 50, "stock": 16, "desde": date(2026, 9, 10)},
+        {"id": 2, "nombre": "B", "umbral_reposicion": 50, "stock": 1, "desde": date(2026, 9, 10)},
+    ]
+    with patch("app.db.stock_de_envases", return_value=bajos):
+        assert contar_envases_a_reponer() == {"casos": 2, "mas_viejo": None}
+        assert len(detallar_envases_a_reponer()["filas"]) == 2
