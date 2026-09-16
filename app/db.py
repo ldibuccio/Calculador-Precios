@@ -10556,11 +10556,53 @@ class StockInsuficienteParaReproceso(Exception):
     detalle por lote.
     """
 
-    def __init__(self, declarado: float, disponible: float, lotes: list[dict]):
+    def __init__(self, declarado: float, disponible: float, lotes: list[dict],
+                 tomado_hoy: list[dict] | None = None):
         self.declarado = declarado
         self.disponible = disponible
         self.lotes = lotes
+        # QUIÉN SE LLEVÓ LO DE HOY, para que la pared no sea muda. Desde el
+        # 16/09 el freno descuenta lo que otra guía R del mismo día ya tomó,
+        # así que puede trabar un día en que el operario VE los cajones en el
+        # piso. Un "no hay stock" en esa situación es la clase de cartel que
+        # se aprende a esquivar; nombrar la guía de hoy le dice exactamente
+        # qué mirar.
+        self.tomado_hoy = list(tomado_hoy or ())
         super().__init__(f"El stock a esa fecha no alcanza: declaró {declarado} y había {disponible}.")
+
+
+
+def _lo_tomado_hoy(cursor, articulo_id: int, fecha_operacion) -> list[dict]:
+    """Lo que las guías R YA CARGADAS de este artículo y este día se llevaron de cada lote.
+
+    Sale del documento congelado (`reprocesos_consumos`) y no de un
+    rejuego, y es a propósito: lo que hay que restar no es lo que el FIFO
+    diría hoy, sino lo que esas guías DECLARARON haberse llevado. Es el
+    mismo número que quedó escrito y que después se lee como costo.
+
+    Solo guías R, y no los armados de pedidos. Un armado que deja una
+    ficha en negativo es comportamiento deliberado del sistema —la ficha
+    queda en el aire hasta que se cargue la guía R que la explica— así que
+    meterlos acá rebotaría cargas por un motivo que el sistema permite.
+
+    Los consumos 'sin_lote' viejos quedan afuera: no apuntan a ningún lote,
+    así que no hay a qué descontárselos.
+    """
+    cursor.execute(
+        """
+        SELECT rc.reproceso_id, rc.origen, rc.origen_id, rc.bultos
+        FROM reprocesos_consumos rc
+        JOIN reprocesos r ON r.id = rc.reproceso_id
+        WHERE r.articulo_id = %s AND r.fecha_operacion = %s
+          AND r.anulado_el IS NULL AND rc.origen <> 'sin_lote'
+        ORDER BY rc.reproceso_id
+        """,
+        (articulo_id, fecha_operacion),
+    )
+    return [
+        {"reproceso_id": fila[0], "origen": fila[1], "origen_id": fila[2], "bultos": float(fila[3])}
+        for fila in cursor.fetchall()
+    ]
 
 
 class RepartoDesactualizado(Exception):
@@ -10627,17 +10669,27 @@ def lotes_para_reproceso(articulo_id: int, fecha) -> dict:
     el guardado va a consumir, no una foto parecida.
 
     Devuelve lo mismo que repartir_fifo: {"lotes", "sin_lote", "stock"}, con
-    los lotes de más viejo a más nuevo y su restante a esa fecha.
+    los lotes de más viejo a más nuevo y su restante a esa fecha, MÁS
+    `tomado_hoy` — lo que las guías R ya cargadas de ese día se llevaron.
+
+    Ese último viaja porque el freno de `crear_reproceso` lo descuenta desde
+    el 16/09, y el aviso que la pantalla da antes de Guardar es el mismo
+    freno adelantado: si acá no llegara, la pantalla diría que alcanza y el
+    server rebotaría al apretar. La regla está escrita una vez
+    (`descontar_lo_tomado_hoy`) y los dos la aplican sobre el mismo dato.
     """
     conexion = obtener_conexion()
     try:
         with conexion.cursor() as cursor:
             entradas, salidas = _entradas_y_salidas_stock(cursor, articulo_id)
+            tomado_hoy = _lo_tomado_hoy(cursor, articulo_id, fecha)
     finally:
         conexion.close()
     from core.stock import reparto_para_reproceso, salidas_para_reparto
 
-    return reparto_para_reproceso(entradas, salidas_para_reparto(salidas), fecha)
+    reparto = reparto_para_reproceso(entradas, salidas_para_reparto(salidas), fecha)
+    reparto["tomado_hoy"] = tomado_hoy
+    return reparto
 
 
 def crear_reproceso(
@@ -10769,7 +10821,9 @@ def _crear_reproceso(
     from core.stock import (
         SALIDA_REPROCESO,
         bultos_en_los_lotes,
+        descontar_lo_tomado_hoy,
         lotes_permitidos,
+        origen_de_consumo,
         propuesta_fifo,
         reparto_para_reproceso,
         salidas_para_reparto,
@@ -10806,9 +10860,31 @@ def _crear_reproceso(
     # cajones las salidas que en realidad comieron cajas.
     lotes = lotes_permitidos(a_la_fecha["lotes"], SALIDA_REPROCESO)
 
-    disponible = bultos_en_los_lotes(lotes)
+    # EL FRENO CUENTA EL MISMO DÍA; EL REPARTO NO. Son dos preguntas
+    # distintas y hasta el 16/09 las contestaba la misma lista. El
+    # recorte asimétrico de `reparto_para_reproceso` contesta "¿qué
+    # lotes había ese día?", y para eso está bien que no descuente las
+    # salidas del día: adentro de un día no hay orden que afirmar. El
+    # freno pregunta otra cosa —"¿cuánto se llevó ya el día?"— y ESA no
+    # necesita orden: 30 y 26 no entran en 40 se haya cargado primero
+    # cualquiera de las dos. Sin esto, cada guía R del día veía el lote
+    # entero y de uno de 40 salieron 56 (56 lotes, 472 bultos medidos).
+    #
+    # Se descuenta SOLO acá: `lotes` sigue entero para la propuesta y
+    # para validar el reparto declarado, así que el desglose que vio el
+    # operario no cambia y el rebote queda donde la suma ya no entra.
+    tomado_hoy = _lo_tomado_hoy(cursor, articulo_id, fecha_operacion)
+    lotes_netos = descontar_lo_tomado_hoy(lotes, tomado_hoy)
+
+    disponible = bultos_en_los_lotes(lotes_netos)
     if round(float(bultos_tomados) - disponible, 2) > 0:
-        raise StockInsuficienteParaReproceso(float(bultos_tomados), disponible, lotes)
+        # Los lotes que viajan son los ENTEROS y no los netos: la pared
+        # dice "lo que había ese día", igual que el desglose, y lo que el
+        # día ya se llevó va aparte. Netos, el operario leería un lote en
+        # 10 sin nada que explique de dónde salió ese 10.
+        raise StockInsuficienteParaReproceso(
+            float(bultos_tomados), disponible, lotes, tomado_hoy
+        )
 
     editados = False
     if reparto is None:
@@ -10832,7 +10908,7 @@ def _crear_reproceso(
     consumos = []
     for fila in declarado:
         lote = por_lote[(fila["tipo_lote"], fila["origen_id"])]
-        origen = "compra" if lote["tipo_lote"] == "guia" else lote["tipo_lote"]
+        origen = origen_de_consumo(lote["tipo_lote"])
         consumos.append(
             {
                 "origen": origen,

@@ -1,6 +1,12 @@
 """Tests del reparto FIFO del stock del depósito (core/stock.py) — puro, sin base."""
 
-from core.stock import repartir_fifo, salidas_para_reparto
+from core.stock import (
+    bultos_en_los_lotes,
+    descontar_lo_tomado_hoy,
+    origen_de_consumo,
+    repartir_fifo,
+    salidas_para_reparto,
+)
 
 
 def _lote(orden, cantidad, **extra):
@@ -748,3 +754,73 @@ def test_la_pared_no_toca_las_salidas_que_no_son_armado_pared():
     merma = {"orden": (_AYER, datetime(2026, 9, 7, 12, 0)), "tipo": "merma", "cantidad": 4.0}
     assert pasadas_de_lotes([_cajon_pared()], merma) == [[_cajon_pared()]]
     assert repartir_fifo([_cajon_pared()], [merma])["sin_lote"] == 0.0
+
+
+# LO QUE EL DÍA YA SE LLEVÓ, descontado solo para el freno (16/09).
+def _lote_con_restante(tipo_lote, origen_id, restante):
+    return {"tipo_lote": tipo_lote, "origen_id": origen_id, "restante": restante}
+
+
+def test_descontar_lo_tomado_hoy_le_baja_el_restante_al_lote_que_corresponde():
+    lotes = [_lote_con_restante("guia", 101, 40.0), _lote_con_restante("guia", 102, 20.0)]
+    netos = descontar_lo_tomado_hoy(
+        lotes, [{"origen": "compra", "origen_id": 101, "bultos": 30.0}]
+    )
+    assert [l["restante"] for l in netos] == [10.0, 20.0]
+
+
+def test_descontar_lo_tomado_hoy_SUMA_lo_de_VARIAS_guias_sobre_el_mismo_lote():
+    """Es el caso real: dos guías del mismo día contra un lote de 40."""
+    netos = descontar_lo_tomado_hoy(
+        [_lote_con_restante("guia", 101, 40.0)],
+        [
+            {"origen": "compra", "origen_id": 101, "bultos": 30.0},
+            {"origen": "compra", "origen_id": 101, "bultos": 26.0},
+        ],
+    )
+    assert netos[0]["restante"] == 0.0
+
+
+def test_el_piso_en_CERO_no_deja_que_un_lote_pasado_le_reste_a_los_otros():
+    """`bultos_en_los_lotes` promete un número nunca negativo, y esto lo sostiene.
+
+    Un lote que ya quedó sobre-atribuido aporta cero. Sin el piso, el −16 del
+    101 le comería 16 al 102 y la carga rebotaría por un agujero ajeno.
+    """
+    lotes = [_lote_con_restante("guia", 101, 40.0), _lote_con_restante("guia", 102, 20.0)]
+    netos = descontar_lo_tomado_hoy(
+        lotes, [{"origen": "compra", "origen_id": 101, "bultos": 56.0}]
+    )
+    assert [l["restante"] for l in netos] == [0.0, 20.0]
+    assert bultos_en_los_lotes(netos) == 20.0
+
+
+def test_descontar_lo_tomado_hoy_NO_TOCA_la_lista_que_recibe():
+    """La lista que entra es la que usan la propuesta y la validación del reparto.
+
+    Bajarle el restante ahí adentro movería el desglose que ve el operario,
+    que es exactamente lo que este arreglo decidió no tocar — y no lo
+    delataría ningún test del freno, porque el freno saldría bien igual.
+    """
+    lotes = [_lote_con_restante("guia", 101, 40.0)]
+    descontar_lo_tomado_hoy(lotes, [{"origen": "compra", "origen_id": 101, "bultos": 30.0}])
+    assert lotes[0]["restante"] == 40.0
+
+
+def test_un_lote_de_MATERIA_PRIMA_se_llama_guia_de_un_lado_y_compra_del_otro():
+    """La traducción vive UNA vez y los dos extremos la usan.
+
+    Escrita dos veces, el que lee dejaría de encontrar lo que el que escribe
+    guardó: el descuento volvería a dar cero y el freno se apagaría entero,
+    sin un test en rojo y sin nada raro en la pantalla.
+    """
+    assert origen_de_consumo("guia") == "compra"
+    assert origen_de_consumo("ajuste") == "ajuste"
+    assert origen_de_consumo("stock_inicial") == "stock_inicial"
+    # Y el descuento la aplica: un consumo 'compra' tiene que encontrar su
+    # lote 'guia'. Si alguna de las dos puntas cambiara sola, esto da 40.
+    netos = descontar_lo_tomado_hoy(
+        [_lote_con_restante("guia", 101, 40.0)],
+        [{"origen": "compra", "origen_id": 101, "bultos": 30.0}],
+    )
+    assert netos[0]["restante"] == 10.0

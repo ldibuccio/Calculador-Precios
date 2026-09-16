@@ -48,3 +48,16 @@ select count(*) filter (where exceso > 0.001)                        as lotes_pa
 --
 -- Y un cero NO dice que este bien: dice que lo ESCRITO cierra. El rejuego del
 -- stock puede decir otra cosa, y sobre este bug la dice.
+
+-- CONTESTADA el 16/09 (Frutamax): lotes_pasados 56 · lotes_consumidos 281 ·
+-- bultos_de_mas 472 · peor_lote 31 · plata_de_mas $13.841.434 ·
+-- lote_no_hallado 0. Palmala no vota (base parada).
+--
+-- Y esos $13,8M son la EXPOSICION, no el error: los 472 bultos existieron y
+-- se costearon al precio del lote al que quedaron mal pegados. El error de
+-- cada guia es la DIFERENCIA contra el lote del que salieron en serio.
+--
+-- EL AGUJERO ESTA CERRADO desde el 16/09 (el freno cuenta el mismo dia), asi
+-- que este numero YA NO PUEDE CRECER: correrla de nuevo devuelve lo mismo por
+-- construccion. Y los 56 que quedaron NO SE CORRIGEN — son de la etapa de
+-- prueba, decidido por el dueno el 16/09. Ver CLAUDE.md, corolario 73.

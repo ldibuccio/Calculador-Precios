@@ -5499,6 +5499,8 @@ def test_crear_reproceso_lee_el_corte_UNA_sola_vez():
     cursor.fetchall.side_effect = [
         [_lote_compra(101, date(2026, 8, 20), 20.0, 1000.0)],
         [],
+        # Lo que YA se llevaron hoy otras guías R: ninguna.
+        [],
     ]
 
     with patch("app.db.obtener_conexion", return_value=conexion):
@@ -6056,6 +6058,8 @@ def test_el_dia_DEL_corte_si_se_puede_cargar():
     cursor.fetchall.side_effect = [
         [_lote_compra(101, date(2026, 8, 15), 20.0, 1000.0)],
         [],
+        # Lo que YA se llevaron hoy otras guías R: ninguna.
+        [],
     ]
 
     with patch("app.db.obtener_conexion", return_value=conexion):
@@ -6093,6 +6097,8 @@ def test_crear_reproceso_congela_consumos_fifo_y_todo_el_costo_a_la_primera():
             _lote_compra(102, date(2026, 8, 22), 10.0, 1200.0),
         ],
         [_salida_fifo(date(2026, 8, 24), 5.0)],
+        # Lo que YA se llevaron hoy otras guías R: ninguna.
+        [],
     ]
 
     with patch("app.db.obtener_conexion", return_value=conexion):
@@ -6139,6 +6145,8 @@ def test_crear_reproceso_con_lote_sin_precio_deja_el_costo_incompleto():
             _lote_compra(102, date(2026, 8, 22), 10.0, None),
         ],
         [],  # sin salidas
+        # Lo que YA se llevaron hoy otras guías R: ninguna.
+        [],
     ]
 
     with patch("app.db.obtener_conexion", return_value=conexion):
@@ -6162,6 +6170,8 @@ def test_el_freno_traba_lo_que_los_lotes_no_cubren_y_NO_escribe_nada():
     cursor.fetchall.side_effect = [
         [_lote_compra(101, date(2026, 8, 20), 3.0, 1000.0)],
         [],  # sin salidas
+        # Lo que YA se llevaron hoy otras guías R: ninguna.
+        [],
     ]
 
     with patch("app.db.obtener_conexion", return_value=conexion):
@@ -6190,6 +6200,8 @@ def test_el_freno_compara_contra_los_RESTANTES_no_contra_el_neto():
     cursor.fetchall.side_effect = [
         [_lote_compra(101, date(2026, 8, 20), 10.0, 1000.0)],
         [_salida_fifo(date(2026, 8, 22), 25.0)],
+        # Lo que YA se llevaron hoy otras guías R: ninguna.
+        [],
     ]
 
     with patch("app.db.obtener_conexion", return_value=conexion):
@@ -6212,6 +6224,8 @@ def test_el_freno_NO_cuenta_las_salidas_DEL_MISMO_DIA():
     cursor.fetchall.side_effect = [
         [_lote_compra(101, date(2026, 8, 30), 44.0, 1000.0)],
         [_salida_fifo(date(2026, 8, 31), 44.0)],
+        # Lo que YA se llevaron hoy otras guías R: ninguna.
+        [],
     ]
 
     with patch("app.db.obtener_conexion", return_value=conexion):
@@ -6220,6 +6234,178 @@ def test_el_freno_NO_cuenta_las_salidas_DEL_MISMO_DIA():
     assert numero == 16
     inserts = [c for c in cursor.execute.call_args_list if "INSERT INTO" in c.args[0]]
     assert inserts[1].args[1] == (16, "compra", 101, 101, 44.0, 1000.0)
+
+
+
+# EL AGUJERO DEL MISMO DÍA, cerrado el 16/09. El recorte de arriba está bien
+# y contesta "¿qué lotes había ese día?". El freno pregunta otra cosa —"¿cuánto
+# se llevó ya el día?"— y ésa no necesita saber el orden: 30 y 26 no entran en
+# 40 se haya cargado primero cualquiera de las dos. Sin esto, cada guía R del
+# día veía el lote ENTERO y de uno de 40 salieron 56.
+def _consumo_de_hoy(numero, origen_id, bultos, origen="compra"):
+    """Una fila de `_lo_tomado_hoy`: lo que una guía R de HOY ya se llevó de un lote."""
+    return (numero, origen, origen_id, bultos)
+
+
+def test_EL_CASO_DE_LOS_56_DE_UN_LOTE_DE_40_lo_que_el_dia_ya_tomo_se_descuenta():
+    """R300 tomó 30 de un lote de 40 hoy; R307 pide 26 el mismo día.
+
+    Es el caso real del 14/09, medido: 56 bultos salieron de un lote de 40.
+    Las dos pasaban porque el recorte del mismo día le mostraba a cada una
+    el lote entero.
+    """
+    conexion, cursor = _conexion_falsa(filas_fetchone=[_CORTE, (307,)])
+    cursor.description = COLUMNAS_LOTES
+    cursor.fetchall.side_effect = [
+        [_lote_compra(101, date(2026, 9, 13), 40.0, 1000.0)],
+        [],
+        [_consumo_de_hoy(300, 101, 30.0)],
+    ]
+
+    with patch("app.db.obtener_conexion", return_value=conexion):
+        with pytest.raises(StockInsuficienteParaReproceso) as levantada:
+            crear_reproceso(1, 26, 24, 0, 2, date(2026, 9, 14))
+
+    assert levantada.value.disponible == 10.0
+    # Y la pared no es muda: dice QUÉ guía de hoy se lo llevó. Sin esto, el
+    # operario lee "no alcanza" contra los cajones que tiene delante.
+    assert levantada.value.tomado_hoy == [
+        {"reproceso_id": 300, "origen": "compra", "origen_id": 101, "bultos": 30.0}
+    ]
+    assert not [c for c in cursor.execute.call_args_list if "INSERT INTO" in c.args[0]]
+
+
+def test_EL_CONTROL_del_caso_de_los_56_sin_nada_tomado_hoy_la_MISMA_carga_entra():
+    """El mismo pedido, con el día limpio: 26 de un lote de 40 entra.
+
+    Es el canario del test de arriba puesto como test: lo único que cambia
+    entre los dos es lo que otra guía R se llevó hoy. Sin este, un freno que
+    trabara siempre pasaría igual el de arriba (corolario 30 — la batería de
+    casos negativos no distingue una guarda que anda de una que frena
+    siempre).
+    """
+    conexion, cursor = _conexion_falsa(filas_fetchone=[_CORTE, (307,)])
+    cursor.description = COLUMNAS_LOTES
+    cursor.fetchall.side_effect = [
+        [_lote_compra(101, date(2026, 9, 13), 40.0, 1000.0)],
+        [],
+        [],
+    ]
+
+    with patch("app.db.obtener_conexion", return_value=conexion):
+        numero = crear_reproceso(1, 26, 24, 0, 2, date(2026, 9, 14))
+
+    assert numero == 307
+
+
+def test_lo_que_TODAVIA_ENTRA_despues_de_lo_de_hoy_no_rebota():
+    """R300 tomó 30 de 40 y la segunda pide 10: la suma entra justo y pasa.
+
+    El rebote se limita a donde la suma ya no entra. Una guía que pide lo
+    que queda no puede encontrarse con una pared que antes no estaba.
+    """
+    conexion, cursor = _conexion_falsa(filas_fetchone=[_CORTE, (308,)])
+    cursor.description = COLUMNAS_LOTES
+    cursor.fetchall.side_effect = [
+        [_lote_compra(101, date(2026, 9, 13), 40.0, 1000.0)],
+        [],
+        [_consumo_de_hoy(300, 101, 30.0)],
+    ]
+
+    with patch("app.db.obtener_conexion", return_value=conexion):
+        numero = crear_reproceso(1, 10, 9, 0, 1, date(2026, 9, 14))
+
+    assert numero == 308
+
+
+def test_EL_REPARTO_NO_CAMBIA_la_propuesta_sale_de_los_lotes_ENTEROS():
+    """El freno cuenta el mismo día; el desglose que ve el operario, no.
+
+    Dos lotes: el 101 (viejo, 40) con 35 ya tomados hoy, y el 102 (100). La
+    guía pide 10. Con el reparto descontado, la propuesta sería 5 del 101 y
+    5 del 102; con el reparto entero —que es lo que se decidió— son 10 del
+    101. El fixture tiene el RIVAL puesto a propósito: con un solo lote las
+    dos versiones dan lo mismo y el test no distingue nada.
+    """
+    conexion, cursor = _conexion_falsa(filas_fetchone=[_CORTE, (309,)])
+    cursor.description = COLUMNAS_LOTES
+    cursor.fetchall.side_effect = [
+        [
+            _lote_compra(101, date(2026, 9, 13), 40.0, 1000.0),
+            _lote_compra(102, date(2026, 9, 13), 100.0, 1200.0),
+        ],
+        [],
+        [_consumo_de_hoy(300, 101, 35.0)],
+    ]
+
+    with patch("app.db.obtener_conexion", return_value=conexion):
+        crear_reproceso(1, 10, 10, 0, 0, date(2026, 9, 14))
+
+    consumos = [c.args[1] for c in cursor.execute.call_args_list
+                if "INSERT INTO reprocesos_consumos" in c.args[0]]
+    assert consumos == [(309, "compra", 101, 101, 10.0, 1000.0)]
+
+
+def test_un_lote_YA_SOBRE_ATRIBUIDO_aporta_CERO_y_no_se_come_a_los_otros():
+    """El piso en cero, y es la promesa de `bultos_en_los_lotes`.
+
+    El 101 tiene 40 y hoy ya se llevaron 56 de él —uno de los 56 lotes
+    medidos—. Ese agujero ya estaba ahí antes de que este operario tocara
+    nada: tiene que aportar cero, no restarle 16 al lote de al lado. Si
+    restara, esta carga de 20 contra un lote intacto de 20 rebotaría por un
+    problema ajeno.
+
+    De acá sale, además, que la guía R de una compra que llega armada no
+    pueda rebotar nunca: su propia compra entra como lote intacto.
+    """
+    conexion, cursor = _conexion_falsa(filas_fetchone=[_CORTE, (310,)])
+    cursor.description = COLUMNAS_LOTES
+    cursor.fetchall.side_effect = [
+        [
+            _lote_compra(101, date(2026, 9, 13), 40.0, 1000.0),
+            _lote_compra(102, date(2026, 9, 13), 20.0, 1200.0),
+        ],
+        [],
+        [_consumo_de_hoy(300, 101, 56.0)],
+    ]
+
+    with patch("app.db.obtener_conexion", return_value=conexion):
+        numero = crear_reproceso(
+            1, 20, 20, 0, 0, date(2026, 9, 14),
+            reparto=[{"tipo_lote": "guia", "origen_id": 102, "bultos": 20.0}],
+        )
+
+    assert numero == 310
+
+
+def test_lo_tomado_hoy_sale_de_las_GUIAS_R_VIVAS_del_mismo_dia_y_de_nada_mas():
+    """Tres recortes, y cada uno tiene su razón. Se miran en el TEXTO.
+
+    - Guías R y no armados: un armado que deja una ficha en negativo es
+      comportamiento deliberado del sistema, así que contarlo rebotaría
+      cargas por un motivo que el sistema permite.
+    - `anulado_el IS NULL`: una guía anulada devolvió lo que tomó.
+    - Mismo artículo y misma FECHA: es de lo único que se trata.
+    """
+    import ast
+
+    # El SQL se saca del ÁRBOL y no del texto de la función: su docstring
+    # nombra las tablas para explicar por qué NO están, así que un `in`
+    # sobre el fuente matchearía la prosa escrita para excluirlas
+    # (corolario 59). Y las tablas se piden en POSICIÓN de tabla por lo
+    # mismo.
+    arbol = ast.parse(inspect.getsource(db._lo_tomado_hoy).lstrip())
+    consulta = next(
+        nodo.value for nodo in ast.walk(arbol)
+        if isinstance(nodo, ast.Constant) and isinstance(nodo.value, str)
+        and "SELECT" in nodo.value
+    )
+    assert "FROM reprocesos_consumos rc" in consulta
+    assert "JOIN reprocesos r ON r.id = rc.reproceso_id" in consulta
+    assert "r.articulo_id = %s AND r.fecha_operacion = %s" in consulta
+    assert "r.anulado_el IS NULL" in consulta
+    assert "FROM pedidos_renglones" not in consulta and "JOIN pedidos_renglones" not in consulta
+    assert "FROM movimientos_stock" not in consulta and "JOIN movimientos_stock" not in consulta
 
 
 def test_un_lote_POSTERIOR_a_la_fecha_del_reproceso_no_cuenta():
@@ -6232,6 +6418,8 @@ def test_un_lote_POSTERIOR_a_la_fecha_del_reproceso_no_cuenta():
     cursor.description = COLUMNAS_LOTES
     cursor.fetchall.side_effect = [
         [_lote_compra(102, date(2026, 8, 22), 10.0, 1200.0)],
+        [],
+        # Lo que YA se llevaron hoy otras guías R: ninguna.
         [],
     ]
 
@@ -6258,6 +6446,8 @@ def test_el_reparto_editado_por_el_operario_se_escribe_y_queda_MARCADO():
             _lote_compra(101, date(2026, 8, 20), 8.0, 1000.0),
             _lote_compra(102, date(2026, 8, 22), 10.0, 1200.0),
         ],
+        [],
+        # Lo que YA se llevaron hoy otras guías R: ninguna.
         [],
     ]
     reparto = [
@@ -6289,6 +6479,8 @@ def test_confirmar_el_desglose_sin_tocarlo_NO_lo_marca_como_editado():
             _lote_compra(102, date(2026, 8, 22), 10.0, 1200.0),
         ],
         [],
+        # Lo que YA se llevaron hoy otras guías R: ninguna.
+        [],
     ]
     igual_al_fifo = [
         {"tipo_lote": "guia", "origen_id": 101, "bultos": 8.0},
@@ -6312,6 +6504,8 @@ def test_un_reparto_que_pide_mas_de_lo_que_hay_en_un_lote_no_se_guarda():
             _lote_compra(102, date(2026, 8, 22), 10.0, 1200.0),
         ],
         [],
+        # Lo que YA se llevaron hoy otras guías R: ninguna.
+        [],
     ]
     reparto = [
         {"tipo_lote": "guia", "origen_id": 101, "bultos": 9.0},  # quedaban 8
@@ -6333,6 +6527,8 @@ def test_un_reparto_que_no_suma_lo_declarado_no_se_guarda():
     cursor.description = COLUMNAS_LOTES
     cursor.fetchall.side_effect = [
         [_lote_compra(101, date(2026, 8, 20), 8.0, 1000.0)],
+        [],
+        # Lo que YA se llevaron hoy otras guías R: ninguna.
         [],
     ]
 
@@ -8043,7 +8239,8 @@ def _conexion_recepcion(ficha_id=3, ficha_articulo=1, numero_guia=99):
         filas += [_CORTE, _ENVASE_DE_LA_FICHA, (numero_guia,)]
     conexion, cursor = _conexion_falsa(filas_fetchone=filas)
     cursor.description = COLUMNAS_LOTES
-    cursor.fetchall.side_effect = [_lotes_con_rival(), []]
+    # Lotes, salidas, y lo que ya se llevaron hoy otras guías R: ninguna.
+    cursor.fetchall.side_effect = [_lotes_con_rival(), [], []]
     return conexion, cursor
 
 
@@ -8165,7 +8362,8 @@ def test_el_RECHAZO_PARCIAL_de_una_compra_marcada_arma_la_guia_por_los_ACEPTADOS
              _CORTE, _ENVASE_DE_LA_FICHA, (99,)]
     conexion, cursor = _conexion_falsa(filas_fetchone=filas)
     cursor.description = COLUMNAS_LOTES
-    cursor.fetchall.side_effect = [_lotes_con_rival(), []]
+    # Lotes, salidas, y lo que ya se llevaron hoy otras guías R: ninguna.
+    cursor.fetchall.side_effect = [_lotes_con_rival(), [], []]
 
     with patch("app.db.obtener_conexion", return_value=conexion):
         recepcionar_compra(_COMPRA_EN_ORIGEN, 8, 16, cantidad_cajones_rechazada=2, motivo_rechazo="golpeado")
@@ -8350,6 +8548,8 @@ def test_el_ingreso_directo_MARCADO_carga_su_guia_R_en_el_MISMO_insert():
     cursor.description = COLUMNAS_LOTES
     cursor.fetchall.side_effect = [
         [_lote_compra(900, date(2026, 8, 25), 10.0, 1200.0)],
+        [],
+        # Lo que ya se llevaron hoy otras guías R: ninguna.
         [],
     ]
 

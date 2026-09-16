@@ -11156,6 +11156,28 @@ def _ayudas_ficha_por_cliente_y_articulo() -> dict[str, str]:
     return ayudas
 
 
+def _guias_de_hoy_para_pantalla(tomado_hoy: list[dict]) -> list[dict]:
+    """Las guías R de HOY que ya se llevaron algo, con su número y cuánto.
+
+    Existe para que la pared no sea muda. Desde el 16/09 el freno descuenta
+    lo que otra guía R del mismo día ya tomó, así que puede trabar un día en
+    que el operario VE los cajones en el piso: sin esta línea, lo único que
+    lee es "no alcanza" contra lo que tiene delante, y ése es exactamente el
+    cartel que se aprende a esquivar.
+
+    Se agrupa POR GUÍA y no por lote: al que está parado en la pantalla no
+    le sirve de qué lote salió, le sirve qué guía ir a mirar.
+    """
+    por_guia = {}
+    for consumo in tomado_hoy:
+        numero = consumo["reproceso_id"]
+        por_guia[numero] = por_guia.get(numero, 0.0) + float(consumo["bultos"])
+    return [
+        {"numero": numero, "bultos": _formatear_numero(round(bultos, 2))}
+        for numero, bultos in sorted(por_guia.items())
+    ]
+
+
 def _desglose_para_pantalla(lotes: list[dict]) -> list[dict]:
     """Los lotes como los ve el OPERARIO: fecha y cantidad, y nada más.
 
@@ -11240,7 +11262,13 @@ def desglose_reproceso(articulo_id: int, fecha: str = "", bultos: float = 0):
     antes de que apriete Guardar. Pero el freno de verdad está en
     crear_reproceso — esto es cortesía, no control.
     """
-    from core.stock import SALIDA_REPROCESO, bultos_en_los_lotes, lotes_permitidos, propuesta_fifo
+    from core.stock import (
+        SALIDA_REPROCESO,
+        bultos_en_los_lotes,
+        descontar_lo_tomado_hoy,
+        lotes_permitidos,
+        propuesta_fifo,
+    )
 
     hoy = _hoy_argentina()
     try:
@@ -11256,17 +11284,30 @@ def desglose_reproceso(articulo_id: int, fecha: str = "", bultos: float = 0):
     # que crear_reproceso rechaza, el operario armaría un reparto que no se
     # puede guardar y el cartel llegaría recién al apretar Guardar.
     lotes = lotes_permitidos(reparto["lotes"], SALIDA_REPROCESO)
-    disponible = bultos_en_los_lotes(lotes)
+    # `disponible` sale de los lotes NETOS —descontando lo que otra guía R
+    # de ese mismo día ya se llevó— y la propuesta sigue saliendo de los
+    # enteros, exactamente como en crear_reproceso. Que el aviso y el freno
+    # midan contra lo mismo es lo único que evita una pantalla que aprueba y
+    # un server que rebota.
+    lotes_netos = descontar_lo_tomado_hoy(lotes, reparto.get("tomado_hoy", []))
+    disponible = bultos_en_los_lotes(lotes_netos)
     propuesta = {
         f"{c['tipo_lote']}:{c['origen_id']}": c["bultos"]
         for c in propuesta_fifo(lotes, bultos)
     }
     return JSONResponse(
         {
+            # La lista sigue siendo la ENTERA, no la neta: significa "lo que
+            # había ese día", que es lo que el desglose viene diciendo desde
+            # siempre, y el reparto que se propone sale de ella. Lo que el
+            # día ya se llevó se dice aparte, en `guias_de_hoy`: un lote que
+            # dijera 10 con una propuesta de 20 encima sería peor que el
+            # hueco que vino a explicar.
             "lotes": _desglose_para_pantalla(lotes),
             "disponible": disponible,
             "alcanza": round(float(bultos) - disponible, 2) <= 0,
             "propuesta": propuesta,
+            "guias_de_hoy": _guias_de_hoy_para_pantalla(reparto.get("tomado_hoy", [])),
         }
     )
 
@@ -11483,6 +11524,7 @@ def cargar_reproceso_ruta(
                 "declarado": _formatear_numero(freno.declarado),
                 "disponible": _formatear_numero(freno.disponible),
                 "lotes": _desglose_para_pantalla(freno.lotes),
+                "guias_de_hoy": _guias_de_hoy_para_pantalla(freno.tomado_hoy),
             },
             status_code=400,
         )

@@ -101,6 +101,11 @@
   }
   .pared-titulo { margin: 0 0 0.5rem; font-size: 1.05rem; font-weight: 800; }
   .pared-cuenta { margin: 0 0 0.5rem; font-size: 1rem; }
+  /* El renglón de las guías de hoy: sin `display` propio, para que el
+     atributo `hidden` alcance a esconderlo. Una regla de display acá le
+     ganaría al `[hidden]` del navegador y el renglón quedaría a la vista
+     con el texto de la consulta anterior. */
+  .pared-hoy { margin: 0 0 0.5rem; font-size: 1rem; font-weight: 700; }
   .pared-lotes { margin: 0 0 0.75rem; padding-left: 1.1rem; font-size: 0.95rem; }
   .pared-lotes li { margin-bottom: 0.15rem; }
   .pared p { margin: 0.6rem 0 0; font-size: 0.95rem; line-height: 1.35; }
@@ -179,6 +184,16 @@
     </p>
     <p class="pared-cuenta" id="pared-cuenta">
       {%- if freno %}Declaraste {{ freno.declarado }} y ese día había {{ freno.disponible }}.{% endif -%}
+    </p>
+    {# QUIÉN SE LLEVÓ LO DE HOY. Desde el 16/09 el freno descuenta lo que
+       otra guía R del mismo día ya tomó, así que la pared puede saltar un
+       día en que el operario VE los cajones en el piso. Sin este renglón lo
+       único que lee es "no alcanza" contra lo que tiene delante. #}
+    <p class="pared-hoy" id="pared-hoy" {% if not freno or not freno.guias_de_hoy %}hidden{% endif %}>
+      {%- if freno and freno.guias_de_hoy -%}
+      Hoy ya se cargaron guías R de este artículo y se llevaron parte:
+      {% for g in freno.guias_de_hoy %}R{{ g.numero }} tomó {{ g.bultos }}{% if not loop.last %} · {% endif %}{% endfor %}.
+      {%- endif -%}
     </p>
     <ul class="pared-lotes" id="pared-lotes">
       {%- if freno %}
@@ -443,6 +458,16 @@
         "No alcanza para " + campos.bultos + " bultos de " + nombreArticulo() + " el " + fecha + ".";
       document.getElementById("pared-cuenta").textContent =
         "Declaraste " + campos.bultos + " y ese día había " + datos.disponible + ".";
+      // El mismo renglón que pinta el server. Se ESCONDE cuando no hay
+      // ninguna: dejarlo con el texto de la consulta anterior diría que
+      // hoy se cargó una guía que no se cargó.
+      const hoy = document.getElementById("pared-hoy");
+      const guias = datos.guias_de_hoy || [];
+      hoy.hidden = !guias.length;
+      if (guias.length) {
+        hoy.textContent = "Hoy ya se cargaron guías R de este artículo y se llevaron parte: "
+          + guias.map(function (g) { return "R" + g.numero + " tomó " + g.bultos; }).join(" · ") + ".";
+      }
       const lista = document.getElementById("pared-lotes");
       lista.innerHTML = "";
       LOTES.forEach(function (lote) {

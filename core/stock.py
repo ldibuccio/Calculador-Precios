@@ -494,6 +494,61 @@ def bultos_en_los_lotes(lotes: list[dict]) -> float:
     return round(sum(float(lote["restante"]) for lote in lotes), 2)
 
 
+# LA TRADUCCION ENTRE EL LOTE Y EL CONSUMO, escrita UNA sola vez. Un lote de
+# materia prima se llama 'guia' del lado del reparto y 'compra' del lado de
+# reprocesos_consumos; los demas tipos se llaman igual de los dos lados.
+#
+# La necesitan los DOS extremos —el que guarda los consumos de una guia R y
+# el que los vuelve a leer para descontarlos— y escrita dos veces se separa
+# en el peor modo posible: el que lee dejaria de encontrar lo que el que
+# escribe guardo, el descuento volveria a dar cero, y el freno de abajo se
+# apagaria sin que nada avise.
+def origen_de_consumo(tipo_lote: str) -> str:
+    """Como se llama en `reprocesos_consumos.origen` un lote de este tipo."""
+    return "compra" if tipo_lote == "guia" else tipo_lote
+
+
+def descontar_lo_tomado_hoy(lotes: list[dict], consumos: list[dict]) -> list[dict]:
+    """Los mismos lotes con el restante bajado por lo que YA se llevaron hoy.
+
+    Contra que existe, y es el agujero del 16/09: `reparto_para_reproceso`
+    no descuenta las salidas del MISMO DIA, a proposito —dentro de un dia el
+    sistema guarda fechas y no horas, asi que descontarlas afirmaria un
+    orden que no sabemos, y en contra del que reprocesa—. El argumento es
+    correcto y no cubre el TOTAL: no hace falta saber el orden para saber
+    que 30 y 26 no entran en 40. Sin esto, cada guia R del dia ve el lote
+    ENTERO, y de un lote de 40 salieron 56.
+
+    SOLO PARA EL FRENO. El desglose que se le muestra al operario y lo que
+    se escribe siguen saliendo de la lista SIN descontar: lo que cambia es
+    cuanto se puede tomar en total, no de donde se propone tomarlo.
+
+    EL PISO EN CERO NO ES COSMETICO. `bultos_en_los_lotes` promete que su
+    numero nunca es negativo, porque "trabar a un operario por un agujero
+    que ya estaba ahi antes de que tocara nada seria trabarlo por lo mismo
+    que esta arreglando". Un lote que hoy ya quedo sobre-atribuido aporta
+    cero y nunca resta de los otros. De ahi sale, ademas, que la guia R de
+    una compra que llega armada NO PUEDA rebotar nunca: su propia compra
+    entra como lote intacto en la misma transaccion, asi que lo disponible
+    siempre le alcanza para lo suyo.
+
+    Devuelve copias: la lista que entra es la que usan la propuesta y la
+    validacion del reparto, y bajarle el restante ahi adentro seria mover el
+    desglose sin que nadie lo pidiera.
+    """
+    ya = {}
+    for consumo in consumos:
+        clave = (consumo["origen"], consumo["origen_id"])
+        ya[clave] = ya.get(clave, 0.0) + float(consumo["bultos"])
+    netos = []
+    for lote in lotes:
+        clave = (origen_de_consumo(lote["tipo_lote"]), lote["origen_id"])
+        copia = dict(lote)
+        copia["restante"] = round(max(float(lote["restante"]) - ya.get(clave, 0.0), 0.0), 2)
+        netos.append(copia)
+    return netos
+
+
 def propuesta_fifo(lotes: list[dict], total: float, salida: dict | None = None) -> list[dict]:
     """Del más viejo primero: cuánto sale de cada lote para juntar `total`.
 

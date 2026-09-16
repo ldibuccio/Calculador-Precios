@@ -6195,9 +6195,9 @@ que se está decidiendo depende del orden. Si es una comparación de SUMAS, no
 depende, y el recorte está de más — protege contra una incertidumbre que esa
 cuenta no tiene.
 
-### NO SE ARREGLÓ, y lo que falta para decidir
+### ARREGLADO EL 16/09, y lo que se midió antes de ponerlo
 
-Por pedido del dueño, y la razón es buena: un freno que empiece a contar el
+Se midió primero, por pedido del dueño, y la razón era buena: un freno que empiece a contar el
 mismo día puede **rebotar cargas legítimas**, y hay que saber cuántas antes
 de ponerlo. Las dos consultas están escritas y probadas contra el esquema
 real con el caso plantado:
@@ -6223,9 +6223,130 @@ distintos del mismo artículo. Lo que el techo dice es que el arreglo no es
 un caso de borde: si rebota, va a rebotar seguido, y por eso el número del
 daño real tiene que venir antes de ponerlo.
 
-**`mismo_dia_1` no se corrió todavía contra las bases.** Hasta que salga el número no
-se sabe si esto es un incidente de dos guías o si el costeo viene mal hace
-semanas, y esa diferencia decide si además del freno hace falta un rescate.
+**El daño, corrido el 16/09** (Frutamax): `lotes_pasados 56 · lotes_consumidos
+281 · bultos_de_mas 472 · peor_lote 31 · plata_de_mas $13.841.434 ·
+lote_no_hallado 0 · guias_normales 307 · última 15/09`. **Uno de cada cinco
+lotes recibió más de lo que tenía**, así que no era un incidente de dos guías.
+
+**Y ese $13,8M es la EXPOSICIÓN, no el error** — hay que decirlo cada vez que
+se cite. Los 472 bultos existieron: salieron cajas de verdad, costeadas al
+precio del lote al que quedaron mal pegados. El error de cada guía es la
+DIFERENCIA contra el precio del lote del que salieron en serio —mismo
+artículo, fecha cercana— y es mucho menor. Es el corolario 13: la cuenta es
+exacta sobre lo que mide y no contesta la pregunta con la que se la va a
+citar.
+
+### LOS 56 QUE YA ESTÁN NO SE CORRIGEN: son de la ETAPA DE PRUEBA (16/09)
+
+Decisión del dueño, con fecha, y escrita acá para que dentro de tres meses
+nadie los encuentre y quiera arreglarlos: **los lotes sobre-atribuidos
+anteriores al 16/09 quedan como están.** Estamos en etapa de prueba, los
+costos todavía no se toman en cuenta, y los números de estos días no
+representan operación real. Lo único que se está mirando en serio es el
+Remanente.
+
+Y además **no se podían recostear aunque se quisiera**, que es lo que hace
+que la decisión no cueste nada:
+
+- La única puerta que existe, `completar_costo_reproceso`, dice en su propio
+  título *"SOLO los NULL, jamás pisa"*. Arregla el PRECIO de un consumo que
+  se cargó sin precio; acá el precio está bien y lo que está mal es **cuántos
+  bultos** se le atribuyeron al lote.
+- Y no hay respuesta correcta a la que recostear: con la regla nueva, la
+  segunda guía **habría sido frenada**, no re-atribuida. El sistema no sabe
+  de dónde salieron esos bultos.
+
+Lo que sí queda es la lista de quién los sigue leyendo mal, para el día que
+los costos importen: `app/db.py:9357` es la **vía de propagación** —la
+primera de una guía entra al FIFO COMO UN LOTE con su
+`costo_por_bulto_primera`, así que una guía mal costeada es un lote mal
+precificado para todo lo que venga después—, el detalle de la guía R, y el
+`SUM(rc.bultos)` por compra de `app/db.py:1579` y `3134`, que hace leer un
+lote como MÁS consumido de lo que está y le apaga el botón "Vino armada" a
+una compra cuyo lote no se agotó.
+
+### Y EL REMANENTE NO SE MOVIÓ, que es lo que decidía la urgencia
+
+La pregunta del dueño era la correcta: si los bultos de más quedaron "sin
+lote" en el rejuego, ¿el Remanente muestra un faltante que no existe? Medido
+contra `db/esquema_completo.sql` con el caso de 56-de-40 plantado en tres
+formas, corriendo `stock_deposito_por_articulo` y `repartir_fifo` de verdad:
+
+| el artículo | Remanente | sin_lote | negativos |
+|---|---|---|---|
+| un lote de 40, las guías producen 56 | **40 — correcto** | 0 | — |
+| dos lotes, 40 y 100 | **140 — correcto** | 0 | — |
+| un lote de 40, las guías producen 10 (el resto merma) | **−6** | 6 | `faltan 6` |
+
+**El Remanente es una SUMA y nunca pregunta de qué lote salió**: `entradas +
+reingresos + ajustes + reproceso_primera − reproceso_tomados − salidas`.
+Verificado además que ninguna de las cuatro cuentas de stock
+—`_sql_sumas_stock`, `_SQL_STOCK_PARTIDO`, `_SQL_POOL_SEGUNDA` y
+`deficit_de_cajas_por_ficha`— lee `reprocesos_consumos`. La sobre-atribución
+es un problema de LOTE y el Remanente mira el ARTÍCULO.
+
+**Y la corrección a lo que yo mismo había escrito**: los 16 bultos NO quedan
+`sin_lote` en general. El rejuego reparte la toma contra TODOS los lotes del
+artículo, así que la absorbe el lote de al lado —o la propia primera del
+día—. Mi medición anterior daba `sin_lote 16` porque el fixture tenía un solo
+lote y nada que produjera. `sin_lote` aparece cuando el ARTÍCULO queda corto,
+y entonces vale exactamente lo mismo que el negativo del Remanente (6, no
+16): es un faltante REAL y ya tiene dónde verse.
+
+Así que lo que había que mirar no era una consulta nueva: es la sección de
+negativos que el Remanente ya muestra. Si está vacía, esto no le movió nada.
+
+### El arreglo, y las dos mitades que tiran para lados opuestos
+
+**El freno cuenta el mismo día; el reparto no.** Son dos preguntas distintas
+que hasta el 16/09 contestaba la misma lista, y separarlas es todo el
+arreglo:
+
+- `reparto_para_reproceso` sigue igual: contesta *"¿qué lotes había ese
+  día?"*, y ahí el recorte asimétrico está bien. **El desglose que ve el
+  operario no cambia**, y la propuesta sigue saliendo de los lotes ENTEROS.
+- El freno resta, de cada lote, lo que las guías R **vivas del mismo artículo
+  y el mismo día** ya le atribuyeron (`descontar_lo_tomado_hoy`, leído del
+  documento congelado). Eso contesta *"¿cuánto se llevó ya el día?"*, que no
+  necesita orden.
+
+**El piso en cero no es cosmético**: un lote ya sobre-atribuido aporta cero y
+nunca le resta a los de al lado — `bultos_en_los_lotes` promete que su número
+no puede ser negativo, porque *"trabar a un operario por un agujero que ya
+estaba ahí antes de que tocara nada sería trabarlo por lo mismo que está
+arreglando"*. De ahí sale, gratis, que **la guía R de una compra que llega
+armada no pueda rebotar nunca**: su propia compra entra como lote intacto en
+la misma transacción.
+
+**Y el aviso de la pantalla se movió con el freno.** El `alcanza` del
+desglose es el freno adelantado: si midiera contra los lotes enteros diría
+que sí y el server rebotaría al apretar Guardar, que es peor que la pared —
+llega después de que ya cargó todo. Los dos aplican la MISMA función sobre el
+mismo dato, y lo cuida el test que mira el cableado de los tres.
+
+### El rebote SÍ puede caerle a una carga legítima, y no tiene arreglo
+
+No rebota cuando la suma entra: dos guías del día que juntas caben en el lote
+no cambian en nada. Pero cuando no entra, **el sistema no puede saber cuál de
+las dos es la equivocada**, y la pared le cae al que carga SEGUNDO aunque el
+error lo haya cometido el primero.
+
+Por eso la pared **nombra la guía R de hoy que se llevó el lote**. Un "no
+alcanza" a secas, un día en que el operario VE los cajones en el piso, es
+exactamente el cartel que se aprende a esquivar; con el número de la guía
+sabe qué ir a mirar — o esa guía está mal, o falta cargar la recepción que
+explica lo que tiene delante.
+
+Y hay una segunda forma de rebote que es nueva y correcta: la mercadería
+llegó pero su compra no está recepcionada. Hoy el recorte del mismo día lo
+tapaba.
+
+**Lo que el arreglo NO cierra**, dicho para que no se lea como más de lo que
+es: con el reparto saliendo de los lotes enteros, un lote puede seguir
+recibiendo más de lo que tenía **cuando el artículo tiene otro lote que
+cubre el total**. El freno cierra el agujero en la SUMA, no en la
+atribución por lote. Es un residuo de costeo y de trazabilidad, y por eso
+se deja: los costos están en etapa de prueba.
 
 ## Corolario 74: una respuesta CONGELADA y una DERIVADA a la misma pregunta se separan sin que ninguna esté rota
 

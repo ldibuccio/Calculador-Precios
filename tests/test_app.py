@@ -22613,6 +22613,67 @@ def test_el_freno_devuelve_la_pantalla_ENTERA_y_dice_QUE_HACER():
     assert 'value="2026-09-02"' in texto
 
 
+
+
+def _renglon_de_las_guias_de_hoy(html: str) -> tuple[str, str]:
+    """(la etiqueta de apertura, lo que dice adentro) del renglón de la pared.
+
+    Se recorta el ELEMENTO y no se busca el texto suelto: el mismo mensaje
+    lo arma también el JS que adelanta la pared, así que un `not in` sobre
+    el documento matchearía el `textContent` del script y diría que el
+    renglón está cuando no está (corolario 50).
+    """
+    m = re.search(r'(<p class="pared-hoy"[^>]*>)(.*?)</p>', html, re.S)
+    assert m is not None, "no está el renglón de las guías de hoy"
+    return m.group(1), m.group(2)
+
+
+def test_la_pared_NOMBRA_la_guia_R_de_HOY_que_se_llevo_el_lote():
+    """Desde el 16/09 el freno descuenta lo que otra guía R del mismo día tomó.
+
+    Eso puede trabar un día en que el operario VE los cajones en el piso, y
+    ahí "no alcanza" a secas es la clase de cartel que se aprende a
+    esquivar. Nombrar la guía le dice exactamente qué ir a mirar: o esa guía
+    está mal, o falta cargar la recepción que explica lo que tiene delante.
+    """
+    freno = StockInsuficienteParaReproceso(
+        26.0, 10.0,
+        [{"tipo_lote": "guia", "origen_id": 101, "fecha_lote": date(2026, 9, 2),
+          "detalle": "Norte 15", "restante": 40.0}],
+        [{"reproceso_id": 300, "origen": "compra", "origen_id": 101, "bultos": 30.0}],
+    )
+    respuesta = _pantalla_de_reproceso_con(
+        {"cliente_id": "1", "articulo_id": "1", "bultos_tomados": "26",
+         "bultos_primera": "24", "bultos_segunda": "0", "bultos_merma": "2",
+         "fecha": "2026-09-02", "ficha_id": "901"},
+        **{"app.main.crear_reproceso": {"side_effect": freno}},
+    )
+
+    assert respuesta.status_code == 400
+    etiqueta, adentro = _renglon_de_las_guias_de_hoy(respuesta.text)
+    assert "R300 tomó 30" in adentro
+    assert "hidden" not in etiqueta
+
+
+def test_sin_ninguna_guia_de_hoy_el_renglon_NO_SE_DIBUJA():
+    """El caso feliz del detector: el freno normal no menciona ninguna guía.
+
+    Sin este, un renglón que se mostrara SIEMPRE pasaría igual el de arriba
+    — y le diría al operario que hoy se cargó una guía que no se cargó.
+    """
+    respuesta = _pantalla_de_reproceso_con(
+        {"cliente_id": "1", "articulo_id": "1", "bultos_tomados": "5",
+         "bultos_primera": "5", "bultos_segunda": "0", "bultos_merma": "0",
+         "fecha": "2026-09-02", "ficha_id": "901"},
+        **{"app.main.crear_reproceso": {
+            "side_effect": StockInsuficienteParaReproceso(5.0, 0.0, [])}},
+    )
+
+    etiqueta, adentro = _renglon_de_las_guias_de_hoy(respuesta.text)
+    assert adentro.strip() == ""
+    assert "hidden" in etiqueta
+
+
 def test_el_freno_con_CERO_lotes_ese_dia_igual_explica_que_hacer():
     """El caso más áspero: no hay ni un lote. El mensaje no puede quedar en
     una lista vacía."""
@@ -22720,6 +22781,54 @@ def test_el_desglose_propone_del_mas_viejo_primero_y_avisa_si_no_alcanza():
     # El mismo número que va a usar el freno: es una sola definición.
     assert no_alcanza["alcanza"] is False
     assert no_alcanza["disponible"] == 25.0
+
+
+
+def test_el_aviso_de_la_PANTALLA_tambien_descuenta_lo_que_el_dia_ya_tomo():
+    """El aviso es el freno adelantado, así que mide contra lo mismo que él.
+
+    Un lote de 40 con 30 ya tomados hoy: pedir 26 no alcanza. Si la pantalla
+    midiera contra el lote entero diría que sí y el server rebotaría recién
+    al apretar Guardar — que es peor que la pared, porque llega después de
+    que ya cargó todo.
+
+    Y la PROPUESTA sigue saliendo del lote entero: el desglose que ve el
+    operario no cambia. Las dos mitades en el mismo test porque son la misma
+    decisión leída de los dos lados.
+    """
+    lotes = [{"tipo_lote": "guia", "origen_id": 101, "fecha_lote": date(2026, 9, 1),
+              "detalle": "Norte 15", "restante": 40.0}]
+    with patch("app.main.lotes_para_reproceso",
+               return_value={"lotes": lotes, "sin_lote": 0, "stock": 40,
+                             "tomado_hoy": [{"reproceso_id": 300, "origen": "compra",
+                                             "origen_id": 101, "bultos": 30.0}]}):
+        datos = cliente.get("/deposito/stock/reproceso/desglose"
+                            "?articulo_id=1&fecha=2026-09-02&bultos=26").json()
+
+    assert datos["alcanza"] is False
+    assert datos["disponible"] == 10.0
+    assert datos["guias_de_hoy"] == [{"numero": 300, "bultos": "30"}]
+    # La lista y la propuesta, con el lote ENTERO: es "lo que había ese día".
+    assert datos["lotes"][0]["restante"] == 40.0
+    assert datos["propuesta"] == {"guia:101": 26.0}
+
+
+def test_EL_CONTROL_del_aviso_sin_nada_tomado_hoy_los_MISMOS_26_alcanzan():
+    """Lo único que cambia entre este y el de arriba es lo que el día ya tomó.
+
+    Sin este, un aviso que dijera siempre que no alcanza pasaría igual el
+    anterior — y el operario se encontraría con una pared permanente.
+    """
+    lotes = [{"tipo_lote": "guia", "origen_id": 101, "fecha_lote": date(2026, 9, 1),
+              "detalle": "Norte 15", "restante": 40.0}]
+    with patch("app.main.lotes_para_reproceso",
+               return_value={"lotes": lotes, "sin_lote": 0, "stock": 40, "tomado_hoy": []}):
+        datos = cliente.get("/deposito/stock/reproceso/desglose"
+                            "?articulo_id=1&fecha=2026-09-02&bultos=26").json()
+
+    assert datos["alcanza"] is True
+    assert datos["disponible"] == 40.0
+    assert datos["guias_de_hoy"] == []
 
 
 def test_los_lotes_VACIOS_no_llegan_a_la_pantalla():
@@ -26888,14 +26997,25 @@ def test_los_TRES_que_miran_los_lotes_de_una_guia_R_aplican_la_pared():
     cuerpo = db_py[db_py.index("def _crear_reproceso("):]
     cuerpo = cuerpo[: cuerpo.index("\ndef ")]
     assert "lotes_permitidos(a_la_fecha[\"lotes\"], SALIDA_REPROCESO)" in cuerpo
-    assert "bultos_en_los_lotes(lotes)" in cuerpo
+    # EL FRENO MIDE CONTRA LOS NETOS y todo lo demás contra los enteros, que
+    # es la separación del 16/09: el freno cuenta lo que otra guía R del
+    # mismo día ya se llevó, el reparto no. Las dos mitades se afirman: si
+    # el freno volviera a medir contra `lotes` el agujero vuelve, y si la
+    # propuesta pasara a medir contra los netos cambiaría el desglose que ve
+    # el operario, que es justo lo que se decidió no tocar.
+    assert "bultos_en_los_lotes(lotes_netos)" in cuerpo
+    assert "descontar_lo_tomado_hoy(lotes, tomado_hoy)" in cuerpo
     assert "validar_reparto_declarado(lotes, bultos_tomados, reparto, SALIDA_REPROCESO)" in cuerpo
 
     # 2) el desglose que dibuja la pantalla.
     desglose = main_py[main_py.index("def desglose_reproceso("):]
     desglose = desglose[: desglose.index("\ndef ")]
     assert "lotes_permitidos(reparto[\"lotes\"], SALIDA_REPROCESO)" in desglose
-    assert "bultos_en_los_lotes(lotes)" in desglose
+    # La MISMA separación acá: el aviso que la pantalla da antes de Guardar
+    # es el freno adelantado, así que mide contra los netos. Si midiera
+    # contra los enteros diría que alcanza y el server rebotaría al apretar.
+    assert "bultos_en_los_lotes(lotes_netos)" in desglose
+    assert "descontar_lo_tomado_hoy(lotes, reparto.get(\"tomado_hoy\", []))" in desglose
     assert "propuesta_fifo(lotes, bultos)" in desglose
     assert "_desglose_para_pantalla(lotes)" in desglose
     # Y que no quede ninguna lectura de la lista sin filtrar.

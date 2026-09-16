@@ -42,3 +42,9 @@ select round(coalesce(sum(exc) filter (where exc > 0.001),0),2) as bultos_de_mas
 -- va a las POSTERIORES primero, porque las de antes entraron cuando el lote
 -- tenia con que. guias_tocadas_post es el TECHO del rebote, con su poblacion
 -- al lado; ultima_guia_r, el testigo.
+
+-- NO SE CORRIO, y la razon esta escrita para que no se lea como un olvido:
+-- existia para dimensionar la URGENCIA DE RECOSTEAR los lotes sobre-atribuidos,
+-- y el 16/09 el dueno decidio que esos 56 no se corrigen (etapa de prueba, los
+-- costos todavia no cuentan). Sigue contestando lo que dice si algun dia la
+-- plata de esos dias importa.
