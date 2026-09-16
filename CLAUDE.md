@@ -5731,3 +5731,86 @@ La pantalla quedó **Cajas**, en `/compras/cajas`, y el nombre es además más
 honesto: "Envases" es el catálogo —el concepto, con su costo— y "Cajas" es
 la cuenta de las que hay en el galpón. Verificado antes de fijarlo: ni
 `/compras/cajas` ni un `<title>` con "Cajas" existían en el repo.
+
+## Corolario 68: un camino que FUNCIONA y no se VE es un camino que no existe, y ningún test de marcado puede ver la diferencia
+
+Del 16/09. Buscar Compras metió sus acciones en un menú y **el Detalle se
+quedó afuera sin botón**, con este argumento escrito en la plantilla: *"la
+tarjeta entera lleva ahí: es lo que se quiere el 80% de las veces y no
+necesita botón"*.
+
+El argumento es válido y el mecanismo anda. Medido en el navegador, no
+leído:
+
+```
+                          ESCRITORIO (1200px)   CELULAR (390px)
+cursor de la fila             pointer              pointer
+el click llega al handler     True                 True
+```
+
+El JS no está adentro de ningún `@media` y `tbody tr[data-detalle] { cursor:
+pointer }` tampoco, así que **la fila SÍ es tocable en escritorio.** Lo que
+faltaba no era el camino: era que se viera.
+
+```
+link_color   rgb(34, 34, 34)      color_celda  rgb(34, 34, 34)
+link_subrayado   none
+```
+
+El nombre del artículo **era un link con el color exacto del texto de al
+lado y sin subrayar.** En el celular no se nota porque el dedo toca
+cualquier lado por costumbre; en escritorio el que busca una acción busca un
+botón, y el único indicio era el cursor al pasar por encima — que hay que
+sospechar para encontrar.
+
+**Y se llevó puesta una operación entera.** `grep` de los dos: el Detalle es
+la ÚNICA puerta a **Corregir Recepción** (un solo `href` en todo
+`templates/`), y Buscar Compras es la única puerta al Detalle. Un camino de
+tres eslabones donde el primero se volvió invisible.
+
+### La parte que no teníamos escrita: el test EXIGÍA la ausencia
+
+No es que ningún test cubriera el botón. Había uno que lo prohibía:
+
+```python
+# Editar sigue estando, adentro del menú. DETALLE YA NO ES UN BOTÓN: la
+# tarjeta entera lleva ahí, que es lo que se quiere el 80% de las veces.
+assert ">Detalle<" not in texto
+```
+
+Es el corolario 22 en su forma más fuerte —el fixture que fija el caso
+equivocado convierte al test en el guardián del bug— con un escalón más:
+**acá no hay un fixture que mirar, hay un ARGUMENTO.** El assert venía con su
+razón al lado, la razón era correcta sobre el mecanismo, y por eso nadie la
+iba a discutir. Y cumplió su función de guardián al pie de la letra: agregar
+el botón lo hizo fallar, y la primera lectura de ese rojo es *"me equivoqué
+yo"*.
+
+### Por qué ningún test podía agarrarlo
+
+El test que cuida el camino al Detalle **estaba puesto y estaba verde**:
+afirma el `data-detalle` de la fila y el `<a class="link-detalle">` del
+nombre. Los dos estaban. Es el corolario 32 corrido de lugar: allá el
+atributo decía "escondeme" y el CSS no obedecía; **acá el atributo dice "soy
+un link" y el CSS lo desmiente.** Un assert sobre marcado prueba que el
+camino existe; no prueba que alguien pueda encontrarlo.
+
+Confirmado con el canario: apagarle el subrayado a la regla hace caer **cero**
+tests de marcado. Lo único que vio la diferencia fue el navegador.
+
+### Las dos preguntas, y son distintas
+
+> **¿Se puede llegar?** la contesta el marcado, y un test la cuida.
+> **¿Se ve que se puede llegar?** la contesta el CSS renderizado, y hay que
+> ir a mirarla.
+
+La segunda no se deduce de la primera y no hay suite que la cubra. Se hace
+cuando una pantalla saca un botón y lo reemplaza por una afordancia —el
+click de la fila, el swipe, el hover—: **abrir el navegador y preguntarse qué
+distingue a eso de un texto muerto.** Si la respuesta es "el cursor", en
+celular no existe; si es "nada", no existe en ningún lado.
+
+**Y el 80% era sobre el CELULAR.** Esa es la premisa que nadie midió
+(corolario 25): el argumento se escribió pensando en el dedo y se aplicó a
+una tabla de escritorio, donde la afordancia que lo sostenía no se ve. Un
+argumento correcto sobre una población y copiado a otra.

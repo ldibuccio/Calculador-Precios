@@ -2744,12 +2744,19 @@ def test_EXPORTAR_queda_AFUERA_del_plegado():
 
 
 def test_la_tarjeta_entera_lleva_al_DETALLE_y_no_depende_solo_del_JS():
-    """Es lo que se quiere el 80% de las veces y no necesita botón.
+    """Los TRES caminos al Detalle, y hacen falta los tres.
 
-    LAS DOS MITADES: el `data-detalle` lo usa el click de la fila —que es lo
-    que hace que la tarjeta entera sirva— y el link en el nombre es lo que
-    hace que ande sin JS y se alcance con el teclado. Con una sola, la
-    pantalla anda peor para alguien.
+    LAS DOS MITADES DEL CLICK: el `data-detalle` lo usa el click de la fila
+    —que es lo que hace que la tarjeta entera sirva en el celular— y el link
+    en el nombre es lo que hace que ande sin JS y se alcance con el teclado.
+
+    Y EL BOTÓN DEL MENÚ, que es el tercero y el que faltaba. El argumento
+    viejo era que la tarjeta entera alcanza y el botón sobra. El click anda
+    —también en escritorio, medido— pero eso NO ES LO MISMO que que se vea:
+    el nombre tenía el color del texto y no estaba subrayado, así que en la
+    tabla no había nada que dijera que se podía entrar. Un camino que
+    funciona y no se ve es un camino que no existe — y como el Detalle es la
+    ÚNICA puerta a Corregir Recepción, se llevó puesta una operación entera.
     """
     with (
         patch("app.main._hoy_argentina", return_value=HOY_DE_PRUEBA),
@@ -2765,6 +2772,66 @@ def test_la_tarjeta_entera_lleva_al_DETALLE_y_no_depende_solo_del_JS():
     # Y el click NO se lleva puesto lo que ya hace algo: sin esta lista, abrir
     # el menú navegaría al Detalle en vez de abrirlo.
     assert 'closest("a, button, input, label, details, summary, form")' in texto
+    # El tercero: el botón del menú. Ancla en el elemento entero y no en la
+    # palabra "Detalle", que aparece en los comentarios de la plantilla
+    # explicando justamente esto (corolario 38).
+    cuerpo = marcado.split('<div class="menu-cuerpo">')[1].split("</details>")[0]
+    assert '<a class="boton boton-detalle" href="/compras/1/detalle">Detalle</a>' in cuerpo
+
+
+def test_el_menu_pone_DETALLE_PRIMERO_y_ELIMINAR_ULTIMO():
+    """El orden lo pidió el dueño y es el del uso: Detalle es lo que más abre
+    y Eliminar lo que menos.
+
+    Compara la lista ENCONTRADA contra la DECIDIDA en vez de recorrer la
+    propia (corolario 60): así falla también el día que alguien agregue una
+    acción sexta en el medio, que es el caso que una lista escrita a mano no
+    puede ver.
+    """
+    with (
+        patch("app.main._hoy_argentina", return_value=HOY_DE_PRUEBA),
+        patch("app.main.listar_todos_los_proveedores", return_value=PROVEEDORES_DE_PRUEBA),
+        patch("app.main.listar_articulos", return_value=ARTICULOS_CON_UNIDAD_COMPRA),
+        patch("app.main.buscar_compras", return_value=COMPRAS_BUSQUEDA_DE_PRUEBA),
+    ):
+        marcado = cliente.get("/compras/buscar").text.split("</style>")[-1]
+
+    cuerpo = marcado.split('<div class="menu-cuerpo">')[1].split("</details>")[0]
+    # Los rótulos en el orden en que salen, sacados del marcado y no de una
+    # lista propia. La compra 1 del fixture es recepcionada y sin marca, así
+    # que le toca "Vino armada"; no tiene ninguna de las dos fotos.
+    encontrado = re.findall(r">([A-ZÁÉÍÓÚÑ][^<>]*?)</(?:a|button)>", cuerpo)
+    assert encontrado == ["Detalle", "Editar", "Vino armada", "Eliminar"], encontrado
+
+
+def test_el_link_del_nombre_SE_VE_como_link():
+    """Lo que este test PUEDE y lo que NO, dicho antes de que alguien le crea.
+
+    PUEDE: que la regla del subrayado siga escrita. NO PUEDE: que el operario
+    la vea — eso lo decide el CSS aplicado, que ningún assert sobre texto
+    corre (corolario 32: el atributo es la intención, no el efecto). El
+    canario lo confirmó: apagarle el subrayado a la regla hace caer CERO
+    tests de marcado.
+
+    Lo que sí vio la diferencia fue el navegador, y por eso el número queda
+    acá: antes `text-decoration-line` daba `none` y el link tenía el MISMO
+    rgb(34,34,34) que el texto de al lado, en 1200px y en 390px. Ahora da
+    `underline` en los dos. Un camino que funciona y no se ve es un camino
+    que no existe.
+
+    Ancla en el CSS (`[0]`, no `[-1]`), que es donde vive lo que afirma.
+    """
+    with (
+        patch("app.main._hoy_argentina", return_value=HOY_DE_PRUEBA),
+        patch("app.main.listar_todos_los_proveedores", return_value=PROVEEDORES_DE_PRUEBA),
+        patch("app.main.listar_articulos", return_value=ARTICULOS_CON_UNIDAD_COMPRA),
+        patch("app.main.buscar_compras", return_value=COMPRAS_BUSQUEDA_DE_PRUEBA),
+    ):
+        hoja = cliente.get("/compras/buscar").text.split("</style>")[0]
+
+    regla = hoja.split(".link-detalle {")[1].split("}")[0]
+    assert "text-decoration: underline" in regla
+    assert "text-decoration: none" not in regla
 
 
 def test_las_acciones_viven_ADENTRO_del_menu_y_los_indicadores_AFUERA():
@@ -2836,10 +2903,17 @@ def test_buscar_compras_muestra_LAS_DOS_FOTOS_y_dice_cual_falta():
     for cuerpo in marcado.split('<div class="menu-cuerpo">')[1:]:
         assert 'class="no-hay"' not in cuerpo.split("</details>")[0]
 
-    # Editar sigue estando, adentro del menú. DETALLE YA NO ES UN BOTÓN: la
-    # tarjeta entera lleva ahí, que es lo que se quiere el 80% de las veces.
+    # Editar y DETALLE, los dos adentro del menú y uno por compra.
+    #
+    # ESTE ASSERT DECÍA `">Detalle<" not in texto`, con un comentario que
+    # explicaba que la tarjeta entera lleva ahí y el botón sobraba. Era el
+    # GUARDIÁN DEL BUG (corolario 22): no es que no cubriera la falta del
+    # botón — la exigía, y con eso dejó sin puerta visible a Corregir
+    # Recepción, que vive adentro del Detalle. El click de la fila anda, en
+    # escritorio también; lo que no existía era algo que dijera que se puede
+    # entrar.
     assert texto.count(">Editar<") == 4
-    assert ">Detalle<" not in texto
+    assert texto.count(">Detalle<") == 4
 
 
 def test_ver_buscar_compras_muestra_el_aviso_cuando_viene_en_la_url():

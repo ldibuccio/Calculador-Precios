@@ -341,8 +341,18 @@
   .indicadores .no-hay { background: #f3f4f6; color: #9ca3af; }
   /* La fila entera lleva al Detalle: que se note que se puede tocar. */
   tbody tr[data-detalle] { cursor: pointer; }
-  .link-detalle { color: inherit; text-decoration: none; }
-  .link-detalle:hover, .link-detalle:focus { text-decoration: underline; }
+  /* SE TIENE QUE VER QUE ES UN LINK. Con `text-decoration: none` el nombre
+     era indistinguible del texto de al lado —medido: el mismo rgb(34,34,34)
+     y sin subrayar— así que el camino al Detalle existía y no lo veía nadie.
+     Hereda el color para no teñir la tabla, y el subrayado gris lo delata
+     sin gritar. */
+  .link-detalle {
+    color: inherit;
+    text-decoration: underline;
+    text-decoration-color: #9ca3af;
+    text-underline-offset: 2px;
+  }
+  .link-detalle:hover, .link-detalle:focus { text-decoration-color: currentColor; }
 </style>
 </head>
 <body>
@@ -480,9 +490,18 @@
             <td>{{ c.cantidad_cajones|numero }} cajones × {{ magnitudes_del_cajon(c) }}</td>
             <td>{% if c.importe is not none %}{{ c.importe|moneda }}{% else %}<span class="sin-precio">SIN PRECIO</span>{% endif %}</td>
             <td>
-              {# LAS ACCIONES ADENTRO DE UN MENÚ, y el Detalle AFUERA porque la
-                 tarjeta entera lleva ahí: es lo que se quiere el 80% de las
-                 veces y no necesita botón.
+              {# LAS ACCIONES ADENTRO DE UN MENÚ, y el Detalle PRIMERO de la
+                 lista: es lo que más se usa, así que va arriba de todo y
+                 Eliminar queda al final.
+
+                 ESTUVO AFUERA Y SIN BOTÓN, con el argumento de que la tarjeta
+                 entera lleva ahí. El click de la fila anda —medido, también
+                 en escritorio— pero NADIE LO VE: el nombre es un link con el
+                 color del texto y sin subrayar, así que en la tabla de
+                 escritorio no hay nada que diga que se puede entrar. Un
+                 camino que funciona y no se ve es un camino que no existe, y
+                 se llevó puesta la única puerta a Corregir Recepción, que
+                 vive adentro del Detalle.
 
                  MEDIDO ANTES DE ESCRIBIRLO: el menú gana 1,1 filas por
                  pantalla (4,5 a 5,6), que es poco — los botones son el 35%
@@ -508,6 +527,7 @@
               <details class="menu-acciones">
                 <summary>Acciones ▾</summary>
                 <div class="menu-cuerpo">
+                  <a class="boton boton-detalle" href="/compras/{{ c.id }}/detalle">Detalle</a>
                   {# Los filtros viajan en la URL de editar para que Guardar/Volver vuelvan a ESTA búsqueda. #}
                   <a class="boton boton-editar" href="/compras/{{ c.id }}/editar?fecha_desde={{ fecha_desde }}&fecha_hasta={{ fecha_hasta }}&proveedor_id={{ proveedor_id if proveedor_id is not none else '' }}&articulo_id={{ articulo_id if articulo_id is not none else '' }}">Editar</a>
                   {% if c.tiene_comanda %}
