@@ -3047,21 +3047,49 @@ def test_TODAS_las_consultas_desempatan_por_creado_en_dentro_de_la_misma_fecha()
             f"{funcion.__name__} resuelve la vigencia sin desempatar por creado_en"
 
 
-def test_asignar_ficha_a_reproceso_solo_toca_la_ficha():
-    # Los consumos y el costo se congelaron al cargar la guía: asignar la
-    # ficha es decir a qué producto de venta fueron esas cajas, no rehacer
-    # el FIFO.
-    conexion, cursor = _conexion_falsa(filas_fetchone=[(7, 1, False), (7, 1)])
+def test_asignar_ficha_a_reproceso_toca_la_ficha_Y_EL_ENVASE_QUE_VIAJA_CON_ELLA():
+    """Este test decía "solo toca la ficha" y dejó de ser cierto el 16/09.
+
+    No se aflojó el assert: cambió lo que hay que afirmar. Una guía R sin
+    ficha no tiene de dónde derivar en qué caja se armó, así que queda "sin
+    declarar" y el stock de cajas la muestra como hueco. Asignar la ficha es
+    LO QUE contesta esa pregunta, y si el UPDATE no la completara el hueco
+    quedaría abierto para siempre sin que nada lo señale.
+
+    Lo que SIGUE siendo cierto, y por eso se queda abajo: los consumos y el
+    costo se congelaron al cargar la guía y no se recalculan.
+    """
+    # La tercera fila es la de la ficha que lee `_envase_de_esta_guia`:
+    # envase 5, fijo. Puesta a propósito distinta de las otras dos para que
+    # el envase no pueda salir bien por copiar el número de al lado.
+    conexion, cursor = _conexion_falsa(filas_fetchone=[(7, 1, False), (7, 1), (5, False)])
 
     with patch("app.db.obtener_conexion", return_value=conexion):
         asignar_ficha_a_reproceso(12, 901)
 
     consulta, parametros = cursor.execute.call_args.args
-    assert consulta == "UPDATE reprocesos SET ficha_id = %s WHERE id = %s"
-    assert parametros == (901, 12)
+    assert "SET ficha_id = %s, lleva_caja_nuestra = %s, envase_id = %s" in consulta
+    assert parametros == (901, True, 5, 12)
     # Nada de recalcular: los consumos no se tocan.
     assert not any("reprocesos_consumos" in c.args[0] for c in cursor.execute.call_args_list)
     conexion.commit.assert_called_once()
+
+
+def test_desasignar_deja_el_envase_SIN_DECLARAR_y_no_en_cero():
+    """Sacarle la ficha a una guía vuelve a abrir el hueco, que es la verdad.
+
+    Escribir `false` diría "esta guía no llevó caja nuestra", que es una
+    afirmación; el NULL dice "no sabemos", que es lo que pasa. La diferencia
+    se ve en el stock: `false` lo daría por cerrado y el NULL lo cuenta como
+    guía sin declarar.
+    """
+    conexion, cursor = _conexion_falsa(filas_fetchone=[(7, 1, False)])
+
+    with patch("app.db.obtener_conexion", return_value=conexion):
+        asignar_ficha_a_reproceso(12, None)
+
+    _, parametros = cursor.execute.call_args.args
+    assert parametros == (None, None, None, 12)
 
 
 def test_no_se_puede_asignar_una_ficha_de_OTRO_articulo():
@@ -3114,14 +3142,17 @@ def test_una_guia_SIN_cliente_acepta_cualquier_ficha_del_articulo():
     peor que el cruce que viene a evitar. Hoy son cero; este test existe
     para el día que aparezca una.
     """
-    conexion, cursor = _conexion_falsa(filas_fetchone=[(7, None, False), (7, 2)])
+    conexion, cursor = _conexion_falsa(
+        filas_fetchone=[(7, None, False), (7, 2), _ENVASE_DE_LA_FICHA])
 
     with patch("app.db.obtener_conexion", return_value=conexion):
         asignar_ficha_a_reproceso(12, 901)
 
     consulta, parametros = cursor.execute.call_args.args
-    assert consulta == "UPDATE reprocesos SET ficha_id = %s WHERE id = %s"
-    assert parametros == (901, 12)
+    assert "UPDATE reprocesos" in consulta and "SET ficha_id = %s" in consulta
+    # Y el envase viaja con la ficha, también acá: la guía vieja sin cliente
+    # no es un caso aparte para eso.
+    assert parametros == (901, True, 42, 12)
     conexion.commit.assert_called_once()
 
 
@@ -3145,8 +3176,10 @@ def test_desasignar_una_guia_se_permite_y_no_valida_ficha():
         asignar_ficha_a_reproceso(12, None)
 
     consulta, parametros = cursor.execute.call_args.args
-    assert "UPDATE reprocesos SET ficha_id = %s" in consulta
-    assert parametros == (None, 12)
+    assert "UPDATE reprocesos" in consulta and "SET ficha_id = %s" in consulta
+    # El envase se va con la ficha: ver el test de arriba sobre por qué NULL
+    # y no false.
+    assert parametros == (None, None, None, 12)
     # No sale a buscar una ficha que no existe.
     assert not any("FROM fichas_logistica" in c.args[0] for c in cursor.execute.call_args_list)
 
@@ -5972,8 +6005,13 @@ def test_crear_reproceso_congela_consumos_fifo_y_todo_el_costo_a_la_primera():
     # alguien agrega una columna es la función del test. Las dos últimas son
     # `tipo` y la compra que originó la guía — 'normal' y None acá, porque
     # ésta es un armado del galpón como cualquier otro.
+    # Las dos últimas son EN QUÉ CAJA se armó la primera. Acá van en None las
+    # dos porque la guía quedó SIN FICHA: sin ficha no hay de dónde derivar el
+    # envase, y eso NO es "no llevó caja nuestra" —que sería `False`— sino
+    # "no sabemos", que el stock de cajas cuenta aparte como hueco.
     assert inserts[0].args[1] == (
-        1, date(2026, 8, 25), 6, 4, 1, 1, 6600.0, 1650.0, 7, None, False, "normal", None
+        1, date(2026, 8, 25), 6, 4, 1, 1, 6600.0, 1650.0, 7, None, False, "normal", None,
+        None, None,
     )
     # Consumos congelados, del lote más viejo primero, con su costo.
     assert inserts[1].args[1] == (12, "compra", 101, 101, 3.0, 1000.0)
@@ -7837,6 +7875,12 @@ def test_el_desglose_dice_si_la_ficha_tiene_ENVASE():
 _COMPRA_EN_ORIGEN = 777
 _CAJON_VIEJO = 555
 
+# (envase_id, envase_variable) de la ficha de la guía. Un envase FIJO, así que
+# el server lo deriva solo y no hace falta preguntar nada. El número está
+# elegido lejos de los otros ids del fixture a propósito: si el envase saliera
+# bien copiando el de al lado, el assert no distinguiría nada.
+_ENVASE_DE_LA_FICHA = (42, False)
+
 
 def _lotes_con_rival():
     """El cajón viejo (rival) y la compra que llegó armada, en ese orden de fecha."""
@@ -7859,7 +7903,10 @@ def _conexion_recepcion(ficha_id=3, ficha_articulo=1, numero_guia=99):
         (1, ficha_id, 10.0, date(2026, 8, 25), ficha_articulo, 7),
     ]
     if ficha_id is not None and ficha_articulo == 1:
-        filas += [_CORTE, (numero_guia,)]
+        # `_ENVASE_DE_LA_FICHA` es la lectura que hace `_envase_de_esta_guia`
+        # para saber EN QUÉ CAJA se armó: va entre el corte y el RETURNING
+        # del INSERT, que es donde el server la pide.
+        filas += [_CORTE, _ENVASE_DE_LA_FICHA, (numero_guia,)]
     conexion, cursor = _conexion_falsa(filas_fetchone=filas)
     cursor.description = COLUMNAS_LOTES
     cursor.fetchall.side_effect = [_lotes_con_rival(), []]
@@ -7932,6 +7979,10 @@ def test_la_guia_en_origen_es_UNO_A_UNO_y_se_marca_como_tal():
         12000.0, 1200.0,                   # costo del lote de SU compra, todo a la primera
         7, 3,                              # cliente (sale de la ficha) y ficha
         False, "en_origen", _COMPRA_EN_ORIGEN,
+        # Y EN QUÉ CAJA: la compra llegó armada en la caja de esa ficha, que
+        # tiene envase fijo, así que el server lo deriva sin preguntar nada.
+        # Esta guía SUMA al stock de cajas — es una prestada que vuelve.
+        True, 42,
     )
 
 
@@ -7976,7 +8027,8 @@ def test_el_RECHAZO_PARCIAL_de_una_compra_marcada_arma_la_guia_por_los_ACEPTADOS
     aceptados (llegados − rechazados). Si en vez de eso mirara la cantidad
     estimada, armaría cajas que se devolvieron al proveedor.
     """
-    filas = [("kilo", 160.0, None), ("retirado",), (1, 3, 8.0, date(2026, 8, 25), 1, 7), _CORTE, (99,)]
+    filas = [("kilo", 160.0, None), ("retirado",), (1, 3, 8.0, date(2026, 8, 25), 1, 7),
+             _CORTE, _ENVASE_DE_LA_FICHA, (99,)]
     conexion, cursor = _conexion_falsa(filas_fetchone=filas)
     cursor.description = COLUMNAS_LOTES
     cursor.fetchall.side_effect = [_lotes_con_rival(), []]
@@ -8157,6 +8209,7 @@ def test_el_ingreso_directo_MARCADO_carga_su_guia_R_en_el_MISMO_insert():
             (1,),                          # el artículo de la ficha marcada
             (1, 3, 10.0, date(2026, 8, 25), 1, 7),  # la compra recién escrita
             _CORTE,
+            _ENVASE_DE_LA_FICHA,           # en qué caja se armó (sale de la ficha)
             (99,),                         # INSERT INTO reprocesos RETURNING id
         ]
     )

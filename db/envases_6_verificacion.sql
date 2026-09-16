@@ -30,11 +30,10 @@ select
  (select max(fecha_operacion) from reprocesos where anulado_el is null)     as ultima_guia_r;
 
 -- ---------------------------------------------------------------------------
--- VA EN SU PROPIA CORRIDA: pegada a un `do`, el editor se queda con esta y el
--- `do` no se ejecuta, con la misma salida que uno que si corrio. En LAS DOS
--- BASES, y se pegan las DOS filas con el nombre de la base adelante.
+-- VA EN SU PROPIA CORRIDA: pegada a un `do`, el editor corre solo esta y
+-- el `do` no se ejecuta, con la misma salida que uno que si corrio.
 --
--- Todo aplicado: 1 · 1 · 4 · 1 · 2 · 1 · 1 · 3 · ofensores_viejos 0.
+-- En LAS DOS BASES, y se pegan las DOS filas con el nombre de la base.
+-- Todo aplicado: 1 · 1 · 4 · 1 · 2 · 1 · 1 · 3 · ofensores 0.
 --
--- guardas_NULL_SAFE_de_3 mira la DEFINICION y no el nombre: los tres
--- constraints existen en los dos estados. Con `=` da 0.
+-- guardas_NULL_SAFE_de_3 mira la DEFINICION: con `=` da 0.

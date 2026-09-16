@@ -1,0 +1,139 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Cajas</title>
+<style>
+  :root { font-family: -apple-system, system-ui, sans-serif; }
+  body { margin: 0; padding: 1rem; background: #f5f5f5; color: #222; }
+  h2 { font-size: 1.05rem; margin: 0 0 0.75rem; }
+  .tarjeta { background: #fff; border-radius: 10px; padding: 1rem;
+             margin-bottom: 1rem; box-shadow: 0 1px 3px rgba(0,0,0,.1); }
+  .error { background: #fee2e2; color: #991b1b; padding: .75rem 1rem;
+           border-radius: 8px; margin-bottom: 1rem; font-size: .95rem; }
+  .aviso { background: #dcfce7; color: #166534; padding: .75rem 1rem;
+           border-radius: 8px; margin-bottom: 1rem; font-size: .95rem; }
+  /* El hueco se PINTA, no se calla: una guia que no dice en que caja se armo
+     no es una caja menos consumida, es un dato que falta. */
+  .hueco { background: #fef3c7; color: #92400e; padding: .75rem 1rem;
+           border-radius: 8px; margin-bottom: 1rem; font-size: .95rem; }
+  .cabeza { display: flex; flex-wrap: wrap; align-items: baseline;
+            gap: .5rem; margin-bottom: .5rem; }
+  .nombre { font-size: 1.1rem; font-weight: 600; }
+  .stock { font-size: 1.6rem; font-weight: 700; }
+  .stock.bajo { color: #b91c1c; }
+  .stock.sin-arrancar { font-size: 1rem; font-weight: 500; color: #6b7280; }
+  .patas { display: flex; flex-wrap: wrap; gap: .4rem .9rem;
+           font-size: .85rem; color: #555; margin: .35rem 0 .75rem; }
+  .patas span { white-space: nowrap; }
+  .fila { display: flex; flex-wrap: wrap; gap: .5rem; align-items: flex-end; }
+  .campo { display: flex; flex-direction: column; flex: 1 1 8rem; min-width: 0; }
+  label { font-size: .85rem; margin-bottom: .2rem; }
+  input, select { font-size: 1rem; padding: .6rem; min-height: 44px;
+                  border: 1px solid #cbd5e1; border-radius: 8px; min-width: 0; }
+  button { font-size: 1rem; padding: .7rem 1.1rem; min-height: 44px;
+           border: 0; border-radius: 8px; background: #2563eb; color: #fff;
+           font-weight: 600; flex: 1 1 8rem; }
+  .ayuda { font-size: .82rem; color: #6b7280; margin: .35rem 0 0; }
+</style>
+</head>
+<body>
+  {% set barra_sector = "compras" %}
+  {% set barra_titulo = "Cajas" %}
+  {% set barra_atras = "/compras" %}
+  {% include "_barra_navegacion.html" %}
+
+  {% if error %}<div class="error">{{ error }}</div>{% endif %}
+  {% if aviso %}<div class="aviso">{{ aviso }}</div>{% endif %}
+
+  {% if sin_declarar.casos %}
+  <div class="hueco">
+    <strong>{{ sin_declarar.casos }} de {{ sin_declarar.poblacion }} guías R</strong>
+    no dicen en qué caja se armaron, así que esas cajas no están descontadas.
+    Pasa cuando la guía quedó sin ficha asignada: al asignarla, el envase se
+    completa solo.
+  </div>
+  {% endif %}
+
+  {% for e in envases %}
+  <div class="tarjeta">
+    <div class="cabeza">
+      <span class="nombre">{{ e.nombre }}</span>
+      {% if e.stock is none %}
+        <span class="stock sin-arrancar">todavía sin conteo inicial</span>
+      {% else %}
+        <span class="stock {% if e.bajo %}bajo{% endif %}">{{ e.stock|numero }}</span>
+        {% if e.bajo %}<span>— menos de {{ e.umbral_reposicion }}: hay que reponer</span>{% endif %}
+      {% endif %}
+    </div>
+
+    {% if e.stock is not none %}
+    <div class="patas">
+      <span>contadas el {{ e.desde.strftime("%d/%m") }}: {{ e.contadas|numero }}</span>
+      <span>declarado: {{ e.declaradas|numero }}</span>
+      <span>guías R: {{ e.por_guias|numero }}</span>
+      <span>vueltas de un rechazo: {{ e.liberadas|numero }}</span>
+    </div>
+    {% endif %}
+
+    {% if e.stock is none %}
+    <form class="fila" method="post" action="/compras/cajas/conteo-inicial">
+      <input type="hidden" name="envase_id" value="{{ e.id }}">
+      <div class="campo">
+        <label for="c{{ e.id }}">¿Cuántas cajas hay hoy en el galpón?</label>
+        <input type="number" id="c{{ e.id }}" name="cantidad" min="0" step="1"
+               inputmode="numeric" required>
+      </div>
+      <div class="campo">
+        <label for="f{{ e.id }}">¿Qué día las contaste?</label>
+        <input type="date" id="f{{ e.id }}" name="fecha" value="{{ hoy }}" max="{{ hoy }}" required>
+      </div>
+      <button type="submit">Arrancar la cuenta</button>
+    </form>
+    <p class="ayuda">Se cuenta una sola vez, y desde ese día el stock baja solo
+      con cada guía R. Contalas a la mañana, antes de armar nada.</p>
+    {% else %}
+    <form class="fila" method="post" action="/compras/cajas/movimiento">
+      <input type="hidden" name="envase_id" value="{{ e.id }}">
+      <div class="campo">
+        <label for="o{{ e.id }}">¿Qué pasó?</label>
+        <select id="o{{ e.id }}" name="origen">
+          <option value="compra">Compré cajas</option>
+          <option value="prestamo_salida">Le mandé cajas vacías al puesto</option>
+          <option value="ajuste">Corregir el stock</option>
+        </select>
+      </div>
+      <div class="campo">
+        <label for="n{{ e.id }}">¿Cuántas cajas?</label>
+        <input type="number" id="n{{ e.id }}" name="cantidad" step="1"
+               inputmode="numeric" required>
+      </div>
+      <div class="campo">
+        <label for="m{{ e.id }}">¿Por qué? (solo al corregir)</label>
+        <input type="text" id="m{{ e.id }}" name="motivo" maxlength="200">
+      </div>
+      <button type="submit">Guardar</button>
+    </form>
+    <p class="ayuda">En "Corregir", un número negativo resta: −5 son cinco
+      cajas que estaban rotas y ya no están.</p>
+    {% endif %}
+
+    <form class="fila" method="post" action="/compras/cajas/umbral" style="margin-top:.75rem">
+      <input type="hidden" name="envase_id" value="{{ e.id }}">
+      <div class="campo">
+        <label for="u{{ e.id }}">Avisame cuando queden menos de</label>
+        <input type="number" id="u{{ e.id }}" name="umbral" min="0" step="1"
+               inputmode="numeric" value="{{ e.umbral_reposicion if e.umbral_reposicion is not none else '' }}"
+               placeholder="vacío = no avisar">
+      </div>
+      <button type="submit">Guardar el aviso</button>
+    </form>
+  </div>
+  {% else %}
+  <div class="tarjeta">No hay envases cargados. Se dan de alta con la ficha de un cliente.</div>
+  {% endfor %}
+
+{% include "_pie_version.html" %}
+</body>
+</html>

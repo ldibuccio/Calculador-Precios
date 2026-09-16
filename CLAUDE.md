@@ -2487,8 +2487,17 @@ rótulos" y en una de las cuatro era falso.
 ## La caja nuestra que se va y no vuelve: TRES puertas del mismo agujero
 
 Del 11/09, y va acá porque es un hecho del negocio que el sistema no
-registra, no un bug. **Anotado y NO construido** — por pedido, y a la
-espera de que el hecho se mida antes de tocar nada.
+registra, no un bug.
+
+**MEDIDO Y RESUELTO EL 16/09, y la resolución no fue construir nada de lo
+que esta sección proponía: fue ver que estas tres puertas NO son un agujero
+de stock de cajas.** La caja se descuenta cuando se ARMA —en la guía R— así
+que para cuando sale por cualquiera de las tres ya estaba descontada y no
+vuelve. El stock lo refleja solo. Lo que estas tres sí son es un agujero de
+COSTO DE ENVASE, que es otra pregunta y sigue abierta.
+
+La observación es de Lionel y dio vuelta el diagnóstico de esta sección
+entera: **teníamos dos preguntas distintas debajo de la misma palabra.**
 
 Cuando la mercadería sale en NUESTRA caja y después se va del circuito, esa
 caja no vuelve. El sistema no lleva cuenta de eso por ninguna de las tres
@@ -2523,10 +2532,18 @@ deja de ser un incidente y es una función que falta.**
 Del 11/09, y va aparte de las tres de arriba a propósito.
 
 Cuando el puesto entrega la mercadería **ya armada en caja nuestra**, las
-cajas vacías se le mandan el día anterior. Eso hoy **no se registra en
-ningún lado**: `envases` es un catálogo —nombre, activo, costo con
-vigencia— **sin stock y sin movimientos**, y el circuito de vacíos es de los
-cajones DEL PROVEEDOR (`proveedores_puesto`), separado a propósito.
+cajas vacías se le mandan el día anterior.
+
+**CONSTRUIDO EL 16/09.** El párrafo decía que eso "no se registra en ningún
+lado" y que `envases` era un catálogo "sin stock y sin movimientos": las dos
+cosas dejaron de ser ciertas. Hoy la salida de vacías se declara como
+`prestamo_salida` en `movimientos_envase`, y la vuelta la registra sola la
+guía R `en_origen` —la compra que llega armada en caja nuestra— que SUMA
+donde las normales restan. Las dos puntas, como decía esta sección que
+correspondía.
+
+Lo que sigue en pie es el circuito de vacíos del PUESTO, que es de los
+cajones DEL PROVEEDOR (`proveedores_puesto`) y está separado a propósito.
 
 **La diferencia con las tres de arriba, y es la que importa:** en aquéllas
 la caja se va CON mercadería y no vuelve — es una pérdida. Acá se va
@@ -2539,8 +2556,14 @@ volvieron".** Contar salidas de un préstamo da un número grande y
 tranquilizadoramente inútil — la mayoría vuelve. El número que significa
 algo es el que no cierra.
 
-**No se construyó, por pedido**: hoy son pocas cajas y se llevan de memoria.
-Queda anotado para el día que deje de alcanzar.
+**Y la advertencia que queda VIVA, que es la parte que el sistema no puede
+cerrar**: la salida de vacías la tiene que cargar alguien, y es un campo
+cuya única consecuencia es que el aviso de reposición salte cuando
+corresponde. Si no se carga, el stock queda alto y el aviso llega tarde —
+sin que nada se descuadre. Es exactamente el perfil del campo que se deja
+de llenar (ver "Un campo sin consecuencia se llena vacío"), así que
+conviene mirar a las dos semanas si se está cargando. Si no se carga, la
+salida no es insistir: es darle consecuencia o sacarlo.
 
 ## El dato de uso decide qué MEJORAR, no qué SACAR
 
@@ -5623,3 +5646,88 @@ cuidar el apagado, es el que hoy cuida la conversión. Es la mejor forma de un
 test de contrato (corolario 21): fija lo que la función TIENE QUE HACER, así
 que sobrevive al cambio de por qué hace falta. El canario lo confirma —
 devolverle `contenido_por_cajon` hace caer nueve tests y ese es uno.
+
+## Corolario 67: un CHECK que compara contra una columna NULEABLE evalúa NULL, y un CHECK que evalúa NULL PASA
+
+Del 16/09. El bloque 4 de la migración de las cajas agregaba
+`movimientos_stock.envase_id` con la guarda obvia:
+
+```sql
+check (envase_id is null or destino_rechazo = 'reproceso')
+```
+
+Se lee perfecta y **no rechaza nada** cuando `destino_rechazo` es NULL: la
+comparación da NULL, el `or` da NULL, y un CHECK que evalúa NULL **se
+considera cumplido**. Medido, no deducido: una MERMA con `envase_id` puesto
+entraba.
+
+El arreglo es `is not distinct from`, que devuelve un booleano de verdad.
+
+**Y lo que importa no es el caso: es que la MISMA forma ya estaba escrita
+dos veces en esa tabla desde siempre.** `movimientos_stock_proveedor_solo_
+devolucion` y `movimientos_stock_compra_solo_devolucion` tienen el mismo
+`= 'devolucion_proveedor'` contra la misma columna nuleable, así que una
+merma con `proveedor_devolucion_id` entraba igual. No era un bug vivo —hoy
+el único que escribe esas columnas es la ruta del reingreso, que siempre
+pone un destino— pero eran dos guardas que afirmaban algo que no cumplían.
+Corregidas en `db/envases_5_*.sql`, con cero ofensores en las dos bases.
+
+**Cómo se reconoce antes de sufrirlo, y es una sola pregunta**: en un CHECK
+de la forma `A is null or B = 'valor'`, preguntarse **si B puede ser NULL**.
+Si puede, el CHECK no cubre ese caso — y ese caso es justamente el de las
+filas de otro tipo, que son las que la guarda venía a excluir.
+
+Es de la familia del corolario 27 —la misma propiedad de un agregado salva a
+una consulta de verificación y arruina una guarda— con el mecanismo corrido
+al SQL de tres valores: lo que acá cambia de signo no es un agregado, es el
+NULL, que en un `where` descarta la fila y en un `check` la deja pasar.
+
+**Y lo agarró el CASO QUE TENÍA QUE PASAR, no los que tenían que fallar.**
+Se probaron once casos negativos contra la migración y los once salían en
+verde con mi CHECK roto: cualquier guarda que no rechace nada los pasa a
+todos si ninguno de ellos es el que la ataca. El que lo destapó fue el
+número doce, el único que buscaba el agujero. Es el corolario 30 al pie de
+la letra, dado vuelta: allá una batería de negativos estaba toda en verde
+con la guarda que frenaba siempre; acá con la que no frenaba nunca.
+
+**Y la verificación tuvo que mirar la DEFINICIÓN y no el nombre**: los tres
+constraints existen en los dos estados y lo que cambia es el comportamiento,
+así que contarlos por nombre da 3 con el agujero puesto. `guardas_NULL_SAFE_
+de_3` filtra por `pg_get_constraintdef(oid) like '%IS DISTINCT FROM%'`. Es
+exactamente lo del `on delete` de los precios, y la segunda vez en una
+semana que un `count` por nombre no alcanza.
+
+### Y el que avisa del nombre repetido es el que lo repite (16/09)
+
+Del mismo día, y es el corolario 14 con una vuelta que duele: **en el
+planteo del stock de cajas escribí, con todas las letras, que en este
+sistema ya hay tres pantallas que se llaman "Stock" y que no había que
+agregar una cuarta. Dos mensajes después bauticé la pantalla nueva
+"Envases", que es el nombre de una pantalla que ya existe** (`/envases`, el
+catálogo de envases con su costo, en Comercial).
+
+Y no se cobró en la próxima lectura como suele: se cobró en el acto, y de
+la peor forma. La función de render se llamó `_renderizar_pantalla_envases`,
+que **ya existía en `app/main.py`**, así que Python se quedó en silencio con
+la segunda definición y mi ruta nueva empezó a renderizar la pantalla ajena.
+El síntoma fue un 500 pidiendo `DATABASE_URL` en un test que parcheaba las
+dos funciones que la ruta llama — o sea, un error que no hablaba del
+problema.
+
+**Dos cosas que se llevan:**
+
+1. **En Python, dos `def` con el mismo nombre en un módulo no son un error:
+   gana el último y el primero desaparece.** Con 18.000 líneas, el `grep`
+   del nombre antes de escribirlo es lo único que lo evita, y cuesta un
+   segundo. Es el mismo mecanismo que el `HOY_DE_PRUEBA` redefinido del
+   14/09, pero sobre una función y no sobre una constante.
+2. **Escribir la advertencia no protege de la advertencia.** Es la tercera
+   vez que este archivo anota exactamente eso —el corolario 33 lo dice del
+   20, y el 18 de sí mismo— y la conclusión operativa sigue siendo la
+   misma: lo que protege no es acordarse de la regla, es el `grep` hecho en
+   el momento de bautizar.
+
+La pantalla quedó **Cajas**, en `/compras/cajas`, y el nombre es además más
+honesto: "Envases" es el catálogo —el concepto, con su costo— y "Cajas" es
+la cuenta de las que hay en el galpón. Verificado antes de fijarlo: ni
+`/compras/cajas` ni un `<title>` con "Cajas" existían en el repo.

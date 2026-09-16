@@ -155,7 +155,12 @@ create table envases (
     nombre          text not null unique,
     activo          boolean not null default true,
     creado_en       timestamptz not null default now(),
-    actualizado_en  timestamptz not null default now()
+    actualizado_en  timestamptz not null default now(),
+    -- Debajo de este número, la alerta de Compras avisa que hay que reponer.
+    -- NULL = este envase no se vigila. Ver db/envases_1_*.sql.
+    umbral_reposicion integer,
+    constraint envases_umbral_no_negativo
+        check (umbral_reposicion is null or umbral_reposicion >= 0)
 );
 
 comment on table envases is 'Catálogo único de envases, compartido entre todos los clientes: cada ficha logística elige el que corresponda. Un envase exclusivo de un cliente se distingue por el nombre (ver envases_sin_cliente.sql).';
@@ -170,6 +175,51 @@ create table envases_costo_historial (
 );
 
 comment on table envases_costo_historial is 'Costo de cada envase, con historial por fecha de vigencia.';
+
+-- Stock de CAJAS NUESTRAS. Guarda SOLO lo que declara una persona; lo
+-- automático NO se escribe acá, se DERIVA de las guías R y de los reingresos
+-- por rechazo. Dos caminos al mismo hecho es la regla escrita dos veces, y la
+-- copia que quedara vieja desconectaría el stock sin que nada avise.
+create table movimientos_envase (
+    id              bigint generated always as identity primary key,
+    envase_id       bigint not null references envases (id),
+    origen          text not null,
+    cantidad        integer not null,
+    motivo          text,
+    fecha_operacion date not null,
+    stock_sistema   integer not null,
+    creado_en       timestamptz not null default now(),
+    anulado_el      timestamptz,
+    constraint movimientos_envase_origen_check
+        check (origen in ('conteo_inicial', 'compra', 'prestamo_salida', 'ajuste')),
+    -- El signo va POR ORIGEN: una compra que reste o un préstamo que sume son
+    -- la misma fila con el signo al revés, y sin esto entran sin que nada avise.
+    constraint movimientos_envase_signo_segun_origen
+        check (case origen
+                 when 'compra'          then cantidad > 0
+                 when 'prestamo_salida' then cantidad < 0
+                 when 'conteo_inicial'  then cantidad >= 0
+                 else cantidad <> 0
+               end),
+    constraint movimientos_envase_ajuste_con_motivo
+        check (origen <> 'ajuste' or btrim(coalesce(motivo, '')) <> '')
+);
+
+comment on table movimientos_envase is 'Movimientos de cajas nuestras que DECLARA una persona: el conteo físico inicial, la compra de cajas, el préstamo de vacías al puesto y el ajuste. En CAJAS (integer: no existe media caja). El stock es la suma de estos más lo derivado de las guías R y los reingresos.';
+comment on column movimientos_envase.origen is 'conteo_inicial (la foto que arranca la cuenta de ese envase, y desde cuya fecha se cuentan las guías R), compra (ingreso), prestamo_salida (cajas vacías al puesto, siempre negativo) y ajuste (corrección, con motivo obligatorio).';
+comment on column movimientos_envase.cantidad is 'Cajas, con signo. INTEGER a propósito: los decimales de bultos_primera resultaron un fósil pre-corte y no hay razón para abrirles una puerta nueva.';
+comment on column movimientos_envase.stock_sistema is 'Foto del stock de ese envase SIN este movimiento. Igual que en ajustes_vacios: un ajuste que pudiera pisar el stock sin dejar rastro tapa cualquier faltante y se acaba el control cruzado.';
+comment on column movimientos_envase.anulado_el is 'NULL = movimiento vigente. Se anula, nunca se borra.';
+
+-- DOS conteos iniciales vigentes del mismo envase duplicarían la base de la
+-- cuenta. Parcial: los anulados no estorban.
+create unique index movimientos_envase_un_conteo_inicial
+    on movimientos_envase (envase_id)
+    where origen = 'conteo_inicial' and anulado_el is null;
+
+create index movimientos_envase_stock_idx
+    on movimientos_envase (envase_id, fecha_operacion)
+    where anulado_el is null;
 
 -- ----------------------------------------------------------------------------
 -- 5. FICHAS_LOGISTICA — cómo trata cada cliente a cada artículo
@@ -849,21 +899,35 @@ create table movimientos_stock (
     -- db/devolucion_al_proveedor.sql.
     proveedor_devolucion_id bigint references proveedores (id),
     constraint movimientos_stock_proveedor_solo_devolucion
+        -- `is not distinct from` Y NO `=`: con destino_rechazo en NULL, la
+        -- comparación da NULL y un CHECK que evalúa NULL PASA. Medido: una
+        -- merma con proveedor_devolucion_id entraba. Ver db/envases_5_*.sql.
         check (proveedor_devolucion_id is null
-               or destino_rechazo = 'devolucion_proveedor'),
+               or destino_rechazo is not distinct from 'devolucion_proveedor'),
     -- De qué COMPRA salieron los bultos devueltos, ELEGIDA por la persona al
     -- cargar: un renglón armado con dos compras no dice de cuáles volvieron
     -- los 8, así que el sistema no reparte — guarda el declarado. Ver
     -- db/devolucion_compra_1_columna.sql.
     compra_devolucion_id bigint references compras (id),
     constraint movimientos_stock_compra_solo_devolucion
+        -- `is not distinct from` Y NO `=`: con destino_rechazo en NULL, la
+        -- comparación da NULL y un CHECK que evalúa NULL PASA. Medido: una
+        -- merma con compra_devolucion_id entraba. Ver db/envases_5_*.sql.
         check (compra_devolucion_id is null
-               or destino_rechazo = 'devolucion_proveedor'),
+               or destino_rechazo is not distinct from 'devolucion_proveedor'),
     -- Y NO PUEDEN CONVIVIR: con la compra elegida el proveedor se lee de
     -- ella; sin compra queda el proveedor suelto. Escritos los dos serían la
     -- misma cosa dos veces, y se pueden contradecir.
     constraint movimientos_stock_compra_o_proveedor
         check (compra_devolucion_id is null or proveedor_devolucion_id is null),
+    -- Solo reingreso con destino 'reproceso': en QUÉ caja nuestra volvió lo
+    -- que se vació a cajón grande. Con ficha de envase fijo lo escribe el
+    -- server copiándolo de la ficha; con ficha VARIABLE no se puede derivar
+    -- y la pantalla lo pregunta. NULL = reingreso anterior a esta columna.
+    envase_id bigint references envases (id),
+    constraint movimientos_stock_envase_solo_reproceso
+        check (envase_id is null
+               or destino_rechazo is not distinct from 'reproceso'),
     -- Merma dirigida a un lote puntual (NULL = FIFO, el default).
     lote_tipo text
         check (lote_tipo is null
@@ -1020,6 +1084,23 @@ create table reprocesos (
     compra_origen_id bigint references compras (id),
     -- El operario corrigió el reparto por lote que propuso el server.
     consumos_editados boolean not null default false,
+    -- EN QUÉ CAJA NUESTRA se armó esta primera, y si lleva una. Son DOS
+    -- columnas y no un envase_id nullable: ese NULL tendría dos significados
+    -- —descartable y guía vieja— y los dos llegan igual a la cuenta de cajas.
+    --     true  + envase  -> consume una caja de ese tipo por bulto de primera
+    --     false + NULL    -> descartable: el cajón vino chico, no lleva caja
+    --     NULL  + NULL    -> guía anterior a estas columnas, sin declarar
+    -- Lo ESCRIBE siempre el server (copiado de la ficha cuando el envase es
+    -- fijo) y la pantalla lo PREGUNTA solo con ficha de envase variable.
+    -- Guardarlo solo en las variables dejaría el conteo de las fijas leyéndose
+    -- de la ficha de HOY, y cambiarle el envase a una ficha re-etiquetaría la
+    -- historia en silencio. Ver db/envases_3_*.sql.
+    envase_id bigint references envases (id),
+    lleva_caja_nuestra boolean,
+    -- En las DOS direcciones: uno que cubriera un solo lado deja pasar el
+    -- espejo en silencio.
+    constraint reprocesos_envase_coherente
+        check ((lleva_caja_nuestra is true) = (envase_id is not null)),
     -- El reproceso inicial PRODUCE SIN CONSUMIR: las cajas armadas que había
     -- en el piso el día del corte ya existen, y los cajones que las
     -- originaron no se van a cargar nunca. Vive en el dato (toma cero) y no

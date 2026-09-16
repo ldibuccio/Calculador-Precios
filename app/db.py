@@ -11,6 +11,7 @@ from contextlib import contextmanager
 
 import psycopg2
 
+from core.envases import envase_de_la_guia
 from core.magnitudes import repartir_magnitudes
 
 DATABASE_URL_ENV_VAR = "DATABASE_URL"
@@ -10410,7 +10411,27 @@ def asignar_ficha_a_reproceso(reproceso_id: int, ficha_id: int | None) -> None:
                         "Esa ficha es de otro cliente: esta guía R se armó para otro."
                     )
 
-            cursor.execute("UPDATE reprocesos SET ficha_id = %s WHERE id = %s", (ficha_id, reproceso_id))
+            # Y EL ENVASE VIAJA CON LA FICHA. Una guía R sin asignar no tiene
+            # de dónde derivar en qué caja se armó, así que queda "sin
+            # declarar" y el stock de cajas la muestra como hueco. El momento
+            # en que eso se puede contestar es justo éste: asignar la ficha es
+            # lo que dice cuál era el envase. Si no se completara acá, el
+            # hueco quedaría abierto para siempre sin que nada lo señale —
+            # que es el modo de falla de todas las columnas que este archivo
+            # persigue.
+            #
+            # Con ficha VARIABLE sigue sin poder derivarse (el envase lo
+            # decide el cajón de esa compra) y por eso el helper devuelve las
+            # dos en NULL: el hueco se queda, que es verdad.
+            lleva_caja, envase_de_la_caja = _envase_de_esta_guia(cursor, ficha_id, None)
+            cursor.execute(
+                """
+                UPDATE reprocesos
+                   SET ficha_id = %s, lleva_caja_nuestra = %s, envase_id = %s
+                 WHERE id = %s
+                """,
+                (ficha_id, lleva_caja, envase_de_la_caja, reproceso_id),
+            )
         conexion.commit()
     finally:
         conexion.close()
@@ -10578,6 +10599,39 @@ def crear_reproceso(
         conexion.close()
 
 
+def _envase_de_esta_guia(cursor, ficha_id, envase_declarado) -> tuple:
+    """(lleva_caja_nuestra, envase_id) de una guía R que se está por escribir.
+
+    La ficha se LEE ACÁ ADENTRO, en la misma transacción que el INSERT, y no
+    se recibe de la ruta: si la ruta la pasara, el día que aparezca un tercer
+    llamador de `_crear_reproceso` la columna se escribiría en NULL y la
+    pantalla volvería a mostrar una sola cosa sin que nada se vea roto.
+
+    `envase_declarado` es lo que contestó la persona cuando hubo que
+    preguntar, y GANA sobre la derivación: con ficha variable el envase lo
+    decide el cajón de ESA compra, no la ficha. None = no se preguntó.
+
+    Si hacía falta preguntar y nadie contestó, quedan las dos en NULL: eso es
+    "no se declaró", que se cuenta aparte en el stock de cajas. NO es cero
+    consumido — un cero se sumaría al total como si fuera un hecho.
+    """
+    ficha = None
+    if ficha_id is not None:
+        # SIN agregado: `fetchone() is None` sobre un `count(*)` nunca es None.
+        cursor.execute(
+            "SELECT envase_id, envase_variable FROM fichas_logistica WHERE id = %s",
+            (ficha_id,),
+        )
+        fila = cursor.fetchone()
+        if fila is not None:
+            ficha = {"envase_id": fila[0], "envase_variable": fila[1]}
+
+    lleva, envase_id, hay_que_preguntar = envase_de_la_guia(ficha)
+    if hay_que_preguntar and envase_declarado is not None:
+        return envase_declarado
+    return lleva, envase_id
+
+
 def _crear_reproceso(
     cursor,
     articulo_id: int,
@@ -10591,6 +10645,7 @@ def _crear_reproceso(
     reparto: list[dict] | None = None,
     tipo: str = "normal",
     compra_origen_id: int | None = None,
+    envase_declarado: tuple | None = None,
 ) -> int:
     """El NUCLEO de la guia R, con el cursor abierto. Los dos frenos viven aca.
 
@@ -10682,6 +10737,14 @@ def _crear_reproceso(
             }
         )
 
+    # EN QUÉ CAJA se armó esta primera. Lo resuelve el SERVER siempre: con
+    # ficha de envase fijo lo deriva de la ficha, y `envase_declarado` solo
+    # llega cuando la ruta tuvo que preguntar (ficha variable, o sin ficha).
+    # Escribirlo acá y no en la ruta es lo que hace que los DOS caminos que
+    # crean una guía R —la normal y la de la compra que vino armada— salgan
+    # con el dato puesto: el que falta, por definición, no nombra la columna.
+    lleva_caja, envase_de_la_caja = _envase_de_esta_guia(cursor, ficha_id, envase_declarado)
+
     costo_total = None
     costo_por_bulto_primera = None
     if all(c["costo_por_bulto"] is not None for c in consumos):
@@ -10695,13 +10758,15 @@ def _crear_reproceso(
         INSERT INTO reprocesos
             (articulo_id, fecha_operacion, bultos_tomados, bultos_primera,
              bultos_segunda, bultos_merma, costo_total, costo_por_bulto_primera,
-             cliente_id, ficha_id, consumos_editados, tipo, compra_origen_id)
-        VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+             cliente_id, ficha_id, consumos_editados, tipo, compra_origen_id,
+             lleva_caja_nuestra, envase_id)
+        VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
         RETURNING id
         """,
         (articulo_id, fecha_operacion, bultos_tomados, bultos_primera,
          bultos_segunda, bultos_merma, costo_total, costo_por_bulto_primera,
-         cliente_id, ficha_id, editados, tipo, compra_origen_id),
+         cliente_id, ficha_id, editados, tipo, compra_origen_id,
+         lleva_caja, envase_de_la_caja),
     )
     reproceso_id = cursor.fetchone()[0]
     for c in consumos:
@@ -11731,5 +11796,225 @@ def listar_estado_alertas() -> list[dict]:
             )
             columnas = [descripcion[0] for descripcion in cursor.description]
             return [dict(zip(columnas, fila)) for fila in cursor.fetchall()]
+    finally:
+        conexion.close()
+
+
+# ---------------------------------------------------------------------------
+# STOCK DE CAJAS NUESTRAS
+# ---------------------------------------------------------------------------
+
+# EL RECORTE CONTRA LA FECHA DEL CONTEO INICIAL, escrito UNA vez y usado por
+# las TRES patas derivadas. Es `>=` porque las cajas se cuentan A LA MAÑANA,
+# antes de que se arme nada: la foto NO viene neta del trabajo del día, así
+# que ese día cuenta entero.
+#
+# Y ESO ES UNA DECISIÓN SOBRE CÓMO SE TOMA EL DATO EN LA REALIDAD, no sobre
+# el código: el día que alguien cuente a la tarde, la foto ya viene neta del
+# trabajo de ese día y con `>=` las guías R de esa jornada se descontarían
+# DOS VECES, sin descuadrar nada y sin que nada avise. Es la misma asimetría
+# que apareció ocho veces con el corte del modelo.
+#
+# Por eso está acá arriba y no escrita a mano en cada pata, y por eso lo
+# cuida `test_el_recorte_del_CONTEO_INICIAL_lleva_canario`, que lo cambia a
+# `>` y exige que el número SE MUEVA. Un piso que no cambia nada al romperlo
+# es un piso que no está puesto.
+COMPARADOR_DESDE_EL_CONTEO = ">="
+
+_SQL_STOCK_DE_ENVASES = """
+    WITH base AS (
+        SELECT envase_id, cantidad, fecha_operacion
+          FROM movimientos_envase
+         WHERE origen = 'conteo_inicial' AND anulado_el IS NULL
+    ),
+    declarados AS (
+        SELECT m.envase_id, SUM(m.cantidad) AS cajas
+          FROM movimientos_envase m
+          JOIN base b ON b.envase_id = m.envase_id
+         WHERE m.anulado_el IS NULL
+           AND m.origen <> 'conteo_inicial'
+           AND m.fecha_operacion {comp} b.fecha_operacion
+         GROUP BY m.envase_id
+    ),
+    guias AS (
+        SELECT r.envase_id,
+               SUM(CASE r.tipo WHEN 'en_origen' THEN r.bultos_primera
+                               WHEN 'normal'    THEN -r.bultos_primera
+                               ELSE 0 END) AS cajas
+          FROM reprocesos r
+          JOIN base b ON b.envase_id = r.envase_id
+         WHERE r.anulado_el IS NULL
+           AND r.lleva_caja_nuestra IS TRUE
+           AND r.fecha_operacion {comp} b.fecha_operacion
+         GROUP BY r.envase_id
+    ),
+    liberadas AS (
+        SELECT m.envase_id, SUM(m.cantidad) AS cajas
+          FROM movimientos_stock m
+          JOIN base b ON b.envase_id = m.envase_id
+         WHERE m.anulado_el IS NULL
+           AND m.tipo = 'reingreso_rechazo'
+           AND m.destino_rechazo = 'reproceso'
+           AND m.fecha_operacion {comp} b.fecha_operacion
+         GROUP BY m.envase_id
+    )
+    SELECT e.id, e.nombre, e.umbral_reposicion,
+           b.fecha_operacion AS desde,
+           b.cantidad AS contadas,
+           COALESCE(d.cajas, 0) AS declaradas,
+           COALESCE(g.cajas, 0) AS por_guias,
+           COALESCE(l.cajas, 0) AS liberadas,
+           b.cantidad + COALESCE(d.cajas, 0) + COALESCE(g.cajas, 0)
+                      + COALESCE(l.cajas, 0) AS stock
+      FROM envases e
+      LEFT JOIN base b      ON b.envase_id = e.id
+      LEFT JOIN declarados d ON d.envase_id = e.id
+      LEFT JOIN guias g      ON g.envase_id = e.id
+      LEFT JOIN liberadas l  ON l.envase_id = e.id
+     WHERE e.activo = true
+     ORDER BY e.nombre
+"""
+
+
+def stock_de_envases() -> list[dict]:
+    """El stock de cajas nuestras, DERIVADO. Una fila por envase activo.
+
+    NO HAY UNA COLUMNA CON EL STOCK, y es la decisión que sostiene todo lo
+    demás: se recalcula en cada lectura sumando el conteo inicial, lo que
+    declaró una persona y lo que sale de las guías R y de los rechazos que
+    vacían una caja. Por eso **anular una guía R corrige el stock de cajas
+    sola**: la fila deja de cumplir `anulado_el IS NULL` y ya no está en la
+    suma. Escrita como una columna que alguien actualiza, anular sería un
+    segundo lugar del que acordarse, y el día que se olvide el stock queda
+    mintiendo sin que nada avise.
+
+    `desde` en None = ese envase NO TIENE CONTEO INICIAL, y por eso `stock`
+    también viene en None. Eso no es cero: es que la cuenta no arrancó, y la
+    pantalla lo dice con esas palabras. Un cero ahí se leería como "no
+    quedan cajas", que es lo contrario de lo que pasa.
+
+    Las cuatro patas vuelven por separado —`contadas`, `declaradas`,
+    `por_guias`, `liberadas`— y no solo el total: un número solo no se puede
+    leer, y cuando el stock no cierre contra el galpón lo primero que hay que
+    poder mirar es cuál de las cuatro se movió.
+    """
+    conexion = obtener_conexion()
+    try:
+        with conexion.cursor() as cursor:
+            cursor.execute(_SQL_STOCK_DE_ENVASES.format(comp=COMPARADOR_DESDE_EL_CONTEO))
+            filas = cursor.fetchall()
+    finally:
+        conexion.close()
+
+    return [
+        {
+            "id": f[0], "nombre": f[1], "umbral_reposicion": f[2],
+            "desde": f[3],
+            "contadas": f[4], "declaradas": f[5],
+            "por_guias": f[6], "liberadas": f[7],
+            "stock": f[8],
+        }
+        for f in filas
+    ]
+
+
+def crear_movimiento_envase(envase_id: int, origen: str, cantidad: int,
+                            fecha_operacion, motivo: str | None = None) -> int:
+    """Escribe un movimiento DECLARADO de cajas. Devuelve su id.
+
+    DECIDE LA BASE Y ACÁ SE TRADUCE EL ERROR: el origen, el signo que le
+    corresponde y el motivo obligatorio del ajuste los rechazan los CHECK de
+    `movimientos_envase` (ver db/envases_2_*.sql). No se pre-chequea nada
+    acá — un pre-chequeo en Python es una segunda copia de la regla, y el
+    día que se separen la que rechaza deja de ser la que el código cree.
+
+    `stock_sistema` lo escribe el SERVER, leído en la MISMA transacción: es
+    la foto de antes de este movimiento, y es lo único que después permite
+    reconstruir contra qué se cargó un ajuste. Si se calculara en la ruta y
+    se pasara como argumento, dos movimientos simultáneos guardarían la
+    misma foto.
+    """
+    conexion = obtener_conexion()
+    try:
+        with conexion.cursor() as cursor:
+            cursor.execute(
+                _SQL_STOCK_DE_ENVASES.format(comp=COMPARADOR_DESDE_EL_CONTEO)
+            )
+            antes = 0
+            for fila in cursor.fetchall():
+                if fila[0] == envase_id and fila[8] is not None:
+                    antes = int(fila[8])
+            cursor.execute(
+                """
+                INSERT INTO movimientos_envase
+                    (envase_id, origen, cantidad, motivo, fecha_operacion, stock_sistema)
+                VALUES (%s, %s, %s, %s, %s, %s)
+                RETURNING id
+                """,
+                (envase_id, origen, cantidad, motivo, fecha_operacion, antes),
+            )
+            movimiento_id = cursor.fetchone()[0]
+        conexion.commit()
+        return movimiento_id
+    finally:
+        conexion.close()
+
+
+def contar_guias_sin_declarar_el_envase() -> dict:
+    """Las guías R que consumieron cajas y no dicen cuál. {"casos": n, "poblacion": n}.
+
+    ES EL HUECO, Y SE MUESTRA. Una guía sin ficha asignada no tiene de dónde
+    derivar el envase, así que queda con `lleva_caja_nuestra` en NULL — que
+    NO es "no consumió caja": es "no sabemos cuál". Sumarla como cero la
+    haría desaparecer adentro del total y el stock diría que sobran cajas.
+
+    La población viaja al lado del conteo, en la misma fila: `casos 3` solo
+    se puede leer contra `de 314`, y nadie se acuerda de ir a buscar el
+    denominador.
+
+    Solo cuenta desde el conteo inicial más viejo: antes de esa fecha
+    ninguna guía tiene la columna escrita, y contarlas daría un hueco enorme
+    y falso el primer día.
+    """
+    conexion = obtener_conexion()
+    try:
+        with conexion.cursor() as cursor:
+            cursor.execute(
+                f"""
+                WITH desde AS (
+                    SELECT MIN(fecha_operacion) AS f
+                      FROM movimientos_envase
+                     WHERE origen = 'conteo_inicial' AND anulado_el IS NULL
+                )
+                SELECT COUNT(*) FILTER (WHERE r.lleva_caja_nuestra IS NULL),
+                       COUNT(*)
+                  FROM reprocesos r, desde d
+                 WHERE r.anulado_el IS NULL
+                   AND r.tipo <> 'inicial'
+                   AND d.f IS NOT NULL
+                   AND r.fecha_operacion {COMPARADOR_DESDE_EL_CONTEO} d.f
+                """
+            )
+            casos, poblacion = cursor.fetchone()
+    finally:
+        conexion.close()
+    return {"casos": int(casos or 0), "poblacion": int(poblacion or 0)}
+
+
+def guardar_umbral_de_envase(envase_id: int, umbral: int | None) -> None:
+    """Debajo de cuántas cajas avisa la alerta de Compras. None = no vigilar este envase.
+
+    El `>= 0` lo rechaza el CHECK de la base (`envases_umbral_no_negativo`),
+    no un `if` acá: un umbral negativo es contenido, y la regla vive donde se
+    escribe.
+    """
+    conexion = obtener_conexion()
+    try:
+        with conexion.cursor() as cursor:
+            cursor.execute(
+                "UPDATE envases SET umbral_reposicion = %s, actualizado_en = now() WHERE id = %s",
+                (umbral, envase_id),
+            )
+        conexion.commit()
     finally:
         conexion.close()

@@ -280,6 +280,10 @@ from app.db import (
     listar_vigencias_de_precios,
     listar_proveedores,
     listar_proveedores_para_abm,
+    stock_de_envases,
+    crear_movimiento_envase,
+    contar_guias_sin_declarar_el_envase,
+    guardar_umbral_de_envase,
     listar_proveedores_puesto,
     listar_senas_pendientes,
     listar_senas_resueltas,
@@ -4413,6 +4417,176 @@ def _armar_aviso_bloqueo_edicion(estado: str | None, cantidad_bloqueada: bool, p
     if cantidad_bloqueada:
         return f"La cantidad no se puede modificar: la compra {razon_cantidad}. El precio sí se puede corregir."
     return f"El precio no se puede modificar: la compra {razon_precio}. La cantidad sí se puede corregir."
+
+
+def _renderizar_pantalla_cajas(request: Request, *, error: str | None = None,
+                               aviso: str | None = None, status_code: int = 200):
+    """La pantalla de Cajas: el stock de cajas nuestras y los movimientos que se declaran."""
+    try:
+        envases = stock_de_envases()
+        sin_declarar = contar_guias_sin_declarar_el_envase()
+    except Exception as error_db:
+        raise HTTPException(status_code=500, detail=f"Error al conectar con la base de datos: {error_db}") from error_db
+
+    for envase in envases:
+        # `bajo` se calcula ACÁ y no en la plantilla: es la misma pregunta que
+        # va a contestar la alerta, y escrita en los dos lugares se separan.
+        # Con stock en None —sin conteo inicial— NO es bajo: no hay número
+        # contra el que comparar, y pintarlo de rojo diría que no quedan cajas
+        # cuando lo que pasa es que la cuenta no arrancó.
+        envase["bajo"] = (
+            envase["stock"] is not None
+            and envase["umbral_reposicion"] is not None
+            and envase["stock"] < envase["umbral_reposicion"]
+        )
+
+    return templates.TemplateResponse(
+        request,
+        "compras_cajas.html",
+        {"envases": envases, "sin_declarar": sin_declarar, "error": error,
+         "aviso": aviso, "hoy": _hoy_argentina().isoformat()},
+        status_code=status_code,
+    )
+
+
+@app.get("/compras/cajas")
+def ver_cajas(request: Request, aviso: str | None = None):
+    """Stock de CAJAS NUESTRAS, derivado en cada lectura.
+
+    Vive en Compras porque es donde se decide reponerlas, y queda detrás de
+    la clave de Gerencia sola: la puerta se aplica por PREFIJO en el
+    middleware, así que esta ruta nace cerrada sin escribir una línea.
+
+    OJO CON EL NOMBRE: en este sistema ya hay tres cosas que se llaman
+    "Stock" —la de Vacíos en Puesto, la del Depósito y la que se llamó así
+    hasta el 06/09—. Ésta se llama ENVASES a propósito, para no agregar una
+    cuarta.
+    """
+    return _renderizar_pantalla_cajas(request, aviso=aviso)
+
+
+@app.post("/compras/cajas/conteo-inicial")
+def cargar_conteo_inicial_caja(request: Request, envase_id: str = Form(""),
+                                 cantidad: str = Form(""), fecha: str = Form("")):
+    """La foto que ARRANCA la cuenta de un envase. Una sola por envase.
+
+    Desde su fecha se cuentan las guías R, y por eso la pantalla pide contar
+    A LA MAÑANA: el recorte es `>=` (ver COMPARADOR_DESDE_EL_CONTEO en
+    app/db.py) porque la foto NO viene neta del trabajo del día. Contando a
+    la tarde, ese día se descontaría dos veces.
+
+    Que no haya dos lo garantiza un índice único parcial en la base, no un
+    `if` acá: dos conteos iniciales duplicarían la base de la cuenta.
+    """
+    return _guardar_movimiento_de_envase(
+        request, envase_id, cantidad, fecha, origen="conteo_inicial", motivo="",
+    )
+
+
+@app.post("/compras/cajas/movimiento")
+def cargar_movimiento_caja(request: Request, envase_id: str = Form(""),
+                             origen: str = Form(""), cantidad: str = Form(""),
+                             fecha: str = Form(""), motivo: str = Form("")):
+    """Compra de cajas, préstamo de vacías al puesto, o corrección.
+
+    EL SIGNO LO PONE EL SERVER según el origen y no la persona: una compra
+    suma y un préstamo resta, y pedirle el signo al que carga es pedirle que
+    se acuerde de una convención. La corrección SÍ lleva signo, porque puede
+    ir para los dos lados y no hay forma de deducirlo.
+    """
+    return _guardar_movimiento_de_envase(
+        request, envase_id, cantidad, fecha, origen=origen, motivo=motivo,
+    )
+
+
+def _guardar_movimiento_de_envase(request: Request, envase_id: str, cantidad: str,
+                                  fecha: str, *, origen: str, motivo: str):
+    """El camino único de escritura de los cuatro movimientos declarados.
+
+    UNO SOLO Y NO CUATRO: el conteo inicial, la compra, el préstamo y el
+    ajuste validan lo mismo —un envase, un entero, una fecha que no sea
+    futura— y escritos cuatro veces se separan. Lo único propio de cada uno
+    es el signo, que es la tabla de abajo.
+
+    Las cajas son ENTERAS y eso lo dice `_entero_o_error`, que es la misma
+    función que ya rechaza medio bulto en la guía R y en la recepción. Una
+    regla nueva acá sería la novena copia de "un bulto no se parte".
+    """
+    if not envase_id.strip().isdigit():
+        return _renderizar_pantalla_cajas(request, error="Elegí un envase.", status_code=400)
+
+    texto = cantidad.strip()
+    if not texto:
+        return _renderizar_pantalla_cajas(
+            request, error="La cantidad de cajas es obligatoria.", status_code=400)
+    try:
+        valor = float(texto)
+    except ValueError:
+        return _renderizar_pantalla_cajas(
+            request, error="La cantidad de cajas tiene que ser un número.", status_code=400)
+    error_entero = _entero_o_error(valor, "cajas")
+    if error_entero:
+        return _renderizar_pantalla_cajas(request, error=error_entero, status_code=400)
+
+    hoy = _hoy_argentina()
+    if not fecha.strip():
+        fecha_valor = hoy
+    else:
+        try:
+            fecha_valor = date.fromisoformat(fecha.strip())
+        except ValueError:
+            return _renderizar_pantalla_cajas(
+                request, error="La fecha no es válida.", status_code=400)
+        if fecha_valor > hoy:
+            return _renderizar_pantalla_cajas(
+                request, error="La fecha no puede ser futura.", status_code=400)
+
+    # El signo por origen. La compra y el conteo llegan en positivo desde la
+    # pantalla; el préstamo se da vuelta acá porque la pregunta es "cuántas
+    # le mandé", no "cuántas resto".
+    if origen == "prestamo_salida":
+        valor = -abs(valor)
+    elif origen in ("compra", "conteo_inicial"):
+        valor = abs(valor)
+
+    try:
+        crear_movimiento_envase(int(envase_id), origen, int(valor), fecha_valor,
+                                motivo=motivo.strip() or None)
+    except Exception as error_db:
+        # La base es la que decide: el origen, el signo y el motivo del ajuste
+        # los rechazan sus CHECK. Acá solo se traduce, sin repetir la regla.
+        return _renderizar_pantalla_cajas(
+            request, error=f"No se pudo guardar: {error_db}", status_code=400)
+
+    return RedirectResponse(
+        url="/compras/cajas?" + urlencode({"aviso": "Movimiento guardado."}),
+        status_code=303,
+    )
+
+
+@app.post("/compras/cajas/umbral")
+def guardar_umbral_caja_ruta(request: Request, envase_id: str = Form(""), umbral: str = Form("")):
+    """Debajo de cuántas cajas avisa la alerta. Vacío = este envase no se vigila."""
+    if not envase_id.strip().isdigit():
+        return _renderizar_pantalla_cajas(request, error="Elegí un envase.", status_code=400)
+
+    texto = umbral.strip()
+    valor = None
+    if texto:
+        if not texto.isdigit():
+            return _renderizar_pantalla_cajas(
+                request, error="El aviso tiene que ser un número entero de cajas, o vacío para no avisar.",
+                status_code=400)
+        valor = int(texto)
+
+    try:
+        guardar_umbral_de_envase(int(envase_id), valor)
+    except Exception as error_db:
+        return _renderizar_pantalla_cajas(
+            request, error=f"No se pudo guardar el aviso: {error_db}", status_code=400)
+
+    return RedirectResponse(
+        url="/compras/cajas?" + urlencode({"aviso": "Aviso guardado."}), status_code=303)
 
 
 @app.get("/compras/{compra_id}/editar")
