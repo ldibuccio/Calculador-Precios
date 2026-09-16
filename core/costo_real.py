@@ -118,6 +118,16 @@ ETIQUETAS_MOTIVO_REAL = {
 # se suma a `rechazos_perdidos`, que es la línea de la pérdida.
 DESTINOS_RECHAZO_PERDIDO = ("segunda", "reproceso")
 
+# Las dos PUERTAS por donde una caja nuestra deja el depósito y no vuelve: la
+# mercadería se va y la caja se va con ella. `reproceso` NO está —esa caja se
+# vacía y vuelve a estar disponible— ni `stock`, que vuelve llena.
+#
+# Es la misma lista que db/cajas_7_*.sql, y NO es la misma que
+# DESTINOS_RECHAZO_PERDIDO: aquélla dice si se perdió la MERCADERÍA. Que
+# `reproceso` esté en una y no en la otra es a propósito y es el hecho del
+# galpón — ver docs/el_costo_de_las_cajas_que_salen_sin_venta.md.
+DESTINOS_QUE_SE_LLEVAN_LA_CAJA = ("segunda", "devolucion_proveedor")
+
 
 
 _MOTIVO_POR_TIPO_LOTE = {
@@ -365,6 +375,20 @@ def calcular_rentabilidad_real(
                 "devoluciones_venta": 0.0,
                 "rechazos_perdidos": 0.0,
                 "rechazos_bultos": 0.0,
+                # LA CAJA, SEPARADA DE LA FRUTA. No es una cuenta nueva: es el
+                # mismo dinero que ya está adentro de `rechazos_perdidos` (para
+                # la segunda) o de `costo_envase` (para la devolución al
+                # proveedor), NOMBRADO. Un chip que dice "$18.000" se lee como
+                # mercadería, y con Día se negocia la caja — que es un número
+                # que se le puede poner sobre la mesa.
+                #
+                # SON LAS DOS PUERTAS DONDE LA CAJA NO VUELVE: la segunda que
+                # se remite al Puesto y la devolución al proveedor. NO entra
+                # `reproceso` (la caja se vacía y se libera) ni `stock` (vuelve
+                # llena y se rearma sin guía R nueva, así que no se consume
+                # otra). Es la misma lista que db/cajas_7_*.sql.
+                "cajas_perdidas": 0.0,
+                "cajas_perdidas_pesos": 0.0,
                 # Devueltos al proveedor: se muestran, no suman a ninguna cuenta.
                 "devueltos_proveedor_bultos": 0.0,
             }
@@ -458,6 +482,10 @@ def calcular_rentabilidad_real(
         envase_unidad = _numero(margen.get("costo_envase_unidad_venta")) or 0.0
         perdido = devolucion.get("destino_rechazo") in DESTINOS_RECHAZO_PERDIDO
         al_proveedor = devolucion.get("destino_rechazo") == "devolucion_proveedor"
+        # La caja se va con la mercadería por estas dos puertas y no vuelve.
+        # `envase_unidad` en cero significa que esa ficha no lleva caja
+        # nuestra (envase perdido de origen): ahí no hay nada que perder.
+        la_caja_se_va = devolucion.get("destino_rechazo") in DESTINOS_QUE_SE_LLEVAN_LA_CAJA
 
         if perdido and costo is None:
             # Se sabe que se perdió pero no cuánto: número chico y cierto.
@@ -489,6 +517,11 @@ def calcular_rentabilidad_real(
             # misma— sino que acá no hay nada que vuelva a salir. Queda en
             # cero de los dos lados, que es lo que se pidió.
             fila["costo_mercaderia"] -= bultos * costo
+        if la_caja_se_va and envase_unidad:
+            fila = _fila(articulo)
+            fila["cajas_perdidas"] += bultos
+            fila["cajas_perdidas_pesos"] += unidades * envase_unidad
+
         if al_proveedor:
             # Se cuenta aparte SOLO para que se vea. No entra en ninguna
             # suma de la cuenta: es un chip al lado del artículo, no un
@@ -589,6 +622,12 @@ def calcular_rentabilidad_real(
         "devoluciones_venta": sum(g["subtotal"]["devoluciones_venta"] for g in grupos),
         "rechazos_perdidos": sum(g["subtotal"]["rechazos_perdidos"] for g in grupos),
         "rechazos_bultos": sum(g["subtotal"]["rechazos_bultos"] for g in grupos),
+        # Sale de las FILAS y no de los subtotales de grupo a propósito: es un
+        # número que se lleva a una conversación con el cliente, así que tiene
+        # que ser el del período entero y no depender de cómo estén agrupados
+        # los artículos en la pantalla.
+        "cajas_perdidas": sum(f["cajas_perdidas"] for f in filas_con_algo),
+        "cajas_perdidas_pesos": sum(f["cajas_perdidas_pesos"] for f in filas_con_algo),
         "segunda_bultos": sum(f["segunda_bultos"] for f in filas_con_algo),
         "afuera_bultos": sum(r["bultos"] for r in afuera_por_motivo),
         "afuera_motivos": len(afuera_por_motivo),

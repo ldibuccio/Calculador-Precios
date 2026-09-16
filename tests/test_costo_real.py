@@ -1007,3 +1007,164 @@ def test_TODOS_los_motivos_que_el_codigo_emite_tienen_etiqueta():
     assert "falta_cargar_guia_r" in emitidos, "el regex dejó de encontrar los motivos"
     faltan = sorted(emitidos - set(ETIQUETAS_MOTIVO_REAL))
     assert not faltan, f"motivos que el código emite y no tienen etiqueta: {faltan}"
+
+
+# --- Las cajas que se fueron con el rechazo ---------------------------------
+#
+# El costo de envase se cobra por unidad de PRIMERA vendida. Una caja que sale
+# con una venta que el cliente rechaza y después se va de nuevo con la
+# mercadería no la pagó nadie. La plata YA estaba en las cuentas —adentro de
+# `rechazos_perdidos` para la segunda, y de `costo_envase` para la devolución
+# al proveedor—: esto la NOMBRA, que es lo que la vuelve reclamable.
+
+
+def _cajas(destino, envase_unidad=80.0, **kw):
+    fecha = date(2026, 8, 25)
+    margen = dict(MARGEN)
+    margen["costo_envase_unidad_venta"] = envase_unidad
+    resultado = calcular_rentabilidad_real(
+        _datos([_armado(fecha, 25, 500.0)]), {fecha: {901: margen}}, 1, fecha, fecha,
+        devoluciones=[_devolucion(5.0, fecha, destino=destino, **kw)],
+    )
+    return resultado
+
+
+def test_solo_las_DOS_puertas_donde_la_caja_NO_VUELVE_cuentan_una_caja_perdida():
+    """El par completo: las que cuentan y las que NO (corolario 53).
+
+    Un detector que marcara todos los destinos se vería igual de trabajador
+    que éste, y el número que se le lleva a Día sería el doble del real.
+
+    `reproceso` es el caso que hay que mirar: está en
+    DESTINOS_RECHAZO_PERDIDO —la MERCADERÍA sí se pierde, va al pool de
+    segunda— y su CAJA vuelve, porque se vacía al pasar la fruta al cajón
+    grande. Son dos preguntas distintas sobre la misma fila, y por eso son
+    dos listas y no una.
+    """
+    assert _cajas("segunda")["totales"]["cajas_perdidas"] == 5.0
+    assert _cajas("devolucion_proveedor")["totales"]["cajas_perdidas"] == 5.0
+    assert _cajas("reproceso")["totales"]["cajas_perdidas"] == 0.0, (
+        "la caja de un reproceso se vacía y vuelve: contarla perdida es "
+        "cobrarle a Día una caja que sigue en el galpón"
+    )
+    assert _cajas("stock")["totales"]["cajas_perdidas"] == 0.0
+
+
+def test_la_caja_perdida_NO_suma_a_ninguna_cuenta_y_por_eso_es_seguro_mostrarla():
+    """Es el mismo dinero, nombrado. Si sumara, estaría cobrado dos veces.
+
+    EL CONTROL ES EL DESTINO 'stock', no otro número: con la misma venta y
+    la misma devolución, cambiar el destino a uno que se lleva la caja no
+    puede mover ni el costo total ni la renta. Un assert contra un número
+    escrito a mano pasaría igual si las dos ramas estuvieran mal.
+    """
+    con_caja = _cajas("devolucion_proveedor")["totales"]
+    sin_caja = _cajas("stock")["totales"]
+
+    assert con_caja["cajas_perdidas_pesos"] > 0
+    assert con_caja["costo_total"] == sin_caja["costo_total"]
+    assert con_caja["renta_pesos"] == sin_caja["renta_pesos"]
+
+
+def test_una_ficha_SIN_ENVASE_no_pierde_ninguna_caja():
+    """Envase perdido de origen: la mercadería sale en el cajón del proveedor.
+
+    Sin este piso, cada devolución de manzana o pera sumaría cajas a cero
+    pesos — un conteo que crece y no significa nada, que es peor que no
+    tenerlo porque se lee como una fuga.
+    """
+    resultado = _cajas("segunda", envase_unidad=0.0)
+    assert resultado["totales"]["cajas_perdidas"] == 0.0
+    assert resultado["totales"]["cajas_perdidas_pesos"] == 0.0
+
+
+def test_la_lista_de_destinos_que_se_llevan_la_caja_es_la_MISMA_que_la_del_sql():
+    """Las dos puertas están escritas en Python y en `db/cajas_7_*.sql`.
+
+    El `.sql` se LEE, no se copia: copiada, la lista envejece en silencio y
+    la consulta que el dueño corre a mano deja de medir lo que la pantalla
+    muestra — y son los dos números que se ponen uno al lado del otro.
+    """
+    import io
+    import re
+
+    from core.costo_real import DESTINOS_QUE_SE_LLEVAN_LA_CAJA
+
+    sql = io.open("db/cajas_7_las_que_se_pierden_contra_las_que_salen.sql",
+                  encoding="utf-8").read()
+    consulta = "\n".join(l for l in sql.splitlines() if not l.strip().startswith("--"))
+    adentro = re.search(r"m\.destino_rechazo in \(([^)]*)\)", consulta)
+    assert adentro is not None, "la consulta dejó de filtrar por destino_rechazo"
+    del_sql = tuple(sorted(re.findall(r"'([a-z_]+)'", adentro.group(1))))
+
+    assert del_sql == tuple(sorted(DESTINOS_QUE_SE_LLEVAN_LA_CAJA)), (
+        f"la pantalla mide {sorted(DESTINOS_QUE_SE_LLEVAN_LA_CAJA)} y la consulta "
+        f"{list(del_sql)}: los dos números dejaron de ser comparables"
+    )
+
+
+def _pantalla_real(totales_extra):
+    """Renderiza Rentabilidad Real con totales fabricados, sin base ni ruta.
+
+    La plantilla no necesita la request para lo que este test mira, así que
+    se la renderiza directo: es la pantalla de verdad —con su Jinja, sus
+    filtros y sus `if`— y no un `in` sobre el archivo. Un assert sobre el
+    texto del `.html` diría que la orden está escrita; esto dice que salió.
+    """
+    from datetime import date as _date
+
+    from app.main import templates
+
+    totales = {
+        "renta_pesos": 1.0, "utilidad_pct": None, "venta_neta": 0,
+        "devoluciones_bultos": 0, "devoluciones_venta": 0, "costo_mercaderia": 0,
+        "costo_envase": 0, "costo_mermas": 0, "rechazos_bultos": 0,
+        "rechazos_perdidos": 0, "bultos": 0, "segunda_bultos": 0,
+        "cajas_perdidas": 0, "cajas_perdidas_pesos": 0,
+    }
+    totales.update(totales_extra)
+    # UN GRUPO, aunque venga sin filas: la tarjeta del total —y con ella el
+    # renglón de las cajas— vive adentro de `{% if resultado.grupos %}`, así
+    # que con la lista vacía esto renderiza la pantalla de "no hay envíos" y
+    # el test mediría una pantalla que no es (corolario 47: el número no
+    # podría dar otra cosa).
+    grupo = {"etiqueta": "fruta", "filas": [], "subtotal": dict(totales)}
+    return templates.env.get_template("gerencia_rentabilidad_real.html").render(
+        request=None, clientes=[], cliente_valor="", error=None,
+        resultado={"grupos": [grupo], "fechas_incluidas": [_date(2026, 9, 1)],
+                   "totales": totales, "afuera_por_motivo": []},
+    )
+
+
+def test_la_pantalla_MUESTRA_las_cajas_que_se_llevaron_los_rechazos():
+    """El número que se le lleva a Día tiene que estar, y con su plata.
+
+    El ancla es la CLASE y no el texto: el comentario del `<style>` explica
+    por qué este renglón va separado de la fruta y nombra las cajas y el
+    rechazo, así que un assert por palabras matchea la prosa (corolario 38).
+    """
+    import re
+
+    html = _pantalla_real({"cajas_perdidas": 7, "cajas_perdidas_pesos": 9100.0})
+    # NO `split("</style>")[-1]`: esta pantalla incluye la barra y el pie, que
+    # traen su propio `<style>`, así que `[-1]` devuelve la cola del documento
+    # y se come el renglón entero (corolario 50, la mitad que corta de MÁS).
+    # Medido: con ese corte este test falla con el renglón bien puesto.
+    renglon = re.search(r'<p class="cajas-perdidas">(.*?)</p>', html, re.S)
+
+    assert renglon is not None, "el renglón de las cajas perdidas no salió"
+    # Con los saltos de línea del HTML colapsados: la plantilla corta la
+    # frase en varias líneas y "7 cajas" no queda contiguo en el fuente.
+    texto = " ".join(renglon.group(1).split())
+    assert "7 cajas nuestras" in texto
+    assert "9.100" in texto
+
+
+def test_SIN_cajas_perdidas_el_renglon_NO_aparece():
+    """La otra respuesta del par: un renglón en cero se aprende a saltear.
+
+    Y acá el cero es la respuesta normal —la mayoría de los períodos no van
+    a tener rechazos— así que mostrarlo siempre lo apaga para el día que
+    tenga un número.
+    """
+    assert 'class="cajas-perdidas"' not in _pantalla_real({})
