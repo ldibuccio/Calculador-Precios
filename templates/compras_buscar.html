@@ -146,6 +146,16 @@
      exactamente eso. No verde —no es el camino normal— ni rojo —no está
      mal—. */
   .boton-vino-armada { background: #6d28d9; color: #fff; }
+  /* EL MISMO CRITERIO QUE `.boton-sin-foto`, que ya estaba en esta pantalla:
+     se ve, no se puede tocar, y no compite con los que sí están. Un botón
+     lleno diría "apretame". Y el motivo entero viaja en el `title`, que es
+     lo que el que abrió el menú fue a buscar. */
+  .boton-vino-armada-no {
+    background: #f3f4f6;
+    color: #9ca3af;
+    border: 1px dashed #d1d5db;
+    cursor: default;
+  }
   .boton-detalle { background: #0891b2; }
   .boton-eliminar { background: #dc2626; border: none; color: #fff; border-radius: 8px; font-weight: 600; cursor: pointer; }
   .boton-ver-foto { background: #6b7280; }
@@ -544,11 +554,25 @@
                      así — la mercadería vino armada del puesto, nadie reprocesó
                      nada.
 
-                     Solo donde se puede: recepcionada y todavía sin marca. Las
-                     dos columnas vienen de `buscar_compras` y no se deducen de
-                     otra cosa. #}
-                  {% if c.estado == "recepcionado" and c.ficha_en_origen_id is none %}
+                     CUÁNDO SE PUEDE NO SE DECIDE ACÁ: lo dice
+                     `c.motivo_vino_armada`, que sale de la MISMA función que
+                     usa la pantalla de destino (core/vino_armada.py). Estuvo
+                     escrito en los dos lados y se separaron — el menú miraba
+                     dos columnas y la pantalla tres motivos, así que el botón
+                     aparecía en 482 compras de Frutamax y en 325 de ellas la
+                     pantalla lo rechazaba por el corte.
+
+                     Y CUANDO NO SE PUEDE VA DESHABILITADO CON EL MOTIVO, no
+                     escondido: escondido, "no se puede nunca" y "ya vino
+                     armada y está registrada" se ven igual — y la segunda es
+                     el estado bueno. Los únicos dos que sí se esconden son
+                     justamente esos, donde la ausencia ya significa algo. #}
+                  {% if se_muestra_vino_armada(c.motivo_vino_armada) %}
+                  {% if c.motivo_vino_armada is none %}
                   <a class="boton boton-vino-armada" href="/compras/{{ c.id }}/vino-armada">Vino armada</a>
+                  {% else %}
+                  <span class="boton boton-vino-armada-no" title="{{ c.motivo_vino_armada.texto }}">{{ etiqueta_vino_armada(c.motivo_vino_armada) }}</span>
+                  {% endif %}
                   {% endif %}
                   <form class="form-eliminar" method="post" action="/compras/{{ c.id }}/eliminar"
                         onsubmit="return confirm('¿Eliminar la compra de {{ c.articulo_nombre }}?');">

@@ -13,6 +13,7 @@ import psycopg2
 
 from core.envases import envase_de_la_guia, hay_que_reponer
 from core.magnitudes import repartir_magnitudes
+from core.vino_armada import motivo_para_no_marcar_armada, motivo_sin_lote_por_el_corte
 
 DATABASE_URL_ENV_VAR = "DATABASE_URL"
 
@@ -1547,6 +1548,13 @@ def buscar_compras(
                        -- todavía sin marca. La pantalla no re-deriva la
                        -- condición de otra columna.
                        c.estado, c.ficha_en_origen_id,
+                       -- Y LOS DOS QUE FALTABAN para que el menú sepa los
+                       -- MISMOS motivos que la pantalla de destino (ver
+                       -- core/vino_armada.py). `fecha_del_lote` sale de
+                       -- procesada_el con la MISMA expresión con que el FIFO
+                       -- fecha el lote, no de fecha_operacion.
+                       {_SQL_FECHA_DEL_LOTE_DE_COMPRA.format(col='c.procesada_el')} AS fecha_del_lote,
+                       COALESCE(cons.bultos, 0) AS bultos_consumidos,
                        EXISTS (SELECT 1 FROM fotos_guia fg WHERE fg.guia_id = c.guia_id) AS tiene_comanda,
                        -- LA SEGUNDA FOTO, y cuelga de la COMPRA y no de la
                        -- guía: la comanda es el papel del proveedor y es una
@@ -1558,6 +1566,21 @@ def buscar_compras(
                 FROM compras c
                 JOIN articulos a ON a.id = c.articulo_id
                 JOIN proveedores p ON p.id = c.proveedor_id
+                -- AGRUPADO UNA VEZ, NO UN LATERAL POR FILA, y la diferencia
+                -- se midió: con 483 compras y 33.000 consumos, el lateral
+                -- tarda 230ms sin índice y 71ms CON un índice nuevo por
+                -- compra_id; agrupando una vez son 4ms y no hace falta
+                -- ningún índice. O sea que el índice habría "arreglado" el
+                -- síntoma dejando puesta la forma cara — la forma natural de
+                -- escribirlo es la que cuesta. Si alguien lo vuelve a un
+                -- lateral, medir antes de creerle.
+                LEFT JOIN (
+                    SELECT rc.compra_id, SUM(rc.bultos) AS bultos
+                      FROM reprocesos_consumos rc
+                      JOIN reprocesos r ON r.id = rc.reproceso_id
+                     WHERE rc.origen = 'compra' AND r.anulado_el IS NULL
+                     GROUP BY rc.compra_id
+                ) cons ON cons.compra_id = c.id
                 WHERE {" AND ".join(condiciones)}
                 ORDER BY c.fecha_operacion DESC, p.codigo_puesto, c.cargado_el
                 {tope_sql}
@@ -1566,7 +1589,19 @@ def buscar_compras(
             )
             columnas = [descripcion[0] for descripcion in cursor.description]
             filas = cursor.fetchall()
-        return [dict(zip(columnas, fila)) for fila in filas]
+            compras = [dict(zip(columnas, fila)) for fila in filas]
+
+            # EL MOTIVO SE RESUELVE ACÁ, con el corte leído UNA vez y con la
+            # MISMA función que usa la pantalla de destino. Puesto en la
+            # plantilla serían dos reglas —que es de donde salió este bug— y
+            # puesto en la ruta lo perdería el export, que llama derecho a
+            # esta función.
+            corte = _fecha_corte(cursor)
+            for compra in compras:
+                compra["motivo_vino_armada"] = motivo_para_no_marcar_armada(
+                    {**compra, "bultos": compra["cantidad_cajones"]}, corte
+                )
+        return compras
     finally:
         conexion.close()
 
@@ -2240,11 +2275,7 @@ def _recepcion_retroactiva_validada(cursor, recepcionada_el, ingreso_directo_dep
 
 
 def _motivo_sin_lote_por_el_corte(cursor, fecha) -> str | None:
-    """Por qué esa fecha NO tiene lote del FIFO, o None si lo tiene.
-
-    ESTRICTAMENTE POSTERIOR AL CORTE, y el día del corte también queda
-    afuera. Es la asimetría de siempre —el conteo del corte se toma A LA
-    TARDE, así que todo lo de ese día ya está adentro de la foto—.
+    """Por qué esa fecha NO tiene lote del FIFO, o None si lo tiene. Lee el corte de la base.
 
     VUELVE UN MOTIVO EN VEZ DE LEVANTAR porque los dos que la usan la
     necesitan de formas distintas: la carga retroactiva la traduce a un
@@ -2252,15 +2283,16 @@ def _motivo_sin_lote_por_el_corte(cursor, fecha) -> str | None:
     como aviso, para no ofrecer un botón que no puede funcionar. Una guarda
     que solo sabe explotar obliga a escribir la condición una segunda vez
     para poder avisar, y esa segunda copia es la que se separa.
+
+    LA COMPARACIÓN NO ESTÁ ACÁ: vive en `core.vino_armada`, porque el menú
+    de Buscar Compras la necesita para QUINIENTAS filas y leer el corte una
+    vez por fila sería pagarlo quinientas veces. Esta función es el corte
+    leído de la base más esa regla — no una segunda versión de ella. La
+    asimetría del día del corte ya se reescribió ocho veces en lugares que
+    no se nombran entre sí (CLAUDE.md lleva la lista); ésta no agrega una
+    novena.
     """
-    corte = _fecha_corte(cursor)
-    if fecha > corte:
-        return None
-    return (
-        f"La fecha tiene que ser POSTERIOR al corte del modelo ({corte:%d/%m/%Y}). "
-        "Ese día ya está adentro de la foto del stock inicial, así que una compra fechada "
-        "ahí suma al total sin ser un lote del FIFO."
-    )
+    return motivo_sin_lote_por_el_corte(fecha, _fecha_corte(cursor))
 
 
 def _validar_caja_en_origen(cursor, ficha_en_origen_id: int, articulo_id: int) -> None:
@@ -3077,11 +3109,11 @@ def compra_para_marcar_armada(compra_id: int) -> dict | None:
     compra que YA se recepcionó sin la marca, porque el comprador se olvidó o
     porque nadie se la había podido poner.
 
-    `motivo_corte` viene con texto cuando esa compra NO tiene lote del FIFO —
-    fechada el día del corte o antes—: ahí la guía R no se puede armar y la
-    pantalla lo dice EN VEZ de ofrecer el botón. Sale de
-    `_motivo_sin_lote_por_el_corte`, la misma regla que usa la carga
-    retroactiva; escrita de nuevo acá serían dos.
+    `motivo` es `core.vino_armada.MotivoVinoArmada` o None, y es la MISMA
+    función que decide si el menú de Buscar Compras ofrece el botón. Ésa es
+    toda la gracia: la pantalla conocía tres motivos y el menú dos, así que
+    el menú ofrecía el botón en casos que esta pantalla rechaza — 325 de 482
+    en Frutamax el 16/09, medido. Dos reglas separadas se vuelven a separar.
 
     `fecha_del_lote` es la fecha que va a llevar la guía, y sale de
     `procesada_el` con la MISMA expresión con que el FIFO fecha el lote — no
@@ -3096,7 +3128,14 @@ def compra_para_marcar_armada(compra_id: int) -> dict | None:
                 SELECT c.id, c.articulo_id, a.nombre AS articulo_nombre, a.unidad_compra,
                        p.nombre AS proveedor_nombre, p.codigo_puesto AS proveedor_codigo_puesto,
                        c.fecha_operacion, c.estado, c.ficha_en_origen_id,
-                       c.cantidad_cajones_real,
+                       c.cantidad_cajones_real, c.cantidad_cajones,
+                       COALESCE((
+                           SELECT SUM(rc.bultos)
+                             FROM reprocesos_consumos rc
+                             JOIN reprocesos r ON r.id = rc.reproceso_id
+                            WHERE rc.origen = 'compra' AND rc.compra_id = c.id
+                              AND r.anulado_el IS NULL
+                       ), 0) AS bultos_consumidos,
                        {_SQL_FECHA_DEL_LOTE_DE_COMPRA.format(col='c.procesada_el')} AS fecha_del_lote
                 FROM compras c
                 JOIN articulos a ON a.id = c.articulo_id
@@ -3109,10 +3148,11 @@ def compra_para_marcar_armada(compra_id: int) -> dict | None:
             if fila is None:
                 return None
             compra = dict(zip([d[0] for d in cursor.description], fila))
-            compra["motivo_corte"] = (
-                _motivo_sin_lote_por_el_corte(cursor, compra["fecha_del_lote"])
-                if compra["fecha_del_lote"] is not None
-                else None
+            # `bultos` es el REAL si existe: es contra eso que se compara lo
+            # que ya salió del lote, igual que en el listado.
+            bultos = compra["cantidad_cajones_real"] or compra["cantidad_cajones"]
+            compra["motivo"] = motivo_para_no_marcar_armada(
+                {**compra, "bultos": bultos}, _fecha_corte(cursor)
             )
             return compra
     finally:

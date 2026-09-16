@@ -51,6 +51,7 @@ from app.costeo import (
 # (calcular_costo_por_unidad_medida) es la división importe / kilos, que
 # también es del motor y trae su propia guarda del cero.
 from core.envases import hay_que_reponer
+from core.vino_armada import etiqueta_del_boton, se_muestra_el_boton
 from core.motor_costeo import (
     calcular_costo_por_unidad_medida,
     costo_objetivo_multi_concepto as calcular_costo_objetivo,
@@ -1079,6 +1080,11 @@ def segunda_por_cajon_de(compra, real: bool = False) -> float | None:
 
 templates.env.globals["segunda_por_cajon_de"] = segunda_por_cajon_de
 templates.env.globals["cajas_en_origen_por_articulo"] = _cajas_en_origen_por_articulo
+# El rótulo y el "¿se muestra?" del renglón de Vino armada salen de
+# core/vino_armada.py, al lado de los códigos de motivo: en la plantilla
+# serían una segunda lista que se despega de la primera.
+templates.env.globals["etiqueta_vino_armada"] = etiqueta_del_boton
+templates.env.globals["se_muestra_vino_armada"] = se_muestra_el_boton
 templates.env.filters["fecha_hora"] = _formatear_fecha_hora
 
 
@@ -4869,22 +4875,16 @@ def _renderizar_vino_armada(request: Request, compra_id: int, *, error=None, sta
     if compra is None:
         raise HTTPException(status_code=404, detail="Compra no encontrada")
 
-    # POR QUÉ NO SE PUEDE, cuando no se puede, y ANTES del botón. Los tres
-    # motivos son distintos y los tres se dicen con todas las letras: un botón
+    # POR QUÉ NO SE PUEDE, cuando no se puede, y ANTES del botón: un botón
     # que no funciona y no explica nada es peor que no tenerlo.
-    bloqueo = None
-    if compra["ficha_en_origen_id"] is not None:
-        bloqueo = "Esta compra ya está marcada como venida armada: su guía R ya está cargada."
-    elif compra["estado"] != "recepcionado":
-        bloqueo = (
-            "Esta compra todavía no se recepcionó. La marca va en la carga —editala y elegí "
-            "la caja— y la guía R sale sola cuando Depósito la reciba."
-        )
-    elif compra["motivo_corte"] is not None:
-        bloqueo = (
-            f"{compra['motivo_corte']} Esa mercadería ya está contada en el stock inicial, "
-            "así que no hay lote contra el que armar la guía R."
-        )
+    #
+    # LOS MOTIVOS NO SE ENUMERAN ACÁ. Estuvieron escritos en esta función y
+    # otra vez, más cortos, en el menú de Buscar Compras — y las dos listas
+    # se separaron: el menú sabía dos y esta pantalla tres. Ahora los dos
+    # preguntan por `motivo_para_no_marcar_armada`, así que el día que
+    # aparezca un cuarto lo aprenden juntos o ninguno.
+    motivo = compra["motivo"]
+    bloqueo = motivo.texto if motivo is not None else None
 
     contexto = {
         "compra": compra,

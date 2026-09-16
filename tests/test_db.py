@@ -945,7 +945,10 @@ def test_buscar_compras_usa_el_real_si_existe():
     with patch("app.db.obtener_conexion", return_value=conexion):
         buscar_compras(date(2026, 8, 15), date(2026, 8, 16))
 
-    consulta = cursor.execute.call_args[0][0]
+    # Por CONTENIDO y no por posición: `buscar_compras` ejecuta también la
+    # lectura del corte, y buscar "la última" haría que cualquier sentencia
+    # nueva rompa un test que no habla de ella.
+    consulta = _sql_que_contiene(cursor, "FROM compras c")
     assert "COALESCE(c.cantidad_cajones_real, c.cantidad_cajones) AS cantidad_cajones" in consulta
     assert "COALESCE(c.contenido_por_cajon_real, c.contenido_por_cajon) AS contenido_por_cajon" in consulta
     assert "COALESCE(c.cantidad_kilos_real, c.cantidad_kilos) AS cantidad_kilos" in consulta
@@ -1363,7 +1366,7 @@ def test_buscar_compras_con_limite_agrega_limit_al_final():
     with patch("app.db.obtener_conexion", return_value=conexion):
         buscar_compras(date(2026, 8, 1), date(2026, 8, 6), limite=501)
 
-    consulta, parametros = cursor.execute.call_args.args
+    consulta, parametros = _sql_y_parametros_que_contienen(cursor, "FROM compras c")
     assert "LIMIT %s" in consulta
     assert parametros[-1] == 501
 
@@ -5610,7 +5613,7 @@ def test_buscar_compras_pregunta_por_LAS_DOS_fotos_con_claves_distintas():
 
     with patch("app.db.obtener_conexion", return_value=conexion):
         buscar_compras(date(2026, 9, 1), date(2026, 9, 10), None, None)
-    consulta = cursor.execute.call_args.args[0]
+    consulta = _sql_que_contiene(cursor, "FROM compras c")
     assert "FROM fotos_guia fg WHERE fg.guia_id = c.guia_id) AS tiene_comanda" in consulta
     assert "FROM fotos_recepcion fr WHERE fr.compra_id = c.id) AS tiene_pesaje" in consulta
 
@@ -8354,13 +8357,14 @@ def test_la_fecha_del_lote_de_la_pantalla_sale_de_PROCESADA_EL_y_no_de_fecha_ope
 
     conexion, cursor = _conexion_falsa(filas_fetchone=[
         (30, 5, "Kiwi", "kilo", "EJEMPLO Uno", "N07P41",
-         date(2026, 9, 9), "recepcionado", None, 10.0, date(2026, 9, 11)),
+         date(2026, 9, 9), "recepcionado", None, 10.0, 10.0, 0, date(2026, 9, 11)),
         (date(2026, 9, 5),),
     ])
     cursor.description = [
         ("id",), ("articulo_id",), ("articulo_nombre",), ("unidad_compra",),
         ("proveedor_nombre",), ("proveedor_codigo_puesto",), ("fecha_operacion",),
-        ("estado",), ("ficha_en_origen_id",), ("cantidad_cajones_real",), ("fecha_del_lote",),
+        ("estado",), ("ficha_en_origen_id",), ("cantidad_cajones_real",),
+        ("cantidad_cajones",), ("bultos_consumidos",), ("fecha_del_lote",),
     ]
 
     with patch("app.db.obtener_conexion", return_value=conexion):
@@ -8369,7 +8373,8 @@ def test_la_fecha_del_lote_de_la_pantalla_sale_de_PROCESADA_EL_y_no_de_fecha_ope
     consulta = _sql_que_contiene(cursor, "fecha_del_lote")
     assert _SQL_FECHA_DEL_LOTE_DE_COMPRA.format(col="c.procesada_el") in consulta
     assert compra["fecha_del_lote"] == date(2026, 9, 11)
-    assert compra["motivo_corte"] is None
+    # El 11/09 es posterior al corte del 05/09 y su lote está intacto: se puede.
+    assert compra["motivo"] is None
 
 
 def test_buscar_compras_TRAE_estado_y_la_marca_para_decidir_el_boton():
@@ -8384,6 +8389,43 @@ def test_buscar_compras_TRAE_estado_y_la_marca_para_decidir_el_boton():
     consulta = _sql_que_contiene(cursor, "FROM compras c")
     assert "c.estado" in consulta
     assert "c.ficha_en_origen_id" in consulta
+
+
+def test_buscar_compras_TRAE_LA_FECHA_DEL_LOTE_Y_LO_CONSUMIDO_o_la_regla_se_apaga_sola():
+    """Los dos que un canario destapó en CERO, y es el corolario 65.
+
+    Sin estas dos columnas la consulta corre perfecto y trae una menos:
+    `motivo_para_no_marcar_armada` recibe None en `bultos_consumidos` y se
+    saltea el motivo del lote consumido, así que el botón vuelve a ofrecerse
+    en las 90 compras donde no puede funcionar. Y sin `fecha_del_lote` pasa lo
+    contrario: se niega en TODAS. Las dos sin un error, sin un test en rojo y
+    sin nada en la pantalla que se vea raro — porque lo que se vería es
+    exactamente lo que se veía antes.
+
+    Por el TEXTO y no por el valor: con un cursor falso la fila la entrega el
+    mock sin mirar una letra del SQL (corolario 40), así que un assert sobre
+    el valor pasa igual con la columna sacada.
+
+    ANCLADO EN LA POSICIÓN, no en el nombre suelto (corolario 59): el
+    comentario que está arriba de esas columnas las NOMBRA para explicar por
+    qué están, así que buscar la palabra matchearía la prosa. `AS
+    <columna>` solo puede ser un SELECT.
+    """
+    conexion, cursor = _conexion_falsa(filas_fetchall=[])
+    cursor.description = [("id",)]
+
+    with patch("app.db.obtener_conexion", return_value=conexion):
+        buscar_compras(date(2026, 9, 1), date(2026, 9, 12))
+
+    consulta = _sql_que_contiene(cursor, "FROM compras c")
+    sin_comentarios = "\n".join(
+        linea for linea in consulta.split("\n") if not linea.strip().startswith("--")
+    )
+    assert "AS fecha_del_lote" in sin_comentarios
+    assert "AS bultos_consumidos" in sin_comentarios
+    # Y que lo consumido salga de las guías VIVAS: sin este filtro, una guía R
+    # anulada seguiría reservando el lote y el botón no volvería nunca.
+    assert "r.anulado_el IS NULL" in sin_comentarios
 
 
 def test_actualizar_cantidad_ESCRIBE_la_marca_y_la_valida_contra_el_articulo_NUEVO():

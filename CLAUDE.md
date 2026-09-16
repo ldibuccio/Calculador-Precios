@@ -5843,3 +5843,97 @@ celular no existe; si es "nada", no existe en ningún lado.
 (corolario 25): el argumento se escribió pensando en el dedo y se aplicó a
 una tabla de escritorio, donde la afordancia que lo sostenía no se ve. Un
 argumento correcto sobre una población y copiado a otra.
+
+## Corolario 69: el recorte de la MEDICIÓN no es el recorte de la DECISIÓN, y la prioridad se invierte
+
+Del 16/09, y es la **segunda vez** —la primera fue el 11% de los kilos
+faltantes, cuyo denominador de 74 recepciones era del 09 al 12/09 y no de los
+siete días que pedía la ventana—. Acá el mecanismo es el mismo y la
+consecuencia es más grande: **no ensució un número, invirtió qué había que
+arreglar primero.**
+
+`vino_armada_1` midió sobre TODA la historia: de **482 compras que muestran
+el botón "Vino armada", 325 las frena el corte** — el 67%. El número es
+cierto y la conclusión que sale sola es "arreglá primero el motivo del
+corte".
+
+**Es exactamente al revés.** Las 325 tienen `procesada_el` anterior o igual
+al corte del 05/09, o sea once días o más, y **Buscar Compras busca 48 horas
+por defecto**. Ninguna de las 325 puede aparecer en la pantalla que se ve. El
+67% es cierto sobre la población y **cero sobre la pantalla**.
+
+| motivo | de la población | de la pantalla por defecto | cuesta |
+|---|---|---|---|
+| anterior al corte | **67%** | **0%, por aritmética** | 0,4 ms |
+| lote ya consumido | 38% | **aparece** — una compra de ayer puede tener su lote consumido hoy | 3,5 ms |
+
+O sea: **el motivo barato es el que no se ve nunca y el caro es el que
+muerde.** Y las 325 son además un número CONGELADO —ninguna compra futura
+puede entrar ahí, porque toda recepción de acá en adelante es posterior al
+corte— así que la proporción se apaga sola mientras el denominador crece.
+
+**La señal, y se hace al escribir la consulta, no al leer el resultado**:
+preguntarse **sobre qué conjunto se va a TOMAR la decisión**, y medir sobre
+ése. Si la decisión es sobre una pantalla, el recorte de la pantalla —su
+ventana por defecto, su filtro, su tope de filas— va adentro de la medición.
+Un total histórico contesta "¿cuántos hay?" y la pregunta era "¿cuántos ve
+la persona?".
+
+Y cuesta una columna, que es la forma de siempre en este archivo:
+`vino_armada_3_por_ventana.sql` devuelve los mismos motivos partidos en
+48hs / 7 / 30 / 90 / todo, con `ofrecidas` al lado como población de cada
+ventana. Con eso las dos lecturas están en la misma pantalla y no hay que
+acordarse de nada.
+
+**Los dos motivos se pusieron igual**, y la decisión es del dueño: *"el que
+busca agosto a propósito merece leer por qué no puede, y 0,4ms no es un
+costo"*. El recorte no decidió QUÉ construir — decidió **en qué orden creerle
+al número**, que es lo que el 67% estaba a punto de arruinar.
+
+## Corolario 70: la forma NATURAL de escribir una consulta es la que cuesta, y un índice "arregla" el síntoma dejándola puesta
+
+Del 16/09. Para que el menú supiera si el lote de cada compra ya se consumió
+hacía falta una cuenta más por fila. La forma que sale sola es un `left join
+lateral` — se lee al lado de la fila, dice exactamente lo que uno piensa, y
+es la que escribí.
+
+Medido con `EXPLAIN ANALYZE` contra `db/esquema_completo.sql`, con 483
+compras y 33.000 consumos, 500 filas (el tope de pantalla) y la ventana más
+ancha que se puede pedir:
+
+| | ms |
+|---|---|
+| la consulta como estaba | **0,5** |
+| + el motivo del corte | **0,9** |
+| + el lote consumido, **lateral por fila**, sin índice | **230** |
+| + el lote consumido, lateral por fila, **con un índice nuevo** | **71** |
+| + el lote consumido, **agrupado UNA vez** | **4,0** — y sin índice |
+
+**El índice habría sido la trampa.** Es la reacción natural a un lateral
+lento —falta el índice por `compra_id`, y de verdad falta— y habría bajado
+230 a 71, que se lee como arreglado. Pero deja puesta la forma cara: 500
+búsquedas donde alcanzaba con una pasada. **Agrupar gana 17× contra el
+lateral CON índice, y encima no necesita el índice**, así que la migración
+que parecía obligatoria no existía.
+
+**La señal, y es una sola pregunta**: si una consulta hace una cuenta POR
+FILA sobre otra tabla, preguntarse si esa cuenta se puede hacer **una vez
+para todas las filas**. Con un agregado agrupado casi siempre sí, y la
+diferencia no es de estilo: es de dos órdenes de magnitud.
+
+**Y lo que lo decidió fue medir las TRES**, no las dos que uno compararía. Con
+"sin índice contra con índice" el resultado es "hace falta el índice" y se
+merguea una migración; la tercera columna es la que dice que la pregunta
+estaba mal planteada. Es la familia del corolario 46 —lo que informa es lo que
+se MOVIÓ entre una medición y la otra— aplicado a elegir entre dos formas: dos
+puntos siempre trazan una recta, y la recta apunta a donde uno ya estaba
+mirando.
+
+El porqué queda escrito **en la consulta**, no acá: el que la lea dentro de
+seis meses va a tener el `LEFT JOIN (SELECT ... GROUP BY)` adelante y la
+tentación de "simplificarlo" a un lateral. El comentario dice los tres
+números y termina en *"si alguien lo vuelve a un lateral, medir antes de
+creerle"*.
+
+Cómo crece, para que el 4,0 no se lea como gratis para siempre: con 5,5× los
+consumos de hoy da **20ms**. Lineal, y a ese ritmo hay años.

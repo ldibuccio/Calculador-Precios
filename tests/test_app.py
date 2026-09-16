@@ -1,4 +1,5 @@
 import base64
+import inspect
 import io
 import os
 import re
@@ -19,6 +20,12 @@ from app.db import (
     RepartoDesactualizado,
     ReprocesoAnteriorAlCorte,
     StockInsuficienteParaReproceso,
+)
+from core.vino_armada import (
+    ETIQUETAS_CORTAS,
+    MOTIVOS_QUE_ESCONDEN_EL_BOTON,
+    MotivoVinoArmada,
+    motivo_para_no_marcar_armada,
 )
 from app.main import (
     SECTORES,
@@ -1714,6 +1721,11 @@ def test_conversion_ya_no_existe_como_pantalla_propia():
 
 
 HOY_DE_PRUEBA = date(2026, 8, 6)
+# El corte contra el que se arma el motivo de "vino armada". ANTERIOR a los
+# dos "hoy" de este archivo, así que el caso base de los dos fixtures SE
+# PUEDE marcar; los tests que quieren el bloqueo pasan esta misma fecha, que
+# es el día del corte y queda afuera por la asimetría de siempre.
+CORTE_DE_PRUEBA_VINO_ARMADA = date(2026, 7, 7)
 
 COMPRAS_DE_PRUEBA = [
     {
@@ -1730,6 +1742,9 @@ COMPRAS_DE_PRUEBA = [
         "importe": 50000,
         "sena": None,
         "tipo_retiro": "Clark",
+        "estado": "recepcionado",
+        "ficha_en_origen_id": None,
+        "motivo_vino_armada": None,
     },
     {
         "id": 31,
@@ -1745,6 +1760,11 @@ COMPRAS_DE_PRUEBA = [
         "importe": 15000,
         "sena": 2000,
         "tipo_retiro": "Carro",
+        "estado": "pendiente",
+        "ficha_en_origen_id": None,
+        "motivo_vino_armada": MotivoVinoArmada(
+            "no_recepcionada", "Esta compra todavía no se recepcionó."
+        ),
     },
 ]
 
@@ -2144,12 +2164,20 @@ COMPRAS_BUSQUEDA_DE_PRUEBA = [
         "importe": 45000.0,
         "sena": None,
         "tipo_retiro": "Clark",
-        # Las dos que deciden si va el botón de "Vino armada". Van en el
-        # fixture porque `buscar_compras` las devuelve: un fixture que no se
-        # parece a producción en el campo que una pantalla mira convierte a
-        # sus tests en guardianes del caso equivocado (corolario 22).
+        # Las que deciden el renglón de "Vino armada". Van en el fixture
+        # porque `buscar_compras` las devuelve: un fixture que no se parece a
+        # producción en el campo que una pantalla mira convierte a sus tests
+        # en guardianes del caso equivocado (corolario 22).
+        #
+        # `motivo_vino_armada` lo resuelve `buscar_compras` con la MISMA
+        # función que la pantalla de destino, así que acá va el valor que esa
+        # función devuelve para esta compra: recepcionada, sin marca, con su
+        # lote intacto y posterior al corte => se puede.
         "estado": "recepcionado",
         "ficha_en_origen_id": None,
+        "fecha_del_lote": HOY_DE_PRUEBA,
+        "bultos_consumidos": 0,
+        "motivo_vino_armada": None,  # se deriva abajo, ver _derivar_motivos
     },
     {
         "id": 2,
@@ -2165,8 +2193,16 @@ COMPRAS_BUSQUEDA_DE_PRUEBA = [
         "importe": None,
         "sena": None,
         "tipo_retiro": "Carro",
+        # Pendiente: el renglón NO aparece. No es un "no se puede" — es que
+        # todavía no es el momento de esta compra (ver
+        # MOTIVOS_QUE_ESCONDEN_EL_BOTON).
         "estado": "pendiente",
         "ficha_en_origen_id": None,
+        "fecha_del_lote": None,
+        "bultos_consumidos": 0,
+        "motivo_vino_armada": MotivoVinoArmada(
+            "no_recepcionada", "Esta compra todavía no se recepcionó."
+        ),
     },
 ]
 
@@ -27631,9 +27667,23 @@ def _compra_recepcionada_sin_marca(**cambios):
         # toma la fecha de la compra", y con las dos iguales las dos
         # implementaciones dan el mismo resultado.
         "fecha_del_lote": date(2026, 9, 11),
-        "motivo_corte": None,
+        "cantidad_cajones": 10,
+        "bultos_consumidos": 0,
+        "motivo": None,
     }
     base.update(cambios)
+    # EL MOTIVO SE DERIVA, no se tipea: `compra_para_marcar_armada` lo
+    # resuelve con esta misma función, así que un fixture que lo escribiera a
+    # mano podría decir "se puede" sobre una compra pendiente — y entonces el
+    # test defendería un caso que en producción no existe (corolario 22).
+    #
+    # Derivarlo NO es el corolario 9: estos tests miran cómo la PANTALLA
+    # muestra el motivo, no si la regla lo elige bien. De eso se ocupan los
+    # tests de core/vino_armada.py, que le pasan los siete casos a mano.
+    if "motivo" not in cambios:
+        base["motivo"] = motivo_para_no_marcar_armada(
+            {**base, "bultos": base["cantidad_cajones_real"]}, CORTE_DE_PRUEBA_VINO_ARMADA
+        )
     return base
 
 
@@ -27717,13 +27767,10 @@ def test_vino_armada_BLOQUEA_por_el_corte_y_DICE_por_que():
     mercadería ya está adentro de la foto del stock inicial. El botón no
     podría funcionar nunca, así que no se ofrece.
     """
-    motivo = ("La fecha tiene que ser POSTERIOR al corte del modelo (05/09/2026). "
-              "Ese día ya está adentro de la foto del stock inicial, así que una compra "
-              "fechada ahí suma al total sin ser un lote del FIFO.")
     with (
         patch("app.main.compra_para_marcar_armada",
               return_value=_compra_recepcionada_sin_marca(
-                  fecha_del_lote=date(2026, 9, 5), motivo_corte=motivo)),
+                  fecha_del_lote=CORTE_DE_PRUEBA_VINO_ARMADA)),
         patch("app.main._cajas_para_elegir_por_articulo", return_value=_cajas_de_un_articulo()),
     ):
         respuesta = cliente.get("/compras/30/vino-armada")
@@ -27811,33 +27858,92 @@ def test_marcar_vino_armada_sin_elegir_caja_no_llama_a_la_base():
     mock_marcar.assert_not_called()
 
 
-def _compras_buscadas(estado, ficha_en_origen_id):
+def _compras_buscadas(**cambios):
+    """Una fila del listado con el motivo DERIVADO, igual que buscar_compras."""
     fila = dict(COMPRAS_BUSQUEDA_DE_PRUEBA[0])
-    fila.update({"estado": estado, "ficha_en_origen_id": ficha_en_origen_id})
+    fila.setdefault("fecha_del_lote", HOY_DE_PRUEBA)
+    fila.setdefault("bultos_consumidos", 0)
+    fila.update(cambios)
+    fila["motivo_vino_armada"] = motivo_para_no_marcar_armada(
+        {**fila, "bultos": fila["cantidad_cajones"]}, CORTE_DE_PRUEBA_VINO_ARMADA
+    )
     return [fila]
 
 
-def test_el_boton_VINO_ARMADA_sale_SOLO_en_la_recepcionada_sin_marca():
-    """Las tres combinaciones, porque las tres se ven igual desde afuera.
+def _renderizar_buscar(compras):
+    with (
+        patch("app.main._hoy_argentina", return_value=HOY_DE_PRUEBA),
+        patch("app.main.buscar_compras", return_value=compras),
+        patch("app.main.listar_todos_los_proveedores", return_value=PROVEEDORES_DE_PRUEBA),
+        patch("app.main.listar_articulos", return_value=ARTICULOS_CON_UNIDAD_COMPRA),
+    ):
+        return cliente.get("/compras/buscar").text.split("</style>")[-1]
+
+
+def test_el_renglon_VINO_ARMADA_dice_habilitado_deshabilitado_o_NO_ESTA():
+    """Los TRES estados, y la diferencia entre los dos últimos es el hallazgo.
+
+    ESCONDIDO NO ES LO MISMO QUE DESHABILITADO, y por eso no alcanza con un
+    booleano: escondido, "no se puede NUNCA" y "ya vino armada y está
+    registrada" se ven igual — y la segunda es el estado BUENO. Se esconde
+    solo cuando la ausencia ya significa algo (ya marcada, todavía no
+    recepcionada); todo lo demás se ve, apagado, con el motivo.
 
     Por la CLASE y no por el texto: un comentario que explique el botón
     nombra su propio rótulo y entraría en la cuenta (corolario 38).
     """
-    casos = {
-        ("recepcionado", None): True,     # la única que puede
-        ("recepcionado", 3): False,       # ya marcada: su guía ya está
-        ("pendiente", None): False,       # todavía no hay lote
+    HABILITADO, APAGADO, AUSENTE = "habilitado", "apagado", "ausente"
+    casos = [
+        (APAGADO,    "anterior al corte",       dict(fecha_del_lote=CORTE_DE_PRUEBA_VINO_ARMADA)),
+        (APAGADO,    "sin fecha de recepcion",  dict(fecha_del_lote=None)),
+        (APAGADO,    "su lote ya se consumio",  dict(bultos_consumidos=40)),
+        (AUSENTE,    "ya vino armada",          dict(ficha_en_origen_id=3)),
+        (AUSENTE,    "todavia no se recepciono", dict(estado="pendiente")),
+        (HABILITADO, "recepcionada y sin marca", {}),
+    ]
+    for esperado, nombre, cambios in casos:
+        marcado = _renderizar_buscar(_compras_buscadas(**cambios))
+        encontrado = (
+            HABILITADO if 'class="boton boton-vino-armada"' in marcado
+            else APAGADO if 'class="boton boton-vino-armada-no"' in marcado
+            else AUSENTE
+        )
+        assert encontrado == esperado, (nombre, encontrado, esperado)
+
+
+def test_el_renglon_APAGADO_lleva_el_MOTIVO_y_no_es_un_link():
+    """Un botón que no funciona y no explica nada es peor que no tenerlo — lo
+    dice la pantalla de destino en su propio comentario, y el menú es donde se
+    mira primero.
+
+    Y no puede ser un `<a>`: un link apagado se toca igual.
+    """
+    marcado = _renderizar_buscar(_compras_buscadas(fecha_del_lote=CORTE_DE_PRUEBA_VINO_ARMADA))
+
+    renglon = marcado.split('class="boton boton-vino-armada-no"')[1].split("</span>")[0]
+    assert "POSTERIOR al corte" in renglon, renglon
+    assert "es anterior al corte" in renglon, renglon
+    assert 'href="/compras/1/vino-armada"' not in marcado
+
+
+def test_los_CINCO_motivos_saben_todos_como_llamarse_en_el_menu():
+    """El conjunto ENCONTRADO contra el DECIDIDO (corolario 60).
+
+    Un motivo nuevo en `motivo_para_no_marcar_armada` tiene que entrar a una
+    de las dos listas —la que lo esconde o la que le da etiqueta— o este test
+    cae nombrándolo. Recorrer la lista propia solo confirmaría lo que ya
+    sabía: el que falta, por definición, no está en ella.
+    """
+    fuente = inspect.getsource(motivo_para_no_marcar_armada)
+    encontrados = set(re.findall(r'MotivoVinoArmada\(\s*"([a-z_]+)"', fuente))
+    decididos = set(ETIQUETAS_CORTAS) | set(MOTIVOS_QUE_ESCONDEN_EL_BOTON)
+
+    assert encontrados == decididos, {
+        "sin nombre en el menu": sorted(encontrados - decididos),
+        "nombrados y ya no existen": sorted(decididos - encontrados),
     }
-    for (estado, ficha), tiene_boton in casos.items():
-        with (
-            patch("app.main._hoy_argentina", return_value=HOY_DE_PRUEBA),
-            patch("app.main.buscar_compras", return_value=_compras_buscadas(estado, ficha)),
-            patch("app.main.listar_todos_los_proveedores", return_value=PROVEEDORES_DE_PRUEBA),
-            patch("app.main.listar_articulos", return_value=ARTICULOS_CON_UNIDAD_COMPRA),
-        ):
-            respuesta = cliente.get("/compras/buscar")
-        marcado = respuesta.text.split("</style>")[-1]
-        assert ('class="boton boton-vino-armada"' in marcado) is tiene_boton, (estado, ficha)
+    # Y que no sean cero, porque dos conjuntos vacíos también son iguales.
+    assert len(encontrados) == 5, sorted(encontrados)
 
 
 def test_vino_armada_BLOQUEADA_no_promete_la_fecha_de_una_guia_que_no_va_a_existir():
@@ -27848,11 +27954,10 @@ def test_vino_armada_BLOQUEADA_no_promete_la_fecha_de_una_guia_que_no_va_a_exist
     solo si había fecha, y la había. Es la rama que ganó un camino nuevo y se
     quedó afirmando lo que valía antes.
     """
-    motivo = "La fecha tiene que ser POSTERIOR al corte del modelo (05/09/2026)."
     with (
         patch("app.main.compra_para_marcar_armada",
               return_value=_compra_recepcionada_sin_marca(
-                  fecha_del_lote=date(2026, 9, 5), motivo_corte=motivo)),
+                  fecha_del_lote=CORTE_DE_PRUEBA_VINO_ARMADA)),
         patch("app.main._cajas_para_elegir_por_articulo", return_value=_cajas_de_un_articulo()),
     ):
         bloqueada = cliente.get("/compras/30/vino-armada").text.split("</style>")[-1]
