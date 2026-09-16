@@ -6125,3 +6125,91 @@ escribiera `NULL` a la fuerza los deja a los seis en verde, y el canario lo
 midió: caían dos, los dos que tienen un valor. **Una batería de casos donde
 el campo va vacío no distingue "el parámetro se guarda" de "la columna está
 en la lista"** — hace falta el caso con un valor, y es el único que lo dice.
+
+## Corolario 73: el recorte que protege al que reprocesa lo deja tomar el MISMO LOTE UNA VEZ POR GUÍA
+
+Del 16/09, y no es un caso nuevo: es el agujero que se midió el 11/09 al
+construir la guía en origen —*"las salidas del mismo día no cuentan, así que
+dos guías sobre la misma compra el mismo día pasan las dos"*— con la parte
+que ese día no se vio. Ahí se cerró con el candado UNO A UNO por compra, que
+aplica **solo a `en_origen`**. Las guías R **normales** siguen sin freno.
+
+El caso que lo trajo: un lote de 40 bultos, R300 con 30 y R307 con 26, las
+dos del 14/09. Salieron 56 de 40.
+
+**Corrido, no leído** (`reparto_para_reproceso` con el caso):
+
+```
+R300 sola (14/09, pide 30)                    disponible 40.0   PASA
+R307 el MISMO dia que R300 (14/09, pide 26)   disponible 40.0   PASA   <- el caso
+R307 al dia SIGUIENTE (15/09, pide 26)        disponible 10.0   FRENA  <- control
+R307 el mismo dia pidiendo los 40 ENTEROS     disponible 40.0   PASA
+una TERCERA el mismo dia, con 56 ya tomados   disponible 40.0   PASA
+```
+
+**Y esa última línea es lo que no estaba medido: el agujero NO está acotado a
+dos guías.** Cada guía del día ve el lote ENTERO, así que el techo de lo que
+se puede tomar de un lote de 40 en un día no es 80 — es 40 por cada guía que
+se cargue. El caso de 56 es el mínimo visible, no el peor posible.
+
+### Lo que pasa con el costo: las DOS cosas, y se contradicen
+
+La pregunta natural es *"¿se atribuyó a un lote que no los tenía, o quedaron
+sin lote?"*. La respuesta es **las dos, en dos lugares distintos**:
+
+```
+lo ESCRITO (reprocesos_consumos)  R300 -> guia/900 30   R307 -> guia/900 26
+lo DERIVADO (el rejuego del stock)  guia/900 restante 0.0 · sin_lote 16.0
+```
+
+`reprocesos_consumos` es un **documento congelado** y de ahí sale
+`costo_total = Σ(bultos × costo_por_bulto)` y `costo_por_bulto_primera`. O
+sea que los 16 bultos de más **quedaron costeados al precio de ese lote,
+para siempre**, en la guía y en todo lo que lea esa tabla.
+
+El rejuego que muestra el stock dice otra cosa: el lote en 0 y 16 `sin_lote`.
+**Ninguno de los dos está roto** —cada uno hace lo que promete— y por eso no
+hay nada que se vea mal: el que mira el detalle de la guía ve un costo
+completo, y el que mira el stock ve un hueco, y nadie los pone al lado.
+
+Es la familia del corolario 71 —dos escrituras de la misma regla con distinto
+PODER— corrida un lugar: acá no es una copia ornamental, son **dos respuestas
+verdaderas a la misma pregunta**, una congelada y una derivada, que el día
+que se separan no tienen cómo avisarse.
+
+### La asimetría sigue siendo correcta, y por eso esto no se arregla solo
+
+El recorte está razonado y el razonamiento es bueno: dentro de un día el
+sistema **guarda fechas, no horas**, así que descontar una salida del mismo
+día afirma un orden que no se sabe, y lo afirma en contra del que reprocesa.
+
+**Lo que ese argumento no cubre es el TOTAL.** No hace falta saber el orden
+para saber que 30 + 26 no entran en 40: la suma no depende de cuál fue
+primero. O sea que el recorte contesta *"¿qué lotes había cuando cargó?"* y
+el freno necesita además *"¿cuánto se llevó ya el día?"*, que es otra
+pregunta y no necesita orden.
+
+**La señal, y es la que se puede usar sin haber sufrido el caso**: cuando un
+recorte se justifica porque *no se puede saber el orden*, preguntarse si lo
+que se está decidiendo depende del orden. Si es una comparación de SUMAS, no
+depende, y el recorte está de más — protege contra una incertidumbre que esa
+cuenta no tiene.
+
+### NO SE ARREGLÓ, y lo que falta para decidir
+
+Por pedido del dueño, y la razón es buena: un freno que empiece a contar el
+mismo día puede **rebotar cargas legítimas**, y hay que saber cuántas antes
+de ponerlo. Las dos consultas están escritas y probadas contra el esquema
+real con el caso plantado:
+
+- `db/mismo_dia_1_lotes_sobreatribuidos.sql` — cuántos lotes recibieron más
+  de lo que tenían, por cuánto, y cuánta plata se imputó de más. Sobre lo
+  ESCRITO, que es lo que quedó congelado.
+- `db/mismo_dia_2_cuantas_guias_comparten_dia.sql` — el TECHO del rebote:
+  una guía sola en su día ve los mismos lotes antes y después, así que las
+  únicas que pueden cambiar de resultado son las que comparten artículo y
+  fecha con otra.
+
+**Ninguna se corrió todavía contra las bases.** Hasta que salga el número no
+se sabe si esto es un incidente de dos guías o si el costeo viene mal hace
+semanas, y esa diferencia decide si además del freno hace falta un rescate.
