@@ -62,8 +62,13 @@ def cajas_que_mueve_la_guia(tipo: str, bultos_primera, lleva_caja_nuestra,
     return SIGNO_POR_TIPO_DE_GUIA.get(tipo, 0) * bultos
 
 
-def envase_de_la_guia(ficha: dict | None) -> tuple[bool | None, int | None, bool]:
-    """Qué envase le corresponde a una guía R de esta ficha: (lleva, envase_id, hay_que_preguntar).
+def envase_derivado_de_la_ficha(ficha: dict | None) -> tuple[bool | None, int | None, bool]:
+    """Qué caja nuestra le corresponde a esta ficha: (lleva, envase_id, hay_que_preguntar).
+
+    LA CONTESTAN DOS OPERACIONES y por eso el nombre dice FICHA y no guía: la
+    guía R, que LLENA una caja, y el reingreso que vuelve a cajón grande, que
+    la VACÍA. Las dos preguntan lo mismo —¿en qué caja nuestra está esto?— y
+    escrita dos veces se separan el día que alguien arregle una.
 
     LO ESCRIBE SIEMPRE EL SERVER y la pantalla solo PREGUNTA cuando no se
     puede derivar. Guardarlo únicamente en las fichas variables dejaría el

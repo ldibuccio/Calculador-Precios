@@ -16,7 +16,7 @@ from core.envases import (
     SIGNO_POR_TIPO_DE_GUIA,
     hay_que_reponer,
     cajas_que_mueve_la_guia,
-    envase_de_la_guia,
+    envase_derivado_de_la_ficha,
 )
 
 cliente = TestClient(app, base_url="https://testserver")
@@ -33,19 +33,19 @@ FICHA_SIN_ENVASE = {"envase_id": None, "envase_variable": False}
 # ---------------------------------------------------------------------------
 
 def test_el_envase_se_DERIVA_de_la_ficha_fija_y_se_PREGUNTA_cuando_no_se_puede():
-    assert envase_de_la_guia(FICHA_FIJA) == (True, 7, False)
+    assert envase_derivado_de_la_ficha(FICHA_FIJA) == (True, 7, False)
     # Variable: el envase lo decide el cajón de ESA compra, no la ficha.
-    assert envase_de_la_guia(FICHA_VARIABLE) == (None, None, True)
+    assert envase_derivado_de_la_ficha(FICHA_VARIABLE) == (None, None, True)
     # Sin ficha no hay de dónde derivarlo. No estaba en el pedido y sale de
     # la misma regla: si no se puede derivar, se pregunta.
-    assert envase_de_la_guia(None) == (None, None, True)
+    assert envase_derivado_de_la_ficha(None) == (None, None, True)
 
 
 def test_una_ficha_SIN_ENVASE_no_es_un_hueco_es_envase_perdido():
     # Manzana, pera, arándano: salen en el cajón del proveedor y no hay caja
     # nuestra que contar. Eso es una respuesta, no un dato que falta — por eso
     # NO pide preguntar.
-    assert envase_de_la_guia(FICHA_SIN_ENVASE) == (False, None, False)
+    assert envase_derivado_de_la_ficha(FICHA_SIN_ENVASE) == (False, None, False)
 
 
 def test_la_guia_EN_ORIGEN_SUMA_donde_la_normal_resta():

@@ -11,7 +11,7 @@ from contextlib import contextmanager
 
 import psycopg2
 
-from core.envases import envase_de_la_guia, hay_que_reponer
+from core.envases import envase_derivado_de_la_ficha, hay_que_reponer
 from core.magnitudes import repartir_magnitudes
 from core.vino_armada import motivo_para_no_marcar_armada, motivo_sin_lote_por_el_corte
 
@@ -8847,6 +8847,49 @@ def stock_de_porcion(articulo_id: int, ficha_id: int | None = None,
         conexion.close()
 
 
+def _envase_de_este_reingreso(cursor, pedido_renglon_id, destino_rechazo, envase_declarado):
+    """El envase que LIBERA un reingreso que vuelve a cajón grande. None en todo lo demás.
+
+    LA FICHA SE LEE ACÁ ADENTRO, en la misma transacción que el INSERT, y no
+    la manda la ruta: es el mismo argumento que en la guía R
+    (`_envase_de_esta_guia`). Si la pasara la ruta, el día que aparezca un
+    segundo llamador la columna se escribiría en NULL y el stock de cajas
+    volvería a decir que sobran — sin un error y sin nada que se vea roto.
+
+    SOLO CON DESTINO 'reproceso', que es la única de las cuatro puertas del
+    rechazo que vacía una caja nuestra: la mercadería se pasa a cajón grande
+    y la caja queda libre. Con los otros tres destinos la caja se va con la
+    mercadería (o se queda con ella) y no hay nada que devolver — y además el
+    CHECK `movimientos_stock_envase_solo_reproceso` lo rechazaría.
+
+    `envase_declarado` es lo que contestó la persona cuando hubo que
+    preguntar, y GANA sobre la derivación por la misma razón que en la guía
+    R: con ficha variable el envase lo decide el cajón de ESA compra. None =
+    no se preguntó.
+    """
+    if destino_rechazo != "reproceso" or pedido_renglon_id is None:
+        return None
+    ficha = None
+    # SIN agregado: `fetchone() is None` sobre un `count(*)` nunca es None.
+    cursor.execute(
+        """
+        SELECT fl.envase_id, fl.envase_variable
+          FROM pedidos_renglones r
+          JOIN fichas_logistica fl ON fl.id = r.ficha_id
+         WHERE r.id = %s
+        """,
+        (pedido_renglon_id,),
+    )
+    fila = cursor.fetchone()
+    if fila is not None:
+        ficha = {"envase_id": fila[0], "envase_variable": fila[1]}
+
+    lleva, envase_id, hay_que_preguntar = envase_derivado_de_la_ficha(ficha)
+    if hay_que_preguntar:
+        return envase_declarado
+    return envase_id if lleva else None
+
+
 def crear_movimiento_stock(
     articulo_id: int,
     tipo: str,
@@ -8864,6 +8907,7 @@ def crear_movimiento_stock(
     ficha_id: int | None = None,
     proveedor_devolucion_id: int | None = None,
     compra_devolucion_id: int | None = None,
+    envase_declarado: int | None = None,
 ) -> float:
     """Un movimiento de stock (ajuste/merma/reingreso): fila nueva, NUNCA pisa el stock. Devuelve el stock resultante.
 
@@ -8914,23 +8958,37 @@ def crear_movimiento_stock(
     qué cajón, y repartir sería inventarlo. Los dos vínculos son excluyentes
     (`movimientos_stock_compra_o_proveedor`): con compra, el proveedor sale
     de ella y mandarlo aparte sería la misma cosa escrita dos veces.
+
+    Y `envase_declarado` es EN QUÉ CAJA NUESTRA volvió lo que se vació a
+    cajón grande, cuando la pantalla tuvo que preguntarlo. La columna la
+    escribe SIEMPRE el server (`_envase_de_este_reingreso`), derivándola de
+    la ficha del renglón cuando se puede: el declarado solo entra en los
+    casos donde no hay de dónde derivar —ficha de envase variable o renglón
+    sin ficha—. Sin esto, la pata `liberadas` del stock de cajas era CERO
+    por construcción: la columna existía, nadie la escribía, y la cuenta se
+    veía perfecta.
     """
     conexion = obtener_conexion()
     try:
         with conexion.cursor() as cursor:
             stock_sistema = _stock_deposito_actual(cursor, articulo_id)
+            envase_liberado = _envase_de_este_reingreso(
+                cursor, pedido_renglon_id, destino_rechazo, envase_declarado
+            )
             cursor.execute(
                 """
                 INSERT INTO movimientos_stock
                     (articulo_id, tipo, cantidad, motivo, cliente_id, fecha_operacion, stock_sistema,
                      pedido_renglon_id, costo_por_bulto, destino_rechazo, bultos_segunda,
-                     lote_tipo, lote_origen_id, ficha_id, proveedor_devolucion_id, compra_devolucion_id)
-                VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+                     lote_tipo, lote_origen_id, ficha_id, proveedor_devolucion_id, compra_devolucion_id,
+                     envase_id)
+                VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
                 RETURNING id
                 """,
                 (articulo_id, tipo, cantidad, motivo, cliente_id, fecha_operacion, stock_sistema,
                  pedido_renglon_id, costo_por_bulto, destino_rechazo, bultos_segunda,
-                 lote_tipo, lote_origen_id, ficha_id, proveedor_devolucion_id, compra_devolucion_id),
+                 lote_tipo, lote_origen_id, ficha_id, proveedor_devolucion_id, compra_devolucion_id,
+                 envase_liberado),
             )
             if foto_ruta:
                 # RETURNING y no currval(pg_get_serial_sequence(...)): el
@@ -9081,12 +9139,20 @@ def obtener_renglon_para_reingreso(renglon_id: int) -> dict | None:
                        ps.orden_compra,
                        COALESCE(r.cantidad_armada, r.cantidad) AS bultos_armados,
                        r.kilos_enviados,
+                       -- EL ENVASE DE LA FICHA, para que la pantalla sepa si
+                       -- tiene que PREGUNTAR en qué caja volvió. Sin estas dos
+                       -- columnas la pregunta no aparece nunca y el reingreso
+                       -- que vacía una caja vuelve a guardarse sin decir cuál
+                       -- — que es exactamente lo que se ve igual que antes.
+                       fl.envase_id AS ficha_envase_id,
+                       fl.envase_variable AS ficha_envase_variable,
                        COALESCE(d.devuelto, 0) AS ya_devuelto
                 FROM pedidos_renglones r
                 JOIN vigentes v ON v.id = r.pedido_id
                 JOIN pedidos p ON p.id = r.pedido_id
                 JOIN clientes cl ON cl.id = p.cliente_id
                 JOIN articulos a ON a.id = r.articulo_id
+                LEFT JOIN fichas_logistica fl ON fl.id = r.ficha_id
                 LEFT JOIN pedidos_sucursales ps ON ps.pedido_id = p.id AND ps.sucursal = r.sucursal
                 LEFT JOIN ({_SQL_DEVUELTO_POR_RENGLON}) d ON d.pedido_renglon_id = r.id
                 WHERE r.id = %s AND r.armado_el IS NOT NULL AND r.anulado_el IS NULL
@@ -10666,7 +10732,7 @@ def _envase_de_esta_guia(cursor, ficha_id, envase_declarado) -> tuple:
         if fila is not None:
             ficha = {"envase_id": fila[0], "envase_variable": fila[1]}
 
-    lleva, envase_id, hay_que_preguntar = envase_de_la_guia(ficha)
+    lleva, envase_id, hay_que_preguntar = envase_derivado_de_la_ficha(ficha)
     if hay_que_preguntar and envase_declarado is not None:
         return envase_declarado
     return lleva, envase_id

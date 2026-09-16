@@ -50,7 +50,7 @@ from app.costeo import (
 # de las tres llamar según qué campo se editó. La cuarta
 # (calcular_costo_por_unidad_medida) es la división importe / kilos, que
 # también es del motor y trae su propia guarda del cero.
-from core.envases import hay_que_reponer
+from core.envases import declarado_del_formulario, envase_derivado_de_la_ficha, hay_que_reponer
 from core.vino_armada import etiqueta_del_boton, se_muestra_el_boton
 from core.motor_costeo import (
     calcular_costo_por_unidad_medida,
@@ -10285,6 +10285,30 @@ def _renderizar_form_reingreso(request: Request, renglon: dict, *, precarga=None
     # FIFO no puede dejar sin CARGAR una devolución.
     compras_del_renglon = list(_compras_del_renglon_para_devolucion(renglon["id"]).values())
 
+    # EN QUÉ CAJA NUESTRA VOLVIÓ, y solo se pregunta cuando no se puede
+    # derivar de la ficha del renglón: envase fijo lo copia el server, envase
+    # perdido no tiene caja que devolver. La MISMA función que decide qué se
+    # escribe (`envase_derivado_de_la_ficha`), no una condición propia acá:
+    # una pantalla que pregunta cuando el server ya derivó deja al operario
+    # eligiendo algo que no se usa, y al revés deja un hueco mudo.
+    #
+    # El server vuelve a derivarla al escribir, con la ficha leída adentro de
+    # la transacción — esto es solo para saber si hay que mostrar el campo.
+    _, _, preguntar_envase = envase_derivado_de_la_ficha(
+        None if renglon.get("ficha_id") is None
+        else {"envase_id": renglon.get("ficha_envase_id"),
+              "envase_variable": renglon.get("ficha_envase_variable")}
+    )
+    envases = []
+    if preguntar_envase:
+        # Si falla, la pantalla sale igual con la lista vacía y el campo
+        # ofreciendo solo "descartable": que no se pueda leer el catálogo no
+        # puede dejar sin CARGAR un reingreso.
+        try:
+            envases = listar_envases()
+        except Exception:
+            logger.exception("No se pudieron leer los envases para el reingreso")
+
     contexto = {
         "compras_del_renglon": compras_del_renglon,
         "paso": "form",
@@ -10293,6 +10317,8 @@ def _renderizar_form_reingreso(request: Request, renglon: dict, *, precarga=None
         "precarga": precarga or {},
         "hoy": _hoy_argentina().isoformat(),
         "proveedores": proveedores,
+        "preguntar_envase": preguntar_envase,
+        "envases": envases,
         "aviso": None,
         "error": error,
     }
@@ -10362,6 +10388,7 @@ def cargar_reingreso_stock_ruta(
     proveedor_id: str = Form(""),
     compra_devolucion_id: str = Form(""),
     cajones: str = Form(""),
+    envase_id: str = Form(""),
 ):
     """Mercadería que el cliente devolvió: entra al stock MARCADA como rechazo y VINCULADA a su renglón de pedido.
 
@@ -10415,6 +10442,7 @@ def cargar_reingreso_stock_ruta(
     # vuelve a cajón grande y esos cajones van a segunda.
     destino_valor = destino if destino in DESTINOS_REINGRESO else "stock"
     bultos_segunda = None
+    envase_declarado_valor = None
     proveedor_valor = None
     compra_valor = None
     compra_elegida = None
@@ -10422,6 +10450,22 @@ def cargar_reingreso_stock_ruta(
         bultos_segunda = cantidad_valor  # la misma caja, sin tocar
     elif not error and destino_valor == "reproceso":
         error, bultos_segunda = _validar_bultos_positivos(cajones, "cajones que salieron")
+        # EN QUÉ CAJA NUESTRA VOLVIÓ. Solo se lee cuando la pantalla tuvo que
+        # preguntarlo; con envase fijo o envase perdido el server lo deriva de
+        # la ficha y lo que llegue por el formulario se ignora. La derivación
+        # la vuelve a hacer `crear_movimiento_stock` con la ficha leída en su
+        # propia transacción — acá solo se traduce la respuesta.
+        #
+        # LA GUARDA VA DONDE SE ESCRIBE: `declarado_del_formulario` devuelve
+        # descartable para un id que no esté en el catálogo, así que un POST a
+        # mano no puede dejar el reingreso apuntando a un envase inventado.
+        if not error and envase_id.strip().isdigit():
+            try:
+                validos = {e["id"] for e in listar_envases()}
+            except Exception:
+                logger.exception("No se pudieron leer los envases para validar el reingreso")
+                validos = set()
+            envase_declarado_valor = declarado_del_formulario(int(envase_id), validos)[1]
     elif not error and destino_valor == "devolucion_proveedor":
         # LA COMPRA PRIMERO, y si hay compras para elegir el proveedor NO se
         # manda: sale de ella. Los dos juntos son la misma cosa dos veces y
@@ -10452,6 +10496,7 @@ def cargar_reingreso_stock_ruta(
             "cantidad": cantidad, "motivo": motivo_limpio, "fecha": fecha,
             "destino": destino_valor, "cajones": cajones,
             "proveedor_id": proveedor_id,
+            "envase_id": envase_id,
             # Vuelve en el reintento: el que corrige el campo que la pantalla
             # le señaló no vuelve a revisar los que ya llenó.
             "compra_devolucion_id": compra_devolucion_id,
@@ -10469,6 +10514,7 @@ def cargar_reingreso_stock_ruta(
             bultos_segunda=bultos_segunda,
             proveedor_devolucion_id=proveedor_valor,
             compra_devolucion_id=compra_valor,
+            envase_declarado=envase_declarado_valor,
         )
     except Exception as error_db:
         return _renderizar_form_reingreso(

@@ -4949,6 +4949,8 @@ def test_crear_movimiento_stock_guarda_la_foto_del_sistema_y_devuelve_el_resulta
         # proveedor_devolucion_id y compra_devolucion_id: solo los usa la
         # devolución al proveedor, y NUNCA los dos juntos.
         None, None,
+        # envase_id: solo lo escribe el reingreso que vuelve a cajón grande.
+        None,
     )
     assert resultado == 9.0
     conexion.commit.assert_called_once()
@@ -4967,6 +4969,8 @@ def test_crear_movimiento_stock_reingreso_lleva_cliente_y_fecha_propia():
         # proveedor_devolucion_id y compra_devolucion_id: solo los usa la
         # devolución al proveedor, y NUNCA los dos juntos.
         None, None,
+        # envase_id: solo lo escribe el reingreso que vuelve a cajón grande.
+        None,
     )
 
 
@@ -4988,13 +4992,18 @@ def test_crear_movimiento_stock_reingreso_vinculado_lleva_renglon_y_costo_congel
         # proveedor_devolucion_id y compra_devolucion_id: solo los usa la
         # devolución al proveedor, y NUNCA los dos juntos.
         None, None,
+        # envase_id: solo lo escribe el reingreso que vuelve a cajón grande.
+        None,
     )
 
 
 def test_crear_movimiento_stock_rechazo_a_segunda_no_toca_el_stock_normal():
     # El destino se decide al cargar: lo que va a segunda entra y sale en
     # el mismo acto, así que el stock del artículo no se mueve.
-    conexion, cursor = _conexion_falsa(filas_fetchone=[(30.0,)])
+    #
+    # El segundo fetchone es LA FICHA DEL RENGLÓN: con destino 'reproceso' el
+    # server deriva de ahí en qué caja nuestra volvió. Envase 4 fijo.
+    conexion, cursor = _conexion_falsa(filas_fetchone=[(30.0,), (4, False)])
 
     with patch("app.db.obtener_conexion", return_value=conexion):
         resultado = crear_movimiento_stock(
@@ -5010,8 +5019,97 @@ def test_crear_movimiento_stock_rechazo_a_segunda_no_toca_el_stock_normal():
         # proveedor_devolucion_id y compra_devolucion_id: solo los usa la
         # devolución al proveedor, y NUNCA los dos juntos.
         None, None,
+        # envase_id DERIVADO de la ficha, con un valor y no con None: los
+        # otros seis tests de esta familia lo pasan vacío, así que un INSERT
+        # que escribiera NULL a la fuerza los deja a todos en verde.
+        4,
     )
     assert resultado == 30.0
+
+
+def test_el_envase_que_libera_el_reingreso_se_DERIVA_de_la_ficha_del_renglon():
+    """La ficha se lee ACÁ ADENTRO, en la misma transacción, y no la manda la ruta.
+
+    Si la pasara la ruta, el día que aparezca un segundo llamador de
+    `crear_movimiento_stock` la columna se escribiría en NULL y la pata
+    `liberadas` del stock de cajas volvería a ser cero — sin un error y sin
+    nada que se vea roto, que es lo que la tuvo apagada desde que existe.
+
+    Y la consulta es SIN AGREGADO: con un `count(*)` el `fetchone() is None`
+    que distingue "el renglón no tiene ficha" nunca sería None (corolario 27).
+    """
+    conexion, cursor = _conexion_falsa(filas_fetchone=[(30.0,), (4, False)])
+
+    with patch("app.db.obtener_conexion", return_value=conexion):
+        crear_movimiento_stock(
+            7, "reingreso_rechazo", 40.0, "rechazado", date(2026, 8, 24),
+            pedido_renglon_id=77, destino_rechazo="reproceso", bultos_segunda=12.0,
+        )
+
+    # El ancla es el JOIN entero y no `FROM pedidos_renglones r`: el cálculo
+    # del stock del artículo también lo dice, y matchearía el equivocado.
+    lectura = _sql_y_parametros_que_contienen(cursor, "JOIN fichas_logistica fl ON fl.id = r.ficha_id")
+    assert "fl.envase_id" in lectura[0] and "fl.envase_variable" in lectura[0]
+    assert "COUNT(" not in lectura[0].upper()
+    assert lectura[1] == (77,)
+
+
+def test_con_ficha_VARIABLE_gana_lo_DECLARADO_y_sin_declarar_queda_en_NULL():
+    """Con envase variable el envase lo decide el cajón de ESA compra, no la ficha.
+
+    Los dos casos en un test porque son la misma regla mirada de los dos
+    lados: lo declarado gana, y su ausencia NO se completa con la ficha —
+    quedaría diciendo que volvió en una caja que la ficha de HOY nombra.
+    """
+    for declarado, esperado in ((9, 9), (None, None)):
+        conexion, cursor = _conexion_falsa(filas_fetchone=[(30.0,), (4, True)])
+        with patch("app.db.obtener_conexion", return_value=conexion):
+            crear_movimiento_stock(
+                7, "reingreso_rechazo", 40.0, "rechazado", date(2026, 8, 24),
+                pedido_renglon_id=77, destino_rechazo="reproceso", bultos_segunda=12.0,
+                envase_declarado=declarado,
+            )
+        assert cursor.execute.call_args_list[-1].args[1][-1] == esperado, declarado
+
+
+def test_la_ficha_SIN_ENVASE_no_libera_caja_y_eso_NO_es_un_hueco():
+    """Envase perdido (manzana, pera, arándano): salió en el cajón del proveedor.
+
+    No hay caja nuestra que devolver, así que la columna queda en NULL — y
+    ahí el NULL es un cero verdadero, no "no sabemos". Es la única de las
+    cuatro respuestas de `envase_derivado_de_la_ficha` que no se pregunta.
+    """
+    conexion, cursor = _conexion_falsa(filas_fetchone=[(30.0,), (None, False)])
+
+    with patch("app.db.obtener_conexion", return_value=conexion):
+        crear_movimiento_stock(
+            7, "reingreso_rechazo", 40.0, "rechazado", date(2026, 8, 24),
+            pedido_renglon_id=77, destino_rechazo="reproceso", bultos_segunda=12.0,
+            # Aunque alguien mande un declarado por un POST a mano: la ficha
+            # dice que no hay caja, y eso no se pregunta.
+            envase_declarado=9,
+        )
+
+    assert cursor.execute.call_args_list[-1].args[1][-1] is None
+
+
+def test_los_OTROS_TRES_destinos_no_leen_la_ficha_ni_escriben_envase():
+    """Solo 'reproceso' vacía una caja: en los otros tres se va con la mercadería.
+
+    Y no se lee la ficha en vano: sin la guarda del destino, cada merma y
+    cada ajuste pagarían una consulta más para escribir NULL igual.
+    """
+    for destino in (None, "stock", "segunda", "devolucion_proveedor"):
+        conexion, cursor = _conexion_falsa(filas_fetchone=[(30.0,)])
+        with patch("app.db.obtener_conexion", return_value=conexion):
+            crear_movimiento_stock(
+                7, "reingreso_rechazo", 40.0, "rechazado", date(2026, 8, 24),
+                pedido_renglon_id=77, destino_rechazo=destino,
+                envase_declarado=9,
+            )
+        assert cursor.execute.call_args_list[-1].args[1][-1] is None, destino
+        consultas = [ll.args[0] for ll in cursor.execute.call_args_list]
+        assert not any("JOIN fichas_logistica fl ON fl.id = r.ficha_id" in c for c in consultas), destino
 
 
 def test_crear_movimiento_stock_merma_dirigida_guarda_el_lote_elegido():
@@ -5030,6 +5128,8 @@ def test_crear_movimiento_stock_merma_dirigida_guarda_el_lote_elegido():
         # proveedor_devolucion_id y compra_devolucion_id: solo los usa la
         # devolución al proveedor, y NUNCA los dos juntos.
         None, None,
+        # envase_id: solo lo escribe el reingreso que vuelve a cajón grande.
+        None,
     )
 
 
@@ -5061,11 +5161,15 @@ def test_crear_movimiento_stock_devolucion_ESCRIBE_la_compra_elegida():
         None, None, None,
         # El proveedor suelto NO viaja: con compra, sale de ella.
         None, 502,
+        # envase_id: la devolución al proveedor no vacía ninguna caja nuestra
+        # —la mercadería se va con lo que la traía— y el CHECK
+        # `movimientos_stock_envase_solo_reproceso` la rechazaría.
+        None,
     )
     # Y la columna está nombrada en el INSERT, no solo el valor en la tupla:
     # con un cursor falso la tupla llega igual con la columna equivocada
     # (corolario 40).
-    assert "compra_devolucion_id)" in insert.args[0]
+    assert "proveedor_devolucion_id, compra_devolucion_id,\n                     envase_id)" in insert.args[0]
 
 
 def test_la_ficha_que_SOLO_TIENE_MERMA_no_se_cae_de_la_cuenta():
@@ -6627,6 +6731,33 @@ def test_obtener_renglon_para_reingreso_trae_todo_y_el_devuelto_acumulado():
     assert "DISTINCT ON (cliente_id, fecha_operacion)" in consulta
     assert renglon["bultos_armados"] == 25.0
     assert renglon["ya_devuelto"] == 5.0
+
+
+def test_el_renglon_TRAE_EL_ENVASE_DE_LA_FICHA_o_la_pregunta_se_apaga_sola():
+    """Mirando el TEXTO del SQL, porque el valor lo entrega el fixture (corolario 65).
+
+    Con un cursor falso, `ficha_envase_id` llega igual con la columna sacada
+    del SELECT: el mock no mira una letra de la consulta. Y el modo de falla
+    es mudo — sin las dos columnas, `envase_derivado_de_la_ficha` ve una ficha
+    con `envase_id` en None, contesta "envase perdido, no preguntes", y la
+    pantalla deja de preguntar para SIEMPRE. Ni un error, ni un hueco: el
+    reingreso vuelve a guardarse sin decir en qué caja volvió, que es
+    exactamente como se veía antes de que esto existiera.
+
+    Con el ALIAS y no `envase_id` suelto: la consulta nombra cuatro tablas y
+    `r.ficha_id` ya está ahí, así que un assert sin calificar puede matchear
+    lo que no se quiso probar (corolario 4).
+    """
+    consulta = "\n".join(
+        linea for linea in inspect.getsource(obtener_renglon_para_reingreso).split("\n")
+        if "--" not in linea
+    )
+    assert "fl.envase_id AS ficha_envase_id" in consulta
+    assert "fl.envase_variable AS ficha_envase_variable" in consulta
+    # Y el JOIN es LEFT: un renglón sin ficha asignada tiene que VOLVER —con
+    # las dos columnas en NULL, que es "preguntá"— y no desaparecer de la
+    # consulta. Con un JOIN normal el reingreso de ese renglón daría 404.
+    assert "LEFT JOIN fichas_logistica fl ON fl.id = r.ficha_id" in consulta
 
 
 def test_listar_renglones_para_reingreso_es_por_pedido_y_sucursal():

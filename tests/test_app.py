@@ -20892,6 +20892,11 @@ RENGLON_REINGRESO_DE_PRUEBA = {
     "articulo_nombre": "Anco", "cliente_id": 1, "cliente_nombre": "Día",
     "fecha_pedido": date(2026, 8, 24), "orden_compra": "1257673",
     "bultos_armados": 25.0, "kilos_enviados": 500.0, "ya_devuelto": 5.0,
+    # EL ENVASE DE LA FICHA, como lo trae la consulta en producción: envase
+    # FIJO, que es el caso común. Sin estas dos el fixture haría que la
+    # pantalla preguntara siempre —`.get` devuelve None y un None se lee como
+    # "sin ficha"— y los tests defenderían la pregunta en el caso donde no va.
+    "ficha_envase_id": 4, "ficha_envase_variable": False,
 }
 
 
@@ -20928,6 +20933,9 @@ def test_devolucion_al_proveedor_guarda_a_quien_y_no_toca_el_pool_de_segunda():
         cliente_id=1, pedido_renglon_id=77, costo_por_bulto=2000.0,
         destino_rechazo="devolucion_proveedor", bultos_segunda=None,
         proveedor_devolucion_id=200, compra_devolucion_id=None,
+        # Ninguno de estos cinco vuelve a cajón grande, así que no libera
+        # ninguna caja: el declarado solo viaja con destino 'reproceso'.
+        envase_declarado=None,
     )
     # El aviso dice a quién y recuerda lo que el sistema NO hace.
     destino = respuesta.headers["location"]
@@ -21014,6 +21022,9 @@ def test_la_devolucion_con_compra_elegida_la_guarda_y_NO_manda_el_proveedor():
         cliente_id=1, pedido_renglon_id=77, costo_por_bulto=2000.0,
         destino_rechazo="devolucion_proveedor", bultos_segunda=None,
         proveedor_devolucion_id=None, compra_devolucion_id=502,
+        # Ninguno de estos cinco vuelve a cajón grande, así que no libera
+        # ninguna caja: el declarado solo viaja con destino 'reproceso'.
+        envase_declarado=None,
     )
     # LA SEGUNDA, no la primera de la lista: si el código agarrara la que más
     # bultos puso, acá diría Saturno.
@@ -21213,6 +21224,9 @@ def test_reingreso_a_segunda_manda_los_bultos_al_pool_y_lo_dice_en_el_aviso():
         cliente_id=1, pedido_renglon_id=77, costo_por_bulto=2000.0,
         destino_rechazo="segunda", bultos_segunda=4.0,
         proveedor_devolucion_id=None, compra_devolucion_id=None,
+        # Ninguno de estos cinco vuelve a cajón grande, así que no libera
+        # ninguna caja: el declarado solo viaja con destino 'reproceso'.
+        envase_declarado=None,
     )
     destino = respuesta.headers["location"]
     assert "Pas%C3%B3+a+segunda+tal+cual" in destino
@@ -21485,6 +21499,9 @@ def test_reingreso_guarda_vinculado_con_costo_congelado_y_fecha_editable():
         cliente_id=1, pedido_renglon_id=77, costo_por_bulto=2000.0,
         destino_rechazo="stock", bultos_segunda=None,
         proveedor_devolucion_id=None, compra_devolucion_id=None,
+        # Ninguno de estos cinco vuelve a cajón grande, así que no libera
+        # ninguna caja: el declarado solo viaja con destino 'reproceso'.
+        envase_declarado=None,
     )
     destino = respuesta.headers["location"]
     # El aviso repite lo cargado (fecha REAL del hecho incluida) y JAMÁS
@@ -21536,7 +21553,153 @@ def test_reingreso_sin_fecha_usa_hoy_y_sin_costo_posible_guarda_sin_costo():
         cliente_id=1, pedido_renglon_id=77, costo_por_bulto=None,
         destino_rechazo="stock", bultos_segunda=None,
         proveedor_devolucion_id=None, compra_devolucion_id=None,
+        # Ninguno de estos cinco vuelve a cajón grande, así que no libera
+        # ninguna caja: el declarado solo viaja con destino 'reproceso'.
+        envase_declarado=None,
     )
+
+
+
+# ---------------------------------------------------------------------------
+# EN QUÉ CAJA NUESTRA VOLVIÓ. La pata `liberadas` del stock de cajas existía
+# desde el 16/09 y valía CERO por construcción: la columna estaba migrada,
+# el SQL la sumaba, y NADIE la escribía. Un cero que no puede dar otra cosa
+# no es una medición (corolario 47), y acá encima tranquilizaba — el stock
+# decía que sobraban cajas.
+# ---------------------------------------------------------------------------
+
+def _renglon_reingreso(**cambios):
+    return {**RENGLON_REINGRESO_DE_PRUEBA, **cambios}
+
+
+def _marcado_del_form_de_reingreso(renglon):
+    with (
+        patch("app.main.obtener_renglon_para_reingreso", return_value=renglon),
+        patch("app.main._compras_del_renglon_para_devolucion", return_value={}),
+        patch("app.main.listar_todos_los_proveedores", return_value=[]),
+        patch("app.main.listar_envases", return_value=[{"id": 4, "nombre": "Caja Día 6k"}]),
+    ):
+        respuesta = cliente.get("/deposito/stock/reingreso?renglon_id=77")
+    assert respuesta.status_code == 200
+    # Anclado afuera del CSS, de los comentarios y del <script>: el JS de esta
+    # pantalla nombra selectores y el comentario del bloque nombra el campo
+    # (corolarios 38 y 50).
+    return respuesta.text
+
+
+def test_la_pantalla_PREGUNTA_la_caja_solo_cuando_no_la_puede_derivar():
+    """Los cuatro casos de `envase_derivado_de_la_ficha`, en la pantalla.
+
+    Los dos que NO preguntan importan tanto como los dos que sí: un detector
+    que marca todo se ve igual de trabajador que uno que funciona
+    (corolario 53). Con envase fijo el server lo copia de la ficha, y con
+    envase perdido no hay caja nuestra que devolver — preguntar ahí sería
+    pedirle al operario que elija algo que no se usa.
+    """
+    casos = (
+        ("envase fijo", _renglon_reingreso(ficha_envase_id=4, ficha_envase_variable=False), False),
+        ("envase perdido", _renglon_reingreso(ficha_envase_id=None, ficha_envase_variable=False), False),
+        ("envase variable", _renglon_reingreso(ficha_envase_id=4, ficha_envase_variable=True), True),
+        ("sin ficha", _renglon_reingreso(ficha_id=None, ficha_envase_id=None,
+                                         ficha_envase_variable=None), True),
+    )
+    for nombre, renglon, pregunta in casos:
+        marcado = _marcado_del_form_de_reingreso(renglon)
+        assert ('<select id="envase_id" name="envase_id">' in marcado) is pregunta, nombre
+
+
+def test_la_pregunta_de_la_caja_vive_ADENTRO_del_bloque_del_reproceso():
+    """Solo 'Vuelve a cajón grande' vacía una caja, así que la pregunta viaja con ese destino.
+
+    Puesta afuera aparecería con los cuatro destinos y el operario tendría
+    que decidir en tres casos donde no hay nada que decidir. Y el `id` del
+    div es lo que el JS esconde y muestra: si la pregunta quedara fuera de
+    él, el atributo seguiría diciendo lo correcto y la pantalla mostraría
+    otra cosa (corolario 32).
+    """
+    marcado = _marcado_del_form_de_reingreso(
+        _renglon_reingreso(ficha_envase_variable=True)
+    )
+    bloque = marcado.split('<div id="campo-cajones"')[1].split("</div>")[0]
+    assert 'name="envase_id"' in bloque
+    # Y "no volvió en caja nuestra" es una RESPUESTA, no el "Elegí..." que no
+    # distingue al que contestó que no de al que no contestó.
+    assert '<option value="">No volvió en caja nuestra' in bloque
+
+
+def test_el_reingreso_a_cajon_grande_MANDA_la_caja_declarada():
+    with (
+        patch("app.main.obtener_renglon_para_reingreso",
+              return_value=_renglon_reingreso(ficha_envase_variable=True)),
+        patch("app.main._costo_congelado_para_reingreso", return_value=2000.0),
+        patch("app.main.listar_envases", return_value=[{"id": 4, "nombre": "Caja Día 6k"}]),
+        patch("app.main.crear_movimiento_stock") as mock_crear,
+        patch("app.main._hoy_argentina", return_value=date(2026, 8, 25)),
+    ):
+        respuesta = cliente.post(
+            "/deposito/stock/reingreso",
+            data={"renglon_id": "77", "cantidad": "4", "motivo": "rechazado",
+                  "fecha": "2026-08-24", "destino": "reproceso", "cajones": "2",
+                  "envase_id": "4"},
+            follow_redirects=False,
+        )
+
+    assert respuesta.status_code == 303
+    assert mock_crear.call_args.kwargs["envase_declarado"] == 4
+
+
+def test_una_caja_que_NO_esta_en_el_catalogo_vuelve_como_descartable():
+    """LA GUARDA VA DONDE SE ESCRIBE: la pantalla ofrece el catálogo y el POST igual valida.
+
+    Un formulario armado a mano con un id inventado dejaría el reingreso
+    devolviendo una caja que no existe, y eso no se ve: el movimiento se
+    guarda y el stock de ese envase sube solo.
+    """
+    with (
+        patch("app.main.obtener_renglon_para_reingreso",
+              return_value=_renglon_reingreso(ficha_envase_variable=True)),
+        patch("app.main._costo_congelado_para_reingreso", return_value=2000.0),
+        patch("app.main.listar_envases", return_value=[{"id": 4, "nombre": "Caja Día 6k"}]),
+        patch("app.main.crear_movimiento_stock") as mock_crear,
+        patch("app.main._hoy_argentina", return_value=date(2026, 8, 25)),
+    ):
+        cliente.post(
+            "/deposito/stock/reingreso",
+            data={"renglon_id": "77", "cantidad": "4", "motivo": "rechazado",
+                  "fecha": "2026-08-24", "destino": "reproceso", "cajones": "2",
+                  "envase_id": "999"},
+            follow_redirects=False,
+        )
+
+    assert mock_crear.call_args.kwargs["envase_declarado"] is None
+
+
+def test_la_caja_elegida_VUELVE_en_el_reintento():
+    """El que corrige el campo que la pantalla le señaló no vuelve a revisar los que ya llenó.
+
+    Corolario 43: el re-render por error es donde peor se pierde un campo,
+    porque lo que queda guardado es una carga bien hecha salvo por eso.
+    """
+    with (
+        patch("app.main.obtener_renglon_para_reingreso",
+              return_value=_renglon_reingreso(ficha_envase_variable=True)),
+        patch("app.main._compras_del_renglon_para_devolucion", return_value={}),
+        patch("app.main.listar_todos_los_proveedores", return_value=[]),
+        patch("app.main.listar_envases", return_value=[{"id": 4, "nombre": "Caja Día 6k"}]),
+        patch("app.main.crear_movimiento_stock") as mock_crear,
+        patch("app.main._hoy_argentina", return_value=date(2026, 8, 25)),
+    ):
+        respuesta = cliente.post(
+            "/deposito/stock/reingreso",
+            # Sin los cajones: el reintento es por ESE campo, no por el envase.
+            data={"renglon_id": "77", "cantidad": "4", "motivo": "rechazado",
+                  "fecha": "2026-08-24", "destino": "reproceso", "cajones": "",
+                  "envase_id": "4"},
+        )
+
+    assert respuesta.status_code == 400
+    mock_crear.assert_not_called()
+    assert '<option value="4" selected>' in respuesta.text
 
 
 def test_reingreso_con_fecha_futura_da_400():

@@ -6038,3 +6038,80 @@ no podía fallar.
 Cerrado calificando por ALIAS y recorriendo las cuatro patas por nombre, con
 un `count(...) == 4` al lado — el denominador del corolario 45 aplicado a un
 assert de texto: sin él, tres filtros y cuatro pasan igual.
+
+## Corolario 72: una columna MIGRADA, SUMADA por la consulta y que NADIE ESCRIBE es un cero que ninguna verificación de esquema puede ver
+
+Del 16/09. `movimientos_stock.envase_id` se migró el mismo día con su CHECK,
+la pata `liberadas` de `_SQL_STOCK_DE_ENVASES` la sumaba, y la verificación
+de la migración daba `columna 1 · guarda 1 · ofensores 0`. Todo correcto, y
+la pata valía **cero por construcción**: ningún camino del código la
+escribía. La columna existía, la cuenta la leía, y no había un solo
+`INSERT` que la nombrara.
+
+**Las tres cosas que lo confirmaron son de tres clases distintas**, y hacen
+falta las tres porque cada una sola se explica de otra manera:
+
+1. La FIRMA de `crear_movimiento_stock` no tenía el parámetro.
+2. Su único `INSERT` no nombraba la columna.
+3. Los dos `UPDATE` de esa tabla solo tocan `anulado_el`.
+
+Una sola de las tres es un indicio; las tres juntas son que la columna no
+tiene escritor, que es un hecho y no una impresión.
+
+**Por qué ninguna de las guardas que ya teníamos lo ve**, y es lo que lo
+vuelve una familia nueva:
+
+- La **verificación de la migración** pregunta si la columna y el CHECK
+  existen. Existen. Sale 1 y 1.
+- El **test que compara la estructura ENTERA del INSERT** compara lo que el
+  INSERT escribe contra lo que se espera — y si la columna no está en
+  ninguno de los dos lados, los dos coinciden. Un campo que nadie nombra no
+  puede desajustar una comparación entre dos listas que tampoco lo nombran.
+- El **canario sobre la consulta** muerde: sacarle la pata `liberadas` hace
+  caer su test. Pero ese test afirma que la consulta SUMA la columna, no que
+  alguien la haya escrito alguna vez.
+- Y la **pantalla** se ve perfecta: un stock de cajas al que le falta una
+  suma que siempre da cero es exactamente igual a uno que no la tiene.
+
+Es el corolario 47 con el mecanismo corrido un lugar más atrás: allá el
+número no podía crecer porque medía lo que no era; **acá no puede crecer
+porque el dato que mide no se escribe nunca.** Y es peor que el 47 en una
+cosa: el 47 se destapa rompiendo a propósito lo que hace cero al número, y
+acá romper la consulta no sirve —la consulta está bien— y romper la
+escritura tampoco, porque no hay escritura que romper.
+
+**La pregunta que lo encuentra, y se hace el día que se migra una columna**:
+*¿qué código la ESCRIBE?* No "¿existe?", no "¿la suma alguien?", sino el
+`grep` del nombre en la lista de columnas de un `INSERT` o de un `UPDATE`.
+Si la única aparición fuera del esquema es un `SELECT`, la columna es un
+cero prolijo esperando a que alguien lo lea como un dato.
+
+Es el corolario 3 en su forma más cara —**grepear quién CONSTRUYE, no el
+campo**— con la vuelta de que acá no había ningún constructor al que le
+faltara el campo: **no había constructor.** El grep del campo devolvía el
+`create table`, el CHECK y la consulta, o sea tres lugares que lo nombran y
+ninguno que lo escriba, y esa lista se lee como cobertura.
+
+### Y una columna que se agrega a un INSERT rompe SIETE tests, y eso está bien
+
+Los seis tests de `crear_movimiento_stock` comparan la tupla ENTERA del
+INSERT, así que agregar una columna los rompe a todos. Es exactamente lo que
+el corolario 3 dice que es su función: *"que falle el día que alguien agrega
+un campo es la función del test, no una molestia"*. Y el séptimo cayó por
+otra cosa: su assert era `"compra_devolucion_id)" in insert.args[0]` —
+anclado en el **paréntesis que cerraba la lista**, o sea en que esa columna
+fuera la última. El día que dejó de serlo, el assert cayó por una razón que
+no era la suya.
+
+Un ancla que depende de la POSICIÓN de algo adentro de una lista no está
+verificando lo que dice: está verificando el orden. Lo que queda es el
+fragmento de la lista entera, que no puede matchear otra cosa y no se rompe
+cuando la lista crece por el otro lado.
+
+### El caso feliz que faltaba, y es el mismo del corolario 30
+
+Seis de los siete tests pasan la columna nueva en **None**. Un INSERT que
+escribiera `NULL` a la fuerza los deja a los seis en verde, y el canario lo
+midió: caían dos, los dos que tienen un valor. **Una batería de casos donde
+el campo va vacío no distingue "el parámetro se guarda" de "la columna está
+en la lista"** — hace falta el caso con un valor, y es el único que lo dice.
