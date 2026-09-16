@@ -4044,6 +4044,31 @@ estado distinto, el denominador tiene que MOVERSE.** Si abrir un panel, expandir
 una fila o cambiar un filtro no mueve `pares` ni `celdas`, lo que falló es la
 manipulación, no la pantalla — y sin el denominador las dos se imprimen igual.
 
+**Y son DOS TURNOS SEGUIDOS con la misma columna haciendo el trabajo**, que es
+lo que lo vuelve una regla y no dos anécdotas:
+
+| turno | lo que se midió de verdad | lo que lo delató |
+|---|---|---|
+| alta de Proveedores | la pantalla de "Falta la clave de Gerencia" | `renglones 6` (con el `GET 200` al lado) |
+| Retirados hoy | la pantalla con el panel todavía cerrado | `pares 3 → 18` |
+
+Las dos veces los TRES números del detector —desborde, quebradas, solapes—
+dieron cero, y los tres eran CIERTOS: una tarjeta con dos párrafos no
+desborda, y un panel que no está tampoco. **Ninguno de ellos puede delatar
+esto por construcción, porque los tres describen lo que se ENCONTRÓ y acá el
+problema es lo que se MIRÓ.**
+
+Por eso el denominador no es un adorno del informe: es la única columna que
+contesta **"¿miré lo que quería, y entero?"**, que es otra pregunta que "¿está
+bien?". Un cero de hallazgos sobre un denominador desconocido no distingue una
+pantalla sana de una pantalla que no se abrió — es la ausencia de filas del
+backfill otra vez, con los números prolijos arriba.
+
+Y es el corolario 45 en su tercer trabajo: el testigo del 24 dice si la base
+está viva, el total esperado del 45 dice si la medición llegó hasta el final,
+y acá dice **cuál pantalla se midió**. Los tres existen por lo mismo — un
+número solo no se puede leer.
+
 ### El TERCER límite, del 15/09: no veía que dos cajas se PISARAN
 
 Una ayuda con `margin-top: -0.4rem` le comía 6,4px al `<select>` de arriba
