@@ -56,6 +56,37 @@ def test_la_guia_EN_ORIGEN_SUMA_donde_la_normal_resta():
     assert cajas_que_mueve_la_guia("inicial", 77, True) == 0
 
 
+def test_la_SEGUNDA_consume_caja_igual_que_la_primera():
+    """Al reprocesar, lo de segunda se pone en caja de Día igual que la
+    primera: no hay otra cosa a mano en la mesa.
+
+    LOS NÚMEROS ESTÁN SEPARADOS A PROPÓSITO (30 y 7): con los dos iguales, la
+    versión que cuenta solo la primera y la que cuenta las dos darían números
+    distintos igual, pero no se podría leer CUÁL de los dos términos entró.
+    Y con la segunda en cero el test pasaría con el bug puesto, que es el
+    caso que este test existe para negar.
+    """
+    assert cajas_que_mueve_la_guia("normal", 30, True, bultos_segunda=7) == -37
+    assert cajas_que_mueve_la_guia("en_origen", 30, True, bultos_segunda=7) == 37
+    assert cajas_que_mueve_la_guia("inicial", 30, True, bultos_segunda=7) == 0
+    # Sin declarar sigue siendo cero: la segunda no abre una puerta nueva.
+    assert cajas_que_mueve_la_guia("normal", 30, None, bultos_segunda=7) == 0
+
+
+def test_la_MERMA_no_consume_caja_y_eso_es_una_DECISION():
+    """Lo que se descarta se tira, no se pone en una caja para tirarlo.
+
+    Se afirma en vez de dejarlo implícito: `cajas_que_mueve_la_guia` ni
+    siquiera recibe la merma, así que el día que alguien decida que sí ocupa
+    caja va a tener que cambiar la FIRMA — y este test dice por qué no está.
+    """
+    import inspect
+
+    from core.envases import cajas_que_mueve_la_guia as fn
+
+    assert "bultos_merma" not in inspect.signature(fn).parameters
+
+
 def test_una_guia_SIN_DECLARAR_no_mueve_el_stock():
     # Y no es "no consumió": es "no sabemos", y se cuenta aparte.
     assert cajas_que_mueve_la_guia("normal", 20, None) == 0
@@ -129,11 +160,37 @@ def test_la_cuenta_derivada_EXCLUYE_las_guias_INICIALES_y_las_sin_declarar():
     """
     sql = _SQL_STOCK_DE_ENVASES
     assert "r.lleva_caja_nuestra IS TRUE" in sql
-    assert "WHEN 'en_origen' THEN r.bultos_primera" in sql
-    assert "WHEN 'normal'    THEN -r.bultos_primera" in sql
     assert "ELSE 0 END" in sql
     # El rechazo que vacía la caja es el ÚNICO destino que suma.
     assert "m.destino_rechazo = 'reproceso'" in sql
+
+
+def test_la_guia_R_consume_PRIMERA_MAS_SEGUNDA_y_no_solo_la_primera():
+    """La segunda sale en caja nuestra igual que la primera.
+
+    Este assert decía `THEN r.bultos_primera` a secas y era el guardián del
+    bug (corolario 22): no defendía la ausencia de la segunda a propósito —
+    fijaba lo que había— y el arreglo lo rompió, que es su función.
+
+    EL MODO DE FALLA NO SE VE EN NINGUNA PANTALLA, y por eso el assert es del
+    TEXTO y no del valor (corolario 65): con un mock la fila la entrega el
+    fixture y el término equivocado llega igual. Contando solo la primera, el
+    stock queda ALTO por todo lo de segunda —80,97 bultos en 90 días en
+    Frutamax—, el aviso de reposición llega tarde, y ninguna cuenta se
+    descuadra. Lo único que lo delata es el conteo físico, que es justamente
+    lo que este módulo viene a ahorrar.
+
+    LAS DOS RAMAS con el MISMO término: en 'en_origen' la segunda es 0 por
+    construcción, pero escrita distinto de 'normal' es una copia esperando
+    separarse.
+    """
+    sql = _SQL_STOCK_DE_ENVASES
+    assert "WHEN 'en_origen' THEN  (r.bultos_primera + r.bultos_segunda)" in sql
+    assert "WHEN 'normal'    THEN -(r.bultos_primera + r.bultos_segunda)" in sql
+    # Y la MERMA no: lo que se descarta se tira, no se pone en una caja para
+    # tirarlo. Es una decisión, así que se afirma — si algún día cambia, que
+    # este test caiga y no que aparezca sumada sin que nadie lo note.
+    assert "bultos_merma" not in sql
 
 
 def test_el_stock_NO_es_una_columna_que_alguien_actualiza():
@@ -146,7 +203,17 @@ def test_el_stock_NO_es_una_columna_que_alguien_actualiza():
     Verificado contra el esquema real: anulando una guía R de 30 cajas el
     stock pasó de 226 a 256 sin tocar nada más.
     """
-    assert "anulado_el IS NULL" in _SQL_STOCK_DE_ENVASES
+    # CALIFICADO POR ALIAS Y EN LAS CUATRO PATAS (corolario 4). Esto decía
+    # `assert "anulado_el IS NULL" in _SQL_STOCK_DE_ENVASES` a secas, y la
+    # consulta tiene CUATRO tablas que se llaman igual esa columna: sacarle el
+    # filtro a la pata de las guías dejaba el assert pasando contra el de otra
+    # tabla. Medido con un canario: caían CERO tests, y una guía R anulada
+    # habría seguido consumiendo cajas para siempre — que es exactamente lo
+    # contrario de lo que este test promete en su título.
+    for alias, pata in (("m", "declarados"), ("r", "guias"), ("m", "liberadas")):
+        assert f"{alias}.anulado_el IS NULL" in _SQL_STOCK_DE_ENVASES, pata
+    assert "origen = 'conteo_inicial' AND anulado_el IS NULL" in _SQL_STOCK_DE_ENVASES
+    assert _SQL_STOCK_DE_ENVASES.count("anulado_el IS NULL") == 4
     assert "UPDATE" not in _SQL_STOCK_DE_ENVASES.upper().replace("FOR UPDATE", "")
     esquema_sin_comentarios = "\n".join(
         l for l in ESQUEMA.splitlines() if not l.strip().startswith("--"))

@@ -11877,9 +11877,21 @@ _SQL_STOCK_DE_ENVASES = """
          GROUP BY m.envase_id
     ),
     guias AS (
+        -- PRIMERA **Y** SEGUNDA, y las dos van en la misma caja nuestra: al
+        -- reprocesar un cajón, lo que sale de segunda se pone en caja de Día
+        -- igual que la primera — no hay otra cosa a mano en la mesa. Restar
+        -- solo la primera dejaba el stock ALTO por todo lo de segunda (en
+        -- Frutamax, 80,97 bultos en 90 días) y el aviso de reposición
+        -- llegando tarde, sin que nada se descuadrara.
+        --
+        -- LA MERMA NO ENTRA, y es una decisión, no un olvido: lo que se
+        -- descarta se tira, no se pone en una caja para tirarlo. Si algún día
+        -- resulta que sí ocupa caja, el término va acá y en
+        -- core/envases.cajas_que_mueve_la_guia, que son los dos únicos
+        -- lugares donde esta suma está escrita.
         SELECT r.envase_id,
-               SUM(CASE r.tipo WHEN 'en_origen' THEN r.bultos_primera
-                               WHEN 'normal'    THEN -r.bultos_primera
+               SUM(CASE r.tipo WHEN 'en_origen' THEN  (r.bultos_primera + r.bultos_segunda)
+                               WHEN 'normal'    THEN -(r.bultos_primera + r.bultos_segunda)
                                ELSE 0 END) AS cajas
           FROM reprocesos r
           JOIN base b ON b.envase_id = r.envase_id

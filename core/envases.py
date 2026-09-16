@@ -25,6 +25,12 @@ no son obvias y por eso están escritas:
 # antes de que esta cuenta empezara, así que no mueven nada. Está nombrado a
 # propósito y no cae en un default — un tipo nuevo que no esté acá tiene que
 # romper el test, no colarse valiendo cero.
+#
+# Y EL SIGNO MULTIPLICA A PRIMERA + SEGUNDA, no solo a la primera (ver
+# `cajas_que_mueve_la_guia`). En 'en_origen' la segunda es 0 por construcción
+# —la compra llega armada y nadie la clasifica— así que ese término suma cero;
+# va igual para que las dos ramas digan la MISMA regla, y para que el día que
+# exista una en_origen con segunda la cuenta la siga sin que nadie se acuerde.
 SIGNO_POR_TIPO_DE_GUIA = {
     "normal": -1,      # se llenó en la mesa: la caja vacía dejó de estar
     "en_origen": +1,   # llegó llena de afuera: es una prestada que vuelve
@@ -32,8 +38,18 @@ SIGNO_POR_TIPO_DE_GUIA = {
 }
 
 
-def cajas_que_mueve_la_guia(tipo: str, bultos_primera, lleva_caja_nuestra) -> float:
+def cajas_que_mueve_la_guia(tipo: str, bultos_primera, lleva_caja_nuestra,
+                            bultos_segunda=0) -> float:
     """Cuántas cajas suma (+) o resta (−) esta guía R. Cero si no lleva caja nuestra.
+
+    PRIMERA **Y** SEGUNDA, porque las dos salen en la misma caja nuestra: al
+    reprocesar un cajón, lo de segunda se pone en caja de Día igual que la
+    primera — no hay otra cosa a mano en la mesa. Contar solo la primera
+    dejaba el stock ALTO por todo lo de segunda y el aviso de reposición
+    llegando tarde, sin que ninguna cuenta se descuadrara.
+
+    LA MERMA NO ENTRA, y es una decisión y no un olvido: lo que se descarta se
+    tira, no se pone en una caja para tirarlo.
 
     `lleva_caja_nuestra` es el DATO DECLARADO de la guía, no algo que se
     deduzca acá: con None —la guía no lo declaró— devuelve 0, y eso NO es
@@ -42,7 +58,8 @@ def cajas_que_mueve_la_guia(tipo: str, bultos_primera, lleva_caja_nuestra) -> fl
     """
     if lleva_caja_nuestra is not True:
         return 0.0
-    return SIGNO_POR_TIPO_DE_GUIA.get(tipo, 0) * float(bultos_primera or 0)
+    bultos = float(bultos_primera or 0) + float(bultos_segunda or 0)
+    return SIGNO_POR_TIPO_DE_GUIA.get(tipo, 0) * bultos
 
 
 def envase_de_la_guia(ficha: dict | None) -> tuple[bool | None, int | None, bool]:

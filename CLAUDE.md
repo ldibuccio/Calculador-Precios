@@ -2496,6 +2496,14 @@ que para cuando sale por cualquiera de las tres ya estaba descontada y no
 vuelve. El stock lo refleja solo. Lo que estas tres sí son es un agujero de
 COSTO DE ENVASE, que es otra pregunta y sigue abierta.
 
+**Y ese párrafo era MEDIA VERDAD el día que se escribió, corregido unas horas
+después**: la caja de la PRIMERA se descontaba y la de la SEGUNDA no — la
+cuenta restaba solo `bultos_primera`. O sea que para la puerta 2 —la segunda
+que se remite al Puesto— la caja salía del depósito **sin haberse descontado
+nunca**, que es exactamente el agujero que este párrafo declaraba cerrado.
+Arreglado el 16/09 sumando `bultos_primera + bultos_segunda`; el detalle está
+en el corolario 71.
+
 La observación es de Lionel y dio vuelta el diagnóstico de esta sección
 entera: **teníamos dos preguntas distintas debajo de la misma palabra.**
 
@@ -5937,3 +5945,96 @@ creerle"*.
 
 Cómo crece, para que el 4,0 no se lea como gratis para siempre: con 5,5× los
 consumos de hoy da **20ms**. Lineal, y a ese ritmo hay años.
+
+## Corolario 71: una regla escrita en la CONSULTA y en una función pura SIN LLAMADORES es una regla y un adorno
+
+Del 16/09, y es la regla escrita dos veces con una asimetría que no
+habíamos visto: **las dos copias no tienen el mismo peso.** Una decide y la
+otra solo se lee como si decidiera.
+
+El stock de cajas resta las que se llenan en la guía R, y eso está escrito
+en dos lugares:
+
+- `_SQL_STOCK_DE_ENVASES`, pata `guias` — **la que corre en producción.**
+- `core/envases.cajas_que_mueve_la_guia` — la que explica la regla, con el
+  mapa de signos y un docstring de diez líneas.
+
+**La segunda tiene CERO llamadores fuera de sus propios tests.** `grep` del
+nombre: seis apariciones, todas en `tests/test_cajas.py` y en su definición.
+Así que la función que se lee como la fuente de la verdad no toca un solo
+número del sistema, y sus tests —verdes, prolijos, con sus casos bien
+elegidos— **no prueban nada sobre lo que el operario ve.**
+
+El bug lo destapó el dueño, no el código: **la segunda sale en caja nuestra
+igual que la primera** —al reprocesar un cajón, lo de segunda se pone en caja
+de Día porque no hay otra cosa a mano en la mesa— y las dos copias restaban
+solo `bultos_primera`. Medido contra `db/esquema_completo.sql` con una guía
+de 30 de primera y 7 de segunda:
+
+```
+como estaba   100 − 30            + 5 = 75
+el galpon     100 − 30 − 7        + 5 = 68
+```
+
+**Siete cajas de más, sin que ninguna cuenta se descuadre.** El stock queda
+ALTO, el aviso de reposición llega tarde, y lo único que lo delata es el
+conteo físico — que es justamente lo que este módulo viene a ahorrar. En
+Frutamax son 80,97 bultos de segunda en 90 días.
+
+### Por qué la copia ornamental es PEOR que dos copias iguales
+
+Con dos copias que corren, la que se separa rompe algo en algún lado: dos
+pantallas dicen números distintos, un test cae, alguien pregunta. **Con una
+copia ornamental no hay nada que se separe** — se puede arreglar la de
+adorno, ver los tests en verde, y no mover un número. Y al revés: arreglar
+solo el SQL deja el módulo que documenta la regla afirmando lo contrario,
+que es el comentario que envejece con la autoridad de ser código.
+
+**La señal, y es un `grep` de un segundo**: cuando una regla vive en una
+función pura, grepear su NOMBRE y ver quién la llama. Si los únicos
+llamadores son sus tests, esa función **no es la regla: es un documento
+ejecutable**, y la regla está en otro lado. Lo cual está bien —un documento
+ejecutable es mejor que un comentario— con la condición de que algo ATE las
+dos: acá, un test que exige el término exacto en el texto del SQL y otro que
+lo exige en la función, y un canario sobre cada uno.
+
+Es el corolario 8 corrido de lugar: allá dos cuentas con el mismo nombre y
+distinto ALCANCE; **acá dos escrituras de la misma regla con distinto
+PODER.** Y como el poder no se ve leyendo —las dos son código, las dos
+tienen tests— hay que ir a contar llamadores.
+
+### La MERMA no entra, y eso se afirma en vez de dejarse implícito
+
+Lo que se descarta se tira; no se pone en una caja para tirarlo. Es una
+decisión y no un olvido, así que está escrita de las dos formas: el SQL
+afirma `"bultos_merma" not in sql` y la función pura **ni siquiera recibe el
+parámetro**, con un test que lo comprueba sobre la firma. El día que resulte
+que sí ocupa caja, hay que cambiar la firma — y ahí el test dice por qué no
+estaba.
+
+### Y el assert de las anuladas era el corolario 4, otra vez
+
+Buscando el término de la segunda apareció, de yapa, un canario en cero:
+sacarle `r.anulado_el IS NULL` a la pata de las guías **no hacía caer ningún
+test**. El assert decía
+
+```python
+assert "anulado_el IS NULL" in _SQL_STOCK_DE_ENVASES
+```
+
+y esa consulta tiene **CUATRO tablas que llaman igual a esa columna**. Una
+coincidencia alcanzaba, así que el assert matcheaba el filtro de otra pata y
+el de las guías podía irse entero. Una guía R anulada habría seguido
+consumiendo cajas para siempre — que es exactamente lo contrario de lo que el
+título de ese test promete (*"que anular una guía R corrija el stock solo
+sale de esto"*).
+
+Es el mismo caso del `anulado_el IS NULL` que matcheaba `pedidos` creyendo
+mirar `pedidos_renglones`, cinco días después de escribirlo acá. Y la
+diferencia con aquél es que **este assert estaba en el test cuyo TÍTULO
+afirma la propiedad**: no es que faltara la verificación, es que la que había
+no podía fallar.
+
+Cerrado calificando por ALIAS y recorriendo las cuatro patas por nombre, con
+un `count(...) == 4` al lado — el denominador del corolario 45 aplicado a un
+assert de texto: sin él, tres filtros y cuatro pasan igual.
