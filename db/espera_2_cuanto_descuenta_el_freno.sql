@@ -41,3 +41,7 @@ select m.articulo, m.dia,
 --
 -- `el_articulo_existe` esta para que un nombre mal tipeado no se lea como
 -- un cero tranquilizador.
+--
+-- EL CASO DEL 16/09 SE CERRO POR LA PANTALLA: los ocho armados que
+-- esperaban guia R entran (Mandarina 10/09 rebota recien con 50, porque
+-- ese dia habia 40). Esta consulta queda para el proximo que dude.

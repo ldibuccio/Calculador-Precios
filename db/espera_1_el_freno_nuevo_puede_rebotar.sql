@@ -30,15 +30,21 @@ select count(*) as dias_de_armado,
 --
 -- El freno del 16/09 descuenta lo que otras guías R del MISMO ARTICULO y la
 -- MISMA FECHA ya tomaron. Con ninguna, no descuenta nada: el resultado es
--- identico al de antes del cambio, bit por bit. Asi que `con_guia_R_ese_dia`
--- en CERO cierra la pregunta — ninguna puede rebotar por el cambio.
+-- identico al de antes del cambio, bit por bit.
+--
+-- CONTESTADA EL 16/09, Y ESTA CONSULTA NO LA CONTESTO: Frutamax dio
+-- `con_guia_R_ese_dia 119 de 128`. Un superconjunto que cubre el 93% no
+-- acota nada — solo un CERO cerraba la pregunta, y no dio cero. Lo que la
+-- cerro fue probar los ocho armados que esperaban en la pantalla de
+-- Reproceso, que corre el codigo del freno: entran los ocho. No la corras
+-- esperando una respuesta; da la condicion necesaria, no el caso.
 --
 -- ES UN SUPERCONJUNTO A PROPOSITO: cuenta todos los dias con armado de ficha
--- con envase, no solo los que estan esperando su guia R (eso sale del rejuego
+-- con envase, no solo los que esperan su guia R (eso sale del rejuego
 -- del FIFO, no de una consulta, y escribirlo en SQL seria la segunda version
 -- de la cuenta que el docstring de bultos_esperando_guia_r_por_articulo
 -- prohibe). Solo puede sobre-reportar, que es la direccion segura para una
 -- pregunta de seguridad.
 --
--- `peor_dia` dice cuantas guias R llegaron a compartir un dia; los testigos
--- dicen si la base esta viva, porque sobre una parada estos ceros no valen.
+-- `peor_dia`: cuantas guias R compartieron un dia. Los testigos dicen si la
+-- base vota: sobre una parada estos ceros no valen.

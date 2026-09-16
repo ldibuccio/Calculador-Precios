@@ -6354,14 +6354,49 @@ Del 16/09, y salió de mirar los 132 bultos que esperan guía R —ocho
 artículos, el más viejo del 07/09— y preguntarse qué pasa cuando alguien
 se ponga a cargarlas.
 
-**El freno nuevo no las puede rebotar.** Solo descuenta cuando ya hay una
-guía R del MISMO artículo y la MISMA fecha; con ninguna, la resta es cero
-y el resultado es idéntico al de antes del cambio. Eso lo mide
-`db/espera_1_el_freno_nuevo_puede_rebotar.sql`, que cuenta los días de
-armado que ya tienen una guía R ese día — un superconjunto a propósito,
-porque cuáles están esperando sale del rejuego del FIFO y escribirlo en
-SQL sería la segunda versión de la cuenta que el docstring de
-`bultos_esperando_guia_r_por_articulo` prohíbe.
+**Los ocho se pueden cargar, y lo cerró la PANTALLA, no una consulta.**
+Probados uno por uno en Reproceso, cada uno con la fecha de su armado:
+
+```
+Limon          11/09  entra con 50
+Tomate Redondo 09/09  entra con 50
+Mandarina      10/09  entra con 35   (con 50 rebota: ese dia habia 40)
+Berenjena      07/09  entra con 20
+Zapallito      14/09  entra con 20
+Lima           10/09  entra con  2
+Palta          10/09  entra con  5   (con 20 rebota)
+```
+
+**Y la medición que yo había escrito para contestarlo NO contestó nada.**
+`db/espera_1_el_freno_nuevo_puede_rebotar.sql` cuenta los días de armado
+que ya tienen una guía R ese día — un superconjunto a propósito, porque
+cuáles están esperando sale del rejuego del FIFO y escribirlo en SQL sería
+la segunda versión de la cuenta que el docstring de
+`bultos_esperando_guia_r_por_articulo` prohíbe. Dio **119 de 128** en
+Frutamax, y el dueño lo rechazó con la razón correcta: **un superconjunto
+que cubre el 93% no acota nada.** Es *"más hallazgos que población condena
+la heurística"* aplicado a una CONDICIÓN en vez de a un hallazgo — si casi
+todos los días cumplen la condición necesaria, la condición no separa nada.
+
+**Lo que sirvió fue usar la pantalla que ya existe como instrumento.** El
+desglose (`/deposito/stock/reproceso/desglose`) es un `GET` de solo lectura
+que corre `lotes_para_reproceso` + `descontar_lo_tomado_hoy`, o sea **el
+código del freno, no una segunda versión de la cuenta**. Y es usable como
+instrumento por una propiedad que hay que tener escrita: **`disponible` no
+depende de `bultos`** — el número tipeado solo entra en `alcanza` y en la
+propuesta—, así que la prueba es MONÓTONA: si entra con N, entra con
+cualquier cosa menor. Alcanza con tipear el número más grande que sea
+plausible.
+
+Dos detalles del método, porque se repiten:
+
+- **Lo que se tipea son CAJONES TOMADOS, no las cajas que esperan.** No hay
+  correlación entre lo tomado y lo producido (un cajón de 16 puede dar tres
+  cajas de 6), así que usar el número del bloque azul mediría otra cosa.
+- **Mandarina es donde el renglón nuevo hizo su trabajo**: con 50 rebota
+  —ese día había 40— y la pared nombra la guía R de hoy que se llevó el
+  lote, que es la diferencia entre un "no alcanza" que se aprende a
+  esquivar y uno que dice qué ir a mirar.
 
 **Y el veredicto del freno viejo tampoco se vence**: `reparto_para_
 reproceso` de una guía fechada el 07/09 mira entradas hasta el 07 y
