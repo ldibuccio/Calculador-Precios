@@ -10340,6 +10340,16 @@ def bultos_esperando_guia_r_por_articulo() -> dict:
     que decide qué hacer primero mira los bultos. `mas_viejo` es la fecha
     del armado más viejo que sigue esperando.
 
+    Y `mas_nuevo` viene al lado porque la pregunta que se hace el que mira
+    este bloque no es cuánto hay: es **si está creciendo**. Una cola de 132
+    bultos que empieza y termina el 07/09 es un día que quedó sin cargar; la
+    misma cola con el más nuevo de hoy es una costumbre. Los dos números son
+    el mismo dato con dos lecturas opuestas, y con uno solo hay que ir a
+    buscar el otro — que es la salvaguarda que nadie lee (corolario 19).
+
+    Sale del MISMO recorrido, sin una segunda consulta: el rejuego ya tiene
+    la fecha de cada salida en la mano.
+
     Solo lo que ALGUIEN PUEDE CERRAR, igual que la alerta de las guías R
     incompletas: acá todo lo contado se cierra cargando el papel. El
     `sin_lote` de verdad —salió más de lo que había— no entra: ése no se
@@ -10394,12 +10404,16 @@ def bultos_esperando_guia_r_por_articulo() -> dict:
                 continue
             fila = por_id.setdefault(
                 articulo_id,
-                {"nombre": nombres.get(articulo_id, "?"), "bultos": 0.0, "mas_viejo": None},
+                {"nombre": nombres.get(articulo_id, "?"), "bultos": 0.0,
+                 "mas_viejo": None, "mas_nuevo": None},
             )
             fila["bultos"] += esperando
             fecha = salida.get("fecha")
-            if fecha is not None and (fila["mas_viejo"] is None or fecha < fila["mas_viejo"]):
-                fila["mas_viejo"] = fecha
+            if fecha is not None:
+                if fila["mas_viejo"] is None or fecha < fila["mas_viejo"]:
+                    fila["mas_viejo"] = fecha
+                if fila["mas_nuevo"] is None or fecha > fila["mas_nuevo"]:
+                    fila["mas_nuevo"] = fecha
     for fila in por_id.values():
         fila["bultos"] = round(fila["bultos"], 2)
     return por_id
@@ -10416,6 +10430,10 @@ def contar_bultos_esperando_guia_r() -> dict:
     if not por_articulo:
         return {"casos": 0, "mas_viejo": None}
     fechas = [f["mas_viejo"] for f in por_articulo.values() if f["mas_viejo"] is not None]
+    # SIN `mas_nuevo`: `guardar_estado_alerta` persiste solo `casos` y
+    # `mas_viejo`, así que una clave más acá no la lee nadie — sería el campo
+    # sin consecuencia, escrito por mí en el mismo commit que lo agregó a la
+    # pantalla, que sí lo muestra. El par de fechas vive donde se mira.
     return {
         "casos": round(sum(f["bultos"] for f in por_articulo.values()), 2),
         "mas_viejo": min(fechas) if fechas else None,

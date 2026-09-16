@@ -326,8 +326,18 @@
          una porción: en esta pantalla todo lo demás está nombrado por
          porción, y sin decirlo este renglón se lee como una pila. #}
       <span class="nombre">{{ p.nombre }} <span class="alcance">(todo el artículo)</span></span>
-      <span class="cuantos">{{ p.bultos|numero }} bultos esperando desde el
-        {{ p.mas_viejo.strftime('%d/%m') }} · <span class="ir">ver de qué lotes salió</span></span>
+      {# LAS DOS FECHAS, y la segunda solo cuando dice algo distinto. La
+         pregunta que se hace el que mira este bloque no es cuánto hay: es
+         si está creciendo. "desde el 07/09" con el más nuevo también del
+         07/09 es un día que quedó sin cargar; "del 07/09 al 16/09" es una
+         cola que se alimenta sola. Con una sola fecha las dos se leen
+         exactamente igual. #}
+      <span class="cuantos">{{ p.bultos|numero }} bultos esperando
+        {% if p.mas_nuevo and p.mas_nuevo != p.mas_viejo -%}
+        de armados del {{ p.mas_viejo.strftime('%d/%m') }} al {{ p.mas_nuevo.strftime('%d/%m') }}
+        {%- else -%}
+        desde el {{ p.mas_viejo.strftime('%d/%m') }}
+        {%- endif %} · <span class="ir">ver de qué lotes salió</span></span>
     </a>
     {% endfor %}
   </div>

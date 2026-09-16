@@ -8074,6 +8074,45 @@ def test_la_alerta_de_la_guia_R_cuenta_BULTOS_y_SE_APAGA_SOLA():
     assert resultado["mas_viejo"] is None, "sin nada esperando no hay fecha que mostrar"
 
 
+
+def test_el_bloque_trae_LAS_DOS_FECHAS_para_que_se_vea_si_la_cola_CRECE():
+    """`mas_viejo` solo no distingue un día sin cargar de una cola que se alimenta.
+
+    132 bultos "desde el 07/09" se leen igual si el más nuevo es del 07/09
+    —un día que quedó sin cargar, y no crece— o si es de hoy, que es una
+    costumbre. Son la misma cola con dos diagnósticos opuestos, y el que
+    mira el bloque decide distinto en cada caso.
+
+    Los DOS armados son de días distintos a propósito: con uno solo, las dos
+    fechas coinciden por construcción y el test no distinguiría una función
+    que devolviera `mas_viejo` en las dos claves.
+    """
+    from app.db import bultos_esperando_guia_r_por_articulo
+
+    cajon = {"orden": (date(2026, 9, 6), datetime(2026, 9, 6, 8, 0)), "tipo_lote": "guia",
+             "cantidad": 40.0, "costo_bulto": 50.0}
+    viejo = {"orden": (date(2026, 9, 7), datetime(2026, 9, 7, 11, 0)), "tipo": "armado",
+             "cantidad": 10.0, "ficha_con_envase": True, "fecha": date(2026, 9, 7)}
+    nuevo = {"orden": (date(2026, 9, 15), datetime(2026, 9, 15, 11, 0)), "tipo": "armado",
+             "cantidad": 5.0, "ficha_con_envase": True, "fecha": date(2026, 9, 15)}
+
+    cursor, datos = _fifo_de_un_articulo([cajon], [viejo, nuevo])
+    conexion = MagicMock()
+    conexion.cursor.return_value.__enter__ = MagicMock(return_value=cursor)
+    conexion.cursor.return_value.__exit__ = MagicMock(return_value=False)
+    with (
+        patch("app.db.obtener_conexion", return_value=conexion),
+        patch("app.db._fecha_corte", return_value=date(2026, 9, 5)),
+        patch("app.db._entradas_y_salidas_stock_varios", return_value=datos),
+    ):
+        por_articulo = bultos_esperando_guia_r_por_articulo()
+
+    fila = por_articulo[7]
+    assert fila["bultos"] == 15.0
+    assert fila["mas_viejo"] == date(2026, 9, 7)
+    assert fila["mas_nuevo"] == date(2026, 9, 15)
+
+
 def test_la_alerta_no_cuenta_el_sin_lote_de_VERDAD():
     """Solo lo que alguien puede cerrar cargando el papel.
 

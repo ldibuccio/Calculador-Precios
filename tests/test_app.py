@@ -27225,8 +27225,14 @@ def test_el_remanente_muestra_los_armados_que_ESPERAN_la_guia_R():
     ninguna guía cubre y hay que averiguar qué pasó; acá se sabe qué pasó y
     la acción es una sola.
     """
-    esperando = {41: {"nombre": "EJEMPLO Uno", "bultos": 12.0, "mas_viejo": date(2026, 9, 7)},
-                 42: {"nombre": "EJEMPLO Dos", "bultos": 30.0, "mas_viejo": date(2026, 9, 8)}}
+    # LAS DOS FILAS SON DISTINTAS A PROPÓSITO: la primera esperó un solo día
+    # y la segunda una semana. Con las dos iguales, la rama del rango no se
+    # ejercita nunca y el test aprueba la mitad de la plantilla — que es el
+    # fixture que no se parece a producción en el campo que el cambio tocó.
+    esperando = {41: {"nombre": "EJEMPLO Uno", "bultos": 12.0,
+                      "mas_viejo": date(2026, 9, 7), "mas_nuevo": date(2026, 9, 7)},
+                 42: {"nombre": "EJEMPLO Dos", "bultos": 30.0,
+                      "mas_viejo": date(2026, 9, 8), "mas_nuevo": date(2026, 9, 15)}}
     with patch("app.main.bultos_esperando_guia_r_por_articulo", return_value=esperando):
         cuerpo = _remanente().text.split("</style>")[-1]
 
@@ -27249,7 +27255,15 @@ def test_el_remanente_muestra_los_armados_que_ESPERAN_la_guia_R():
     # En dos mitades porque la plantilla parte la frase en dos líneas: un
     # assert que cruza el salto se rompe con cualquier reindentado y no dice
     # nada sobre el contenido.
-    assert "12 bultos esperando desde el" in cuerpo
+    # UN SOLO DÍA dice "desde el", con la fecha y nada más.
+    assert "12 bultos esperando" in cuerpo
+    assert "desde el 07/09" in cuerpo
+    # Y VARIOS DÍAS dicen el RANGO, que es lo que contesta si está creciendo:
+    # "desde el 08/09" a secas no distingue un día que quedó sin cargar de
+    # una cola que se alimenta sola, y las dos se leen exactamente igual.
+    assert "de armados del 08/09 al 15/09" in cuerpo
+    # El control: la fila de un solo día NO puede decir un rango.
+    assert "de armados del 07/09 al 07/09" not in cuerpo
     assert "07/09" in cuerpo
     # Los que más esperan, arriba: con veinte renglones el de abajo no existe.
     assert cuerpo.index("EJEMPLO Dos") < cuerpo.index("EJEMPLO Uno")
