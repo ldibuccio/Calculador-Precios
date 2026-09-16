@@ -5780,11 +5780,40 @@ assert ">Detalle<" not in texto
 
 Es el corolario 22 en su forma más fuerte —el fixture que fija el caso
 equivocado convierte al test en el guardián del bug— con un escalón más:
-**acá no hay un fixture que mirar, hay un ARGUMENTO.** El assert venía con su
-razón al lado, la razón era correcta sobre el mecanismo, y por eso nadie la
-iba a discutir. Y cumplió su función de guardián al pie de la letra: agregar
-el botón lo hizo fallar, y la primera lectura de ese rojo es *"me equivoqué
-yo"*.
+**acá no hay un fixture que mirar, hay un ARGUMENTO.** Y cumplió su función
+de guardián al pie de la letra: agregar el botón lo hizo fallar, y la primera
+lectura de ese rojo es *"me equivoqué yo"*.
+
+**La distinción, y es la que hay que tener a mano** (del dueño, 16/09): no
+fue que FALTARA un test. Fue que había uno **defendiendo la ausencia**, y
+son dos cosas que se buscan distinto. Un hueco se encuentra preguntándose
+qué no está cubierto — una pregunta que uno se hace. Un test que defiende
+la ausencia **ya contestó esa pregunta**, y contestó que no va: aparece en
+la lista de tests verdes como una decisión tomada, no como algo que falta.
+
+> **Un test con razón escrita no se cuestiona.**
+
+Ahí está todo el daño. Un assert pelado invita a preguntar por qué; uno con
+su comentario al lado se lee como un acuerdo al que ya se llegó, y el que
+pasa por ahí supone que alguien lo pensó mejor que él. Es exactamente el
+corolario 25 —un argumento válido es más difícil de revisar que uno flojo,
+porque se defiende mejor y se copia a los comentarios, donde envejece con
+toda la autoridad de algo razonado— mordiendo adentro de la suite en vez de
+adentro de un docstring.
+
+**Y la premisa VIAJÓ, que es cómo un argumento cierto queda defendiendo algo
+falso.** El 80% era verdad sobre el celular, donde el dedo toca cualquier
+lado. El mismo assert corre sobre la tabla de escritorio, donde la
+afordancia que lo sostenía —tocar sin mirar— no existe. Nadie se equivocó al
+escribirlo: se equivocó el alcance, y el alcance no estaba escrito en ningún
+lado.
+
+**Lo accionable**, y es una sola pregunta que se hace al ESCRIBIR, no al
+leer: cuando un assert diga que algo NO tiene que estar, **escribir al lado
+para qué población vale**. "No va el botón porque la tarjeta entera lleva
+ahí" es una afirmación sobre el celular; escrito así se ve solo el día que
+alguien lo lea pensando en escritorio. Es el corolario 8 —el nombre lleva el
+alcance— aplicado a la razón de un test.
 
 ### Por qué ningún test podía agarrarlo
 
