@@ -2494,7 +2494,17 @@ que esta sección proponía: fue ver que estas tres puertas NO son un agujero
 de stock de cajas.** La caja se descuenta cuando se ARMA —en la guía R— así
 que para cuando sale por cualquiera de las tres ya estaba descontada y no
 vuelve. El stock lo refleja solo. Lo que estas tres sí son es un agujero de
-COSTO DE ENVASE, que es otra pregunta y sigue abierta.
+COSTO DE ENVASE, que es otra pregunta.
+
+**Y esa pregunta tiene planteo y consulta desde el 16/09, y la respuesta no
+es la que se estaba buscando**: el costo de envase YA se cobra, por unidad de
+PRIMERA vendida, y esa tasa supone que toda caja que sale la paga una
+primera. Las de estas puertas salen sin una atrás, así que **la primera las
+subsidia** — o sea que no falta una línea de costo nueva, falta saber por
+cuánto está corta la tasa que ya existe, que es un factor sobre un solo
+lugar. Ver `docs/el_costo_de_las_cajas_que_salen_sin_venta.md` y
+`db/cajas_6_*.sql`; los números del 16/09 están corregidos ahí y no se
+vuelven a citar.
 
 **Y ese párrafo era MEDIA VERDAD el día que se escribió, corregido unas horas
 después**: la caja de la PRIMERA se descontaba y la de la SEGUNDA no — la
