@@ -12037,21 +12037,30 @@ _SQL_STOCK_DE_ENVASES = """
          GROUP BY m.envase_id
     ),
     guias AS (
-        -- PRIMERA **Y** SEGUNDA, y las dos van en la misma caja nuestra: al
-        -- reprocesar un cajón, lo que sale de segunda se pone en caja de Día
-        -- igual que la primera — no hay otra cosa a mano en la mesa. Restar
-        -- solo la primera dejaba el stock ALTO por todo lo de segunda (en
-        -- Frutamax, 80,97 bultos en 90 días) y el aviso de reposición
-        -- llegando tarde, sin que nada se descuadrara.
+        -- SOLO LA PRIMERA. Al reprocesar un cajón, la primera va en caja de
+        -- Día y LA SEGUNDA QUEDA EN EL ENVASE DEL PROVEEDOR: no lleva caja
+        -- nuestra y no hay nada que descontar por ella.
         --
-        -- LA MERMA NO ENTRA, y es una decisión, no un olvido: lo que se
+        -- El 16/09 esto sumó `bultos_segunda` durante unas horas, sobre una
+        -- premisa del galpón que el dueño dio vuelta el mismo día ("la segunda
+        -- se pone en caja de Día igual que la primera"). Restaba 80,97 bultos
+        -- por trimestre de un stock del que nunca salieron — el stock BAJO y
+        -- el aviso de reposición temprano. Queda escrito acá para que nadie
+        -- lo vuelva a agregar leyendo el número sin la premisa.
+        --
+        -- LA SEGUNDA QUE SÍ ESTÁ EN CAJA NUESTRA ES OTRA: la del RECHAZO, que
+        -- vuelve del súper en la caja en la que salió. Ésa no pasa por acá
+        -- —vive en movimientos_stock— y ya está descontada desde la guía R
+        -- que la armó, así que no se cuenta de nuevo.
+        --
+        -- LA MERMA TAMPOCO ENTRA, y es una decisión, no un olvido: lo que se
         -- descarta se tira, no se pone en una caja para tirarlo. Si algún día
         -- resulta que sí ocupa caja, el término va acá y en
         -- core/envases.cajas_que_mueve_la_guia, que son los dos únicos
         -- lugares donde esta suma está escrita.
         SELECT r.envase_id,
-               SUM(CASE r.tipo WHEN 'en_origen' THEN  (r.bultos_primera + r.bultos_segunda)
-                               WHEN 'normal'    THEN -(r.bultos_primera + r.bultos_segunda)
+               SUM(CASE r.tipo WHEN 'en_origen' THEN  r.bultos_primera
+                               WHEN 'normal'    THEN -r.bultos_primera
                                ELSE 0 END) AS cajas
           FROM reprocesos r
           JOIN base b ON b.envase_id = r.envase_id
@@ -12211,6 +12220,94 @@ def contar_guias_sin_declarar_el_envase() -> dict:
     finally:
         conexion.close()
     return {"casos": int(casos or 0), "poblacion": int(poblacion or 0)}
+
+
+VENTANA_GASTO_EN_CAJAS_DIAS = 90
+
+_SQL_GASTO_EN_CAJAS = """
+    SELECT e.nombre,
+           SUM(m.cantidad)                         AS cajas,
+           SUM(m.cantidad * c.costo)               AS gasto,
+           COUNT(*) FILTER (WHERE c.costo IS NULL) AS sin_costo,
+           MAX(m.fecha_operacion)                  AS ultima
+      FROM movimientos_envase m
+      JOIN envases e ON e.id = m.envase_id
+      LEFT JOIN LATERAL (
+          SELECT h.costo
+            FROM envases_costo_historial h
+           WHERE h.envase_id = m.envase_id
+             AND h.vigente_desde <= m.fecha_operacion
+           ORDER BY h.vigente_desde DESC
+           LIMIT 1
+      ) c ON true
+     WHERE m.anulado_el IS NULL
+       AND m.origen = 'compra'
+       AND m.fecha_operacion >= %s
+     GROUP BY e.nombre
+     ORDER BY e.nombre
+"""
+
+
+def gasto_en_cajas(desde) -> dict:
+    """Cuánta plata se gastó en cajas desde una fecha, por envase y en total.
+
+    ES LA ÚNICA CUENTA DE ESTE SISTEMA QUE MIRA LA PLATA DE LAS CAJAS. El
+    envase se cobra adentro del precio sugerido (una caja por cada
+    `contenido_caja` unidades de primera) y la Rentabilidad Real no lo toca,
+    así que hasta acá comprar cajas no aparecía en ninguna pantalla: el gasto
+    llegaba como sorpresa. `movimientos_envase` guarda CAJAS y no pesos, y el
+    precio vive aparte en `envases_costo_historial` — esto es lo que los junta.
+
+    EL COSTO ES EL VIGENTE A LA FECHA DE CADA COMPRA, no el de hoy. Con el
+    costo de hoy una compra vieja se revalúa sola: medido sobre el fixture del
+    16/09, Caja Grande daba $240.000 en vez de $200.000 — 20% de más, sin que
+    nada se vea raro. Es la misma familia que leer un valor de la migración
+    que lo creó en vez de leerlo de la base.
+
+    `cajas` Y `gasto` NO TIENEN LA MISMA POBLACIÓN cuando `sin_costo` no es
+    cero: una compra anterior al primer costo cargado de su envase suma cajas
+    y no suma pesos (el `SUM` saltea el NULL). Por eso `sin_costo` vuelve al
+    lado y la pantalla lo dice; sin esa columna el total se leería como si
+    cubriera todo.
+
+    `prestamo_salida`, `conteo_inicial` y `ajuste` NO son compras y no entran:
+    mover cajas de lugar o corregir un conteo no cuesta plata. Verificado con
+    los tres canarios contra `db/esquema_completo.sql` — sin el filtro de
+    origen, Caja Grande pasa de 150 a 320 cajas; sin el de anuladas, a 1149.
+
+    El LATERAL es a propósito y está medido (corolario 70): la forma agrupada
+    de una pasada —tramos con `lead(vigente_desde)`— da 1,4ms contra 2,4ms a
+    escala real (500 movimientos) y **80ms contra 35ms** a 50.000. Acá la
+    pregunta del corolario 70 se contesta que NO: la tabla de costos tiene
+    decenas de filas, así que "por fila" es una búsqueda chica y no 500
+    entradas a una tabla grande. Si alguien lo cambia, medir antes de creerle.
+    """
+    conexion = obtener_conexion()
+    try:
+        with conexion.cursor() as cursor:
+            cursor.execute(_SQL_GASTO_EN_CAJAS, (desde,))
+            filas = cursor.fetchall()
+    finally:
+        conexion.close()
+
+    por_envase = [
+        {
+            "nombre": f[0],
+            "cajas": int(f[1] or 0),
+            "gasto": float(f[2]) if f[2] is not None else 0.0,
+            "sin_costo": int(f[3] or 0),
+            "ultima": f[4],
+        }
+        for f in filas
+    ]
+    return {
+        "desde": desde,
+        "por_envase": por_envase,
+        "cajas": sum(e["cajas"] for e in por_envase),
+        "gasto": sum(e["gasto"] for e in por_envase),
+        "sin_costo": sum(e["sin_costo"] for e in por_envase),
+        "ultima": max((e["ultima"] for e in por_envase if e["ultima"]), default=None),
+    }
 
 
 def guardar_umbral_de_envase(envase_id: int, umbral: int | None) -> None:

@@ -2496,23 +2496,29 @@ que para cuando sale por cualquiera de las tres ya estaba descontada y no
 vuelve. El stock lo refleja solo. Lo que estas tres sí son es un agujero de
 COSTO DE ENVASE, que es otra pregunta.
 
-**Y esa pregunta tiene planteo y consulta desde el 16/09, y la respuesta no
-es la que se estaba buscando**: el costo de envase YA se cobra, por unidad de
-PRIMERA vendida, y esa tasa supone que toda caja que sale la paga una
-primera. Las de estas puertas salen sin una atrás, así que **la primera las
-subsidia** — o sea que no falta una línea de costo nueva, falta saber por
-cuánto está corta la tasa que ya existe, que es un factor sobre un solo
-lugar. Ver `docs/el_costo_de_las_cajas_que_salen_sin_venta.md` y
-`db/cajas_6_*.sql`; los números del 16/09 están corregidos ahí y no se
-vuelven a citar.
+**Y esa pregunta tiene planteo desde el 16/09.** El mecanismo: el costo de
+envase YA se cobra, por unidad de PRIMERA vendida, y esa tasa supone que toda
+caja que sale la paga una primera. **La población, en cambio, se midió mal dos
+veces el mismo día** — primero la segunda del reproceso (que no lleva caja) y
+después el total de la segunda— y lo que queda es mucho más chico y tiene otro
+NOMBRE: **las cajas que se pierden en un RECHAZO.** Salen con una venta,
+vuelven del súper y se van de nuevo sin una segunda venta atrás.
 
-**Y ese párrafo era MEDIA VERDAD el día que se escribió, corregido unas horas
-después**: la caja de la PRIMERA se descontaba y la de la SEGUNDA no — la
-cuenta restaba solo `bultos_primera`. O sea que para la puerta 2 —la segunda
-que se remite al Puesto— la caja salía del depósito **sin haberse descontado
-nunca**, que es exactamente el agujero que este párrafo declaraba cerrado.
-Arreglado el 16/09 sumando `bultos_primera + bultos_segunda`; el detalle está
-en el corolario 71.
+Ver `docs/el_costo_de_las_cajas_que_salen_sin_venta.md`, que está reescrito
+con la corrección. **Ningún número de la primera versión se vuelve a citar.**
+
+**Ese párrafo se declaró MEDIA VERDAD el mismo día y NO LO ERA** — se dijo que
+la caja de la segunda salía sin descontarse nunca, se "arregló" sumando
+`bultos_segunda`, y unas horas después el dueño corrigió el dato del galpón:
+**la segunda de un reproceso queda en el cajón del proveedor y no lleva caja
+nuestra.** Revertido; el detalle y el error de método están en el corolario 71.
+
+**Y la puerta 2 quedó más chica de lo que esta sección dice.** No es "la
+segunda que se remite al Puesto": es **solo la que vino de un RECHAZO** —el
+súper devuelve mercadería que salió en caja nuestra y eso se anota como
+segunda—. Esa caja **ya se descontó en la guía R que la armó**, así que el
+stock está bien y nunca estuvo mal: lo que falta es su COSTO, que es la otra
+pregunta.
 
 La observación es de Lionel y dio vuelta el diagnóstico de esta sección
 entera: **teníamos dos preguntas distintas debajo de la misma palabra.**
@@ -2524,7 +2530,10 @@ puertas por las que pasa:
 1. **El envase perdido de origen** — manzana, pera, arándano: salen en el
    cajón del proveedor y no se reprocesan nunca. Ahí no hay caja nuestra que
    perder, y por eso está bien que no se cuente (ver más arriba).
-2. **La segunda que se remite al Puesto** — sale en la caja en la que está.
+2. **La segunda que se remite al Puesto, y SOLO la que vino de un rechazo** —
+   sale en la caja en la que está, que es nuestra porque ya lo era antes de
+   volver del súper. La segunda que sale de reprocesar un cajón NO cuenta:
+   queda en el envase del proveedor (16/09).
 3. **La devolución al proveedor** (la que estrenó el cuarto destino): si la
    mercadería vuelve en el cajón del proveedor, ese cajón sale por el
    circuito de vacíos como cualquier otro y no hay nada que hacer. **Si
@@ -5975,21 +5984,49 @@ Así que la función que se lee como la fuente de la verdad no toca un solo
 número del sistema, y sus tests —verdes, prolijos, con sus casos bien
 elegidos— **no prueban nada sobre lo que el operario ve.**
 
-El bug lo destapó el dueño, no el código: **la segunda sale en caja nuestra
-igual que la primera** —al reprocesar un cajón, lo de segunda se pone en caja
-de Día porque no hay otra cosa a mano en la mesa— y las dos copias restaban
-solo `bultos_primera`. Medido contra `db/esquema_completo.sql` con una guía
-de 30 de primera y 7 de segunda:
+### EL BUG QUE ESTE COROLARIO CONTABA NO EXISTÍA (16/09, unas horas después)
 
-```
-como estaba   100 − 30            + 5 = 75
-el galpon     100 − 30 − 7        + 5 = 68
-```
+**Se deja entero y corregido acá, porque el error de método es más caro que
+el hallazgo que decía tener.**
 
-**Siete cajas de más, sin que ninguna cuenta se descuadre.** El stock queda
-ALTO, el aviso de reposición llega tarde, y lo único que lo delata es el
-conteo físico — que es justamente lo que este módulo viene a ahorrar. En
-Frutamax son 80,97 bultos de segunda en 90 días.
+La versión original decía: *"el bug lo destapó el dueño, no el código: la
+segunda sale en caja nuestra igual que la primera —al reprocesar un cajón, lo
+de segunda se pone en caja de Día porque no hay otra cosa a mano en la mesa—
+y las dos copias restaban solo `bultos_primera`"*. Sobre eso se cambiaron las
+dos copias a `bultos_primera + bultos_segunda`.
+
+**El dato del galpón era al revés, y lo corrigió el dueño el mismo día**: al
+reprocesar un cajón la primera va en caja de Día y **la segunda queda en el
+envase del proveedor**. No lleva caja nuestra. Así que el arreglo restaba
+80,97 bultos por trimestre de un stock del que nunca salieron: **el stock
+BAJO y el aviso de reposición temprano**, que es el mismo modo de falla que
+venía a arreglar, con el signo cambiado.
+
+Revertido el 16/09, con la premisa retractada escrita al lado de las dos
+copias para que nadie la vuelva a agregar leyendo el número sin el dato.
+
+**La lección NO es "preguntá el dato", que ya está escrita en veinte lugares
+de este archivo. Es sobre CUÁNDO se pregunta:** el dato se preguntó, se
+contestó, y la respuesta estaba mal — **porque la pregunta se hizo en medio
+de un arreglo, con la hipótesis ya armada y el diff a medio escribir.** Una
+pregunta así se contesta rápido y para adelante, que es exactamente cuando
+menos se verifica (corolario 18, pero del lado del que CONTESTA y no del que
+escribe).
+
+**Cómo se reconoce, y es lo único accionable**: cuando un hecho del galpón
+llega como confirmación de algo que uno ya empezó a construir, eso no es una
+medición — es un tilde. El que contesta está mirando el arreglo, no el
+galpón. La forma que lo evita es la que ya funcionó dos veces con el mango
+multiformato: **preguntar qué pasa, no si pasa lo que uno cree.** *"¿En qué
+va la segunda cuando se reprocesa?"* tiene una sola respuesta posible; *"la
+segunda sale en caja nuestra, ¿no?"* tiene dos y una es un asentimiento.
+
+**Y la parte que sí se confirmó**: existe una segunda que va en caja nuestra,
+y es **la del RECHAZO** — el súper devuelve mercadería que salió en nuestra
+caja y eso se anota como segunda. Ésa no pasa por `reprocesos`: vive en
+`movimientos_stock`, y **ya está descontada desde la guía R que la armó**, así
+que sumarla otra vez la contaría dos veces. Las dos segundas se llaman igual
+y salen de tablas distintas, que es la familia entera de este archivo.
 
 ### Por qué la copia ornamental es PEOR que dos copias iguales
 

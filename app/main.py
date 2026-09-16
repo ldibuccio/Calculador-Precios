@@ -283,8 +283,10 @@ from app.db import (
     listar_proveedores,
     listar_proveedores_para_abm,
     stock_de_envases,
+    VENTANA_GASTO_EN_CAJAS_DIAS,
     crear_movimiento_envase,
     contar_guias_sin_declarar_el_envase,
+    gasto_en_cajas,
     guardar_umbral_de_envase,
     contar_envases_a_reponer,
     detallar_envases_a_reponer,
@@ -4434,6 +4436,7 @@ def _renderizar_pantalla_cajas(request: Request, *, error: str | None = None,
     try:
         envases = stock_de_envases()
         sin_declarar = contar_guias_sin_declarar_el_envase()
+        gasto = gasto_en_cajas(_hoy_argentina() - timedelta(days=VENTANA_GASTO_EN_CAJAS_DIAS))
     except Exception as error_db:
         raise HTTPException(status_code=500, detail=f"Error al conectar con la base de datos: {error_db}") from error_db
 
@@ -4448,7 +4451,8 @@ def _renderizar_pantalla_cajas(request: Request, *, error: str | None = None,
         request,
         "compras_cajas.html",
         {"envases": envases, "sin_declarar": sin_declarar, "error": error,
-         "aviso": aviso, "hoy": _hoy_argentina().isoformat()},
+         "aviso": aviso, "hoy": _hoy_argentina().isoformat(),
+         "gasto": gasto, "ventana_gasto": VENTANA_GASTO_EN_CAJAS_DIAS},
         status_code=status_code,
     )
 

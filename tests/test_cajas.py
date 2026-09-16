@@ -56,21 +56,35 @@ def test_la_guia_EN_ORIGEN_SUMA_donde_la_normal_resta():
     assert cajas_que_mueve_la_guia("inicial", 77, True) == 0
 
 
-def test_la_SEGUNDA_consume_caja_igual_que_la_primera():
-    """Al reprocesar, lo de segunda se pone en caja de Día igual que la
-    primera: no hay otra cosa a mano en la mesa.
+def test_la_SEGUNDA_del_reproceso_NO_consume_caja_y_eso_es_una_DECISION():
+    """Al reprocesar, la primera va en caja de Día y LA SEGUNDA QUEDA EN EL
+    CAJÓN DEL PROVEEDOR. No lleva caja nuestra: no hay nada que descontar.
 
-    LOS NÚMEROS ESTÁN SEPARADOS A PROPÓSITO (30 y 7): con los dos iguales, la
-    versión que cuenta solo la primera y la que cuenta las dos darían números
-    distintos igual, pero no se podría leer CUÁL de los dos términos entró.
-    Y con la segunda en cero el test pasaría con el bug puesto, que es el
-    caso que este test existe para negar.
+    ESTE TEST AFIRMABA LO CONTRARIO durante unas horas el 16/09, sobre un dato
+    del galpón que el dueño dio vuelta el mismo día. Mientras tanto restaba
+    80,97 bultos por trimestre de un stock del que nunca salieron —el stock
+    BAJO y el aviso de reposición temprano— y era el guardián de ese bug.
+
+    Se afirma POR LA FIRMA, como la merma: la función ni siquiera recibe
+    `bultos_segunda`, así que el día que alguien la quiera volver a sumar
+    tiene que cambiar la firma, y este test dice por qué no está. Un assert
+    sobre el valor lo pasaría igual un parámetro ignorado.
+
+    LA SEGUNDA QUE SÍ VA EN CAJA NUESTRA ES LA DEL RECHAZO —vuelve del súper
+    en la caja en la que salió—, y ésa no pasa por esta función: vive en
+    movimientos_stock y ya quedó descontada en la guía R que la armó.
     """
-    assert cajas_que_mueve_la_guia("normal", 30, True, bultos_segunda=7) == -37
-    assert cajas_que_mueve_la_guia("en_origen", 30, True, bultos_segunda=7) == 37
-    assert cajas_que_mueve_la_guia("inicial", 30, True, bultos_segunda=7) == 0
-    # Sin declarar sigue siendo cero: la segunda no abre una puerta nueva.
-    assert cajas_que_mueve_la_guia("normal", 30, None, bultos_segunda=7) == 0
+    import inspect
+
+    parametros = inspect.signature(cajas_que_mueve_la_guia).parameters
+    assert "bultos_segunda" not in parametros, (
+        "volvió `bultos_segunda`: la segunda del reproceso sale en el cajón "
+        "del proveedor, no en caja nuestra"
+    )
+    # Y el valor sigue saliendo solo de la primera, en las tres ramas.
+    assert cajas_que_mueve_la_guia("normal", 30, True) == -30
+    assert cajas_que_mueve_la_guia("en_origen", 30, True) == 30
+    assert cajas_que_mueve_la_guia("inicial", 30, True) == 0
 
 
 def test_la_MERMA_no_consume_caja_y_eso_es_una_DECISION():
@@ -165,28 +179,33 @@ def test_la_cuenta_derivada_EXCLUYE_las_guias_INICIALES_y_las_sin_declarar():
     assert "m.destino_rechazo = 'reproceso'" in sql
 
 
-def test_la_guia_R_consume_PRIMERA_MAS_SEGUNDA_y_no_solo_la_primera():
-    """La segunda sale en caja nuestra igual que la primera.
-
-    Este assert decía `THEN r.bultos_primera` a secas y era el guardián del
-    bug (corolario 22): no defendía la ausencia de la segunda a propósito —
-    fijaba lo que había— y el arreglo lo rompió, que es su función.
+def test_la_guia_R_consume_SOLO_LA_PRIMERA_y_la_segunda_NO_esta_en_el_SQL():
+    """La segunda del reproceso queda en el cajón del proveedor.
 
     EL MODO DE FALLA NO SE VE EN NINGUNA PANTALLA, y por eso el assert es del
     TEXTO y no del valor (corolario 65): con un mock la fila la entrega el
-    fixture y el término equivocado llega igual. Contando solo la primera, el
-    stock queda ALTO por todo lo de segunda —80,97 bultos en 90 días en
-    Frutamax—, el aviso de reposición llega tarde, y ninguna cuenta se
-    descuadra. Lo único que lo delata es el conteo físico, que es justamente
-    lo que este módulo viene a ahorrar.
+    fixture y el término de más llega igual. Sumando la segunda, el stock
+    queda BAJO por 80,97 bultos por trimestre en Frutamax, el aviso de
+    reposición llega temprano, y ninguna cuenta se descuadra — lo único que
+    lo delata es el conteo físico, que es justamente lo que este módulo viene
+    a ahorrar.
 
-    LAS DOS RAMAS con el MISMO término: en 'en_origen' la segunda es 0 por
-    construcción, pero escrita distinto de 'normal' es una copia esperando
-    separarse.
+    LAS DOS MITADES HACEN FALTA: afirmar `r.bultos_primera` pasa igual con
+    `(r.bultos_primera + r.bultos_segunda)` puesto, porque el fragmento está
+    adentro. Lo que niega el término es la segunda línea.
     """
     sql = _SQL_STOCK_DE_ENVASES
-    assert "WHEN 'en_origen' THEN  (r.bultos_primera + r.bultos_segunda)" in sql
-    assert "WHEN 'normal'    THEN -(r.bultos_primera + r.bultos_segunda)" in sql
+    assert "WHEN 'en_origen' THEN  r.bultos_primera" in sql
+    assert "WHEN 'normal'    THEN -r.bultos_primera" in sql
+    # El texto de la consulta SIN sus comentarios: el de arriba nombra a
+    # `bultos_segunda` justamente para explicar por qué no está (corolario 59).
+    consulta = "\n".join(
+        linea for linea in sql.splitlines() if not linea.strip().startswith("--")
+    )
+    assert "bultos_segunda" not in consulta, (
+        "volvió la segunda al descuento de cajas: sale en el cajón del "
+        "proveedor, no en caja nuestra"
+    )
     # Y la MERMA no: lo que se descarta se tira, no se pone en una caja para
     # tirarlo. Es una decisión, así que se afirma — si algún día cambia, que
     # este test caiga y no que aparezca sumada sin que nadie lo note.
@@ -302,10 +321,28 @@ UN_ENVASE_BAJO = [{
     "contadas": 100, "declaradas": -70, "por_guias": -20, "liberadas": 6, "stock": 16,
 }]
 
+# El gasto en cajas viaja SIEMPRE, así que todas las pruebas de pantalla lo
+# parchean. Y ese parche hace, él solo, de aserción de que `app.main` importa
+# `gasto_en_cajas`: si el nombre no está, `mock.patch` levanta AttributeError
+# antes de ejercitar una línea (corolario 51).
+SIN_GASTO = {"desde": date(2026, 6, 18), "por_envase": [], "cajas": 0,
+             "gasto": 0.0, "sin_costo": 0, "ultima": None}
+CON_GASTO = {
+    "desde": date(2026, 6, 18),
+    "por_envase": [
+        {"nombre": "Caja Grande", "cajas": 150, "gasto": 200000.0,
+         "sin_costo": 0, "ultima": date(2026, 9, 10)},
+        {"nombre": "Caja Chica", "cajas": 90, "gasto": 52000.0,
+         "sin_costo": 1, "ultima": date(2026, 9, 12)},
+    ],
+    "cajas": 240, "gasto": 252000.0, "sin_costo": 1, "ultima": date(2026, 9, 12),
+}
+
 
 def test_sin_conteo_inicial_la_pantalla_NO_dice_cero():
     """Un cero ahí se leería como "no quedan cajas", que es lo contrario."""
-    with patch("app.main.stock_de_envases", return_value=UN_ENVASE_SIN_ARRANCAR), \
+    with patch("app.main.gasto_en_cajas", return_value=SIN_GASTO), \
+         patch("app.main.stock_de_envases", return_value=UN_ENVASE_SIN_ARRANCAR), \
          patch("app.main.contar_guias_sin_declarar_el_envase", return_value={"casos": 0, "poblacion": 0}):
         respuesta = cliente.get("/compras/cajas")
     assert respuesta.status_code == 200
@@ -317,7 +354,8 @@ def test_sin_conteo_inicial_la_pantalla_NO_dice_cero():
 
 
 def test_debajo_del_umbral_la_pantalla_lo_MARCA():
-    with patch("app.main.stock_de_envases", return_value=UN_ENVASE_BAJO), \
+    with patch("app.main.gasto_en_cajas", return_value=SIN_GASTO), \
+         patch("app.main.stock_de_envases", return_value=UN_ENVASE_BAJO), \
          patch("app.main.contar_guias_sin_declarar_el_envase", return_value={"casos": 0, "poblacion": 0}):
         respuesta = cliente.get("/compras/cajas")
     marcado = respuesta.text.split("</style>")[-1]
@@ -328,7 +366,8 @@ def test_debajo_del_umbral_la_pantalla_lo_MARCA():
 
 
 def test_el_HUECO_de_las_guias_sin_declarar_se_muestra_CON_su_poblacion():
-    with patch("app.main.stock_de_envases", return_value=UN_ENVASE_BAJO), \
+    with patch("app.main.gasto_en_cajas", return_value=SIN_GASTO), \
+         patch("app.main.stock_de_envases", return_value=UN_ENVASE_BAJO), \
          patch("app.main.contar_guias_sin_declarar_el_envase",
                return_value={"casos": 3, "poblacion": 314}):
         respuesta = cliente.get("/compras/cajas")
@@ -339,7 +378,8 @@ def test_el_HUECO_de_las_guias_sin_declarar_se_muestra_CON_su_poblacion():
 
 
 def test_la_pantalla_vive_en_COMPRAS_y_la_barra_lo_dice():
-    with patch("app.main.stock_de_envases", return_value=UN_ENVASE_BAJO), \
+    with patch("app.main.gasto_en_cajas", return_value=SIN_GASTO), \
+         patch("app.main.stock_de_envases", return_value=UN_ENVASE_BAJO), \
          patch("app.main.contar_guias_sin_declarar_el_envase", return_value={"casos": 0, "poblacion": 0}):
         respuesta = cliente.get("/compras/cajas")
     # SOBRE EL DOCUMENTO ENTERO y no sobre `[-1]`: la barra se incluye desde
@@ -352,7 +392,8 @@ def test_la_pantalla_vive_en_COMPRAS_y_la_barra_lo_dice():
 
 def test_una_cantidad_con_DECIMALES_no_entra():
     """Media caja no existe, y la regla sale de la misma función que la guía R."""
-    with patch("app.main.stock_de_envases", return_value=UN_ENVASE_BAJO), \
+    with patch("app.main.gasto_en_cajas", return_value=SIN_GASTO), \
+         patch("app.main.stock_de_envases", return_value=UN_ENVASE_BAJO), \
          patch("app.main.contar_guias_sin_declarar_el_envase", return_value={"casos": 0, "poblacion": 0}), \
          patch("app.main.crear_movimiento_envase") as escribir:
         respuesta = cliente.post("/compras/cajas/movimiento",
@@ -365,7 +406,8 @@ def test_una_cantidad_con_DECIMALES_no_entra():
 
 def test_el_PRESTAMO_lo_da_vuelta_el_SERVER_y_no_la_persona():
     """La pregunta es "cuántas le mandé", no "cuántas resto"."""
-    with patch("app.main.stock_de_envases", return_value=UN_ENVASE_BAJO), \
+    with patch("app.main.gasto_en_cajas", return_value=SIN_GASTO), \
+         patch("app.main.stock_de_envases", return_value=UN_ENVASE_BAJO), \
          patch("app.main.contar_guias_sin_declarar_el_envase", return_value={"casos": 0, "poblacion": 0}), \
          patch("app.main.crear_movimiento_envase") as escribir:
         cliente.post("/compras/cajas/movimiento",
@@ -375,7 +417,8 @@ def test_el_PRESTAMO_lo_da_vuelta_el_SERVER_y_no_la_persona():
     escribir.assert_called_once()
     assert escribir.call_args.args[2] == -30
     # Y la compra suma, con la misma pantalla y el mismo campo en positivo.
-    with patch("app.main.stock_de_envases", return_value=UN_ENVASE_BAJO), \
+    with patch("app.main.gasto_en_cajas", return_value=SIN_GASTO), \
+         patch("app.main.stock_de_envases", return_value=UN_ENVASE_BAJO), \
          patch("app.main.contar_guias_sin_declarar_el_envase", return_value={"casos": 0, "poblacion": 0}), \
          patch("app.main.crear_movimiento_envase") as escribir:
         cliente.post("/compras/cajas/movimiento",
@@ -499,3 +542,95 @@ def test_el_conteo_de_la_alerta_sale_de_las_MISMAS_filas_que_el_detalle():
     with patch("app.db.stock_de_envases", return_value=bajos):
         assert contar_envases_a_reponer() == {"casos": 2, "mas_viejo": None}
         assert len(detallar_envases_a_reponer()["filas"]) == 2
+
+
+# --- El gasto en cajas -------------------------------------------------------
+#
+# Hasta el 16/09 la plata de las cajas no estaba en ninguna pantalla: el envase
+# se cobra adentro del precio sugerido y la Rentabilidad Real no lo toca, así
+# que comprar cajas era una sorpresa. Esto es lo único que junta las cajas de
+# `movimientos_envase` con el precio de `envases_costo_historial`.
+
+
+def _cuerpo(respuesta) -> str:
+    """El marcado, sin el CSS ni el <script> (corolario 50)."""
+    import re
+
+    marcado = respuesta.text.split("</style>")[-1]
+    return re.sub(r"<script>.*?</script>", "", marcado, flags=re.S)
+
+
+def test_la_pantalla_MUESTRA_lo_que_se_gasto_en_cajas():
+    with patch("app.main.gasto_en_cajas", return_value=CON_GASTO), \
+         patch("app.main.stock_de_envases", return_value=UN_ENVASE_BAJO), \
+         patch("app.main.contar_guias_sin_declarar_el_envase", return_value={"casos": 0, "poblacion": 0}):
+        respuesta = cliente.get("/compras/cajas")
+    assert respuesta.status_code == 200
+    marcado = _cuerpo(respuesta)
+
+    # El ancla es la CLASE, no el texto: el comentario del <style> explica por
+    # qué el gasto se apila sin tabla y nombra el gasto (corolario 38).
+    assert 'class="gasto-total"' in marcado
+    assert marcado.count('class="gasto-fila"') == 2, "un renglón por envase"
+    # Y el total está, con las dos mitades: cuántas cajas y cuánta plata.
+    assert "252.000" in marcado
+    assert "240 cajas" in marcado
+
+
+def test_SIN_compras_la_pantalla_lo_DICE_en_vez_de_mostrar_un_cero():
+    """La otra respuesta del detector (corolario 53): la que NO tiene que marcar.
+
+    Un `$0` prolijo se lee como "no gastamos nada en cajas", que es lo mismo
+    que se vería si nadie declarara las compras. Son cosas distintas y la
+    pantalla las separa con palabras.
+    """
+    with patch("app.main.gasto_en_cajas", return_value=SIN_GASTO), \
+         patch("app.main.stock_de_envases", return_value=UN_ENVASE_BAJO), \
+         patch("app.main.contar_guias_sin_declarar_el_envase", return_value={"casos": 0, "poblacion": 0}):
+        respuesta = cliente.get("/compras/cajas")
+    marcado = _cuerpo(respuesta)
+
+    assert 'class="gasto-total"' not in marcado, "sin compras no hay total que mostrar"
+    assert "No hay ninguna compra de cajas declarada" in marcado
+
+
+def test_las_compras_SIN_COSTO_a_su_fecha_se_dicen_y_no_se_esconden():
+    """`cajas` y `gasto` no tienen la misma población, y eso se ve.
+
+    Una compra anterior al primer costo cargado de su envase suma cajas y no
+    suma pesos. Sin este renglón el total se leería como si las cubriera.
+    """
+    with patch("app.main.gasto_en_cajas", return_value=CON_GASTO), \
+         patch("app.main.stock_de_envases", return_value=UN_ENVASE_BAJO), \
+         patch("app.main.contar_guias_sin_declarar_el_envase", return_value={"casos": 0, "poblacion": 0}):
+        respuesta = cliente.get("/compras/cajas")
+    # Una sola frase, con los saltos de línea del HTML colapsados: partida en
+    # dos asserts unidos por un `or` el test lo pasa cualquiera de las mitades.
+    marcado = " ".join(_cuerpo(respuesta).split())
+    assert "<strong>1 de esas compras no tienen costo cargado a su fecha</strong>" in marcado
+    assert "el total está corto por ésas" in marcado
+
+
+def test_el_gasto_se_valua_al_costo_DEL_DIA_DE_LA_COMPRA_y_eso_sale_del_SQL():
+    """El valor lo entrega el mock; QUÉ pide la consulta solo se ve en el texto.
+
+    Es el corolario 65: con `h.vigente_desde <= current_date` la consulta
+    revalúa las compras viejas al precio de hoy —medido contra el esquema
+    real, Caja Grande pasa de $200.000 a $240.000— y ningún test de pantalla
+    lo puede ver, porque el número lo pone el fixture.
+    """
+    from app.db import _SQL_GASTO_EN_CAJAS
+
+    sql = "\n".join(
+        linea for linea in _SQL_GASTO_EN_CAJAS.splitlines()
+        if not linea.strip().startswith("--")
+    )
+    assert "h.vigente_desde <= m.fecha_operacion" in sql, (
+        "el costo dejó de ser el vigente a la fecha de la compra"
+    )
+    assert "current_date" not in sql.lower()
+    # Y los dos filtros que deciden qué ES una compra. Medido con canarios
+    # contra el esquema real: sin el de origen, Caja Grande pasa de 150 a 320
+    # cajas; sin el de anuladas, a 1149.
+    assert "m.origen = 'compra'" in sql
+    assert "m.anulado_el IS NULL" in sql

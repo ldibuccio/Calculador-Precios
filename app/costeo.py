@@ -30,6 +30,8 @@ from core.motor_costeo import (
     utilidad_real_multi_concepto as calcular_utilidad_real,
 )
 
+from core.envases import envases_por_unidad_de_venta
+
 from core.zona import ARGENTINA  # noqa: E402  (la zona va escrita en UN solo lugar)
 VENTANA_COSTEO_HORAS = 48
 LIMITE_APARICION_DIAS = 15
@@ -294,11 +296,6 @@ def _envases_por_unidad_ponderado(
     if not contenido_ficha:
         return 0.0
 
-    # float(...): psycopg2 devuelve contenido_caja (numeric) como Decimal,
-    # no float — sin este cast, dividir 1.0 / contenido_ficha rompe con
-    # "unsupported operand type(s) for /: 'float' and 'decimal.Decimal'".
-    contenido_ficha = float(contenido_ficha)
-
     total_ponderado = 0.0
     cantidad_total = 0.0
 
@@ -311,10 +308,9 @@ def _envases_por_unidad_ponderado(
         if cantidad_real is None or contenido_compra is None:
             continue
 
-        if envase_variable and contenido_compra <= contenido_ficha:
-            envases_por_unidad = 0.0
-        else:
-            envases_por_unidad = 1.0 / contenido_ficha
+        envases_por_unidad = envases_por_unidad_de_venta(
+            contenido_ficha, envase_variable, contenido_compra
+        )
 
         total_ponderado += envases_por_unidad * cantidad_real
         cantidad_total += cantidad_real
@@ -953,17 +949,23 @@ def calcular_objetivos_de_compra(cliente_id: int, momento_referencia: datetime |
         if utilidad_objetivo is None:
             continue
 
-        # Envase por la convención de la ficha (igual que la Rutina A):
-        # 1 envase cada contenido_ficha unidades. Variable: el corte por
-        # bulto se decide con el kilaje correspondiente.
+        # LA REGLA ES LA MISMA QUE LA DE LA RUTINA A Y SALE DEL MISMO LUGAR
+        # (`envases_por_unidad_de_venta`). Escrita a mano acá se separaba sin
+        # que nada se descuadre: el techo salía más alto del que corresponde y
+        # el comprador iba al Mercado con ese número.
         contenido_ficha = float(ficha["contenido_caja"]) if ficha["contenido_caja"] else None
         costo_envase = costo_por_envase_id.get(ficha["envase_id"], SIN_ENVASE) if ficha["envase_id"] else SIN_ENVASE
-        envase_por_unidad = (costo_envase / contenido_ficha) if contenido_ficha else 0.0
+        # Sin bulto contra el cual decidir NO SE CORTA: éste es el número que
+        # viaja a la pantalla, y el corte lo aplica el JS en vivo con
+        # `umbral_envase` cuando el comprador edita el kilaje.
+        envase_por_unidad = costo_envase * envases_por_unidad_de_venta(
+            contenido_ficha, ficha["envase_variable"], None
+        )
 
         def _envase_para_kilaje(kilaje: float) -> float:
-            if ficha["envase_variable"] and contenido_ficha and kilaje <= contenido_ficha:
-                return 0.0
-            return envase_por_unidad
+            return costo_envase * envases_por_unidad_de_venta(
+                contenido_ficha, ficha["envase_variable"], kilaje
+            )
 
         utilidad_actual = calcular_utilidad_real(
             precio_vigente=precio_vigente,

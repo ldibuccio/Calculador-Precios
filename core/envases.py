@@ -26,11 +26,11 @@ no son obvias y por eso están escritas:
 # propósito y no cae en un default — un tipo nuevo que no esté acá tiene que
 # romper el test, no colarse valiendo cero.
 #
-# Y EL SIGNO MULTIPLICA A PRIMERA + SEGUNDA, no solo a la primera (ver
-# `cajas_que_mueve_la_guia`). En 'en_origen' la segunda es 0 por construcción
-# —la compra llega armada y nadie la clasifica— así que ese término suma cero;
-# va igual para que las dos ramas digan la MISMA regla, y para que el día que
-# exista una en_origen con segunda la cuenta la siga sin que nadie se acuerde.
+# Y EL SIGNO MULTIPLICA SOLO A LA PRIMERA (ver `cajas_que_mueve_la_guia`):
+# la segunda de un reproceso queda en el envase del proveedor y no lleva caja
+# nuestra. La que sí la lleva es la del RECHAZO, que vuelve del súper en la
+# caja en la que salió — y ésa ya está descontada desde la guía R que la armó,
+# así que sumarla acá la contaría dos veces.
 SIGNO_POR_TIPO_DE_GUIA = {
     "normal": -1,      # se llenó en la mesa: la caja vacía dejó de estar
     "en_origen": +1,   # llegó llena de afuera: es una prestada que vuelve
@@ -38,18 +38,25 @@ SIGNO_POR_TIPO_DE_GUIA = {
 }
 
 
-def cajas_que_mueve_la_guia(tipo: str, bultos_primera, lleva_caja_nuestra,
-                            bultos_segunda=0) -> float:
+def cajas_que_mueve_la_guia(tipo: str, bultos_primera, lleva_caja_nuestra) -> float:
     """Cuántas cajas suma (+) o resta (−) esta guía R. Cero si no lleva caja nuestra.
 
-    PRIMERA **Y** SEGUNDA, porque las dos salen en la misma caja nuestra: al
-    reprocesar un cajón, lo de segunda se pone en caja de Día igual que la
-    primera — no hay otra cosa a mano en la mesa. Contar solo la primera
-    dejaba el stock ALTO por todo lo de segunda y el aviso de reposición
-    llegando tarde, sin que ninguna cuenta se descuadrara.
+    SOLO LA PRIMERA, y la segunda NO ENTRA POR CONSTRUCCIÓN: no recibe el
+    parámetro. Al reprocesar un cajón la primera va en caja de Día y la
+    segunda queda en el envase del proveedor — no lleva caja nuestra, así que
+    no hay nada que descontar. El día que resulte que sí, hay que cambiar la
+    FIRMA, y ahí el test dice por qué no estaba.
 
-    LA MERMA NO ENTRA, y es una decisión y no un olvido: lo que se descarta se
-    tira, no se pone en una caja para tirarlo.
+    El 16/09 esta función recibió `bultos_segunda` durante unas horas, sobre
+    una premisa del galpón que el dueño dio vuelta el mismo día. Restaba 80,97
+    bultos por trimestre de un stock del que nunca salieron.
+
+    LA SEGUNDA QUE SÍ VA EN CAJA NUESTRA ES LA DEL RECHAZO —vuelve del súper
+    en la caja en la que salió— y ésa no pasa por acá: vive en
+    movimientos_stock y ya quedó descontada en la guía R que la armó.
+
+    LA MERMA TAMPOCO ENTRA, y es una decisión y no un olvido: lo que se
+    descarta se tira, no se pone en una caja para tirarlo.
 
     `lleva_caja_nuestra` es el DATO DECLARADO de la guía, no algo que se
     deduzca acá: con None —la guía no lo declaró— devuelve 0, y eso NO es
@@ -58,8 +65,7 @@ def cajas_que_mueve_la_guia(tipo: str, bultos_primera, lleva_caja_nuestra,
     """
     if lleva_caja_nuestra is not True:
         return 0.0
-    bultos = float(bultos_primera or 0) + float(bultos_segunda or 0)
-    return SIGNO_POR_TIPO_DE_GUIA.get(tipo, 0) * bultos
+    return SIGNO_POR_TIPO_DE_GUIA.get(tipo, 0) * float(bultos_primera or 0)
 
 
 def envase_derivado_de_la_ficha(ficha: dict | None) -> tuple[bool | None, int | None, bool]:
@@ -132,3 +138,53 @@ def hay_que_reponer(envase: dict) -> bool:
     if envase.get("stock") is None or envase.get("umbral_reposicion") is None:
         return False
     return envase["stock"] < envase["umbral_reposicion"]
+
+
+def envases_por_unidad_de_venta(
+    contenido_ficha: float | None,
+    envase_variable: bool,
+    contenido_del_bulto: float | None,
+) -> float:
+    """Cuántas CAJAS por unidad de venta lleva UN bulto de esta ficha.
+
+    Devuelve CAJAS, no pesos: multiplicarla por el costo del envase es del
+    llamador. Así la regla física queda de un lado y la plata del otro, y el
+    día que el costo cambie de fuente esto no se entera.
+
+    LA MISMA REGLA LA APLICAN DOS PANTALLAS y por eso vive acá: la Rutina A
+    la corre una vez por compra y la pondera (`_envases_por_unidad_ponderado`),
+    y el Techo de Compra la corre una vez sobre el kilaje de la última compra.
+    Escrita dos veces se separan, y la que se olvide manda al comprador al
+    Mercado con un techo más alto del que corresponde — sin que ninguna
+    cuenta se descuadre.
+
+    Envase FIJO: 1 caja cada `contenido_ficha` unidades, siempre (ficha de
+    16 kg por Caja Grande => 1/16 cajas por kilo).
+
+    Envase VARIABLE (mango/cherry): si ESE bulto trae menos o igual que el
+    contenido de la ficha, sale descartable y no lleva caja; si trae más, es
+    caja chica a la misma razón. El número de corte y el "cada cuánto" salen
+    los dos de la ficha, nunca hardcodeados.
+
+    `contenido_del_bulto` en None = no hay bulto contra el cual decidir, así
+    que NO SE APLICA EL CORTE. Es el caso del renglón del Techo de Compra que
+    viaja a la pantalla: el JS decide el corte en vivo cuando el comprador
+    edita el kilaje, así que necesita la tasa sin cortar y el umbral al lado.
+
+    LAS DOS MAGNITUDES TIENEN QUE SER LA MISMA (corolario de las unidades):
+    `contenido_ficha` está en unidad de VENTA, así que `contenido_del_bulto`
+    también. Quién lo convierte es el llamador — acá no se puede saber.
+    """
+    if not contenido_ficha:
+        return 0.0
+
+    contenido_ficha = float(contenido_ficha)
+
+    if (
+        envase_variable
+        and contenido_del_bulto is not None
+        and float(contenido_del_bulto) <= contenido_ficha
+    ):
+        return 0.0
+
+    return 1.0 / contenido_ficha

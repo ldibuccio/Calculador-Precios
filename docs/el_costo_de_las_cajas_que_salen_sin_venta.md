@@ -1,118 +1,124 @@
 # El costo de las cajas que salen sin una venta atrás
 
-Del 16/09. Es el último hilo de las tres puertas. **No se construyó nada**:
-esto es el planteo y la medición que lo decide.
+Del 16/09. **Reescrito el mismo día**: la primera versión descansaba sobre un
+dato del galpón que el dueño dio vuelta, y la mitad de lo que decía era falso.
+**Ningún número de aquella versión se vuelve a citar.**
 
-## Lo que ya está cerrado, para no volver a discutirlo
+## Lo que se cayó, y por qué se deja escrito
 
-Las tres puertas **no son un agujero de STOCK de cajas**. La caja se
-descuenta cuando se ARMA —en la guía R— así que para cuando sale por
-cualquiera de las tres ya estaba descontada. El stock lo refleja solo.
+Decía que la segunda de un reproceso sale en caja de Día igual que la primera.
+**Es al revés: la primera va en caja de Día y la segunda queda en el envase del
+proveedor.** No lleva caja nuestra.
 
-Lo que sí son es un agujero de **COSTO DE ENVASE**, y ésa es otra pregunta.
+Eso mató tres cosas de un saque:
 
-## La observación que cambia la forma del problema
+1. Los **80,97 bultos** de `reprocesos.bultos_segunda` no son cajas nuestras y
+   no van en ninguna cuenta de envase.
+2. `pct_sin_primera` medido sobre esa columna **no significaba nada**, y el
+   factor que se iba a calcular con él habría corregido una fuga inexistente.
+3. Y se había cambiado el stock de cajas para descontarla: restaba 80,97
+   bultos por trimestre de un stock del que nunca salieron. Revertido — ver
+   el corolario 71 de CLAUDE.md, que además anota el error de método.
 
-El costo de envase **ya se cobra**, y se cobra por unidad de PRIMERA vendida:
-`_envases_por_unidad_ponderado` (app/costeo.py) devuelve `1/contenido_ficha`
-cajas por unidad, y `calcular_listado_para_negociar_precios` lo multiplica por
-el costo vigente del envase. Eso entra en el precio sugerido y en la utilidad.
+## Lo que queda, que es más chico y tiene otro nombre
 
-Esa tasa **supone que toda caja que sale la paga una unidad de primera.** Las
-cajas de las otras puertas salen sin una primera atrás:
+**No es un subproducto del reproceso: son los RECHAZOS.** Una caja que se
+pierde por esta vía hace este recorrido:
 
-| puerta | ¿hay caja nuestra? | ¿la paga una venta? |
+1. Se llena en una guía R con primera → **la tasa cobró una caja** contra el
+   precio de esa unidad, y el stock la descontó ahí.
+2. Sale con una entrega.
+3. **El súper la rechaza** y vuelve, llena, en nuestra caja.
+4. Y se va de nuevo, para siempre, por una de dos puertas.
+
+| puerta | `destino_rechazo` | qué pasa con la caja |
 |---|---|---|
-| 1. envase perdido de origen | **no** — sale en el cajón del proveedor | no aplica |
-| 2. la segunda que se remite al Puesto | **sí** — se pone en caja de Día en la mesa | **no** |
-| 3. la devolución al proveedor | **sí, si vuelve en caja de Día** | **no** |
-| (el rechazo a cajón grande) | sí, y **VUELVE** | no aplica: la recupera |
+| **2. Segunda al Puesto** | `segunda` | se va con la mercadería |
+| **3. Devolución al proveedor** | `devolucion_proveedor` | se va, si vuelve en caja de Día |
+| (vuelve a cajón grande) | `reproceso` | **se libera** — ya la suma `liberadas` |
+| (vuelve a stock) | `stock` | neutro por construcción |
 
-Así que **no falta una línea de costo nueva. Lo que falta es saber por cuánto
-está corta la tasa que ya existe.** La primera está subsidiando a la segunda,
-y el número que lo dice es `por_segunda / (por_primera + por_segunda)`.
+`cajas_4` midió las dos primeras: **149 cajas en 90 días — 84 chicas a $650 y
+65 grandes a $1.600, $158.600.** Cruzando `movimientos_stock` con la ficha del
+renglón, o sea mercadería que volvió del súper y que efectivamente salió en
+caja nuestra.
 
-Eso es una corrección sobre algo que ya se cobra, en el lugar donde ya se
-cobra. Es mucho más barato que una cuenta nueva, y no hay dos reglas.
+**El stock de cajas ya está bien y nunca estuvo mal para estas dos**: la caja
+se descontó cuando se llenó y no vuelve a sumarse. Lo que falta es el COSTO.
 
-## Las TRES correcciones a los números del 16/09
+## LA PREMISA QUE DECIDE TODO, Y NO ES MEDIBLE ACÁ
 
-Las tres son de razonamiento, no de aritmética, y las tres invalidan lo que
-dije. **No se corrige la prosa mirando la prosa**: las consultas viejas no
-quedaron en el repo, así que los números no se pueden reabrir y **no se
-vuelven a citar**. Lo que queda es la consulta nueva.
+**¿La mercadería rechazada se le factura igual a Día, o se le acredita?**
 
-### 1. Las 230 pueden estar contadas dos veces
+- **Si se acredita** → la venta se cae, la tasa no cobró nada, y la caja se
+  fue igual. La fuga es real y son los $158.600 por trimestre.
+- **Si se factura igual** → la caja ya está pagada por esa venta. **No hay
+  ninguna fuga**, y todo este documento describe un problema que no existe.
 
-Una consulta contaba las cajas que **salen** por las tres puertas y la otra
-las que **se llenan** con segunda. **Es la misma caja en dos momentos**: la
-segunda se pone en caja nuestra en la guía R y esa misma caja se va después
-con el remito al Puesto. Sumarlas cuenta cada caja dos veces.
+No hay consulta que lo conteste: la nota de crédito no vive en este sistema.
+**Se pregunta.** Y se pregunta como corresponde —*¿qué pasa con la factura
+cuando el súper rechaza?*— y no *"se acredita, ¿no?"*, que es exactamente la
+forma que produjo el error de esta misma mañana.
 
-Por eso la consulta nueva mide **en la guía R y una sola vez**, que además es
-el único lugar donde se sabe de qué envase es.
+## El denominador, que es lo que hace legible el número
 
-### 2. El conteo no se podía pasar a pesos, y ahora sí
+$158.600 por trimestre no se puede leer solo. Lo que decide es **contra cuántas
+cajas salieron**: 149 sobre 5.000 es 3%; 149 sobre 800 es 19%. El denominador
+ya existe y es `por_guias`, la columna que la pantalla de Cajas muestra al lado
+del stock. La consulta que los pone en la misma fila, por ficha, es
+`db/cajas_7_las_que_se_pierden_contra_las_que_salen.sql`.
 
-Los bultos de segunda venían `sin envase`: hasta el 16/09 `reprocesos` no
-tenía `envase_id`, así que no había forma de saber qué caja era. Multiplicar
-por un precio único era inventar la respuesta, con los costos yendo de $650
-a $1.600 — **2,5×**.
+## Las opciones, y la recomendación
 
-Desde `adedece` la segunda **sí es atribuible**, así que `pesos_sin_cobrar`
-sale por envase, con su `costo_caja` al lado para poder verificar la
-multiplicación en la misma fila.
+### A) Un FACTOR sobre la tasa de envase — **no**
 
-### 3. Los denominadores no cerraban
+Aritméticamente cierra y por ficha sería el grano correcto. Pero:
 
-Una consulta decía 314 guías en 30 días y otra 306 en 90. **Menos guías en
-una ventana tres veces más larga es imposible** si cuentan lo mismo, así que
-al menos una contaba otra cosa — otro filtro de anuladas, otro `tipo`, u otra
-ventana efectiva.
+- **Difumina un costo ATRIBUIBLE.** Un rechazo tiene artículo, cliente y
+  fecha. Meterlo en la tasa lo reparte entre todas las ventas de esa ficha,
+  que es justo donde deja de poder arreglarse. La regla de esta casa es la
+  contraria: el aviso va en la unidad de la CAUSA, no en la del síntoma.
+- **Es un instrumento grande para un costo chico.** 149 cajas por trimestre
+  son 1,6 por día. Mover una lista de precios es un acto comercial con una
+  contraparte enfrente; recuperar $53.000 por mes por esa vía cuesta más
+  conversación de la que vale.
+- **Y le cobra el rechazo de Día a Día**, lo cual es defendible — pero eso es
+  una POLÍTICA, no la corrección de un error de cuenta, y conviene no
+  disfrazarla de lo segundo.
 
-No se resolvió cuál: se reemplazaron las dos por **una sola consulta, con una
-ventana, una lista de filtros, y la población en la misma fila**
-(`guias_en_la_ventana`), para que la resta se haga mirando un solo resultado.
+### B) Un costo fijo mensual estimado — **no**
 
-## La consulta
+No hay libro de gastos en este sistema, así que sería un número que no
+alimenta ninguna cuenta: no traba nada, no cambia ningún precio, no aparece en
+ninguna decisión. Es el perfil exacto del campo sin consecuencia.
 
-`db/cajas_6_cuantas_salen_sin_una_primera_atras.sql`. Probada contra
-`db/esquema_completo.sql` con los casos plantados, no leída: la guía fuera de
-la ventana, la anulada y la que no declara el envase quedan afuera cada una
-por su filtro, y el envase sin usar vuelve en ceros en vez de desaparecer.
-Los dos canarios la mueven (sin el filtro de anuladas: 100 → 500 de primera;
-sin el piso de la ventana: 100 → 118).
+### C) Lo que va: **contarlo donde se causa, y no tocar ningún precio**
 
-## Lo que hay que mirar ANTES de creerle al número
+1. **El gasto real de cajas, visible** — hecho el 16/09 en la pantalla de
+   Cajas: cuántas cajas se compraron y cuánta plata, valuadas al costo que
+   regía el día de cada compra. Eso es lo que contesta *"que no aparezca como
+   sorpresa cuando compro cajas"*, y no dependía de ninguna decisión.
+2. **Las cajas perdidas por rechazo, al lado del rechazo**, con su artículo y
+   su cliente. Un renglón que diga *"los rechazos de este mes se llevaron N
+   cajas · $X"* es negociable con Día; un 2% repartido en la lista de precios
+   no.
+3. **Y la validación que ya está armada**: lo COBRADO por la tasa contra lo
+   CONSUMIDO (`por_guias`). Son dos fuentes independientes del mismo hecho, y
+   si no cierran por más que los rechazos, ahí hay algo. (Comprado contra
+   stock NO sirve: es una identidad por construcción y siempre cierra.)
 
-**`sin_declarar` grande invalida la ventana.** `reprocesos.envase_id` y
-`lleva_caja_nuestra` se escriben desde el 16/09, así que los 90 días traen
-guías viejas que no los tienen. Mientras ese número sea del orden de
-`guias_en_la_ventana`, lo que la consulta mide es **la primera semana**, no
-noventa días. Conviene correrla de nuevo en octubre.
+## Lo que sigue sin declararse
 
-Es el corolario 24 con otra ropa: un cero prolijo sobre una población que
-todavía no existe se lee igual que uno sobre una población medida.
+`movimientos_stock.lleva_caja_nuestra` y `envase_id` solo se pueden escribir
+cuando `destino_rechazo = 'reproceso'` — lo dice el CHECK. Así que **las dos
+puertas que pierden la caja no la declaran**, y `cajas_4` la DEDUCE de la ficha
+del renglón.
 
-## Lo que queda ANOTADO Y NO CONSTRUIDO
+Eso funciona hoy y tiene un costo conocido: la ficha es la de AHORA, así que
+cambiarle el envase a una ficha **re-etiqueta la historia en silencio**. Es
+exactamente la razón por la que `reprocesos.envase_id` se guarda en vez de
+leerse de la ficha, y está escrita en el comment de esa columna.
 
-1. **La corrección de la tasa.** Con `pct_sin_primera` medido, la tasa pasa
-   de `1/contenido_ficha` a `1/contenido_ficha / (1 − pct)`. Es un solo lugar
-   —`_envases_por_unidad_ponderado`— y ninguna regla nueva.
-
-   **Antes de tocarla hay que ver el número.** Si da 3%, mover el precio
-   sugerido por eso es ruido; si da 20%, es una caja de cada cinco. Y como
-   sube el precio sugerido de todos los artículos de esa ficha, la decisión
-   no es técnica.
-
-2. **La puerta 3 no está medida y no se puede.** Hoy la devolución al
-   proveedor no dice si la mercadería se fue en caja nuestra: no hay columna.
-   La consulta nueva **no la incluye**, y eso está dicho acá para que nadie
-   lea `pesos_sin_cobrar` como el total de las tres puertas — es la puerta 2
-   sola.
-
-   Si se quiere, la columna es la misma que acabamos de poner en el
-   reingreso a cajón grande, con la misma regla y la misma función.
-
-3. **La puerta 1 no va a tener número nunca**, y está bien: no hay caja
-   nuestra que perder.
+El arreglo es la misma columna con la misma regla y la misma función,
+extendida a los otros dos destinos. **No se construyó**: primero la premisa de
+la factura, que puede cerrar el tema entero.

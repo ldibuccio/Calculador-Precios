@@ -1633,3 +1633,111 @@ def test_la_regla_de_PYTHON_y_la_de_la_ALERTA_son_LA_MISMA(  ):
     fuente = io.open("app/costeo.py", encoding="utf-8").read()
     assert "activo" in unidades_incompatibles.__doc__, "la diferencia va explicada donde se decide"
     assert fuente.count("def unidades_incompatibles") == 1, "la regla vive en UN solo lugar"
+
+
+# --- La tasa de envase se escribe UNA sola vez ------------------------------
+#
+# La Rutina A y el Techo de Compra contestan la MISMA pregunta —cuántas cajas
+# por unidad de venta lleva un bulto de esta ficha— y hasta el 16/09 cada una
+# la escribía a mano. El docstring del Techo decía "la misma convención que la
+# Rutina A", que es exactamente cómo se reconoce una copia.
+#
+# Los dos tests preguntan por la ESTRUCTURA y no por el texto (corolario 59):
+# el docstring de la función compartida NOMBRA a las dos rutinas, así que un
+# `in fuente` matchea la prosa que explica la regla y pasa con la regla rota.
+
+
+def _funcion_del_modulo(nombre: str):
+    import ast, io
+
+    arbol = ast.parse(io.open("app/costeo.py", encoding="utf-8").read())
+    for nodo in ast.walk(arbol):
+        if isinstance(nodo, ast.FunctionDef) and nodo.name == nombre:
+            return nodo
+    raise AssertionError(f"no existe {nombre} en app/costeo.py")
+
+
+def _llamadas_a(nodo, nombre: str) -> int:
+    import ast
+
+    return sum(
+        1
+        for hijo in ast.walk(nodo)
+        if isinstance(hijo, ast.Call)
+        and isinstance(hijo.func, ast.Name)
+        and hijo.func.id == nombre
+    )
+
+
+def test_las_DOS_rutinas_sacan_la_tasa_de_envase_de_la_MISMA_funcion():
+    """Rutina A y Techo de Compra llaman a `envases_por_unidad_de_venta`.
+
+    Una llamada en POSICIÓN de llamada, no el nombre adentro de una cadena:
+    `ast.unparse` de cualquiera de las dos devuelve su docstring entero, y el
+    comentario que explica la regla la nombra.
+    """
+    # CUÁNTOS USOS TIENE CADA UNA, y el número importa: el Techo usa la regla
+    # DOS veces —el valor que viaja a la pantalla, sin cortar, y el corte por
+    # kilaje de la utilidad actual— y un `>= 1` deja volver la copia en el
+    # corte, que es justo donde las dos se separan (el `<=`, la guarda del
+    # contenido). Medido: con `>= 1` ese canario cae CERO.
+    usos = {"_envases_por_unidad_ponderado": 1, "calcular_objetivos_de_compra": 2}
+    for rutina, minimo in usos.items():
+        nodo = _funcion_del_modulo(rutina)
+        assert _llamadas_a(nodo, "envases_por_unidad_de_venta") >= minimo, (
+            f"{rutina} volvió a escribir la tasa a mano: si el factor de las cajas "
+            "que salen sin primera va en la otra, las dos se separan sin que nada "
+            "se descuadre"
+        )
+
+
+def test_NADIE_en_costeo_divide_a_mano_por_el_contenido_de_la_ficha():
+    """El conjunto ENCONTRADO contra el DECIDIDO (corolario 60), en el árbol.
+
+    Recorrer las dos rutinas que hoy conozco solo confirma lo que ya sé. Esto
+    barre el módulo entero, así que también cae la TERCERA copia que alguien
+    escriba mañana en una función que todavía no existe.
+    """
+    import ast, io
+
+    arbol = ast.parse(io.open("app/costeo.py", encoding="utf-8").read())
+    a_mano = [
+        nodo
+        for nodo in ast.walk(arbol)
+        if isinstance(nodo, ast.BinOp)
+        and isinstance(nodo.op, ast.Div)
+        and isinstance(nodo.right, ast.Name)
+        and nodo.right.id == "contenido_ficha"
+    ]
+    assert a_mano == [], (
+        "hay una división por contenido_ficha escrita a mano en app/costeo.py: "
+        "esa es la tasa de envase y sale de core.envases.envases_por_unidad_de_venta"
+    )
+
+
+def test_el_corte_del_JS_del_Techo_de_Compra_es_LA_MISMA_regla_que_la_de_Python():
+    """La TERCERA copia del corte, y ésta no se puede compartir: corre en el navegador.
+
+    El JS recalcula el techo en vivo mientras el comprador edita el kilaje, así
+    que repite el corte de envase variable. No hay forma de que llame a
+    `envases_por_unidad_de_venta`, y por eso queda pineado acá: el día que
+    alguien toque el `<=` por un `<`, un bulto que trae exactamente el
+    contenido de la ficha pasa de descartable a caja chica en la pantalla y
+    NO en el server, y los dos números se separan sin que nada se descuadre.
+
+    El ancla es la expresión entera y va contra el `<script>`, no contra el
+    documento: el comentario que explica el corte está tres líneas más arriba
+    y nombra el umbral (corolario 38).
+    """
+    import io, re
+
+    html = io.open("templates/objetivo_compra.html", encoding="utf-8").read()
+    guion = re.search(r"<script>(.*?)</script>", html, re.S)
+    assert guion is not None, "la pantalla del Techo perdió su <script>"
+    js = re.sub(r"//.*", "", guion.group(1))
+
+    assert "kilos <= umbral" in js, (
+        "el corte del JS dejó de ser `kilos <= umbral`: ésa es la misma regla "
+        "que core.envases.envases_por_unidad_de_venta aplica en el server"
+    )
+    assert js.count("umbral") >= 2, "el umbral tiene que leerse y compararse"
