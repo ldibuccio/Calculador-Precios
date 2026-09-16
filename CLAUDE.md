@@ -6348,6 +6348,50 @@ cubre el total**. El freno cierra el agujero en la SUMA, no en la
 atribución por lote. Es un residuo de costeo y de trazabilidad, y por eso
 se deja: los costos están en etapa de prueba.
 
+### Y el riesgo de verdad no es el freno: es la FECHA con que se carga
+
+Del 16/09, y salió de mirar los 132 bultos que esperan guía R —ocho
+artículos, el más viejo del 07/09— y preguntarse qué pasa cuando alguien
+se ponga a cargarlas.
+
+**El freno nuevo no las puede rebotar.** Solo descuenta cuando ya hay una
+guía R del MISMO artículo y la MISMA fecha; con ninguna, la resta es cero
+y el resultado es idéntico al de antes del cambio. Eso lo mide
+`db/espera_1_el_freno_nuevo_puede_rebotar.sql`, que cuenta los días de
+armado que ya tienen una guía R ese día — un superconjunto a propósito,
+porque cuáles están esperando sale del rejuego del FIFO y escribirlo en
+SQL sería la segunda versión de la cuenta que el docstring de
+`bultos_esperando_guia_r_por_articulo` prohíbe.
+
+**Y el veredicto del freno viejo tampoco se vence**: `reparto_para_
+reproceso` de una guía fechada el 07/09 mira entradas hasta el 07 y
+salidas hasta el 06, los dos fijos. Cargarla hoy da lo mismo que el día 7.
+Solo se mueve si alguien carga algo FECHADO en esos días, y eso solo puede
+ayudar.
+
+**Lo que sí es un riesgo es fechar la guía que falta con el día de HOY**, y
+lo que lo vuelve digno de una sección es que **dispara DOS guardas
+correctas a la vez, y las dos empujan para el mismo lado**:
+
+1. **No tapa el hueco.** Una guía R posterior al armado no lo cubre
+   (`lote_posterior_a_la_salida` compara fechas), así que los bultos
+   siguen esperando y el bloque sigue mostrándolos. Esto la pantalla ya lo
+   avisa desde el 10/09.
+2. **Y entra a compartir día con todas las guías R de hoy**, que es
+   exactamente donde el freno del 16/09 sí descuenta. O sea que la fecha
+   equivocada es lo único que puede convertir esta carga en un rebote.
+
+Ninguna de las dos es nueva por separado; **la que es nueva es que las
+dispara el mismo error**. Y ahí está la forma general que conviene
+reconocer: cuando se agrega una guarda, la pregunta no es solo a quién
+traba — es **qué equivocación única hace fallar a la vez a la nueva y a
+una que ya estaba**. Dos guardas correctas que comparten una causa se
+sienten como un sistema que se ensañó, y el que la sufre aprende a
+desconfiar de las dos.
+
+**Lo accionable, y es una sola cosa**: al cargar estas guías, el único
+campo que hay que mirar es la fecha, y va **el día en que se armó**.
+
 ## Corolario 74: una respuesta CONGELADA y una DERIVADA a la misma pregunta se separan sin que ninguna esté rota
 
 Del 16/09, y es del dueño: *"las dos cumplen lo que prometen, y nadie las
