@@ -184,3 +184,69 @@ los dos se separan.
 Cuánto pesa no se sabe: `cajas_7` excluye `reproceso` a propósito. Sale de
 correr la misma consulta con ese destino agregado, que es el canario A de
 `tests/test_costo_real.py`.
+
+## LA TABLA, corrida en Frutamax el 16/09 — y está CONCENTRADA
+
+```
+Pomelo           5 de 5    · 100%  · $8.000
+Zapallito       35 de 43   ·  81%  · $22.750
+Limon           25 de 45   ·  56%  · $40.000
+Tomate Redondo  35 de 64   ·  55%  · $56.000
+Morron Verde     3 de 57   ·   5%  · $1.950
+Palta            1 de 19   ·   5%  · $650
+Cherry          35 de 0    ·  ---  · $22.750
+Mango           10 de 0    ·  ---  · $6.500
+(diez articulos en cero)                        total $158.600 en 90 dias
+```
+
+**Cuatro artículos se llevan el 80%, y diez están en cero.** Eso confirma la
+decisión con el número: un factor global habría repartido el costo de Pomelo
+—que pierde el 100% de lo que arma— entre los diez que no pierden ninguna. El
+problema es de cuatro artículos, no de la lista de precios.
+
+### Cherry y Mango con `salieron` en 0: era un defecto de la consulta
+
+**`salieron` exigía la caja DECLARADA y `perdidas` la DERIVA de la ficha.** Las
+dos mitades del cociente no medían lo mismo.
+
+El mecanismo está en `envase_derivado_de_la_ficha`: una ficha de envase
+**VARIABLE** devuelve `(None, None, True)` — *"hay que preguntar"*, porque el
+envase lo decide el cajón de esa compra y puede salir descartable. Si nadie
+contesta, `lleva_caja_nuestra` queda en NULL y esa guía R no entra en
+`salieron`. Pero la ficha SÍ tiene `envase_id`, así que sus cajas perdidas sí
+cuentan. **Mango y Cherry son exactamente los dos de envase variable** — los
+mismos dos multiformato cuya `contenido_referencia` se vació el 12/09.
+
+Arreglado agregando **`sin_declarar`** a la consulta: ahora el `pct` en NULL se
+explica solo en la misma fila. Y con eso viene la advertencia que hay que
+leer: **para esas dos filas `perdidas` es un TECHO**, porque el envase se
+derivó de la ficha y puede que ese día el cajón viniera chico y saliera
+descartable.
+
+Los seis de envase FIJO no están afectados: ahí el server escribe
+`lleva_caja_nuestra` siempre, porque se puede derivar.
+
+### Pomelo al 100%: lo contesta una columna, no otra consulta
+
+5 de 5 no distingue "pasa siempre" de "volvió un camión": con denominador 5 no
+hay poder para nada. Por eso el renglón de la pantalla trae **`rechazos`** —
+de cuántos rechazos DISTINTOS salen esas cajas. Cinco cajas en UN rechazo es un
+camión; las mismas cinco en CINCO es algo que pasa todas las semanas, y son dos
+conversaciones distintas con el cliente.
+
+## DÓNDE QUEDÓ, y por qué en Cajas y no en otro lado
+
+**La lista va en `/compras/cajas`, pegada al gasto de compra y con la MISMA
+ventana.** La razón es del dueño y es la buena: los dos números se leen juntos
+—lo que se compró contra lo que se perdió— y con dos recortes distintos la
+resta no significaría nada. Lo cuida un test que compara las dos llamadas.
+
+Ordenada **por plata**, que es lo que la vuelve una lista de trabajo: con
+cuatro artículos llevándose el 80%, por nombre habría que leerla entera.
+
+**Y sigue habiendo un renglón en Rentabilidad Real**, que es otra lectura: ahí
+la caja va al lado de la renta de ESE cliente. Son dos escrituras de la misma
+regla que no pueden compartir código —una es SQL de la app, la otra Python
+sobre datos ya cargados— así que las ata un test que exige que las TRES listas
+de destinos (las dos del código y la del `.sql` que se pega en Supabase) digan
+lo mismo.

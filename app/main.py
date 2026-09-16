@@ -286,6 +286,7 @@ from app.db import (
     VENTANA_GASTO_EN_CAJAS_DIAS,
     crear_movimiento_envase,
     contar_guias_sin_declarar_el_envase,
+    cajas_perdidas_por_rechazo,
     gasto_en_cajas,
     guardar_umbral_de_envase,
     contar_envases_a_reponer,
@@ -4436,7 +4437,12 @@ def _renderizar_pantalla_cajas(request: Request, *, error: str | None = None,
     try:
         envases = stock_de_envases()
         sin_declarar = contar_guias_sin_declarar_el_envase()
-        gasto = gasto_en_cajas(_hoy_argentina() - timedelta(days=VENTANA_GASTO_EN_CAJAS_DIAS))
+        desde_gasto = _hoy_argentina() - timedelta(days=VENTANA_GASTO_EN_CAJAS_DIAS)
+        gasto = gasto_en_cajas(desde_gasto)
+        # LA MISMA VENTANA que el gasto, a propósito: los dos números se leen
+        # juntos —lo que se compró contra lo que se perdió— y con dos recortes
+        # distintos la resta no significaría nada.
+        perdidas = cajas_perdidas_por_rechazo(desde_gasto)
     except Exception as error_db:
         raise HTTPException(status_code=500, detail=f"Error al conectar con la base de datos: {error_db}") from error_db
 
@@ -4452,7 +4458,8 @@ def _renderizar_pantalla_cajas(request: Request, *, error: str | None = None,
         "compras_cajas.html",
         {"envases": envases, "sin_declarar": sin_declarar, "error": error,
          "aviso": aviso, "hoy": _hoy_argentina().isoformat(),
-         "gasto": gasto, "ventana_gasto": VENTANA_GASTO_EN_CAJAS_DIAS},
+         "gasto": gasto, "ventana_gasto": VENTANA_GASTO_EN_CAJAS_DIAS,
+         "perdidas": perdidas},
         status_code=status_code,
     )
 

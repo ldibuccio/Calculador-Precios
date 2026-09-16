@@ -327,6 +327,18 @@ UN_ENVASE_BAJO = [{
 # antes de ejercitar una línea (corolario 51).
 SIN_GASTO = {"desde": date(2026, 6, 18), "por_envase": [], "cajas": 0,
              "gasto": 0.0, "sin_costo": 0, "ultima": None}
+SIN_PERDIDAS = {"desde": date(2026, 6, 18), "renglones": [], "cajas": 0,
+                "pesos": 0.0, "ultimo": None}
+CON_PERDIDAS = {
+    "desde": date(2026, 6, 18),
+    "renglones": [
+        {"cliente": "EJEMPLO Super", "articulo": "Fruta Uno", "envase": "Caja Grande",
+         "cajas": 35.0, "pesos": 56000.0, "rechazos": 4, "ultimo": date(2026, 9, 12)},
+        {"cliente": "EJEMPLO Super", "articulo": "Fruta Dos", "envase": "Caja Chica",
+         "cajas": 5.0, "pesos": 3250.0, "rechazos": 1, "ultimo": date(2026, 9, 3)},
+    ],
+    "cajas": 40.0, "pesos": 59250.0, "ultimo": date(2026, 9, 12),
+}
 CON_GASTO = {
     "desde": date(2026, 6, 18),
     "por_envase": [
@@ -341,7 +353,8 @@ CON_GASTO = {
 
 def test_sin_conteo_inicial_la_pantalla_NO_dice_cero():
     """Un cero ahí se leería como "no quedan cajas", que es lo contrario."""
-    with patch("app.main.gasto_en_cajas", return_value=SIN_GASTO), \
+    with patch("app.main.cajas_perdidas_por_rechazo", return_value=SIN_PERDIDAS), \
+         patch("app.main.gasto_en_cajas", return_value=SIN_GASTO), \
          patch("app.main.stock_de_envases", return_value=UN_ENVASE_SIN_ARRANCAR), \
          patch("app.main.contar_guias_sin_declarar_el_envase", return_value={"casos": 0, "poblacion": 0}):
         respuesta = cliente.get("/compras/cajas")
@@ -354,7 +367,8 @@ def test_sin_conteo_inicial_la_pantalla_NO_dice_cero():
 
 
 def test_debajo_del_umbral_la_pantalla_lo_MARCA():
-    with patch("app.main.gasto_en_cajas", return_value=SIN_GASTO), \
+    with patch("app.main.cajas_perdidas_por_rechazo", return_value=SIN_PERDIDAS), \
+         patch("app.main.gasto_en_cajas", return_value=SIN_GASTO), \
          patch("app.main.stock_de_envases", return_value=UN_ENVASE_BAJO), \
          patch("app.main.contar_guias_sin_declarar_el_envase", return_value={"casos": 0, "poblacion": 0}):
         respuesta = cliente.get("/compras/cajas")
@@ -366,7 +380,8 @@ def test_debajo_del_umbral_la_pantalla_lo_MARCA():
 
 
 def test_el_HUECO_de_las_guias_sin_declarar_se_muestra_CON_su_poblacion():
-    with patch("app.main.gasto_en_cajas", return_value=SIN_GASTO), \
+    with patch("app.main.cajas_perdidas_por_rechazo", return_value=SIN_PERDIDAS), \
+         patch("app.main.gasto_en_cajas", return_value=SIN_GASTO), \
          patch("app.main.stock_de_envases", return_value=UN_ENVASE_BAJO), \
          patch("app.main.contar_guias_sin_declarar_el_envase",
                return_value={"casos": 3, "poblacion": 314}):
@@ -378,7 +393,8 @@ def test_el_HUECO_de_las_guias_sin_declarar_se_muestra_CON_su_poblacion():
 
 
 def test_la_pantalla_vive_en_COMPRAS_y_la_barra_lo_dice():
-    with patch("app.main.gasto_en_cajas", return_value=SIN_GASTO), \
+    with patch("app.main.cajas_perdidas_por_rechazo", return_value=SIN_PERDIDAS), \
+         patch("app.main.gasto_en_cajas", return_value=SIN_GASTO), \
          patch("app.main.stock_de_envases", return_value=UN_ENVASE_BAJO), \
          patch("app.main.contar_guias_sin_declarar_el_envase", return_value={"casos": 0, "poblacion": 0}):
         respuesta = cliente.get("/compras/cajas")
@@ -392,7 +408,8 @@ def test_la_pantalla_vive_en_COMPRAS_y_la_barra_lo_dice():
 
 def test_una_cantidad_con_DECIMALES_no_entra():
     """Media caja no existe, y la regla sale de la misma función que la guía R."""
-    with patch("app.main.gasto_en_cajas", return_value=SIN_GASTO), \
+    with patch("app.main.cajas_perdidas_por_rechazo", return_value=SIN_PERDIDAS), \
+         patch("app.main.gasto_en_cajas", return_value=SIN_GASTO), \
          patch("app.main.stock_de_envases", return_value=UN_ENVASE_BAJO), \
          patch("app.main.contar_guias_sin_declarar_el_envase", return_value={"casos": 0, "poblacion": 0}), \
          patch("app.main.crear_movimiento_envase") as escribir:
@@ -406,7 +423,8 @@ def test_una_cantidad_con_DECIMALES_no_entra():
 
 def test_el_PRESTAMO_lo_da_vuelta_el_SERVER_y_no_la_persona():
     """La pregunta es "cuántas le mandé", no "cuántas resto"."""
-    with patch("app.main.gasto_en_cajas", return_value=SIN_GASTO), \
+    with patch("app.main.cajas_perdidas_por_rechazo", return_value=SIN_PERDIDAS), \
+         patch("app.main.gasto_en_cajas", return_value=SIN_GASTO), \
          patch("app.main.stock_de_envases", return_value=UN_ENVASE_BAJO), \
          patch("app.main.contar_guias_sin_declarar_el_envase", return_value={"casos": 0, "poblacion": 0}), \
          patch("app.main.crear_movimiento_envase") as escribir:
@@ -417,7 +435,8 @@ def test_el_PRESTAMO_lo_da_vuelta_el_SERVER_y_no_la_persona():
     escribir.assert_called_once()
     assert escribir.call_args.args[2] == -30
     # Y la compra suma, con la misma pantalla y el mismo campo en positivo.
-    with patch("app.main.gasto_en_cajas", return_value=SIN_GASTO), \
+    with patch("app.main.cajas_perdidas_por_rechazo", return_value=SIN_PERDIDAS), \
+         patch("app.main.gasto_en_cajas", return_value=SIN_GASTO), \
          patch("app.main.stock_de_envases", return_value=UN_ENVASE_BAJO), \
          patch("app.main.contar_guias_sin_declarar_el_envase", return_value={"casos": 0, "poblacion": 0}), \
          patch("app.main.crear_movimiento_envase") as escribir:
@@ -561,7 +580,8 @@ def _cuerpo(respuesta) -> str:
 
 
 def test_la_pantalla_MUESTRA_lo_que_se_gasto_en_cajas():
-    with patch("app.main.gasto_en_cajas", return_value=CON_GASTO), \
+    with patch("app.main.cajas_perdidas_por_rechazo", return_value=SIN_PERDIDAS), \
+         patch("app.main.gasto_en_cajas", return_value=CON_GASTO), \
          patch("app.main.stock_de_envases", return_value=UN_ENVASE_BAJO), \
          patch("app.main.contar_guias_sin_declarar_el_envase", return_value={"casos": 0, "poblacion": 0}):
         respuesta = cliente.get("/compras/cajas")
@@ -584,7 +604,8 @@ def test_SIN_compras_la_pantalla_lo_DICE_en_vez_de_mostrar_un_cero():
     que se vería si nadie declarara las compras. Son cosas distintas y la
     pantalla las separa con palabras.
     """
-    with patch("app.main.gasto_en_cajas", return_value=SIN_GASTO), \
+    with patch("app.main.cajas_perdidas_por_rechazo", return_value=SIN_PERDIDAS), \
+         patch("app.main.gasto_en_cajas", return_value=SIN_GASTO), \
          patch("app.main.stock_de_envases", return_value=UN_ENVASE_BAJO), \
          patch("app.main.contar_guias_sin_declarar_el_envase", return_value={"casos": 0, "poblacion": 0}):
         respuesta = cliente.get("/compras/cajas")
@@ -600,7 +621,8 @@ def test_las_compras_SIN_COSTO_a_su_fecha_se_dicen_y_no_se_esconden():
     Una compra anterior al primer costo cargado de su envase suma cajas y no
     suma pesos. Sin este renglón el total se leería como si las cubriera.
     """
-    with patch("app.main.gasto_en_cajas", return_value=CON_GASTO), \
+    with patch("app.main.cajas_perdidas_por_rechazo", return_value=SIN_PERDIDAS), \
+         patch("app.main.gasto_en_cajas", return_value=CON_GASTO), \
          patch("app.main.stock_de_envases", return_value=UN_ENVASE_BAJO), \
          patch("app.main.contar_guias_sin_declarar_el_envase", return_value={"casos": 0, "poblacion": 0}):
         respuesta = cliente.get("/compras/cajas")
@@ -634,3 +656,152 @@ def test_el_gasto_se_valua_al_costo_DEL_DIA_DE_LA_COMPRA_y_eso_sale_del_SQL():
     # cajas; sin el de anuladas, a 1149.
     assert "m.origen = 'compra'" in sql
     assert "m.anulado_el IS NULL" in sql
+
+
+# --- Las cajas que se llevaron los rechazos ---------------------------------
+
+
+def test_la_pantalla_LISTA_las_cajas_perdidas_ORDENADAS_POR_PLATA():
+    """Ordenada por plata es lo que la vuelve una lista de trabajo.
+
+    En Frutamax cuatro artículos se llevan el 80% de los $158.600: por cajas
+    o por nombre habría que leerla entera para encontrar los dos que
+    importan. El orden lo hace el SQL; acá se afirma que la pantalla lo
+    respeta y no lo vuelve a ordenar por su cuenta.
+    """
+    with patch("app.main.cajas_perdidas_por_rechazo", return_value=CON_PERDIDAS), \
+         patch("app.main.gasto_en_cajas", return_value=SIN_GASTO), \
+         patch("app.main.stock_de_envases", return_value=UN_ENVASE_BAJO), \
+         patch("app.main.contar_guias_sin_declarar_el_envase", return_value={"casos": 0, "poblacion": 0}):
+        respuesta = cliente.get("/compras/cajas")
+    assert respuesta.status_code == 200
+    marcado = _cuerpo(respuesta)
+
+    assert marcado.count('class="perdida-fila"') == 2
+    assert 'class="perdida-total"' in marcado
+    assert marcado.index("Fruta Uno") < marcado.index("Fruta Dos"), (
+        "la de más plata tiene que ir primero"
+    )
+    # Cliente y artículo juntos: el número se negocia con alguien.
+    assert "Fruta Uno · EJEMPLO Super" in " ".join(marcado.split())
+    assert "59.250" in marcado
+
+
+def test_la_lista_dice_DE_CUANTOS_RECHAZOS_sale_cada_numero():
+    """Sin esa columna un porcentaje sobre números chicos no se puede leer.
+
+    Cinco cajas perdidas en UN rechazo es un camión que volvió; las mismas
+    cinco en CINCO es algo que pasa siempre, y son dos conversaciones
+    distintas. Es el denominador del corolario 45 puesto por renglón.
+    """
+    with patch("app.main.cajas_perdidas_por_rechazo", return_value=CON_PERDIDAS), \
+         patch("app.main.gasto_en_cajas", return_value=SIN_GASTO), \
+         patch("app.main.stock_de_envases", return_value=UN_ENVASE_BAJO), \
+         patch("app.main.contar_guias_sin_declarar_el_envase", return_value={"casos": 0, "poblacion": 0}):
+        respuesta = cliente.get("/compras/cajas")
+    marcado = " ".join(_cuerpo(respuesta).split())
+
+    assert "4 rechazos" in marcado
+    assert "1 rechazo ·" in marcado, "singular con uno solo, o se lee como un error"
+
+
+def test_SIN_cajas_perdidas_la_pantalla_lo_DICE_en_vez_de_mostrar_una_lista_vacia():
+    """La otra respuesta del par (corolario 53).
+
+    Y acá el vacío es la respuesta normal: la mayoría de las semanas no se
+    pierde ninguna caja. Una tarjeta vacía se aprende a saltear y el día que
+    tenga algo ya nadie la mira.
+    """
+    with patch("app.main.cajas_perdidas_por_rechazo", return_value=SIN_PERDIDAS), \
+         patch("app.main.gasto_en_cajas", return_value=SIN_GASTO), \
+         patch("app.main.stock_de_envases", return_value=UN_ENVASE_BAJO), \
+         patch("app.main.contar_guias_sin_declarar_el_envase", return_value={"casos": 0, "poblacion": 0}):
+        respuesta = cliente.get("/compras/cajas")
+    marcado = _cuerpo(respuesta)
+
+    assert 'class="perdida-total"' not in marcado
+    assert "Ningún rechazo se llevó una caja nuestra" in marcado
+
+
+def test_las_dos_cuentas_de_la_pantalla_usan_LA_MISMA_VENTANA():
+    """Lo comprado y lo perdido se leen juntos: con dos recortes no se restan.
+
+    Se afirma sobre la LLAMADA y no sobre el texto: las dos fechas viajan a
+    la pantalla adentro de sus dicts, así que un assert sobre el marcado
+    compararía lo que el fixture trajo (corolario 40).
+    """
+    with patch("app.main.cajas_perdidas_por_rechazo", return_value=SIN_PERDIDAS) as perdidas, \
+         patch("app.main.gasto_en_cajas", return_value=SIN_GASTO) as gasto, \
+         patch("app.main.stock_de_envases", return_value=UN_ENVASE_BAJO), \
+         patch("app.main.contar_guias_sin_declarar_el_envase", return_value={"casos": 0, "poblacion": 0}):
+        cliente.get("/compras/cajas")
+
+    assert perdidas.call_args.args == gasto.call_args.args
+
+
+def test_las_TRES_listas_de_destinos_que_se_llevan_la_caja_dicen_lo_MISMO():
+    """La pantalla de Cajas, la de Rentabilidad Real y la consulta a mano.
+
+    Son tres escrituras de la misma regla y no pueden compartir código —una
+    es SQL de la app, otra Python, la tercera un `.sql` que se pega en
+    Supabase—. El `.sql` se LEE, no se copia: copiado envejece en silencio y
+    el número que el dueño corre a mano deja de ser el que la pantalla
+    muestra, que son justo los dos que se ponen uno al lado del otro.
+    """
+    import io
+    import re
+
+    from app.db import _SQL_CAJAS_PERDIDAS_POR_RECHAZO
+    from core.costo_real import DESTINOS_QUE_SE_LLEVAN_LA_CAJA
+
+    def destinos(texto):
+        sin_comentarios = "\n".join(
+            l for l in texto.splitlines() if not l.strip().startswith("--")
+        )
+        adentro = re.search(r"destino_rechazo IN \(([^)]*)\)", sin_comentarios, re.I)
+        assert adentro is not None, "dejó de filtrar por destino_rechazo"
+        return tuple(sorted(re.findall(r"'([a-z_]+)'", adentro.group(1))))
+
+    sql_del_repo = io.open(
+        "db/cajas_7_las_que_se_pierden_contra_las_que_salen.sql", encoding="utf-8"
+    ).read()
+    esperado = tuple(sorted(DESTINOS_QUE_SE_LLEVAN_LA_CAJA))
+
+    assert destinos(_SQL_CAJAS_PERDIDAS_POR_RECHAZO) == esperado
+    assert destinos(sql_del_repo) == esperado
+
+
+def test_lo_que_la_CONSULTA_de_las_perdidas_pide_solo_se_ve_en_su_TEXTO():
+    """Tres propiedades que ningún test de pantalla puede ver.
+
+    El valor lo entrega el mock, así que el orden, el reloj del costo y el
+    tipo de JOIN llegan iguales con la consulta rota (corolario 65). Los tres
+    canarios daban CERO antes de este test.
+
+    Y el ancla va SIN los comentarios: el docstring de la función nombra las
+    tres cosas para explicarlas, así que un `in` sobre el texto entero
+    matchea la prosa (corolario 59).
+    """
+    from app.db import _SQL_CAJAS_PERDIDAS_POR_RECHAZO
+
+    sql = "\n".join(
+        l for l in _SQL_CAJAS_PERDIDAS_POR_RECHAZO.splitlines()
+        if not l.strip().startswith("--")
+    )
+
+    # 1. ORDENADA POR PLATA: es lo que la vuelve una lista de trabajo. Con
+    #    cuatro artículos llevándose el 80%, por nombre habría que leerla
+    #    entera para encontrar los dos que importan.
+    assert "ORDER BY SUM(m.cantidad * c.costo) DESC" in sql
+
+    # 2. EL COSTO VIGENTE A LA FECHA DEL RECHAZO, no el de hoy: una caja
+    #    perdida en julio no se revalúa sola. Es el mismo reloj que
+    #    `gasto_en_cajas`, y las dos se leen juntas en la misma pantalla.
+    assert "h.vigente_desde <= m.fecha_operacion" in sql
+    assert "current_date" not in sql.lower()
+
+    # 3. `JOIN envases` Y NO `LEFT JOIN`: una ficha sin envase es envase
+    #    perdido de origen y ahí no hay caja nuestra que perder. Con LEFT
+    #    JOIN esas devoluciones entran con cajas en positivo y pesos en NULL
+    #    — se lee como una fuga sin precio en vez de como lo que es.
+    assert "JOIN envases e" in sql and "LEFT JOIN envases" not in sql

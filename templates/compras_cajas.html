@@ -46,6 +46,23 @@
                  margin-top: .5rem; padding-top: .5rem; border-top: 2px solid #e2e8f0;
                  font-size: 1.15rem; font-weight: 700; }
   .gasto-total .cuanto { white-space: nowrap; font-variant-numeric: tabular-nums; }
+  /* Las cajas que se llevaron los rechazos. Va PEGADA al gasto y con la
+     misma ventana: los dos se leen juntos — lo que se compró contra lo que
+     se perdió. En celular cada renglón se apila en dos líneas (quién y
+     cuánto arriba, el detalle abajo) en vez de una tabla que se corte. */
+  .perdida-fila { padding: .5rem 0; border-bottom: 1px solid #f1f5f9;
+                  font-size: .95rem; }
+  .perdida-fila:last-of-type { border-bottom: 0; }
+  .perdida-fila .arriba { display: flex; justify-content: space-between; gap: .5rem; }
+  .perdida-fila .quien { font-weight: 600; }
+  .perdida-fila .cuanto { white-space: nowrap; font-variant-numeric: tabular-nums;
+                          font-weight: 700; color: #3730a3; }
+  .perdida-fila .abajo { font-size: .82rem; color: #6b7280; margin-top: .15rem; }
+  .perdida-total { display: flex; justify-content: space-between; gap: .5rem;
+                   margin-top: .5rem; padding-top: .5rem;
+                   border-top: 2px solid #e2e8f0;
+                   font-size: 1.15rem; font-weight: 700; color: #3730a3; }
+  .perdida-total .cuanto { white-space: nowrap; font-variant-numeric: tabular-nums; }
 </style>
 </head>
 <body>
@@ -89,6 +106,36 @@
     {% else %}
       <p class="ayuda">No hay ninguna compra de cajas declarada en los últimos
         {{ ventana_gasto }} días. Se declaran más abajo, con "Movimiento".</p>
+    {% endif %}
+  </div>
+
+  <div class="tarjeta">
+    <h2>Lo que se llevaron los rechazos — últimos {{ ventana_gasto }} días</h2>
+    {% if perdidas.renglones %}
+      {% for r in perdidas.renglones %}
+      <div class="perdida-fila">
+        <div class="arriba">
+          <span class="quien">{{ r.articulo }} · {{ r.cliente }}</span>
+          <span class="cuanto">{{ r.pesos|moneda }}</span>
+        </div>
+        <div class="abajo">{{ r.cajas|numero }} {{ r.envase }} ·
+          {{ r.rechazos }} rechazo{{ "s" if r.rechazos != 1 }} ·
+          el último {{ r.ultimo|fecha_corta }}</div>
+      </div>
+      {% endfor %}
+      <div class="perdida-total">
+        <span>Total · {{ perdidas.cajas|numero }} cajas</span>
+        <span class="cuanto">{{ perdidas.pesos|moneda }}</span>
+      </div>
+      <p class="ayuda">Salieron con una venta que el cliente no pagó y se
+        fueron de nuevo con la mercadería — al Puesto como segunda o de vuelta
+        al proveedor. <strong>Ordenado por plata</strong>: los de arriba son
+        los que vale la pena hablar. Y mirá los <strong>rechazos</strong>: las
+        mismas cajas en uno solo son un camión que volvió; en cinco, algo que
+        pasa siempre.</p>
+    {% else %}
+      <p class="ayuda">Ningún rechazo se llevó una caja nuestra en los últimos
+        {{ ventana_gasto }} días.</p>
     {% endif %}
   </div>
 

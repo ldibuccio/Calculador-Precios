@@ -12310,6 +12310,98 @@ def gasto_en_cajas(desde) -> dict:
     }
 
 
+_SQL_CAJAS_PERDIDAS_POR_RECHAZO = """
+    SELECT cl.nombre, a.nombre, e.nombre,
+           SUM(m.cantidad)                       AS cajas,
+           SUM(m.cantidad * c.costo)             AS pesos,
+           COUNT(*)                              AS rechazos,
+           MAX(m.fecha_operacion)                AS ultimo
+      FROM movimientos_stock m
+      JOIN pedidos_renglones pr ON pr.id = m.pedido_renglon_id
+      JOIN fichas_logistica f   ON f.id = pr.ficha_id
+      JOIN envases e            ON e.id = f.envase_id
+      JOIN clientes cl          ON cl.id = f.cliente_id
+      JOIN articulos a          ON a.id = f.articulo_id
+      LEFT JOIN LATERAL (
+          SELECT h.costo
+            FROM envases_costo_historial h
+           WHERE h.envase_id = f.envase_id
+             AND h.vigente_desde <= m.fecha_operacion
+           ORDER BY h.vigente_desde DESC
+           LIMIT 1
+      ) c ON true
+     WHERE m.anulado_el IS NULL
+       AND m.tipo = 'reingreso_rechazo'
+       AND m.destino_rechazo IN ('segunda', 'devolucion_proveedor')
+       AND m.fecha_operacion >= %s
+     GROUP BY cl.nombre, a.nombre, e.nombre
+     ORDER BY SUM(m.cantidad * c.costo) DESC NULLS LAST, SUM(m.cantidad) DESC
+"""
+
+
+def cajas_perdidas_por_rechazo(desde) -> dict:
+    """Las cajas nuestras que se llevaron los rechazos, por cliente y artículo.
+
+    ORDENADA POR PLATA, y eso es lo que la vuelve una lista de trabajo: en
+    Frutamax cuatro artículos se llevan el 80%, así que ordenada por cajas o
+    por nombre haría falta leerla entera para encontrar los dos que importan.
+
+    LAS DOS PUERTAS DONDE LA CAJA NO VUELVE: `segunda` (se remite al Puesto en
+    la caja en la que volvió) y `devolucion_proveedor` (se va con la
+    mercadería). NO entra `reproceso` —esa caja se vacía al pasar la fruta al
+    cajón grande— ni `stock`, que vuelve llena y se rearma sin guía R nueva.
+    Es la misma lista que `core.costo_real.DESTINOS_QUE_SE_LLEVAN_LA_CAJA` y
+    que `db/cajas_7_*.sql`, y hay un test que ata las tres.
+
+    `rechazos` ES LA COLUMNA QUE HACE LEGIBLE EL RESTO, y no estaba en el
+    pedido: dice de cuántos rechazos DISTINTOS salen esas cajas. Un artículo
+    que perdió 5 cajas en UN rechazo es un camión que volvió; el mismo número
+    en CINCO es algo que pasa siempre, y son dos conversaciones distintas con
+    el cliente. Sin ella, un porcentaje alto sobre números chicos no se puede
+    leer (Pomelo, 5 de 5).
+
+    EL COSTO ES EL VIGENTE A LA FECHA DE CADA RECHAZO, igual que en
+    `gasto_en_cajas`: con el de hoy, una caja perdida en julio se revalúa
+    sola. Las dos cuentas de esta pantalla tienen que usar el mismo reloj o
+    no se pueden restar.
+
+    `JOIN envases` Y NO `LEFT JOIN`: una ficha sin envase es envase perdido de
+    origen —manzana, pera, arándano— y ahí no hay caja nuestra que perder. Con
+    un LEFT JOIN esas devoluciones entrarían con `cajas` en positivo y `pesos`
+    en NULL, que se lee como una fuga sin precio en vez de como lo que es.
+
+    EL ENVASE SALE DE LA FICHA DE HOY, que es lo único que hay: las dos
+    puertas no lo declaran (el CHECK solo deja escribir `envase_id` con
+    destino `reproceso`). Cambiarle el envase a una ficha re-etiqueta esta
+    historia en silencio. Ver docs/el_costo_de_las_cajas_que_salen_sin_venta.md
+    """
+    conexion = obtener_conexion()
+    try:
+        with conexion.cursor() as cursor:
+            cursor.execute(_SQL_CAJAS_PERDIDAS_POR_RECHAZO, (desde,))
+            filas = cursor.fetchall()
+    finally:
+        conexion.close()
+
+    renglones = [
+        {
+            "cliente": f[0], "articulo": f[1], "envase": f[2],
+            "cajas": float(f[3] or 0),
+            "pesos": float(f[4]) if f[4] is not None else 0.0,
+            "rechazos": int(f[5] or 0),
+            "ultimo": f[6],
+        }
+        for f in filas
+    ]
+    return {
+        "desde": desde,
+        "renglones": renglones,
+        "cajas": sum(r["cajas"] for r in renglones),
+        "pesos": sum(r["pesos"] for r in renglones),
+        "ultimo": max((r["ultimo"] for r in renglones if r["ultimo"]), default=None),
+    }
+
+
 def guardar_umbral_de_envase(envase_id: int, umbral: int | None) -> None:
     """Debajo de cuántas cajas avisa la alerta de Compras. None = no vigilar este envase.
 
