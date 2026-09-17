@@ -40,6 +40,9 @@ end $$;
 --   C) control, una merma comun ........ ENTRA
 --   D) el rechazo a STOCK .............. ENTRA
 --
+-- CORRIDO Y VERIFICADO EN LAS DOS BASES el 17/09. El bloque 7 SI estaba
+-- puesto, y nadie lo piso: `vuelven_a_cajon 0` sobre 27 reingresos.
+--
 -- `if exists` y no `if not exists`: esto borra ESTRUCTURA. El bloque 7 puede
 -- no haberse corrido nunca, y el drop tiene que pasar igual.
 --

@@ -2540,6 +2540,12 @@ de coherencia puesto el reingreso a `reproceso` de toda ficha con envase
 derivable **quedaba rechazado por la base**. Una pata que sumaba algo que no
 pasa, apoyada en una columna que el código no podía escribir.
 
+**Y ese CHECK ESTUVO PUESTO EN LAS DOS BASES**, confirmado por el dueño el
+17/09: la tanda entera se corrió. Lo que lo dejó sin víctimas es que nadie
+cruzó ese camino — `vuelven_a_cajon 0` sobre 27 reingresos en Frutamax—, así
+que la pared existió un día y la desactivó el drop en vez del uso. Es el
+corolario 75.
+
 **Dónde vive el modelo**: arriba de todo en `core/envases.py`, que es el
 módulo que las dos cuentas leen. Acá está para el que busque por el lado del
 negocio; allá, para el que lo busque por el lado del código.
@@ -6633,3 +6639,91 @@ descuadre se ve como dos pantallas sanas.** Es la familia entera de este
 archivo —el cero que no puede crecer, la columna que nadie escribe, el campo
 sin consecuencia— dicha una vez más: lo que hace daño no es el dato malo, es
 que se vea igual que el bueno.
+
+## Corolario 75: un CHECK de coherencia entre DOS columnas es una pared si el código escribe UNA
+
+Del 17/09, y es del dueño. La migración del bloque 7 agregó esto sobre
+`movimientos_stock`:
+
+```sql
+check ((lleva_caja_nuestra is true) = (envase_id is not null))
+```
+
+**El CHECK está bien escrito y cubre las dos direcciones**, que es
+exactamente lo que este archivo pide (una guarda que cubre un solo lado deja
+pasar el espejo en silencio). Lo que no estaba era la otra mitad del par: el
+código escribía `envase_id` y **nunca** escribió `lleva_caja_nuestra`. Así
+que la base rechazaba todo reingreso a `reproceso` de una ficha con envase
+derivable, y la guarda dejó de proteger para pasar a trabar.
+
+**Y el modo de falla es el peor que puede tener una migración: una pared que
+aparece el día que alguien usa un camino que hasta entonces nadie usó.** No
+falla al migrar, no falla en la verificación, no falla con los datos que hay.
+Medido en las dos bases el día que se sacó: `vuelven_a_cajon 0` sobre **27
+reingresos** en Frutamax. La mina estuvo enterrada un día entero y **la
+desactivó el drop, no el uso** — lo único que la hacía invisible era que
+nadie había cargado todavía un rechazo de esa forma.
+
+### Por qué NINGUNA de las guardas que ya teníamos lo ve
+
+Y es lo que lo vuelve una familia y no un descuido:
+
+- **La verificación de la migración pregunta por las filas que ESTÁN**, y su
+  `ofensores` cuenta `lleva_caja is true and envase_id is null`. Todas las
+  filas viejas tienen las dos en NULL, que es un caso legítimo, así que sale
+  **0 y es correcto**. Lo que nunca se cuenta son las filas que **no van a
+  poder entrar**, porque todavía no existen.
+- **El CHECK no puede saber que su segunda mitad no se llena.** Una guarda
+  declara una relación entre dos columnas; no sabe cuáles se escriben.
+- **Los tests del INSERT comparan la tupla ENTERA** y coincidían: la columna
+  no estaba ni en el INSERT ni en lo esperado. Es el corolario 72 otra vez —
+  un campo que nadie nombra no desajusta una comparación entre dos listas que
+  tampoco lo nombran.
+- **Y la pantalla andaba**, porque el camino que rebota es el que nadie
+  cruzó.
+
+### La pregunta que lo encuentra, y se hace el día que se escribe el CHECK
+
+> **Después de un CHECK que relaciona dos columnas, grepear el INSERT y el
+> UPDATE por LAS DOS.** Si aparece una sola, la guarda no es una guarda: es
+> una pared esperando al primero que pase.
+
+Cuesta un `grep` y se hace en el mismo commit que la migración. Y es el
+corolario 3 con una vuelta: allá el que falta no nombra el campo, así que
+hay que grepear el CONSTRUCTOR; acá **el constructor existe y nombra una de
+las dos**, que se lee como cobertura y es media.
+
+### Con qué engancha, y son los dos extremos del mismo eje
+
+| | qué le pasa a la guarda | cómo se ve |
+|---|---|---|
+| **Corolario 67** | evalúa NULL y **no rechaza nada** | todo entra, incluido lo que no debía |
+| **Corolario 72** | la columna no tiene escritor y **suma cero** | un cero prolijo que nadie lee como hueco |
+| **Éste** | rechaza **de más**, en un camino frío | no se ve hasta que alguien lo camina |
+
+Los tres salieron de la MISMA migración de cinco bloques, y ésa es la
+observación que más conviene guardar: **una tanda de bloques escritos el
+mismo día comparte los supuestos del que los escribió**, así que un error de
+lectura del mundo no aparece una vez — aparece en todos los bloques que se
+apoyaban en él. Revisar uno no dice nada de los otros cuatro.
+
+### Y el control que lo cerró fue la POBLACIÓN, no las columnas
+
+La verificación del drop trae `movimientos_POBLACION` y se corre las dos
+veces, antes y después:
+
+```
+FRUTAMAX  antes 109 · después 109
+PALMALA   antes   1 · después   1
+```
+
+`columnas 0 · guardas 0` dice que se fue lo que tenía que irse. **No dice que
+no se haya ido nada más.** Un `drop column` no toca filas, así que el
+conteo igual antes y después es lo único que separa "salieron las dos
+columnas" de "se llevó algo puesto" — y cuesta una columna más en una
+consulta que ya se iba a correr.
+
+Es el corolario 45 en su cuarto trabajo: el testigo del 24 dice si la base
+vota, el total esperado dice si la medición llegó al final, el denominador
+del 53 dice cuál pantalla se midió, y acá dice **qué NO se rompió**. Los
+cuatro existen por lo mismo — un número solo no se puede leer.
