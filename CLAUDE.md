@@ -2484,6 +2484,66 @@ escondo tiene adentro algo que se toca?* Y la respuesta se cuenta, no se
 recuerda — en las cuatro pantallas de arriba la intuición decía "son
 rótulos" y en una de las cuatro era falso.
 
+## EL MODELO DE LA CAJA, en tres renglones (17/09)
+
+Es del dueño, y reemplaza todo lo que la sección de abajo fue pensando
+durante seis días. Vale la pena leerlo primero: lo de abajo es el camino
+hasta acá, con tres premisas que se cayeron en el medio.
+
+    1. La caja de Día NO VUELVE NUNCA al stock. Por ninguna puerta.
+    2. El stock solo SUBE por COMPRA — y por la guía R `en_origen`, que es
+       una caja nuestra que vuelve llena de afuera.
+    3. Toda caja que se llena está PERDIDA, salvo la que vuelve rechazada y
+       se remanda; y ésa ya estaba descontada, así que no se cuenta dos
+       veces.
+
+**Las cuatro puertas del rechazo, contra ese modelo.** Las cuatro salen del
+mismo lugar —una caja que ya se descontó cuando la guía R la armó— y ninguna
+le devuelve nada al stock:
+
+| `destino_rechazo` | qué le pasa a la caja |
+|---|---|
+| `segunda` | se remite al Puesto en la caja en que volvió |
+| `devolucion_proveedor` | se va con la mercadería que se devuelve |
+| `reproceso` | la fruta pasa a cajón grande y la caja **se tira** |
+| `stock` | vuelve llena, se rearma y sale de nuevo: **la misma caja** |
+
+**Y POR ESO NO HAY NINGUNA REGLA QUE ESCRIBIR**, que es lo que lo vuelve un
+modelo y no una lista: las tres primeras ya están restadas y no vuelven; la
+cuarta está restada UNA vez y se reusa sin pasar por una guía R nueva.
+
+El neutro de la cuarta **no es una convención entre dos lugares** —que sería
+el corolario 21, correcto hasta que alguien agregue un tercer camino— sino
+una pared: un rechazo a `stock` deja un lote `reingreso_rechazo`, que es un
+TIPO_LOTE_TRABAJADO, y `reproceso_toma` los tiene **PROHIBIDOS**
+(core/stock.py). Medido con canario, no leído:
+
+```
+una GUIA R (reproceso_toma)  -> ['guia']                        <- no lo ve
+un ARMADO                    -> ['reingreso_rechazo', 'guia']   <- lo prefiere
+CANARIO (pared sacada)       -> ['reingreso_rechazo', 'guia']   <- la ve
+```
+
+Así que ninguna guía R puede consumir esa caja por segunda vez, y no hace
+falta que nadie se acuerde de nada.
+
+**Lo que costó llegar acá**: la `reproceso` llegó a tener columna propia
+—`movimientos_stock.envase_id` con su `lleva_caja_nuestra` y tres CHECKs— y
+una pata `liberadas` que le sumaba esa caja al stock, sobre la premisa de que
+quedaba libre. Se sacaron el 17/09 (`db/envases_9_*.sql`). **Un camino que
+nunca se va a recorrer es peor que no tenerlo: el próximo que lo lea va a
+creer que falta cablearlo.**
+
+Y una segunda razón, medida contra el esquema real: el código escribía
+`envase_id` y **nunca** escribió `lleva_caja_nuestra`, así que con el CHECK
+de coherencia puesto el reingreso a `reproceso` de toda ficha con envase
+derivable **quedaba rechazado por la base**. Una pata que sumaba algo que no
+pasa, apoyada en una columna que el código no podía escribir.
+
+**Dónde vive el modelo**: arriba de todo en `core/envases.py`, que es el
+módulo que las dos cuentas leen. Acá está para el que busque por el lado del
+negocio; allá, para el que lo busque por el lado del código.
+
 ## La caja nuestra que se va y no vuelve: TRES puertas del mismo agujero
 
 Del 11/09, y va acá porque es un hecho del negocio que el sistema no
@@ -6082,9 +6142,11 @@ diferencia con aquél es que **este assert estaba en el test cuyo TÍTULO
 afirma la propiedad**: no es que faltara la verificación, es que la que había
 no podía fallar.
 
-Cerrado calificando por ALIAS y recorriendo las cuatro patas por nombre, con
-un `count(...) == 4` al lado — el denominador del corolario 45 aplicado a un
-assert de texto: sin él, tres filtros y cuatro pasan igual.
+Cerrado calificando por ALIAS y recorriendo las patas por nombre, con un
+`count(...)` al lado — el denominador del corolario 45 aplicado a un assert
+de texto: sin él, tres filtros y cuatro pasan igual. (Eran cuatro patas
+cuando se escribió esto y son TRES desde el 17/09: se fue `liberadas`. El
+assert cuenta lo que hay, así que el número del test se movió con ella.)
 
 ## Corolario 72: una columna MIGRADA, SUMADA por la consulta y que NADIE ESCRIBE es un cero que ninguna verificación de esquema puede ver
 
@@ -6094,6 +6156,37 @@ de la migración daba `columna 1 · guarda 1 · ofensores 0`. Todo correcto, y
 la pata valía **cero por construcción**: ningún camino del código la
 escribía. La columna existía, la cuenta la leía, y no había un solo
 `INSERT` que la nombrara.
+
+**Y LA LECTURA ESTABA DADA VUELTA, corregido el 17/09.** Esto se leyó como
+un cableado que faltaba: la columna esperaba un escritor. No esperaba
+ninguno — **esperaba sumar cajas que se fueron a la basura.** La premisa de
+la pata era que el rechazo a cajón grande LIBERA la caja, y el dueño la dio
+vuelta: la caja SE TIRA. O sea que el cero era el único valor correcto que
+esa cuenta podía dar, y el bug no era que nadie la escribiera: era que
+existiera. Se sacó entera con sus dos columnas (`db/envases_9_*.sql`).
+
+**Eso no invalida el corolario, lo completa**, y la parte nueva es la que
+cuesta encontrar: una columna sin escritor tiene DOS explicaciones —falta
+cablearla, o no tiene que existir— y **las dos se ven idénticas**: columna
+migrada, consulta que la suma, cero prolijo, verificación en verde. La
+pregunta del 72 (*¿qué código la ESCRIBE?*) encuentra el síntoma y no
+distingue los dos casos. La que los separa no es de código: es **¿el hecho
+del mundo que esta columna afirma, ocurre?** — y eso se pregunta en el
+galpón, no se grepea.
+
+**Y hay una señal barata que estaba a la vista**: la columna se migró el
+16/09 con su CHECK y su verificación, y el código que la escribía se cableó
+en el commit ANTERIOR. O sea que la pata se escribió, se migró y se verificó
+sin que nadie preguntara si el hecho pasaba. Cuando una cuenta nueva se
+construye entera antes de confirmar su premisa, el cero que devuelve no es
+información — es el silencio de algo que nunca ocurrió.
+
+**Y la premisa era medible de la forma más barata que hay: preguntando.**
+Es el corolario 25 al pie de la letra —la premisa que nadie midió— con el
+agravante de que acá medir costaba una pregunta de una línea. La que
+funcionó las tres veces en esta casa es la abierta: *"¿qué pasa con la caja
+cuando la fruta vuelve a cajón grande?"*, y no *"la caja queda libre, ¿no?"*
+— la segunda tiene dos respuestas y una es un asentimiento (corolario 71).
 
 **Las tres cosas que lo confirmaron son de tres clases distintas**, y hacen
 falta las tres porque cada una sola se explica de otra manera:

@@ -15,6 +15,39 @@ no son obvias y por eso están escritas:
   mercadería que ya está en una caja. Como no se carga ninguna guía R nueva,
   el reuso queda NEUTRO POR CONSTRUCCIÓN y no hace falta escribir ninguna
   regla que lo diga. Anclado en el armado habría que acordarse de escribirla.
+
+EL MODELO ENTERO, en tres renglones (del dueño, 17/09), y es más simple que
+lo que estuvo construido dos días:
+
+    1. La caja de Día NO VUELVE NUNCA al stock. Por ninguna puerta.
+    2. El stock solo SUBE por COMPRA — y por la guía R `en_origen`, que es
+       una caja nuestra que vuelve llena de afuera.
+    3. Toda caja que se llena está PERDIDA, salvo la que vuelve rechazada y
+       se remanda; y ésa ya estaba descontada, así que no se cuenta dos
+       veces.
+
+LAS CUATRO PUERTAS DEL RECHAZO, contra ese modelo. Las cuatro salen del
+mismo lugar —una caja que ya se descontó cuando la guía R la armó— y
+ninguna le devuelve nada al stock:
+
+    segunda              se remite al Puesto en la caja en que volvió
+    devolucion_proveedor se va con la mercadería que se devuelve
+    reproceso            la fruta pasa a cajón grande y la caja SE TIRA
+    stock                vuelve llena, se rearma y sale de nuevo: LA MISMA
+                         caja, descontada una sola vez
+
+Y POR ESO NO HAY NINGUNA REGLA QUE ESCRIBIR, que es el punto: las tres
+primeras ya están restadas y no vuelven; la cuarta está restada una vez y
+se reusa sin pasar por una guía R nueva, porque `reproceso_toma` tiene
+PROHIBIDOS los lotes trabajados (core/stock.py). El neutro no es una
+convención entre dos lugares: es una pared que el FIFO no puede cruzar.
+
+La 'reproceso' llegó a tener columna propia —`movimientos_stock.envase_id`
+con su `lleva_caja_nuestra`— y una pata `liberadas` que se la sumaba al
+stock, sobre la premisa de que esa caja quedaba libre. Es falsa: se tira. Se
+sacaron las dos el 17/09 (db/envases_9_*.sql). Un camino que nunca se va a
+recorrer es peor que no tenerlo — el próximo que lo lea va a creer que falta
+cablearlo.
 """
 
 # Los tres tipos de guía R le hacen a la caja cosas distintas, y el signo no
@@ -102,20 +135,6 @@ def envase_derivado_de_la_ficha(ficha: dict | None) -> tuple[bool | None, int | 
     if ficha.get("envase_variable"):
         return None, None, True
     return True, ficha["envase_id"], False
-
-
-def declarado_del_formulario(envase_id, envases_validos) -> tuple[bool | None, int | None]:
-    """Traduce lo que eligió la pantalla cuando hubo que preguntar: (lleva, envase_id).
-
-    Vacío es DESCARTABLE —"este cajón no lleva caja nuestra"—, que es una
-    respuesta y no la ausencia de una: el select la ofrece con todas las
-    letras. Un id que no esté en los válidos vuelve como descartable y no
-    como un envase inventado; quien decide si eso alcanza es la ruta, que es
-    la que puede exigir que se conteste.
-    """
-    if envase_id in envases_validos:
-        return True, envase_id
-    return False, None
 
 
 def hay_que_reponer(envase: dict) -> bool:

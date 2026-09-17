@@ -8847,48 +8847,6 @@ def stock_de_porcion(articulo_id: int, ficha_id: int | None = None,
         conexion.close()
 
 
-def _envase_de_este_reingreso(cursor, pedido_renglon_id, destino_rechazo, envase_declarado):
-    """El envase que LIBERA un reingreso que vuelve a cajón grande. None en todo lo demás.
-
-    LA FICHA SE LEE ACÁ ADENTRO, en la misma transacción que el INSERT, y no
-    la manda la ruta: es el mismo argumento que en la guía R
-    (`_envase_de_esta_guia`). Si la pasara la ruta, el día que aparezca un
-    segundo llamador la columna se escribiría en NULL y el stock de cajas
-    volvería a decir que sobran — sin un error y sin nada que se vea roto.
-
-    SOLO CON DESTINO 'reproceso', que es la única de las cuatro puertas del
-    rechazo que vacía una caja nuestra: la mercadería se pasa a cajón grande
-    y la caja queda libre. Con los otros tres destinos la caja se va con la
-    mercadería (o se queda con ella) y no hay nada que devolver — y además el
-    CHECK `movimientos_stock_envase_solo_reproceso` lo rechazaría.
-
-    `envase_declarado` es lo que contestó la persona cuando hubo que
-    preguntar, y GANA sobre la derivación por la misma razón que en la guía
-    R: con ficha variable el envase lo decide el cajón de ESA compra. None =
-    no se preguntó.
-    """
-    if destino_rechazo != "reproceso" or pedido_renglon_id is None:
-        return None
-    ficha = None
-    # SIN agregado: `fetchone() is None` sobre un `count(*)` nunca es None.
-    cursor.execute(
-        """
-        SELECT fl.envase_id, fl.envase_variable
-          FROM pedidos_renglones r
-          JOIN fichas_logistica fl ON fl.id = r.ficha_id
-         WHERE r.id = %s
-        """,
-        (pedido_renglon_id,),
-    )
-    fila = cursor.fetchone()
-    if fila is not None:
-        ficha = {"envase_id": fila[0], "envase_variable": fila[1]}
-
-    lleva, envase_id, hay_que_preguntar = envase_derivado_de_la_ficha(ficha)
-    if hay_que_preguntar:
-        return envase_declarado
-    return envase_id if lleva else None
-
 
 def crear_movimiento_stock(
     articulo_id: int,
@@ -8907,7 +8865,6 @@ def crear_movimiento_stock(
     ficha_id: int | None = None,
     proveedor_devolucion_id: int | None = None,
     compra_devolucion_id: int | None = None,
-    envase_declarado: int | None = None,
 ) -> float:
     """Un movimiento de stock (ajuste/merma/reingreso): fila nueva, NUNCA pisa el stock. Devuelve el stock resultante.
 
@@ -8959,36 +8916,37 @@ def crear_movimiento_stock(
     (`movimientos_stock_compra_o_proveedor`): con compra, el proveedor sale
     de ella y mandarlo aparte sería la misma cosa escrita dos veces.
 
-    Y `envase_declarado` es EN QUÉ CAJA NUESTRA volvió lo que se vació a
-    cajón grande, cuando la pantalla tuvo que preguntarlo. La columna la
-    escribe SIEMPRE el server (`_envase_de_este_reingreso`), derivándola de
-    la ficha del renglón cuando se puede: el declarado solo entra en los
-    casos donde no hay de dónde derivar —ficha de envase variable o renglón
-    sin ficha—. Sin esto, la pata `liberadas` del stock de cajas era CERO
-    por construcción: la columna existía, nadie la escribía, y la cuenta se
-    veía perfecta.
+    NO HAY COLUMNA DE ENVASE, y es la decisión del 17/09: un rechazo que
+    vuelve a cajón grande NO libera la caja. Se tira — la fruta pasa al
+    cajón y la caja de Día se descarta—, así que no hay nada que devolverle
+    al stock de cajas. `movimientos_stock.envase_id` y su `lleva_caja_nuestra`
+    existieron dos días sobre la premisa contraria y se sacaron con su
+    migración (db/envases_9_*.sql): un camino que nunca se va a recorrer es
+    peor que no tenerlo, porque el próximo que lo lea va a creer que falta
+    cablearlo.
+
+    La caja de ese rechazo ya está contada, y como PÉRDIDA: se descontó del
+    stock el día que la guía R la armó, y `rechazos_perdidos` le carga el
+    envase junto con la mercadería. Ver core/envases.py, que tiene el modelo
+    entero escrito arriba.
+
     """
     conexion = obtener_conexion()
     try:
         with conexion.cursor() as cursor:
             stock_sistema = _stock_deposito_actual(cursor, articulo_id)
-            envase_liberado = _envase_de_este_reingreso(
-                cursor, pedido_renglon_id, destino_rechazo, envase_declarado
-            )
             cursor.execute(
                 """
                 INSERT INTO movimientos_stock
                     (articulo_id, tipo, cantidad, motivo, cliente_id, fecha_operacion, stock_sistema,
                      pedido_renglon_id, costo_por_bulto, destino_rechazo, bultos_segunda,
-                     lote_tipo, lote_origen_id, ficha_id, proveedor_devolucion_id, compra_devolucion_id,
-                     envase_id)
-                VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+                     lote_tipo, lote_origen_id, ficha_id, proveedor_devolucion_id, compra_devolucion_id)
+                VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
                 RETURNING id
                 """,
                 (articulo_id, tipo, cantidad, motivo, cliente_id, fecha_operacion, stock_sistema,
                  pedido_renglon_id, costo_por_bulto, destino_rechazo, bultos_segunda,
-                 lote_tipo, lote_origen_id, ficha_id, proveedor_devolucion_id, compra_devolucion_id,
-                 envase_liberado),
+                 lote_tipo, lote_origen_id, ficha_id, proveedor_devolucion_id, compra_devolucion_id),
             )
             if foto_ruta:
                 # RETURNING y no currval(pg_get_serial_sequence(...)): el
@@ -12068,30 +12026,17 @@ _SQL_STOCK_DE_ENVASES = """
            AND r.lleva_caja_nuestra IS TRUE
            AND r.fecha_operacion {comp} b.fecha_operacion
          GROUP BY r.envase_id
-    ),
-    liberadas AS (
-        SELECT m.envase_id, SUM(m.cantidad) AS cajas
-          FROM movimientos_stock m
-          JOIN base b ON b.envase_id = m.envase_id
-         WHERE m.anulado_el IS NULL
-           AND m.tipo = 'reingreso_rechazo'
-           AND m.destino_rechazo = 'reproceso'
-           AND m.fecha_operacion {comp} b.fecha_operacion
-         GROUP BY m.envase_id
     )
     SELECT e.id, e.nombre, e.umbral_reposicion,
            b.fecha_operacion AS desde,
            b.cantidad AS contadas,
            COALESCE(d.cajas, 0) AS declaradas,
            COALESCE(g.cajas, 0) AS por_guias,
-           COALESCE(l.cajas, 0) AS liberadas,
-           b.cantidad + COALESCE(d.cajas, 0) + COALESCE(g.cajas, 0)
-                      + COALESCE(l.cajas, 0) AS stock
+           b.cantidad + COALESCE(d.cajas, 0) + COALESCE(g.cajas, 0) AS stock
       FROM envases e
       LEFT JOIN base b      ON b.envase_id = e.id
       LEFT JOIN declarados d ON d.envase_id = e.id
       LEFT JOIN guias g      ON g.envase_id = e.id
-      LEFT JOIN liberadas l  ON l.envase_id = e.id
      WHERE e.activo = true
      ORDER BY e.nombre
 """
@@ -12114,10 +12059,17 @@ def stock_de_envases() -> list[dict]:
     pantalla lo dice con esas palabras. Un cero ahí se leería como "no
     quedan cajas", que es lo contrario de lo que pasa.
 
-    Las cuatro patas vuelven por separado —`contadas`, `declaradas`,
-    `por_guias`, `liberadas`— y no solo el total: un número solo no se puede
-    leer, y cuando el stock no cierre contra el galpón lo primero que hay que
-    poder mirar es cuál de las cuatro se movió.
+    Las TRES patas vuelven por separado —`contadas`, `declaradas`,
+    `por_guias`— y no solo el total: un número solo no se puede leer, y
+    cuando el stock no cierre contra el galpón lo primero que hay que poder
+    mirar es cuál de las tres se movió.
+
+    ERAN CUATRO HASTA EL 17/09: había una `liberadas`, que sumaba las cajas
+    que devolvía un rechazo con destino 'reproceso'. Esa caja no vuelve —se
+    tira al pasar la fruta al cajón grande— así que la pata sumaba algo que
+    no ocurre. Se fue con `movimientos_stock.envase_id`
+    (db/envases_9_*.sql). El stock de cajas SOLO SUBE POR COMPRA y por la
+    guía R `en_origen`, que es una caja nuestra que vuelve llena de afuera.
     """
     conexion = obtener_conexion()
     try:
@@ -12132,8 +12084,8 @@ def stock_de_envases() -> list[dict]:
             "id": f[0], "nombre": f[1], "umbral_reposicion": f[2],
             "desde": f[3],
             "contadas": f[4], "declaradas": f[5],
-            "por_guias": f[6], "liberadas": f[7],
-            "stock": f[8],
+            "por_guias": f[6],
+            "stock": f[7],
         }
         for f in filas
     ]
@@ -12346,12 +12298,16 @@ def cajas_perdidas_por_rechazo(desde) -> dict:
     Frutamax cuatro artículos se llevan el 80%, así que ordenada por cajas o
     por nombre haría falta leerla entera para encontrar los dos que importan.
 
-    LAS DOS PUERTAS DONDE LA CAJA NO VUELVE: `segunda` (se remite al Puesto en
-    la caja en la que volvió) y `devolucion_proveedor` (se va con la
-    mercadería). NO entra `reproceso` —esa caja se vacía al pasar la fruta al
-    cajón grande— ni `stock`, que vuelve llena y se rearma sin guía R nueva.
-    Es la misma lista que `core.costo_real.DESTINOS_QUE_SE_LLEVAN_LA_CAJA` y
-    que `db/cajas_7_*.sql`, y hay un test que ata las tres.
+    LAS DOS PUERTAS QUE SE NOMBRAN ACÁ: `segunda` (se remite al Puesto en la
+    caja en la que volvió) y `devolucion_proveedor` (se va con la mercadería).
+
+    `reproceso` TAMBIÉN pierde la caja —se tira al pasar la fruta al cajón
+    grande, confirmado el 17/09— y no está igual, porque esa caja ya está
+    COBRADA adentro de `rechazos_perdidos`. Lo que le falta es el nombre, y
+    es lo único que queda abierto. `stock` no está por otra razón: es la
+    única donde la caja se reusa. El porqué entero, en
+    `core.costo_real.DESTINOS_QUE_SE_LLEVAN_LA_CAJA`, que es la misma lista
+    que `db/cajas_7_*.sql` — y hay un test que ata las tres.
 
     `rechazos` ES LA COLUMNA QUE HACE LEGIBLE EL RESTO, y no estaba en el
     pedido: dice de cuántos rechazos DISTINTOS salen esas cajas. Un artículo

@@ -118,14 +118,25 @@ ETIQUETAS_MOTIVO_REAL = {
 # se suma a `rechazos_perdidos`, que es la línea de la pérdida.
 DESTINOS_RECHAZO_PERDIDO = ("segunda", "reproceso")
 
-# Las dos PUERTAS por donde una caja nuestra deja el depósito y no vuelve: la
-# mercadería se va y la caja se va con ella. `reproceso` NO está —esa caja se
-# vacía y vuelve a estar disponible— ni `stock`, que vuelve llena.
+# Las dos puertas donde la caja se va CON LA MERCADERÍA y por eso se NOMBRA
+# acá: `segunda` (se remite al Puesto en la caja en la que volvió) y
+# `devolucion_proveedor` (se va con lo que se le devuelve).
+#
+# `reproceso` TAMBIÉN PIERDE LA CAJA —el dueño lo confirmó el 17/09: al pasar
+# la fruta al cajón grande la caja de Día se TIRA— y aun así no está en esta
+# lista. No es un olvido y no es que se reuse: es que esa caja YA ESTÁ
+# COBRADA, adentro de `rechazos_perdidos`, porque 'reproceso' sí está en
+# DESTINOS_RECHAZO_PERDIDO y esa línea suma `bultos * costo + unidades *
+# envase_unidad`. Meterla acá no movería un peso —este renglón no entra en
+# ninguna suma— pero SÍ le faltaría el nombre. Queda como lo único abierto de
+# esto, medible con la misma consulta y el destino agregado.
+#
+# `stock` no está por otra razón, y es la única de las cuatro donde la caja
+# se reusa: vuelve llena, se rearma sin guía R nueva, y ya se descontó una
+# vez. Ver core/envases.py, que tiene el modelo entero.
 #
 # Es la misma lista que db/cajas_7_*.sql, y NO es la misma que
-# DESTINOS_RECHAZO_PERDIDO: aquélla dice si se perdió la MERCADERÍA. Que
-# `reproceso` esté en una y no en la otra es a propósito y es el hecho del
-# galpón — ver docs/el_costo_de_las_cajas_que_salen_sin_venta.md.
+# DESTINOS_RECHAZO_PERDIDO: aquélla dice si se perdió la MERCADERÍA.
 DESTINOS_QUE_SE_LLEVAN_LA_CAJA = ("segunda", "devolucion_proveedor")
 
 
@@ -382,11 +393,12 @@ def calcular_rentabilidad_real(
                 # mercadería, y con Día se negocia la caja — que es un número
                 # que se le puede poner sobre la mesa.
                 #
-                # SON LAS DOS PUERTAS DONDE LA CAJA NO VUELVE: la segunda que
-                # se remite al Puesto y la devolución al proveedor. NO entra
-                # `reproceso` (la caja se vacía y se libera) ni `stock` (vuelve
-                # llena y se rearma sin guía R nueva, así que no se consume
-                # otra). Es la misma lista que db/cajas_7_*.sql.
+                # LAS DOS PUERTAS QUE SE NOMBRAN ACÁ: la segunda que se remite
+                # al Puesto y la devolución al proveedor. `reproceso` también
+                # pierde la caja —se tira, 17/09— y no está igual, porque ya
+                # está COBRADA adentro de `rechazos_perdidos`: lo que le falta
+                # es el nombre. `stock` no está por otra razón: vuelve llena y
+                # se rearma sin guía R nueva. Misma lista que db/cajas_7_*.sql.
                 "cajas_perdidas": 0.0,
                 "cajas_perdidas_pesos": 0.0,
                 # Devueltos al proveedor: se muestran, no suman a ninguna cuenta.

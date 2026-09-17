@@ -36,16 +36,15 @@ select cl.nombre as cliente, a.nombre as articulo,
  where coalesce(p.cajas, 0) > 0 or coalesce(s.cajas, 0) > 0
  order by pesos desc nulls last;
 
--- `pct`: cajas PERDIDAS sobre las que SALIERON. Un numero solo no se lee:
--- 149 sobre 5.000 es 3% y sobre 800 es 19%.
---
+-- `pct`: PERDIDAS sobre las que SALIERON. Un numero solo no se lee: 149
+-- sobre 5.000 es 3% y sobre 800 es 19%.
 -- `sin_declarar` HACE LEGIBLE UN `pct` EN NULL: `salieron` cuenta solo las
--- guias con la caja DECLARADA y `perdidas` la DERIVA de la ficha. Una ficha de
--- envase VARIABLE (mango, cherry) no se deriva y queda NULL si nadie contesto.
--- Con `sin_declarar` alto ese `pct` NO SE LEE y `perdidas` es un TECHO.
+-- guias con la caja DECLARADA y `perdidas` la DERIVA de la ficha. Una de
+-- envase VARIABLE (mango, cherry) queda NULL si nadie contesto: ahi el
+-- `pct` no se lee y `perdidas` es un TECHO.
 --
--- PERDIDAS: el rechazo que se va de nuevo — `segunda` y
--- `devolucion_proveedor`. No `reproceso` (se libera) ni `stock`.
+-- PERDIDAS: `segunda` y `devolucion_proveedor`. `reproceso` tambien la
+-- pierde (se tira, 17/09) y no esta porque ya se cobra en
+-- `rechazos_perdidos`. `stock` la reusa.
 --
--- `poblacion` es contra cuanto se cuenta; `ult_guia`, si la base vota.
--- El resto en docs/el_costo_de_las_cajas_que_salen_sin_venta.md
+-- `poblacion`: contra cuanto se cuenta. `ult_guia`: si la base vota.

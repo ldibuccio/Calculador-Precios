@@ -1037,16 +1037,19 @@ def test_solo_las_DOS_puertas_donde_la_caja_NO_VUELVE_cuentan_una_caja_perdida()
 
     `reproceso` es el caso que hay que mirar: está en
     DESTINOS_RECHAZO_PERDIDO —la MERCADERÍA sí se pierde, va al pool de
-    segunda— y su CAJA vuelve, porque se vacía al pasar la fruta al cajón
-    grande. Son dos preguntas distintas sobre la misma fila, y por eso son
-    dos listas y no una.
+    segunda— y su CAJA **también se pierde**: se tira al pasar la fruta al
+    cajón grande (dueño, 17/09). Son dos preguntas distintas sobre la misma
+    fila, y por eso son dos listas y no una.
     """
     assert _cajas("segunda")["totales"]["cajas_perdidas"] == 5.0
     assert _cajas("devolucion_proveedor")["totales"]["cajas_perdidas"] == 5.0
-    assert _cajas("reproceso")["totales"]["cajas_perdidas"] == 0.0, (
-        "la caja de un reproceso se vacía y vuelve: contarla perdida es "
-        "cobrarle a Día una caja que sigue en el galpón"
-    )
+    # `reproceso` DA CERO ACÁ Y SU CAJA SÍ SE PIERDE, y la razón no es que se
+    # reuse —se tira— sino que YA ESTÁ COBRADA en `rechazos_perdidos`. O sea
+    # que este cero es de NOMBRE y no de plata, y es lo único que queda
+    # abierto de las cajas. Escrito así porque un assert con su razón al lado
+    # no se vuelve a cuestionar (corolario 68): con la razón vieja, el que
+    # pasara por acá leía que la caja vuelve, que es falso.
+    assert _cajas("reproceso")["totales"]["cajas_perdidas"] == 0.0
     assert _cajas("stock")["totales"]["cajas_perdidas"] == 0.0
 
 

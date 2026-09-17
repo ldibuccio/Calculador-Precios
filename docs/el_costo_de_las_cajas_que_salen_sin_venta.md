@@ -35,7 +35,7 @@ pierde por esta vía hace este recorrido:
 |---|---|---|
 | **2. Segunda al Puesto** | `segunda` | se va con la mercadería |
 | **3. Devolución al proveedor** | `devolucion_proveedor` | se va, si vuelve en caja de Día |
-| (vuelve a cajón grande) | `reproceso` | **se libera** — ya la suma `liberadas` |
+| (vuelve a cajón grande) | `reproceso` | **SE TIRA** — ya cobrada en `rechazos_perdidos` |
 | (vuelve a stock) | `stock` | neutro por construcción |
 
 `cajas_4` midió las dos primeras: **149 cajas en 90 días — 84 chicas a $650 y
@@ -160,30 +160,37 @@ El arreglo es la misma columna con la misma regla y la misma función,
 extendida a los otros dos destinos. **No se construyó**: primero la premisa de
 la factura, que puede cerrar el tema entero.
 
-## Lo que queda ABIERTO, y es una decisión del dueño
+## CERRADO el 17/09: la caja del `reproceso` SE TIRA
 
-**`reproceso` cuenta la caja como perdida y esa caja vuelve.** Está en
-`DESTINOS_RECHAZO_PERDIDO` —donde corresponde, porque la MERCADERÍA sí se
-pierde: va al pool de segunda— pero su caja **se vacía al pasar la fruta al
-cajón grande y queda disponible de nuevo**. Así que `rechazos_perdidos` le
-suma `unidades × envase_unidad` a una caja que sigue en el galpón.
+La pregunta abierta era si `reproceso` cobraba de más: su caja **parecía
+volver** —la fruta pasa al cajón grande y la caja quedaría libre— mientras
+`rechazos_perdidos` le sumaba `unidades × envase_unidad` como pérdida. Dos
+preguntas sobre la misma fila (*¿se perdió la mercadería?* y *¿se perdió la
+caja?*) contestadas por una sola lista.
 
-Son dos preguntas distintas sobre la misma fila —*¿se perdió la mercadería?*
-y *¿se perdió la caja?*— y hasta el 16/09 las contestaba una sola lista. El
-número nuevo (`cajas_perdidas`) ya las separa; **lo que no se tocó es
-`rechazos_perdidos`**, porque corregirlo mueve una pérdida que hoy se informa
-y eso se decide, no se mete en un commit de otra cosa.
+**La contestó el dueño, y es al revés: la caja se TIRA.** Al pasar la fruta al
+cajón grande, la caja de Día se descarta. Así que cobrarla como pérdida
+**estaba bien desde siempre** y no hay nada que corregir en
+`rechazos_perdidos`.
 
-**Y hay una segunda mitad del mismo hecho, del corolario 72**: la pata
-`liberadas` del stock de cajas —la que devolvería esa caja al stock— es CERO
-por construcción, porque **nadie escribe `movimientos_stock.envase_id`**. Así
-que hoy los dos están mal en la misma dirección: el stock no la devuelve y el
-costo la cobra perdida. El día que alguien le ponga escritor a esa columna,
-los dos se separan.
+**Y eso dio vuelta la otra mitad.** El corolario 72 decía que la pata
+`liberadas` del stock de cajas valía cero por construcción porque nadie
+escribía `movimientos_stock.envase_id`, y lo leía como un agujero — la
+columna esperaba un escritor. No esperaba nada: **esperaba sumar cajas que se
+fueron a la basura.** El bug no era que faltara cablearla; era que existiera.
 
-Cuánto pesa no se sabe: `cajas_7` excluye `reproceso` a propósito. Sale de
-correr la misma consulta con ese destino agregado, que es el canario A de
-`tests/test_costo_real.py`.
+Se sacaron las dos el 17/09 (`db/envases_9_*.sql`): la pata, las dos columnas
+y sus tres CHECKs. Un camino que nunca se va a recorrer es peor que no
+tenerlo — el próximo que lo lea va a creer que falta cablearlo.
+
+### Lo único que queda, y es de NOMBRE, no de plata
+
+`reproceso` **pierde la caja y no aparece en `cajas_perdidas`**, que es el
+renglón que las nombra. No es un peso de diferencia —ese renglón no entra en
+ninguna suma— pero el conteo de "cuántas cajas se llevaron los rechazos" sale
+corto. Agregarlo es la misma consulta con el destino sumado a
+`DESTINOS_QUE_SE_LLEVAN_LA_CAJA` y a `db/cajas_7_*.sql`, con el test que ata
+las tres listas diciendo dónde.
 
 ## LA TABLA, corrida en Frutamax el 16/09 — y está CONCENTRADA
 

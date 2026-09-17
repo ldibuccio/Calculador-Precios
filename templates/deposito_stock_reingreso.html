@@ -345,25 +345,6 @@
                value="{{ precarga.cajones or "" }}">
         <p class="ayuda">Los que contaste después de pasar las cajas a cajón. La diferencia con los bultos devueltos no es merma: es el cambio de envase.</p>
 
-        {# EN QUÉ CAJA VOLVIÓ: al lado de los cajones, que es la otra pregunta
-           de este mismo destino, y solo cuando el server no lo puede derivar
-           de la ficha del renglón. Con envase fijo lo copia de la ficha y con
-           envase perdido no hay caja nuestra que devolver: preguntar ahí
-           sería pedirle al operario que elija algo que no se usa.
-
-           EL VACÍO ES UNA RESPUESTA —"no volvió en caja nuestra"— y está
-           escrito con todas las letras: un select que empieza en "Elegí..."
-           no distingue al que contestó que no de al que no contestó. #}
-        {% if preguntar_envase %}
-        <label for="envase_id">¿En qué caja nuestra volvió?</label>
-        <select id="envase_id" name="envase_id">
-          <option value="">No volvió en caja nuestra (vino en cajón del proveedor)</option>
-          {% for e in envases %}
-          <option value="{{ e.id }}" {% if precarga.envase_id|string == e.id|string %}selected{% endif %}>{{ e.nombre }}</option>
-          {% endfor %}
-        </select>
-        <p class="ayuda">Esa caja queda libre y vuelve al stock de cajas. Esta ficha no lo dice sola: {% if renglon.ficha_id %}el envase se elige por compra{% else %}el renglón salió sin ficha asignada{% endif %}.</p>
-        {% endif %}
       </div>
 
       <button type="submit" class="boton-guardar">Guardar reingreso</button>

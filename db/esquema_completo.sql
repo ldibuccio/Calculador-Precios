@@ -920,32 +920,17 @@ create table movimientos_stock (
     -- misma cosa dos veces, y se pueden contradecir.
     constraint movimientos_stock_compra_o_proveedor
         check (compra_devolucion_id is null or proveedor_devolucion_id is null),
-    -- Solo reingreso con destino 'reproceso': EN QUÉ CAJA NUESTRA volvió lo
-    -- que se vació a cajón grande, y si volvió en una. Son DOS columnas y no
-    -- un envase_id nullable, igual que en reprocesos: ese NULL tendría dos
-    -- significados y los dos llegan igual a la cuenta de cajas.
-    --     true  + envase  -> libera una caja de ese tipo
-    --     false + NULL    -> no volvió en caja nuestra (envase perdido, o el
-    --                        cajón vino chico): un cero VERDADERO
-    --     NULL  + NULL    -> reingreso anterior a estas columnas: NO es "no
-    --                        liberó", es "no sabemos", y se cuenta aparte
-    -- Lo ESCRIBE siempre el server, copiándolo de la ficha del renglón cuando
-    -- el envase es fijo; la pantalla lo PREGUNTA solo cuando no se puede
-    -- derivar —ficha de envase variable o renglón sin ficha—. Es la misma
-    -- regla que en la guía R y vive en UNA función,
-    -- core/envases.envase_derivado_de_la_ficha. Ver db/envases_7_*.sql.
-    envase_id bigint references envases (id),
-    lleva_caja_nuestra boolean,
-    constraint movimientos_stock_envase_solo_reproceso
-        check (envase_id is null
-               or destino_rechazo is not distinct from 'reproceso'),
-    constraint movimientos_stock_lleva_caja_solo_reproceso
-        check (lleva_caja_nuestra is null
-               or destino_rechazo is not distinct from 'reproceso'),
-    -- En las DOS direcciones: uno que cubriera un solo lado deja pasar el
-    -- espejo en silencio.
-    constraint movimientos_stock_envase_coherente
-        check ((lleva_caja_nuestra is true) = (envase_id is not null)),
+    -- NO HAY COLUMNA DE ENVASE ACÁ, y es una decisión del 17/09: hubo una
+    -- (`envase_id` + `lleva_caja_nuestra`, con tres CHECKs) durante dos días,
+    -- para el rechazo con destino 'reproceso'. La premisa era que esa caja
+    -- quedaba libre al pasar la fruta al cajón grande. ES FALSA: LA CAJA SE
+    -- TIRA. Las sacó db/envases_9_*.sql — un camino que nunca se va a
+    -- recorrer es peor que no tenerlo.
+    --
+    -- Esa caja ya está contada como PÉRDIDA: se descuenta del stock cuando la
+    -- guía R la arma, y su costo va adentro de `rechazos_perdidos`. La guía R
+    -- sí tiene las dos columnas, y ahí se quedan: es donde la caja se llena.
+    -- El modelo entero está en core/envases.py.
     -- Merma dirigida a un lote puntual (NULL = FIFO, el default).
     lote_tipo text
         check (lote_tipo is null

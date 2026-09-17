@@ -144,7 +144,7 @@ def test_los_CUATRO_origenes_declarados_del_CHECK_los_ofrece_la_pantalla():
 # ---------------------------------------------------------------------------
 
 def test_el_recorte_del_CONTEO_INICIAL_esta_escrito_UNA_sola_vez():
-    """Las tres patas derivadas comparan contra la fecha del conteo inicial.
+    """Las dos patas derivadas comparan contra la fecha del conteo inicial.
 
     ESCRITO A MANO EN CADA UNA SE SEPARAN, y el día que alguien pase a contar
     a la tarde va a corregir una y dejar dos: ahí las guías R de ese día se
@@ -158,7 +158,7 @@ def test_el_recorte_del_CONTEO_INICIAL_esta_escrito_UNA_sola_vez():
     el recorte está puesto y no es decorativo.
     """
     assert COMPARADOR_DESDE_EL_CONTEO == ">="
-    assert _SQL_STOCK_DE_ENVASES.count("{comp}") == 3
+    assert _SQL_STOCK_DE_ENVASES.count("{comp}") == 2
     # Y ninguna pata lo escribe a mano: el `{comp}` es el único comparador
     # contra `b.fecha_operacion` que hay en la consulta.
     assert not re.search(r"(>=|>)\s*b\.fecha_operacion", _SQL_STOCK_DE_ENVASES)
@@ -175,8 +175,12 @@ def test_la_cuenta_derivada_EXCLUYE_las_guias_INICIALES_y_las_sin_declarar():
     sql = _SQL_STOCK_DE_ENVASES
     assert "r.lleva_caja_nuestra IS TRUE" in sql
     assert "ELSE 0 END" in sql
-    # El rechazo que vacía la caja es el ÚNICO destino que suma.
-    assert "m.destino_rechazo = 'reproceso'" in sql
+    # Y NINGÚN RECHAZO SUMA. La pata `liberadas` le sumaba al stock las cajas
+    # del rechazo a cajón grande; esa caja se tira (17/09), así que se fue con
+    # la columna. El assert es del TEXTO por lo mismo que el de arriba: con un
+    # mock la fila la entrega el fixture y el término de más llega igual, así
+    # que ninguna pantalla puede ver que volvió.
+    assert "destino_rechazo" not in sql and "reingreso_rechazo" not in sql
 
 
 def test_la_guia_R_consume_SOLO_LA_PRIMERA_y_la_segunda_NO_esta_en_el_SQL():
@@ -229,10 +233,10 @@ def test_el_stock_NO_es_una_columna_que_alguien_actualiza():
     # tabla. Medido con un canario: caían CERO tests, y una guía R anulada
     # habría seguido consumiendo cajas para siempre — que es exactamente lo
     # contrario de lo que este test promete en su título.
-    for alias, pata in (("m", "declarados"), ("r", "guias"), ("m", "liberadas")):
+    for alias, pata in (("m", "declarados"), ("r", "guias")):
         assert f"{alias}.anulado_el IS NULL" in _SQL_STOCK_DE_ENVASES, pata
     assert "origen = 'conteo_inicial' AND anulado_el IS NULL" in _SQL_STOCK_DE_ENVASES
-    assert _SQL_STOCK_DE_ENVASES.count("anulado_el IS NULL") == 4
+    assert _SQL_STOCK_DE_ENVASES.count("anulado_el IS NULL") == 3
     assert "UPDATE" not in _SQL_STOCK_DE_ENVASES.upper().replace("FOR UPDATE", "")
     esquema_sin_comentarios = "\n".join(
         l for l in ESQUEMA.splitlines() if not l.strip().startswith("--"))
@@ -314,11 +318,11 @@ def _puerta_de_compras_abierta():
 
 UN_ENVASE_SIN_ARRANCAR = [{
     "id": 1, "nombre": "Caja Grande", "umbral_reposicion": 50, "desde": None,
-    "contadas": None, "declaradas": 0, "por_guias": 0, "liberadas": 0, "stock": None,
+    "contadas": None, "declaradas": 0, "por_guias": 0, "stock": None,
 }]
 UN_ENVASE_BAJO = [{
     "id": 1, "nombre": "Caja Grande", "umbral_reposicion": 50, "desde": date(2026, 9, 10),
-    "contadas": 100, "declaradas": -70, "por_guias": -20, "liberadas": 6, "stock": 16,
+    "contadas": 100, "declaradas": -70, "por_guias": -20, "stock": 10,
 }]
 
 # El gasto en cajas viaja SIEMPRE, así que todas las pruebas de pantalla lo
@@ -375,8 +379,15 @@ def test_debajo_del_umbral_la_pantalla_lo_MARCA():
     marcado = respuesta.text.split("</style>")[-1]
     assert 'class="stock bajo"' in marcado
     assert "hay que reponer" in marcado
-    # Las cuatro patas al lado del total: un número solo no se puede leer.
-    assert "guías R" in marcado and "vueltas de un rechazo" in marcado
+    # Las TRES patas al lado del total: un número solo no se puede leer.
+    assert "contadas el" in marcado and "declarado:" in marcado and "guías R" in marcado
+    # Y NO HAY UNA CUARTA. Había una —"vueltas de un rechazo"— que mostraba la
+    # pata `liberadas`: las cajas que devolvía un rechazo a cajón grande. Esa
+    # caja se tira (17/09), así que la pata sumaba algo que no ocurre y se fue
+    # con la columna. El assert de la ausencia vale acá y NO es del corolario
+    # 68 —un test que defiende un hueco de pantalla—: esto no esconde un
+    # camino que se pueda recorrer, dice que la cuenta tiene tres términos.
+    assert "vueltas de un rechazo" not in marcado
 
 
 def test_el_HUECO_de_las_guias_sin_declarar_se_muestra_CON_su_poblacion():
@@ -533,13 +544,13 @@ def test_el_detalle_dice_CUANTAS_FALTAN_y_no_solo_cuales():
     bajos = [
         {"id": 1, "nombre": "Caja Grande", "umbral_reposicion": 50, "stock": 16,
          "desde": date(2026, 9, 10), "contadas": 100, "declaradas": 0,
-         "por_guias": 0, "liberadas": 0},
+         "por_guias": 0},
         {"id": 2, "nombre": "Caja Chica", "umbral_reposicion": 20, "stock": 300,
          "desde": date(2026, 9, 10), "contadas": 300, "declaradas": 0,
-         "por_guias": 0, "liberadas": 0},
+         "por_guias": 0},
         {"id": 3, "nombre": "Sin arrancar", "umbral_reposicion": 99, "stock": None,
          "desde": None, "contadas": None, "declaradas": 0,
-         "por_guias": 0, "liberadas": 0},
+         "por_guias": 0},
     ]
     with patch("app.db.stock_de_envases", return_value=bajos):
         detalle = detallar_envases_a_reponer()
