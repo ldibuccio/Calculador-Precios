@@ -20,6 +20,8 @@ from app.db import (
 from app.main import PUERTA_COMPRAS, app
 from core.envases import (
     ORIGENES_DE_COLEGA,
+    SIN_CAJA_NUESTRA,
+    declaracion_de_caja,
     SIGNO_POR_TIPO_DE_GUIA,
     como_queda_la_cuenta,
     efecto_en_la_cuenta,
@@ -40,6 +42,26 @@ FICHA_SIN_ENVASE = {"envase_id": None, "envase_variable": False}
 # ---------------------------------------------------------------------------
 # Las reglas puras
 # ---------------------------------------------------------------------------
+
+def test_la_RESPUESTA_del_operario_se_traduce_y_lo_que_NO_TIENE_FORMA_rebota():
+    """Tres valores, y "" NO es "no".
+
+    JUNTARLOS SERÍA EL BUG CON OTRA ROPA: no contestar se guardaría como "no
+    lleva caja", y entonces la caja sale, nadie la descuenta, y el sistema
+    AFIRMA que no había ninguna. Un hueco se ve; una afirmación falsa no.
+    """
+    assert declaracion_de_caja("") is None
+    assert declaracion_de_caja("   ") is None
+    assert declaracion_de_caja(None) is None
+    assert declaracion_de_caja(SIN_CAJA_NUESTRA) == (False, None)
+    assert declaracion_de_caja("7") == (True, 7)
+
+    # PREGUNTA POR LA FORMA DEL DATO (corolario 30): un id es un entero
+    # positivo, y eso no lo puede imitar ningún texto de la pantalla.
+    for basura in ("0", "-3", "si", "abc", "7.5"):
+        with pytest.raises(ValueError):
+            declaracion_de_caja(basura)
+
 
 def test_el_envase_se_DERIVA_de_la_ficha_fija_y_se_PREGUNTA_cuando_no_se_puede():
     assert envase_derivado_de_la_ficha(FICHA_FIJA) == (True, 7, False)

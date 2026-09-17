@@ -10506,7 +10506,10 @@ def asignar_ficha_a_reproceso(reproceso_id: int, ficha_id: int | None) -> None:
             # Con ficha VARIABLE sigue sin poder derivarse (el envase lo
             # decide el cajón de esa compra) y por eso el helper devuelve las
             # dos en NULL: el hueco se queda, que es verdad.
-            lleva_caja, envase_de_la_caja = _envase_de_esta_guia(cursor, ficha_id, None)
+            # El tercer valor se descarta A PROPOSITO: asignar la ficha no puede
+            # negarse. Con ficha variable vuelve a dar NULL y eso es verdad — el
+            # envase lo decide el cajon de ESA compra y acá no hay quien conteste.
+            lleva_caja, envase_de_la_caja, _ = _envase_de_esta_guia(cursor, ficha_id, None)
             cursor.execute(
                 """
                 UPDATE reprocesos
@@ -10679,6 +10682,7 @@ def crear_reproceso(
     cliente_id: int | None = None,
     ficha_id: int | None = None,
     reparto: list[dict] | None = None,
+    caja_declarada: tuple | None = None,
 ) -> int:
     """Carga una guía R: el SERVER frena, reparte y congela consumos y costo. Devuelve el número de guía.
 
@@ -10712,6 +10716,11 @@ def crear_reproceso(
     puede tener varias fichas del mismo artículo — pide Banana Bolivia y
     recibe Banana Ecuador — así que esa derivación es ambigua por diseño
     y lo va a ser siempre.
+
+    caja_declarada: (lleva_caja_nuestra, envase_id), lo que contestó el
+    operario. HACE FALTA cuando la ficha no lo define sola —la variable, y
+    la guía sin asignar— y si no viene, esto NO GUARDA. Es la única puerta
+    que se niega, porque es la única donde hay alguien que puede contestar.
     """
     conexion = obtener_conexion()
     try:
@@ -10727,6 +10736,12 @@ def crear_reproceso(
                 cliente_id=cliente_id,
                 ficha_id=ficha_id,
                 reparto=reparto,
+                envase_declarado=caja_declarada,
+                # EXIGE CONTESTAR, y es el único camino que lo hace: acá hay
+                # una persona en la pantalla que acaba de armar las cajas y
+                # sabe en cuál las puso. El de la compra que llega armada no
+                # tiene a quién preguntarle, así que ahí sigue en False.
+                exigir_caja_declarada=True,
             )
         conexion.commit()
         return reproceso_id
@@ -10747,8 +10762,22 @@ def _envase_de_esta_guia(cursor, ficha_id, envase_declarado) -> tuple:
     decide el cajón de ESA compra, no la ficha. None = no se preguntó.
 
     Si hacía falta preguntar y nadie contestó, quedan las dos en NULL: eso es
-    "no se declaró", que se cuenta aparte en el stock de cajas. NO es cero
-    consumido — un cero se sumaría al total como si fuera un hecho.
+    "no se declaró". NO es cero consumido — un cero se sumaría al total como
+    si fuera un hecho.
+
+    DEVUELVE TRES COSAS Y LA TERCERA ES `falta_declarar`, que es lo que hace
+    posible negarse. Hasta el 17/09 devolvía dos y el NULL se escribía en
+    silencio: con ficha variable —Mango y Cherry, los que más se mueven— la
+    caja salía, era nuestra, y no se descontaba NUNCA. El parámetro
+    `envase_declarado` estaba puesto desde el primer día y NO TENÍA UN SOLO
+    ESCRITOR: la pregunta se diseñó y nunca se construyó.
+
+    Y el que se niega es EL LLAMADOR y no esta función, a propósito: el
+    camino manual tiene una persona adelante que puede contestar, y el de la
+    compra que llega armada no. Negarse acá sería una pared en un camino frío
+    —la recepción de una compra en caja nuestra con ficha variable— que no
+    falla al migrar, no falla en la verificación, y aparece el día que alguien
+    lo cruza.
     """
     ficha = None
     if ficha_id is not None:
@@ -10763,8 +10792,8 @@ def _envase_de_esta_guia(cursor, ficha_id, envase_declarado) -> tuple:
 
     lleva, envase_id, hay_que_preguntar = envase_derivado_de_la_ficha(ficha)
     if hay_que_preguntar and envase_declarado is not None:
-        return envase_declarado
-    return lleva, envase_id
+        return (*envase_declarado, False)
+    return lleva, envase_id, hay_que_preguntar
 
 
 def _crear_reproceso(
@@ -10781,6 +10810,7 @@ def _crear_reproceso(
     tipo: str = "normal",
     compra_origen_id: int | None = None,
     envase_declarado: tuple | None = None,
+    exigir_caja_declarada: bool = False,
 ) -> int:
     """El NUCLEO de la guia R, con el cursor abierto. Los dos frenos viven aca.
 
@@ -10821,6 +10851,28 @@ def _crear_reproceso(
     corte = _fecha_corte(cursor)
     if fecha_operacion < corte:
         raise ReprocesoAnteriorAlCorte(fecha_operacion, corte)
+
+    # EN QUÉ CAJA se armó esta primera. Lo resuelve el SERVER siempre: con
+    # ficha de envase fijo lo deriva de la ficha, y `envase_declarado` solo
+    # llega cuando la ruta tuvo que preguntar (ficha variable, o sin ficha).
+    # Escribirlo acá y no en la ruta es lo que hace que los DOS caminos que
+    # crean una guía R —la normal y la de la compra que vino armada— salgan
+    # con el dato puesto: el que falta, por definición, no nombra la columna.
+    #
+    # Y VA ACÁ ARRIBA, JUNTO AL PISO DE LA FECHA, no abajo con el costo: es
+    # una lectura de una fila y no necesita el FIFO, así que rebotar acá le
+    # ahorra al que carga rejugar el reparto entero para nada. Abajo, el que
+    # tenía las dos cosas mal veía primero la pared del stock, iba a cargar
+    # una recepción, volvía, y recién ahí se enteraba de que además faltaba
+    # contestar un select — dos viajes por dos preguntas que se contestan en
+    # la misma pantalla.
+    lleva_caja, envase_de_la_caja, falta_declarar = _envase_de_esta_guia(
+        cursor, ficha_id, envase_declarado)
+    if falta_declarar and exigir_caja_declarada:
+        raise ValueError(
+            "Falta decir si quedó armada en una caja nuestra: esta ficha no lo "
+            "define sola."
+        )
 
     entradas, salidas = _entradas_y_salidas_stock(cursor, articulo_id, corte)
     # Los lotes A LA FECHA DEL REPROCESO, con el recorte asimétrico
@@ -10895,14 +10947,6 @@ def _crear_reproceso(
                 "costo_por_bulto": float(lote["costo_bulto"]) if lote["costo_bulto"] is not None else None,
             }
         )
-
-    # EN QUÉ CAJA se armó esta primera. Lo resuelve el SERVER siempre: con
-    # ficha de envase fijo lo deriva de la ficha, y `envase_declarado` solo
-    # llega cuando la ruta tuvo que preguntar (ficha variable, o sin ficha).
-    # Escribirlo acá y no en la ruta es lo que hace que los DOS caminos que
-    # crean una guía R —la normal y la de la compra que vino armada— salgan
-    # con el dato puesto: el que falta, por definición, no nombra la columna.
-    lleva_caja, envase_de_la_caja = _envase_de_esta_guia(cursor, ficha_id, envase_declarado)
 
     costo_total = None
     costo_por_bulto_primera = None

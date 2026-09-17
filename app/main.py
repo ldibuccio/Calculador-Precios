@@ -50,7 +50,12 @@ from app.costeo import (
 # de las tres llamar según qué campo se editó. La cuarta
 # (calcular_costo_por_unidad_medida) es la división importe / kilos, que
 # también es del motor y trae su propia guarda del cero.
-from core.envases import ORIGENES_DE_COLEGA, hay_que_reponer
+from core.envases import (
+    ORIGENES_DE_COLEGA,
+    declaracion_de_caja,
+    envase_derivado_de_la_ficha,
+    hay_que_reponer,
+)
 from core.vino_armada import etiqueta_del_boton, se_muestra_el_boton
 from core.motor_costeo import (
     calcular_costo_por_unidad_medida,
@@ -11151,8 +11156,16 @@ def _fichas_por_cliente_y_articulo() -> dict[str, list[dict]]:
             sufijo = SUFIJOS_FICHA_REPROCESO.get(ficha.get("unidad_venta"), "")
             kilaje = (f"{_formatear_numero(ficha['contenido_caja'])} {sufijo}".strip()
                       if ficha.get("contenido_caja") else "")
+            # `pregunta_caja` SALE DE LA MISMA REGLA que usa el server al
+            # escribir, no de un `if ficha["envase_variable"]` escrito acá:
+            # son la pantalla y la guarda contestando lo mismo, y escritas
+            # dos veces se separan el día que alguien toque una. El que la
+            # pantalla pregunte de más es molesto; que pregunte de menos deja
+            # el hueco que esto vino a cerrar.
+            _, _, pregunta = envase_derivado_de_la_ficha(ficha)
             por_clave.setdefault(clave, []).append(
-                {"id": ficha["id"], "nombre": etiquetas[ficha["id"]], "kilaje": kilaje}
+                {"id": ficha["id"], "nombre": etiquetas[ficha["id"]],
+                 "kilaje": kilaje, "pregunta_caja": pregunta}
             )
     for fichas in por_clave.values():
         fichas.sort(key=lambda f: _clave_alfabetica(f["nombre"]))
@@ -11265,6 +11278,12 @@ def _renderizar_pantalla_reproceso(request: Request, *, precarga=None, aviso=Non
         clientes = listar_clientes()
         ayudas = _ayudas_ficha_por_cliente_y_articulo()
         fichas_elegibles = _fichas_por_cliente_y_articulo()
+        # LAS CAJAS QUE SE PUEDEN ELEGIR cuando la ficha no lo define sola.
+        # Se ofrecen TODAS las activas y no solo la de la ficha: con envase
+        # variable la de la ficha es referencia —lo dice el comment de la
+        # columna— así que ofrecer solo ésa sería precargar la respuesta que
+        # justamente no tiene valor dominante.
+        cajas_del_galpon = listar_envases()
         # El piso del selector de fecha. Es COMODIDAD, no la regla: la
         # regla vive en crear_reproceso y es la que rechaza. Acá solo
         # evita que el operario elija una fecha que después va a rebotar.
@@ -11277,6 +11296,7 @@ def _renderizar_pantalla_reproceso(request: Request, *, precarga=None, aviso=Non
         "clientes": clientes,
         "ayudas_ficha": ayudas,
         "fichas_elegibles": fichas_elegibles,
+        "cajas_del_galpon": cajas_del_galpon,
         "precarga": precarga or {},
         "hoy": _hoy_argentina().isoformat(),
         "corte": corte.isoformat(),
@@ -11419,6 +11439,7 @@ def cargar_reproceso_ruta(
     bultos_merma: str = Form(""),
     fecha: str = Form(""),
     ficha_id: str = Form(""),
+    caja_nuestra: str = Form(""),
     reparto: str = Form(""),
     confirmado: str = Form(""),
 ):
@@ -11491,6 +11512,7 @@ def cargar_reproceso_ruta(
             "bultos_merma": bultos_merma,
             "fecha": fecha,
             "ficha_id": ficha_id,
+            "caja_nuestra": caja_nuestra,
         }
         return _renderizar_pantalla_reproceso(request, precarga=precarga, error=error, status_code=400)
 
@@ -11505,6 +11527,7 @@ def cargar_reproceso_ruta(
         "bultos_merma": bultos_merma,
         "fecha": fecha,
         "ficha_id": ficha_id,
+        "caja_nuestra": caja_nuestra,
     }
 
     # "sin_asignar" es una ELECCIÓN, no el resultado de no contestar: el
@@ -11513,6 +11536,17 @@ def cargar_reproceso_ruta(
     ficha_valor = None
     if ficha_id.strip().isdigit():
         ficha_valor = int(ficha_id)
+
+    # EN QUÉ CAJA QUEDÓ ARMADA. Lo traduce `core/envases`, que es donde vive
+    # la regla; acá solo se atrapa el valor que no tiene forma de dato. Lo que
+    # decide si HACE FALTA es `crear_reproceso`, adentro de la transacción y
+    # leyendo la ficha: acá no se puede saber sin ir a la base, y preguntarlo
+    # antes para escribir después son dos reglas que se separan.
+    try:
+        caja_declarada = declaracion_de_caja(caja_nuestra)
+    except ValueError as invalida:
+        return _renderizar_pantalla_reproceso(
+            request, precarga=precarga, error=str(invalida), status_code=400)
 
     # EL AVISO DE LA FECHA HACIA ATRÁS, con el molde de las señas: se cuenta
     # ANTES de escribir, la pantalla muestra el número y pide el segundo
@@ -11554,6 +11588,7 @@ def cargar_reproceso_ruta(
         numero_guia = crear_reproceso(
             articulo["id"], tomados_valor, primera_valor, segunda_valor, merma_valor, fecha_valor,
             cliente_id=cliente["id"], ficha_id=ficha_valor, reparto=reparto_valor,
+            caja_declarada=caja_declarada,
         )
     except StockInsuficienteParaReproceso as freno:
         # EL FRENO. No hay "la cargo igual": la pantalla vuelve con todo
@@ -11596,6 +11631,14 @@ def cargar_reproceso_ruta(
             precarga=precarga,
             error=f"{desactualizado} Cambió el stock mientras cargabas: mirá de nuevo de dónde sale.",
             status_code=400,
+        )
+    except ValueError as falta:
+        # FALTA CONTESTAR EN QUÉ CAJA QUEDÓ. Va ANTES del `except Exception`
+        # de abajo a propósito: ahí caería como 500 y —peor— sin `precarga`,
+        # así que el operario perdería todo lo tipeado por no haber
+        # contestado un select. Es un dato mal pedido, no una base caída.
+        return _renderizar_pantalla_reproceso(
+            request, precarga=precarga, error=str(falta), status_code=400
         )
     except Exception as error_db:
         return _renderizar_pantalla_reproceso(

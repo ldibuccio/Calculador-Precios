@@ -12655,6 +12655,14 @@ FICHA_ANALISIS = {
 FICHA_ANALISIS_2 = dict(FICHA_ANALISIS, id=902, nombre_cliente="EJEMPLO UNO ECUADOR",
                         codigo_cliente="90102", contenido_caja=10)
 
+# LA FICHA VARIABLE — el caso de Mango y Cherry. Su envase es REFERENCIA: el
+# de verdad lo decide el cajón de esa compra, así que el server no lo puede
+# derivar y la pantalla tiene que preguntarlo. Está acá y no inline porque es
+# el fixture que separa el caso que pregunta del que no, y los dos hacen falta.
+FICHA_VARIABLE_REPROCESO = dict(FICHA_ANALISIS, id=904, envase_variable=True,
+                                nombre_cliente="EJEMPLO UNO MANGO",
+                                codigo_cliente="90104")
+
 FILA_ANALISIS = {
     "ficha_id": 901, "articulo_id": 1, "articulo_nombre": "EJEMPLO Uno",
     "ficha_nombre": "EJEMPLO UNO BOLIVIA", "unidad_venta": "kilo", "fresco": True,
@@ -22150,7 +22158,17 @@ def _salidas_fifo(total, fecha=None):
 # --- Reproceso (tanda 1): pantalla de operario y Guías R ---
 
 
-def _get_reproceso(articulos_stock=None, fichas=None, espia_total=None):
+# Las cajas del galpón que ofrece la pregunta "¿usaste una caja nuestra?".
+# Nombres de EJEMPLO y que se note: una captura con nombres reales se lee
+# como producción.
+CAJAS_DEL_GALPON = [
+    {"id": 7, "nombre": "Caja EJEMPLO Grande"},
+    {"id": 8, "nombre": "Caja EJEMPLO Chica"},
+]
+
+
+def _get_reproceso(articulos_stock=None, fichas=None, espia_total=None,
+                   cajas=None):
     # articulos_stock son los artículos CON SUELTOS que devuelve la base ya
     # filtrados: desde el 31/08 el filtro vive en listar_articulos_para_reproceso
     # (probado en test_db) y no en la ruta.
@@ -22170,8 +22188,188 @@ def _get_reproceso(articulos_stock=None, fichas=None, espia_total=None):
         # Acá va una fecha distinta de la real a propósito: si alguien
         # clava el 31/08 en el código, este test lo agarra.
         patch("app.main.fecha_corte", return_value=date(2026, 8, 20)),
+        # El parche ES, él solo, la aserción de que `app.main` importa este
+        # nombre: si no está, mock.patch levanta AttributeError antes de
+        # ejercitar una línea (corolario 51).
+        patch("app.main.listar_envases",
+              return_value=CAJAS_DEL_GALPON if cajas is None else cajas),
     ):
         return cliente.get("/deposito/stock/reproceso")
+
+
+def test_lo_que_SE_CONTESTO_llega_al_server_traducido():
+    """El cable entre el select y `crear_reproceso`.
+
+    Es la mitad que el test del texto no puede ver: la pantalla puede
+    dibujar la pregunta perfecta y la ruta tirar la respuesta, y eso se vería
+    exactamente igual — el bug del 12/09 con la marca de "viene armada", que
+    seis caminos declaraban en su firma y dos no guardaban.
+    """
+    with patch("app.main.crear_reproceso", return_value=77) as mock_crear, \
+         patch("app.main.obtener_cliente", return_value={"id": 1, "nombre": "Día"}), \
+         patch("app.main.obtener_articulo", return_value={"id": 1, "nombre": "Mango"}), \
+         patch("app.main._hoy_argentina", return_value=date(2026, 8, 25)), \
+         patch("app.main.contar_guias_r_afectadas_por_fecha", return_value=0):
+        respuesta = cliente.post("/deposito/stock/reproceso", data={
+            "cliente_id": "1", "articulo_id": "1", "bultos_tomados": "30",
+            "bultos_primera": "20", "bultos_segunda": "0", "bultos_merma": "0",
+            "fecha": "2026-08-25", "ficha_id": "904", "caja_nuestra": "7",
+        }, follow_redirects=False)
+
+    assert respuesta.status_code == 303
+    assert mock_crear.call_args.kwargs["caja_declarada"] == (True, 7)
+
+
+def test_contestar_QUE_NO_no_es_lo_mismo_que_NO_CONTESTAR():
+    """Los dos llegan distinto, y de eso depende todo.
+
+    "No, salió en el cajón del proveedor" es un HECHO DECLARADO —(False,
+    None)— y no contestar es None. Si la ruta los mandara igual, no contestar
+    se guardaría como "no lleva caja": la caja sale, nadie la descuenta, y el
+    sistema afirma que no había ninguna. Un hueco se ve; una afirmación falsa
+    no.
+    """
+    def _postear(caja_nuestra):
+        with patch("app.main.crear_reproceso", return_value=77) as mock_crear, \
+             patch("app.main.obtener_cliente", return_value={"id": 1, "nombre": "Día"}), \
+             patch("app.main.obtener_articulo", return_value={"id": 1, "nombre": "Mango"}), \
+             patch("app.main._hoy_argentina", return_value=date(2026, 8, 25)), \
+             patch("app.main.contar_guias_r_afectadas_por_fecha", return_value=0):
+            cliente.post("/deposito/stock/reproceso", data={
+                "cliente_id": "1", "articulo_id": "1", "bultos_tomados": "30",
+                "bultos_primera": "20", "bultos_segunda": "0", "bultos_merma": "0",
+                "fecha": "2026-08-25", "ficha_id": "904", "caja_nuestra": caja_nuestra,
+            }, follow_redirects=False)
+        return mock_crear.call_args.kwargs["caja_declarada"]
+
+    assert _postear("no") == (False, None)
+    assert _postear("") is None
+
+
+def test_si_la_guia_REBOTA_por_falta_de_caja_NO_se_pierde_lo_tipeado():
+    """El re-render por error es donde peor se pierde un campo.
+
+    El que reintenta corrige lo que la pantalla le señaló y NO vuelve a
+    revisar lo que ya había llenado — y eso es lo correcto, la pantalla le
+    dijo qué estaba mal. Así que un campo que se cae acá se va sin que nadie
+    lo mire, y lo que queda guardado es una guía bien cargada salvo por eso.
+
+    Y ADEMÁS ES 400 Y NO 500: sin su propia rama, el ValueError de la guarda
+    caía en el `except Exception` de abajo, que renderiza SIN precarga. Un
+    select sin contestar le costaría al operario tipear la pantalla entera.
+    """
+    with patch("app.main.crear_reproceso",
+               side_effect=ValueError("Falta decir si quedó armada en una caja nuestra.")), \
+         patch("app.main.obtener_cliente", return_value={"id": 1, "nombre": "Día"}), \
+         patch("app.main.obtener_articulo", return_value={"id": 1, "nombre": "Mango"}), \
+         patch("app.main._hoy_argentina", return_value=date(2026, 8, 25)), \
+         patch("app.main.contar_guias_r_afectadas_por_fecha", return_value=0), \
+         patch("app.main.listar_articulos_para_reproceso", return_value=[{"id": 1, "nombre": "Mango"}]), \
+         patch("app.main.listar_envases", return_value=CAJAS_DEL_GALPON), \
+         patch("app.main.listar_clientes", return_value=CLIENTES_PARA_SELECTOR), \
+         patch("app.main.listar_fichas_de_todos_los_clientes", return_value=[]), \
+         patch("app.main.fecha_corte", return_value=date(2026, 8, 20)):
+        respuesta = cliente.post("/deposito/stock/reproceso", data={
+            "cliente_id": "1", "articulo_id": "1", "bultos_tomados": "30",
+            "bultos_primera": "20", "bultos_segunda": "3", "bultos_merma": "1",
+            "fecha": "2026-08-25", "ficha_id": "904", "caja_nuestra": "",
+        }, follow_redirects=False)
+
+    assert respuesta.status_code == 400
+    assert "caja nuestra" in respuesta.text
+    # TODO lo que tipeó, de vuelta puesto.
+    for tipeado in ('value="30"', 'value="20"', 'value="3"', 'value="1"'):
+        assert tipeado in respuesta.text, f"se perdió {tipeado} al rebotar"
+
+
+def test_la_respuesta_YA_DADA_vuelve_PUESTA_cuando_rebota_por_OTRA_cosa():
+    """El canario lo encontró: el otro test de re-render era CIEGO acá.
+
+    Posteaba `caja_nuestra=""` —el caso que rebota POR eso— así que sacarle
+    la línea a la precarga no cambiaba nada: se perdía un vacío. Es el
+    corolario 30 exacto: una batería de casos donde el campo va vacío no
+    distingue "el valor vuelve" de "la línea está en el dict".
+
+    Acá la respuesta SÍ está dada y lo que rebota es el stock. Si se
+    perdiera, el operario contesta de nuevo algo que ya había contestado —
+    y peor, puede contestar distinto.
+    """
+    freno = StockInsuficienteParaReproceso(30.0, 10.0, [])
+    respuesta = _pantalla_de_reproceso_con(
+        {"cliente_id": "1", "articulo_id": "1", "bultos_tomados": "30",
+         "bultos_primera": "20", "bultos_segunda": "0", "bultos_merma": "0",
+         "fecha": "2026-09-02", "ficha_id": "904", "caja_nuestra": "7"},
+        **{"app.main.crear_reproceso": {"side_effect": freno},
+           "app.main.listar_envases": {"return_value": CAJAS_DEL_GALPON}},
+    )
+
+    assert respuesta.status_code == 400
+    marcado = respuesta.text.split("</style>")[-1]
+    opciones = marcado[marcado.index('<select id="caja_nuestra"'):]
+    opciones = opciones[:opciones.index("</select>")]
+    assert 'value="7"' in opciones and "selected" in opciones
+    # Y NO quedó el "Elegí..." marcado: eso sería haberla perdido.
+    assert 'value="" selected' not in opciones
+
+
+def test_la_pantalla_PREGUNTA_en_que_caja_quedo_cuando_la_ficha_no_lo_define():
+    """La pregunta que el server esperaba desde el primer día y nadie construyó.
+
+    `envase_declarado` estaba en la firma de `_envase_de_esta_guia` con su
+    docstring explicando que "si no se puede derivar, se pregunta" — y el
+    `grep` del nombre en app/, core/ y templates/ daba CERO. Con ficha
+    variable la caja salía, era nuestra, y no se descontaba nunca.
+
+    LA PANTALLA OFRECE LAS DOS RESPUESTAS POSIBLES, no una: la caja nuestra
+    (cuál) y el cajón del proveedor. Sin la segunda, el que sacó la
+    mercadería en el cajón que vino no tiene qué contestar y va a elegir
+    cualquiera con tal de guardar.
+    """
+    respuesta = _get_reproceso(articulos_stock=[{"id": 1, "nombre": "Banana"}],
+                               fichas=[FICHA_VARIABLE_REPROCESO])
+    assert respuesta.status_code == 200
+    marcado = respuesta.text.split("</style>")[-1]
+
+    # ANCLADO EN EL ELEMENTO y no en una palabra suelta: "caja" aparece en
+    # media pantalla, empezando por el rótulo de la ficha (corolario 50).
+    assert '<select id="caja_nuestra" name="caja_nuestra">' in marcado
+    assert "¿Usaste una caja nuestra?" in marcado
+    assert 'value="no"' in marcado and "cajón del proveedor" in marcado
+    # Y las cajas del galpón, con el id que el server espera.
+    assert 'value="7"' in marcado and "Caja EJEMPLO Grande" in marcado
+
+    # SIN PRECARGA: con envase variable no hay valor dominante —si lo
+    # hubiera, la ficha no sería variable— y un valor plausible puesto solo
+    # invita a aceptarlo con el mismo click que ya se iba a hacer.
+    opciones = marcado[marcado.index('<select id="caja_nuestra"'):]
+    opciones = opciones[:opciones.index("</select>")]
+    assert opciones.count("selected") == 1
+    assert 'value="" selected' in opciones
+
+
+def test_la_pregunta_de_la_caja_ARRANCA_ESCONDIDA_y_la_decide_la_MISMA_regla():
+    """Dos mitades, y las dos hacen falta.
+
+    ESCONDIDA: con envase fijo el server deriva la respuesta, así que
+    preguntar sería pedir dos veces el mismo dato. El bloque se dibuja
+    siempre —el JS lo muestra cuando la ficha elegida lo pide— y arranca con
+    `hidden`.
+
+    Y QUIÉN LO PIDE VIAJA EN EL DATO, no en un `if` del JS: `pregunta_caja`
+    lo pone `envase_derivado_de_la_ficha`, que es la MISMA función que el
+    server usa al escribir. Escrita dos veces se separan, y la copia de la
+    pantalla se va sin que nada se vea roto — la guía entra igual y el hueco
+    vuelve.
+    """
+    respuesta = _get_reproceso(articulos_stock=[{"id": 1, "nombre": "Banana"}],
+                               fichas=[FICHA_ANALISIS, FICHA_VARIABLE_REPROCESO])
+    marcado = respuesta.text.split("</style>")[-1]
+
+    assert '<div class="caja-nuestra" id="caja-nuestra" hidden>' in marcado
+    # La fija dice que NO hay que preguntar y la variable que SÍ, en el mismo
+    # JSON que el JS lee.
+    assert '"pregunta_caja": false' in respuesta.text.lower()
+    assert '"pregunta_caja": true' in respuesta.text.lower()
 
 
 def test_reproceso_lista_los_articulos_con_sueltos_por_nombre_y_sin_numeros():
@@ -22244,7 +22442,7 @@ def test_reproceso_guarda_con_cliente_y_el_aviso_repite_solo_lo_cargado():
     assert respuesta.status_code == 303
     # El cliente queda en la guía R como DATO (el stock sigue sin dueño).
     mock_crear.assert_called_once_with(1, 30.0, 20.0, 5.0, 5.0, date(2026, 8, 25), cliente_id=1, ficha_id=None,
-                                       reparto=None)
+                                       reparto=None, caja_declarada=None)
     destino = respuesta.headers["location"]
     # "Guía R12: tomé 30... para Día..." — lo cargado, jamás costos ni stock.
     assert "Gu%C3%ADa+R12" in destino
@@ -22279,7 +22477,8 @@ def test_el_reproceso_guarda_A_QUE_FICHA_fueron_las_cajas():
 
     assert respuesta.status_code == 303
     mock_crear.assert_called_once_with(
-        1, 30.0, 20.0, 5.0, 5.0, date(2026, 8, 25), cliente_id=1, ficha_id=901, reparto=None
+        1, 30.0, 20.0, 5.0, 5.0, date(2026, 8, 25), cliente_id=1, ficha_id=901, reparto=None,
+        caja_declarada=None
     )
     # Asignada, el aviso no dice nada de "sin asignar".
     assert "sin+asignar" not in respuesta.headers["location"]
@@ -22306,7 +22505,8 @@ def test_SIN_ASIGNAR_es_una_eleccion_y_el_aviso_lo_dice():
 
     assert respuesta.status_code == 303
     mock_crear.assert_called_once_with(
-        1, 30.0, 20.0, 0.0, 0.0, date(2026, 8, 25), cliente_id=1, ficha_id=None, reparto=None
+        1, 30.0, 20.0, 0.0, 0.0, date(2026, 8, 25), cliente_id=1, ficha_id=None, reparto=None,
+        caja_declarada=None
     )
     assert "sin+asignar" in respuesta.headers["location"]
 
@@ -22409,6 +22609,10 @@ def _pantalla_de_reproceso_con(datos, **parches):
         "app.main.listar_clientes": [{"id": 1, "nombre": "Día"}],
         "app.main._ayudas_ficha_por_cliente_y_articulo": {},
         "app.main._fichas_por_cliente_y_articulo": {},
+        # El catálogo de cajas de la pregunta "¿usaste una caja nuestra?".
+        # Está acá y no en cada test porque lo pide TODO re-render de esta
+        # pantalla, incluidos los de error — que es donde más se olvida.
+        "app.main.listar_envases": CAJAS_DEL_GALPON,
     }
     with ExitStack() as pila:
         for destino, valor in contexto.items():
@@ -22728,11 +22932,13 @@ def test_reproceso_sin_cliente_da_400():
         patch("app.main.obtener_articulo", return_value={"id": 1, "nombre": "Tomate Perita"}),
         patch("app.main.crear_reproceso") as mock_crear,
         patch("app.main.listar_articulos_para_reproceso", return_value=[]),
+        patch("app.main.listar_envases", return_value=CAJAS_DEL_GALPON),
         patch("app.main.listar_clientes", return_value=[]),
         patch("app.main.listar_fichas_de_todos_los_clientes", return_value=[]),
         patch("app.main.listar_clientes", return_value=CLIENTES_PARA_SELECTOR),
         patch("app.main._hoy_argentina", return_value=date(2026, 8, 25)),
         patch("app.main.fecha_corte", return_value=date(2026, 8, 20)),
+        patch("app.main.listar_envases", return_value=CAJAS_DEL_GALPON),
     ):
         respuesta = cliente.post(
             "/deposito/stock/reproceso",
@@ -22746,7 +22952,7 @@ def test_reproceso_sin_cliente_da_400():
 
 
 def test_reproceso_sin_nada_producido_da_400():
-    with patch("app.main.crear_reproceso") as mock_crear, patch("app.main.listar_articulos_para_reproceso", return_value=[]), patch("app.main.listar_clientes", return_value=[]), patch("app.main.listar_fichas_de_todos_los_clientes", return_value=[]), patch("app.main._hoy_argentina", return_value=date(2026, 8, 25)), patch("app.main.fecha_corte", return_value=date(2026, 8, 20)):
+    with patch("app.main.crear_reproceso") as mock_crear, patch("app.main.listar_articulos_para_reproceso", return_value=[]), patch("app.main.listar_clientes", return_value=[]), patch("app.main.listar_fichas_de_todos_los_clientes", return_value=[]), patch("app.main._hoy_argentina", return_value=date(2026, 8, 25)), patch("app.main.fecha_corte", return_value=date(2026, 8, 20)), patch("app.main.listar_envases", return_value=CAJAS_DEL_GALPON):
         respuesta = cliente.post(
             "/deposito/stock/reproceso",
             data={"articulo_id": "1", "bultos_tomados": "5", "bultos_primera": "",
@@ -22759,7 +22965,7 @@ def test_reproceso_sin_nada_producido_da_400():
 
 
 def test_reproceso_fecha_futura_da_400():
-    with patch("app.main.crear_reproceso") as mock_crear, patch("app.main.listar_articulos_para_reproceso", return_value=[]), patch("app.main.listar_clientes", return_value=[]), patch("app.main.listar_fichas_de_todos_los_clientes", return_value=[]), patch("app.main._hoy_argentina", return_value=date(2026, 8, 25)), patch("app.main.fecha_corte", return_value=date(2026, 8, 20)):
+    with patch("app.main.crear_reproceso") as mock_crear, patch("app.main.listar_articulos_para_reproceso", return_value=[]), patch("app.main.listar_clientes", return_value=[]), patch("app.main.listar_fichas_de_todos_los_clientes", return_value=[]), patch("app.main._hoy_argentina", return_value=date(2026, 8, 25)), patch("app.main.fecha_corte", return_value=date(2026, 8, 20)), patch("app.main.listar_envases", return_value=CAJAS_DEL_GALPON):
         respuesta = cliente.post(
             "/deposito/stock/reproceso",
             data={"articulo_id": "1", "bultos_tomados": "5", "bultos_primera": "3",
@@ -26321,6 +26527,7 @@ def test_reproceso_tiene_CANCELAR_que_solo_sale_al_hub_de_stock():
     """
     with (
         patch("app.main.listar_articulos_para_reproceso", return_value=[]),
+        patch("app.main.listar_envases", return_value=CAJAS_DEL_GALPON),
         patch("app.main.listar_clientes", return_value=[]),
         patch("app.main._ayudas_ficha_por_cliente_y_articulo", return_value={}),
         patch("app.main._fichas_por_cliente_y_articulo", return_value={}),

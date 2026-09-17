@@ -141,6 +141,42 @@ def envase_derivado_de_la_ficha(ficha: dict | None) -> tuple[bool | None, int | 
     return True, ficha["envase_id"], False
 
 
+# LA RESPUESTA A "¿QUEDÓ ARMADA EN CAJA NUESTRA?", como viaja en el formulario.
+#
+# Tres valores y no dos: "" es SIN CONTESTAR, que no es lo mismo que "no".
+# Juntarlos haría que no contestar se guarde como "no lleva caja", y entonces
+# la caja sale, nadie la descuenta, y el sistema afirma que no había ninguna —
+# que es peor que el hueco, porque un hueco se ve y una afirmación falsa no.
+SIN_CAJA_NUESTRA = "no"
+
+
+def declaracion_de_caja(valor: str | None) -> tuple[bool, int | None] | None:
+    """Lo que contestó el operario, como (lleva_caja_nuestra, envase_id).
+
+    None = no contestó. El que decide si eso se puede guardar es quien
+    ESCRIBE, no esta función: acá solo se traduce.
+
+    PREGUNTA POR LA FORMA DEL DATO y no contra una lista de valores buenos
+    (corolario 30): un id de envase es un entero positivo y eso no lo puede
+    imitar ningún texto de la pantalla. Chequear contra el catálogo sería una
+    segunda copia de la lista de envases, que se separa el día que alguien
+    agregue uno — y además la FK de la base ya rechaza un id que no existe,
+    que es donde tiene que vivir esa regla.
+
+        ""      -> None          no contestó
+        "no"    -> (False, None) salió en el cajón del proveedor
+        "7"     -> (True, 7)     salió en la caja 7
+    """
+    limpio = (valor or "").strip()
+    if not limpio:
+        return None
+    if limpio == SIN_CAJA_NUESTRA:
+        return False, None
+    if limpio.isdigit() and int(limpio) > 0:
+        return True, int(limpio)
+    raise ValueError("No entendí en qué caja quedó armada.")
+
+
 def hay_que_reponer(envase: dict) -> bool:
     """¿Este envase está debajo de su aviso de reposición?
 

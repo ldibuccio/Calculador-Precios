@@ -7000,6 +7000,17 @@ variable vuelve a dar NULL—. Es el cartel que se aprende a esquivar, antes de
 existir. Lo que hay que construir es la pregunta; la alerta recién sirve
 después.
 
+**LA PREGUNTA SE CONSTRUYÓ EL 17/09**, así que la mitad de arriba ya no
+describe el sistema: la pantalla de Reproceso pregunta *"¿Usaste una caja
+nuestra?"* cuando la ficha no lo define sola, y `crear_reproceso` **no guarda
+sin esa respuesta**. Lo que sigue abierto es el camino `en_origen` —la compra
+que llega ya armada genera su guía R sola y ahí no hay a quién preguntarle— y
+se dimensiona con `db/cajas_9_lo_que_queda_sin_declarar.sql`.
+
+Lo que NO envejeció es el criterio: la alerta sigue sin construirse, y ahora
+por la razón opuesta — el caso que se podía arreglar ya se arregla en la
+pantalla donde ocurre, que es mejor que avisar después.
+
 ### La forma general
 
 **Un aviso que junta poblaciones con causas distintas no se arregla moviendo
@@ -7044,3 +7055,117 @@ borra. Ese test es hoy la única señal de que existen.
 gasto_en_cajas` que nada usa hace creer al próximo que lee la ruta que la
 pantalla todavía lo muestra. La función se conserva donde vive; el cableado
 muerto se corta.
+
+## Corolario 79: un parámetro sin escritor es una FUNCIÓN QUE FALTA, y se lee como una que está
+
+Del 17/09, y es el corolario 72 sobre un parámetro en vez de sobre una
+columna — con un agravante que lo vuelve peor: **una columna sin escritor
+devuelve un cero prolijo; un parámetro sin escritor deja el `if` que lo usa
+escrito, probado y visible.**
+
+`_envase_de_esta_guia(cursor, ficha_id, envase_declarado)` tenía el
+parámetro desde el primer día, con su docstring diciendo *"es lo que contestó
+la persona cuando hubo que preguntar"*, y la línea que lo usa:
+
+```python
+if hay_que_preguntar and envase_declarado is not None:
+    return envase_declarado
+```
+
+**Nadie lo pasó nunca.** `grep` del nombre en `app/`, `core/` y `templates/`:
+cero fuera de su propia definición. Y `envase_derivado_de_la_ficha` define
+tres casos, el tercero de los cuales dice **"si no se puede derivar, se
+PREGUNTA"** — la pregunta se diseñó, se le dejó el cable, y nunca se
+construyó la pantalla.
+
+**La consecuencia, y por eso valía atacarlo antes que nada**: con ficha
+variable —Mango y Cherry, los dos artículos que más se mueven— la caja sale,
+es nuestra, y **no se descuenta nunca**. El stock de cajas queda alto
+justamente donde más rota.
+
+### Por qué se lee como si estuviera cableado
+
+Un lector que abre `_envase_de_esta_guia` ve el parámetro, ve el `if`, ve el
+docstring que explica cuándo llega, y **concluye que llega**. Es lo contrario
+del campo sin consecuencia (que se ve vacío) y del `{% else %}` que afirma de
+más (que se ve raro al leerlo): **acá el código está bien escrito y completo,
+y lo que falta está AFUERA de él.**
+
+Ninguna guarda de las que ya teníamos lo ve:
+
+- el **CHECK de coherencia** relaciona `lleva_caja_nuestra` con `envase_id`, y
+  las dos en NULL lo cumplen;
+- el **test de la estructura entera del INSERT** compara dos listas que
+  escriben NULL en esas columnas, y coinciden;
+- los **tests de la función** le pasan `envase_declarado` a mano —porque el
+  test sí puede— así que el camino se ejercita y pasa;
+- y la **pantalla** se ve perfecta: no hay campo que falte, porque el campo
+  nunca existió.
+
+### La pregunta que lo encuentra
+
+> **Para cada parámetro OPCIONAL que cambia el resultado, grepear quién lo
+> PASA.** Si los únicos que lo pasan son sus tests, no es un parámetro con
+> default: es una función que falta, y el default es el bug.
+
+Es el corolario 71 —una regla en una función pura sin llamadores es un
+adorno— corrido al argumento: allá había que contar llamadores de la función,
+acá de un parámetro. Y las dos veces lo que engaña es que **el código
+existe, es correcto, y tiene tests verdes**.
+
+### Y quién se niega NO es quien lee: es el llamador
+
+La guarda podía ir adentro de `_envase_de_esta_guia`, que es donde se detecta
+el caso. **No va ahí**, y la razón es el corolario 75: ese núcleo lo comparten
+el camino manual —que tiene una persona en la pantalla que acaba de armar las
+cajas y sabe en cuál las puso— y el de la compra que llega armada, que **no
+tiene a quién preguntarle**. Negarse adentro sería una pared en un camino
+frío: no falla al migrar, no falla en la verificación, y aparece el día que
+alguien la cruza.
+
+Por eso el núcleo devuelve `falta_declarar` y **el que decide es el
+llamador** (`exigir_caja_declarada=True`, en un solo lugar). La detección y
+la política son dos cosas, y juntarlas es lo que fabrica la pared.
+
+### Y la guarda va ARRIBA, junto al piso más barato
+
+Quedó primero abajo, al lado del costo, y el canario lo destapó: con el stock
+también corto, el operario veía **la pared del stock primero**, iba a cargar
+una recepción, volvía, y recién ahí se enteraba de que además faltaba
+contestar un select. Dos viajes por dos preguntas que se contestan en la
+misma pantalla — y un FIFO rejugado entero para una request que iba a rebotar.
+
+**La regla: una guarda que solo necesita leer una fila va con las otras
+baratas, antes de cualquier cuenta.** El orden de las guardas no es estilo: es
+cuántas veces vuelve el que carga.
+
+## Y un canario que dice `[0]` sobre un campo VACÍO no probó nada
+
+Del 17/09, y salió de la tanda de esta misma pregunta. De doce canarios, uno
+dio **0**: sacarle a la ruta la línea que devuelve la respuesta al rearmar el
+formulario **no hizo caer ningún test**.
+
+El test existía y estaba bien escrito. Lo que estaba mal era **su fixture**:
+posteaba `caja_nuestra=""` —el caso que rebota *por* no contestar— así que lo
+que se perdía al sacar la línea era **un vacío**. Un vacío perdido y un vacío
+conservado se renderizan igual.
+
+Es el corolario 30 exacto: *una batería de casos donde el campo va vacío no
+distingue "el valor vuelve" de "la línea está en el dict"*. Y es la **quinta
+lectura del canario en cero**, distinta de las cuatro que ya están escritas
+(el test flojo, el canario mal puesto, el pycache viejo, la rama
+inalcanzable):
+
+> **el test ejercita el caso donde el campo que se perdió NO TENÍA VALOR.**
+
+**Cómo se reconoce sin correr el canario**: si el campo que el cambio agrega
+es el mismo que la rama de error viene a reclamar, el test de esa rama no lo
+puede cuidar — por construcción llega vacío. Hace falta un test donde el
+campo esté CONTESTADO y lo que rebote sea **otra cosa**.
+
+Y de yapa, el canario de la MEDICIÓN cayó en lo mismo por otro lado: plantar
+un nombre de setenta caracteres en un `<option>` **no movió el desborde**,
+porque el texto de una opción no ensancha la página — el `select` lo recorta.
+El canario estaba mal puesto, no la medición. Lo que sí desborda es el
+RÓTULO, y con eso el número saltó de 0 a 480px. **Antes de leer un canario de
+layout en cero, preguntarse si lo que se rompió puede mover ese número.**

@@ -4,6 +4,19 @@ from datetime import date, datetime, time
 import pytest
 from unittest.mock import MagicMock, call, patch
 
+# LA RESPUESTA A "¿quedó armada en caja nuestra?" que llevan estas cargas.
+#
+# Van SIN FICHA, que en la pantalla es "sin asignar", y desde el 17/09 eso
+# EXIGE contestar: sin ficha no hay de dónde derivar el envase, y hasta ese
+# día el NULL se escribía en silencio. Estos fixtures no tienen un envase en
+# ningún lado, así que la respuesta verdadera es la de abajo — no un relleno
+# para que el test pase.
+#
+# Que estas catorce llamadas hayan tenido que cambiar ES LA FUNCIÓN del
+# cambio, no una molestia: la firma ganó algo obligatorio y los llamadores lo
+# acusan. El que no lo acusa es el que no pasa por acá.
+SIN_CAJA_NUESTRA_DECLARADA = (False, None)
+
 from app import db
 from app.main import REGEX_CODIGO_PUESTO
 from app.db import (
@@ -5409,7 +5422,7 @@ def test_crear_reproceso_lee_el_corte_UNA_sola_vez():
     ]
 
     with patch("app.db.obtener_conexion", return_value=conexion):
-        crear_reproceso(1, 10, 8, 0, 2, date(2026, 8, 20))
+        crear_reproceso(1, 10, 8, 0, 2, date(2026, 8, 20), caja_declarada=SIN_CAJA_NUESTRA_DECLARADA)
 
     lecturas = [c for c in cursor.execute.call_args_list if "corte_modelo" in c.args[0]]
     assert len(lecturas) == 1
@@ -5929,7 +5942,7 @@ def test_el_piso_de_fecha_NO_deja_cargar_una_guia_R_ANTES_del_corte():
 
     with patch("app.db.obtener_conexion", return_value=conexion):
         with pytest.raises(ReprocesoAnteriorAlCorte) as levantada:
-            crear_reproceso(1, 10, 8, 0, 2, date(2026, 8, 14))
+            crear_reproceso(1, 10, 8, 0, 2, date(2026, 8, 14), caja_declarada=SIN_CAJA_NUESTRA_DECLARADA)
 
     assert levantada.value.corte == date(2026, 8, 15)
     assert levantada.value.fecha == date(2026, 8, 14)
@@ -5947,9 +5960,96 @@ def test_el_piso_SALE_de_corte_modelo_y_no_de_una_constante():
 
     with patch("app.db.obtener_conexion", return_value=conexion):
         with pytest.raises(ReprocesoAnteriorAlCorte) as levantada:
-            crear_reproceso(1, 10, 8, 0, 2, date(2026, 8, 25))
+            crear_reproceso(1, 10, 8, 0, 2, date(2026, 8, 25), caja_declarada=SIN_CAJA_NUESTRA_DECLARADA)
 
     assert levantada.value.corte == date(2026, 9, 1)
+
+
+def test_con_ficha_VARIABLE_y_sin_contestar_la_guia_R_NO_SE_GUARDA():
+    """EL BUG QUE ESTO VINO A CERRAR, y era silencioso.
+
+    Con Mango o Cherry —las dos fichas variables— el envase NO se puede
+    derivar: lo decide el cajón de ESA compra. Hasta el 17/09 eso se escribía
+    como NULL sin que nada avisara, así que la caja salía, era nuestra, y no
+    se descontaba NUNCA — en los dos artículos que más se mueven.
+
+    El parámetro `envase_declarado` estaba puesto desde el primer día y NO
+    TENÍA UN SOLO ESCRITOR: la pregunta se diseñó y nunca se construyó. Es el
+    corolario 72 sobre un parámetro en vez de sobre una columna.
+
+    Y LA PARED VA DONDE SE ESCRIBE: que la pantalla ponga `required` no
+    alcanza — un formulario armado a mano entra sin ver el cartel.
+    """
+    # La ficha existe, tiene envase, y es VARIABLE.
+    conexion, cursor = _conexion_falsa(filas_fetchone=[_CORTE, (7, True)])
+
+    with patch("app.db.obtener_conexion", return_value=conexion):
+        with pytest.raises(ValueError) as rebote:
+            crear_reproceso(1, 10, 8, 0, 2, date(2026, 8, 25), cliente_id=1, ficha_id=901)
+
+    assert "caja nuestra" in str(rebote.value)
+    # Y NO ESCRIBIÓ NADA. Sin esto, "rebota" y "rebota después de escribir a
+    # medias" se leen igual desde el test.
+    inserts = [c for c in cursor.execute.call_args_list
+               if "INSERT INTO reprocesos" in c.args[0]]
+    assert inserts == []
+
+
+def test_CONTESTANDO_la_misma_carga_entra_y_escribe_LO_QUE_SE_CONTESTO():
+    """EL CASO QUE TIENE QUE PASAR, y es el único que separa "la guarda
+    funciona" de "la guarda frena siempre".
+
+    Una batería de rechazos la pasa entera cualquier guarda que aborte
+    siempre (corolario 30), y acá eso dejaría la pantalla trabada para Mango
+    y Cherry sin un solo test en rojo.
+
+    Y verifica que lo DECLARADO gane sobre la derivación: la misma ficha
+    variable que arriba rebotaba, acá escribe True y la caja 7.
+    """
+    conexion, cursor = _conexion_falsa(filas_fetchone=[_CORTE, (7, True), (31,)])
+    cursor.description = COLUMNAS_LOTES
+    cursor.fetchall.side_effect = [
+        [_lote_compra(101, date(2026, 8, 15), 20.0, 1000.0)],
+        [],
+        [],
+    ]
+
+    with patch("app.db.obtener_conexion", return_value=conexion):
+        numero = crear_reproceso(1, 10, 8, 0, 2, date(2026, 8, 25), cliente_id=1,
+                                 ficha_id=901, caja_declarada=(True, 7))
+
+    assert numero == 31
+    insert = next(c for c in cursor.execute.call_args_list
+                  if "INSERT INTO reprocesos" in c.args[0])
+    assert True in insert.args[1] and 7 in insert.args[1]
+
+
+def test_una_ficha_de_envase_FIJO_no_pregunta_NADA_y_lo_deriva_sola():
+    """EL CONTROL, y es lo que impide que el arreglo trabe todo el galpón.
+
+    La inmensa mayoría de las fichas tienen envase fijo: ahí el server sabe
+    la respuesta y preguntar sería pedir dos veces el mismo dato. Sin este
+    test, una guarda que exija SIEMPRE pasa los dos de arriba y rompe la
+    pantalla para todos los demás artículos.
+    """
+    # Ficha con envase 7 y NO variable.
+    conexion, cursor = _conexion_falsa(filas_fetchone=[_CORTE, (7, False), (32,)])
+    cursor.description = COLUMNAS_LOTES
+    cursor.fetchall.side_effect = [
+        [_lote_compra(101, date(2026, 8, 15), 20.0, 1000.0)],
+        [],
+        [],
+    ]
+
+    with patch("app.db.obtener_conexion", return_value=conexion):
+        # SIN `caja_declarada`, que es como la va a llamar la pantalla para
+        # toda ficha fija: no se pregunta nada y entra igual.
+        numero = crear_reproceso(1, 10, 8, 0, 2, date(2026, 8, 25), cliente_id=1, ficha_id=901)
+
+    assert numero == 32
+    insert = next(c for c in cursor.execute.call_args_list
+                  if "INSERT INTO reprocesos" in c.args[0])
+    assert True in insert.args[1] and 7 in insert.args[1]
 
 
 def test_el_dia_DEL_corte_si_se_puede_cargar():
@@ -5968,7 +6068,7 @@ def test_el_dia_DEL_corte_si_se_puede_cargar():
     ]
 
     with patch("app.db.obtener_conexion", return_value=conexion):
-        numero = crear_reproceso(1, 10, 8, 0, 2, date(2026, 8, 15))
+        numero = crear_reproceso(1, 10, 8, 0, 2, date(2026, 8, 15), caja_declarada=SIN_CAJA_NUESTRA_DECLARADA)
 
     assert numero == 30
 
@@ -6007,7 +6107,7 @@ def test_crear_reproceso_congela_consumos_fifo_y_todo_el_costo_a_la_primera():
     ]
 
     with patch("app.db.obtener_conexion", return_value=conexion):
-        numero = crear_reproceso(1, 6, 4, 1, 1, date(2026, 8, 25), cliente_id=7)
+        numero = crear_reproceso(1, 6, 4, 1, 1, date(2026, 8, 25), cliente_id=7, caja_declarada=SIN_CAJA_NUESTRA_DECLARADA)
 
     assert numero == 12
     inserts = [c for c in cursor.execute.call_args_list if "INSERT INTO" in c.args[0]]
@@ -6029,7 +6129,11 @@ def test_crear_reproceso_congela_consumos_fifo_y_todo_el_costo_a_la_primera():
     # "no sabemos", que el stock de cajas cuenta aparte como hueco.
     assert inserts[0].args[1] == (
         1, date(2026, 8, 25), 6, 4, 1, 1, 6600.0, 1650.0, 7, None, False, "normal", None,
-        None, None,
+        # lleva_caja_nuestra y envase_id: FALSE y None, no None y None. La
+        # carga contestó "salió en el cajón del proveedor", y eso es un HECHO
+        # DECLARADO — distinto de "nadie dijo", que es lo que había antes y
+        # se veía igual en la pantalla.
+        False, None,
     )
     # Consumos congelados, del lote más viejo primero, con su costo.
     assert inserts[1].args[1] == (12, "compra", 101, 101, 3.0, 1000.0)
@@ -6055,7 +6159,7 @@ def test_crear_reproceso_con_lote_sin_precio_deja_el_costo_incompleto():
     ]
 
     with patch("app.db.obtener_conexion", return_value=conexion):
-        crear_reproceso(1, 10, 8, 0, 0, date(2026, 8, 25))
+        crear_reproceso(1, 10, 8, 0, 0, date(2026, 8, 25), caja_declarada=SIN_CAJA_NUESTRA_DECLARADA)
 
     inserts = [c for c in cursor.execute.call_args_list if "INSERT INTO" in c.args[0]]
     assert inserts[0].args[1][6] is None
@@ -6081,7 +6185,7 @@ def test_el_freno_traba_lo_que_los_lotes_no_cubren_y_NO_escribe_nada():
 
     with patch("app.db.obtener_conexion", return_value=conexion):
         with pytest.raises(StockInsuficienteParaReproceso) as levantada:
-            crear_reproceso(1, 5, 4, 0, 1, date(2026, 8, 25))
+            crear_reproceso(1, 5, 4, 0, 1, date(2026, 8, 25), caja_declarada=SIN_CAJA_NUESTRA_DECLARADA)
 
     # La excepción trae lo que la pantalla necesita para explicarlo sola.
     assert levantada.value.declarado == 5.0
@@ -6111,7 +6215,7 @@ def test_el_freno_compara_contra_los_RESTANTES_no_contra_el_neto():
 
     with patch("app.db.obtener_conexion", return_value=conexion):
         with pytest.raises(StockInsuficienteParaReproceso) as levantada:
-            crear_reproceso(1, 4, 4, 0, 0, date(2026, 8, 25))
+            crear_reproceso(1, 4, 4, 0, 0, date(2026, 8, 25), caja_declarada=SIN_CAJA_NUESTRA_DECLARADA)
 
     assert levantada.value.disponible == 0.0
 
@@ -6134,7 +6238,7 @@ def test_el_freno_NO_cuenta_las_salidas_DEL_MISMO_DIA():
     ]
 
     with patch("app.db.obtener_conexion", return_value=conexion):
-        numero = crear_reproceso(1, 44, 40, 0, 4, date(2026, 8, 31))
+        numero = crear_reproceso(1, 44, 40, 0, 4, date(2026, 8, 31), caja_declarada=SIN_CAJA_NUESTRA_DECLARADA)
 
     assert numero == 16
     inserts = [c for c in cursor.execute.call_args_list if "INSERT INTO" in c.args[0]]
@@ -6169,7 +6273,7 @@ def test_EL_CASO_DE_LOS_56_DE_UN_LOTE_DE_40_lo_que_el_dia_ya_tomo_se_descuenta()
 
     with patch("app.db.obtener_conexion", return_value=conexion):
         with pytest.raises(StockInsuficienteParaReproceso) as levantada:
-            crear_reproceso(1, 26, 24, 0, 2, date(2026, 9, 14))
+            crear_reproceso(1, 26, 24, 0, 2, date(2026, 9, 14), caja_declarada=SIN_CAJA_NUESTRA_DECLARADA)
 
     assert levantada.value.disponible == 10.0
     # Y la pared no es muda: dice QUÉ guía de hoy se lo llevó. Sin esto, el
@@ -6198,7 +6302,7 @@ def test_EL_CONTROL_del_caso_de_los_56_sin_nada_tomado_hoy_la_MISMA_carga_entra(
     ]
 
     with patch("app.db.obtener_conexion", return_value=conexion):
-        numero = crear_reproceso(1, 26, 24, 0, 2, date(2026, 9, 14))
+        numero = crear_reproceso(1, 26, 24, 0, 2, date(2026, 9, 14), caja_declarada=SIN_CAJA_NUESTRA_DECLARADA)
 
     assert numero == 307
 
@@ -6218,7 +6322,7 @@ def test_lo_que_TODAVIA_ENTRA_despues_de_lo_de_hoy_no_rebota():
     ]
 
     with patch("app.db.obtener_conexion", return_value=conexion):
-        numero = crear_reproceso(1, 10, 9, 0, 1, date(2026, 9, 14))
+        numero = crear_reproceso(1, 10, 9, 0, 1, date(2026, 9, 14), caja_declarada=SIN_CAJA_NUESTRA_DECLARADA)
 
     assert numero == 308
 
@@ -6244,7 +6348,7 @@ def test_EL_REPARTO_NO_CAMBIA_la_propuesta_sale_de_los_lotes_ENTEROS():
     ]
 
     with patch("app.db.obtener_conexion", return_value=conexion):
-        crear_reproceso(1, 10, 10, 0, 0, date(2026, 9, 14))
+        crear_reproceso(1, 10, 10, 0, 0, date(2026, 9, 14), caja_declarada=SIN_CAJA_NUESTRA_DECLARADA)
 
     consumos = [c.args[1] for c in cursor.execute.call_args_list
                 if "INSERT INTO reprocesos_consumos" in c.args[0]]
@@ -6278,6 +6382,7 @@ def test_un_lote_YA_SOBRE_ATRIBUIDO_aporta_CERO_y_no_se_come_a_los_otros():
         numero = crear_reproceso(
             1, 20, 20, 0, 0, date(2026, 9, 14),
             reparto=[{"tipo_lote": "guia", "origen_id": 102, "bultos": 20.0}],
+            caja_declarada=SIN_CAJA_NUESTRA_DECLARADA,
         )
 
     assert numero == 310
@@ -6330,7 +6435,7 @@ def test_un_lote_POSTERIOR_a_la_fecha_del_reproceso_no_cuenta():
 
     with patch("app.db.obtener_conexion", return_value=conexion):
         with pytest.raises(StockInsuficienteParaReproceso) as levantada:
-            crear_reproceso(1, 8, 8, 0, 0, date(2026, 8, 20))
+            crear_reproceso(1, 8, 8, 0, 0, date(2026, 8, 20), caja_declarada=SIN_CAJA_NUESTRA_DECLARADA)
 
     assert levantada.value.disponible == 0.0
 
@@ -6361,7 +6466,7 @@ def test_el_reparto_editado_por_el_operario_se_escribe_y_queda_MARCADO():
     ]
 
     with patch("app.db.obtener_conexion", return_value=conexion):
-        crear_reproceso(1, 10, 9, 0, 1, date(2026, 8, 25), reparto=reparto)
+        crear_reproceso(1, 10, 9, 0, 1, date(2026, 8, 25), reparto=reparto, caja_declarada=SIN_CAJA_NUESTRA_DECLARADA)
 
     inserts = [c for c in cursor.execute.call_args_list if "INSERT INTO" in c.args[0]]
     # POR NOMBRE y no `[-1]`: la última columna dejó de ser ésta el día que
@@ -6393,7 +6498,7 @@ def test_confirmar_el_desglose_sin_tocarlo_NO_lo_marca_como_editado():
     ]
 
     with patch("app.db.obtener_conexion", return_value=conexion):
-        crear_reproceso(1, 10, 9, 0, 1, date(2026, 8, 25), reparto=igual_al_fifo)
+        crear_reproceso(1, 10, 9, 0, 1, date(2026, 8, 25), reparto=igual_al_fifo, caja_declarada=SIN_CAJA_NUESTRA_DECLARADA)
 
     inserts = [c for c in cursor.execute.call_args_list if "INSERT INTO" in c.args[0]]
     assert _valor_insertado(cursor, "consumos_editados", "INSERT INTO reprocesos\n") is False
@@ -6419,7 +6524,7 @@ def test_un_reparto_que_pide_mas_de_lo_que_hay_en_un_lote_no_se_guarda():
 
     with patch("app.db.obtener_conexion", return_value=conexion):
         with pytest.raises(RepartoDesactualizado):
-            crear_reproceso(1, 10, 9, 0, 1, date(2026, 8, 25), reparto=reparto)
+            crear_reproceso(1, 10, 9, 0, 1, date(2026, 8, 25), reparto=reparto, caja_declarada=SIN_CAJA_NUESTRA_DECLARADA)
 
     assert not [c for c in cursor.execute.call_args_list if "INSERT INTO" in c.args[0]]
     conexion.commit.assert_not_called()
@@ -6440,7 +6545,8 @@ def test_un_reparto_que_no_suma_lo_declarado_no_se_guarda():
     with patch("app.db.obtener_conexion", return_value=conexion):
         with pytest.raises(RepartoDesactualizado):
             crear_reproceso(1, 5, 4, 0, 1, date(2026, 8, 25),
-                            reparto=[{"tipo_lote": "guia", "origen_id": 101, "bultos": 4.0}])
+                            reparto=[{"tipo_lote": "guia", "origen_id": 101, "bultos": 4.0}],
+                            caja_declarada=SIN_CAJA_NUESTRA_DECLARADA)
 
     assert not [c for c in cursor.execute.call_args_list if "INSERT INTO" in c.args[0]]
 
