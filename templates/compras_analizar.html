@@ -127,7 +127,21 @@
 <body>
   {% set barra_sector = "compras" %}
   {% set barra_titulo = "Analizar Artículo" %}
+  {# EL ATRAS VUELVE A ELEGIR, no sale de la pantalla. El selector de artículo
+     vive acá mismo, plegado una vez que se eligió, así que salir a /compras
+     obliga a volver a entrar para mirar otro — que es lo que se hace todo el
+     tiempo en esta pantalla. Con la ficha elegida el atrás vuelve acá sin
+     ficha (el selector se abre solo) y conserva el CLIENTE, que casi nunca
+     cambia entre un artículo y el siguiente.
+
+     Sin ficha elegida sigue siendo /compras: si no, el atrás sería un link a
+     la pantalla en la que ya estás, que es el mismo defecto que el "Ver el
+     detalle" de las alertas. #}
+  {% if ficha %}
+  {% set barra_atras = "/compras/analizar?cliente_id=" ~ cliente_id %}
+  {% else %}
   {% set barra_atras = "/compras" %}
+  {% endif %}
   {% include "_barra_navegacion.html" %}
 
   {# PLEGADOS UNA VEZ QUE CUMPLIERON. Abiertos se llevaban toda la parte de

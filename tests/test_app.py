@@ -4110,7 +4110,7 @@ def test_deposito_no_manda_a_ADMINISTRACION_sin_avisar():
     """Un control de acceso se vuelve peor que no tenerlo el día que traba al
     operario en algo cotidiano: la clave termina pegada en la pared.
 
-    Dos cosas se sacaron por eso: el botón "Buscar Pedidos" de la pantalla de
+    Dos cosas se sacaron por eso: el botón "Armar Remito" de la pantalla de
     pedidos de Depósito, y el `barra_sector` de las dos pantallas de CARGA de
     pedido —que las sirve `/deposito/...` pero declaraban sector
     "administracion", así que su barra llevaba a una clave en medio de la
@@ -12678,7 +12678,7 @@ TASAS_ANALISIS = {
 SIN_TASAS_ANALISIS = {"tasas_suman": [], "tasas_restan": [], "utilidad": None, "detalle": []}
 
 
-def _analizar(url, fichas=None, fila=None, tasas=None):
+def _analizar(url, fichas=None, fila=None, tasas=None, entero=False):
     from unittest.mock import patch as _patch
     with (
         _patch("app.main.listar_articulos", return_value=[{"id": 1, "nombre": "EJEMPLO Uno"}]),
@@ -12693,7 +12693,9 @@ def _analizar(url, fichas=None, fila=None, tasas=None):
     ):
         respuesta = cliente.get(url)
     assert respuesta.status_code == 200, respuesta.status_code
-    return respuesta.text.split("</style>")[-1]
+    # `entero` para lo que vive en la BARRA: se incluye con su propio <style>,
+    # así que split("</style>")[-1] la corta de más (corolario 50).
+    return respuesta.text if entero else respuesta.text.split("</style>")[-1]
 
 
 def _valor(marcado, campo):
@@ -16520,9 +16522,9 @@ def test_ver_deposito_muestra_los_accesos_a_pedido():
     assert respuesta.status_code == 200
     assert 'href="/deposito/pedido"' in respuesta.text
     assert 'href="/deposito/pedido/armar"' in respuesta.text
-    # Buscar Pedidos se mudó a Administración: es consulta, no operación.
+    # Armar Remito se mudó a Administración: es consulta, no operación.
     assert "/administracion/pedidos/buscar" not in respuesta.text
-    assert "Buscar Pedidos" not in respuesta.text
+    assert "Armar Remito" not in respuesta.text
     # Y Cargar Pedido también: el depósito arma lo que ya está cargado, no
     # transcribe el mail del cliente.
     assert "Cargar Pedido" not in respuesta.text
@@ -16537,7 +16539,7 @@ def test_administracion_tiene_cargar_pedido_en_la_tarjeta_de_pedidos():
     # Va en Pedidos, junto a Buscar, y no en otra tarjeta.
     pedidos = cuerpo.split("<h2>Pedidos</h2>")[1].split("</div>")[0]
     assert "Cargar Pedido" in pedidos
-    assert "Buscar Pedidos" in pedidos
+    assert "Armar Remito" in pedidos
 
 
 def test_la_pantalla_de_cargar_pedido_vuelve_a_DEPOSITO():
@@ -20123,7 +20125,7 @@ def test_ver_casilla_muestra_el_horario_de_revision_y_su_formulario():
     assert "Cambiar horario de revisión automática" in respuesta.text
 
 
-# --- Armado: kilos reales, anular, terminar, Buscar Pedidos ---
+# --- Armado: kilos reales, anular, terminar, Armar Remito ---
 
 FICHAS_ARMADO_CON_CONTENIDO = [
     {"id": 1, "articulo_id": 1, "articulo_nombre": "Banana", "articulo_grupo": "fruta",
@@ -20502,7 +20504,7 @@ def test_buscar_pedidos_sin_cliente_muestra_solo_el_selector():
     mock_buscar.assert_not_called()
 
 
-def test_exportar_buscar_pedidos_pdf_y_excel():
+def test_exportar_armar_remito_pdf_y_excel():
     with (
         patch("app.main._hoy_argentina", return_value=date(2026, 8, 22)),
         patch("app.main.obtener_cliente", return_value=dict(CLIENTE_DE_PRUEBA)),
@@ -20513,9 +20515,13 @@ def test_exportar_buscar_pedidos_pdf_y_excel():
 
     assert pdf.status_code == 200
     assert pdf.content.startswith(b"%PDF")
-    assert 'filename="Pedidos_2026-08-15_a_2026-08-22.pdf"' in pdf.headers["content-disposition"]
+    assert 'filename="Remito_2026-08-15_a_2026-08-22.pdf"' in pdf.headers["content-disposition"]
     assert excel.status_code == 200
     assert "spreadsheetml" in excel.headers["content-type"]
+    # EL NOMBRE DEL EXCEL NO LO AFIRMABA NADIE, y es la mitad del exportable
+    # que se descarga igual. Al renombrar la pantalla a Armar Remito se
+    # cambiaron los dos y solo uno tenía quien lo mirara.
+    assert 'filename="Remito_2026-08-15_a_2026-08-22.xlsx"' in excel.headers["content-disposition"]
 
 
 def test_el_Excel_de_pedidos_tiene_LAS_SEIS_COLUMNAS_y_Armado_va_VACIA():
@@ -20631,7 +20637,7 @@ def test_ver_pedido_NO_lleva_a_administracion_y_muestra_el_badge_terminado():
         respuesta = cliente.get("/deposito/pedido?cliente_id=1")
 
     assert respuesta.status_code == 200
-    # "Buscar Pedidos" SE FUE el 10/09: vive en Administración, que ahora pide
+    # "Armar Remito" SE FUE el 10/09: vive en Administración, que ahora pide
     # clave, y esta pantalla la usa el operario todos los días. Un botón que
     # lleva a una clave desde la pantalla cotidiana es cómo la clave termina
     # pegada en la pared.
@@ -28823,4 +28829,53 @@ def test_el_CSS_de_celular_del_catalogo_cubre_TODAS_las_columnas_de_la_tabla():
     assert indices == set(range(1, columnas + 1)), (
         f"la tabla tiene {columnas} columnas y el CSS de celular ubica {sorted(indices)}: "
         "cada columna necesita su regla, y una regla de más apunta a una columna que no existe"
+    )
+
+
+def test_el_ATRAS_de_Analizar_vuelve_a_ELEGIR_OTRO_articulo_y_no_sale():
+    """El selector vive en la misma pantalla, plegado una vez que se eligió.
+
+    Con el atrás en `/compras`, mirar el artículo siguiente obliga a salir y
+    volver a entrar — y elegir otro artículo es para lo que se abre esta
+    pantalla. Con ficha elegida el atrás vuelve acá SIN ficha (el selector se
+    abre solo) y conserva el CLIENTE, que casi nunca cambia entre uno y el
+    que sigue.
+
+    SIN FICHA SIGUE SIENDO /compras, y esa mitad es la que importa: si no, el
+    atrás sería un link a la pantalla en la que ya estás, que es exactamente
+    el defecto que este mismo commit arregla en las alertas.
+    """
+    con_ficha = _analizar("/compras/analizar?cliente_id=1&ficha_id=901", entero=True)
+    assert 'href="/compras/analizar?cliente_id=1" aria-label="Volver atrás"' in con_ficha, (
+        "con la ficha elegida, el atrás vuelve al selector del mismo cliente"
+    )
+
+    sin_ficha = _analizar("/compras/analizar", entero=True)
+    assert 'href="/compras" aria-label="Volver atrás"' in sin_ficha, (
+        "sin ficha no hay a dónde volver adentro de la pantalla: sale a Compras"
+    )
+
+
+def test_la_alerta_que_apunta_A_ESTA_pantalla_NO_dibuja_el_link():
+    """La url es UNA y los contextos son DOS (corolario 56).
+
+    `kilos_faltantes` y `cajones_faltantes` tienen `url="/compras/alertas"`
+    porque desde el BANNER ese destino es el correcto: te trae a ver el
+    detalle. Adentro de `/compras/alertas` el mismo link recarga la página en
+    la que ya estás, con el detalle tres centímetros más abajo — que es el
+    "no lleva a ningún lado" que se reportó.
+
+    Y LA OTRA MITAD ES LA QUE HACE QUE EL TEST SIRVA: una alerta cuyo destino
+    es OTRA pantalla sigue mostrando su link. Sin eso, esconder todos los
+    links pasaría este test igual.
+    """
+    propia = _alertas_de("/compras/alertas", ["kilos_faltantes"])
+    assert 'href="/compras/alertas"' not in propia, (
+        "el link a la pantalla en la que ya estás no se dibuja"
+    )
+    assert "Compras cuyos cajones pesaron menos" in propia, "pero el bloque sí está"
+
+    ajena = _alertas_de("/compras/alertas", ["guias_r_costo_incompleto"])
+    assert 'href="/compras/pendientes"' in ajena, (
+        "una alerta que apunta a otra pantalla conserva su link"
     )

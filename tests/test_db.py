@@ -4814,7 +4814,7 @@ def test_buscar_renglones_pedidos_trae_kilos_y_anulados_de_los_vigentes():
     assert "DISTINCT ON (fecha_operacion)" in consulta
     assert "WHERE cliente_id = %s AND anulado_el IS NULL" in consulta  # pedidos
     assert "r.kilos_enviados" in consulta
-    # Acá el renglón anulado SÍ viene, y es a propósito: Buscar Pedidos los
+    # Acá el renglón anulado SÍ viene, y es a propósito: Armar Remito los
     # muestra marcados ("registrados, nunca desaparecen") y los descuenta al
     # sumar, en Python. Queda escrito para que no se lea como el olvido que
     # sí tenía listar_renglones_pedidos_vigentes.
@@ -7726,7 +7726,7 @@ def test_facturacion_por_ficha_cuenta_el_dia_aunque_no_haya_precio():
 
 
 def test_facturacion_por_ficha_excluye_el_renglon_anulado():
-    # Es el criterio de Buscar Pedidos (_grupos_buscar_pedidos), NO el de
+    # Es el criterio de Armar Remito (_grupos_buscar_pedidos), NO el de
     # listar_renglones_pedidos_vigentes, que hoy no filtra el renglón
     # anulado. La facturación tiene que cerrar con la pantalla que factura.
     conexion, cursor = _conexion_falsa()

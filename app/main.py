@@ -12682,7 +12682,7 @@ ALERTAS = [
         titulo="Pedidos entregados que Administración no controló",
         titulo_corto="Pedidos sin controlar",
         url="/administracion/pedidos/buscar",
-        texto_link="Ver en Buscar Pedidos",
+        texto_link="Ver en Armar Remito",
         # Solo Administración: el control es suyo. Depósito ya tiene seis
         # alertas y ésta no la puede resolver.
         modulos=("administracion",),
@@ -12697,7 +12697,7 @@ ALERTAS = [
         # se aprende a ignorar.
         #
         # La ventana sale de DIAS_PASADOS_LISTADO_PEDIDOS y no de un 7
-        # escrito acá: contar pedidos que Buscar Pedidos no lista por
+        # escrito acá: contar pedidos que Armar Remito no lista por
         # defecto dejaría el banner diciendo un número y la pantalla
         # mostrando otro.
         contar=lambda: contar_pedidos_sin_controlar(
@@ -16241,7 +16241,7 @@ def ver_pedido_del_dia(request: Request, cliente_id: str | None = None, fecha: s
 
 
 def _grupos_buscar_pedidos(renglones: list[dict]) -> tuple[list[dict], dict]:
-    """Agrupa los renglones de Buscar Pedidos por FECHA y, adentro, por SUCURSAL.
+    """Agrupa los renglones de Armar Remito por FECHA y, adentro, por SUCURSAL.
 
     Los kilos son SIEMPRE los kilos_enviados que grabó el depósito al
     armar — un renglón sin kilaje se cuenta aparte, jamás se calcula el
@@ -16412,7 +16412,7 @@ def ver_buscar_pedidos(
     fecha_hasta: str | None = None,
     aviso: str | None = None,
 ):
-    """Buscar Pedidos: lo que se mandó por fecha y artículo, con los KILOS REALES del depósito.
+    """Armar Remito: lo que se mandó por fecha y artículo, con los KILOS REALES del depósito.
 
     Es la pantalla para facturar: los kilos son los que el depósito grabó
     al armar cada renglón (editables en Armar Pedido), no los de la
@@ -16538,10 +16538,10 @@ def guardar_control_de_pedido_ruta(pedido_id: int, cliente_id: str = Form(""),
 
 @app.get("/administracion/pedidos/buscar/exportar-pdf")
 def exportar_pedidos_pdf(cliente_id: str = "", fecha_desde: str = "", fecha_hasta: str = ""):
-    """Buscar Pedidos en PDF (mismos filtros que la pantalla) — sin tope."""
+    """Armar Remito en PDF (mismos filtros que la pantalla) — sin tope."""
     desde, hasta, nombre_cliente, grupos, totales = _datos_exportar_pedidos(cliente_id, fecha_desde, fecha_hasta)
     pdf_bytes = generar_pdf_pedidos(desde, hasta, nombre_cliente, grupos, totales)
-    nombre_archivo = f"Pedidos_{desde.isoformat()}_a_{hasta.isoformat()}.pdf"
+    nombre_archivo = f"Remito_{desde.isoformat()}_a_{hasta.isoformat()}.pdf"
     return Response(
         content=pdf_bytes,
         media_type="application/pdf",
@@ -16551,10 +16551,10 @@ def exportar_pedidos_pdf(cliente_id: str = "", fecha_desde: str = "", fecha_hast
 
 @app.get("/administracion/pedidos/buscar/exportar-excel")
 def exportar_pedidos_excel(cliente_id: str = "", fecha_desde: str = "", fecha_hasta: str = ""):
-    """Buscar Pedidos en Excel (mismos filtros que la pantalla) — sin tope."""
+    """Armar Remito en Excel (mismos filtros que la pantalla) — sin tope."""
     desde, hasta, nombre_cliente, grupos, totales = _datos_exportar_pedidos(cliente_id, fecha_desde, fecha_hasta)
     excel_bytes = generar_excel_pedidos(desde, hasta, nombre_cliente, grupos, totales)
-    nombre_archivo = f"Pedidos_{desde.isoformat()}_a_{hasta.isoformat()}.xlsx"
+    nombre_archivo = f"Remito_{desde.isoformat()}_a_{hasta.isoformat()}.xlsx"
     return Response(
         content=excel_bytes,
         media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",

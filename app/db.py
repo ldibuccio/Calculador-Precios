@@ -7018,7 +7018,7 @@ def reabrir_armado_pedido(pedido_id: int) -> None:
 
 
 def buscar_renglones_pedidos(cliente_id: int, fecha_desde, fecha_hasta) -> list[dict]:
-    """Los renglones de los pedidos VIGENTES del rango, para Buscar Pedidos (lo que se factura).
+    """Los renglones de los pedidos VIGENTES del rango, para Armar Remito (lo que se factura).
 
     Trae los KILOS ENVIADOS tal cual los grabó el depósito al armar —
     NULL si el renglón no se armó: la pantalla lo dice, jamás se calcula
@@ -7207,7 +7207,7 @@ def facturacion_por_ficha(cliente_id: int, fecha_desde, fecha_hasta) -> dict:
 
     A diferencia de listar_renglones_pedidos_vigentes, acá SÍ se filtra
     r.anulado_el: un renglón dado de baja no se facturó. Es el criterio de
-    Buscar Pedidos (ver _grupos_buscar_pedidos), que es la pantalla con la
+    Armar Remito (ver _grupos_buscar_pedidos), que es la pantalla con la
     que este número tiene que cerrar.
     """
     conexion = obtener_conexion()

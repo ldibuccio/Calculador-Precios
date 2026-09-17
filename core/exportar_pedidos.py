@@ -1,4 +1,4 @@
-"""Genera Buscar Pedidos en PDF y Excel — puro, sin tocar la base.
+"""Genera Armar Remito en PDF y Excel — puro, sin tocar la base.
 
 Mismo criterio visual que los otros exports (core/exportar_ingresos.py):
 banda de encabezado por página, una tabla por FECHA Y SUCURSAL con su
@@ -104,7 +104,7 @@ def _dibujar_encabezado(canvas, documento, subtitulo: str):
 def generar_pdf_pedidos(
     fecha_desde: date, fecha_hasta: date, nombre_cliente: str, grupos: list[dict], totales: dict
 ) -> bytes:
-    """Arma el PDF de Buscar Pedidos: una tabla por fecha con subtotal + total general al final."""
+    """Arma el PDF de Armar Remito: una tabla por fecha con subtotal + total general al final."""
     buffer = BytesIO()
     subtitulo = _armar_subtitulo(fecha_desde, fecha_hasta, nombre_cliente)
     documento = SimpleDocTemplate(
@@ -233,7 +233,7 @@ def generar_pdf_pedidos(
 def generar_excel_pedidos(
     fecha_desde: date, fecha_hasta: date, nombre_cliente: str, grupos: list[dict], totales: dict
 ) -> bytes:
-    """Arma el Excel de Buscar Pedidos: secciones por fecha con subtotal + total general al final."""
+    """Arma el Excel de Armar Remito: secciones por fecha con subtotal + total general al final."""
     libro = Workbook()
     hoja = libro.active
     hoja.title = "Pedidos"
