@@ -6875,3 +6875,64 @@ que se compara se DERIVA de los mismos números que se están comparando, la
 igualdad no puede fallar. El control tiene que venir de otra corrida, otra
 consulta u otra fuente — es la misma regla que *"la verificación que funciona
 es la que hace chocar dos fuentes"* (corolario 19), acá adentro de un test.
+
+## Corolario 77: un `JOIN` contra la fila que todavía no existe no devuelve cero, DESAPARECE
+
+Del 17/09. Las tres patas del stock de cajas entran por `JOIN base`, donde
+`base` es el conteo inicial de ese envase. Un envase recién dado de alta no
+tiene esa fila, así que **`declarados` y `guias` no producen ni un renglón**
+y todo lo que se le cargó —una compra de doscientas cajas, un préstamo, una
+guía R— es invisible.
+
+La pantalla decía "todavía sin conteo inicial", que es **verdadero y no
+alcanza**. El que compró las doscientas entra, lee que la cuenta no arrancó,
+y no tiene forma de saber que sus doscientas ya están cargadas y escondidas.
+Es la ausencia de filas del backfill con otro disfraz: *"acá no hay nada"* y
+*"acá hay cosas que no puedo mostrarte"* se dibujan exactamente igual.
+
+**Y el aviso que lo tapa tiene que contar SIN EL JOIN**, que es lo que sale
+al revés: escrito al lado de las otras tres patas, lo natural es copiarles el
+`JOIN base`, y entonces el contador da **cero justo en el único caso que le
+importa** — un cero que no puede dar otra cosa (corolario 47), adentro del
+arreglo escrito para el corolario 47. Lo cuida
+`test_lo_que_ESPERA_AL_CONTEO_se_cuenta_SIN_PASAR_POR_base`, que lee el
+cuerpo de esas dos CTE y exige que la palabra `base` no esté.
+
+**Y la otra mitad, que es del corolario 8**: el contador se apaga en CERO
+cuando el conteo SÍ existe. Sin eso, un envase con la cuenta andando
+devolvería sus movimientos como "esperando" y habría que mirar `desde` al
+lado para saber si el número significa algo. **Una columna que significa dos
+cosas según otra columna no es una columna: son dos.**
+
+### El aviso nombra la FECHA, porque "ponelo antes" no dice antes de qué
+
+El recorte es `fecha_operacion >= conteo.fecha`, así que lo que decide si
+una compra vieja se suma o queda absorbida **es la fecha del conteo**, y hay
+tres casos que el que arranca la cuenta tiene que poder distinguir:
+
+| lo que quiere | qué carga |
+|---|---|
+| contó las cajas que ya le llegaron | la cantidad, fechado **hoy** — esas compras quedan absorbidas |
+| que una compra ya cargada se sume | **cero cajas**, fechado **antes** de esa compra |
+| ~~contar las cajas Y fecharlo antes de la compra~~ | **nunca** — se suman dos veces |
+
+**El tercero es el que alguien va a hacer, y es el que no avisa**: no
+descuadra nada, el stock queda alto, y el aviso de reposición llega tarde
+para siempre. Por eso la regla va **en la pantalla y no en un doc**: el que
+arranca la cuenta está ahí y no va a ir a buscar nada. Y por eso el aviso
+dice la fecha del movimiento más viejo —la más vieja **de las dos** patas, no
+la de una— porque *"fechá el conteo antes"* sin un día al lado no se puede
+obedecer.
+
+**Cero es una respuesta válida**, y va dicho donde se decide qué tipear. Sin
+esa frase, el que tiene doscientas esperando cuenta doscientas, que es
+exactamente el tercer caso.
+
+### Y los movimientos y las guías R van SEPARADOS, no sumados
+
+Se cargan en pantallas distintas. Un solo *"3 esperando"* manda a buscar en
+la lista de movimientos de ese envase una guía R que nunca estuvo ahí —el
+operario encuentra 2 y se queda pensando cuál falta—. Cuesta una columna más
+y es la diferencia entre un número que se puede ir a verificar y uno que hay
+que creer. Es el corolario 74 evitado antes de existir: dos respuestas
+verdaderas que no se pueden poner una al lado de la otra.

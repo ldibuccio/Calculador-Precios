@@ -36,6 +36,16 @@
            border: 0; border-radius: 8px; background: #2563eb; color: #fff;
            font-weight: 600; flex: 1 1 8rem; }
   .ayuda { font-size: .82rem; color: #6b7280; margin: .35rem 0 0; }
+  /* LA REGLA DE LA FECHA VA EN LA PANTALLA, no solo en el doc: es el unico
+     lugar donde el que arranca la cuenta la va a leer a tiempo. Va con el
+     cuerpo del texto y no en letra chica — el caso que se equivoca (contar
+     200 y fecharlo antes de la compra) suma dos veces sin descuadrar nada
+     y sin que nada avise despues. */
+  .regla-fecha { background: #eff6ff; color: #1e3a8a; border-radius: 8px;
+                 padding: .75rem .9rem; margin: .6rem 0 0; font-size: .9rem; }
+  .regla-fecha ul { margin: .5rem 0 0; padding-left: 1.1rem; }
+  .regla-fecha li { margin-bottom: .35rem; }
+  .regla-fecha li:last-child { margin-bottom: 0; }
   /* El gasto en cajas: renglones que se apilan, sin tabla, para que entre en
      390px sin scroll horizontal ni abreviaturas. */
   .gasto-fila { display: flex; justify-content: space-between; gap: .5rem;
@@ -222,6 +232,24 @@
     {% endif %}
 
     {% if e.stock is none %}
+    {# LO QUE YA ESTA CARGADO Y NO SE VE. Sin esto, "todavia sin conteo
+       inicial" es verdadero y no alcanza: el que compro 200 cajas entra,
+       lee que la cuenta no arranco, y no tiene forma de saber que sus 200
+       estan invisibles. Los movimientos y las guias R van SEPARADOS porque
+       se cargan en pantallas distintas: un solo numero mandaria a buscar en
+       la lista de movimientos una guia R que nunca estuvo ahi. #}
+    {% if e.esperando_mov or e.esperando_guias %}
+    <div class="hueco">
+      Ya hay
+      {%- if e.esperando_mov %} {{ e.esperando_mov }} movimiento{{ "" if e.esperando_mov == 1 else "s" }}{% endif %}
+      {%- if e.esperando_mov and e.esperando_guias %} y{% endif %}
+      {%- if e.esperando_guias %} {{ e.esperando_guias }} guía{{ "" if e.esperando_guias == 1 else "s" }} R{% endif %}
+      cargados que <strong>no se ven acá</strong> hasta que arranques la cuenta.
+      El más viejo es del {{ e.esperando_desde.strftime("%d/%m/%Y") }}.
+      Para que se sumen, el conteo va en <strong>cero</strong> y fechado
+      <strong>antes</strong> de ese día. Cero es una respuesta válida.
+    </div>
+    {% endif %}
     <form class="fila" method="post" action="/compras/cajas/conteo-inicial">
       <input type="hidden" name="envase_id" value="{{ e.id }}">
       <div class="campo">
@@ -237,6 +265,21 @@
     </form>
     <p class="ayuda">Se cuenta una sola vez, y desde ese día el stock baja solo
       con cada guía R. Contalas a la mañana, antes de armar nada.</p>
+    <div class="regla-fecha">
+      <strong>La fecha decide qué se suma y qué no.</strong> Todo lo cargado
+      desde el día del conteo —ese día incluido— se suma encima de lo que
+      contaste. Lo anterior ya está adentro del número que contaste.
+      <ul>
+        <li>Contaste las cajas que ya te llegaron → fechalo <strong>hoy</strong>:
+          esas compras quedan absorbidas.</li>
+        <li>Querés que una compra ya cargada se sume →
+          <strong>contá cero</strong>, fechado <strong>antes</strong> de esa
+          compra.</li>
+        <li>Lo que nunca va: contar las cajas <strong>y además</strong> fecharlo
+          antes de la compra que las trajo. Ahí se suman dos veces, el stock
+          queda alto, y no se descuadra nada que avise.</li>
+      </ul>
+    </div>
     {% else %}
     <form class="fila" method="post" action="/compras/cajas/movimiento">
       <input type="hidden" name="envase_id" value="{{ e.id }}">

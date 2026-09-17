@@ -242,6 +242,18 @@ def test_la_guia_R_consume_SOLO_LA_PRIMERA_y_la_segunda_NO_esta_en_el_SQL():
     assert "bultos_merma" not in sql
 
 
+def cuerpo_de_la_pata(anclaje: str) -> str:
+    """El cuerpo de UNA pata de _SQL_STOCK_DE_ENVASES, anclada con su sangría.
+
+    ANCLADA EN LA SANGRIA Y NO EN EL NOMBRE PELADO: `guias` es sufijo de
+    `esperando_guias`, así que un split por "guias AS (" devuelve el cuerpo de
+    la OTRA pata y el assert termina mirando lo que no quiso. Es el corolario
+    4 —calificar el assert para que solo pueda matchear lo que se quiso
+    probar— dentro de una misma consulta.
+    """
+    return _SQL_STOCK_DE_ENVASES.split(anclaje)[1].split("\n    )")[0]
+
+
 def test_el_stock_NO_es_una_columna_que_alguien_actualiza():
     """Que anular una guía R corrija el stock solo sale de esto, no de un trigger.
 
@@ -252,17 +264,29 @@ def test_el_stock_NO_es_una_columna_que_alguien_actualiza():
     Verificado contra el esquema real: anulando una guía R de 30 cajas el
     stock pasó de 226 a 256 sin tocar nada más.
     """
-    # CALIFICADO POR ALIAS Y EN LAS CUATRO PATAS (corolario 4). Esto decía
+    # EL FILTRO SE BUSCA ADENTRO DE CADA PATA (corolario 4). Esto decía
     # `assert "anulado_el IS NULL" in _SQL_STOCK_DE_ENVASES` a secas, y la
-    # consulta tiene CUATRO tablas que se llaman igual esa columna: sacarle el
+    # consulta tiene CINCO tablas que llaman igual a esa columna: sacarle el
     # filtro a la pata de las guías dejaba el assert pasando contra el de otra
     # tabla. Medido con un canario: caían CERO tests, y una guía R anulada
     # habría seguido consumiendo cajas para siempre — que es exactamente lo
     # contrario de lo que este test promete en su título.
-    for alias, pata in (("m", "declarados"), ("r", "guias")):
-        assert f"{alias}.anulado_el IS NULL" in _SQL_STOCK_DE_ENVASES, pata
+    #
+    # Y BUSCARLO POR ALIAS TAMPOCO ALCANZA DESDE EL 17/09: `m` y `r` se repiten
+    # en las patas de "lo que espera al conteo", así que un `in` sobre la
+    # consulta entera vuelve a poder matchear por la de al lado.
+    patas = {
+        "WITH base AS (": "anulado_el IS NULL",
+        "\n    declarados AS (": "m.anulado_el IS NULL",
+        "\n    guias AS (": "r.anulado_el IS NULL",
+        "\n    esperando_mov AS (": "m.anulado_el IS NULL",
+        "\n    esperando_guias AS (": "r.anulado_el IS NULL",
+    }
+    for anclaje, filtro in patas.items():
+        assert filtro in cuerpo_de_la_pata(anclaje), anclaje
     assert "origen = 'conteo_inicial' AND anulado_el IS NULL" in _SQL_STOCK_DE_ENVASES
-    assert _SQL_STOCK_DE_ENVASES.count("anulado_el IS NULL") == 3
+    # El denominador: sin él, cuatro filtros y cinco pasan igual.
+    assert _SQL_STOCK_DE_ENVASES.count("anulado_el IS NULL") == len(patas)
     assert "UPDATE" not in _SQL_STOCK_DE_ENVASES.upper().replace("FOR UPDATE", "")
     esquema_sin_comentarios = "\n".join(
         l for l in ESQUEMA.splitlines() if not l.strip().startswith("--"))
@@ -342,13 +366,26 @@ def _puerta_de_compras_abierta():
             cliente.cookies.delete(PUERTA_COMPRAS.cookie)
 
 
+# LOS FIXTURES LLEVAN LAS ONCE COLUMNAS, como las devuelve la consulta. Un
+# fixture al que le falta el campo que el arreglo toca convierte al test en
+# guardián de lo viejo: en Jinja una clave que no está es Undefined y es
+# FALSA, así que el aviso no se dibuja y el test pasa igual con la pantalla
+# sin aviso.
 UN_ENVASE_SIN_ARRANCAR = [{
     "id": 1, "nombre": "Caja Grande", "umbral_reposicion": 50, "desde": None,
     "contadas": None, "declaradas": 0, "por_guias": 0, "stock": None,
+    "esperando_mov": 0, "esperando_guias": 0, "esperando_desde": None,
+}]
+UN_ENVASE_SIN_ARRANCAR_CON_COSAS_ESPERANDO = [{
+    "id": 1, "nombre": "Caja Grande", "umbral_reposicion": 50, "desde": None,
+    "contadas": None, "declaradas": 0, "por_guias": 0, "stock": None,
+    "esperando_mov": 2, "esperando_guias": 1,
+    "esperando_desde": date(2026, 9, 5),
 }]
 UN_ENVASE_BAJO = [{
     "id": 1, "nombre": "Caja Grande", "umbral_reposicion": 50, "desde": date(2026, 9, 10),
     "contadas": 100, "declaradas": -70, "por_guias": -20, "stock": 10,
+    "esperando_mov": 0, "esperando_guias": 0, "esperando_desde": None,
 }]
 
 # El gasto en cajas viaja SIEMPRE, así que todas las pruebas de pantalla lo
@@ -396,6 +433,98 @@ def test_sin_conteo_inicial_la_pantalla_NO_dice_cero():
     assert 'class="stock bajo"' not in marcado
     # Y ofrece arrancarla, que es lo único que se puede hacer con ese envase.
     assert 'action="/compras/cajas/conteo-inicial"' in marcado
+    # SIN NADA ESPERANDO, EL AVISO NO SALE. Es la otra mitad del par: un aviso
+    # que se dibuja siempre se ve igual de trabajador que uno que funciona, y
+    # acá diría que hay movimientos invisibles donde no hay ninguno.
+    assert "no se ven acá" not in marcado
+
+
+def test_lo_que_YA_ESTA_CARGADO_y_no_se_ve_se_DICE_en_la_tarjeta_sin_conteo():
+    """"Todavía sin conteo inicial" es verdadero y no alcanza.
+
+    EL CASO: alguien da de alta un envase nuevo, compra doscientas cajas,
+    entra a la pantalla y lee que la cuenta no arrancó. Sus doscientas están
+    cargadas, bien cargadas, y no se ven en ningún lado — las tres patas del
+    stock entran por `base`, así que sin conteo inicial no hay ni una fila.
+
+    Es la pantalla vacía del backfill con otro disfraz: "no hay nada" y "hay
+    cosas que no puedo mostrar" se dibujan exactamente igual. El aviso es lo
+    único que las separa, y por eso dice el NÚMERO y la FECHA MÁS VIEJA — sin
+    la fecha, "poné el conteo antes" no dice antes de qué.
+    """
+    with patch("app.main.cajas_perdidas_por_rechazo", return_value=SIN_PERDIDAS), \
+         patch("app.main.gasto_en_cajas", return_value=SIN_GASTO), \
+         patch("app.main.stock_de_envases",
+               return_value=UN_ENVASE_SIN_ARRANCAR_CON_COSAS_ESPERANDO), \
+         patch("app.main.cuentas_de_colegas", return_value=[]), \
+         patch("app.main.listar_colegas", return_value=[]), \
+         patch("app.main.contar_guias_sin_declarar_el_envase", return_value={"casos": 0, "poblacion": 0}):
+        respuesta = cliente.get("/compras/cajas")
+    assert respuesta.status_code == 200
+    marcado = respuesta.text.split("</style>")[-1]
+
+    assert "2 movimientos" in marcado
+    # LAS GUIAS R VAN APARTE, y no sumadas a los movimientos: se cargan en
+    # otra pantalla. Un solo "3 esperando" mandaría a buscar en la lista de
+    # movimientos una guía R que nunca estuvo ahí.
+    assert "1 guía R" in marcado
+    assert "no se ven acá" in marcado
+    assert "05/09/2026" in marcado
+    # Y CERO ES UNA RESPUESTA VALIDA, dicho donde se decide qué tipear: sin
+    # eso, el que tiene 200 esperando cuenta 200 y las suma dos veces.
+    assert "Cero es una respuesta válida" in marcado
+
+
+def test_la_REGLA_DE_LA_FECHA_esta_en_la_PANTALLA_y_no_solo_en_el_doc():
+    """El error caro no se descuadra: el stock queda alto y nada avisa.
+
+    Contar las 200 que ya llegaron Y fechar el conteo antes de esa compra las
+    suma dos veces — el conteo las trae, y el recorte `>=` vuelve a traer la
+    compra. No hay error, no hay hueco, y el aviso de reposición llega tarde
+    para siempre.
+
+    Un doc no lo ataja: el que arranca la cuenta está en esta pantalla y no
+    va a ir a buscar nada. Por eso los tres casos van acá, y el que se
+    equivoca va nombrado como lo que nunca va, no deducible de los otros dos.
+    """
+    with patch("app.main.cajas_perdidas_por_rechazo", return_value=SIN_PERDIDAS), \
+         patch("app.main.gasto_en_cajas", return_value=SIN_GASTO), \
+         patch("app.main.stock_de_envases", return_value=UN_ENVASE_SIN_ARRANCAR), \
+         patch("app.main.cuentas_de_colegas", return_value=[]), \
+         patch("app.main.listar_colegas", return_value=[]), \
+         patch("app.main.contar_guias_sin_declarar_el_envase", return_value={"casos": 0, "poblacion": 0}):
+        respuesta = cliente.get("/compras/cajas")
+    marcado = respuesta.text.split("</style>")[-1]
+
+    assert 'class="regla-fecha"' in marcado
+    assert "La fecha decide qué se suma y qué no" in marcado
+    # Los TRES casos, y el tercero nombrado como el que nunca va.
+    assert "quedan absorbidas" in marcado
+    assert "contá cero" in marcado
+    assert "Lo que nunca va" in marcado
+    assert "se suman dos veces" in marcado
+    # Y NO ESTA EN LETRA CHICA: es el texto que evita el error que no avisa.
+    assert 'class="ayuda">La fecha decide' not in respuesta.text
+
+
+def test_con_el_conteo_PUESTO_la_regla_de_la_fecha_YA_NO_ESTORBA():
+    """La explicación vive en la rama que la necesita y en ninguna otra.
+
+    Un envase con la cuenta andando no tiene nada que fechar, y dejarle la
+    regla al lado sería repetir en cada tarjeta un párrafo que ya no aplica
+    — que es cómo un texto útil se vuelve el que nadie lee.
+    """
+    with patch("app.main.cajas_perdidas_por_rechazo", return_value=SIN_PERDIDAS), \
+         patch("app.main.gasto_en_cajas", return_value=SIN_GASTO), \
+         patch("app.main.stock_de_envases", return_value=UN_ENVASE_BAJO), \
+         patch("app.main.cuentas_de_colegas", return_value=[]), \
+         patch("app.main.listar_colegas", return_value=[]), \
+         patch("app.main.contar_guias_sin_declarar_el_envase", return_value={"casos": 0, "poblacion": 0}):
+        respuesta = cliente.get("/compras/cajas")
+    marcado = respuesta.text.split("</style>")[-1]
+
+    assert 'class="regla-fecha"' not in marcado
+    assert "no se ven acá" not in marcado
 
 
 def test_debajo_del_umbral_la_pantalla_lo_MARCA():
@@ -872,6 +1001,37 @@ def test_lo_que_la_CONSULTA_de_las_perdidas_pide_solo_se_ve_en_su_TEXTO():
     assert "JOIN envases e" in sql and "LEFT JOIN envases" not in sql
 
 
+def test_lo_que_ESPERA_AL_CONTEO_se_cuenta_SIN_PASAR_POR_base():
+    """Las otras tres patas entran por `base`, y por eso no pueden contarlo.
+
+    ESE ES EL BUG QUE EL AVISO VIENE A TAPAR: `declarados` y `guias` hacen
+    `JOIN base`, así que un envase sin conteo inicial no produce ni una fila
+    y sus movimientos son invisibles. Si estas dos CTE copiaran ese join
+    —que es lo que sale solo, porque están escritas al lado— contarían CERO
+    exactamente en el único caso que les importa, y el aviso no saldría
+    nunca. Un cero que no puede dar otra cosa (corolario 47).
+
+    Y LA OTRA MITAD: el SELECT las apaga cuando el conteo SÍ está, para que
+    la columna signifique una sola cosa. Sin eso, un envase con la cuenta
+    andando devolvería sus movimientos como "esperando" y habría que mirar
+    `desde` para saber si el número quiere decir algo.
+    """
+    for nombre in ("esperando_mov", "esperando_guias"):
+        cuerpo = cuerpo_de_la_pata("\n    " + nombre + " AS (")
+        assert "base" not in cuerpo, (
+            f"{nombre} pasa por `base`: cuenta cero justo donde tiene que contar"
+        )
+        assert "GROUP BY" in cuerpo and "MIN(" in cuerpo
+
+    # Las TRES columnas se apagan con el conteo puesto, y se apagan por el
+    # MISMO hecho: que `base` no tenga fila para ese envase.
+    final = _SQL_STOCK_DE_ENVASES.split("FROM envases e")[0]
+    assert final.count("CASE WHEN b.envase_id IS NULL") == 3
+    # Y la fecha es la MAS VIEJA DE LAS DOS, no la de una sola: el aviso dice
+    # "fechá el conteo antes de ese día", y antes de la segunda no alcanza.
+    assert "LEAST(em.desde, eg.desde)" in final
+
+
 def test_los_NOMBRES_de_las_columnas_son_los_que_la_consulta_DEVUELVE():
     """El conjunto ENCONTRADO contra el DECIDIDO, leído del SELECT de verdad.
 
@@ -920,7 +1080,8 @@ def test_guardar_un_movimiento_LEE_EL_STOCK_y_NO_revienta():
     """
     conexion = MagicMock()
     cursor = conexion.cursor.return_value.__enter__.return_value
-    fila = (1, "Caja EJEMPLO Grande", 100, date(2026, 9, 10), 500, 0, 0, 500)
+    fila = (1, "Caja EJEMPLO Grande", 100, date(2026, 9, 10), 500, 0, 0, 500,
+            0, 0, None)
     assert len(fila) == len(
         __import__("app.db", fromlist=["x"]).COLUMNAS_STOCK_DE_ENVASES
     ), "el fixture tiene que tener las columnas que la consulta devuelve, ni una más"
@@ -1092,7 +1253,8 @@ def test_el_INSERT_de_un_movimiento_escribe_LAS_DOS_columnas_que_el_CHECK_ata():
     conexion = MagicMock()
     cursor = conexion.cursor.return_value.__enter__.return_value
     cursor.fetchall.return_value = [
-        (1, "Caja EJEMPLO Grande", 100, date(2026, 9, 10), 500, 0, 0, 500)]
+        (1, "Caja EJEMPLO Grande", 100, date(2026, 9, 10), 500, 0, 0, 500,
+         0, 0, None)]
     cursor.fetchone.return_value = (77,)
 
     with patch("app.db.obtener_conexion", return_value=conexion):

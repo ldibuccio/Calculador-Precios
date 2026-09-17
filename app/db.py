@@ -11996,6 +11996,7 @@ COMPARADOR_DESDE_EL_CONTEO = ">="
 COLUMNAS_STOCK_DE_ENVASES = (
     "id", "nombre", "umbral_reposicion", "desde",
     "contadas", "declaradas", "por_guias", "stock",
+    "esperando_mov", "esperando_guias", "esperando_desde",
 )
 
 _SQL_STOCK_DE_ENVASES = """
@@ -12012,6 +12013,40 @@ _SQL_STOCK_DE_ENVASES = """
            AND m.origen <> 'conteo_inicial'
            AND m.fecha_operacion {comp} b.fecha_operacion
          GROUP BY m.envase_id
+    ),
+    -- LO QUE ESPERA AL CONTEO. Las dos patas de arriba ENTRAN POR `base`,
+    -- así que un envase sin conteo inicial no tiene ninguna fila: sus
+    -- movimientos y sus guías R existen, están bien cargados, y no se ven
+    -- en ningún lado. El que carga un envase nuevo, compra doscientas cajas
+    -- y entra a la pantalla lee "la cuenta no arrancó" y no tiene forma de
+    -- saber que esas doscientas están invisibles.
+    --
+    -- POR ESO ESTAS DOS CTE NO PASAN POR `base`: cuentan lo que hay, exista
+    -- o no el conteo. Y el SELECT las devuelve en CERO cuando el conteo SÍ
+    -- está, para que la columna signifique UNA sola cosa —cuántos
+    -- movimientos son invisibles por falta de conteo— y no dos.
+    --
+    -- Van SEPARADAS a propósito: el que lee "3 esperando" y abre la lista de
+    -- movimientos de ese envase encuentra 2, porque la tercera es una guía R
+    -- y no se carga por ahí. Un solo número obligaría a que la pantalla
+    -- mienta o a que el operario adivine cuál falta.
+    esperando_mov AS (
+        SELECT m.envase_id,
+               COUNT(*) AS movimientos,
+               MIN(m.fecha_operacion) AS desde
+          FROM movimientos_envase m
+         WHERE m.anulado_el IS NULL
+           AND m.origen <> 'conteo_inicial'
+         GROUP BY m.envase_id
+    ),
+    esperando_guias AS (
+        SELECT r.envase_id,
+               COUNT(*) AS guias,
+               MIN(r.fecha_operacion) AS desde
+          FROM reprocesos r
+         WHERE r.anulado_el IS NULL
+           AND r.lleva_caja_nuestra IS TRUE
+         GROUP BY r.envase_id
     ),
     guias AS (
         -- SOLO LA PRIMERA. Al reprocesar un cajón, la primera va en caja de
@@ -12051,11 +12086,16 @@ _SQL_STOCK_DE_ENVASES = """
            b.cantidad AS contadas,
            COALESCE(d.cajas, 0) AS declaradas,
            COALESCE(g.cajas, 0) AS por_guias,
-           b.cantidad + COALESCE(d.cajas, 0) + COALESCE(g.cajas, 0) AS stock
+           b.cantidad + COALESCE(d.cajas, 0) + COALESCE(g.cajas, 0) AS stock,
+           CASE WHEN b.envase_id IS NULL THEN COALESCE(em.movimientos, 0) ELSE 0 END AS esperando_mov,
+           CASE WHEN b.envase_id IS NULL THEN COALESCE(eg.guias, 0) ELSE 0 END AS esperando_guias,
+           CASE WHEN b.envase_id IS NULL THEN LEAST(em.desde, eg.desde) END AS esperando_desde
       FROM envases e
       LEFT JOIN base b      ON b.envase_id = e.id
       LEFT JOIN declarados d ON d.envase_id = e.id
       LEFT JOIN guias g      ON g.envase_id = e.id
+      LEFT JOIN esperando_mov em ON em.envase_id = e.id
+      LEFT JOIN esperando_guias eg ON eg.envase_id = e.id
      WHERE e.activo = true
      ORDER BY e.nombre
 """
@@ -12077,6 +12117,14 @@ def stock_de_envases() -> list[dict]:
     también viene en None. Eso no es cero: es que la cuenta no arrancó, y la
     pantalla lo dice con esas palabras. Un cero ahí se leería como "no
     quedan cajas", que es lo contrario de lo que pasa.
+
+    Y CON ESA FILA VIENEN `esperando_mov`, `esperando_guias` y
+    `esperando_desde`: cuántos movimientos y cuántas guías R ya cargadas
+    están invisibles por falta de conteo, y la fecha de la más vieja. Sin
+    eso, "la cuenta no arrancó" es verdadero y no alcanza — el que compró
+    doscientas cajas ayer no tiene forma de saber que no se ven. Las tres
+    valen CERO/None cuando el conteo existe, así que la columna significa
+    una sola cosa y no hay que acordarse de mirar `desde` para leerla.
 
     Las TRES patas vuelven por separado —`contadas`, `declaradas`,
     `por_guias`— y no solo el total: un número solo no se puede leer, y
