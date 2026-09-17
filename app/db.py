@@ -11979,6 +11979,24 @@ def listar_estado_alertas() -> list[dict]:
 # es un piso que no está puesto.
 COMPARADOR_DESDE_EL_CONTEO = ">="
 
+# LAS COLUMNAS DE LA CONSULTA, EN ORDEN Y EN UN SOLO LUGAR, porque hay DOS
+# lectores y el segundo direccionaba POR INDICE. Al sacar la pata `liberadas`
+# el 17/09 la consulta pasó de nueve columnas a ocho: `stock_de_envases` se
+# actualizó a `f[7]` y `crear_movimiento_envase` quedó leyendo `fila[8]`, así
+# que TODO guardado reventaba con "tuple index out of range" — el conteo
+# inicial incluido, que es lo primero que alguien carga.
+#
+# Es el corolario 3 en su forma más cara: un lector que direcciona por índice
+# NO NOMBRA NINGUNA COLUMNA, así que el grep del campo que se saca no lo
+# encuentra nunca. Igual que el CSS que ubica por `nth-child`.
+#
+# Lo cuida `test_los_NOMBRES_de_las_columnas_son_los_que_la_consulta_DEVUELVE`,
+# que cuenta las columnas del SELECT y exige que sean éstas.
+COLUMNAS_STOCK_DE_ENVASES = (
+    "id", "nombre", "umbral_reposicion", "desde",
+    "contadas", "declaradas", "por_guias", "stock",
+)
+
 _SQL_STOCK_DE_ENVASES = """
     WITH base AS (
         SELECT envase_id, cantidad, fecha_operacion
@@ -12079,16 +12097,7 @@ def stock_de_envases() -> list[dict]:
     finally:
         conexion.close()
 
-    return [
-        {
-            "id": f[0], "nombre": f[1], "umbral_reposicion": f[2],
-            "desde": f[3],
-            "contadas": f[4], "declaradas": f[5],
-            "por_guias": f[6],
-            "stock": f[7],
-        }
-        for f in filas
-    ]
+    return [dict(zip(COLUMNAS_STOCK_DE_ENVASES, f)) for f in filas]
 
 
 def crear_movimiento_envase(envase_id: int, origen: str, cantidad: int,
@@ -12115,8 +12124,12 @@ def crear_movimiento_envase(envase_id: int, origen: str, cantidad: int,
             )
             antes = 0
             for fila in cursor.fetchall():
-                if fila[0] == envase_id and fila[8] is not None:
-                    antes = int(fila[8])
+                # POR NOMBRE Y NO POR INDICE: acá vivía `fila[8]`, que dejó de
+                # existir el día que la consulta perdió una columna y siguió
+                # pareciendo correcto porque no nombra nada.
+                envase = dict(zip(COLUMNAS_STOCK_DE_ENVASES, fila))
+                if envase["id"] == envase_id and envase["stock"] is not None:
+                    antes = int(envase["stock"])
             cursor.execute(
                 """
                 INSERT INTO movimientos_envase

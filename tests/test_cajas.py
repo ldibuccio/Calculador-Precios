@@ -10,7 +10,8 @@ from unittest.mock import MagicMock, patch
 import pytest
 from fastapi.testclient import TestClient
 
-from app.db import COMPARADOR_DESDE_EL_CONTEO, _SQL_STOCK_DE_ENVASES
+from app.db import (COMPARADOR_DESDE_EL_CONTEO, _SQL_STOCK_DE_ENVASES,
+                    crear_movimiento_envase)
 from app.main import PUERTA_COMPRAS, app
 from core.envases import (
     SIGNO_POR_TIPO_DE_GUIA,
@@ -816,3 +817,68 @@ def test_lo_que_la_CONSULTA_de_las_perdidas_pide_solo_se_ve_en_su_TEXTO():
     #    JOIN esas devoluciones entran con cajas en positivo y pesos en NULL
     #    — se lee como una fuga sin precio en vez de como lo que es.
     assert "JOIN envases e" in sql and "LEFT JOIN envases" not in sql
+
+
+def test_los_NOMBRES_de_las_columnas_son_los_que_la_consulta_DEVUELVE():
+    """El conjunto ENCONTRADO contra el DECIDIDO, leído del SELECT de verdad.
+
+    EXISTE PORQUE HAY DOS LECTORES y uno direccionaba por índice. Al sacar la
+    pata `liberadas` el 17/09 la consulta pasó de nueve columnas a ocho:
+    `stock_de_envases` se actualizó y `crear_movimiento_envase` quedó leyendo
+    `fila[8]`, así que TODO guardado reventaba con "tuple index out of range"
+    — el conteo inicial incluido.
+
+    Ningún grep lo habría encontrado: un lector por índice NO NOMBRA NINGUNA
+    COLUMNA, así que buscar la que se saca no lo cruza nunca. Es el corolario
+    3 y es la misma forma que el CSS que ubica por `nth-child`.
+
+    Que este test caiga el día que alguien agregue o saque una columna sin
+    tocar la tupla de nombres ES SU FUNCION, no una molestia.
+    """
+    from app.db import COLUMNAS_STOCK_DE_ENVASES
+
+    select = _SQL_STOCK_DE_ENVASES.split("SELECT e.id")[1].split("FROM envases")[0]
+    crudas = [c.strip() for c in re.split(r",(?![^()]*\))", "e.id" + select) if c.strip()]
+    nombres = []
+    for cruda in crudas:
+        plana = " ".join(cruda.split())
+        if " AS " in plana:
+            nombres.append(plana.split(" AS ")[-1].strip())
+        else:
+            nombres.append(plana.split(".")[-1].strip())
+
+    assert tuple(nombres) == COLUMNAS_STOCK_DE_ENVASES, (
+        f"la consulta devuelve {nombres} y la tupla de nombres dice "
+        f"{list(COLUMNAS_STOCK_DE_ENVASES)}"
+    )
+
+
+def test_guardar_un_movimiento_LEE_EL_STOCK_y_NO_revienta():
+    """La foto de antes sale de la MISMA consulta, y hay que poder leerla.
+
+    ES EL CASO QUE TENIA QUE PASAR, y por eso encontró lo que ninguna batería
+    de rechazos podía: los tests del formulario parchean
+    `crear_movimiento_envase`, así que nadie ejercitaba su cuerpo — la función
+    estuvo rota en main sin un solo test en rojo.
+
+    La fila que se le da tiene EXACTAMENTE las columnas que devuelve la
+    consulta de hoy. Una fila inventada con una de más lo dejaría pasar, que
+    es el fixture que no se parece a producción.
+    """
+    conexion = MagicMock()
+    cursor = conexion.cursor.return_value.__enter__.return_value
+    fila = (1, "Caja EJEMPLO Grande", 100, date(2026, 9, 10), 500, 0, 0, 500)
+    assert len(fila) == len(
+        __import__("app.db", fromlist=["x"]).COLUMNAS_STOCK_DE_ENVASES
+    ), "el fixture tiene que tener las columnas que la consulta devuelve, ni una más"
+    cursor.fetchall.return_value = [fila]
+    cursor.fetchone.return_value = (77,)
+
+    with patch("app.db.obtener_conexion", return_value=conexion):
+        assert crear_movimiento_envase(1, "compra", 200, date(2026, 9, 17)) == 77
+
+    insert = next(ll for ll in cursor.execute.call_args_list
+                  if "INSERT INTO movimientos_envase" in ll.args[0])
+    # 500 es la foto de ANTES, leída de la fila: si el lector se desalinea, acá
+    # entra un 0 y el ajuste de mañana no se puede reconstruir contra nada.
+    assert insert.args[1][5] == 500
