@@ -1640,6 +1640,36 @@ escribe un `.sql` a mano para la misma FORMA de operación, eso ya no es un
 arreglo puntual — es una función que falta. La primera vez es un
 incidente; la segunda es un diagnóstico.
 
+### Y DESDE EL 17/09 HAY UN TEST, porque la variante peor es la ruta sin botón
+
+`/compras/cajas` se construyó entera —migración en las dos bases, pantalla,
+dieciséis tests— y **el botón nunca entró al hub**. El dueño no podía cargar
+el conteo inicial, que es lo único que hace arrancar toda la cuenta de cajas.
+
+Es peor que el `.sql` a mano porque **no deja rastro**: no hay un incidente
+que se repita, no hay un archivo que alguien vuelva a abrir. La ruta existe,
+responde 200, tiene sus tests en verde, y nadie llega. **Todos los tests
+entran por la URL**, así que la ausencia de puerta es invisible para la
+suite entera por construcción.
+
+Lo cuida `test_TODA_pantalla_de_un_sector_esta_LINKEADA_desde_algun_lado`, y
+las dos decisiones de su diseño son las que lo hacen usable:
+
+- **Mira "linkeada desde algún lado", no "desde su hub".** Una pantalla
+  colgada de otra —el detalle de un colega, la edición de un artículo— es
+  alcanzable, y exigirle un botón en el hub llenaría el hub de cosas que se
+  abren desde adentro. Lo que no puede pasar es que no la linkee NADIE.
+- **Compara el conjunto ENCONTRADO contra el DECIDIDO** (corolario 60), con
+  la razón escrita al lado de cada excepción. Falla cuando aparece una
+  pantalla que nadie decidió dejar suelta **y** cuando una de la lista pasa
+  a estar linkeada, así la lista no protege algo que ya no pasa.
+
+Y el barrido encontró de yapa lo que un hallazgo suelto no da: **los falsos
+positivos son informativos.** Dos exportables figuraban sin link y sí lo
+tienen —el href se arma con `{{ contexto.base }}`, que un regex literal no
+puede resolver—, y `/compras/nueva` renderiza una pantalla que nadie linkea
+y quedó en la lista **marcada como deuda y no como excepción legítima**.
+
 Dos cosas que se llevan del método, más allá del botón:
 
 - **El `.sql` que se escribió para el incidente vale como camino

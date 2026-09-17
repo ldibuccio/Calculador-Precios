@@ -28879,3 +28879,75 @@ def test_la_alerta_que_apunta_A_ESTA_pantalla_NO_dibuja_el_link():
     assert 'href="/compras/pendientes"' in ajena, (
         "una alerta que apunta a otra pantalla conserva su link"
     )
+
+
+# Lo que NO se llega por un href y está DECIDIDO que así sea. Cada una con su
+# razón: una lista sin razones se convierte en el lugar donde se esconde la
+# próxima pantalla sin puerta.
+PANTALLAS_SIN_LINK_DECIDIDAS = {
+    "/compras/clave": "la puerta: el middleware manda acá, no se linkea",
+    "/administracion/clave": "la puerta: el middleware manda acá, no se linkea",
+    "/gerencia/auditoria": "301 a /auditoria — es la URL vieja, no una pantalla",
+    "/deposito/stock/reproceso/desglose": "JSON que pide el JS, no es una pantalla",
+    "/administracion/precios-por-periodo/exportar-excel":
+        "el href se arma con {{ contexto.base }}, que un regex literal no ve",
+    "/precios/vigencias/exportar-excel":
+        "el href se arma con {{ contexto.base }}, que un regex literal no ve",
+    # DEUDA ANOTADA, no una excepción legítima: renderiza una pantalla de
+    # verdad y nadie la linkea. El hub ofrece /compras/nueva/manual. Queda acá
+    # para que se vea, no para que se olvide.
+    "/compras/nueva": "DEUDA: renderiza pantalla y nada la linkea (17/09)",
+}
+
+
+def test_TODA_pantalla_de_un_sector_esta_LINKEADA_desde_algun_lado():
+    """Una ruta sin puerta pasa todos los tests y no se ve hasta que se busca.
+
+    Es el corolario 31 —una operación construida, probada y sin puerta— hecho
+    test en vez de hallazgo. `/compras/cajas` se construyó entera el 17/09
+    —migración, pantalla, dieciséis tests— y el botón nunca entró al hub, así
+    que el dueño no podía cargar el conteo inicial que hace arrancar toda la
+    cuenta. Ningún test lo vio porque todos entran por la URL.
+
+    MIRA "LINKEADA DESDE ALGÚN LADO" Y NO "DESDE SU HUB", y la diferencia es
+    la que hace que el test sirva: una pantalla colgada de otra —el detalle de
+    un colega, la edición de un artículo— es perfectamente alcanzable, y
+    exigirle un botón en el hub llenaría el hub de cosas que se abren desde
+    adentro. Lo que no puede pasar es que NO la linkee nadie.
+
+    Y COMPARA EL CONJUNTO ENCONTRADO CONTRA EL DECIDIDO (corolario 60): falla
+    cuando aparece una pantalla que nadie decidió dejar suelta, y también
+    cuando una de la lista pasa a estar linkeada — así la lista no termina
+    protegiendo algo que ya no pasa.
+    """
+    import os
+    import re as _re
+
+    from app.main import app as _app
+
+    sectores = ("compras", "comercial", "deposito", "logistica",
+                "administracion", "gerencia", "precios")
+    marcado = "".join(
+        io.open("templates/" + n, encoding="utf-8").read()
+        for n in os.listdir("templates") if n.endswith(".html")
+    )
+    linkeadas = set(_re.findall(r'href="(/[^"?#]*)', marcado))
+
+    sin_link = set()
+    for ruta in _app.routes:
+        camino = getattr(ruta, "path", "")
+        metodos = getattr(ruta, "methods", set()) or set()
+        if "GET" not in metodos or "{" in camino:
+            continue
+        if not any(camino.startswith("/" + s) for s in sectores):
+            continue
+        if camino in linkeadas or camino.lstrip("/") in sectores:
+            continue
+        sin_link.add(camino)
+
+    assert sin_link == set(PANTALLAS_SIN_LINK_DECIDIDAS), (
+        "sin link y sin decidir: "
+        f"{sorted(sin_link - set(PANTALLAS_SIN_LINK_DECIDIDAS))} · "
+        "decididas que ya están linkeadas (sacalas de la lista): "
+        f"{sorted(set(PANTALLAS_SIN_LINK_DECIDIDAS) - sin_link)}"
+    )
