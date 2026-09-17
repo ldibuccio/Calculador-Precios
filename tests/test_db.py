@@ -8356,6 +8356,12 @@ _CAJON_VIEJO = 555
 # bien copiando el de al lado, el assert no distinguiría nada.
 _ENVASE_DE_LA_FICHA = (42, False)
 
+# La fila que lee `_validar_caja_en_origen`: (articulo_id, envase_id,
+# envase_variable). Las TRES y no el artículo solo, porque esa guarda también
+# rechaza la ficha de ENVASE PERDIDO: con la tupla de una posición el fixture
+# deja de parecerse a producción justo en el campo que la guarda mira.
+_CAJA_EN_ORIGEN_FIJA = (42, False)
+
 
 def _lotes_con_rival():
     """El cajón viejo (rival) y la compra que llegó armada, en ese orden de fecha."""
@@ -8626,7 +8632,7 @@ def test_marcar_una_compra_con_una_caja_de_OTRO_ARTICULO_no_la_guarda():
     antes —con el camión en la puerta— y el que lo cometió no es el que lo
     sufre. Acá rebota en el momento, contra el que se equivocó.
     """
-    conexion, cursor = _conexion_falsa(filas_fetchone=[(105,), (0,), (900,), (2,)])
+    conexion, cursor = _conexion_falsa(filas_fetchone=[(105,), (0,), (900,), (2, *_CAJA_EN_ORIGEN_FIJA)])
 
     with patch("app.db.obtener_conexion", return_value=conexion):
         with pytest.raises(ValueError, match="otro artículo"):
@@ -8642,7 +8648,7 @@ def test_marcar_una_compra_con_una_caja_de_OTRO_ARTICULO_no_la_guarda():
 
 def test_una_compra_marcada_con_la_caja_de_SU_articulo_se_guarda():
     """El caso FELIZ, el único que distingue una guarda que funciona de una que siempre frena."""
-    conexion, cursor = _conexion_falsa(filas_fetchone=[(105,), (0,), (900,), (1,)])
+    conexion, cursor = _conexion_falsa(filas_fetchone=[(105,), (0,), (900,), (1, *_CAJA_EN_ORIGEN_FIJA)])
 
     with patch("app.db.obtener_conexion", return_value=conexion):
         crear_compra(
@@ -8661,7 +8667,7 @@ def test_una_compra_PENDIENTE_marcada_NO_carga_la_guia_R_todavia():
     Solo el ingreso directo la carga en el mismo insert, porque esa compra
     nace 'recepcionado' y no pasa por Recepción nunca.
     """
-    conexion, cursor = _conexion_falsa(filas_fetchone=[(105,), (0,), (900,), (1,)])
+    conexion, cursor = _conexion_falsa(filas_fetchone=[(105,), (0,), (900,), (1, *_CAJA_EN_ORIGEN_FIJA)])
 
     with patch("app.db.obtener_conexion", return_value=conexion):
         crear_compra(
@@ -8683,7 +8689,7 @@ def test_el_ingreso_directo_MARCADO_carga_su_guia_R_en_el_MISMO_insert():
     conexion, cursor = _conexion_falsa(
         filas_fetchone=[
             (105,), (0,), (900,),          # guía, punto e id de la compra
-            (1,),                          # el artículo de la ficha marcada
+            (1, *_CAJA_EN_ORIGEN_FIJA),    # el artículo y la caja de la ficha marcada
             (1, 3, 10.0, date(2026, 8, 25), 1, 7),  # la compra recién escrita
             _CORTE,
             _ENVASE_DE_LA_FICHA,           # en qué caja se armó (sale de la ficha)
@@ -8731,7 +8737,7 @@ def _conexion_para_marcar(estado="recepcionado", ya_marcada=None, fecha_del_lote
         (estado, ya_marcada, 10.0, fecha_del_lote),   # el estado de la compra
         (corte,),                                     # corte_modelo
         (5,),                                         # articulo_id de la compra
-        (articulo_de_la_ficha,),                      # articulo_id de la ficha
+        (articulo_de_la_ficha, *_CAJA_EN_ORIGEN_FIJA),  # artículo y caja de la ficha
     ])
 
 

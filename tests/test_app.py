@@ -27751,7 +27751,11 @@ def _pendientes_con_una_marcada():
 
 
 def _catalogo_de_fichas():
-    return {11: [{"id": 3, "cliente_id": 7, "nombre": "Caja de EJEMPLO", "kilaje": "16 kg"}]}
+    # Con `envase_id`, que es lo que la ficha trae en producción: el selector
+    # de "viene ya armada" no ofrece las de envase perdido, así que un fixture
+    # sin esa clave se lee como perdida y el selector sale vacío.
+    return {11: [{"id": 3, "cliente_id": 7, "nombre": "Caja de EJEMPLO",
+                  "kilaje": "16 kg", "envase_id": 4, "envase_variable": False}]}
 
 
 def test_recepcion_AVISA_que_la_compra_viene_armada_y_NO_ofrece_nada_que_elegir():
@@ -27876,7 +27880,8 @@ def test_si_la_guia_en_origen_no_se_puede_cargar_la_pantalla_dice_POR_QUE():
 
 def _cajas_de_un_articulo():
     """Solo el artículo 5 tiene cajas; el otro de ARTICULOS_CON_UNIDAD_COMPRA no."""
-    return {5: [{"id": 3, "cliente_id": 7, "nombre": "Caja de EJEMPLO", "kilaje": "16 kg"}]}
+    return {5: [{"id": 3, "cliente_id": 7, "nombre": "Caja de EJEMPLO",
+                 "kilaje": "16 kg", "envase_id": 4, "envase_variable": False}]}
 
 
 def test_la_carga_de_compras_OFRECE_marcar_que_viene_armada():

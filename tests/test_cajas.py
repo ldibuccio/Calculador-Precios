@@ -1284,3 +1284,199 @@ def test_el_detalle_de_la_cuenta_MUESTRA_lo_que_le_di_y_lo_que_me_dio_con_fechas
     with patch("app.main.movimientos_de_colegas", return_value=[]), \
          patch("app.main.cuentas_de_colegas", return_value=[]):
         assert cliente.get("/compras/cajas/colega/999").status_code == 404
+
+
+# ---------------------------------------------------------------------------
+# EL SELECTOR DE "¿VIENE YA ARMADA EN CAJA NUESTRA?" NO OFRECE ENVASE PERDIDO
+# ---------------------------------------------------------------------------
+#
+# Manzana, pera y arándano salen en el cajón del proveedor. Marcar ahí "viene
+# en nuestra caja" es una contradicción que no falla ruidosamente: la guía R
+# en origen deriva (False, None), el conteo de cajas no se mueve, y la compra
+# queda afirmando algo que no pasó. Un hueco se ve; una marca que no hace nada
+# se lee como un dato declarado.
+
+FICHAS_DE_LOS_TRES_CASOS = [
+    {"id": 1, "cliente_id": 10, "articulo_id": 7, "articulo_nombre": "EJEMPLO Uno",
+     "articulo_grupo": None, "envase_id": 4, "envase_nombre": "Caja EJEMPLO Fija",
+     "contenido_caja": 16, "unidad_venta": "kilo", "envase_variable": False,
+     "nombre_cliente": None, "codigo_cliente": None},
+    {"id": 2, "cliente_id": 10, "articulo_id": 7, "articulo_nombre": "EJEMPLO Uno",
+     "articulo_grupo": None, "envase_id": 5, "envase_nombre": "Caja EJEMPLO Variable",
+     "contenido_caja": 10, "unidad_venta": "kilo", "envase_variable": True,
+     "nombre_cliente": None, "codigo_cliente": None},
+    {"id": 3, "cliente_id": 10, "articulo_id": 7, "articulo_nombre": "EJEMPLO Uno",
+     "articulo_grupo": None, "envase_id": None, "envase_nombre": None,
+     "contenido_caja": 18, "unidad_venta": "kilo", "envase_variable": False,
+     "nombre_cliente": "EJEMPLO Perdido", "codigo_cliente": None},
+]
+
+
+def _catalogo_de_los_tres_casos():
+    from app.main import _cajas_en_origen_por_articulo
+    with patch("app.main.listar_clientes",
+               return_value=[{"id": 10, "nombre": "Cliente EJEMPLO"}]), \
+         patch("app.main.listar_fichas_de_todos_los_clientes",
+               return_value=FICHAS_DE_LOS_TRES_CASOS):
+        return _cajas_en_origen_por_articulo()
+
+
+def test_el_selector_de_EN_ORIGEN_no_ofrece_la_ficha_de_ENVASE_PERDIDO():
+    """Se ofrecen la FIJA y la VARIABLE; la de envase perdido no.
+
+    Los tres casos van juntos a propósito: un test que solo plantara la
+    perdida lo pasaría igual un filtro que no ofreciera ninguna (corolario
+    53 — hay que poder dar las dos respuestas).
+    """
+    ofrecidas = {caja["id"] for caja in _catalogo_de_los_tres_casos()[7]}
+    assert ofrecidas == {1, 2}, (
+        "la fija se deriva y la variable se pregunta: las dos tienen caja "
+        f"nuestra. La de envase perdido no. Ofrecidas: {ofrecidas}"
+    )
+
+
+def test_un_articulo_que_SOLO_tiene_fichas_de_envase_perdido_no_aparece():
+    """Y no aparece con la lista vacía: el artículo se va entero.
+
+    Una entrada con `[]` deja el bloque dibujado y vacío, que es lo que el
+    macro dice que se lee como "este artículo no tiene cajas" — cierto acá,
+    y aun así peor que no ofrecerlo: un selector con una sola opción que
+    dice "No" invita a buscar la que falta.
+    """
+    solo_perdida = [FICHAS_DE_LOS_TRES_CASOS[2]]
+    from app.main import _cajas_en_origen_por_articulo
+    with patch("app.main.listar_clientes",
+               return_value=[{"id": 10, "nombre": "Cliente EJEMPLO"}]), \
+         patch("app.main.listar_fichas_de_todos_los_clientes", return_value=solo_perdida):
+        assert _cajas_en_origen_por_articulo() == {}
+
+
+def test_el_filtro_PREGUNTA_por_envase_derivado_y_no_por_su_propia_condicion():
+    """Se mueve la pared y el filtro tiene que seguirla.
+
+    Con `envase_derivado_de_la_ficha` parcheada para decir que TODA ficha
+    lleva caja, la de envase perdido tiene que entrar. Un filtro con un
+    `envase_id is None` propio pasa este test en verde con la regla de
+    verdad cambiada, y ese es exactamente el día que las dos se separan.
+    """
+    from app.main import _cajas_en_origen_por_articulo
+    with patch("app.main.listar_clientes",
+               return_value=[{"id": 10, "nombre": "Cliente EJEMPLO"}]), \
+         patch("app.main.listar_fichas_de_todos_los_clientes",
+               return_value=FICHAS_DE_LOS_TRES_CASOS), \
+         patch("app.main.envase_derivado_de_la_ficha", return_value=(True, 99, False)):
+        ofrecidas = {caja["id"] for caja in _cajas_en_origen_por_articulo()[7]}
+    assert ofrecidas == {1, 2, 3}, (
+        "el filtro tiene que salir de envase_derivado_de_la_ficha, no de una "
+        f"condición escrita al lado. Ofrecidas: {ofrecidas}"
+    )
+
+
+def test_las_pantallas_que_eligen_la_PORCION_siguen_viendo_la_de_envase_perdido():
+    """El filtro es del selector de en origen, NO del catálogo del que sale.
+
+    Stock Físico, Stock Inicial y el asignar ficha de una guía R eligen de
+    qué porción del artículo se está hablando, y una ficha de envase perdido
+    es una porción legítima. Filtrarla allá la haría incontable.
+    """
+    from app.main import _cajas_para_elegir_por_articulo
+    with patch("app.main.listar_clientes",
+               return_value=[{"id": 10, "nombre": "Cliente EJEMPLO"}]), \
+         patch("app.main.listar_fichas_de_todos_los_clientes",
+               return_value=FICHAS_DE_LOS_TRES_CASOS):
+        todas = {caja["id"] for caja in _cajas_para_elegir_por_articulo()[7]}
+    assert todas == {1, 2, 3}
+
+
+# ---------------------------------------------------------------------------
+# Y LA GUARDA VA DONDE SE ESCRIBE
+# ---------------------------------------------------------------------------
+#
+# Que la pantalla no la ofrezca no alcanza: un POST armado a mano entra igual.
+# Es el mismo hallazgo del tilde de la fecha y el del cajón en el armado.
+
+def _cursor_con_ficha(articulo_id, envase_id, envase_variable):
+    cursor = MagicMock()
+    cursor.fetchone.return_value = (articulo_id, envase_id, envase_variable)
+    return cursor
+
+
+def test_marcar_EN_ORIGEN_una_ficha_de_ENVASE_PERDIDO_se_RECHAZA():
+    from app.db import _validar_caja_en_origen
+    with pytest.raises(ValueError) as error:
+        _validar_caja_en_origen(_cursor_con_ficha(7, None, False), 3, 7)
+    assert "cajón del proveedor" in str(error.value)
+
+
+def test_la_FIJA_y_la_VARIABLE_pasan_la_guarda():
+    """El caso feliz, que es el único que distingue "rechaza lo que tiene que
+    rechazar" de "rechaza siempre" (corolario 30)."""
+    from app.db import _validar_caja_en_origen
+    _validar_caja_en_origen(_cursor_con_ficha(7, 4, False), 1, 7)
+    _validar_caja_en_origen(_cursor_con_ficha(7, 5, True), 2, 7)
+
+
+def test_la_guarda_del_ENVASE_PERDIDO_pregunta_por_envase_derivado():
+    """Movida la pared, la de envase perdido tiene que entrar."""
+    from app.db import _validar_caja_en_origen
+    with patch("app.db.envase_derivado_de_la_ficha", return_value=(True, 99, False)):
+        _validar_caja_en_origen(_cursor_con_ficha(7, None, False), 3, 7)
+
+
+def _columnas_que_pide(fuente_de_la_funcion: str) -> str:
+    """Lo que hay ENTRE el SELECT y el FROM, que es la única parte que decide
+    qué columnas vuelven.
+
+    Preguntar si el nombre "está en la consulta" no sirve y los dos canarios
+    lo midieron: con `fl.envase_id` sacado del SELECT, el nombre seguía ahí
+    en el `LEFT JOIN envases e ON e.id = fl.envase_id`; y con `envase_id`
+    sacado de la guarda, seguía en el dict que la guarda arma dos líneas más
+    abajo. Los dos asserts pasaban en verde con la columna afuera.
+
+    Es el corolario 59: el ancla es la POSICIÓN GRAMATICAL —una columna en
+    posición de columna— y no que la palabra aparezca.
+    """
+    arriba = fuente_de_la_funcion.upper()
+    desde = arriba.index("SELECT") + len("SELECT")
+    return fuente_de_la_funcion[desde:desde + arriba[desde:].index("FROM")]
+
+
+def test_la_consulta_de_la_guarda_TRAE_las_dos_columnas_que_la_regla_lee():
+    """Corolario 65: con el mock, el valor lo entrega el fixture y el test no
+    ve QUÉ columna pidió la consulta. Sin `envase_id` en el SELECT la regla
+    contesta "esta ficha no lleva caja" para TODAS y la marca se rechaza
+    siempre — en producción, sin un test en rojo."""
+    fuente = io.open("app/db.py", encoding="utf-8").read()
+    cuerpo = fuente.split("def _validar_caja_en_origen")[1].split("\ndef ")[0]
+    pedidas = _columnas_que_pide(cuerpo.split('"""')[2])
+    assert "envase_id" in pedidas and "envase_variable" in pedidas, (
+        f"lo que pide la consulta es: {pedidas.strip()!r}. "
+        "la guarda lee las dos de la ficha: la consulta las tiene que traer"
+    )
+
+
+def test_la_consulta_del_CATALOGO_trae_las_dos_columnas_del_filtro():
+    """Corolario 65, y acá el modo de falla es MUDO en las dos direcciones.
+
+    El filtro las lee con `.get()` sobre un dict que viene de la base. Sin
+    `envase_id` en el SELECT, `envase_derivado_de_la_ficha` contesta "envase
+    perdido" para TODAS y el selector de "viene ya armada" queda vacío en las
+    cinco pantallas de carga — que es exactamente lo que el macro dice que se
+    lee como "este artículo no tiene cajas". Sin `envase_variable`, la
+    variable se toma por fija y se ofrece igual, que no rompe nada hoy y deja
+    el filtro decidiendo con media regla.
+
+    Con el mock, el valor lo entrega el fixture: lo único que ve QUÉ columna
+    pidió la consulta es el texto del SQL.
+    """
+    fuente = io.open("app/db.py", encoding="utf-8").read()
+    cuerpo = fuente.split("def listar_fichas_de_todos_los_clientes")[1].split("\ndef ")[0]
+    # Después del docstring, no "entre las dos primeras comillas triples": esa
+    # función tiene DOS bloques de `\"\"\"` —el docstring y el SQL— así que un
+    # corte fijo cae en el hueco de en medio y el assert falla sin razón.
+    pedidas = _columnas_que_pide(cuerpo.split('"""', 2)[2])
+    assert "fl.envase_id" in pedidas and "fl.envase_variable" in pedidas, (
+        f"lo que pide la consulta es: {pedidas.strip()!r}. "
+        "el catálogo de cajas por artículo filtra las de envase perdido con "
+        "estas dos: la consulta las tiene que traer"
+    )

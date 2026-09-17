@@ -1046,11 +1046,39 @@ def _cajas_en_origen_por_articulo() -> dict:
     Se traga el error a propósito: que no se pueda leer el catálogo no puede
     dejar sin CARGAR una compra. Sin catálogo el selector no se ofrece y el
     resto de la pantalla anda igual.
+
+    Y FILTRA LAS DE ENVASE PERDIDO, que es lo que lo separa del catálogo del
+    que sale. Manzana, pera y arándano salen en el cajón del proveedor y no
+    hay caja nuestra que mandar al puesto: ofrecerlas acá es ofrecer marcar
+    "viene en nuestra caja" sobre una ficha que no tiene ninguna, y nada lo
+    frena después — la compra queda marcada, la guía R en origen deriva
+    `(False, None)` y el conteo de cajas no se mueve. Una marca que no hace
+    nada es peor que el hueco, porque el que la puso cree que declaró algo.
+
+    LA CONDICIÓN NO SE REESCRIBE ACÁ: se la pregunta a
+    `envase_derivado_de_la_ficha`, que es donde vive. Envase perdido es el
+    único de sus tres casos que no tiene caja que declarar — la fija la deriva
+    y la variable la pregunta, y las dos se ofrecen.
+
+    Y el filtro va SOLO acá y no en `_cajas_para_elegir_por_articulo`: aquél
+    lo usan las pantallas que eligen la PORCIÓN del artículo (Stock Físico,
+    Stock Inicial, asignar ficha de una guía R), donde una ficha de envase
+    perdido es una porción legítima y sacarla la haría incontable.
     """
     try:
-        return _cajas_para_elegir_por_articulo()
+        catalogo = _cajas_para_elegir_por_articulo()
     except Exception:
         return {}
+    con_caja: dict = {}
+    for articulo_id, cajas in catalogo.items():
+        elegibles = []
+        for caja in cajas:
+            lleva, _, hay_que_preguntar = envase_derivado_de_la_ficha(caja)
+            if lleva or hay_que_preguntar:
+                elegibles.append(caja)
+        if elegibles:
+            con_caja[articulo_id] = elegibles
+    return con_caja
 
 
 def segunda_por_cajon_de(compra, real: bool = False) -> float | None:
@@ -9701,6 +9729,12 @@ def _cajas_para_elegir_por_articulo() -> dict[int, list[dict]]:
                     "cliente_id": ficha["cliente_id"],
                     "nombre": etiquetas[ficha["id"]],
                     "kilaje": kilaje,
+                    # Las dos que necesita `envase_derivado_de_la_ficha` para
+                    # contestar si esta ficha tiene una caja NUESTRA. Van con
+                    # el NOMBRE que la regla espera, no traducidas: el que
+                    # filtra no vuelve a escribir la condición, se la pregunta.
+                    "envase_id": ficha.get("envase_id"),
+                    "envase_variable": ficha.get("envase_variable"),
                 }
             )
     for cajas in por_articulo.values():

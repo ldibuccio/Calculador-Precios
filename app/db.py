@@ -2311,9 +2311,22 @@ def _validar_caja_en_origen(cursor, ficha_en_origen_id: int, articulo_id: int) -
 
     SIN agregado: `fetchone() is None` sobre un `count(*)` nunca es None y no
     distinguiría "no existe" de "existe" (corolario 27).
+
+    Y RECHAZA LA DE ENVASE PERDIDO, que es la que la pantalla dejó de
+    ofrecer. Que no se liste no alcanza: un formulario armado a mano entra
+    igual, y la marca no falla ruidosamente —la guía R en origen deriva
+    `(False, None)`, el conteo de cajas no se mueve y la compra queda
+    diciendo que vino en una caja nuestra que no existe—. La guarda va donde
+    se ESCRIBE; la pantalla es la forma de cumplirlo cómodo.
+
+    La condición se la pregunta a `envase_derivado_de_la_ficha`: envase
+    perdido es su único caso sin caja que declarar. Escribir acá un
+    `envase_id is None` propio sería la segunda copia de esa regla, y el día
+    que la de allá cambie ésta se queda vieja sin que nada avise.
     """
     cursor.execute(
-        "SELECT articulo_id FROM fichas_logistica WHERE id = %s",
+        "SELECT articulo_id, envase_id, envase_variable "
+        "FROM fichas_logistica WHERE id = %s",
         (ficha_en_origen_id,),
     )
     ficha = cursor.fetchone()
@@ -2321,6 +2334,14 @@ def _validar_caja_en_origen(cursor, ficha_en_origen_id: int, articulo_id: int) -
         raise ValueError("Esa caja no existe.")
     if ficha[0] != articulo_id:
         raise ValueError("Esa caja es de otro artículo: no puede ser la de esta compra.")
+    lleva, _, hay_que_preguntar = envase_derivado_de_la_ficha(
+        {"envase_id": ficha[1], "envase_variable": ficha[2]}
+    )
+    if not (lleva or hay_que_preguntar):
+        raise ValueError(
+            "Ese producto sale en el cajón del proveedor: no hay caja nuestra "
+            "en la que pueda venir armado."
+        )
 
 
 def _insertar_compra_con_guia(
