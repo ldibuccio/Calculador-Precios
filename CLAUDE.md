@@ -6727,3 +6727,60 @@ Es el corolario 45 en su cuarto trabajo: el testigo del 24 dice si la base
 vota, el total esperado dice si la medición llegó al final, el denominador
 del 53 dice cuál pantalla se midió, y acá dice **qué NO se rompió**. Los
 cuatro existen por lo mismo — un número solo no se puede leer.
+
+## Corolario 76: un argumento CIERTO sobre la plata no decide sobre una lista que ENUMERA
+
+Del 17/09, y es del dueño en una frase: **"falta el nombre, no la plata, pero
+el nombre es lo que la vuelve negociable."**
+
+`reproceso` perdía la caja y quedó dos días afuera de `cajas_perdidas` —el
+renglón que las NOMBRA— con este argumento mío: esa caja ya está cobrada
+adentro de `rechazos_perdidos`, así que agregarla no mueve un peso.
+
+**Todo eso es cierto y sigue siéndolo.** Lo verifiqué, está medido, y el
+renglón efectivamente no entra en ninguna suma. El argumento no tenía una
+premisa falsa —que sería el corolario 25— ni un número mal. **Lo que estaba
+mal es contra qué se evaluaba la cosa.**
+
+> **Una lista que ENUMERA no se evalúa por lo que cobra: se evalúa por si se
+> puede llevar a discutir.** Y a la que le falta un tercio de las puertas no
+> se puede — el de enfrente pregunta por las que faltan y la conversación se
+> termina ahí.
+
+Es la familia del corolario 25 corrida un lugar y por eso cuesta más verla:
+allá el razonamiento era válido y la PREMISA no se había medido; acá la
+premisa estaba medida, el razonamiento era válido, **y la dimensión era otra**.
+No hay nada que medir para encontrarlo: hay que preguntarse para qué existe
+la cosa.
+
+**La señal, y es una sola pregunta**: cuando un argumento para dejar algo
+afuera empieza con *"total, no cambia ningún número"*, preguntarse **si el
+número es para lo que esa cosa existe**. Un total, un costo, una alerta que
+frena: ahí la plata decide. Un renglón que nombra, un detalle, una lista de
+reclamo, un chip al lado de un artículo: ahí decide si está COMPLETA, y "no
+mueve nada" es exactamente lo que se espera de él.
+
+### Y lo que sí había que probar era lo contrario
+
+Nombrarla en dos lugares se lee como doble conteo. Que no lo sea **no se ve
+mirando los dos números**, y la primera versión del test lo "probaba" así:
+
+```python
+mercaderia = rechazos_perdidos - cajas_perdidas_pesos
+assert rechazos_perdidos == mercaderia + cajas_perdidas_pesos   # x == (x−y)+y
+```
+
+Cierto por álgebra. **Corolario 41 adentro del test escrito para cerrar el
+caso**: pasa con el envase cobrado una vez, dos o ninguna — medido con el
+canario del cobro doble, que la versión vieja pasa y la nueva hace caer.
+
+Lo que sirve es una corrida de CONTROL que produzca el otro número por su
+cuenta: la misma devolución con `envase_unidad = 0` da la mercadería sola, y
+lo que CRECE al ponerle envase tiene que ser exactamente lo que el renglón
+nombra. Dos números de dos lugares, no una resta y su inversa.
+
+**La señal, para reconocerlo sin correr el canario**: si el valor contra el
+que se compara se DERIVA de los mismos números que se están comparando, la
+igualdad no puede fallar. El control tiene que venir de otra corrida, otra
+consulta u otra fuente — es la misma regla que *"la verificación que funciona
+es la que hace chocar dos fuentes"* (corolario 19), acá adentro de un test.

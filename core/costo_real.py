@@ -118,26 +118,37 @@ ETIQUETAS_MOTIVO_REAL = {
 # se suma a `rechazos_perdidos`, que es la línea de la pérdida.
 DESTINOS_RECHAZO_PERDIDO = ("segunda", "reproceso")
 
-# Las dos puertas donde la caja se va CON LA MERCADERÍA y por eso se NOMBRA
-# acá: `segunda` (se remite al Puesto en la caja en la que volvió) y
-# `devolucion_proveedor` (se va con lo que se le devuelve).
+# LAS TRES PUERTAS DONDE LA CAJA SE PIERDE, y por eso se NOMBRAN acá:
+# `segunda` (se remite al Puesto en la caja en la que volvió),
+# `devolucion_proveedor` (se va con lo que se le devuelve) y `reproceso` (la
+# fruta pasa al cajón grande y la caja de Día SE TIRA).
 #
-# `reproceso` TAMBIÉN PIERDE LA CAJA —el dueño lo confirmó el 17/09: al pasar
-# la fruta al cajón grande la caja de Día se TIRA— y aun así no está en esta
-# lista. No es un olvido y no es que se reuse: es que esa caja YA ESTÁ
-# COBRADA, adentro de `rechazos_perdidos`, porque 'reproceso' sí está en
-# DESTINOS_RECHAZO_PERDIDO y esa línea suma `bultos * costo + unidades *
-# envase_unidad`. Meterla acá no movería un peso —este renglón no entra en
-# ninguna suma— pero SÍ le faltaría el nombre. Queda como lo único abierto de
-# esto, medible con la misma consulta y el destino agregado.
+# `reproceso` ENTRÓ EL 17/09 y estuvo dos días afuera, con este argumento:
+# que su caja ya está cobrada adentro de `rechazos_perdidos` —es cierto, y
+# sigue siéndolo— así que agregarla no mueve un peso. **El argumento era
+# correcto sobre la PLATA y contestaba la pregunta equivocada**: este renglón
+# no cobra, NOMBRA, y una lista de cajas perdidas a la que le falta un tercio
+# de las puertas no se puede llevar a discutir con nadie. La frase del dueño
+# es la regla: *falta el nombre, no la plata, pero el nombre es lo que la
+# vuelve negociable.*
 #
-# `stock` no está por otra razón, y es la única de las cuatro donde la caja
+# Que sea el mismo dinero dicho dos veces NO es doble conteo, y lo cuida
+# `test_la_caja_del_REPROCESO_ya_esta_cobrada_y_solo_le_faltaba_el_NOMBRE`:
+# `rechazos_perdidos` de un reproceso es EXACTAMENTE
+# `bultos * costo + cajas_perdidas_pesos`. Si algún día deja de cerrar, una
+# de las dos está cobrando de más.
+#
+# `stock` es la única de las cuatro que NO está, y es la única donde la caja
 # se reusa: vuelve llena, se rearma sin guía R nueva, y ya se descontó una
 # vez. Ver core/envases.py, que tiene el modelo entero.
 #
-# Es la misma lista que db/cajas_7_*.sql, y NO es la misma que
-# DESTINOS_RECHAZO_PERDIDO: aquélla dice si se perdió la MERCADERÍA.
-DESTINOS_QUE_SE_LLEVAN_LA_CAJA = ("segunda", "devolucion_proveedor")
+# Es la misma lista que db/cajas_7_*.sql, y ahora COINCIDE con
+# DESTINOS_RECHAZO_PERDIDO en dos de sus tres miembros por casualidad y no
+# por regla: aquélla dice si se perdió la MERCADERÍA y ésta si se perdió la
+# CAJA. `devolucion_proveedor` pierde la caja y NO la mercadería —se la
+# devolvió al proveedor y no se le paga— así que las dos listas siguen sin
+# poder fusionarse.
+DESTINOS_QUE_SE_LLEVAN_LA_CAJA = ("segunda", "devolucion_proveedor", "reproceso")
 
 
 

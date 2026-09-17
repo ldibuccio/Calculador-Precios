@@ -35,7 +35,7 @@ pierde por esta vía hace este recorrido:
 |---|---|---|
 | **2. Segunda al Puesto** | `segunda` | se va con la mercadería |
 | **3. Devolución al proveedor** | `devolucion_proveedor` | se va, si vuelve en caja de Día |
-| (vuelve a cajón grande) | `reproceso` | **SE TIRA** — ya cobrada en `rechazos_perdidos` |
+| (vuelve a cajón grande) | `reproceso` | **SE TIRA** — cobrada en `rechazos_perdidos`, nombrada desde el 17/09 |
 | (vuelve a stock) | `stock` | neutro por construcción |
 
 `cajas_4` midió las dos primeras: **149 cajas en 90 días — 84 chicas a $650 y
@@ -101,9 +101,15 @@ envase por unidad en 0 y en 80, y mirando `rechazos_perdidos`:
 | destino | con envase 0 → 80 | qué significa |
 |---|---|---|
 | `segunda` | 10.000 → **18.000** | la caja **ya se cuenta como pérdida** |
-| `reproceso` | 10.000 → **18.000** | también — **y esa caja vuelve** |
+| `reproceso` | 10.000 → **18.000** | también — **y esa caja NO vuelve: se tira** |
 | `devolucion_proveedor` | 0 → **0** | no se nombra; queda dentro de `costo_envase` |
 | `stock` | 0 → **0** | correcto: la caja vuelve llena |
+
+**Esa fila de `reproceso` decía "y esa caja vuelve" y es FALSA** — la premisa
+se dio vuelta el 17/09: se tira. La medición de al lado no cambia (el envase
+entra igual en `rechazos_perdidos`); lo que cambia es que ya no hay ninguna
+caja que "vuelva" fuera de `stock`, y por eso el renglón que las nombra la
+incluye desde ese día.
 
 Con el desglose de `cajas_4` —54 chicas + 65 grandes al Puesto, 30 chicas
 devueltas— eso parte los $158.600 en:
@@ -183,14 +189,25 @@ Se sacaron las dos el 17/09 (`db/envases_9_*.sql`): la pata, las dos columnas
 y sus tres CHECKs. Un camino que nunca se va a recorrer es peor que no
 tenerlo — el próximo que lo lea va a creer que falta cablearlo.
 
-### Lo único que queda, y es de NOMBRE, no de plata
+### Y el NOMBRE se cerró el 17/09, que era lo último
 
-`reproceso` **pierde la caja y no aparece en `cajas_perdidas`**, que es el
-renglón que las nombra. No es un peso de diferencia —ese renglón no entra en
-ninguna suma— pero el conteo de "cuántas cajas se llevaron los rechazos" sale
-corto. Agregarlo es la misma consulta con el destino sumado a
-`DESTINOS_QUE_SE_LLEVAN_LA_CAJA` y a `db/cajas_7_*.sql`, con el test que ata
-las tres listas diciendo dónde.
+`reproceso` **entró a `cajas_perdidas`**, el renglón que las nombra, en las
+tres listas a la vez (la constante, la consulta de la pantalla y
+`db/cajas_7_*.sql`). No movió un peso: ese renglón no entra en ninguna suma y
+esa caja ya estaba cobrada adentro de `rechazos_perdidos`.
+
+**La decisión es del dueño y el criterio vale más que el caso**: *"falta el
+nombre, no la plata, pero el nombre es lo que la vuelve negociable"*. Mi
+argumento para dejarlo afuera era correcto sobre la PLATA —no cambia ningún
+total— y contestaba la pregunta equivocada: **una lista que enumera pérdidas
+no se evalúa por lo que cobra sino por si se puede llevar a discutir**, y a
+la que le falta un tercio de las puertas no se puede.
+
+Lo que sí hubo que probar es que nombrarla no la cobra de nuevo, y eso NO se
+ve mirando los dos números: `test_la_caja_del_REPROCESO_ya_esta_cobrada_y_
+solo_le_faltaba_el_NOMBRE` compara contra una corrida con `envase_unidad = 0`
+—la mercadería sola— y exige que lo que crece al ponerle envase sea
+exactamente lo que el renglón nombra.
 
 ## LA TABLA, corrida en Frutamax el 16/09 — y está CONCENTRADA
 

@@ -1029,28 +1029,67 @@ def _cajas(destino, envase_unidad=80.0, **kw):
     return resultado
 
 
-def test_solo_las_DOS_puertas_donde_la_caja_NO_VUELVE_cuentan_una_caja_perdida():
-    """El par completo: las que cuentan y las que NO (corolario 53).
+def test_las_TRES_puertas_donde_la_caja_SE_PIERDE_la_cuentan_y_stock_NO():
+    """El par completo: las que cuentan y la que NO (corolario 53).
 
-    Un detector que marcara todos los destinos se vería igual de trabajador
-    que éste, y el número que se le lleva a Día sería el doble del real.
+    Un detector que marcara los cuatro destinos se vería igual de trabajador
+    que éste, y el número que se le lleva a Día incluiría cajas que se
+    reusan. Por eso el caso negativo —'stock'— no es un trámite: es el único
+    que distingue esta lista de una que marca todo.
 
-    `reproceso` es el caso que hay que mirar: está en
-    DESTINOS_RECHAZO_PERDIDO —la MERCADERÍA sí se pierde, va al pool de
-    segunda— y su CAJA **también se pierde**: se tira al pasar la fruta al
-    cajón grande (dueño, 17/09). Son dos preguntas distintas sobre la misma
-    fila, y por eso son dos listas y no una.
+    `stock` es la única de las cuatro donde la caja VUELVE: llega llena, se
+    rearma sin guía R nueva y sale de nuevo, así que ya se descontó una sola
+    vez y nada se perdió. Las otras tres la pierden por caminos distintos y
+    la pregunta que las junta es una sola — ¿esta caja vuelve a estar
+    disponible?—, que es otra que la de DESTINOS_RECHAZO_PERDIDO.
     """
     assert _cajas("segunda")["totales"]["cajas_perdidas"] == 5.0
     assert _cajas("devolucion_proveedor")["totales"]["cajas_perdidas"] == 5.0
-    # `reproceso` DA CERO ACÁ Y SU CAJA SÍ SE PIERDE, y la razón no es que se
-    # reuse —se tira— sino que YA ESTÁ COBRADA en `rechazos_perdidos`. O sea
-    # que este cero es de NOMBRE y no de plata, y es lo único que queda
-    # abierto de las cajas. Escrito así porque un assert con su razón al lado
-    # no se vuelve a cuestionar (corolario 68): con la razón vieja, el que
-    # pasara por acá leía que la caja vuelve, que es falso.
-    assert _cajas("reproceso")["totales"]["cajas_perdidas"] == 0.0
+    assert _cajas("reproceso")["totales"]["cajas_perdidas"] == 5.0
     assert _cajas("stock")["totales"]["cajas_perdidas"] == 0.0
+
+
+def test_la_caja_del_REPROCESO_ya_esta_cobrada_y_solo_le_faltaba_el_NOMBRE():
+    """Nombrarla NO la cobra de nuevo, y esto es lo único que lo prueba.
+
+    `reproceso` está en las DOS listas: pierde la mercadería (va al pool de
+    segunda) y pierde la caja (se tira al pasar la fruta al cajón grande).
+    Así que su envase viaja en `rechazos_perdidos` —que SÍ es una cuenta— y
+    además en `cajas_perdidas_pesos`, que solo nombra. Eso se lee como doble
+    conteo y no lo es; la diferencia no se ve mirando los dos números.
+
+    **LA COMPARACIÓN ES CONTRA UNA CORRIDA CON `envase_unidad = 0`**, y no
+    contra una resta de los mismos dos números. La primera versión de este
+    test hacía `mercaderia = rechazos_perdidos − cajas_perdidas_pesos` y
+    después exigía que la suma volviera a dar `rechazos_perdidos`: eso es
+    `x == (x − y) + y`, cierto por álgebra, que se lee como una verificación
+    y es la vuelta completa del corolario 41. Pasaba con el envase cobrado
+    dos veces, tres, o ninguna.
+
+    Con la corrida de control los dos números salen de lugares distintos: sin
+    envase, `rechazos_perdidos` es la mercadería sola, y lo que crece al
+    ponerle envase tiene que ser EXACTAMENTE la caja que el renglón nombra.
+    """
+    con = _cajas("reproceso")["totales"]
+    sin_envase = _cajas("reproceso", envase_unidad=0.0)["totales"]
+
+    assert con["cajas_perdidas_pesos"] > 0
+    assert sin_envase["cajas_perdidas_pesos"] == 0
+    assert sin_envase["rechazos_perdidos"] > 0, "la mercadería sola tiene que costar"
+
+    crecio = con["rechazos_perdidos"] - sin_envase["rechazos_perdidos"]
+    assert round(crecio, 6) == round(con["cajas_perdidas_pesos"], 6), (
+        f"`rechazos_perdidos` creció {crecio} y el renglón nombra "
+        f'{con["cajas_perdidas_pesos"]}: una de las dos cobra por su cuenta'
+    )
+
+    # El control del OTRO lado: `devolucion_proveedor` pierde la caja y NO la
+    # mercadería, así que nombra la caja con `rechazos_perdidos` en cero. Sin
+    # esta fila, la identidad de arriba se cumpliría igual en un sistema donde
+    # las dos listas fueran la misma — y son dos preguntas distintas.
+    devol = _cajas("devolucion_proveedor")["totales"]
+    assert devol["cajas_perdidas_pesos"] > 0
+    assert devol["rechazos_perdidos"] == 0
 
 
 def test_la_caja_perdida_NO_suma_a_ninguna_cuenta_y_por_eso_es_seguro_mostrarla():

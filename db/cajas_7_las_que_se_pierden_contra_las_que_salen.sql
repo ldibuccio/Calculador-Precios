@@ -4,7 +4,7 @@ perdidas as (
     join pedidos_renglones pr on pr.id = m.pedido_renglon_id
     join fichas_logistica f on f.id = pr.ficha_id, v
    where m.anulado_el is null and m.tipo = 'reingreso_rechazo'
-     and m.destino_rechazo in ('segunda', 'devolucion_proveedor')
+     and m.destino_rechazo in ('segunda', 'devolucion_proveedor', 'reproceso')
      and f.envase_id is not null and m.fecha_operacion >= v.desde
    group by f.id
 ),
@@ -43,8 +43,7 @@ select cl.nombre as cliente, a.nombre as articulo,
 -- envase VARIABLE (mango, cherry) queda NULL si nadie contesto: ahi el
 -- `pct` no se lee y `perdidas` es un TECHO.
 --
--- PERDIDAS: `segunda` y `devolucion_proveedor`. `reproceso` tambien la
--- pierde (se tira, 17/09) y no esta porque ya se cobra en
--- `rechazos_perdidos`. `stock` la reusa.
+-- PERDIDAS: las TRES donde la caja se pierde — `segunda`,
+-- `devolucion_proveedor` y `reproceso`. `stock` no: la reusa.
 --
 -- `poblacion`: contra cuanto se cuenta. `ult_guia`: si la base vota.

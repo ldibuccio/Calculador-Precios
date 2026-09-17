@@ -12284,7 +12284,7 @@ _SQL_CAJAS_PERDIDAS_POR_RECHAZO = """
       ) c ON true
      WHERE m.anulado_el IS NULL
        AND m.tipo = 'reingreso_rechazo'
-       AND m.destino_rechazo IN ('segunda', 'devolucion_proveedor')
+       AND m.destino_rechazo IN ('segunda', 'devolucion_proveedor', 'reproceso')
        AND m.fecha_operacion >= %s
      GROUP BY cl.nombre, a.nombre, e.nombre
      ORDER BY SUM(m.cantidad * c.costo) DESC NULLS LAST, SUM(m.cantidad) DESC
@@ -12298,14 +12298,16 @@ def cajas_perdidas_por_rechazo(desde) -> dict:
     Frutamax cuatro artículos se llevan el 80%, así que ordenada por cajas o
     por nombre haría falta leerla entera para encontrar los dos que importan.
 
-    LAS DOS PUERTAS QUE SE NOMBRAN ACÁ: `segunda` (se remite al Puesto en la
-    caja en la que volvió) y `devolucion_proveedor` (se va con la mercadería).
+    LAS TRES PUERTAS DONDE LA CAJA SE PIERDE: `segunda` (se remite al Puesto
+    en la caja en la que volvió), `devolucion_proveedor` (se va con la
+    mercadería) y `reproceso` (se tira al pasar la fruta al cajón grande).
 
-    `reproceso` TAMBIÉN pierde la caja —se tira al pasar la fruta al cajón
-    grande, confirmado el 17/09— y no está igual, porque esa caja ya está
-    COBRADA adentro de `rechazos_perdidos`. Lo que le falta es el nombre, y
-    es lo único que queda abierto. `stock` no está por otra razón: es la
-    única donde la caja se reusa. El porqué entero, en
+    `reproceso` ENTRÓ EL 17/09, dos días después que las otras dos. Estuvo
+    afuera porque su caja ya está cobrada adentro de `rechazos_perdidos` —lo
+    sigue estando— y eso contestaba sobre la plata una pregunta que era sobre
+    el NOMBRE: esta lista no cobra, enumera, y sin el reproceso enumeraba dos
+    tercios. `stock` es la única que no está, y es la única donde la caja se
+    reusa. El porqué entero, en
     `core.costo_real.DESTINOS_QUE_SE_LLEVAN_LA_CAJA`, que es la misma lista
     que `db/cajas_7_*.sql` — y hay un test que ata las tres.
 
