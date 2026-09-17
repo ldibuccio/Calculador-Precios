@@ -469,3 +469,87 @@ def test_en_CELULAR_el_conteo_del_catalogo_se_explica_y_el_vacio_no_dice_nada():
     # llenaría la celda de prosa.
     en_ancha = asyncio.run(leer(1200))
     assert en_ancha[0] == "unidad"
+
+
+def _pantallas_de_la_cuenta_con_colegas(nombre):
+    """Las dos pantallas de la cuenta, con el nombre que se le pase.
+
+    RECIBE EL NOMBRE porque es lo único que en estas pantallas lo escribe una
+    persona, y por lo tanto lo único cuyo largo no controlamos.
+    """
+    from datetime import date
+    from unittest.mock import patch
+
+    from tests.test_app import cliente
+
+    vacio_gasto = {"desde": date(2026, 6, 18), "por_envase": [], "cajas": 0,
+                   "gasto": 0.0, "sin_costo": 0, "ultima": None}
+    vacio_perd = {"desde": date(2026, 6, 18), "renglones": [], "cajas": 0.0,
+                  "pesos": 0.0, "ultimo": None}
+    envases = [{"id": 1, "nombre": "Caja EJEMPLO Grande", "umbral_reposicion": 100,
+                "desde": date(2026, 9, 10), "contadas": 500, "declaradas": -420,
+                "por_guias": 0, "stock": 80}]
+    cuentas = [{"colega_id": 3, "colega": nombre, "movimientos": 2,
+                "por_envase": [{"envase": nombre, "neto": 220,
+                                "lado": "me debe", "cuantas": 220},
+                               {"envase": "Caja EJEMPLO Chica", "neto": -40,
+                                "lado": "le debo", "cuantas": 40}]}]
+    movimientos = [{"id": 1, "colega_id": 3, "colega": nombre, "envase_id": 1,
+                    "envase": nombre, "origen": "colega_le_presto",
+                    "cantidad": -220, "fecha": date(2026, 9, 12), "motivo": nombre}]
+
+    with (
+        patch("app.main.cajas_perdidas_por_rechazo", return_value=vacio_perd),
+        patch("app.main.gasto_en_cajas", return_value=vacio_gasto),
+        patch("app.main.stock_de_envases", return_value=envases),
+        patch("app.main.cuentas_de_colegas", return_value=cuentas),
+        patch("app.main.listar_colegas",
+              return_value=[{"id": 3, "nombre": nombre, "activo": True}]),
+        patch("app.main.contar_guias_sin_declarar_el_envase",
+              return_value={"casos": 0, "poblacion": 0}),
+    ):
+        lista = cliente.get("/compras/cajas")
+    with (
+        patch("app.main.movimientos_de_colegas", return_value=movimientos),
+        patch("app.main.cuentas_de_colegas", return_value=cuentas),
+    ):
+        detalle = cliente.get("/compras/cajas/colega/3")
+
+    # LA IDENTIDAD AL LADO DEL NUMERO: un cero de la pantalla de la clave se
+    # ve igual de prolijo que uno bueno, y las dos viven detrás de una puerta.
+    assert lista.status_code == 200 and "colega-fila" in lista.text
+    assert detalle.status_code == 200 and 'class="mov ' in detalle.text
+    return {"/compras/cajas": lista.text, "/compras/cajas/colega/3": detalle.text}
+
+
+def test_las_DOS_pantallas_de_la_cuenta_aguantan_un_nombre_QUE_NO_SE_PUEDE_PARTIR():
+    """El nombre de un colega lo tipea una persona: su largo no lo controlamos.
+
+    EL CASO SE PLANTA, porque un cero sobre un nombre corto no dice nada. Con
+    60 caracteres sin un espacio el navegador NO ENVUELVE —`overflow-wrap`
+    por defecto es `normal`— así que el texto se sale por el costado y la
+    pantalla pide scroll horizontal, que es justo lo que este proyecto no
+    admite en celular.
+
+    Medido el 17/09 antes de arreglarlo: la lista desbordaba 395px y el
+    detalle 430px. El del detalle NO era el nombre en la tarjeta sino EL
+    TITULO DE LA BARRA, que es un componente compartido y la única de las 93
+    pantallas que le metía texto tipeado por una persona.
+
+    Y SE MIDE EL DESBORDE DE LA PAGINA, no `medicion["desborde"]`: esa clave
+    vale 0 POR CONSTRUCCION cuando la pantalla no tiene filas de tabla, y
+    estas dos son de tarjetas. Un cero que no puede ser otra cosa no es una
+    medición.
+    """
+    corto = "Colega EJEMPLO Uno"
+    largo = "X" * 60
+    for ruta, html in _pantallas_de_la_cuenta_con_colegas(corto).items():
+        medicion = _medir(html, ancho=390)
+        assert medicion["desborde_pagina"] == 0, f"{ruta}: {medicion['desborde_pagina']}px"
+        assert medicion["pares"] > 0, f"{ruta}: no se miró un solo par"
+        assert medicion["solapes"] == [], f"{ruta}: {medicion['solapes']}"
+    for ruta, html in _pantallas_de_la_cuenta_con_colegas(largo).items():
+        medicion = _medir(html, ancho=390)
+        assert medicion["desborde_pagina"] == 0, (
+            f"{ruta}: un nombre sin espacios desborda {medicion['desborde_pagina']}px"
+        )

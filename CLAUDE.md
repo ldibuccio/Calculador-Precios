@@ -2492,7 +2492,11 @@ hasta acá, con tres premisas que se cayeron en el medio.
 
     1. La caja de Día NO VUELVE NUNCA al stock. Por ninguna puerta.
     2. El stock solo SUBE por COMPRA — y por la guía R `en_origen`, que es
-       una caja nuestra que vuelve llena de afuera.
+       una caja nuestra que vuelve llena de afuera. **Y desde el 17/09,
+       por la cuenta con un COLEGA**: una caja que me presta entra al piso,
+       y una que le devuelvo sale. Eso no le agrega ninguna pata al stock
+       —`cantidad` ya significa el efecto sobre el piso— pero la frase "solo
+       compra y en_origen" dejó de ser cierta y acá se corrige.
     3. Toda caja que se llena está PERDIDA, salvo la que vuelve rechazada y
        se remanda; y ésa ya estaba descontada, así que no se cuenta dos
        veces.
@@ -2630,7 +2634,9 @@ cajas vacías se le mandan el día anterior.
 **CONSTRUIDO EL 16/09.** El párrafo decía que eso "no se registra en ningún
 lado" y que `envases` era un catálogo "sin stock y sin movimientos": las dos
 cosas dejaron de ser ciertas. Hoy la salida de vacías se declara como
-`prestamo_salida` en `movimientos_envase`, y la vuelta la registra sola la
+`prestamo_al_puesto` en `movimientos_envase` (se llamaba `prestamo_salida`
+hasta el 17/09: el préstamo a un COLEGA estrenó sus propios orígenes y los dos
+nombres juntos en una lista se confundían), y la vuelta la registra sola la
 guía R `en_origen` —la compra que llega armada en caja nuestra— que SUMA
 donde las normales restan. Las dos puntas, como decía esta sección que
 correspondía.
@@ -4218,6 +4224,29 @@ pantalla. La diferencia es el defecto real volviendo con la suite en verde,
 y se cierra con un test que renderiza las dos pantallas de verdad y exige
 `solapes == []` con `pares > 0` al lado.
 
+### Y el QUINTO es la CLAVE que se lee del resultado (17/09)
+
+`medir` devuelve **dos** números de desborde y uno de ellos está clavado en
+cero. Cuando la pantalla no tiene filas de tabla —o sea, en toda pantalla de
+tarjetas, que en celular son casi todas— la rama de arriba devuelve
+`desborde: 0` **literal** y el valor real viaja en `desborde_pagina`.
+
+`imprimir` lo sabe y usa el que corresponde. **El que lee `medicion["desborde"]`
+a mano, no.** Medido: una pantalla que desbordaba 395px daba `desborde 0` y
+`desborde_pagina 395` en la misma medición.
+
+Y lo peor es cómo se descubre: **el canario no movió el número.** O sea que
+la lectura equivocada se disfraza exactamente de "la pantalla está bien" Y de
+"el canario no aplica" a la vez — las dos conclusiones tranquilizadoras
+juntas. Lo único que lo destapó fue sondear la geometría a mano
+(`documentElement.scrollWidth - clientWidth`) y ver que sí desbordaba.
+
+Es el corolario 47 adentro del resultado en vez de adentro de la pantalla:
+**el número no podía dar otra cosa**, y esta vez no porque midiera mal sino
+porque era la clave equivocada. La regla, que cuesta cero: **en una pantalla
+de tarjetas se lee `desborde_pagina`, o se usa `imprimir` y no se toca el
+diccionario.**
+
 ## Corolario 54: el total DIMENSIONA, la magnitud unitaria DETECTA
 
 Del 12/09, y es reutilizable: no es de las alertas de compras, es de
@@ -5445,6 +5474,38 @@ grepear quién la CONSTRUYE.** Y acá el que la construye es una lista de
 ÍNDICES que no nombra ninguna columna, así que ningún `grep` del nombre la
 encuentra — es el caso más puro de "el que falta, por definición, no lo
 nombra".
+
+##### Y VOLVIO EN PYTHON EL 17/09, con la columna que se SACA en vez de la que se agrega
+
+Mismo mecanismo, sin una línea de CSS. `_SQL_STOCK_DE_ENVASES` perdió la
+pata `liberadas` y pasó de NUEVE columnas a OCHO. `stock_de_envases` se
+actualizó a `f[7]`; **`crear_movimiento_envase` quedó leyendo `fila[8]`**, que
+ya no existe. Reproducido con la fila real:
+
+    IndexError: tuple index out of range
+
+O sea que **todo guardado de un movimiento de cajas reventaba**, el CONTEO
+INICIAL incluido — que es lo primero que alguien carga y lo único que hace
+arrancar esa cuenta. Estuvo así desde el 17/09 y nadie lo pisó solo porque la
+cuenta de cajas todavía no se había usado en ninguna de las dos bases.
+
+**Las dos cosas que lo dejaron pasar, y ninguna es descuido:**
+
+1. **Un lector por índice NO NOMBRA NINGUNA COLUMNA.** El `grep` que se hace
+   al sacar un campo es el del campo, y `fila[8]` no lo contiene. Es
+   exactamente lo del `nth-child`, en un lenguaje donde uno no lo espera.
+2. **Ningún test podía verlo.** Los tres tests del formulario **parchean**
+   `crear_movimiento_envase`, así que su cuerpo no lo ejercitaba nadie: la
+   función estuvo rota sin un solo test en rojo. Es el corolario 9 corrido de
+   lugar — allá el parche tapaba la línea rota, acá la saltea entera.
+
+**El arreglo no es correr el índice**: es que las posiciones vivan en UN solo
+lugar (`COLUMNAS_STOCK_DE_ENVASES`) y que los dos lectores lean POR NOMBRE.
+Con eso, sacar o agregar una columna rompe un test en vez de una pantalla.
+
+**La señal, y es barata**: cuando una consulta pierde o gana una columna,
+`grep` de `fila[` y de `f[` en sus lectores, no del nombre de la columna. Y
+si una función tiene todos sus tests parcheándola, no tiene ninguno.
 
 Lo cuida ahora un test que cuenta los `<th>` de la tabla y los compara
 contra los `nth-child` del CSS, en los dos sentidos (corolario 60): falla si

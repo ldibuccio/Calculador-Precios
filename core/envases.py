@@ -21,7 +21,11 @@ lo que estuvo construido dos días:
 
     1. La caja de Día NO VUELVE NUNCA al stock. Por ninguna puerta.
     2. El stock solo SUBE por COMPRA — y por la guía R `en_origen`, que es
-       una caja nuestra que vuelve llena de afuera.
+       una caja nuestra que vuelve llena de afuera. **Y desde el 17/09,
+       por la cuenta con un COLEGA**: una caja que me presta entra al piso,
+       y una que le devuelvo sale. Eso no le agrega ninguna pata al stock
+       —`cantidad` ya significa el efecto sobre el piso— pero la frase "solo
+       compra y en_origen" dejó de ser cierta y acá se corrige.
     3. Toda caja que se llena está PERDIDA, salvo la que vuelve rechazada y
        se remanda; y ésa ya estaba descontada, así que no se cuenta dos
        veces.

@@ -935,3 +935,282 @@ def test_guardar_un_movimiento_LEE_EL_STOCK_y_NO_revienta():
     # 500 es la foto de ANTES, leída de la fila: si el lector se desalinea, acá
     # entra un 0 y el ajuste de mañana no se puede reconstruir contra nada.
     assert insert.args[1][5] == 500
+
+
+# ---------------------------------------------------------------------------
+# La cuenta con un colega
+# ---------------------------------------------------------------------------
+
+UN_ENVASE_BAJO_CON_DEUDA = [
+    {"id": 1, "nombre": "Caja EJEMPLO Grande", "umbral_reposicion": 100,
+     "desde": date(2026, 9, 10), "contadas": 500, "declaradas": -420,
+     "por_guias": 0, "stock": 80},
+]
+CUENTA_CON_DOSCIENTAS = [
+    {"colega_id": 3, "colega": "Colega EJEMPLO Uno", "movimientos": 2,
+     "por_envase": [{"envase": "Caja EJEMPLO Grande", "neto": 200,
+                     "lado": "me debe", "cuantas": 200}]},
+]
+
+
+def test_la_alerta_de_reposicion_MIRA_SOLO_EL_PISO_aunque_le_deban_doscientas():
+    """El consolidado es información; el físico es el que dispara.
+
+    Si te deben doscientas cajas NO LAS TENES: no podés salir a comprar menos
+    porque alguien te las debe. El detonante de salir corriendo es lo que hay
+    en el piso y nada más.
+
+    SE CUMPLE POR CONSTRUCCION y no por acordarse: `cantidad` significa el
+    efecto sobre EL PISO, así que una caja prestada ya está restada del stock
+    y la cuenta se lee de otras columnas. Este test existe para que el día que
+    alguien quiera "mejorar" el stock sumándole lo que le deben, se entere de
+    que estaba decidido.
+    """
+    assert hay_que_reponer(UN_ENVASE_BAJO_CON_DEUDA[0]), (
+        "80 cajas contra un umbral de 100 es reponer, le deban lo que le deban"
+    )
+    with patch("app.main.cajas_perdidas_por_rechazo", return_value=SIN_PERDIDAS), \
+         patch("app.main.gasto_en_cajas", return_value=SIN_GASTO), \
+         patch("app.main.stock_de_envases", return_value=UN_ENVASE_BAJO_CON_DEUDA), \
+         patch("app.main.cuentas_de_colegas", return_value=CUENTA_CON_DOSCIENTAS), \
+         patch("app.main.listar_colegas", return_value=[{"id": 3, "nombre": "Colega EJEMPLO Uno", "activo": True}]), \
+         patch("app.main.contar_guias_sin_declarar_el_envase",
+               return_value={"casos": 0, "poblacion": 0}):
+        respuesta = cliente.get("/compras/cajas")
+    marcado = respuesta.text.split("</style>")[-1]
+    assert 'class="stock bajo"' in marcado, (
+        "con 200 en la cuenta a favor, el piso sigue estando bajo y tiene que marcarse"
+    )
+    # Y las 200 SE VEN, porque son información: lo que no hacen es apagar el rojo.
+    assert "me debe" in marcado
+
+
+def test_la_cuenta_del_colega_NO_lleva_el_recorte_del_conteo_inicial():
+    """El físico lleva el recorte y la cuenta NO, y eso se afirma en los dos.
+
+    La foto del piso ya refleja lo que se prestó antes de contarla, así que el
+    físico tiene que saltear esos movimientos. La cuenta no: si le presté 200
+    el mes pasado y conté el galpón hoy, el piso está bien sin esas 200 y el
+    colega me las sigue debiendo.
+
+    COPIAR ACA EL FILTRO DE LA PATA DE AL LADO ES LO NATURAL —está tres líneas
+    más arriba— y borraría las deudas viejas EN SILENCIO. Sería la novena
+    aparición de la asimetría del corte.
+
+    EL CONTROL ES LA MITAD QUE IMPORTA: sin afirmar que el físico SI lo lleva,
+    este test pasaría igual el día que alguien saque el recorte de los dos
+    lados, que es el otro modo de romperlo.
+    """
+    cuenta = " ".join(_SQL_MOVIMIENTOS_DE_COLEGAS.split())
+    assert "conteo_inicial" not in cuenta, (
+        "la cuenta con el colega no mira el conteo inicial del piso"
+    )
+    assert "fecha_operacion >=" not in cuenta and "fecha_operacion >" not in cuenta
+
+    fisico = " ".join(_SQL_STOCK_DE_ENVASES.split())
+    assert "conteo_inicial" in fisico
+    assert "fecha_operacion {comp} b.fecha_operacion" in fisico, (
+        "el físico SI recorta por el conteo inicial: si esto deja de ser cierto, "
+        "la asimetría se fue de los dos lados y este test dejó de significar algo"
+    )
+
+
+def test_una_caja_prestada_ANTES_del_conteo_sigue_en_la_cuenta():
+    """El canario del corte, sobre la cuenta armada de verdad.
+
+    El texto de la consulta dice que el recorte no está; esto mide que su
+    ausencia CAMBIA EL NUMERO. Un piso que no mueve nada al romperlo es un
+    piso que no está puesto.
+    """
+    viejo = {"colega_id": 3, "colega": "Colega EJEMPLO Uno", "envase_id": 1,
+             "envase": "Caja EJEMPLO Grande", "origen": "colega_le_presto",
+             "cantidad": -200, "fecha": date(2026, 8, 15), "motivo": None}
+    nuevos = [
+        {"colega_id": 3, "colega": "Colega EJEMPLO Uno", "envase_id": 1,
+         "envase": "Caja EJEMPLO Grande", "origen": "colega_le_presto",
+         "cantidad": -50, "fecha": date(2026, 9, 12), "motivo": None},
+        {"colega_id": 3, "colega": "Colega EJEMPLO Uno", "envase_id": 1,
+         "envase": "Caja EJEMPLO Grande", "origen": "colega_me_devuelve",
+         "cantidad": 30, "fecha": date(2026, 9, 14), "motivo": None},
+    ]
+    colegas = [{"id": 3, "nombre": "Colega EJEMPLO Uno", "activo": True}]
+
+    with patch("app.db.listar_colegas", return_value=colegas), \
+         patch("app.db.movimientos_de_colegas", return_value=[viejo] + nuevos):
+        con_el_viejo = cuentas_de_colegas()[0]["por_envase"][0]
+    # El CANARIO: los mismos movimientos con el recorte del conteo puesto, o sea
+    # sin el préstamo anterior al 10/09.
+    with patch("app.db.listar_colegas", return_value=colegas), \
+         patch("app.db.movimientos_de_colegas", return_value=nuevos):
+        con_recorte = cuentas_de_colegas()[0]["por_envase"][0]
+
+    assert con_el_viejo["neto"] == 220 and con_el_viejo["lado"] == "me debe"
+    assert con_recorte["neto"] == 20, "el recorte se come las 200 de agosto"
+    assert con_el_viejo["neto"] != con_recorte["neto"], (
+        "si el número no se mueve, este test no está midiendo el recorte"
+    )
+
+
+def test_el_neto_NO_se_suma_entre_TIPOS_de_caja():
+    """Te puede deber Grandes mientras vos le debés Chicas, y no se cancelan.
+
+    Netear entre tipos diría que están a mano cuando hay dos conversaciones
+    pendientes. Adentro de un tipo el neto sí es lo que se quiere ver.
+    """
+    movimientos = [
+        {"colega_id": 3, "colega": "Colega EJEMPLO Uno", "envase_id": 1,
+         "envase": "Caja EJEMPLO Grande", "origen": "colega_le_presto",
+         "cantidad": -40, "fecha": date(2026, 9, 12), "motivo": None},
+        {"colega_id": 3, "colega": "Colega EJEMPLO Uno", "envase_id": 2,
+         "envase": "Caja EJEMPLO Chica", "origen": "colega_me_presta",
+         "cantidad": 40, "fecha": date(2026, 9, 13), "motivo": None},
+    ]
+    with patch("app.db.listar_colegas",
+               return_value=[{"id": 3, "nombre": "Colega EJEMPLO Uno", "activo": True}]), \
+         patch("app.db.movimientos_de_colegas", return_value=movimientos):
+        cuenta = cuentas_de_colegas()[0]
+
+    assert len(cuenta["por_envase"]) == 2, "un renglón por tipo de caja, no uno solo"
+    por_nombre = {p["envase"]: p for p in cuenta["por_envase"]}
+    assert por_nombre["Caja EJEMPLO Grande"]["lado"] == "me debe"
+    assert por_nombre["Caja EJEMPLO Chica"]["lado"] == "le debo"
+
+
+def test_el_INSERT_de_un_movimiento_escribe_LAS_DOS_columnas_que_el_CHECK_ata():
+    """La forma exacta del corolario 75, y por eso se mira el INSERT y no la firma.
+
+    `movimientos_envase_colega_segun_origen` ata `colega_id` con `origen` en
+    las DOS direcciones. Una guarda de coherencia con UNA SOLA MITAD escrita
+    por el código no protege: RECHAZA TODO, y de un camino frío que nadie
+    recorre hasta que alguien lo recorre. El 17/09 una así estuvo enterrada un
+    día entero en las dos bases y la desactivó un drop en vez del uso.
+
+    Y SE COMPARA LA TUPLA ENTERA, no los campos que este cambio tocó: que
+    falle el día que alguien agregue una columna es su función. Un test de
+    tres campos de siete no protege los que no mira.
+    """
+    conexion = MagicMock()
+    cursor = conexion.cursor.return_value.__enter__.return_value
+    cursor.fetchall.return_value = [
+        (1, "Caja EJEMPLO Grande", 100, date(2026, 9, 10), 500, 0, 0, 500)]
+    cursor.fetchone.return_value = (77,)
+
+    with patch("app.db.obtener_conexion", return_value=conexion):
+        crear_movimiento_envase(1, "colega_le_presto", -50, date(2026, 9, 17),
+                                colega_id=3)
+
+    insert = next(ll for ll in cursor.execute.call_args_list
+                  if "INSERT INTO movimientos_envase" in ll.args[0])
+    assert "colega_id" in insert.args[0], "la columna tiene que estar en el INSERT"
+    assert insert.args[1] == (1, "colega_le_presto", -50, None,
+                              date(2026, 9, 17), 500, 3)
+
+    # Y el caso de al lado: sin colega, la columna viaja en NULL. Con solo el
+    # caso de arriba, un INSERT que escribiera un 3 fijo pasaría igual.
+    cursor.execute.reset_mock()
+    with patch("app.db.obtener_conexion", return_value=conexion):
+        crear_movimiento_envase(1, "compra", 200, date(2026, 9, 17))
+    insert = next(ll for ll in cursor.execute.call_args_list
+                  if "INSERT INTO movimientos_envase" in ll.args[0])
+    assert insert.args[1][-1] is None
+
+
+def test_los_CUATRO_origenes_de_colega_del_CHECK_estan_en_el_MAPA():
+    """El conjunto ENCONTRADO contra el DECIDIDO, en los dos sentidos.
+
+    La lista de orígenes de colega está escrita en TRES lugares del esquema
+    —la lista de valores, el signo y la coherencia con `colega_id`— y en el
+    mapa de `core/envases.py`. Recorrer solo el mapa confirmaría lo que ya
+    sabíamos; comparar los conjuntos falla también cuando aparece uno que
+    nadie decidió.
+
+    LO QUE NO ENTRA ACA ES EL NETO, y es la mejor protección que tiene esta
+    cuenta: `efecto_en_la_cuenta` es `-cantidad` y NO LEE EL ORIGEN, así que
+    no puede separarse de ninguna de estas listas.
+    """
+    check = re.search(
+        r"movimientos_envase_origen_check\s*\n?\s*check \(origen in \(([^)]+)\)\)", ESQUEMA)
+    assert check, "no encontré el CHECK de movimientos_envase.origen"
+    del_esquema = {v for v in re.findall(r"'([a-z_]+)'", check.group(1))
+                   if v.startswith("colega_")}
+    assert del_esquema == set(ORIGENES_DE_COLEGA), (
+        f"el esquema dice {sorted(del_esquema)} y el mapa {sorted(ORIGENES_DE_COLEGA)}"
+    )
+    assert len(del_esquema) == 4, "son cuatro: prestar y devolver, para los dos lados"
+
+    signo = re.search(r"movimientos_envase_signo_segun_origen(.{0,600}?)\),\n", ESQUEMA, re.S)
+    coherencia = re.search(r"movimientos_envase_colega_segun_origen(.{0,400}?)\),\n", ESQUEMA, re.S)
+    assert signo and coherencia
+    for origen in del_esquema:
+        assert origen in signo.group(1), f"{origen} no tiene signo declarado"
+        assert origen in coherencia.group(1), f"{origen} no está en la guarda de colega_id"
+
+    # Y cada uno lleva sus DOS rótulos y su signo del piso: repartidos en tres
+    # mapas, el día que se agregue un origen alguno se va a olvidar.
+    for origen, datos in ORIGENES_DE_COLEGA.items():
+        assert datos["corto"] and datos["largo"], origen
+        assert datos["piso"] in (-1, 1), origen
+
+
+def test_la_pantalla_lista_UN_RENGLON_por_colega_y_SE_VE_que_se_puede_entrar():
+    """Un camino que anda y no se ve es un camino que no existe.
+
+    El corolario 68 salió de un link del color exacto del texto de al lado y
+    sin subrayar: el marcado decía que se podía llegar y nadie llegaba. Acá el
+    renglón del colega lleva borde, fondo propio y chevron, y eso se afirma —
+    aunque lo único que lo prueba de verdad sea abrir el navegador.
+    """
+    with patch("app.main.cajas_perdidas_por_rechazo", return_value=SIN_PERDIDAS), \
+         patch("app.main.gasto_en_cajas", return_value=SIN_GASTO), \
+         patch("app.main.stock_de_envases", return_value=UN_ENVASE_BAJO), \
+         patch("app.main.cuentas_de_colegas", return_value=CUENTA_CON_DOSCIENTAS), \
+         patch("app.main.listar_colegas", return_value=[{"id": 3, "nombre": "Colega EJEMPLO Uno", "activo": True}]), \
+         patch("app.main.contar_guias_sin_declarar_el_envase",
+               return_value={"casos": 0, "poblacion": 0}):
+        respuesta = cliente.get("/compras/cajas")
+    assert respuesta.status_code == 200
+    marcado = respuesta.text.split("</style>")[-1]
+    assert 'href="/compras/cajas/colega/3"' in marcado
+    assert "Colega EJEMPLO Uno" in marcado
+    assert "me debe" in marcado and "200" in marcado
+    # Y el colega se puede elegir al cargar el movimiento.
+    assert 'name="colega"' in marcado
+    estilos = respuesta.text.split("</style>")[0]
+    assert ".colega-fila" in estilos and "chevron" in estilos, (
+        "el renglón tiene que verse tocable, no solo serlo"
+    )
+    # El `hidden` del campo del colega necesita SU regla: `.campo` es flex y le
+    # gana al [hidden] del navegador. Sin esto el campo se ve siempre.
+    assert ".campo[hidden]" in estilos
+
+
+def test_el_detalle_de_la_cuenta_MUESTRA_lo_que_le_di_y_lo_que_me_dio_con_fechas():
+    """Y sale de la MISMA consulta que el renglón, no de una propia."""
+    movimientos = [
+        {"id": 9, "colega_id": 3, "colega": "Colega EJEMPLO Uno", "envase_id": 1,
+         "envase": "Caja EJEMPLO Grande", "origen": "colega_le_presto",
+         "cantidad": -50, "fecha": date(2026, 9, 12), "motivo": None},
+        {"id": 8, "colega_id": 3, "colega": "Colega EJEMPLO Uno", "envase_id": 1,
+         "envase": "Caja EJEMPLO Grande", "origen": "colega_me_devuelve",
+         "cantidad": 30, "fecha": date(2026, 9, 14), "motivo": None},
+    ]
+    with patch("app.main.movimientos_de_colegas", return_value=movimientos), \
+         patch("app.main.cuentas_de_colegas", return_value=CUENTA_CON_DOSCIENTAS):
+        respuesta = cliente.get("/compras/cajas/colega/3")
+    assert respuesta.status_code == 200
+    marcado = respuesta.text.split("</style>")[-1]
+    assert "Le presté" in marcado and "Me devolvió" in marcado
+    assert "12/09/2026" in marcado and "14/09/2026" in marcado
+    # SOBRE LA RESPUESTA ENTERA Y CON EL ATRIBUTO DE AL LADO: la barra se
+    # incluye con su propio <style>, así que split("</style>")[-1] corta DE MAS
+    # y se come la barra. Y el href solo aparece dos veces en la barra por
+    # diseño (el ícono del sector y el botón de atrás), así que un assert del
+    # href pelado no puede fallar — hay que anclar en el elemento.
+    assert 'href="/compras/cajas" aria-label="Volver atrás"' in respuesta.text, (
+        "tiene que poder volver a Cajas"
+    )
+
+    # Un colega que no existe no es un 500.
+    with patch("app.main.movimientos_de_colegas", return_value=[]), \
+         patch("app.main.cuentas_de_colegas", return_value=[]):
+        assert cliente.get("/compras/cajas/colega/999").status_code == 404

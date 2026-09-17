@@ -7,11 +7,12 @@
 <style>
   :root { font-family: -apple-system, system-ui, sans-serif; }
   body { margin: 0; padding: 1rem; background: #f5f5f5; color: #222; }
-  h2 { font-size: 1.05rem; margin: 0 0 0.75rem; }
+  h2 { font-size: 1.05rem; margin: 0 0 0.75rem; overflow-wrap: anywhere; }
   .tarjeta { background: #fff; border-radius: 10px; padding: 1rem;
              margin-bottom: 1rem; box-shadow: 0 1px 3px rgba(0,0,0,.1); }
   .ayuda { font-size: .82rem; color: #6b7280; margin: .35rem 0 0; }
-  .neto { display: block; font-size: 1rem; margin-top: .3rem; }
+  .neto { display: block; font-size: 1rem; margin-top: .3rem;
+          overflow-wrap: anywhere; }
   .neto .cuantas { font-weight: 700; font-variant-numeric: tabular-nums;
                    font-size: 1.25rem; }
   .neto.debe .cuantas { color: #166534; }
@@ -23,22 +24,29 @@
   .mov { padding: .55rem 0; border-bottom: 1px solid #f1f5f9; }
   .mov:last-of-type { border-bottom: 0; }
   .mov .arriba { display: flex; justify-content: space-between; gap: .5rem; }
-  .mov .que { font-weight: 600; }
+  .mov .que { font-weight: 600; overflow-wrap: anywhere; }
   .mov .cuantas { white-space: nowrap; font-variant-numeric: tabular-nums;
                   font-weight: 700; }
   .mov.salio .cuantas { color: #b91c1c; }
   .mov.entro .cuantas { color: #166534; }
-  .mov .abajo { font-size: .82rem; color: #6b7280; margin-top: .15rem; }
+  .mov .abajo { font-size: .82rem; color: #6b7280; margin-top: .15rem;
+                overflow-wrap: anywhere; }
 </style>
 </head>
 <body>
   {% set barra_sector = "compras" %}
-  {% set barra_titulo = "Cuenta con " ~ cuenta.colega %}
+  {# EL NOMBRE NO VA EN LA BARRA, y es la única pantalla que lo intentó: las
+     otras 91 ponen un literal y las dos dinámicas usan valores del sistema.
+     La barra es compartida y su título no está hecho para texto que tipea una
+     persona — medido, un nombre de 60 caracteres sin espacios desbordaba la
+     página 430px a 390px de ancho, y el que se salía era `.barra-titulo`.
+     El nombre va abajo, en el h2, donde sí puede envolver. #}
+  {% set barra_titulo = "Cuenta con un colega" %}
   {% set barra_atras = "/compras/cajas" %}
   {% include "_barra_navegacion.html" %}
 
   <div class="tarjeta">
-    <h2>Cómo está la cuenta</h2>
+    <h2>Cuenta con {{ cuenta.colega }}</h2>
     {% for p in cuenta.por_envase %}
     <span class="neto {% if p.neto > 0 %}debe{% elif p.neto < 0 %}debo{% else %}cero{% endif %}">
       {{ p.envase }}: {% if p.neto == 0 %}están a mano{% else %}{{ p.lado }}

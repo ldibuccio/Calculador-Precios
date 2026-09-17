@@ -76,9 +76,15 @@
                  border: 1px solid #c7d2fe; border-radius: 8px;
                  background: #eef2ff; text-decoration: none; color: inherit; }
   .colega-fila .cuerpo { flex: 1 1 auto; min-width: 0; }
-  .colega-fila .quien { font-weight: 600; font-size: 1rem; color: #3730a3; }
+  /* Un nombre lo tipea una persona y puede venir sin espacios: sin esto
+     una palabra larga no envuelve, se sale por el costado y la pantalla
+     pide scroll horizontal. Medido: 60 caracteres seguidos desbordaban
+     395px a 390px de ancho. */
+  .colega-fila .quien { font-weight: 600; font-size: 1rem; color: #3730a3;
+                        overflow-wrap: anywhere; }
   .colega-fila .chevron { flex: 0 0 auto; font-size: 1.3rem; color: #6366f1; }
-  .neto { display: block; font-size: .9rem; margin-top: .15rem; }
+  .neto { display: block; font-size: .9rem; margin-top: .15rem;
+          overflow-wrap: anywhere; }
   .neto .cuantas { font-weight: 700; font-variant-numeric: tabular-nums; }
   .neto.debe .cuantas { color: #166534; }
   .neto.debo .cuantas { color: #b91c1c; }
