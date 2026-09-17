@@ -14,8 +14,14 @@
            border-radius: 8px; margin-bottom: 1rem; font-size: .95rem; }
   .aviso { background: #dcfce7; color: #166534; padding: .75rem 1rem;
            border-radius: 8px; margin-bottom: 1rem; font-size: .95rem; }
-  /* El hueco se PINTA, no se calla: una guia que no dice en que caja se armo
-     no es una caja menos consumida, es un dato que falta. */
+  /* El hueco se PINTA, no se calla: lo que esta cargado y todavia no se ve
+     no es "no hay", es un dato que falta.
+
+     ESTE COMENTARIO HABLABA DE OTRA COSA HASTA EL 17/09 — de la guia R que no
+     declara su caja, que era el unico usuario de esta clase y se fue de la
+     pantalla en el mismo commit. Es el comentario que envejece EN EL DIFF que
+     lo vuelve falso: cuando una rama deja de alcanzarse por el motivo de
+     antes, el texto de al lado hay que releerlo. */
   .hueco { background: #fef3c7; color: #92400e; padding: .75rem 1rem;
            border-radius: 8px; margin-bottom: 1rem; font-size: .95rem; }
   .cabeza { display: flex; flex-wrap: wrap; align-items: baseline;
@@ -46,33 +52,6 @@
   .regla-fecha ul { margin: .5rem 0 0; padding-left: 1.1rem; }
   .regla-fecha li { margin-bottom: .35rem; }
   .regla-fecha li:last-child { margin-bottom: 0; }
-  /* El gasto en cajas: renglones que se apilan, sin tabla, para que entre en
-     390px sin scroll horizontal ni abreviaturas. */
-  .gasto-fila { display: flex; justify-content: space-between; gap: .5rem;
-                padding: .35rem 0; font-size: .95rem; border-bottom: 1px solid #f1f5f9; }
-  .gasto-fila:last-of-type { border-bottom: 0; }
-  .gasto-fila .cuanto { white-space: nowrap; font-variant-numeric: tabular-nums; }
-  .gasto-total { display: flex; justify-content: space-between; gap: .5rem;
-                 margin-top: .5rem; padding-top: .5rem; border-top: 2px solid #e2e8f0;
-                 font-size: 1.15rem; font-weight: 700; }
-  .gasto-total .cuanto { white-space: nowrap; font-variant-numeric: tabular-nums; }
-  /* Las cajas que se llevaron los rechazos. Va PEGADA al gasto y con la
-     misma ventana: los dos se leen juntos — lo que se compró contra lo que
-     se perdió. En celular cada renglón se apila en dos líneas (quién y
-     cuánto arriba, el detalle abajo) en vez de una tabla que se corte. */
-  .perdida-fila { padding: .5rem 0; border-bottom: 1px solid #f1f5f9;
-                  font-size: .95rem; }
-  .perdida-fila:last-of-type { border-bottom: 0; }
-  .perdida-fila .arriba { display: flex; justify-content: space-between; gap: .5rem; }
-  .perdida-fila .quien { font-weight: 600; }
-  .perdida-fila .cuanto { white-space: nowrap; font-variant-numeric: tabular-nums;
-                          font-weight: 700; color: #3730a3; }
-  .perdida-fila .abajo { font-size: .82rem; color: #6b7280; margin-top: .15rem; }
-  .perdida-total { display: flex; justify-content: space-between; gap: .5rem;
-                   margin-top: .5rem; padding-top: .5rem;
-                   border-top: 2px solid #e2e8f0;
-                   font-size: 1.15rem; font-weight: 700; color: #3730a3; }
-  .perdida-total .cuanto { white-space: nowrap; font-variant-numeric: tabular-nums; }
   /* EL `hidden` DEL CAMPO DEL COLEGA NECESITA ESTA REGLA: `.campo` es
      `display: flex`, que le gana al `[hidden] { display: none }` que trae el
      navegador sin `!important`. Poner el atributo es la mitad del trabajo y
@@ -109,71 +88,6 @@
 
   {% if error %}<div class="error">{{ error }}</div>{% endif %}
   {% if aviso %}<div class="aviso">{{ aviso }}</div>{% endif %}
-
-  {% if sin_declarar.casos %}
-  <div class="hueco">
-    <strong>{{ sin_declarar.casos }} de {{ sin_declarar.poblacion }} guías R</strong>
-    no dicen en qué caja se armaron, así que esas cajas no están descontadas.
-    Pasa cuando la guía quedó sin ficha asignada: al asignarla, el envase se
-    completa solo.
-  </div>
-  {% endif %}
-
-  <div class="tarjeta">
-    <h2>Lo que se gastó en cajas — últimos {{ ventana_gasto }} días</h2>
-    {% if gasto.por_envase %}
-      {% for g in gasto.por_envase %}
-      <div class="gasto-fila">
-        <span>{{ g.nombre }} · {{ g.cajas|numero }} cajas</span>
-        <span class="cuanto">{{ g.gasto|moneda }}</span>
-      </div>
-      {% endfor %}
-      <div class="gasto-total">
-        <span>Total · {{ gasto.cajas|numero }} cajas</span>
-        <span class="cuanto">{{ gasto.gasto|moneda }}</span>
-      </div>
-      <p class="ayuda">Cada compra se valúa al costo que regía EL DÍA que se
-        compró, no al de hoy. Última compra: {{ gasto.ultima|fecha_corta }}.</p>
-      {% if gasto.sin_costo %}
-      <p class="ayuda"><strong>{{ gasto.sin_costo }} de esas compras no tienen
-        costo cargado a su fecha</strong>: suman cajas y no suman pesos, así que
-        el total está corto por ésas.</p>
-      {% endif %}
-    {% else %}
-      <p class="ayuda">No hay ninguna compra de cajas declarada en los últimos
-        {{ ventana_gasto }} días. Se declaran más abajo, con "Movimiento".</p>
-    {% endif %}
-  </div>
-
-  <div class="tarjeta">
-    <h2>Lo que se llevaron los rechazos — últimos {{ ventana_gasto }} días</h2>
-    {% if perdidas.renglones %}
-      {% for r in perdidas.renglones %}
-      <div class="perdida-fila">
-        <div class="arriba">
-          <span class="quien">{{ r.articulo }} · {{ r.cliente }}</span>
-          <span class="cuanto">{{ r.pesos|moneda }}</span>
-        </div>
-        <div class="abajo">{{ r.cajas|numero }} {{ r.envase }} ·
-          {{ r.rechazos }} rechazo{{ "s" if r.rechazos != 1 }} ·
-          el último {{ r.ultimo|fecha_corta }}</div>
-      </div>
-      {% endfor %}
-      <div class="perdida-total">
-        <span>Total · {{ perdidas.cajas|numero }} cajas</span>
-        <span class="cuanto">{{ perdidas.pesos|moneda }}</span>
-      </div>
-      <p class="ayuda">Salieron con una venta que el cliente no pagó y se
-        fueron de nuevo con la mercadería — al Puesto como segunda o de vuelta
-        al proveedor. <strong>Ordenado por plata</strong>: los de arriba son
-        los que vale la pena hablar. Y mirá los <strong>rechazos</strong>: las
-        mismas cajas en uno solo son un camión que volvió; en cinco, algo que
-        pasa siempre.</p>
-    {% else %}
-      <p class="ayuda">Ningún rechazo se llevó una caja nuestra en los últimos
-        {{ ventana_gasto }} días.</p>
-    {% endif %}
-  </div>
 
   <div class="tarjeta">
     <h2>Cuentas con colegas</h2>

@@ -482,10 +482,6 @@ def _pantallas_de_la_cuenta_con_colegas(nombre):
 
     from tests.test_app import cliente
 
-    vacio_gasto = {"desde": date(2026, 6, 18), "por_envase": [], "cajas": 0,
-                   "gasto": 0.0, "sin_costo": 0, "ultima": None}
-    vacio_perd = {"desde": date(2026, 6, 18), "renglones": [], "cajas": 0.0,
-                  "pesos": 0.0, "ultimo": None}
     envases = [{"id": 1, "nombre": "Caja EJEMPLO Grande", "umbral_reposicion": 100,
                 "desde": date(2026, 9, 10), "contadas": 500, "declaradas": -420,
                 "por_guias": 0, "stock": 80}]
@@ -499,14 +495,10 @@ def _pantallas_de_la_cuenta_con_colegas(nombre):
                     "cantidad": -220, "fecha": date(2026, 9, 12), "motivo": nombre}]
 
     with (
-        patch("app.main.cajas_perdidas_por_rechazo", return_value=vacio_perd),
-        patch("app.main.gasto_en_cajas", return_value=vacio_gasto),
         patch("app.main.stock_de_envases", return_value=envases),
         patch("app.main.cuentas_de_colegas", return_value=cuentas),
         patch("app.main.listar_colegas",
               return_value=[{"id": 3, "nombre": nombre, "activo": True}]),
-        patch("app.main.contar_guias_sin_declarar_el_envase",
-              return_value={"casos": 0, "poblacion": 0}),
     ):
         lista = cliente.get("/compras/cajas")
     with (

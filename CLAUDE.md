@@ -6876,6 +6876,14 @@ igualdad no puede fallar. El control tiene que venir de otra corrida, otra
 consulta u otra fuente — es la misma regla que *"la verificación que funciona
 es la que hace chocar dos fuentes"* (corolario 19), acá adentro de un test.
 
+**Y el renglón que este corolario defendió YA NO SE VE EN CAJAS** (17/09): la
+pantalla pasó a ser solo stock y `cajas_perdidas` se fue con el resto de la
+plata. **El corolario no se mueve**: sigue diciendo que una lista que ENUMERA
+se evalúa por si está completa, y esa lista va a volver a dibujarse el día que
+alguien la cablee en Gerencia — con el renglón del reproceso adentro, que es
+lo que este corolario compró. Lo que envejeció es DÓNDE se ve, que es el
+estado que se anota al lado del mecanismo para ilustrarlo.
+
 ## Corolario 77: un `JOIN` contra la fila que todavía no existe no devuelve cero, DESAPARECE
 
 Del 17/09. Las tres patas del stock de cajas entran por `JOIN base`, donde
@@ -6936,3 +6944,103 @@ operario encuentra 2 y se queda pensando cuál falta—. Cuesta una columna más
 y es la diferencia entre un número que se puede ir a verificar y uno que hay
 que creer. Es el corolario 74 evitado antes de existir: dos respuestas
 verdaderas que no se pueden poner una al lado de la otra.
+
+## Corolario 78: un aviso que MEZCLA poblaciones no se arregla afinando el umbral — hay que partirlo, y a veces el resultado es que no hay aviso
+
+Del 17/09, y es del dueño: *"eso no debería poder pasar: la caja sale de la
+ficha"*. La pantalla de Cajas decía **"2 de 22 guías R no dicen en qué caja se
+armaron, así que esas cajas no están descontadas"**, y la frase tenía dos
+mitades: un conteo correcto y una explicación inventada — *"pasa cuando la
+guía quedó sin ficha asignada"*, que es UNA de cinco causas.
+
+**Las cinco, leídas del código y no deducidas:**
+
+| por qué queda en NULL | ¿es un hueco? |
+|---|---|
+| la guía es anterior al **16/09**, que es cuando corrió `db/envases_3` | **no** — la columna no existía y la migración no backfillea |
+| la guía se dejó **sin ficha** ("sin asignar") | no se puede saber cuál caja |
+| **ficha variable**: el envase lo decide el cajón de ESA compra | no se puede saber, **nunca** |
+| **ficha sin envase** (envase perdido) | no hay caja que descontar |
+| ficha con envase **FIJO** y la columna en NULL | **SÍ**, y es el único |
+
+**Cuatro de las cinco son normales**, así que el número no contestaba la
+pregunta que su propia frase hacía. Y "no está descontada" es literal —la pata
+`guias` filtra `r.lleva_caja_nuestra IS TRUE`— pero **descontar de más sería
+peor**: en tres de los cinco casos no salió ninguna caja nuestra.
+
+### Lo que el conteo tenía mal ADEMÁS, y es el error de alcance de siempre
+
+Su docstring decía: *"solo cuenta desde el conteo inicial más viejo: antes de
+esa fecha ninguna guía tiene la columna escrita"*. **El ancla es la
+equivocada.** Lo que decide si una guía tiene la columna escrita es la fecha de
+la MIGRACIÓN (16/09), y el conteo inicial lo fecha el operario — puede ponerlo
+en agosto. Toda guía entre esas dos fechas se cuenta como hueco y no lo es.
+
+Es el corolario 69 otra vez: **el recorte de la medición no es el recorte del
+hecho que se mide.** Y acá con el agravante de que el ancla elegida la mueve
+una persona desde una pantalla, así que el número del aviso cambia según qué
+día alguien haya dicho que contó las cajas.
+
+### El bug REAL está abajo y no es un aviso: `envase_declarado` no tiene escritor
+
+`envase_derivado_de_la_ficha` define tres casos y el tercero dice **"si no se
+puede derivar, se PREGUNTA"**. `_envase_de_esta_guia` recibe `envase_declarado`
+para eso. **`grep` del nombre en `app/`, `core/` y `templates/`: cero.** La
+pantalla de Reproceso no nombra la palabra "envase" ni una vez.
+
+O sea que la pregunta se diseñó, se le dejó el parámetro, y **nunca se
+construyó** — corolario 72 sobre un parámetro en vez de sobre una columna, y
+corolario 31 sobre una pregunta en vez de sobre un botón. Con ficha variable la
+caja sale, es nuestra, y no se descuenta **nunca**, en silencio y para siempre.
+
+**Y por eso el aviso NO se mudó a Alertas**: una alerta sobre eso dispararía
+sobre algo que **no se puede arreglar desde ninguna pantalla** —asignar la
+ficha no alcanza: `asignar_ficha_a_reproceso` vuelve a derivar y con ficha
+variable vuelve a dar NULL—. Es el cartel que se aprende a esquivar, antes de
+existir. Lo que hay que construir es la pregunta; la alerta recién sirve
+después.
+
+### La forma general
+
+**Un aviso que junta poblaciones con causas distintas no se arregla moviendo
+el umbral: se parte por causa, y recién ahí se ve cuál de los pedazos merece
+un aviso.** Acá el resultado de partirlo fue que **ninguno lo merece hoy**:
+tres pedazos son normales, uno es un fósil que se apaga solo, y el que queda
+necesita una función que no existe.
+
+Es la contracara del corolario 23 —una consulta barata borró una pantalla
+entera antes de escribirla—: acá borró un aviso que **ya estaba escrito y
+andando**, y lo que lo destapó no fue una medición sino que el dueño leyera la
+frase y dijera *"eso no debería poder pasar"*. **Una explicación que contradice
+el modelo es una medición gratis**, y la que se escribió acá (`db/cajas_8_*`)
+sirvió para dimensionar, no para descubrir.
+
+## Una pantalla de EXISTENCIAS no es donde se cuelga todo lo que dice la misma palabra
+
+Del 17/09, y también es del dueño: *"esto sirve para una cosa: saber cuántas
+cajas tengo, a quién le presté y quién me debe. Nada más."*
+
+`/compras/cajas` había juntado **tres preguntas distintas** debajo de la
+palabra "cajas": cuántas hay (existencias), cuánto se gastó en comprarlas
+(plata, 90 días) y cuánto se llevaron los rechazos (plata, 90 días). Ninguna
+estaba mal calculada; las tres estaban en el mismo lugar por compartir un
+sustantivo.
+
+**Cómo se reconoce, y no hace falta que nadie se queje**: si dos bloques de una
+pantalla **se miran en momentos distintos** —el stock antes de reponer, el
+gasto al cerrar el mes— o **los mira gente distinta**, están juntos por el
+nombre y no por el uso. La pregunta que lo separa es *¿esto lo abre la misma
+persona en el mismo momento?*, y se contesta sin datos.
+
+**Y las cuentas NO se borran cuando se saca el bloque**: `gasto_en_cajas` y
+`cajas_perdidas_por_rechazo` quedan enteras con sus tests, así que mudarlas a
+Gerencia es cablear una pantalla y no reescribir dos cuentas —con sus
+ventanas, su valuación al costo del día de la compra y su orden por plata—.
+Lo que sí hace falta es **un test que las nombre**: sin un solo llamador son
+exactamente lo que el corolario 33 dice que se lee como "no se usa" y se
+borra. Ese test es hoy la única señal de que existen.
+
+**Y los imports SÍ se sacan**, que es la mitad opuesta: un `from app.db import
+gasto_en_cajas` que nada usa hace creer al próximo que lee la ruta que la
+pantalla todavía lo muestra. La función se conserva donde vive; el cableado
+muerto se corta.

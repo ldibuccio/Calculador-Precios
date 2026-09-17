@@ -287,11 +287,7 @@ from app.db import (
     movimientos_de_colegas,
     obtener_o_crear_colega,
     stock_de_envases,
-    VENTANA_GASTO_EN_CAJAS_DIAS,
     crear_movimiento_envase,
-    contar_guias_sin_declarar_el_envase,
-    cajas_perdidas_por_rechazo,
-    gasto_en_cajas,
     guardar_umbral_de_envase,
     contar_envases_a_reponer,
     detallar_envases_a_reponer,
@@ -4437,16 +4433,33 @@ def _armar_aviso_bloqueo_edicion(estado: str | None, cantidad_bloqueada: bool, p
 
 def _renderizar_pantalla_cajas(request: Request, *, error: str | None = None,
                                aviso: str | None = None, status_code: int = 200):
-    """La pantalla de Cajas: el stock de cajas nuestras y los movimientos que se declaran."""
+    """La pantalla de Cajas: CUANTAS HAY y CON QUIEN ESTA LA CUENTA. Nada más.
+
+    ES SOLO STOCK, y eso es una decisión del dueño del 17/09: esta pantalla
+    contesta cuántas cajas tengo, a quién le presté y quién me debe. Se le
+    sacaron tres cosas que estaban acá y no son eso:
+
+      - el aviso de las guías R que no declaran su caja. Una notificación va
+        en Alertas, no en la pantalla de la cosa. Y además ese número mezclaba
+        cinco poblaciones, cuatro de ellas normales — ver
+        `db/cajas_8_las_guias_sin_caja_declarada.sql`.
+      - el gasto en cajas de los últimos 90 días, y
+      - lo que se llevaron los rechazos, con sus pesos.
+
+    LOS DOS ÚLTIMOS SON PLATA Y VAN EN GERENCIA. No se borraron: sus
+    funciones (`gasto_en_cajas`, `cajas_perdidas_por_rechazo`) siguen enteras
+    con sus tests, así que mudarlas es cablear una pantalla y no reescribir
+    una cuenta.
+
+    La regla que sale de esto, y es más ancha que esta pantalla: **una
+    pantalla de existencias no es el lugar donde se cuelga todo lo que
+    menciona la misma palabra.** "Cajas" aparece en el stock, en el gasto y en
+    la pérdida, y eso alcanzó para juntar tres preguntas distintas —cuántas
+    hay, cuánto salieron, cuánto se perdieron— que se miran en momentos
+    distintos y las decide gente distinta.
+    """
     try:
         envases = stock_de_envases()
-        sin_declarar = contar_guias_sin_declarar_el_envase()
-        desde_gasto = _hoy_argentina() - timedelta(days=VENTANA_GASTO_EN_CAJAS_DIAS)
-        gasto = gasto_en_cajas(desde_gasto)
-        # LA MISMA VENTANA que el gasto, a propósito: los dos números se leen
-        # juntos —lo que se compró contra lo que se perdió— y con dos recortes
-        # distintos la resta no significaría nada.
-        perdidas = cajas_perdidas_por_rechazo(desde_gasto)
         cuentas = cuentas_de_colegas()
         colegas = listar_colegas()
     except Exception as error_db:
@@ -4462,10 +4475,9 @@ def _renderizar_pantalla_cajas(request: Request, *, error: str | None = None,
     return templates.TemplateResponse(
         request,
         "compras_cajas.html",
-        {"envases": envases, "sin_declarar": sin_declarar, "error": error,
+        {"envases": envases, "error": error,
          "aviso": aviso, "hoy": _hoy_argentina().isoformat(),
-         "gasto": gasto, "ventana_gasto": VENTANA_GASTO_EN_CAJAS_DIAS,
-         "perdidas": perdidas, "cuentas": cuentas, "colegas": colegas,
+         "cuentas": cuentas, "colegas": colegas,
          "origenes_colega": ORIGENES_DE_COLEGA},
         status_code=status_code,
     )
