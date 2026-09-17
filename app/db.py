@@ -11,7 +11,8 @@ from contextlib import contextmanager
 
 import psycopg2
 
-from core.envases import envase_derivado_de_la_ficha, hay_que_reponer
+from core.envases import (como_queda_la_cuenta, efecto_en_la_cuenta,
+                          envase_derivado_de_la_ficha, hay_que_reponer)
 from core.magnitudes import repartir_magnitudes
 from core.vino_armada import motivo_para_no_marcar_armada, motivo_sin_lote_por_el_corte
 
@@ -12100,9 +12101,162 @@ def stock_de_envases() -> list[dict]:
     return [dict(zip(COLUMNAS_STOCK_DE_ENVASES, f)) for f in filas]
 
 
+def listar_colegas(incluir_inactivos: bool = False) -> list[dict]:
+    """Los colegas con los que se prestan cajas. Por nombre.
+
+    LISTA APARTE de `proveedores` y de `proveedores_puesto`, igual que
+    aquéllas entre sí: circuitos distintos, listas distintas. Un colega que
+    además sea proveedor va a estar escrito dos veces y está bien — no se
+    suman en ninguna cuenta.
+    """
+    conexion = obtener_conexion()
+    try:
+        with conexion.cursor() as cursor:
+            cursor.execute(
+                "SELECT id, nombre, activo FROM colegas"
+                + ("" if incluir_inactivos else " WHERE activo = true")
+                + " ORDER BY nombre"
+            )
+            return [{"id": f[0], "nombre": f[1], "activo": f[2]}
+                    for f in cursor.fetchall()]
+    finally:
+        conexion.close()
+
+
+def obtener_o_crear_colega(nombre: str, nombre_normalizado: str) -> int:
+    """Devuelve el id del colega, creándolo si no estaba. Unifica por el normalizado.
+
+    MISMA UNIFICACION que clientes_puesto y proveedores_puesto, y el plegado
+    lo hace el llamador con `normalizar_texto`: el UNIQUE de la base solo
+    exige que lo guardado sea distinto, no pliega nada. Así la regla está
+    escrita UNA vez, en Python. Un índice que plegara por su cuenta serían
+    DOS, y ése es el caso de "ruben" al lado de "Rubén".
+
+    REACTIVA al que estaba dado de baja en vez de crear uno nuevo: dos filas
+    del mismo colega partirían su cuenta en dos y ninguna de las dos diría
+    cuánto debe.
+    """
+    conexion = obtener_conexion()
+    try:
+        with conexion.cursor() as cursor:
+            cursor.execute(
+                "SELECT id, activo FROM colegas WHERE nombre_normalizado = %s",
+                (nombre_normalizado,),
+            )
+            fila = cursor.fetchone()
+            if fila is not None:
+                if not fila[1]:
+                    cursor.execute("UPDATE colegas SET activo = true WHERE id = %s",
+                                   (fila[0],))
+                    conexion.commit()
+                return fila[0]
+            cursor.execute(
+                "INSERT INTO colegas (nombre, nombre_normalizado) VALUES (%s, %s)"
+                " RETURNING id",
+                (nombre, nombre_normalizado),
+            )
+            nuevo = cursor.fetchone()[0]
+        conexion.commit()
+        return nuevo
+    finally:
+        conexion.close()
+
+
+# UNA sola consulta para la LISTA y para el DETALLE, y por eso devuelve los
+# movimientos crudos en vez de un saldo: dos consultas —una que suma y otra
+# que lista— son la misma regla escrita dos veces, y el día que se separen el
+# renglón del colega y su detalle van a decir números distintos sin que nada
+# avise. La suma la hace Python con `efecto_en_la_cuenta`, que es el único
+# lugar donde el signo de la cuenta está escrito.
+#
+# ***NO LLEVA EL RECORTE DEL CONTEO INICIAL, Y ESO ES TODO EL ASUNTO.*** El
+# stock FISICO sí lo lleva —la foto del piso ya refleja lo que se prestó antes
+# de contarla— pero la CUENTA no: si le presté 200 el mes pasado y conté el
+# piso hoy, el piso está bien sin esas 200 y el colega me las sigue debiendo.
+# Copiar acá el `{comp} b.fecha_operacion` de la pata de al lado borraría esas
+# deudas EN SILENCIO. Es la novena aparición de la asimetría del corte, y la
+# cuida `test_la_cuenta_del_colega_NO_lleva_el_recorte_del_conteo_inicial`,
+# que corre la cuenta con el recorte puesto y exige que el número SE MUEVA.
+_SQL_MOVIMIENTOS_DE_COLEGAS = """
+    SELECT m.id, m.colega_id, c.nombre, m.envase_id, e.nombre,
+           m.origen, m.cantidad, m.fecha_operacion, m.motivo
+      FROM movimientos_envase m
+      JOIN colegas c ON c.id = m.colega_id
+      JOIN envases e ON e.id = m.envase_id
+     WHERE m.anulado_el IS NULL
+       AND m.colega_id IS NOT NULL
+       {filtro}
+     ORDER BY m.fecha_operacion DESC, m.id DESC
+"""
+
+
+def movimientos_de_colegas(colega_id: int | None = None) -> list[dict]:
+    """Los movimientos de cuenta, todos o los de un colega. El más nuevo primero."""
+    filtro = "AND m.colega_id = %s" if colega_id is not None else ""
+    conexion = obtener_conexion()
+    try:
+        with conexion.cursor() as cursor:
+            cursor.execute(_SQL_MOVIMIENTOS_DE_COLEGAS.format(filtro=filtro),
+                           (colega_id,) if colega_id is not None else ())
+            return [{"id": f[0], "colega_id": f[1], "colega": f[2],
+                     "envase_id": f[3], "envase": f[4], "origen": f[5],
+                     "cantidad": f[6], "fecha": f[7], "motivo": f[8]}
+                    for f in cursor.fetchall()]
+    finally:
+        conexion.close()
+
+
+def cuentas_de_colegas() -> list[dict]:
+    """Un renglón por colega, con el neto POR TIPO DE CAJA.
+
+    SIN TOTAL ENTRE TIPOS, y es una decisión: un colega puede deberme Grandes
+    mientras yo le debo Chicas, y sumarlas diría que están a mano. No se
+    cancelan porque no son la misma cosa — netear entre tipos es exactamente
+    el error que netear adentro de un tipo no es.
+
+    LOS COLEGAS SIN MOVIMIENTOS APARECEN IGUAL, con la lista vacía: uno recién
+    cargado tiene que verse en la pantalla, o no hay forma de saber si se
+    guardó. Una lista que solo muestra a los que deben no distingue "no debe
+    nada" de "no está cargado".
+
+    EL NETO SALE DE `efecto_en_la_cuenta`, sumado acá y no en el SQL: son
+    pocas filas —movimientos DECLARADOS por una persona— y así el signo de la
+    cuenta está escrito en UN solo lugar, que además es el que los tests
+    miran. Un `SUM(-cantidad)` en la consulta sería la segunda copia.
+    """
+    cuentas = {}
+    for colega in listar_colegas():
+        cuentas[colega["id"]] = {"colega_id": colega["id"], "colega": colega["nombre"],
+                                 "por_envase": [], "movimientos": 0}
+
+    netos = {}
+    for movimiento in movimientos_de_colegas():
+        clave = (movimiento["colega_id"], movimiento["envase"])
+        netos[clave] = netos.get(clave, 0) + efecto_en_la_cuenta(movimiento["cantidad"])
+        if movimiento["colega_id"] in cuentas:
+            cuentas[movimiento["colega_id"]]["movimientos"] += 1
+
+    for (colega_id, envase), neto in sorted(netos.items(), key=lambda p: p[0][1]):
+        if colega_id not in cuentas:
+            continue
+        lado, cuantas = como_queda_la_cuenta(neto)
+        cuentas[colega_id]["por_envase"].append(
+            {"envase": envase, "neto": neto, "lado": lado, "cuantas": cuantas})
+
+    return sorted(cuentas.values(), key=lambda c: c["colega"])
+
+
 def crear_movimiento_envase(envase_id: int, origen: str, cantidad: int,
-                            fecha_operacion, motivo: str | None = None) -> int:
+                            fecha_operacion, motivo: str | None = None,
+                            colega_id: int | None = None) -> int:
     """Escribe un movimiento DECLARADO de cajas. Devuelve su id.
+
+    `colega_id` VIAJA HASTA EL INSERT y no se queda en la firma: el CHECK
+    `movimientos_envase_colega_segun_origen` ata las DOS columnas, así que una
+    guarda con una sola mitad escrita por el código es una pared que rechaza
+    todo préstamo entre colegas — la forma exacta del 17/09, que estuvo un día
+    enterrada y la desactivó un drop en vez del uso. Lo cuida el test que
+    compara la tupla ENTERA del INSERT.
 
     DECIDE LA BASE Y ACÁ SE TRADUCE EL ERROR: el origen, el signo que le
     corresponde y el motivo obligatorio del ajuste los rechazan los CHECK de
@@ -12133,11 +12287,12 @@ def crear_movimiento_envase(envase_id: int, origen: str, cantidad: int,
             cursor.execute(
                 """
                 INSERT INTO movimientos_envase
-                    (envase_id, origen, cantidad, motivo, fecha_operacion, stock_sistema)
-                VALUES (%s, %s, %s, %s, %s, %s)
+                    (envase_id, origen, cantidad, motivo, fecha_operacion, stock_sistema,
+                     colega_id)
+                VALUES (%s, %s, %s, %s, %s, %s, %s)
                 RETURNING id
                 """,
-                (envase_id, origen, cantidad, motivo, fecha_operacion, antes),
+                (envase_id, origen, cantidad, motivo, fecha_operacion, antes, colega_id),
             )
             movimiento_id = cursor.fetchone()[0]
         conexion.commit()

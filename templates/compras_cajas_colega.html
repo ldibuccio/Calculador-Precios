@@ -1,0 +1,77 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Cuenta con {{ cuenta.colega }}</title>
+<style>
+  :root { font-family: -apple-system, system-ui, sans-serif; }
+  body { margin: 0; padding: 1rem; background: #f5f5f5; color: #222; }
+  h2 { font-size: 1.05rem; margin: 0 0 0.75rem; }
+  .tarjeta { background: #fff; border-radius: 10px; padding: 1rem;
+             margin-bottom: 1rem; box-shadow: 0 1px 3px rgba(0,0,0,.1); }
+  .ayuda { font-size: .82rem; color: #6b7280; margin: .35rem 0 0; }
+  .neto { display: block; font-size: 1rem; margin-top: .3rem; }
+  .neto .cuantas { font-weight: 700; font-variant-numeric: tabular-nums;
+                   font-size: 1.25rem; }
+  .neto.debe .cuantas { color: #166534; }
+  .neto.debo .cuantas { color: #b91c1c; }
+  .neto.cero { color: #6b7280; }
+  /* Un renglon por movimiento, apilado en dos lineas para que entre en 390px
+     sin tabla y sin scroll horizontal: que paso y cuanto arriba, cuando y en
+     que caja abajo. */
+  .mov { padding: .55rem 0; border-bottom: 1px solid #f1f5f9; }
+  .mov:last-of-type { border-bottom: 0; }
+  .mov .arriba { display: flex; justify-content: space-between; gap: .5rem; }
+  .mov .que { font-weight: 600; }
+  .mov .cuantas { white-space: nowrap; font-variant-numeric: tabular-nums;
+                  font-weight: 700; }
+  .mov.salio .cuantas { color: #b91c1c; }
+  .mov.entro .cuantas { color: #166534; }
+  .mov .abajo { font-size: .82rem; color: #6b7280; margin-top: .15rem; }
+</style>
+</head>
+<body>
+  {% set barra_sector = "compras" %}
+  {% set barra_titulo = "Cuenta con " ~ cuenta.colega %}
+  {% set barra_atras = "/compras/cajas" %}
+  {% include "_barra_navegacion.html" %}
+
+  <div class="tarjeta">
+    <h2>Cómo está la cuenta</h2>
+    {% for p in cuenta.por_envase %}
+    <span class="neto {% if p.neto > 0 %}debe{% elif p.neto < 0 %}debo{% else %}cero{% endif %}">
+      {{ p.envase }}: {% if p.neto == 0 %}están a mano{% else %}{{ p.lado }}
+      <span class="cuantas">{{ p.cuantas }}</span>{% endif %}
+    </span>
+    {% else %}
+    <p class="ayuda">Todavía no hay movimientos con este colega.</p>
+    {% endfor %}
+    {% if cuenta.por_envase %}
+    <p class="ayuda">El neto va por tipo de caja y no se suma entre tipos.</p>
+    {% endif %}
+  </div>
+
+  {% if movimientos %}
+  <div class="tarjeta">
+    <h2>Todo lo que pasó — {{ movimientos|length }} movimientos</h2>
+    {% for m in movimientos %}
+    <div class="mov {% if m.salio %}salio{% else %}entro{% endif %}">
+      <div class="arriba">
+        <span class="que">{{ m.rotulo }}</span>
+        <span class="cuantas">{{ m.cajas }}</span>
+      </div>
+      <div class="abajo">
+        {{ m.fecha.strftime('%d/%m/%Y') }} · {{ m.envase }}{% if m.motivo %} · {{ m.motivo }}{% endif %}
+      </div>
+    </div>
+    {% endfor %}
+    <p class="ayuda">El más nuevo arriba. Estos movimientos NO llevan el
+      recorte del conteo inicial del piso: una caja prestada antes de contar
+      el galpón sigue siendo una caja que te deben.</p>
+  </div>
+  {% endif %}
+
+{% include "_pie_version.html" %}
+</body>
+</html>

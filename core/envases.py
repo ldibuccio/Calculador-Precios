@@ -159,6 +159,89 @@ def hay_que_reponer(envase: dict) -> bool:
     return envase["stock"] < envase["umbral_reposicion"]
 
 
+# ---------------------------------------------------------------------------
+# LA CUENTA CORRIENTE CON UN COLEGA
+# ---------------------------------------------------------------------------
+#
+# Se prestan cajas entre colegas, y son CAJAS NUESTRAS: las mismas del
+# catálogo. El préstamo funciona justamente porque los dos usan el mismo tipo
+# de caja — con cajas suyas no habría intercambio posible.
+#
+# NO ES EL PRÉSTAMO AL PUESTO, y por eso los orígenes se llaman distinto: al
+# puesto la caja vuelve SOLA con la guía R `en_origen` (llega la compra ya
+# armada en caja nuestra) y no hay ninguna cuenta que llevar. Con un colega
+# la vuelta la declara una persona, y queda un saldo.
+#
+# LOS DOS ROTULOS Y EL SIGNO VIAJAN JUNTOS a propósito: repartidos en tres
+# mapas, el día que se agregue un origen alguno se va a olvidar y los otros
+# van a seguir contestando. `piso` es EL EFECTO SOBRE EL PISO.
+#
+# SON DOS ROTULOS Y NO UNO PORQUE SE LEEN EN DOS LUGARES: en el `<select>` no
+# hay ningún colega a la vista todavía, así que la opción tiene que decir "a
+# un colega"; adentro de la cuenta de Fulano, repetirlo sería ruido en cada
+# renglón. Es la misma distinción del corolario 56 —lo que describe la COSA
+# contra lo que describe el CAMINO— y por eso los dos están acá y no uno acá
+# y otro en la plantilla.
+ORIGENES_DE_COLEGA = {
+    "colega_le_presto":   {"corto": "Le presté",
+                           "largo": "Le presté cajas a un colega", "piso": -1},
+    "colega_me_devuelve": {"corto": "Me devolvió",
+                           "largo": "Un colega me devolvió cajas", "piso": +1},
+    "colega_me_presta":   {"corto": "Me prestó",
+                           "largo": "Un colega me prestó cajas", "piso": +1},
+    "colega_le_devuelvo": {"corto": "Le devolví",
+                           "largo": "Le devolví cajas a un colega", "piso": -1},
+}
+
+
+def efecto_en_la_cuenta(cantidad) -> int:
+    """Cuánto mueve este movimiento la cuenta con el colega. + me debe / - le debo.
+
+    ES `-cantidad`, Y NO HAY MAPA DE SIGNOS POR ORIGEN. Verificado en los
+    cuatro, que son todos los que hay:
+
+        le presto 50    piso -50  ->  me debe +50   = -(-50)
+        me devuelve 30  piso +30  ->  me debe -30   = -(+30)
+        me presta 50    piso +50  ->  le debo +50, o sea neto -50 = -(+50)
+        le devuelvo 30  piso -30  ->  le debo -30, o sea neto +30 = -(-30)
+
+    No es una casualidad de los cuatro casos: `cantidad` significa EL EFECTO
+    SOBRE EL PISO, y toda caja que sale hacia un colega sube lo que me debe o
+    baja lo que le debo, mientras que toda caja que entra hace lo contrario.
+
+    Y de ahí sale lo que más protege a esta cuenta: NO LEE EL ORIGEN, así que
+    no se puede separar de la lista de orígenes. Un mapa de signos por origen
+    sería una segunda copia de `ORIGENES_DE_COLEGA` esperando a que alguien
+    agregue un quinto y actualice uno solo de los dos.
+
+    LOS CUATRO ORIGENES EXISTEN IGUAL y no son decoración: con uno solo y el
+    signo suelto, "le presté 50" y "le devolví 50" son los dos -50 y el
+    DETALLE no los distingue. El neto saldría bien y la cuenta no se podría
+    leer, que es justamente lo que se entra a mirar.
+    """
+    return -int(cantidad)
+
+
+def como_queda_la_cuenta(neto) -> tuple[str, int]:
+    """Cómo se lee un neto: ("me debe" | "le debo" | "en cero", cuántas cajas).
+
+    DEVUELVE EL NUMERO SIN SIGNO junto con de qué lado está, porque eso es lo
+    que se lee en el galpón: "Fulano me debe 20" y no "Fulano: +20". El signo
+    obliga a acordarse de una convención, y el que mira la pantalla no tiene
+    por qué.
+
+    EL CERO ES SU PROPIO CASO y no cae en ninguno de los otros dos: "me debe
+    0" y "le debo 0" son las dos formas de decir que están a mano, y las dos
+    se leen como si hubiera algo pendiente.
+    """
+    valor = int(neto)
+    if valor > 0:
+        return ("me debe", valor)
+    if valor < 0:
+        return ("le debo", -valor)
+    return ("en cero", 0)
+
+
 def envases_por_unidad_de_venta(
     contenido_ficha: float | None,
     envase_variable: bool,

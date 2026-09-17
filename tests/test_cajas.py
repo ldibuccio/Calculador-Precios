@@ -10,11 +10,19 @@ from unittest.mock import MagicMock, patch
 import pytest
 from fastapi.testclient import TestClient
 
-from app.db import (COMPARADOR_DESDE_EL_CONTEO, _SQL_STOCK_DE_ENVASES,
-                    crear_movimiento_envase)
+from app.db import (
+    COMPARADOR_DESDE_EL_CONTEO,
+    _SQL_MOVIMIENTOS_DE_COLEGAS,
+    _SQL_STOCK_DE_ENVASES,
+    crear_movimiento_envase,
+    cuentas_de_colegas,
+)
 from app.main import PUERTA_COMPRAS, app
 from core.envases import (
+    ORIGENES_DE_COLEGA,
     SIGNO_POR_TIPO_DE_GUIA,
+    como_queda_la_cuenta,
+    efecto_en_la_cuenta,
     hay_que_reponer,
     cajas_que_mueve_la_guia,
     envase_derivado_de_la_ficha,
@@ -128,12 +136,29 @@ def test_los_CUATRO_origenes_declarados_del_CHECK_los_ofrece_la_pantalla():
     Se lee del `.sql` y no se copia: copiada, la lista envejece en silencio.
     `conteo_inicial` no está en el select porque tiene su propio formulario,
     y por eso se lo descuenta acá a propósito en vez de aflojar el assert.
+
+    MIRA LA PAGINA RENDERIZADA Y NO EL TEXTO DE LA PLANTILLA, desde el 17/09:
+    las opciones de colega salen de un `{% for %}` sobre ORIGENES_DE_COLEGA,
+    así que en el archivo dicen `{{ clave }}` y un regex sobre el texto no ve
+    ninguna. Leída la respuesta, el test cubre además el camino entero —el
+    mapa, el contexto de la ruta y la plantilla— en vez de solo lo que el
+    archivo afirma. Es lo mismo que el `hidden` que el CSS desmiente: el
+    archivo dice la intención y la página dice el efecto.
     """
     check = re.search(
         r"movimientos_envase_origen_check\s*\n?\s*check \(origen in \(([^)]+)\)\)", ESQUEMA)
     assert check, "no encontré el CHECK de movimientos_envase.origen"
     del_esquema = set(re.findall(r"'([a-z_]+)'", check.group(1)))
-    marcado = io.open("templates/compras_cajas.html", encoding="utf-8").read().split("</style>")[-1]
+    with patch("app.main.cajas_perdidas_por_rechazo", return_value=SIN_PERDIDAS), \
+         patch("app.main.gasto_en_cajas", return_value=SIN_GASTO), \
+         patch("app.main.stock_de_envases", return_value=UN_ENVASE_BAJO), \
+         patch("app.main.cuentas_de_colegas", return_value=[]), \
+         patch("app.main.listar_colegas", return_value=[]), \
+         patch("app.main.contar_guias_sin_declarar_el_envase",
+               return_value={"casos": 0, "poblacion": 0}):
+        respuesta = cliente.get("/compras/cajas")
+    assert respuesta.status_code == 200
+    marcado = respuesta.text.split("</style>")[-1]
     del_select = set(re.findall(r'<option value="([a-z_]+)"', marcado))
     assert del_select | {"conteo_inicial"} == del_esquema, (
         f"el esquema permite {sorted(del_esquema)} y la pantalla ofrece {sorted(del_select)}"
@@ -361,6 +386,8 @@ def test_sin_conteo_inicial_la_pantalla_NO_dice_cero():
     with patch("app.main.cajas_perdidas_por_rechazo", return_value=SIN_PERDIDAS), \
          patch("app.main.gasto_en_cajas", return_value=SIN_GASTO), \
          patch("app.main.stock_de_envases", return_value=UN_ENVASE_SIN_ARRANCAR), \
+         patch("app.main.cuentas_de_colegas", return_value=[]), \
+         patch("app.main.listar_colegas", return_value=[]), \
          patch("app.main.contar_guias_sin_declarar_el_envase", return_value={"casos": 0, "poblacion": 0}):
         respuesta = cliente.get("/compras/cajas")
     assert respuesta.status_code == 200
@@ -375,6 +402,8 @@ def test_debajo_del_umbral_la_pantalla_lo_MARCA():
     with patch("app.main.cajas_perdidas_por_rechazo", return_value=SIN_PERDIDAS), \
          patch("app.main.gasto_en_cajas", return_value=SIN_GASTO), \
          patch("app.main.stock_de_envases", return_value=UN_ENVASE_BAJO), \
+         patch("app.main.cuentas_de_colegas", return_value=[]), \
+         patch("app.main.listar_colegas", return_value=[]), \
          patch("app.main.contar_guias_sin_declarar_el_envase", return_value={"casos": 0, "poblacion": 0}):
         respuesta = cliente.get("/compras/cajas")
     marcado = respuesta.text.split("</style>")[-1]
@@ -395,6 +424,8 @@ def test_el_HUECO_de_las_guias_sin_declarar_se_muestra_CON_su_poblacion():
     with patch("app.main.cajas_perdidas_por_rechazo", return_value=SIN_PERDIDAS), \
          patch("app.main.gasto_en_cajas", return_value=SIN_GASTO), \
          patch("app.main.stock_de_envases", return_value=UN_ENVASE_BAJO), \
+         patch("app.main.cuentas_de_colegas", return_value=[]), \
+         patch("app.main.listar_colegas", return_value=[]), \
          patch("app.main.contar_guias_sin_declarar_el_envase",
                return_value={"casos": 3, "poblacion": 314}):
         respuesta = cliente.get("/compras/cajas")
@@ -408,6 +439,8 @@ def test_la_pantalla_vive_en_COMPRAS_y_la_barra_lo_dice():
     with patch("app.main.cajas_perdidas_por_rechazo", return_value=SIN_PERDIDAS), \
          patch("app.main.gasto_en_cajas", return_value=SIN_GASTO), \
          patch("app.main.stock_de_envases", return_value=UN_ENVASE_BAJO), \
+         patch("app.main.cuentas_de_colegas", return_value=[]), \
+         patch("app.main.listar_colegas", return_value=[]), \
          patch("app.main.contar_guias_sin_declarar_el_envase", return_value={"casos": 0, "poblacion": 0}):
         respuesta = cliente.get("/compras/cajas")
     # SOBRE EL DOCUMENTO ENTERO y no sobre `[-1]`: la barra se incluye desde
@@ -423,6 +456,8 @@ def test_una_cantidad_con_DECIMALES_no_entra():
     with patch("app.main.cajas_perdidas_por_rechazo", return_value=SIN_PERDIDAS), \
          patch("app.main.gasto_en_cajas", return_value=SIN_GASTO), \
          patch("app.main.stock_de_envases", return_value=UN_ENVASE_BAJO), \
+         patch("app.main.cuentas_de_colegas", return_value=[]), \
+         patch("app.main.listar_colegas", return_value=[]), \
          patch("app.main.contar_guias_sin_declarar_el_envase", return_value={"casos": 0, "poblacion": 0}), \
          patch("app.main.crear_movimiento_envase") as escribir:
         respuesta = cliente.post("/compras/cajas/movimiento",
@@ -438,10 +473,12 @@ def test_el_PRESTAMO_lo_da_vuelta_el_SERVER_y_no_la_persona():
     with patch("app.main.cajas_perdidas_por_rechazo", return_value=SIN_PERDIDAS), \
          patch("app.main.gasto_en_cajas", return_value=SIN_GASTO), \
          patch("app.main.stock_de_envases", return_value=UN_ENVASE_BAJO), \
+         patch("app.main.cuentas_de_colegas", return_value=[]), \
+         patch("app.main.listar_colegas", return_value=[]), \
          patch("app.main.contar_guias_sin_declarar_el_envase", return_value={"casos": 0, "poblacion": 0}), \
          patch("app.main.crear_movimiento_envase") as escribir:
         cliente.post("/compras/cajas/movimiento",
-                     data={"envase_id": "1", "origen": "prestamo_salida",
+                     data={"envase_id": "1", "origen": "prestamo_al_puesto",
                            "cantidad": "30", "fecha": "2026-09-15", "motivo": ""},
                      follow_redirects=False)
     escribir.assert_called_once()
@@ -450,6 +487,8 @@ def test_el_PRESTAMO_lo_da_vuelta_el_SERVER_y_no_la_persona():
     with patch("app.main.cajas_perdidas_por_rechazo", return_value=SIN_PERDIDAS), \
          patch("app.main.gasto_en_cajas", return_value=SIN_GASTO), \
          patch("app.main.stock_de_envases", return_value=UN_ENVASE_BAJO), \
+         patch("app.main.cuentas_de_colegas", return_value=[]), \
+         patch("app.main.listar_colegas", return_value=[]), \
          patch("app.main.contar_guias_sin_declarar_el_envase", return_value={"casos": 0, "poblacion": 0}), \
          patch("app.main.crear_movimiento_envase") as escribir:
         cliente.post("/compras/cajas/movimiento",
@@ -595,6 +634,8 @@ def test_la_pantalla_MUESTRA_lo_que_se_gasto_en_cajas():
     with patch("app.main.cajas_perdidas_por_rechazo", return_value=SIN_PERDIDAS), \
          patch("app.main.gasto_en_cajas", return_value=CON_GASTO), \
          patch("app.main.stock_de_envases", return_value=UN_ENVASE_BAJO), \
+         patch("app.main.cuentas_de_colegas", return_value=[]), \
+         patch("app.main.listar_colegas", return_value=[]), \
          patch("app.main.contar_guias_sin_declarar_el_envase", return_value={"casos": 0, "poblacion": 0}):
         respuesta = cliente.get("/compras/cajas")
     assert respuesta.status_code == 200
@@ -619,6 +660,8 @@ def test_SIN_compras_la_pantalla_lo_DICE_en_vez_de_mostrar_un_cero():
     with patch("app.main.cajas_perdidas_por_rechazo", return_value=SIN_PERDIDAS), \
          patch("app.main.gasto_en_cajas", return_value=SIN_GASTO), \
          patch("app.main.stock_de_envases", return_value=UN_ENVASE_BAJO), \
+         patch("app.main.cuentas_de_colegas", return_value=[]), \
+         patch("app.main.listar_colegas", return_value=[]), \
          patch("app.main.contar_guias_sin_declarar_el_envase", return_value={"casos": 0, "poblacion": 0}):
         respuesta = cliente.get("/compras/cajas")
     marcado = _cuerpo(respuesta)
@@ -636,6 +679,8 @@ def test_las_compras_SIN_COSTO_a_su_fecha_se_dicen_y_no_se_esconden():
     with patch("app.main.cajas_perdidas_por_rechazo", return_value=SIN_PERDIDAS), \
          patch("app.main.gasto_en_cajas", return_value=CON_GASTO), \
          patch("app.main.stock_de_envases", return_value=UN_ENVASE_BAJO), \
+         patch("app.main.cuentas_de_colegas", return_value=[]), \
+         patch("app.main.listar_colegas", return_value=[]), \
          patch("app.main.contar_guias_sin_declarar_el_envase", return_value={"casos": 0, "poblacion": 0}):
         respuesta = cliente.get("/compras/cajas")
     # Una sola frase, con los saltos de línea del HTML colapsados: partida en
@@ -684,6 +729,8 @@ def test_la_pantalla_LISTA_las_cajas_perdidas_ORDENADAS_POR_PLATA():
     with patch("app.main.cajas_perdidas_por_rechazo", return_value=CON_PERDIDAS), \
          patch("app.main.gasto_en_cajas", return_value=SIN_GASTO), \
          patch("app.main.stock_de_envases", return_value=UN_ENVASE_BAJO), \
+         patch("app.main.cuentas_de_colegas", return_value=[]), \
+         patch("app.main.listar_colegas", return_value=[]), \
          patch("app.main.contar_guias_sin_declarar_el_envase", return_value={"casos": 0, "poblacion": 0}):
         respuesta = cliente.get("/compras/cajas")
     assert respuesta.status_code == 200
@@ -709,6 +756,8 @@ def test_la_lista_dice_DE_CUANTOS_RECHAZOS_sale_cada_numero():
     with patch("app.main.cajas_perdidas_por_rechazo", return_value=CON_PERDIDAS), \
          patch("app.main.gasto_en_cajas", return_value=SIN_GASTO), \
          patch("app.main.stock_de_envases", return_value=UN_ENVASE_BAJO), \
+         patch("app.main.cuentas_de_colegas", return_value=[]), \
+         patch("app.main.listar_colegas", return_value=[]), \
          patch("app.main.contar_guias_sin_declarar_el_envase", return_value={"casos": 0, "poblacion": 0}):
         respuesta = cliente.get("/compras/cajas")
     marcado = " ".join(_cuerpo(respuesta).split())
@@ -727,6 +776,8 @@ def test_SIN_cajas_perdidas_la_pantalla_lo_DICE_en_vez_de_mostrar_una_lista_vaci
     with patch("app.main.cajas_perdidas_por_rechazo", return_value=SIN_PERDIDAS), \
          patch("app.main.gasto_en_cajas", return_value=SIN_GASTO), \
          patch("app.main.stock_de_envases", return_value=UN_ENVASE_BAJO), \
+         patch("app.main.cuentas_de_colegas", return_value=[]), \
+         patch("app.main.listar_colegas", return_value=[]), \
          patch("app.main.contar_guias_sin_declarar_el_envase", return_value={"casos": 0, "poblacion": 0}):
         respuesta = cliente.get("/compras/cajas")
     marcado = _cuerpo(respuesta)
@@ -745,6 +796,8 @@ def test_las_dos_cuentas_de_la_pantalla_usan_LA_MISMA_VENTANA():
     with patch("app.main.cajas_perdidas_por_rechazo", return_value=SIN_PERDIDAS) as perdidas, \
          patch("app.main.gasto_en_cajas", return_value=SIN_GASTO) as gasto, \
          patch("app.main.stock_de_envases", return_value=UN_ENVASE_BAJO), \
+         patch("app.main.cuentas_de_colegas", return_value=[]), \
+         patch("app.main.listar_colegas", return_value=[]), \
          patch("app.main.contar_guias_sin_declarar_el_envase", return_value={"casos": 0, "poblacion": 0}):
         cliente.get("/compras/cajas")
 

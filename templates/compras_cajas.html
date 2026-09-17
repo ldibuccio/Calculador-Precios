@@ -63,6 +63,26 @@
                    border-top: 2px solid #e2e8f0;
                    font-size: 1.15rem; font-weight: 700; color: #3730a3; }
   .perdida-total .cuanto { white-space: nowrap; font-variant-numeric: tabular-nums; }
+  /* EL `hidden` DEL CAMPO DEL COLEGA NECESITA ESTA REGLA: `.campo` es
+     `display: flex`, que le gana al `[hidden] { display: none }` que trae el
+     navegador sin `!important`. Poner el atributo es la mitad del trabajo y
+     es la mitad que los tests miran; lo que el operario ve lo decide el CSS. */
+  .campo[hidden] { display: none; }
+  /* La cuenta de cada colega. SE VE QUE SE PUEDE ENTRAR: borde, color y
+     chevron. Un renglon que lleva a algun lado y no lo parece es un camino
+     que no existe — nadie lo va a tocar. */
+  .colega-fila { display: flex; align-items: center; gap: .6rem;
+                 min-height: 44px; padding: .6rem .75rem; margin-bottom: .5rem;
+                 border: 1px solid #c7d2fe; border-radius: 8px;
+                 background: #eef2ff; text-decoration: none; color: inherit; }
+  .colega-fila .cuerpo { flex: 1 1 auto; min-width: 0; }
+  .colega-fila .quien { font-weight: 600; font-size: 1rem; color: #3730a3; }
+  .colega-fila .chevron { flex: 0 0 auto; font-size: 1.3rem; color: #6366f1; }
+  .neto { display: block; font-size: .9rem; margin-top: .15rem; }
+  .neto .cuantas { font-weight: 700; font-variant-numeric: tabular-nums; }
+  .neto.debe .cuantas { color: #166534; }
+  .neto.debo .cuantas { color: #b91c1c; }
+  .neto.cero { color: #6b7280; }
 </style>
 </head>
 <body>
@@ -139,6 +159,42 @@
     {% endif %}
   </div>
 
+  <div class="tarjeta">
+    <h2>Cuentas con colegas</h2>
+    {% for c in cuentas %}
+    <a class="colega-fila" href="/compras/cajas/colega/{{ c.colega_id }}">
+      <span class="cuerpo">
+        <span class="quien">{{ c.colega }}</span>
+        {% for p in c.por_envase %}
+        <span class="neto {% if p.neto > 0 %}debe{% elif p.neto < 0 %}debo{% else %}cero{% endif %}">
+          {{ p.envase }}: {% if p.neto == 0 %}están a mano{% else %}{{ p.lado }}
+          <span class="cuantas">{{ p.cuantas }}</span>{% endif %}
+        </span>
+        {% endfor %}
+        {% if not c.por_envase %}
+        <span class="neto cero">todavía no hay movimientos con este colega</span>
+        {% endif %}
+      </span>
+      <span class="chevron" aria-hidden="true">›</span>
+    </a>
+    {% else %}
+    <p class="ayuda">No hay colegas cargados. Agregá uno acá abajo y después
+      vas a poder anotar los préstamos desde el movimiento de cada caja.</p>
+    {% endfor %}
+
+    <form class="fila" method="post" action="/compras/cajas/colegas"
+          style="margin-top:.75rem">
+      <div class="campo">
+        <label for="colega-nuevo">Agregar un colega</label>
+        <input type="text" id="colega-nuevo" name="nombre" maxlength="80" required>
+      </div>
+      <button type="submit">Guardar</button>
+    </form>
+    <p class="ayuda">El neto va por tipo de caja y no se suma entre tipos: te
+      puede deber Grandes mientras vos le debés Chicas, y sumarlas diría que
+      están a mano.</p>
+  </div>
+
   {% for e in envases %}
   <div class="tarjeta">
     <div class="cabeza">
@@ -182,8 +238,23 @@
         <label for="o{{ e.id }}">¿Qué pasó?</label>
         <select id="o{{ e.id }}" name="origen">
           <option value="compra">Compré cajas</option>
-          <option value="prestamo_salida">Le mandé cajas vacías al puesto</option>
+          <option value="prestamo_al_puesto">Le mandé cajas vacías al puesto</option>
+          {# LAS OPCIONES DE COLEGA SALEN DEL MAPA, no escritas a mano: el mapa
+             está atado al CHECK por un test, así que la pantalla no puede
+             quedarse atrás de lo que la base acepta. `data-colega` lo marca
+             acá y no lo deduce el JS por el prefijo del valor — deducirlo
+             sería una tercera regla sobre cuáles son los de colega. #}
+          {% for clave, o in origenes_colega.items() %}
+          <option value="{{ clave }}" data-colega="1">{{ o.largo }}</option>
+          {% endfor %}
           <option value="ajuste">Corregir el stock</option>
+        </select>
+      </div>
+      <div class="campo campo-colega" hidden>
+        <label for="cg{{ e.id }}">¿Con qué colega?</label>
+        <select id="cg{{ e.id }}" name="colega">
+          <option value="">Elegí uno</option>
+          {% for c in colegas %}<option value="{{ c.id }}">{{ c.nombre }}</option>{% endfor %}
         </select>
       </div>
       <div class="campo">
@@ -215,6 +286,32 @@
   {% else %}
   <div class="tarjeta">No hay envases cargados. Se dan de alta con la ficha de un cliente.</div>
   {% endfor %}
+
+<script>
+  // El campo del colega solo aparece cuando el movimiento es con un colega.
+  // QUIEN DECIDE ES `data-colega`, puesto por la plantilla desde el mapa: si
+  // el JS lo dedujera del prefijo del valor, serian TRES lugares diciendo
+  // cuales son los origenes de colega en vez de uno.
+  //
+  // Y ES COMODIDAD, NO GUARDA: el que decide es el CHECK
+  // movimientos_envase_colega_segun_origen. Un formulario armado a mano entra
+  // igual y la base lo rechaza, que es donde tiene que rebotar.
+  document.querySelectorAll('form[action="/compras/cajas/movimiento"]').forEach(function (f) {
+    var origen = f.querySelector('select[name="origen"]');
+    var campo = f.querySelector('.campo-colega');
+    var colega = f.querySelector('select[name="colega"]');
+    if (!origen || !campo || !colega) { return; }
+    function refrescar() {
+      var elegida = origen.options[origen.selectedIndex];
+      var esDeColega = !!(elegida && elegida.dataset.colega);
+      campo.hidden = !esDeColega;
+      colega.required = esDeColega;
+      if (!esDeColega) { colega.value = ''; }
+    }
+    origen.addEventListener('change', refrescar);
+    refrescar();
+  });
+</script>
 
 {% include "_pie_version.html" %}
 </body>

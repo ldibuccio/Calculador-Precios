@@ -50,7 +50,7 @@ from app.costeo import (
 # de las tres llamar según qué campo se editó. La cuarta
 # (calcular_costo_por_unidad_medida) es la división importe / kilos, que
 # también es del motor y trae su propia guarda del cero.
-from core.envases import hay_que_reponer
+from core.envases import ORIGENES_DE_COLEGA, hay_que_reponer
 from core.vino_armada import etiqueta_del_boton, se_muestra_el_boton
 from core.motor_costeo import (
     calcular_costo_por_unidad_medida,
@@ -282,6 +282,10 @@ from app.db import (
     listar_vigencias_de_precios,
     listar_proveedores,
     listar_proveedores_para_abm,
+    cuentas_de_colegas,
+    listar_colegas,
+    movimientos_de_colegas,
+    obtener_o_crear_colega,
     stock_de_envases,
     VENTANA_GASTO_EN_CAJAS_DIAS,
     crear_movimiento_envase,
@@ -4443,6 +4447,8 @@ def _renderizar_pantalla_cajas(request: Request, *, error: str | None = None,
         # juntos —lo que se compró contra lo que se perdió— y con dos recortes
         # distintos la resta no significaría nada.
         perdidas = cajas_perdidas_por_rechazo(desde_gasto)
+        cuentas = cuentas_de_colegas()
+        colegas = listar_colegas()
     except Exception as error_db:
         raise HTTPException(status_code=500, detail=f"Error al conectar con la base de datos: {error_db}") from error_db
 
@@ -4459,7 +4465,8 @@ def _renderizar_pantalla_cajas(request: Request, *, error: str | None = None,
         {"envases": envases, "sin_declarar": sin_declarar, "error": error,
          "aviso": aviso, "hoy": _hoy_argentina().isoformat(),
          "gasto": gasto, "ventana_gasto": VENTANA_GASTO_EN_CAJAS_DIAS,
-         "perdidas": perdidas},
+         "perdidas": perdidas, "cuentas": cuentas, "colegas": colegas,
+         "origenes_colega": ORIGENES_DE_COLEGA},
         status_code=status_code,
     )
 
@@ -4501,7 +4508,8 @@ def cargar_conteo_inicial_caja(request: Request, envase_id: str = Form(""),
 @app.post("/compras/cajas/movimiento")
 def cargar_movimiento_caja(request: Request, envase_id: str = Form(""),
                              origen: str = Form(""), cantidad: str = Form(""),
-                             fecha: str = Form(""), motivo: str = Form("")):
+                             fecha: str = Form(""), motivo: str = Form(""),
+                             colega: str = Form("")):
     """Compra de cajas, préstamo de vacías al puesto, o corrección.
 
     EL SIGNO LO PONE EL SERVER según el origen y no la persona: una compra
@@ -4511,11 +4519,13 @@ def cargar_movimiento_caja(request: Request, envase_id: str = Form(""),
     """
     return _guardar_movimiento_de_envase(
         request, envase_id, cantidad, fecha, origen=origen, motivo=motivo,
+        colega=colega,
     )
 
 
 def _guardar_movimiento_de_envase(request: Request, envase_id: str, cantidad: str,
-                                  fecha: str, *, origen: str, motivo: str):
+                                  fecha: str, *, origen: str, motivo: str,
+                                  colega: str = ""):
     """El camino único de escritura de los cuatro movimientos declarados.
 
     UNO SOLO Y NO CUATRO: el conteo inicial, la compra, el préstamo y el
@@ -4557,16 +4567,23 @@ def _guardar_movimiento_de_envase(request: Request, envase_id: str, cantidad: st
                 request, error="La fecha no puede ser futura.", status_code=400)
 
     # El signo por origen. La compra y el conteo llegan en positivo desde la
-    # pantalla; el préstamo se da vuelta acá porque la pregunta es "cuántas
+    # pantalla; los préstamos se dan vuelta acá porque la pregunta es "cuántas
     # le mandé", no "cuántas resto".
-    if origen == "prestamo_salida":
+    #
+    # EL DE LOS COLEGAS SALE DE `ORIGENES_DE_COLEGA` y no se escribe de nuevo:
+    # ahí el rótulo y el signo viajan juntos, así que el día que se agregue un
+    # origen no hay una segunda tabla que se olvide de acompañarlo.
+    if origen in ORIGENES_DE_COLEGA:
+        valor = ORIGENES_DE_COLEGA[origen]["piso"] * abs(valor)
+    elif origen == "prestamo_al_puesto":
         valor = -abs(valor)
     elif origen in ("compra", "conteo_inicial"):
         valor = abs(valor)
 
     try:
         crear_movimiento_envase(int(envase_id), origen, int(valor), fecha_valor,
-                                motivo=motivo.strip() or None)
+                                motivo=motivo.strip() or None,
+                                colega_id=int(colega) if colega.strip().isdigit() else None)
     except Exception as error_db:
         # La base es la que decide: el origen, el signo y el motivo del ajuste
         # los rechazan sus CHECK. Acá solo se traduce, sin repetir la regla.
@@ -4576,6 +4593,56 @@ def _guardar_movimiento_de_envase(request: Request, envase_id: str, cantidad: st
     return RedirectResponse(
         url="/compras/cajas?" + urlencode({"aviso": "Movimiento guardado."}),
         status_code=303,
+    )
+
+
+@app.post("/compras/cajas/colegas")
+def crear_colega_ruta(request: Request, nombre: str = Form("")):
+    """Da de alta un colega para la cuenta de cajas. Unifica por nombre plegado."""
+    limpio = nombre.strip()
+    if not limpio:
+        return _renderizar_pantalla_cajas(
+            request, error="El nombre del colega es obligatorio.", status_code=400)
+    try:
+        obtener_o_crear_colega(limpio, normalizar_texto(limpio))
+    except Exception as error_db:
+        return _renderizar_pantalla_cajas(
+            request, error=f"No se pudo guardar: {error_db}", status_code=400)
+    return RedirectResponse(
+        url="/compras/cajas?" + urlencode({"aviso": f"Colega {limpio} guardado."}),
+        status_code=303,
+    )
+
+
+@app.get("/compras/cajas/colega/{colega_id}")
+def ver_cuenta_de_colega(request: Request, colega_id: int):
+    """El detalle de la cuenta de un colega: lo que le di y lo que me dio, con fechas.
+
+    SALE DE LA MISMA CONSULTA que el renglón de la lista
+    (`movimientos_de_colegas`) y el neto de la MISMA función
+    (`efecto_en_la_cuenta`). Una consulta propia para el detalle sería la
+    regla escrita dos veces, y el día que se separen la tarjeta va a decir un
+    número y su detalle otro, sin que nada avise cuál tiene razón.
+    """
+    try:
+        movimientos = movimientos_de_colegas(colega_id)
+        cuenta = next((c for c in cuentas_de_colegas() if c["colega_id"] == colega_id), None)
+    except Exception as error_db:
+        raise HTTPException(status_code=500, detail=f"Error al conectar con la base de datos: {error_db}") from error_db
+    if cuenta is None:
+        raise HTTPException(status_code=404, detail="No existe ese colega.")
+
+    for movimiento in movimientos:
+        del_mapa = ORIGENES_DE_COLEGA.get(movimiento["origen"], {})
+        movimiento["rotulo"] = del_mapa.get("corto", movimiento["origen"])
+        movimiento["cajas"] = abs(int(movimiento["cantidad"]))
+        # Salió del piso o entró, para pintarlo. SALE DEL MAPA y no del signo
+        # de `cantidad`: el signo lo puso el mapa al guardar, así que leerlo
+        # de vuelta sería confiar en que nadie escribió una fila a mano.
+        movimiento["salio"] = del_mapa.get("piso", 0) < 0
+    return templates.TemplateResponse(
+        request, "compras_cajas_colega.html",
+        {"cuenta": cuenta, "movimientos": movimientos},
     )
 
 
