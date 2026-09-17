@@ -22334,7 +22334,12 @@ def test_la_pantalla_PREGUNTA_en_que_caja_quedo_cuando_la_ficha_no_lo_define():
     # media pantalla, empezando por el rótulo de la ficha (corolario 50).
     assert '<select id="caja_nuestra" name="caja_nuestra">' in marcado
     assert "¿Usaste una caja nuestra?" in marcado
-    assert 'value="no"' in marcado and "cajón del proveedor" in marcado
+    # "Descartable" ES LA PALABRA DEL GALPÓN —la misma que el costeo usa para
+    # el mango y el cherry que salen en el cajón que vinieron— y lo que
+    # significa va al lado, porque el rótulo hace la pregunta y no nombra el
+    # mecanismo.
+    assert 'value="no"' in marcado and "Descartable" in marcado
+    assert "salió en el cajón que vino" in marcado
     # Y las cajas del galpón, con el id que el server espera.
     assert 'value="7"' in marcado and "Caja EJEMPLO Grande" in marcado
 
@@ -23104,6 +23109,8 @@ GUIAS_R_DE_PRUEBA = [
      "costo_total": 33000.0, "costo_por_bulto_primera": 1650.0,
      "creado_en": datetime(2026, 8, 25, 15, 0), "anulado_el": None,
      "tipo": "normal", "compra_origen_id": None,
+    "lleva_caja_nuestra": None, "ficha_envase_id": None, "ficha_envase_variable": None,
+     "lleva_caja_nuestra": None, "ficha_envase_id": None, "ficha_envase_variable": None,
      "articulo_nombre": "Tomate Perita",
      "consumos": [
          {"origen": "compra", "origen_id": 101, "bultos": 20.0, "costo_por_bulto": 1000.0,
@@ -23116,6 +23123,8 @@ GUIAS_R_DE_PRUEBA = [
      "costo_total": None, "costo_por_bulto_primera": None,
      "creado_en": datetime(2026, 8, 25, 16, 0), "anulado_el": datetime(2026, 8, 25, 17, 0),
      "tipo": "normal", "compra_origen_id": None,
+    "lleva_caja_nuestra": None, "ficha_envase_id": None, "ficha_envase_variable": None,
+     "lleva_caja_nuestra": None, "ficha_envase_id": None, "ficha_envase_variable": None,
      "articulo_nombre": "Anco",
      "consumos": [
          {"origen": "ajuste", "origen_id": 1, "bultos": 4.0, "costo_por_bulto": None,
@@ -23133,6 +23142,7 @@ GUIA_R_ESPERANDO_PRECIO = {
     "costo_total": None, "costo_por_bulto_primera": None,
     "creado_en": datetime(2026, 8, 25, 18, 0), "anulado_el": None,
     "tipo": "normal", "compra_origen_id": None,
+    "lleva_caja_nuestra": None, "ficha_envase_id": None, "ficha_envase_variable": None,
      "articulo_nombre": "Tomate Perita",
     "consumos": [
         {"origen": "compra", "origen_id": 103, "bultos": 10.0, "costo_por_bulto": None,
@@ -23145,6 +23155,7 @@ def test_guias_r_muestra_trazabilidad_costo_y_marca_incompleto():
     with (
         patch("app.main._hoy_argentina", return_value=date(2026, 8, 25)),
         patch("app.main.listar_reprocesos_por_rango", return_value=[dict(g) for g in GUIAS_R_DE_PRUEBA]),
+        patch("app.main.listar_envases", return_value=CAJAS_DEL_GALPON),
         patch("app.main.listar_articulos",
               return_value=[{"id": 1, "nombre": "EJEMPLO Uno"},
                             {"id": 5, "nombre": "EJEMPLO Cinco"}]),
@@ -23177,6 +23188,7 @@ def test_guias_r_una_guia_VIGENTE_sin_costo_si_muestra_el_cartel_y_el_detalle():
     # el precio de una COMPRA, y ese precio puede llegar.
     with (
         patch("app.main.listar_reprocesos_por_rango", return_value=[dict(GUIA_R_ESPERANDO_PRECIO)]),
+        patch("app.main.listar_envases", return_value=CAJAS_DEL_GALPON),
         patch("app.main.contar_reprocesos_sin_costo_posible", return_value={"casos": 0, "mas_viejo": None}),
         patch("app.main.listar_fichas_de_todos_los_clientes", return_value=[]),
         patch("app.main.listar_clientes", return_value=CLIENTES_PARA_SELECTOR),
@@ -23203,6 +23215,7 @@ def test_guias_r_una_guia_SIN_COSTO_POSIBLE_no_ofrece_el_boton_que_no_puede_hace
     guia = dict(GUIAS_R_DE_PRUEBA[1], id=20, anulado_el=None)
     with (
         patch("app.main.listar_reprocesos_por_rango", return_value=[guia]),
+        patch("app.main.listar_envases", return_value=CAJAS_DEL_GALPON),
         patch("app.main.contar_reprocesos_sin_costo_posible", return_value={"casos": 0, "mas_viejo": None}),
         patch("app.main.listar_fichas_de_todos_los_clientes", return_value=[]),
         patch("app.main.listar_clientes", return_value=CLIENTES_PARA_SELECTOR),
@@ -23229,6 +23242,7 @@ def test_guias_r_el_consumo_del_compensatorio_no_se_puede_completar():
     ])
     with (
         patch("app.main.listar_reprocesos_por_rango", return_value=[guia]),
+        patch("app.main.listar_envases", return_value=CAJAS_DEL_GALPON),
         patch("app.main.contar_reprocesos_sin_costo_posible", return_value={"casos": 0, "mas_viejo": None}),
         patch("app.main.listar_fichas_de_todos_los_clientes", return_value=[]),
         patch("app.main.listar_clientes", return_value=CLIENTES_PARA_SELECTOR),
@@ -23249,6 +23263,7 @@ def test_guias_r_muestra_el_total_de_las_que_no_se_pueden_cerrar_nunca():
     cargar" al lado para que nadie lo lea como un pendiente."""
     with (
         patch("app.main.listar_reprocesos_por_rango", return_value=[]),
+        patch("app.main.listar_envases", return_value=CAJAS_DEL_GALPON),
         patch("app.main.contar_reprocesos_sin_costo_posible",
               return_value={"casos": 7, "mas_viejo": date(2026, 8, 31)}),
         patch("app.main.listar_fichas_de_todos_los_clientes", return_value=[]),
@@ -23277,6 +23292,7 @@ def test_guias_r_una_guia_ANULADA_no_grita_nada():
     cruces = [{"reproceso_id": 21, "cliente_salida_nombre": "Vea", "bultos": 3.0}]
     with (
         patch("app.main.listar_reprocesos_por_rango", return_value=[guia]),
+        patch("app.main.listar_envases", return_value=CAJAS_DEL_GALPON),
         patch("app.main.listar_articulos",
               return_value=[{"id": 1, "nombre": "EJEMPLO Uno"},
                             {"id": 5, "nombre": "EJEMPLO Cinco"}]),
@@ -23539,6 +23555,7 @@ def test_guias_r_muestra_el_boton_completar_solo_en_incompletas():
     with (
         patch("app.main._hoy_argentina", return_value=date(2026, 8, 25)),
         patch("app.main.listar_reprocesos_por_rango", return_value=[dict(g) for g in GUIAS_R_DE_PRUEBA]),
+        patch("app.main.listar_envases", return_value=CAJAS_DEL_GALPON),
         patch("app.main.listar_articulos",
               return_value=[{"id": 1, "nombre": "EJEMPLO Uno"},
                             {"id": 5, "nombre": "EJEMPLO Cinco"}]),
@@ -23558,6 +23575,7 @@ def test_guias_r_muestra_el_boton_completar_solo_en_incompletas():
     with (
         patch("app.main._hoy_argentina", return_value=date(2026, 8, 25)),
         patch("app.main.listar_reprocesos_por_rango", return_value=con_incompleta),
+        patch("app.main.listar_envases", return_value=CAJAS_DEL_GALPON),
         patch("app.main.listar_articulos",
               return_value=[{"id": 1, "nombre": "EJEMPLO Uno"},
                             {"id": 5, "nombre": "EJEMPLO Cinco"}]),
@@ -24182,6 +24200,7 @@ def test_guias_r_solo_ofrece_las_fichas_DEL_CLIENTE_de_la_guia():
     ]
     with (
         patch("app.main.listar_reprocesos_por_rango", return_value=guias),
+        patch("app.main.listar_envases", return_value=CAJAS_DEL_GALPON),
         patch("app.main.contar_reprocesos_sin_costo_posible", return_value={"casos": 0, "mas_viejo": None}),
         patch("app.main.listar_fichas_de_todos_los_clientes", return_value=fichas),
         patch("app.main.listar_clientes", return_value=CLIENTES_PARA_SELECTOR),
@@ -24227,6 +24246,7 @@ def test_guias_r_SIN_cliente_sigue_viendo_todas_las_del_articulo():
     ]
     with (
         patch("app.main.listar_reprocesos_por_rango", return_value=guias),
+        patch("app.main.listar_envases", return_value=CAJAS_DEL_GALPON),
         patch("app.main.contar_reprocesos_sin_costo_posible", return_value={"casos": 0, "mas_viejo": None}),
         patch("app.main.listar_fichas_de_todos_los_clientes", return_value=fichas),
         patch("app.main.listar_clientes", return_value=CLIENTES_PARA_SELECTOR),
@@ -24265,6 +24285,7 @@ def test_guias_r_muestra_el_cliente_cuando_la_ficha_es_de_OTRO():
     ]
     with (
         patch("app.main.listar_reprocesos_por_rango", return_value=guias),
+        patch("app.main.listar_envases", return_value=CAJAS_DEL_GALPON),
         patch("app.main.contar_reprocesos_sin_costo_posible", return_value={"casos": 0, "mas_viejo": None}),
         patch("app.main.listar_fichas_de_todos_los_clientes", return_value=fichas),
         patch("app.main.listar_clientes", return_value=CLIENTES_PARA_SELECTOR),
@@ -24296,6 +24317,7 @@ def test_guias_r_NO_repite_el_cliente_cuando_el_titulo_ya_lo_dice():
     ]
     with (
         patch("app.main.listar_reprocesos_por_rango", return_value=guias),
+        patch("app.main.listar_envases", return_value=CAJAS_DEL_GALPON),
         patch("app.main.contar_reprocesos_sin_costo_posible", return_value={"casos": 0, "mas_viejo": None}),
         patch("app.main.listar_fichas_de_todos_los_clientes", return_value=fichas),
         patch("app.main.listar_clientes", return_value=CLIENTES_PARA_SELECTOR),
@@ -24337,6 +24359,7 @@ def test_guias_r_muestra_la_ficha_y_deja_completar_la_que_no_tiene():
     ]
     with (
         patch("app.main.listar_reprocesos_por_rango", return_value=guias),
+        patch("app.main.listar_envases", return_value=CAJAS_DEL_GALPON),
         patch("app.main.contar_reprocesos_sin_costo_posible", return_value={"casos": 0, "mas_viejo": None}),
         patch("app.main.listar_fichas_de_todos_los_clientes", return_value=fichas),
         patch("app.main.listar_clientes", return_value=CLIENTES_PARA_SELECTOR),
@@ -24382,6 +24405,7 @@ def test_guias_r_marca_las_guias_donde_el_reparto_lo_eligio_el_OPERARIO():
     ]
     with (
         patch("app.main.listar_reprocesos_por_rango", return_value=guias),
+        patch("app.main.listar_envases", return_value=CAJAS_DEL_GALPON),
         patch("app.main.contar_reprocesos_sin_costo_posible", return_value={"casos": 0, "mas_viejo": None}),
         patch("app.main.listar_fichas_de_todos_los_clientes", return_value=[]),
         patch("app.main.listar_clientes", return_value=CLIENTES_PARA_SELECTOR),
@@ -24411,6 +24435,7 @@ def test_SIN_ASIGNAR_va_en_su_propio_grupo_no_al_lado_de_las_cajas():
                "nombre_cliente": "Banana Bolivia", "articulo_nombre": "Banana"}]
     with (
         patch("app.main.listar_reprocesos_por_rango", return_value=guias),
+        patch("app.main.listar_envases", return_value=CAJAS_DEL_GALPON),
         patch("app.main.contar_reprocesos_sin_costo_posible", return_value={"casos": 0, "mas_viejo": None}),
         patch("app.main.listar_fichas_de_todos_los_clientes", return_value=fichas),
         patch("app.main.listar_clientes", return_value=CLIENTES_PARA_SELECTOR),
@@ -24443,6 +24468,7 @@ def test_una_guia_anulada_no_ofrece_asignar_ficha():
                   ficha_nombre=None, anulado_el=datetime(2026, 8, 26, 10, 0))]
     with (
         patch("app.main.listar_reprocesos_por_rango", return_value=guias),
+        patch("app.main.listar_envases", return_value=CAJAS_DEL_GALPON),
         patch("app.main.contar_reprocesos_sin_costo_posible", return_value={"casos": 0, "mas_viejo": None}),
         patch("app.main.listar_fichas_de_todos_los_clientes", return_value=[]),
         patch("app.main.listar_clientes", return_value=CLIENTES_PARA_SELECTOR),
@@ -24530,6 +24556,10 @@ def _guias_r(guias, conteos=None, articulo_id=None, guia=None):
         patch("app.main._cruces_primera_reproceso", return_value=[]),
         patch("app.main._cajas_para_elegir_por_articulo", return_value={1: [{"id": 5, "nombre": "Caja Chica"}]}),
         patch("app.main.listar_ultimos_conteos_stock", return_value=conteos or []),
+        # El catálogo de cajas para la pregunta "¿en qué caja quedó armada?"
+        # de las guías que no lo pudieron derivar. El parche ES, él solo, la
+        # aserción de que `app.main` importa el nombre (corolario 51).
+        patch("app.main.listar_envases", return_value=CAJAS_DEL_GALPON),
     ):
         respuesta = cliente.get(url)
     respuesta.mock_listar = mock_listar
@@ -24682,6 +24712,37 @@ def test_una_guia_R_SIN_FICHA_lo_dice_EN_EL_TITULO_y_no_queda_el_articulo_pelado
     assert 'action="/administracion/stock/guias-r/180/asignar-ficha"' in cuerpo
 
 
+# LA GUÍA QUE FALTA COMPLETAR: ficha VARIABLE —Mango, Cherry— y la caja sin
+# declarar. Es el caso real de Frutamax del 17/09: 2 de 22 guías, las dos
+# `ficha_variable`, esperando la pregunta que no existía.
+GUIA_SIN_LA_CAJA = {
+    "id": 177, "articulo_id": 1, "ficha_id": 5, "fecha_operacion": date(2026, 9, 17),
+    "bultos_tomados": 12.0, "bultos_primera": 10.0, "bultos_segunda": 0.0, "bultos_merma": 0.0,
+    "costo_total": 450000.0, "costo_por_bulto_primera": 45000.0,
+    "creado_en": datetime(2026, 9, 17, 10, 0), "anulado_el": None,
+    "articulo_nombre": "Mango", "cliente_id": 1, "cliente_nombre": "Día",
+    "ficha_nombre": "MANGO", "consumos": [],
+    "lleva_caja_nuestra": None, "ficha_envase_id": 1, "ficha_envase_variable": True,
+    "tipo": "normal", "compra_origen_id": None,
+}
+
+# LA GUÍA VIEJA: ficha de envase FIJO y la caja en NULL, que es como quedaron
+# las anteriores al 16/09 —la migración agregó la columna y no backfillea—.
+# EL CANARIO LA PIDIÓ: sin ella, sacarle a la ruta la condición de "no lo
+# puede derivar" no hacía caer nada, porque la otra guía de control tiene
+# `lleva_caja_nuestra` en True y ya la excluye la PRIMERA condición. Un
+# control que se cae por el motivo equivocado no es un control.
+GUIA_VIEJA_SIN_CAJA = {
+    "id": 179, "articulo_id": 1, "ficha_id": 5, "fecha_operacion": date(2026, 9, 10),
+    "bultos_tomados": 10.0, "bultos_primera": 10.0, "bultos_segunda": 0.0, "bultos_merma": 0.0,
+    "costo_total": 450000.0, "costo_por_bulto_primera": 45000.0,
+    "creado_en": datetime(2026, 9, 10, 10, 0), "anulado_el": None,
+    "articulo_nombre": "Morron Rojo", "cliente_id": 1, "cliente_nombre": "Día",
+    "ficha_nombre": "M.ROJO GRA", "consumos": [],
+    "lleva_caja_nuestra": None, "ficha_envase_id": 1, "ficha_envase_variable": False,
+    "tipo": "normal", "compra_origen_id": None,
+}
+
 GUIA_CON_FICHA = {
     "id": 176, "articulo_id": 1, "ficha_id": 5, "fecha_operacion": date(2026, 9, 7),
     "bultos_tomados": 10.0, "bultos_primera": 10.0, "bultos_segunda": 0.0, "bultos_merma": 0.0,
@@ -24689,7 +24750,103 @@ GUIA_CON_FICHA = {
     "creado_en": datetime(2026, 9, 7, 10, 0), "anulado_el": None,
     "articulo_nombre": "Morron Rojo", "cliente_id": 1, "cliente_nombre": "Día",
     "ficha_nombre": "M.ROJO GRA", "consumos": [],
+    # LAS TRES DE LA CAJA, como las devuelve la consulta real. Esta ficha
+    # tiene envase FIJO (variable en False), así que el server derivó su caja
+    # sola y `lleva_caja_nuestra` viene en True: NO es de las que hay que
+    # completar. Es el fixture que separa el caso que pregunta del que no.
+    "lleva_caja_nuestra": True, "ficha_envase_id": 1, "ficha_envase_variable": False,
+    "tipo": "normal", "compra_origen_id": None,
 }
+
+
+def test_la_guia_SIN_LA_CAJA_ofrece_completarla_y_la_que_puede_derivarla_NO():
+    """El par, y hacen falta los dos.
+
+    OFRECER: es la puerta de las que ya están. Sin ella, las dos guías de
+    Frutamax del 17/09 solo se podían arreglar anulándolas y recargándolas, o
+    tocando la base a mano — que es el agujero del corolario 31.
+
+    Y NO OFRECER donde la ficha define sola la caja: ahí el server ya la
+    derivó, y dejar que alguien la pise sería re-etiquetar la historia. La
+    escritura lo rechaza, así que ofrecerlo sería un callejón.
+    """
+    con_hueco = _guias_r([dict(GUIA_SIN_LA_CAJA)])
+    assert con_hueco.status_code == 200
+    marcado = con_hueco.text.split("</style>")[-1]
+
+    assert '/administracion/stock/guias-r/177/declarar-caja' in marcado
+    assert "no dice en qué caja quedó" in marcado
+    assert "Descartable" in marcado
+    assert "Caja EJEMPLO Grande" in marcado
+
+    # Y SE VE SIN ABRIR NADA: no adentro del `<details>` de "Corregir la
+    # ficha", que arranca cerrado justo cuando la guía ya tiene ficha — que
+    # es el caso de éstas. Un camino que funciona y no se ve no existe.
+    antes_del_details = marcado[:marcado.index("<details")]
+    despues = marcado[marcado.index("</details>"):]
+    assert "declarar-caja" in despues and "declarar-caja" not in antes_del_details
+
+    # EL CONTROL: la misma pantalla, con una guía cuya ficha SÍ define la
+    # caja. Sin esto, un selector que se dibuja siempre pasa el assert de
+    # arriba y le ofrece a todo el mundo pisar lo que el server derivó.
+    derivable = _guias_r([dict(GUIA_CON_FICHA)])
+    assert "declarar-caja" not in derivable.text.split("</style>")[-1]
+
+    # Y EL CONTROL QUE EL CANARIO PIDIÓ: la guía VIEJA, con la caja en NULL
+    # igual que la de arriba, pero cuya ficha SÍ la define. La primera
+    # condición no la excluye —su caja está en NULL— así que es la única que
+    # puede ver si la segunda existe. La escritura la rechaza, así que
+    # ofrecerla sería un callejón.
+    vieja = _guias_r([dict(GUIA_VIEJA_SIN_CAJA)])
+    assert "declarar-caja" not in vieja.text.split("</style>")[-1]
+
+
+def test_una_guia_ANULADA_sin_caja_NO_ofrece_completarla():
+    """Ya no cuenta para nada: completarle un dato daría a entender que sí.
+
+    Y la pantalla tiene que coincidir con la escritura, que también la
+    rechaza — si ofreciera, el operario apretaría y se comería un error por
+    algo que la pantalla le propuso.
+    """
+    anulada = _guias_r([dict(GUIA_SIN_LA_CAJA, id=178,
+                             anulado_el=datetime(2026, 9, 17, 12, 0))])
+    assert "declarar-caja" not in anulada.text.split("</style>")[-1]
+
+
+def test_declarar_la_caja_desde_la_pantalla_VUELVE_A_LA_LISTA_con_los_filtros():
+    """Volver sin los filtros deja al que estaba completando guías de Mango
+    mirando las 22 de nuevo, una por cada guía que completa."""
+    with patch("app.main.declarar_la_caja_de_una_guia") as mock_declarar:
+        respuesta = cliente.post(
+            "/administracion/stock/guias-r/177/declarar-caja",
+            data={"caja_nuestra": "7", "fecha_desde": "2026-09-01",
+                  "fecha_hasta": "2026-09-17", "articulo_id": "1", "guia": ""},
+            follow_redirects=False)
+
+    assert respuesta.status_code == 303
+    mock_declarar.assert_called_once_with(177, (True, 7))
+    destino = respuesta.headers["location"]
+    for filtro in ("fecha_desde=2026-09-01", "fecha_hasta=2026-09-17", "articulo_id=1"):
+        assert filtro in destino, f"se perdió {filtro} al volver"
+    assert "aviso=" in destino
+
+
+def test_declarar_SIN_elegir_nada_NO_escribe_y_lo_dice():
+    """"" no es "no": no contestar no se puede guardar como "no lleva caja".
+
+    Si se guardara así, la caja sale, nadie la descuenta, y el sistema AFIRMA
+    que no había ninguna. Un hueco se ve; una afirmación falsa no.
+    """
+    with patch("app.main.declarar_la_caja_de_una_guia") as mock_declarar:
+        respuesta = cliente.post(
+            "/administracion/stock/guias-r/177/declarar-caja",
+            data={"caja_nuestra": "", "fecha_desde": "", "fecha_hasta": "",
+                  "articulo_id": "", "guia": ""},
+            follow_redirects=False)
+
+    assert respuesta.status_code == 303
+    mock_declarar.assert_not_called()
+    assert "error=" in respuesta.headers["location"]
 
 
 def test_guias_r_con_ficha_puesta_el_selector_NO_arranca_abierto():
@@ -24753,6 +24910,8 @@ def test_guias_r_muestran_para_quien_y_el_cruce_con_datos():
         "bultos_merma": 1.0, "costo_total": 12000.0, "costo_por_bulto_primera": 1200.0,
         "creado_en": datetime(2026, 8, 24, 10, 0), "anulado_el": None,
         "tipo": "normal", "compra_origen_id": None,
+    "lleva_caja_nuestra": None, "ficha_envase_id": None, "ficha_envase_variable": None,
+     "lleva_caja_nuestra": None, "ficha_envase_id": None, "ficha_envase_variable": None,
         "articulo_nombre": "Tomate Perita", "cliente_id": 1, "cliente_nombre": "Día",
         "ficha_id": None, "consumos": [],
     }
@@ -24760,6 +24919,7 @@ def test_guias_r_muestran_para_quien_y_el_cruce_con_datos():
     with (
         patch("app.main._hoy_argentina", return_value=date(2026, 8, 25)),
         patch("app.main.listar_reprocesos_por_rango", return_value=[guia, guia_vieja]),
+        patch("app.main.listar_envases", return_value=CAJAS_DEL_GALPON),
         patch("app.main.contar_reprocesos_sin_costo_posible", return_value={"casos": 0, "mas_viejo": None}),
         patch("app.main.listar_fichas_de_todos_los_clientes", return_value=[]),
         patch("app.main.listar_clientes", return_value=CLIENTES_PARA_SELECTOR),

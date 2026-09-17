@@ -5472,6 +5472,31 @@ def test_total_reingresos_rechazo_excluye_anulados():
     assert total == 11.0
 
 
+def test_la_consulta_de_GUIAS_R_trae_lo_que_decide_si_falta_declarar_la_caja():
+    """EL CANARIO LO PIDIÓ, y es el corolario 65 otra vez.
+
+    Toda la pantalla de Guías R mockea `listar_reprocesos_por_rango`, así que
+    el fixture entrega `lleva_caja_nuestra` y las dos de la ficha SIN MIRAR
+    UNA LETRA DEL SQL. Sacarlas del SELECT no hacía caer un solo test —y el
+    modo de falla es mudo: la pantalla sale igual, con un campo menos, y las
+    guías que esperan la caja dejan de poder completarse para siempre.
+
+    Se mira el TEXTO porque el valor no viene de la consulta: viene del
+    fixture. Y CALIFICADO POR ALIAS (corolario 4): `envase_id` está en
+    `reprocesos` Y en `fichas_logistica`, así que un `in` pelado matchea la
+    columna equivocada.
+    """
+    import inspect as _inspect
+    from app import db as _db
+
+    fuente = _inspect.getsource(_db.listar_reprocesos_por_rango)
+    select = fuente.split("FROM reprocesos rp")[0]
+
+    assert "rp.lleva_caja_nuestra" in select
+    assert "f.envase_id AS ficha_envase_id" in select
+    assert "f.envase_variable AS ficha_envase_variable" in select
+
+
 def test_listar_reprocesos_por_rango_filtra_por_articulo_solo_si_se_lo_piden():
     """El filtro va en el WHERE y con parámetro, no interpolado.
 
@@ -5963,6 +5988,76 @@ def test_el_piso_SALE_de_corte_modelo_y_no_de_una_constante():
             crear_reproceso(1, 10, 8, 0, 2, date(2026, 8, 25), caja_declarada=SIN_CAJA_NUESTRA_DECLARADA)
 
     assert levantada.value.corte == date(2026, 9, 1)
+
+
+def test_declarar_la_caja_de_una_guia_YA_CARGADA_solo_escribe_ESAS_DOS_columnas():
+    """La puerta de las que YA ESTÁN, y no recalcula nada.
+
+    NO HACE FALTA RECARGARLAS: el stock de cajas se deriva en cada lectura,
+    así que estas dos columnas alcanzan para que la guía empiece a descontar.
+    Medido contra el esquema real con el caso de Frutamax —dos guías de 10 y
+    6 cajas de primera, ficha variable, conteo del mismo día—: el stock pasó
+    de 500 a 484 con solo este UPDATE, y declarando "descartable" se quedó en
+    500. Es la misma propiedad que hace que anular una guía R corrija el
+    stock sola.
+
+    Y SOLO ESAS DOS: los consumos y el costo se congelaron al cargar la guía.
+    Declarar en qué caja quedó es decir en qué salió, no rehacer el FIFO.
+    """
+    from app.db import declarar_la_caja_de_una_guia
+
+    # La guía existe, no está anulada, y su ficha es VARIABLE.
+    conexion, cursor = _conexion_falsa(filas_fetchone=[(901, False), (7, True)])
+
+    with patch("app.db.obtener_conexion", return_value=conexion):
+        declarar_la_caja_de_una_guia(176, (True, 7))
+
+    updates = [c for c in cursor.execute.call_args_list if "UPDATE" in c.args[0]]
+    assert len(updates) == 1
+    assert updates[0].args[1] == (True, 7, 176)
+    # NADA de consumos ni de costo: si esto tocara el FIFO, una guía vieja
+    # cambiaría de costo por declarar en qué caja salió.
+    for prohibido in ("reprocesos_consumos", "costo_total", "costo_por_bulto"):
+        assert prohibido not in updates[0].args[0]
+
+
+def test_una_guia_que_SI_puede_derivar_su_caja_NO_se_declara_a_mano():
+    """La guarda que impide re-etiquetar la historia.
+
+    Con ficha de envase FIJO el envase sale de la ficha, y dejar que alguien
+    lo pise acá sería exactamente lo que este proyecto se negó a hacer con
+    `unidad_compra`: cambiarle el significado a lo ya escrito sin mover un
+    número y sin que nada avise.
+
+    Y LA PREGUNTA ES LA MISMA que decide si la pantalla ofrece el selector,
+    así que no puede haber un botón que esta guarda después rechace — un
+    callejón es peor que no ofrecer nada.
+    """
+    from app.db import declarar_la_caja_de_una_guia
+
+    # Ficha con envase 7 y NO variable: el server ya derivó su caja.
+    conexion, cursor = _conexion_falsa(filas_fetchone=[(901, False), (7, False)])
+
+    with patch("app.db.obtener_conexion", return_value=conexion):
+        with pytest.raises(ValueError) as rebote:
+            declarar_la_caja_de_una_guia(176, (True, 9))
+
+    assert "su ficha" in str(rebote.value)
+    assert not [c for c in cursor.execute.call_args_list if "UPDATE" in c.args[0]]
+
+
+def test_una_guia_ANULADA_no_se_completa():
+    """Ya no cuenta para nada, y completarle un dato daría a entender que sí."""
+    from app.db import declarar_la_caja_de_una_guia
+
+    conexion, cursor = _conexion_falsa(filas_fetchone=[(901, True)])
+
+    with patch("app.db.obtener_conexion", return_value=conexion):
+        with pytest.raises(ValueError) as rebote:
+            declarar_la_caja_de_una_guia(176, (True, 7))
+
+    assert "anulada" in str(rebote.value)
+    assert not [c for c in cursor.execute.call_args_list if "UPDATE" in c.args[0]]
 
 
 def test_con_ficha_VARIABLE_y_sin_contestar_la_guia_R_NO_SE_GUARDA():

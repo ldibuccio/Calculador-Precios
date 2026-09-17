@@ -7011,6 +7011,21 @@ Lo que NO envejeció es el criterio: la alerta sigue sin construirse, y ahora
 por la razón opuesta — el caso que se podía arreglar ya se arregla en la
 pantalla donde ocurre, que es mejor que avisar después.
 
+**Y LAS QUE YA ESTABAN TAMBIÉN TIENEN PUERTA (17/09)**, así que la frase de
+arriba sobre que "no se puede arreglar desde ninguna pantalla" dejó de valer
+para ellas: Guías R ofrece declarar la caja de las que no la pudieron
+derivar. Medido en Frutamax: `sin_declarar 2 de 22`, las dos
+`ficha_variable`, `DERIVABLE_es_un_hueco 0` — o sea que no había ninguna de
+las que se cierran asignando la ficha, y las dos esperaban exactamente esta
+pregunta.
+
+**No hace falta recargarlas.** El stock de cajas se deriva en cada lectura,
+así que declarar la caja alcanza para que la guía empiece a descontar.
+Medido contra el esquema real con el caso de Frutamax —dos guías de 10 y 6
+cajas de primera, ficha variable, conteo del mismo día—: el stock pasó de
+500 a 484 con solo el UPDATE de esas dos columnas, y declarando
+"descartable" se quedó en 500.
+
 ### La forma general
 
 **Un aviso que junta poblaciones con causas distintas no se arregla moviendo
@@ -7169,3 +7184,92 @@ porque el texto de una opción no ensancha la página — el `select` lo recorta
 El canario estaba mal puesto, no la medición. Lo que sí desborda es el
 RÓTULO, y con eso el número saltó de 0 a 480px. **Antes de leer un canario de
 layout en cero, preguntarse si lo que se rompió puede mover ese número.**
+
+## Corolario 80: una cuenta DERIVADA convierte "completar el dato" en "arreglarlo", y eso decide si hay que recargar
+
+Del 17/09, y es la propiedad que más veces salvó a este sistema, vista del
+lado bueno por tercera vez.
+
+Las dos guías R de Frutamax que no declaraban su caja **no hubo que anularlas
+ni recargarlas**: el stock de cajas no vive en una columna, se rejuega en cada
+lectura, así que escribir `lleva_caja_nuestra` y `envase_id` alcanza para que
+la guía empiece a descontar. Medido contra el esquema real, no leído:
+
+```
+las dos en NULL                        contadas 500 · por_guias   0 · stock 500
+declaradas en caja nuestra (10 y 6)    contadas 500 · por_guias -16 · stock 484
+declaradas DESCARTABLE                 contadas 500 · por_guias   0 · stock 500
+```
+
+Es la misma propiedad que hace que **anular una guía R corrija el stock sola**
+—está escrita en el docstring de `stock_de_envases` desde que se construyó— y
+la que hace que el reparto del FIFO se acomode cuando aparece la guía R que
+faltaba. Escrito como una columna que alguien actualiza, completar el dato
+habría sido un segundo lugar del que acordarse, y el día que se olvide el
+stock queda mintiendo.
+
+**La pregunta que hay que hacerse antes de decidir si un arreglo necesita
+recargar**: ¿el número sale de una columna o se deriva? Si se deriva,
+completar el dato de origen ES el arreglo, y no hay nada más que hacer. Si
+vive en una columna, hay dos lugares y hay que tocar los dos.
+
+### Y la puerta de las que YA ESTÁN no es la misma que la pregunta nueva
+
+Son dos construcciones y hacen falta las dos: la pregunta en Reproceso cierra
+el agujero **desde hoy**, y sin una puerta para las que ya están, lo viejo
+solo se arregla anulando y recargando —o tocando la base a mano, que es el
+corolario 31—. Cerrar la puerta y no curar lo que ya pasó deja un número
+inexplicable para siempre.
+
+**Y LA PUERTA SE OFRECE SOLO DONDE LA ESCRITURA ACEPTA.** Las dos preguntan
+con la MISMA función (`envase_derivado_de_la_ficha`), así que no puede haber
+un botón que el POST después rechace. Un callejón —ofrecer algo que al
+apretar da error— es peor que no ofrecer nada: el que lo aprieta se come un
+error por algo que la pantalla le propuso.
+
+Concretamente, la guía **vieja** (anterior a la migración, con ficha de envase
+FIJO y la columna en NULL) **no se ofrece**: su caja sale de la ficha, y
+dejarla declarar a mano sería re-etiquetar la historia — lo mismo que este
+proyecto se negó a hacer con `unidad_compra`. Ésa se arregla reasignándole la
+ficha, que re-deriva.
+
+### El control que el canario pidió, y por qué el que había no servía
+
+El canario que saca la condición de "no lo puede derivar" **dio CERO**, y el
+test de control existía: una guía cuya ficha define la caja, que no tiene que
+ofrecer el formulario. **Pero esa guía tenía `lleva_caja_nuestra` en True**,
+así que la excluía la PRIMERA condición y la segunda nunca se ejercitaba.
+
+> **Un control que se cae por el motivo equivocado no es un control.**
+
+El fixture que sí lo ve es el que pasa la primera condición y falla la
+segunda: caja en NULL **y** ficha fija. Es el corolario 30 con dos guardas en
+serie — para probar la segunda hay que pasar la primera, y un fixture que
+rebota antes las aprueba a las dos sin mirar ninguna.
+
+## Y un formulario adentro de un `<details>` que arranca CERRADO es el corolario 68 antes de nacer
+
+Del 17/09. La pregunta de la caja quedó escrita adentro del bloque
+`<details class="corregir-ficha">` de Guías R, que se titula **"Corregir la
+ficha"** y arranca cerrado **cuando la guía ya tiene ficha** — que es
+exactamente el caso de las que esperan su caja.
+
+O sea: la ruta existía, respondía, tenía sus tests en verde, y para llegar
+había que abrir un desplegable que dice otra cosa. Es el camino que funciona
+y no se ve, encontrado **antes** de que alguien lo sufriera y no después.
+
+**Lo que lo destapó no fue leer la plantilla**: fue un canario que dio 0
+—"la pantalla ofrece completar una ANULADA"— y al ir a ver por qué no mordía
+apareció que el bloque entero vivía adentro de otro `if`. El canario
+preguntaba por una guarda y contestó sobre la ubicación.
+
+**La señal, y se hace al escribir**: cuando un formulario nuevo se agrega
+"al lado" de otro, mirar qué lo CONTIENE. Un `<details>`, un `@media`, un
+`{% if %}` de tres pantallas más arriba: lo que decide si se ve no es dónde
+se escribió sino qué lo envuelve — y en una plantilla larga eso está a
+cincuenta líneas de distancia.
+
+Y el criterio para decidir dónde va, que es el que separa las dos cosas:
+**son dos operaciones distintas.** La ficha dice a qué producto fueron las
+cajas; ésta, en qué caja salieron. Meterlas en el mismo desplegable las hace
+ver como una sola, y la que se esconde es la que nadie fue a buscar.

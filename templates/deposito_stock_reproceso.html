@@ -293,8 +293,14 @@
              hubiera, la ficha no sería variable. Un valor plausible puesto
              solo invita a aceptarlo con el mismo click que ya se iba a hacer. #}
           <option value="" {% if not precarga.caja_nuestra %}selected{% endif %}>Elegí...</option>
+          {# "DESCARTABLE" ES LA PALABRA DEL GALPÓN, y por eso va primero: el
+             costeo la usa desde siempre para el mango y el cherry que salen
+             en el cajón que vinieron (`_envases_por_unidad_ponderado`:
+             "descartable (0 cajas)"). El rótulo nombra la cosa del galpón y
+             lo que significa va al lado — el que no conoce la palabra
+             entiende igual, y el que la conoce la reconoce. #}
           <option value="no" {% if precarga.caja_nuestra == "no" %}selected{% endif %}>
-            No, salió en el cajón del proveedor
+            Descartable — salió en el cajón que vino
           </option>
           {% for caja in cajas_del_galpon %}
           <option value="{{ caja.id }}"
@@ -304,8 +310,8 @@
           {% endfor %}
         </select>
         <p class="ayuda-ficha">El mango viene en cajón grande y lo pasás a caja
-          de Día. Si vino en cajón chico, sale en ese mismo y no gastás
-          ninguna.</p>
+          de Día. Si vino en cajón chico, sale en ese mismo: eso es
+          descartable y no gastás ninguna.</p>
       </div>
 
       <label for="bultos_tomados">Bultos que tomé</label>

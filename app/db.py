@@ -10523,6 +10523,67 @@ def asignar_ficha_a_reproceso(reproceso_id: int, ficha_id: int | None) -> None:
         conexion.close()
 
 
+def declarar_la_caja_de_una_guia(reproceso_id: int, declarado: tuple) -> None:
+    """Completa en qué caja quedó armada una guía R que no lo pudo derivar.
+
+    ES LA PUERTA DE LAS QUE YA ESTÁN. La pregunta en la pantalla de Reproceso
+    cierra el agujero desde hoy; ésta es para las que se cargaron antes de que
+    existiera y quedaron con `lleva_caja_nuestra` en NULL.
+
+    Y NO HACE FALTA RECARGARLAS NI RECALCULAR NADA: el stock de cajas se
+    deriva en cada lectura, así que escribir estas dos columnas alcanza para
+    que la guía empiece a descontar. Medido contra el esquema real: dos guías
+    de 10 y 6 cajas de primera pasaron el stock de 500 a 484 con solo este
+    UPDATE. Es la misma propiedad que hace que anular una guía R corrija el
+    stock sola.
+
+    SOLO LAS QUE NO LO PUEDEN DERIVAR, y esa guarda es lo importante: con
+    ficha de envase FIJO el envase sale de la ficha, y dejar que alguien lo
+    pise acá sería re-etiquetar la historia — exactamente lo que este
+    proyecto se negó a hacer con `unidad_compra`. Si la ficha lo define, esto
+    rechaza.
+
+    Tampoco toca una guía ANULADA: ya no cuenta para nada, y completarle un
+    dato daría a entender que vuelve a contar.
+    """
+    lleva, envase_id = declarado
+
+    conexion = obtener_conexion()
+    try:
+        with conexion.cursor() as cursor:
+            # SIN agregado: `fetchone() is None` sobre un `count(*)` nunca es
+            # None y la guarda no distinguiría "no existe" de "existe"
+            # (corolario 27).
+            cursor.execute(
+                "SELECT ficha_id, anulado_el IS NOT NULL FROM reprocesos WHERE id = %s",
+                (reproceso_id,),
+            )
+            fila = cursor.fetchone()
+            if fila is None:
+                raise ValueError("Esa guía R no existe.")
+            ficha_id, anulada = fila
+            if anulada:
+                raise ValueError("Esa guía R está anulada: no hay nada que completar.")
+
+            # LA MISMA función que decide si la pantalla pregunta y la que
+            # escribe al crear. Preguntarlo con una condición propia acá sería
+            # la tercera copia, y la que se separe deja entrar lo que las
+            # otras dos rechazan.
+            _, _, hay_que_preguntar = _envase_de_esta_guia(cursor, ficha_id, None)
+            if not hay_que_preguntar:
+                raise ValueError(
+                    "Esta guía R saca la caja de su ficha: no se declara a mano."
+                )
+
+            cursor.execute(
+                "UPDATE reprocesos SET lleva_caja_nuestra = %s, envase_id = %s WHERE id = %s",
+                (lleva, envase_id, reproceso_id),
+            )
+        conexion.commit()
+    finally:
+        conexion.close()
+
+
 class StockInsuficienteParaReproceso(Exception):
     """El freno: a la fecha del reproceso los lotes no llegaban a lo declarado.
 
@@ -11207,7 +11268,20 @@ def listar_reprocesos_por_rango(fecha_desde, fecha_hasta, articulo_id=None,
                        -- cliente PUEDE terminar en la ficha de otro, y la
                        -- pantalla lo necesita para poder mostrarlo: el
                        -- título sale de la FICHA y taparía la diferencia.
-                       f.cliente_id AS ficha_cliente_id
+                       f.cliente_id AS ficha_cliente_id,
+                       -- EN QUÉ CAJA QUEDÓ ARMADA. NULL = no se declaró, y
+                       -- esta pantalla es donde se completa: sin la columna
+                       -- acá, la pregunta no se puede ofrecer y el hueco se
+                       -- queda para siempre sin que nada se vea roto — la
+                       -- pantalla sale igual, con un campo menos.
+                       rp.lleva_caja_nuestra,
+                       -- Las dos de la FICHA, para decidir si esta guía puede
+                       -- derivar su caja sola. Van crudas y la regla la
+                       -- aplica `envase_derivado_de_la_ficha`: escrita acá
+                       -- como un `f.envase_variable IS TRUE` sería la tercera
+                       -- copia de la misma pregunta.
+                       f.envase_id AS ficha_envase_id,
+                       f.envase_variable AS ficha_envase_variable
                 FROM reprocesos rp
                 JOIN articulos a ON a.id = rp.articulo_id
                 LEFT JOIN clientes cl ON cl.id = rp.cliente_id
