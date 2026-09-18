@@ -8100,6 +8100,122 @@ esa línea el total del pedido guardado no cuadra contra la comanda que se
 acaba de pegar, y eso se lee como un error de lectura de la IA — la primera
 sospecha razonable, y manda a mirar el lugar equivocado.
 
+## Corolario 85: una consulta de diagnóstico que REESCRIBE una cuenta del sistema en vez de reusarla miente con números plausibles
+
+Del 18/09, y es el corolario 6 con el culpable cambiado: allá una medición
+quedó vieja al cambiar una regla; **acá nació mal el mismo día, porque en vez
+de reusar la cuenta que el sistema ya tiene la escribí de nuevo desde cero.**
+
+El caso. Para medir en qué días un artículo quedó negativo A SU FECHA escribí
+`arandano_2` con dos patas —compras como entradas, armados como salidas— y dio
+**192 días-artículo en rojo sobre 446**. El dueño lo leyó como un hallazgo y
+estaba por decidir con él la ventana de una alerta.
+
+**El stock de este sistema tiene SEIS patas**, y están escritas una sola vez en
+`_SQL_SUMAS_STOCK` (app/db.py): compras, armados, reingresos, ajustes, y el
+reproceso con `bultos_primera` de ENTRADA y `bultos_tomados` de SALIDA. Le
+faltaban tres. Un artículo cuyo stock viene de una guía R —que es el caso
+normal de cualquier cosa que se reprocesa— aparecía en rojo todos los días.
+
+Reproducido contra el esquema real con cinco artículos, uno por pata:
+
+```
+                                    la vieja        la nueva     la regla real
+                                    (2 patas)       (6 patas)    (_sql_sumas_stock)
+dias-articulo en rojo                  4 de 5          1 de 5      1 (solo Arándano)
+bultos descubiertos                        88              18      −18 al 17/09
+```
+
+**Y el 4 de 5 es el 192 de 446 en miniatura**: los dos son "más hallazgos que
+población", que condena la heurística sin mirar un caso. Ese control estaba
+disponible antes de abrir un solo día y no lo apliqué a mi propia consulta —
+lo apliqué recién cuando el número volvió del dueño.
+
+### Las dos direcciones en que mintió, y son opuestas
+
+No es que exagerara: **fallaba para los dos lados**, y eso solo se vio con el
+canario de cada defecto por separado.
+
+| defecto | qué hace | cómo se ve |
+|---|---|---|
+| le faltan tres patas | **INVENTA** faltantes | 4 de 5 artículos en rojo |
+| fecha las compras por `fecha_operacion` | **TAPA** faltantes | una compra comprada el 16 y recepcionada el 18 cuenta como si hubiera estado el 17 |
+
+La regla real fecha las compras por
+`coalesce((procesada_el at time zone ...)::date, fecha_operacion)`, o sea por
+cuándo ENTRÓ al galpón y no por cuándo se compró. Medido plantando los dos
+campos distintos: la mía decía **0** donde la regla real decía **−18**.
+
+**Un derivado que falla en las dos direcciones no se corrige con un umbral.**
+Y las dos mitades se tapaban entre sí: los falsos positivos de las patas que
+faltaban hacían de ruido de fondo donde un falso negativo no se distingue.
+
+### Y la SEGUNDA consulta del mismo día tenía un defecto que nadie buscaría
+
+`arandano_1` —la línea de tiempo— filtraba los armados con `p.anulado_el is
+null` a secas, y la regla real usa `vigentes` (`DISTINCT ON (cliente_id,
+fecha_operacion) ... ORDER BY creado_en DESC`). **Un pedido RECARGADO no se
+anula: deja de ser el vigente.** Así que el mismo armado aparecía DOS VECES en
+la línea de tiempo que se usó para entender el caso. Verificado plantando un
+pedido recargado: la regla vigentes dice 1 armado, `anulado_el is null` dice 2.
+
+Y eso es lo que lo vuelve peor que un descuido: **el caso que se estaba
+investigando era justamente uno donde hubo recarga.** El defecto pegaba
+exactamente donde se estaba mirando.
+
+### La regla
+
+> **Antes de escribir una consulta de diagnóstico sobre una cuenta que el
+> sistema ya sabe hacer, ir a buscar dónde está escrita esa cuenta y contar sus
+> patas.** Si el `.sql` tiene menos términos que la función, no es una
+> simplificación: es otra cuenta.
+
+Y cuando el `.sql` no puede importar la función —que es siempre, porque se
+pega en el editor de Supabase— lo que queda no es libertad para reescribirla:
+es la obligación de **nombrar de dónde salió** (`-- LAS SEIS PATAS de
+_SQL_SUMAS_STOCK`) y de verificarla **contra la función misma**, no contra la
+intuición. Es el corolario 71 —una regla escrita dos veces con distinto
+poder— con la vuelta de que acá la copia sin poder es la que decide qué se
+arregla después.
+
+### Cómo se verifica, y son TRES cosas distintas
+
+Ninguna de las tres sola alcanza, y esto es lo que costó el turno:
+
+1. **Un artículo por PATA en el fixture.** Con un fixture de un solo artículo
+   comprado y armado, las seis patas y las dos dan el mismo número. Los cinco
+   artículos —uno que solo se mueve por guía R, uno por ajuste, uno por
+   reingreso— son lo único que hace que sacar una pata mueva el resultado.
+2. **El canario POR PATA, no uno solo.** Sacar la de movimientos_stock lleva
+   1 a 3; sacar la de reprocesos lleva 1 a 2. Un canario único que rompa
+   "algo" no dice cuál mitad no estaba cubierta (es el canario corrido línea
+   por línea del corolario 43, aplicado a los términos de una suma).
+3. **La colisión con la FUNCIÓN REAL, importada y no retipeada.**
+   `python3 -c "import app.db as d; d._sql_sumas_stock(por_articulo=False)"`
+   devuelve el texto exacto que corre en producción, y correrlo sobre el mismo
+   fixture es lo que convierte "mi consulta parece bien" en "las dos dicen lo
+   mismo". Es *la verificación que funciona es la que hace chocar dos fuentes*
+   (corolario 19), y la fuente contra la que hay que chocar es el código, no
+   otra consulta que escribí yo.
+
+**Y el caso que tiene que dar CERO va en la lista**: con el ingreso de Arándano
+fechado el 17 en vez del 18, la consulta da 0. Sin ése, una consulta que marque
+todo pasa igual todos los casos positivos (corolario 30 y 53).
+
+### Lo que NO hay que hacer con el número mientras tanto
+
+El 192 alcanzó a salir en un mensaje, y eso es lo caro: **un número falso viaja
+con la autoridad de una medición y decide qué se construye.** Acá iba a decidir
+la ventana de una alerta —siete días o dos— y con 192 sobre 446 la conclusión
+natural era "esto dispara todos los días, no sirve". La alerta correcta se
+habría descartado por el número de la consulta rota.
+
+Por eso, y es lo único operativo que queda: **al retractar un número, retractar
+también la DECISIÓN que ese número estaba por tomar**, y decirlo en la misma
+frase. "El 192 estaba mal" invita a corregir el 192; "el 192 estaba mal y por
+lo tanto la ventana todavía no se puede decidir" es lo que impide que la
+decisión sobreviva a su premisa.
+
 ## Corolario 84: una premisa del DUEÑO también se verifica, y la que se cae agranda el pedido
 
 Del 18/09. El pedido venía con una premisa adentro: *"no es que pidan más
