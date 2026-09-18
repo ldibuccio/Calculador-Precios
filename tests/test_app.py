@@ -30265,3 +30265,91 @@ def test_la_alerta_de_sin_pesaje_esta_registrada_y_NO_manda_a_una_puerta_ajena()
     # Con detalle: el banner da un número y la pantalla del sector tiene que
     # poder decir CUÁLES son sin cruzar ninguna puerta.
     assert alerta.detallar is not None
+
+
+def _pantalla_armar(url):
+    """La pantalla de Armar Pedido con los mismos dobles que el resto de sus tests."""
+    with (
+        patch("app.main._hoy_argentina", return_value=date(2026, 8, 21)),
+        patch("app.main.listar_clientes", return_value=CLIENTES_PARA_SELECTOR),
+        patch("app.main.listar_pedidos_vigentes_con_armado", return_value=[]),
+        patch("app.main.obtener_pedido_vigente", return_value=PEDIDO_VIGENTE_DE_PRUEBA),
+        patch("app.main.listar_sucursales_pedido", return_value=[dict(s) for s in SUCURSALES_PEDIDO_DE_PRUEBA]),
+        patch("app.main.listar_renglones_pedido", return_value=RENGLONES_ARMADO_DE_PRUEBA),
+        patch("app.main.fichas_con_cajas_armadas", return_value=set()),
+        patch("app.main.listar_fichas_por_cliente", return_value=FICHAS_PEDIDO_DE_PRUEBA),
+    ):
+        return cliente.get(url)
+
+
+def test_al_tildar_la_vuelta_dice_CUAL_renglon_se_acaba_de_armar():
+    """El tilde es el único de los cinco que vuelven acá que sabe cuál fue.
+
+    Sin esto la pantalla no puede abrir la sección ni marcar el renglón, y
+    "Elegir el lote" queda adentro de un acordeón cerrado.
+    """
+    with patch("app.main.marcar_renglon_armado"):
+        respuesta = cliente.post(
+            "/deposito/pedido/50/renglones/11/armar",
+            data={"cliente_id": "1", "fecha": "2026-08-21", "sucursal": "VL"},
+            follow_redirects=False,
+        )
+
+    assert respuesta.status_code == 303
+    assert "recien=11" in respuesta.headers["location"]
+
+
+def test_los_OTROS_cuatro_caminos_de_vuelta_NO_dicen_recien():
+    """Desarmar, anular, reponer y guardar lotes vuelven a la misma pantalla y
+    no acaban de tildar nada: si pasaran `recien`, la sección se abriría y
+    marcaría un renglón por una operación que no fue un tilde.
+
+    Se lee del CÓDIGO y no de las cuatro respuestas: lo que hay que afirmar es
+    que ningún otro llamador lo pasa, y eso incluye al quinto que alguien
+    agregue mañana — que por definición no va a estar en una lista escrita a
+    mano (corolario 3).
+    """
+    import ast as _ast
+
+    arbol = _ast.parse(io.open("app/main.py", encoding="utf-8").read())
+    con_recien = []
+    for nodo in _ast.walk(arbol):
+        if (isinstance(nodo, _ast.Call) and isinstance(nodo.func, _ast.Name)
+                and nodo.func.id == "_url_vuelta_armado"):
+            if any(k.arg == "recien" for k in nodo.keywords):
+                con_recien.append(_ast.unparse(nodo))
+
+    assert len(con_recien) == 1, (
+        f"solo el tilde pasa `recien`, y lo pasan {len(con_recien)}: {con_recien}")
+    assert "renglon_id" in con_recien[0]
+
+
+def test_con_recien_la_seccion_YA_ARMADO_se_abre_y_marca_ese_renglon():
+    """Lo que hace encontrable la elección del lote sin adelantarla al tilde."""
+    respuesta = _pantalla_armar(
+        "/deposito/pedido/armar?cliente_id=1&fecha=2026-08-21&sucursal=VL&recien=12")
+
+    assert respuesta.status_code == 200
+    marcado = respuesta.text.split("</style>")[-1]
+    assert '<details class="seccion-cerrados" open>' in marcado
+    assert 'class="renglon-armar armado recien"' in marcado
+    assert 'id="renglon-12"' in marcado
+    # y el botón que se venía de buscar está adentro de ese renglón
+    assert "Elegir el lote" in marcado
+
+
+def test_SIN_recien_la_seccion_sigue_PLEGADA_y_nada_queda_marcado():
+    """El control, y es el que distingue un `open` condicional de uno fijo.
+
+    Sin este test, poner `open` a secas —que abre la sección SIEMPRE y deshace
+    la decisión de que los terminados se plieguen— pasa igual que el
+    condicional. Es el par del corolario 53: el caso que tiene que encontrar y
+    el que NO, los dos plantados.
+    """
+    respuesta = _pantalla_armar(
+        "/deposito/pedido/armar?cliente_id=1&fecha=2026-08-21&sucursal=VL")
+
+    assert respuesta.status_code == 200
+    marcado = respuesta.text.split("</style>")[-1]
+    assert '<details class="seccion-cerrados">' in marcado
+    assert "armado recien" not in marcado

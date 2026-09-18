@@ -149,6 +149,16 @@
   /* Los armados: abajo y atenuados — lo que falta queda arriba y a mano. */
   .renglon-armar.armado { opacity: 0.55; }
   .renglon-armar.armado .nombre { text-decoration: line-through; }
+  /* EL RECIÉN TILDADO NO SE ATENÚA: es el único de esta sección que alguien
+     está mirando ahora, y es donde vive "Elegir el lote". El resto sigue
+     atenuado — si se resaltaran todos, no se resalta ninguno. */
+  .renglon-armar.armado.recien {
+    opacity: 1;
+    background: #ecfdf5;
+    border-left: 4px solid #059669;
+    padding-left: 0.6rem;
+    scroll-margin-top: 4rem;
+  }
   .marca-incompleto {
     display: inline-block;
     background: #fef9c3;
@@ -655,12 +665,22 @@
 
   {% if armados %}
   {# Los terminados SE VAN de la lista de arriba: quedan acá abajo,
-     plegados — como en Vacíos y Retiros. Deshacer desde acá. #}
-  <details class="seccion-cerrados">
+     plegados — como en Vacíos y Retiros. Deshacer desde acá.
+
+     SE ABRE SOLA cuando se acaba de tildar uno, y solo entonces. El renglón
+     tildado se va a esta sección, y plegada se lleva con él "Elegir el lote":
+     la elección existe, la pantalla la ofrece, y nadie la encuentra. El botón
+     no se puede adelantar al renglón sin tildar —`guardar_lotes_elegidos` lo
+     rechaza, y la razón está escrita: antes del tilde la pantalla no puede
+     mostrar números del sistema, porque entonces se arma contra el sistema y
+     no contra el piso— así que lo que se arregla es que DESPUÉS del tilde se
+     vea, que es donde la decisión dice que va. #}
+  <details class="seccion-cerrados"{% if recien_armado %} open{% endif %}>
     <summary>Ya armado ({{ armados|length }})</summary>
     <div class="tarjeta">
     {% for r in armados %}
-    <div class="renglon-armar armado">
+    <div class="renglon-armar armado{% if recien_armado == r.id %} recien{% endif %}"
+         id="renglon-{{ r.id }}">
       <div class="datos">
         <div class="nombre">{{ r.nombre_venta }}</div>
         <div class="cantidad">
@@ -884,6 +904,18 @@
         );
       });
     });
+
+  // Al volver de tildar, la sección "Ya armado" viene abierta y el renglón
+  // recién cerrado marcado: esto lo trae a la pantalla. Sin el salto, en
+  // celular queda abajo de todo lo ya armado y hay que ir a buscarlo — que
+  // es el mismo problema del acordeón cerrado, un poco más chico.
+  (function () {
+    var recien = document.querySelector(".renglon-armar.recien");
+    if (!recien) { return; }
+    // `auto` y no `smooth`: en el celular del galpón lo que importa es que
+    // esté ahí al mirar, no la animación.
+    recien.scrollIntoView({ block: "center", behavior: "auto" });
+  })();
   </script>
 
   <a class="volver-boton" href="/deposito/pedido/armar?cliente_id={{ cliente_id }}&fecha={{ fecha }}">Volver a las sucursales</a>

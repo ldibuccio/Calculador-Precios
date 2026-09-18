@@ -17815,7 +17815,7 @@ def _diff_pedido_contra_anterior(renglones_nuevos: list[dict], renglones_viejos:
 
 
 @app.get("/deposito/pedido/armar")
-def ver_armar_pedido(request: Request, cliente_id: str | None = None, fecha: str | None = None, sucursal: str | None = None, aviso: str | None = None):
+def ver_armar_pedido(request: Request, cliente_id: str | None = None, fecha: str | None = None, sucursal: str | None = None, aviso: str | None = None, recien: str | None = None):
     """Armar Pedido: el del depósito, parado y con una mano — sin clave, es la operación del día a día.
 
     Primero el LISTADO de pedidos (hoy primero, después los próximos —
@@ -18034,6 +18034,10 @@ def ver_armar_pedido(request: Request, cliente_id: str | None = None, fecha: str
             "pendientes": pendientes,
             "armados": armados,
             "anulados": anulados,
+            # ENTERO y no el texto crudo de la URL: termina adentro del
+            # marcado (abre el acordeón y marca un renglón), así que lo que
+            # no sea un id se convierte en None acá y no llega a la plantilla.
+            "recien_armado": _id_opcional_desde_query(recien),
         }
     )
     return templates.TemplateResponse(request, "deposito_pedido_armar.html", contexto)
@@ -18076,8 +18080,25 @@ def _desvio_de_tolerancia(renglon, contenido_ficha, unidad):
     return {"por_bulto": round(por_bulto, 2), "ficha": float(contenido_ficha), "desvio": desvio}
 
 
-def _url_vuelta_armado(cliente_id: int, fecha: str, sucursal: str) -> str:
-    return f"/deposito/pedido/armar?{urlencode({'cliente_id': cliente_id, 'fecha': fecha, 'sucursal': sucursal})}"
+def _url_vuelta_armado(cliente_id: int, fecha: str, sucursal: str,
+                       recien: int | None = None) -> str:
+    """La vuelta a Armar Pedido. `recien` es el renglón que se acaba de tildar.
+
+    OPCIONAL a propósito: de los cinco que vuelven acá, solo el TILDE sabe
+    cuál renglón acaba de cerrarse. Los otros cuatro —desarmar, anular,
+    reponer, guardar lotes— no pasan nada y su URL no cambia.
+
+    Para qué sirve: al tildar, el renglón se va a la sección "Ya armado",
+    que arranca PLEGADA. Con esto la pantalla la abre y marca cuál fue, así
+    "Elegir el lote" queda a la vista en vez de adentro de un acordeón
+    cerrado. No adelanta la elección al renglón sin tildar —eso lo prohíbe
+    `guardar_lotes_elegidos`, y con razón escrita— sino que la hace
+    encontrable DESPUÉS del tilde, que es donde la decisión dice que va.
+    """
+    parametros = {'cliente_id': cliente_id, 'fecha': fecha, 'sucursal': sucursal}
+    if recien is not None:
+        parametros['recien'] = recien
+    return f"/deposito/pedido/armar?{urlencode(parametros)}"
 
 
 @app.post("/deposito/pedido/{pedido_id}/renglones/{renglon_id}/armar")
@@ -18144,7 +18165,8 @@ def armar_renglon_pedido_ruta(
     except Exception as error_db:
         raise HTTPException(status_code=500, detail=f"No se pudo marcar el renglón: {error_db}") from error_db
 
-    return RedirectResponse(url=_url_vuelta_armado(cliente_id, fecha, sucursal), status_code=303)
+    return RedirectResponse(url=_url_vuelta_armado(cliente_id, fecha, sucursal, recien=renglon_id),
+                            status_code=303)
 
 
 @app.get("/deposito/pedido/renglones/{renglon_id}/lotes")
