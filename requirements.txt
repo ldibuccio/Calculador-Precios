@@ -1,4 +1,5 @@
 pytest==9.1.1
+pyflakes==3.4.0
 anthropic==0.118.0
 fastapi==0.140.13
 uvicorn==0.51.0
