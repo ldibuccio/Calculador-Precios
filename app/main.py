@@ -89,11 +89,13 @@ from app.db import (
     contar_mails_pedido_sin_procesar,
     contar_pedidos_con_renglones_sin_identificar,
     contar_pedidos_incompletos,
+    contar_recepciones_sin_pesaje,
     contenido_por_bulto_de_lotes,
     desmarcar_renglon_armado,
     devoluciones_de_la_compra,
     fecha_de_la_primera_foto_de_balanza,
     listar_diferencia_de_kilos,
+    listar_recepciones_sin_pesaje,
     marcar_renglon_armado,
     contar_retiros_buscados,
     cerrar_disponible_generado,
@@ -489,6 +491,27 @@ DIAS_ALERTA_CAJONES_FALTANTES = 7
 # consulta leyendo la base, no una fecha escrita acá.
 UMBRAL_KILOS_FALTANTES_POR_CAJON = 1
 DIAS_ALERTA_KILOS_FALTANTES = 7
+
+# SIN PESAJE: recepciones sin NINGUNA evidencia de que alguien haya pesado —
+# ni foto de balanza ni un número cambiado. Las dos condiciones a la vez, no
+# una: tocar el número es pesaje aunque no haya foto, y una foto con el
+# número sin tocar puede ser "pesé y dio 16". Lo que no tiene ninguna defensa
+# es el cruce.
+#
+# DOS DÍAS Y NO SIETE, al revés que las dos de arriba, y la razón es lo que
+# se puede HACER con el aviso: una recepción de anteayer todavía se
+# reconstruye —el cajón puede estar en el piso, el que la recibió se
+# acuerda— y una de la semana pasada no. Las otras dos alertas apuntan a un
+# RECLAMO al proveedor, que sobrevive una semana; ésta apunta a mirar algo
+# que se está yendo.
+#
+# Y con siete días el número sería ~19 por la medición del 12/09, que es el
+# tamaño exacto del aviso que este proyecto ya decidió no construir una vez
+# ("dispara veintiún veces por semana y no se mira dos semanas"). Con dos
+# días son ~5. El número hay que confirmarlo con
+# `db/pesaje_1_cuantas_sin_evidencia.sql` corrida en las dos bases: si diera
+# mucho más, lo que hay que mover no es el umbral sino la unidad.
+DIAS_SIN_PESAJE = 2
 
 from core.zona import ARGENTINA  # noqa: E402  (la zona va escrita en UN solo lugar)
 REGEX_CODIGO_PUESTO = re.compile(r"^[NL][0-9]{2}P[0-9]{2}$")
@@ -12396,6 +12419,38 @@ def _detalle_compras_sin_precio() -> dict:
     }
 
 
+def _detalle_recepciones_sin_pesaje() -> dict:
+    """Las recepciones sin ninguna evidencia de pesaje, la más nueva arriba.
+
+    LA MÁS NUEVA Y NO LA MÁS VIEJA, al revés que las otras alertas: acá el
+    caso viejo es el que MENOS sirve. Una recepción de hace dos días todavía
+    se puede reconstruir —el cajón puede estar en el piso, el que la recibió
+    se acuerda— y una de hace un mes no. La alerta no es una cola de trabajo
+    donde lo viejo espera: es un aviso que se apaga solo al envejecer.
+
+    Las columnas son las de RECONOCER la compra: la fecha con la hora, el
+    artículo, el proveedor y cuánto entró. Con eso el que la lee sabe si es
+    la que él recibió y si vale la pena ir a mirar.
+    """
+    filas = listar_recepciones_sin_pesaje(_hoy_argentina() - timedelta(days=DIAS_SIN_PESAJE))
+    renglones = [
+        [
+            _formatear_fecha_hora(fila["procesada_el"]),
+            fila["articulo"],
+            fila["proveedor"],
+            (f'{_formatear_numero(fila["cantidad_cajones_real"])} × '
+             f'{_formatear_numero(fila["contenido_por_cajon"])}'
+             f'{SUFIJOS_UNIDAD_COMPRA.get(fila["unidad_compra"], "")}'),
+        ]
+        for fila in filas
+    ]
+    return {
+        "columnas": ["Recibida", "Artículo", "Proveedor", "Entró"],
+        "filas": renglones,
+        "resumen": f"{len(renglones)} recepción{'es' if len(renglones) != 1 else ''}",
+    }
+
+
 def _detalle_articulos_incotizables() -> dict:
     """Los artículos comprados que no se pueden cotizar, y CUÁL de las dos cosas falta.
 
@@ -12667,6 +12722,23 @@ ALERTAS = [
         # ESTADO: una compra rechazada o cancelada nunca va a tener precio.
         contar=lambda: contar_compras_sin_precio(),
         detallar=_detalle_compras_sin_precio,
+    ),
+    DefinicionAlerta(
+        codigo="recepciones_sin_pesaje",
+        titulo="Recepciones sin pesar (ni foto de balanza ni número corregido)",
+        url="/compras/buscar",
+        texto_link="Ver en Buscar Compras",
+        # EN COMPRAS Y NO EN DEPÓSITO, aunque el que saca la foto sea el
+        # depósito: las de la lista YA se recepcionaron, así que en la
+        # pantalla de Recepción no están y el link no llevaría a ningún
+        # lado. El que puede hacer algo con esto es el que audita el dato de
+        # entrada, y el detalle de la compra —con Corregir Recepción del
+        # otro lado— vive detrás de Buscar Compras. A Depósito el sistema ya
+        # se lo dice donde sirve: en la pantalla de recepción, antes.
+        modulos=("compras",),
+        contar=lambda: contar_recepciones_sin_pesaje(
+            _hoy_argentina() - timedelta(days=DIAS_SIN_PESAJE)),
+        detallar=_detalle_recepciones_sin_pesaje,
     ),
     DefinicionAlerta(
         codigo="retiros_sin_hacer",

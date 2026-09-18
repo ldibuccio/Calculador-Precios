@@ -4157,6 +4157,104 @@ def contar_recepciones_pendientes_viejas(fecha_limite) -> dict:
         conexion.close()
 
 
+def contar_recepciones_sin_pesaje(desde) -> dict:
+    """Recepciones sin NINGUNA evidencia de que alguien haya pesado, desde una fecha.
+
+    Sin evidencia son DOS condiciones a la vez, y hacen falta las dos:
+
+      · **no hay foto de balanza** — y está medido que la foto es lo que hace
+        que se pese, no lo que lo documenta: con foto se corrige el 63% de las
+        recepciones y sin foto el 8%, medido en la misma ventana de días para
+        que no sea el período el que cambió; y
+      · **el contenido real quedó igual al estimado** (o en NULL), que es
+        apretar Recibir con el número precargado.
+
+    Cada una sola NO alcanza, y por eso no es un `OR`. Tocar el número es
+    pesaje aunque no haya foto: el que corrigió 16 por 18 pesó. Y una foto con
+    el número sin tocar puede ser perfectamente "pesé y dio 16" — ahí la foto
+    ES la evidencia. Lo que no tiene ninguna defensa es el cruce.
+
+    LO QUE ESTA CUENTA NO PUEDE HACER, dicho acá para que nadie lo lea de
+    más: distinguir "lo pesaron y dio exactamente el estimado" de "lo
+    aceptaron sin mirar". Son indistinguibles en la base y siempre lo van a
+    ser. Por eso la alerta cuenta los que no tienen NINGUNA de las dos
+    señales, que es el conjunto más chico del que se puede afirmar algo.
+    """
+    conexion = obtener_conexion()
+    try:
+        with conexion.cursor() as cursor:
+            cursor.execute(
+                """
+                SELECT COUNT(*), MIN(c.procesada_el)
+                FROM compras c
+                WHERE c.estado = 'recepcionado'
+                  -- EN ZONA ARGENTINA, como el resto del modulo:
+                  -- procesada_el es timestamptz y compararlo contra una
+                  -- fecha pelada mueve la ventana tres horas segun de
+                  -- que lado del mediodia UTC caiga. Lo agarro el test
+                  -- que barre las consultas buscando justo esto.
+                  AND (c.procesada_el AT TIME ZONE
+                       'America/Argentina/Buenos_Aires')::date >= %s
+                  AND NOT EXISTS (
+                      SELECT 1 FROM fotos_recepcion f WHERE f.compra_id = c.id
+                  )
+                  -- IS NOT DISTINCT FROM y no `=`: con el real en NULL la
+                  -- comparacion daria NULL y la fila se caeria del WHERE,
+                  -- que es justo la recepcion que menos evidencia tiene.
+                  AND (c.contenido_por_cajon_real IS NULL
+                       OR c.contenido_por_cajon_real
+                          IS NOT DISTINCT FROM c.contenido_por_cajon)
+                """,
+                (desde,),
+            )
+            casos, mas_viejo = cursor.fetchone()
+        return {"casos": int(casos), "mas_viejo": mas_viejo}
+    finally:
+        conexion.close()
+
+
+def listar_recepciones_sin_pesaje(desde) -> list[dict]:
+    """Las mismas, con nombre y fecha, para el detalle de la alerta.
+
+    El MISMO recorte que el conteo, escrito una sola vez: si el detalle
+    filtrara distinto, el banner diria un numero y la lista mostraria otro, y
+    el que abre no sabe cual creer.
+    """
+    conexion = obtener_conexion()
+    try:
+        with conexion.cursor() as cursor:
+            cursor.execute(
+                """
+                SELECT c.id, a.nombre AS articulo, p.nombre AS proveedor,
+                       c.procesada_el, c.cantidad_cajones_real,
+                       c.contenido_por_cajon, a.unidad_compra
+                FROM compras c
+                JOIN articulos a ON a.id = c.articulo_id
+                JOIN proveedores p ON p.id = c.proveedor_id
+                WHERE c.estado = 'recepcionado'
+                  -- EN ZONA ARGENTINA, como el resto del modulo:
+                  -- procesada_el es timestamptz y compararlo contra una
+                  -- fecha pelada mueve la ventana tres horas segun de
+                  -- que lado del mediodia UTC caiga. Lo agarro el test
+                  -- que barre las consultas buscando justo esto.
+                  AND (c.procesada_el AT TIME ZONE
+                       'America/Argentina/Buenos_Aires')::date >= %s
+                  AND NOT EXISTS (
+                      SELECT 1 FROM fotos_recepcion f WHERE f.compra_id = c.id
+                  )
+                  AND (c.contenido_por_cajon_real IS NULL
+                       OR c.contenido_por_cajon_real
+                          IS NOT DISTINCT FROM c.contenido_por_cajon)
+                ORDER BY c.procesada_el DESC
+                """,
+                (desde,),
+            )
+            columnas = [descripcion[0] for descripcion in cursor.description]
+            return [dict(zip(columnas, fila)) for fila in cursor.fetchall()]
+    finally:
+        conexion.close()
+
+
 def listar_compras_pendientes_retiro(tipo_retiro: str) -> list[dict]:
     """Compras de un tipo de retiro puntual (Clark/Carro/Pases) que todavía no se procesaron en Logística.
 

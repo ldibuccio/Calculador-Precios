@@ -112,3 +112,25 @@ def test_la_regla_del_CODIGO_parte_igual_que_la_CONSULTA_que_midio_el_umbral():
     # El 0.25 de la consulta y el de la constante son el mismo número.
     assert "s.salto > 0.25" in consulta
     assert CORTE_DE_RACIMO == 0.25
+
+
+def test_las_TRES_copias_de_SUFIJOS_UNIDAD_COMPRA_dicen_lo_MISMO():
+    """Está escrita tres veces y hoy las tres son idénticas.
+
+    No se unifican todavía —decisión del 18/09: son tres líneas iguales y
+    moverlas ahora es riesgo sin beneficio— así que lo que impide que se
+    separen no es que hoy coincidan: es esto. El que agregue una unidad nueva
+    va a editar la que tenga abierta, y la que quede vieja **no va a fallar**:
+    va a imprimir el número sin letra, que es el hueco que no se ve.
+    """
+    from app.main import SUFIJOS_UNIDAD_COMPRA as en_main
+    from core.exportar_compras import SUFIJOS_UNIDAD_COMPRA as en_compras
+    from core.exportar_ingresos import SUFIJOS_UNIDAD_COMPRA as en_ingresos
+
+    assert en_compras == en_ingresos == en_main, (
+        "Se separaron: core/exportar_compras.py, core/exportar_ingresos.py y "
+        "app/main.py tienen que decir lo mismo mientras sean tres copias."
+    )
+    # Y las tres unidades que el sistema conoce están en la tabla: una que
+    # falte imprime el número pelado, sin la letra.
+    assert set(en_main) == {"kilo", "unidad", "cubeta"}

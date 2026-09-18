@@ -12509,6 +12509,7 @@ def test_recalcular_alertas_usa_las_ventanas_de_cada_control():
         "contar_pedidos_faltantes": VACIO,
         "contar_casillas_sin_revisar": VACIO,
         "contar_envases_a_reponer": VACIO,
+        "contar_recepciones_sin_pesaje": VACIO,
     }
     with ExitStack() as pila:
         pila.enter_context(patch("app.main._hoy_argentina", return_value=HOY_DE_PRUEBA))
@@ -12536,6 +12537,7 @@ def test_recalcular_alertas_usa_las_ventanas_de_cada_control():
     sin_controlar = mocks["contar_pedidos_sin_controlar"]
     faltantes = mocks["contar_cajones_faltantes"]
     kilos = mocks["contar_diferencia_de_kilos"]
+    sin_pesaje = mocks["contar_recepciones_sin_pesaje"]
 
     assert resumen["corrio"] is True and resumen["fallaron"] == 0
     # "Más de 48 horas" = de anteayer para atrás; señas y comprados, 7 días.
@@ -12557,6 +12559,11 @@ def test_recalcular_alertas_usa_las_ventanas_de_cada_control():
     # hoy con diez bultos de menos hay que verla hoy), con el umbral de UN
     # cajón — un bulto que se compró y no llegó no tiene banda gris.
     faltantes.assert_called_once_with(date(2026, 7, 30), HOY_DE_PRUEBA, 1)
+    # SIN PESAJE: DOS días, y es la ventana más corta de todas las alertas.
+    # No es un reclamo al proveedor —esos aguantan una semana— sino un aviso
+    # para mirar algo que se está yendo: una recepción de anteayer todavía se
+    # reconstruye y una de la semana pasada no.
+    sin_pesaje.assert_called_once_with(date(2026, 8, 4))
     # Kilos faltantes: LA MISMA ventana y el MISMO umbral que su hermana, y
     # eso es a propósito — son dos caras del mismo cotejo y dos ventanas
     # distintas harían que una compra apareciera en una y no en la otra sin
@@ -29687,3 +29694,112 @@ def test_el_lote_SIN_contenido_declarado_va_a_su_propia_pila_y_lo_dice():
     marcado = respuesta.text.split("</style>")[-1]
     assert "Sin formato declarado" in marcado
     assert "Cajones de 16 k" in marcado
+
+
+# ── La alerta de sin pesaje ────────────────────────────────────────────────
+#
+# "Sin evidencia" son DOS condiciones a la vez: ni foto de balanza ni número
+# corregido. Cada una sola no alcanza — tocar el número es pesaje aunque no
+# haya foto, y una foto con el número sin tocar puede ser "pesé y dio 16".
+# Verificado contra db/esquema_completo.sql con seis casos plantados: entran
+# la que no tiene ninguna de las dos y la que tiene el real en NULL; no entran
+# la que tocó el número, la que tiene foto, la pendiente y la de nueve días.
+
+
+def _sql_de(nombre):
+    import inspect
+
+    import app.db
+
+    return inspect.getsource(getattr(app.db, nombre))
+
+
+def test_sin_pesaje_exige_las_DOS_condiciones_y_no_una_cualquiera():
+    """El `AND` es la alerta; un `OR` sería otra cosa y mucho más grande.
+
+    Con `OR` entrarían todas las que no tienen foto —aunque alguien haya
+    corregido el número— y todas las que no se tocaron aunque tengan la foto.
+    Eso es el aviso de veintiún disparos por semana que este proyecto ya
+    decidió no construir una vez.
+    """
+    for nombre in ("contar_recepciones_sin_pesaje", "listar_recepciones_sin_pesaje"):
+        cuerpo = _sql_de(nombre)
+        consulta = cuerpo[cuerpo.index("WHERE"):cuerpo.index('"""', cuerpo.index("WHERE"))]
+        # Ninguna foto de balanza colgada de esa compra.
+        assert "NOT EXISTS" in consulta and "fotos_recepcion" in consulta, nombre
+        # Y el número sin corregir. `IS NOT DISTINCT FROM` y no `=`: con el
+        # real en NULL la comparación da NULL y la fila se cae del WHERE, que
+        # es justo la recepción que MENOS evidencia tiene (corolario 67).
+        assert "IS NOT DISTINCT FROM" in consulta, nombre
+        assert "contenido_por_cajon_real IS NULL" in consulta, nombre
+        # Las dos con AND: un OR acá cambia la alerta entera.
+        assert " OR NOT EXISTS" not in consulta.replace("\n", " "), nombre
+        # Solo las recepcionadas: una pendiente todavía no pasó por la balanza.
+        assert "c.estado = 'recepcionado'" in consulta, nombre
+
+
+def test_el_conteo_y_el_DETALLE_de_sin_pesaje_recortan_IGUAL():
+    """Si el detalle filtrara distinto, el banner diría un número y la lista
+    mostraría otro, y el que abre no sabe cuál creer."""
+    def condiciones(nombre):
+        cuerpo = _sql_de(nombre)
+        consulta = cuerpo[cuerpo.index("WHERE"):cuerpo.index('"""', cuerpo.index("WHERE"))]
+        # "OR " CON ESPACIO: sin él, `startswith("OR")` matchea `ORDER BY`,
+        # que no es una condición — y el detalle "difería" del conteo por
+        # tener un orden. Un prefijo que matchea de más es el corolario 4 en
+        # su versión más chica.
+        return {linea.strip() for linea in consulta.splitlines()
+                if linea.strip().startswith(("AND ", "WHERE ", "OR ", "SELECT 1"))}
+
+    del_conteo = condiciones("contar_recepciones_sin_pesaje")
+    del_detalle = condiciones("listar_recepciones_sin_pesaje")
+    assert del_conteo == del_detalle, (
+        f"solo en el conteo: {sorted(del_conteo - del_detalle)} · "
+        f"solo en el detalle: {sorted(del_detalle - del_conteo)}"
+    )
+
+
+def test_sin_pesaje_compara_la_fecha_EN_ZONA_ARGENTINA():
+    """`procesada_el` es timestamptz: comparado contra una fecha pelada, la
+    ventana se mueve tres horas según de qué lado del mediodía UTC caiga.
+
+    Lo agarró el barrido de tests/test_db.py cuando esta consulta se escribió
+    sin la zona; queda afirmado también acá para que se lea al lado de la
+    alerta y no solo en el barrido.
+    """
+    for nombre in ("contar_recepciones_sin_pesaje", "listar_recepciones_sin_pesaje"):
+        assert "AT TIME ZONE" in _sql_de(nombre), nombre
+
+
+def test_el_detalle_de_sin_pesaje_muestra_lo_que_hace_falta_para_RECONOCER_la_compra():
+    filas = [
+        {"id": 7, "articulo": "EJEMPLO Uno", "proveedor": "EJEMPLO Puesto",
+         "procesada_el": datetime(2026, 9, 17, 8, 30, tzinfo=timezone.utc),
+         "cantidad_cajones_real": 10.0, "contenido_por_cajon": 16.0, "unidad_compra": "kilo"},
+    ]
+    from app.main import _detalle_recepciones_sin_pesaje
+
+    with patch("app.main.listar_recepciones_sin_pesaje", return_value=filas):
+        detalle = _detalle_recepciones_sin_pesaje()
+
+    assert detalle["columnas"] == ["Recibida", "Artículo", "Proveedor", "Entró"]
+    assert detalle["filas"][0][1:3] == ["EJEMPLO Uno", "EJEMPLO Puesto"]
+    # La cantidad con su unidad: "10 × 16k" se reconoce, "10 × 16" no dice
+    # de qué son esos 16.
+    assert detalle["filas"][0][3] == "10 × 16k"
+    assert detalle["resumen"] == "1 recepción"
+
+
+def test_la_alerta_de_sin_pesaje_esta_registrada_y_NO_manda_a_una_puerta_ajena():
+    """Va en COMPRAS, no en Depósito, aunque el que saca la foto sea el
+    depósito: las de la lista ya se recepcionaron, así que en la pantalla de
+    Recepción no están y el link no llevaría a ningún lado.
+    """
+    from app.main import ALERTAS
+
+    alerta = next(a for a in ALERTAS if a.codigo == "recepciones_sin_pesaje")
+    assert alerta.modulos == ("compras",)
+    assert alerta.url == "/compras/buscar"
+    # Con detalle: el banner da un número y la pantalla del sector tiene que
+    # poder decir CUÁLES son sin cruzar ninguna puerta.
+    assert alerta.detallar is not None

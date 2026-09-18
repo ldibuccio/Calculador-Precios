@@ -401,6 +401,31 @@ el día que se arregla: **buscar el mismo criterio en el resto del código
 antes de dar el arreglo por hecho.** Un `grep` del número, del operador o de
 la frase alcanza, y es más barato que la tercera vez.
 
+### Las TRES copias de `SUFIJOS_UNIDAD_COMPRA`, anotadas donde se buscan
+
+Del 18/09. La tabla que traduce la unidad a su letra (`kilo` → `k`) está
+escrita **tres veces**, y las tres son idénticas hoy:
+
+    core/exportar_compras.py:35
+    core/exportar_ingresos.py:41
+    app/main.py:1004          ← la que usa el filtro `sufijo_unidad`
+
+Decisión del dueño: **no urge y no se unifica hasta que haya que tocar
+alguna** — son tres líneas iguales y moverlas ahora es riesgo sin beneficio.
+Lo que sí va desde hoy es dónde están las tres, porque el que agregue una
+unidad nueva va a editar la que tenga abierta y las otras dos van a decir
+otra cosa: **la que se separe no va a fallar, va a imprimir un número sin
+letra**, que es el hueco que no se ve.
+
+Y lo cuida `test_las_TRES_copias_de_SUFIJOS_UNIDAD_COMPRA_dicen_lo_MISMO`,
+que es el mismo patrón que el plegado de tildes: cuando dos copias no se
+pueden unificar todavía, lo que impide que se separen no es que hoy
+coincidan — es un test que las compara.
+
+**Y la cuarta no se escribió**: el stock por kilaje necesitaba la letra y usó
+el filtro `sufijo_unidad` que ya existe. Ese es el momento en que una copia
+se convierte en cuatro, y es el único momento en que se puede evitar gratis.
+
 ### Y la copia que más se olvida es la que está EN ESTE ARCHIVO
 
 Del 13/09, y es del dueño: **el que escribe la regla de buscar la otra copia
@@ -3494,6 +3519,29 @@ de entrada.
 casos es poco para mover una traba que puede dejar un camión esperando. Pero
 queda anotado que el argumento ya no es el mismo.
 
+**Y EL 18/09 SE CONSTRUYÓ EL ESCALÓN DEL MEDIO**: la alerta
+`recepciones_sin_pesaje`, que cuenta las recepciones **sin ninguna evidencia
+de pesaje** — ni foto de balanza ni número corregido. Las dos condiciones a
+la vez y no un `OR`: tocar el número es pesaje aunque no haya foto, y una
+foto con el número sin tocar puede ser *"pesé y dio 16"*. Lo que no tiene
+ninguna defensa es el cruce.
+
+**Lo que esa cuenta NO puede hacer, y hay que decirlo cada vez**: distinguir
+"lo pesaron y dio exactamente el estimado" de "lo aceptaron sin mirar". Son
+indistinguibles en la base y siempre lo van a ser. Por eso la alerta cuenta
+el conjunto más chico del que se puede afirmar algo.
+
+**Y la ventana es de DOS días, la más corta de todas**, contra los siete de
+las otras dos de compras. No es un capricho de simetría: **las otras apuntan
+a un RECLAMO al proveedor, que sobrevive una semana; ésta apunta a mirar algo
+que se está yendo.** Una recepción de anteayer todavía se reconstruye —el
+cajón puede estar en el piso, el que la recibió se acuerda— y una de la
+semana pasada no. Con siete días el número sería ~19 por la medición del
+12/09, que es el tamaño exacto del aviso que este proyecto ya decidió no
+construir una vez; con dos son ~5. Queda por confirmar con
+`db/pesaje_1_cuantas_sin_evidencia.sql`: **si diera mucho más, lo que hay que
+mover no es el umbral sino la unidad.**
+
 ### Y lo que queda ANOTADO Y NO HECHO
 
 1. **Volver a correr `kilos_4` el 25/09.** Si el 82% sin tocar era falta de
@@ -4216,6 +4264,35 @@ validador, una regla de lint, un umbral. Es la forma CONSTRUCTIVA de lo que
 **"más hallazgos que población condena la heurística"** dice desde el campo:
 aquélla mira el resultado sobre datos reales y condena; ésta se hace antes,
 sobre casos plantados, y decide si la herramienta sirve.
+
+### Un test de UMBRAL lleva el caso que el umbral VECINO clasifica distinto
+
+Del 18/09, y es del dueño. El corte de los formatos quedó en 25% y sus tests
+fijaban tres cosas: que Batata (50%) y Mango (233%) se parten, que Lima y
+Pepino (17-19%) no, y que la constante vale 0,25.
+
+**El canario que la afloja a 40% no hacía caer la regla**, solo la aritmética
+—`assert 0.37 > CORTE_DE_RACIMO`— y el test que compara la constante contra
+la consulta. Porque los dos casos escritos como PARTICIÓN saltan tanto que se
+parten igual con 40: el 50% y el 233% pasan cualquier umbral razonable.
+
+El caso que condena al 40% es el **Cherry de Frutamax, que salta 37%** — o
+sea el más chico de los cinco que se parten, y justamente el que motivó todo.
+Estaba escrito como comparación de números y no como partición.
+
+> **Un test de umbral que solo tiene casos cómodos verifica la aritmética, no
+> el umbral.** Hace falta el caso que cae ENTRE este umbral y el vecino: el
+> que este corte clasifica de una forma y el de al lado de la otra.
+
+Se reconoce sin canario: si todos los casos del test están lejos del corte,
+mover el corte no rompe nada. La pregunta es *¿cuál de mis casos cambia de
+lado si muevo el umbral un escalón?* — y si la respuesta es "ninguno", el
+número está suelto y alguien lo va a redondear.
+
+Es el corolario 53 corrido al umbral: allá un detector tiene que poder dar
+las dos respuestas, acá **el test tiene que tener un caso de cada lado de la
+raya, y pegado a la raya.** Los cómodos prueban que el detector detecta; el
+de al lado del corte es el único que prueba dónde está el corte.
 
 ### El límite conocido de este detector, escrito antes de que alguien le crea
 
