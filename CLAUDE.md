@@ -7027,7 +7027,8 @@ El docstring de `envase_derivado_de_la_ficha` decía, textual: *"Los tres casos,
 y el tercero **no estaba en el pedido** pero sale de la misma regla"*. Es el
 corolario 29 —un requisito que nadie enunció— con la vuelta de que esta vez lo
 dejé anotado al lado y no me detuvo. **Escribir "esto no me lo pidieron" no es
-lo mismo que preguntarlo.**
+lo mismo que preguntarlo** — eso es el corolario 81, al final, que es donde
+está el mecanismo entero.
 
 **Lo que se hizo el 18/09**: la regla devuelve la caja de la ficha también
 para la variable. Como las tres pantallas preguntan por esa función —el
@@ -7324,3 +7325,78 @@ Y el criterio para decidir dónde va, que es el que separa las dos cosas:
 **son dos operaciones distintas.** La ficha dice a qué producto fueron las
 cajas; ésta, en qué caja salieron. Meterlas en el mismo desplegable las hace
 ver como una sola, y la que se esconde es la que nadie fue a buscar.
+
+## Corolario 81: DERIVAR un caso de una regla no es lo mismo que preguntar si el caso existe
+
+Del 18/09, y es del dueño. Es una forma distinta de todas las de este
+archivo, y por eso lleva número propio en vez de quedar como una frase
+adentro del caso que la produjo:
+
+- **no hubo una premisa falsa** (corolario 25): la regla era verdadera.
+- **no hubo un número mal medido** (corolarios 6, 11, 45, 69): no se midió
+  nada, porque no había nada que medir.
+- **no hubo un requisito leído de más en el pedido** (corolario 29): el
+  pedido no decía nada de esto ni cerca.
+
+Lo que hubo es **un caso derivado de la forma de la regla, sin preguntar si
+ese caso ocurre.** `envase_derivado_de_la_ficha` tenía dos casos que alguien
+había pedido —ficha con envase, ficha sin envase— y yo agregué un tercero
+porque la regla, escrita así, parecía tener un hueco: *si no se puede
+derivar, se pregunta*. De ahí salieron una pregunta en Reproceso, una puerta
+en Guías R, una negativa que no dejaba guardar, y un parámetro que nunca
+tuvo escritor. **La caja sale de la ficha y ese hueco no existía.**
+
+### Por qué convence más que un requisito inventado
+
+El corolario 29 nace de leer de más lo que alguien pidió, y eso se siente
+como una interpretación — algo que uno sabe que está haciendo. **Éste nace
+de completar una simetría**, y eso se siente como rigor: la regla tiene tres
+casos, dos están contemplados, falta el tercero. Nadie revisa un razonamiento
+que se ve prolijo.
+
+**La simetría es una buena razón para SOSPECHAR que un caso existe. Nunca es
+una razón para construirlo.**
+
+### Y la señal la escribí yo, en el mismo commit que introdujo el caso
+
+El docstring decía, textual: *"Los tres casos, y el tercero **no estaba en el
+pedido** pero sale de la misma regla"*.
+
+Estaba anotado, al lado, en mayúsculas prácticamente, y no me detuvo. Y la
+razón de que no detenga es la que hay que entender:
+
+> **Escribir "esto no me lo pidieron" no es lo mismo que preguntarlo.**
+
+La anotación se siente como la honestidad ya ejercida — se parece tanto al
+acto de señalarlo que lo reemplaza. Pero es una nota sobre el ORIGEN del
+caso, escrita en el código, para uno mismo; y lo que hace falta es una
+pregunta sobre el MUNDO, hecha a la persona que lo conoce. Son dos actos
+distintos y el primero no paga el segundo.
+
+**Lo accionable, y cuesta una línea de chat**: una frase de esa forma
+—"no estaba en el pedido", "sale de la misma regla", "por simetría", "el caso
+que falta"— **es la orden de preguntar antes de escribir la primera línea**,
+no una licencia para escribirla dejando constancia. Y la pregunta es la
+abierta (corolario 71): *"¿qué pasa cuando…?"*, nunca *"esto pasa, ¿no?"*.
+
+### Y lo único que salió bien: BORRARLA fue un solo cambio
+
+La pregunta se mostraba en tres lugares —el selector de Reproceso, el
+`falta_la_caja` de Guías R y la guarda del server— y los tres se apagaron
+cambiando **la rama de una función**. Ninguno tenía su propio
+`if envase_variable`.
+
+Eso es más que una comodidad: **es la única prueba dura de que una regla
+estaba escrita una sola vez.** Un test puede afirmar que dos lugares
+coinciden hoy; lo que demuestra que no son dos copias es que borrar la regla
+los apague a los dos. La cantidad de lugares que hay que tocar para sacar
+algo **es la medida de cuántas veces estaba escrito**, y se cobra justo el
+día que resulta que no iba.
+
+Por eso vale al revés también, y es la parte usable: **cuando algo se
+construye sobre una premisa que todavía no se preguntó, escribirlo en UN
+lugar no es prolijidad — es lo que hace que deshacerlo salga gratis** el día
+que la premisa se cae. Es el corolario 29 en su parte buena (*un cambio que
+todavía no tiene usuarios se escribe de forma que deshacerlo sea gratis*),
+con el mecanismo dicho: la forma de que sea gratis es que la regla tenga un
+solo lugar.
