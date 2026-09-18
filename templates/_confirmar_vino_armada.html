@@ -1,0 +1,197 @@
+{# EL MODAL DE "VINO ARMADA", una sola vez para TODAS las pantallas que
+   pueden poner la marca.
+
+   SON SIETE SUPERFICIES: el alta, la manual, cada renglón de la comanda, la
+   edición, el ingreso directo y el retroactivo —las seis que pasan por
+   `_caja_en_origen.html`— más la pantalla del botón "Vino armada", que tiene
+   su `<select name="ficha_en_origen_id">` escrito a mano. Escrito en cada una
+   serían siete copias del MISMO texto, y el día que se corrija una frase
+   queda corregida en una. Y peor: el que la lea en la que quedó vieja va a
+   marcar creyendo otra cosa.
+
+   Y SE INCLUYE DESDE LAS PANTALLAS, no desde `_caja_en_origen.html`, aunque
+   eso sea un include más del que alguien se puede olvidar (lo cuida
+   `test_TODA_pantalla_que_puede_marcar_VINO_ARMADA_trae_la_doble_
+   confirmacion`, que compara el conjunto ENCONTRADO contra el DECIDIDO).
+   Dos razones, y la segunda es la que decide: adentro del partial el modal
+   se repetiría una vez por renglón de la comanda —siete `<dialog>` con el
+   mismo id—, y la comanda MÚLTIPLE llega por `innerHTML`, que no ejecuta los
+   `<script>` que trae adentro. Ahí el cableado tiene que estar YA vivo en la
+   pantalla que recibe el fragmento, y por eso el disparador es un listener
+   en `document` y no uno por formulario: agarra también los formularios que
+   aparecen después.
+
+   POR QUÉ UN MODAL Y NO UN TILDE: el tilde sirve cuando el caso normal es un
+   click y la excepción es rara —la fecha retroactiva—. Acá la marca ES la
+   excepción: son pocas operaciones por mes y un paso más no le molesta a
+   nadie. Y ya entró un dedazo por acá (la compra de Pera del 16/09, marcada
+   contra una ficha de envase perdido), así que el paso que obliga a leer es
+   exactamente lo que faltaba.
+
+   `<dialog>` NATIVO con showModal(), igual que el de la foto de balanza:
+   tapa la pantalla de verdad, deja el fondo inerte y no se cierra tocando
+   afuera. El toque al costado que descarta es lo que convierte un aviso en
+   un cartel que nadie mira. #}
+{# EL MARCADO ARRANCA ACÁ, y este comentario no es decorativo: es la COSTURA
+   por la que los tests cortan. Un partial que entra al final de una pantalla
+   y trae su propio `<style>` rompe el `split("</style>")[-1]` de toda la
+   suite —el último `</style>` pasa a ser el suyo y el corte se lleva la
+   pantalla entera (corolario 50)— y además su `<script>` nombra
+   `name="ficha_en_origen_id"`, que es justo lo que media docena de tests
+   pregunta por la negativa. Con la costura declarada, el corte es exacto y
+   no depende de adivinar dónde empieza esto. #}
+<!-- modal-vino-armada -->
+<style>
+  dialog.modal-armada {
+    border: none;
+    border-radius: 12px;
+    padding: 1.25rem;
+    width: min(92vw, 23rem);
+    box-sizing: border-box;
+    box-shadow: 0 10px 30px rgba(0, 0, 0, 0.25);
+  }
+  dialog.modal-armada::backdrop { background: rgba(0, 0, 0, 0.55); }
+  .modal-armada .titulo { font-size: 1.05rem; font-weight: 700; margin: 0 0 0.6rem; }
+  .modal-armada p { font-size: 0.95rem; color: #444; margin: 0 0 0.8rem; line-height: 1.4; }
+  .modal-armada .remate {
+    font-weight: 700;
+    color: #92400e;
+    background: #fffaf0;
+    border-left: 3px solid #d6a400;
+    padding: 0.5rem 0.65rem;
+    margin-bottom: 1.1rem;
+  }
+  /* 44px, que es el mínimo para tocarlo con el pulgar, y ancho completo:
+     a 390px dos botones al lado se aprietan y el de volver termina pegado
+     al de confirmar, que es el que más caro sale apretar por error. */
+  .modal-armada button {
+    display: block;
+    width: 100%;
+    min-height: 44px;
+    border-radius: 8px;
+    font-size: 1rem;
+    font-weight: 600;
+    cursor: pointer;
+  }
+  .modal-armada .confirmar { background: #6d28d9; color: #fff; border: 0; }
+  /* SEPARADA y sin fondo: es la que no hace nada, así que no compite con la
+     otra. Y con margen grande arriba para que no se apriete por inercia. */
+  .modal-armada .volver {
+    background: none;
+    border: none;
+    color: #6b7280;
+    text-decoration: underline;
+    margin-top: 1rem;
+  }
+</style>
+
+<dialog class="modal-armada" id="modal-vino-armada">
+  <p class="titulo">Esto dice que la mercadería llega YA ARMADA en caja nuestra.</p>
+  <p>O sea: vos le mandaste las cajas al puesto, ellos la armaron, y te la
+    entregan en caja de Día. Al recepcionarla el sistema va a generar la guía R
+    solo y esas cajas se descuentan del stock.</p>
+  <p class="remate">Si la mercadería llega en el cajón del proveedor, esto no va.</p>
+  <button type="button" class="confirmar" id="modal-armada-confirmar">
+    Sí, viene armada en caja nuestra
+  </button>
+  <button type="button" class="volver" id="modal-armada-volver">Volver</button>
+</dialog>
+
+<script>
+  // UNA SOLA REGLA PARA LAS SIETE PANTALLAS: si este formulario va a guardar
+  // una marca, se confirma antes. "Va a guardar una marca" es que algún
+  // selector de caja tenga algo elegido — el mismo criterio en la pantalla de
+  // carga (donde el campo puede quedar vacío) y en la del botón (donde es
+  // `required` y siempre tiene algo), así que ahí el modal sale siempre.
+  //
+  // EN EL SUBMIT Y NO EN EL `change`: el que elige y después se arrepiente
+  // puede volver a "No" sin haber leído un cartel, y el que llega al final
+  // con la marca puesta es el que la va a guardar. El momento en que el dato
+  // se ESCRIBE es el que hay que confirmar.
+  (function () {
+    if (window.__modalArmadaCableado) { return; }
+    window.__modalArmadaCableado = true;
+
+    var modal = document.getElementById('modal-vino-armada');
+    if (!modal) { return; }
+    var pendiente = null;
+
+    // Un renglón DESCARTADO de la comanda con una caja elegida antes de
+    // descartarlo hace salir el modal aunque el servidor lo vaya a saltear:
+    // el descarte solo apaga el `required`, no limpia el selector. Se deja
+    // así —confirmar de más es leer un cartel que no se iba a guardar— antes
+    // que enseñarle a este archivo el marcado de UNA de las siete pantallas.
+    function hayMarca(formulario) {
+      var selects = formulario.querySelectorAll('[data-caja-en-origen] select, select[name="ficha_en_origen_id"]');
+      for (var i = 0; i < selects.length; i++) {
+        if (selects[i].value) { return true; }
+      }
+      return false;
+    }
+
+    function cerrar() {
+      modal.close();
+      // Saca la entrada de historial que puso abrir(), y SOLO si es la de
+      // arriba: un back() a ciegas se llevaría al que carga fuera de la
+      // pantalla, con la compra a medio tipear.
+      if (history.state && history.state.modalArmada) { history.back(); }
+    }
+
+    // EL CAPTURE ES LO QUE LO HACE FUNCIONAR sin pisar los onsubmit que las
+    // pantallas ya tienen (la de cancelar del alta, el normalizarCodigoPuesto
+    // de la manual): corre ANTES que ellos y, si no hay marca, no hace nada.
+    document.addEventListener('submit', function (evento) {
+      var formulario = evento.target;
+      if (formulario.dataset.armadaConfirmada === '1') { return; }
+      if (!hayMarca(formulario)) { return; }
+      evento.preventDefault();
+      evento.stopPropagation();
+      pendiente = { formulario: formulario, boton: evento.submitter || null };
+      modal.showModal();
+      // Una entrada de historial propia para los navegadores donde el atrás
+      // no lo frena el preventDefault del 'cancel' de abajo.
+      history.pushState({ modalArmada: true }, '');
+    }, true);
+
+    document.getElementById('modal-armada-confirmar').addEventListener('click', function () {
+      cerrar();
+      if (!pendiente) { return; }
+      // LA MARCA SE PONE EN EL FORMULARIO, no en una variable: si el que
+      // confirma vuelve atrás y manda otra vez, el modal tiene que salir de
+      // nuevo — y sale, porque esta bandera se va con la página.
+      pendiente.formulario.dataset.armadaConfirmada = '1';
+      // requestSubmit y no submit(): submit() se saltea los otros onsubmit
+      // —el de cancelar del alta, el normalizarCodigoPuesto de la manual— y
+      // esos hacen falta.
+      //
+      // El `else` es para el navegador viejo que tiene <dialog> y no tiene
+      // requestSubmit (Safari 15.4 a 15.6, que es una franja angosta y
+      // existe). Ahí se pierden esos onsubmit, y se pierde a propósito:
+      // llamar a nada sería un botón que no hace NADA, que es peor. La
+      // validación no se pierde — el submit original ya la pasó, porque el
+      // evento no se dispara hasta que pasó.
+      if (typeof pendiente.formulario.requestSubmit === 'function') {
+        if (pendiente.boton) {
+          pendiente.formulario.requestSubmit(pendiente.boton);
+        } else {
+          pendiente.formulario.requestSubmit();
+        }
+      } else {
+        pendiente.formulario.submit();
+      }
+      pendiente = null;
+    });
+
+    document.getElementById('modal-armada-volver').addEventListener('click', function () {
+      cerrar();
+      pendiente = null;
+    });
+
+    // Sin esto, Escape (y el atrás de los navegadores nuevos) lo cierran sin
+    // elegir, que es el toque al costado que no queremos.
+    modal.addEventListener('cancel', function (evento) { evento.preventDefault(); });
+    window.addEventListener('popstate', function () {
+      if (modal.open) { history.pushState({ modalArmada: true }, ''); }
+    });
+  })();
+</script>

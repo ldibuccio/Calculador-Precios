@@ -1435,6 +1435,22 @@ Tres cosas para la próxima:
    decisión sin quitarle el poder al que sabe. Trabar habría sido peor —la
    fecha rara puede ser real—, y avisar ya se probó que no alcanza.
 
+   **Y CUÁL escalón va lo decide si el caso riesgoso es el NORMAL o la
+   EXCEPCIÓN**, que es la precisión que le faltaba a este punto y la puso el
+   dueño el 18/09 sobre "vino armada". El tilde sirve cuando el caso normal
+   es un click —la fecha del mail está bien casi siempre— y la excepción es
+   rara: ahí un paso más se lo cobra a todos para atajar a uno. Cuando la
+   marca **es** la excepción —son pocas por mes y la de todos los días es no
+   marcarla— el que corresponde es el modal que obliga a leer: no le cuesta
+   nada al caso normal, porque el caso normal no pasa por ahí.
+
+   Y hay una segunda diferencia entre los dos, que es la que hace que un
+   tilde no habría alcanzado acá: **el tilde pregunta "¿estás seguro?" y el
+   que se equivocó también está seguro.** Lo que frena el dedazo no es
+   confirmar: es LEER qué dice la marca. Por eso el texto del modal cuenta
+   las dos consecuencias —se genera una guía R sola, esas cajas salen del
+   stock— y dice con todas las letras cuándo NO va.
+
 Y el diagnóstico también se llevó una lección: la primera hipótesis fue
 que el auto-confirmado ignoraba el chequeo. **Se descartó corriendo la
 función real con el asunto real**, no leyendo el código: `'Pedido Dia
@@ -1677,6 +1693,30 @@ muestra cuál anular y no hay botón. Las dos mitades preguntan por el mismo
 filtro y hay un test que lo exige en las TRES funciones que lo usan —
 ofrecer algo que el POST después rechaza es un callejón, y eso es peor que
 no ofrecer nada.
+
+### Y la puerta no es el arreglo del dedazo: el arreglo es que cueste ponerlo (18/09)
+
+Desmarcar es la CURA. Lo que faltaba era que la marca no se pusiera sola, y
+el pedido del dueño fue el escalón que corresponde: **un modal que explica
+qué significa la marca, en los DOS lugares donde se pone** —"si está en uno
+solo, el dedazo entra por el otro"—.
+
+Enumeradas con `ast` desde `app/main.py`, las que escriben
+`ficha_en_origen_id` son **siete superficies en seis rutas**: el alta, la
+manual, cada renglón de la comanda, la edición, el ingreso directo de
+Depósito, el retroactivo de Gerencia y el botón "Vino armada". Las seis
+primeras pasan por `_caja_en_origen.html`; la séptima tiene su `<select>`
+escrito a mano. **Las siete pasan ahora por el mismo modal**, y lo cuida un
+test que compara el conjunto ENCONTRADO contra el DECIDIDO en vez de una
+lista escrita a mano — la octava pantalla no la va a recordar nadie.
+
+**Y la comanda MÚLTIPLE no puede marcar hoy**, medido y no deducido: su
+fragmento llega por `innerHTML`, que no ejecuta los `<script>` que trae, así
+que el bloque queda en `display: none` de verdad y el selector no aparece
+nunca. Es un agujero aparte —una función que existe y nadie puede usar— y
+está anotado en el corolario 83 con el número al lado. El modal ya está
+cableado en su pantalla anfitriona, así que el día que se destape, la
+confirmación ya está puesta.
 
 ### Y DESDE EL 17/09 HAY UN TEST, porque la variante peor es la ruta sin botón
 
@@ -3588,6 +3628,38 @@ assert". Antes de aflojarlo, mirar QUÉ fragmento matcheó o QUÉ pedazo quedó
 en `marcado`. Si el texto está en el documento pero no en `marcado`, el
 problema es el corte; si está en `marcado` pero no en el marcado de verdad,
 es la región.
+
+### Y el partial que entra AL FINAL rompe el corte de toda la suite, la mitad en silencio
+
+Del 18/09, y es el caso 2 otra vez con una consecuencia que no estaba
+escrita. El modal de "vino armada" se incluye al final de siete pantallas y
+trae su propio `<style>`: desde ese día, en esas siete, el ÚLTIMO `</style>`
+del documento es el suyo, así que `split("</style>")[-1]` devuelve la cola
+del partial y **se lleva la pantalla entera**.
+
+**Cayeron doce tests, y ésos no son el problema: un rojo se lee.** El que
+importa es el que NO cayó — `assert "No se recepcionó" not in marcado`, que
+sobre un pedazo que ya no tiene la pantalla adentro **pasa siempre**. Un
+corte que se lleva de más apaga en verde todos los asserts por la negativa
+que tenía adentro, y un test apagado se ve exactamente igual que uno que
+mira. La suite salió 2604 en verde con uno de ellos ciego.
+
+**Cómo se enumeran, que es lo único que los encuentra**: no por el rojo, sino
+cruzando los tests que usan el corte contra las pantallas que ganaron el
+partial. Un script sobre el `ast` que liste las funciones que tienen
+`split("</style>")` **y** nombran una de esas URLs los devuelve todos —acá 15,
+de los cuales 12 fallaban y **1 pasaba vacío**— y los otros dos resultaron ser
+de pantallas que no tienen el partial, o sea falsos positivos informativos.
+
+**Y el arreglo no fue reescribir doce asserts ni correr el `<style>` de
+lugar** —eso último es mover el mundo para que entre en la medición, y el
+partial siguiente lo rompe igual—: el partial declara una COSTURA
+(`<!-- modal-vino-armada -->` como primera cosa que emite) y el corte va
+primero por ahí y recién después por el CSS. La costura es marcado de verdad,
+no aparece en prosa ni en CSS ni en un selector de JS, y está puesta a
+propósito con su comentario al lado diciendo para qué. Con el canario que se
+la saca, los trece tests caen — que es la prueba de que el corte apoya ahí y
+no en la suerte.
 
 ## Un canario que MUTA archivos no se corre en segundo plano, y si se lo mata deja el código roto
 
@@ -7488,3 +7560,58 @@ Engancha con **"un canario que MUTA archivos no se corre en segundo plano"**
 por el mismo lado: las dos son sobre el ESTADO DE PARTIDA. Allá lo que lo
 contamina es otro proceso; acá, un rojo que ya estaba. Y las dos se ven igual
 desde adentro del resultado.
+
+## Corolario 83: un `<script>` adentro de un fragmento que llega por `innerHTML` NO SE EJECUTA, así que el partial que se lleva su cableado adentro muere ahí
+
+Del 18/09. Este proyecto tiene una costumbre buena y escrita:
+`_caja_en_origen.html` lleva su `<script>` adentro *"y no en un include
+aparte que cada pantalla tenga que acordarse de poner: el que se lo olvidara
+dejaría el bloque escondido para siempre —arranca `hidden`— y eso no se ve"*.
+El argumento es correcto y sigue en pie.
+
+**Tiene un caso donde se da vuelta, y es el peor posible: la pantalla que
+recibe el fragmento por `innerHTML`.** `innerHTML` inserta el marcado y
+**no ejecuta ningún `<script>` que venga adentro** — es del estándar, no un
+bug del navegador. O sea que el partial llega entero, con su bloque, su
+selector y su script, y el script no corre: el bloque se queda como nació.
+
+Medido en el navegador, con la identidad de cada pantalla al lado para no
+estar midiendo otra cosa (corolario 53):
+
+```
+                                        hidden  display   cableado   modal
+comanda de UNA foto (render del server)  false   block      true      true
+comanda MÚLTIPLE (innerHTML)             true    none       false     true
+```
+
+**`display: none` de verdad, no el atributo**: el efecto, no la intención
+(corolario 32). Así que en la comanda múltiple el selector de "¿viene ya
+armada?" **no se puede usar** — llega, ocupa lugar en el DOM, manda su valor
+vacío, y nadie lo ve nunca. Es la ruta sin botón del corolario 31 en su
+variante más callada: no hay `.sql` a mano que se repita ni incidente que
+alguien recuerde, porque la función no se pide — se supone.
+
+### Lo que decide dónde va un partial nuevo
+
+> **Si el partial trae `<script>`, la pregunta no es qué pantalla lo usa: es
+> si alguna de esas pantallas lo recibe por `innerHTML`.** Si alguna lo hace,
+> el cableado va en LA PANTALLA que recibe, y el disparador tiene que ser un
+> listener en `document` —no uno por elemento— porque los elementos que va a
+> cuidar todavía no existen cuando el listener se registra.
+
+Por eso el modal de "vino armada" se incluye desde las siete pantallas y no
+desde `_caja_en_origen.html`, y por eso `compra_fotos_multiples.html` —que no
+tiene ningún selector propio— lo trae igual: es la anfitriona del fragmento.
+
+**Y el include de más no se sostiene solo**: lo cuida un test que compara el
+conjunto ENCONTRADO contra el DECIDIDO (corolario 60), con la relación
+fragmento→anfitriona escrita como dato. Falla en las dos direcciones: cuando
+aparece una octava pantalla que puede marcar y no confirma, y cuando una deja
+de poder marcar y se queda con el cartel colgado.
+
+### Y el `grep` que lo encuentra no es el del script
+
+`grep "<script>" templates/` devuelve medio repositorio. Lo que hay que
+grepear es **`innerHTML =`**, que es la lista corta de lugares donde el
+marcado entra sin ejecutarse — y después, para cada uno, qué partials viajan
+adentro de lo que se inyecta.

@@ -1,3 +1,4 @@
+import asyncio
 import base64
 import inspect
 import io
@@ -27551,6 +27552,27 @@ def test_si_la_guia_en_origen_no_se_puede_cargar_la_pantalla_dice_POR_QUE():
 # los que uno se puede olvidar, y el que se olvide deja el selector vacío.
 
 
+COSTURA_DEL_MODAL_ARMADA = "<!-- modal-vino-armada -->"
+
+
+def _marcado(html):
+    """El marcado de una de las SIETE pantallas que pueden marcar "vino armada".
+
+    `split("</style>")[-1]` a secas dejó de servir en éstas el día que
+    `_confirmar_vino_armada.html` entró al final de las siete: trae su propio
+    `<style>`, así que el último `</style>` del documento es el suyo y el
+    corte se lleva la pantalla ENTERA (corolario 50, el caso de la plantilla
+    incluida). Y no falla en rojo siempre: un `assert X not in marcado` sobre
+    un pedazo vacío pasa igual, que es como un test se queda sin mirar nada.
+
+    El corte va primero por la costura que el partial declara y recién
+    después por el CSS de la pantalla. Así el modal —su `<style>`, y su
+    `<script>`, que nombra `name="ficha_en_origen_id"` porque es lo que
+    busca— queda afuera de lo que estos tests afirman.
+    """
+    return html.split(COSTURA_DEL_MODAL_ARMADA)[0].split("</style>")[-1]
+
+
 def _cajas_de_un_articulo():
     """Solo el artículo 5 tiene cajas; el otro de ARTICULOS_CON_UNIDAD_COMPRA no."""
     return {5: [{"id": 3, "cliente_id": 7, "nombre": "Caja de EJEMPLO",
@@ -27566,7 +27588,7 @@ def test_la_carga_de_compras_OFRECE_marcar_que_viene_armada():
     ):
         respuesta = cliente.get("/compras/nueva?proveedor_id=200")
 
-    marcado = respuesta.text.split("</style>")[-1]
+    marcado = _marcado(respuesta.text)
     # Por el ATRIBUTO entero y no por el texto: un comentario que explique el
     # campo nombra su propio rótulo y entraría en la cuenta (corolario 38).
     assert 'name="ficha_en_origen_id"' in marcado
@@ -27588,7 +27610,7 @@ def test_la_carga_NO_ofrece_el_selector_si_NINGUN_articulo_tiene_caja():
     ):
         respuesta = cliente.get("/compras/nueva?proveedor_id=200")
 
-    assert 'name="ficha_en_origen_id"' not in respuesta.text.split("</style>")[-1]
+    assert 'name="ficha_en_origen_id"' not in _marcado(respuesta.text)
 
 
 def test_la_carga_de_compras_ANDA_IGUAL_si_no_se_puede_leer_el_catalogo_de_cajas():
@@ -27607,7 +27629,7 @@ def test_la_carga_de_compras_ANDA_IGUAL_si_no_se_puede_leer_el_catalogo_de_cajas
 
     assert respuesta.status_code == 200
     assert 'name="cantidad_cajones"' in respuesta.text
-    assert 'name="ficha_en_origen_id"' not in respuesta.text.split("</style>")[-1]
+    assert 'name="ficha_en_origen_id"' not in _marcado(respuesta.text)
 
 
 def test_cargar_una_compra_MARCADA_le_pasa_la_caja_al_guardado():
@@ -27826,7 +27848,7 @@ def test_el_retroactivo_devuelve_la_caja_elegida_cuando_el_guardado_FALLA():
         )
 
     assert respuesta.status_code == 400
-    marcado = respuesta.text.split("</style>")[-1]
+    marcado = _marcado(respuesta.text)
     assert 'name="ficha_en_origen_id"' in marcado
     # LA OPCIÓN 3 Y SOLO ELLA marcada. Un `"selected" in marcado` a secas
     # pasaría por cualquier <option selected> de la pantalla —el proveedor, el
@@ -27903,7 +27925,7 @@ def test_vino_armada_dice_que_la_guia_va_fechada_EL_DIA_DE_LA_RECEPCION():
         respuesta = cliente.get("/compras/30/vino-armada")
 
     assert respuesta.status_code == 200
-    marcado = respuesta.text.split("</style>")[-1]
+    marcado = _marcado(respuesta.text)
     assert "11/09" in marcado       # la recepción, que es la fecha del lote
     assert 'name="ficha_en_origen_id"' in marcado
     assert "Caja de EJEMPLO" in marcado
@@ -27930,7 +27952,7 @@ def test_vino_armada_muestra_LO_QUE_YA_SALIO_del_lote_antes_de_confirmar():
     ):
         respuesta = cliente.get("/compras/30/vino-armada")
 
-    marcado = respuesta.text.split("</style>")[-1]
+    marcado = _marcado(respuesta.text)
     assert "ya salieron" in marcado
     assert "R214" in marcado
     assert "EJEMPLO Dos" in marcado
@@ -27949,7 +27971,7 @@ def test_vino_armada_BLOQUEA_la_compra_que_todavia_no_se_recepciono():
     ):
         respuesta = cliente.get("/compras/30/vino-armada")
 
-    marcado = respuesta.text.split("</style>")[-1]
+    marcado = _marcado(respuesta.text)
     assert 'class="bloqueo"' in marcado
     assert "todavía no se recepcionó" in marcado
     assert 'name="ficha_en_origen_id"' not in marcado
@@ -27970,7 +27992,7 @@ def test_vino_armada_BLOQUEA_por_el_corte_y_DICE_por_que():
     ):
         respuesta = cliente.get("/compras/30/vino-armada")
 
-    marcado = respuesta.text.split("</style>")[-1]
+    marcado = _marcado(respuesta.text)
     assert 'class="bloqueo"' in marcado
     assert "POSTERIOR al corte" in marcado
     assert "no hay lote contra el que armar la guía R" in marcado
@@ -27985,7 +28007,7 @@ def test_vino_armada_BLOQUEA_la_que_YA_esta_marcada():
     ):
         respuesta = cliente.get("/compras/30/vino-armada")
 
-    assert "ya está marcada" in respuesta.text.split("</style>")[-1]
+    assert "ya está marcada" in _marcado(respuesta.text)
 
 
 def test_vino_armada_sin_NINGUNA_caja_del_articulo_lo_dice_en_vez_de_ofrecer_un_selector_vacio():
@@ -27998,7 +28020,7 @@ def test_vino_armada_sin_NINGUNA_caja_del_articulo_lo_dice_en_vez_de_ofrecer_un_
     ):
         respuesta = cliente.get("/compras/30/vino-armada")
 
-    marcado = respuesta.text.split("</style>")[-1]
+    marcado = _marcado(respuesta.text)
     assert "no tiene ninguna caja cargada" in marcado
     assert 'name="ficha_en_origen_id"' not in marcado
 
@@ -28037,7 +28059,7 @@ def test_marcar_vino_armada_traduce_el_FRENO_DEL_STOCK_y_dice_que_no_escribio_na
     assert "no se pudo cargar su guía R" in respuesta.text
     assert "No se marcó nada" in respuesta.text
     # Y NO el texto del otro camino: allá lo que se deshace es la recepción.
-    assert "No se recepcionó" not in respuesta.text.split("</style>")[-1]
+    assert "No se recepcionó" not in _marcado(respuesta.text)
 
 
 def test_marcar_vino_armada_sin_elegir_caja_no_llama_a_la_base():
@@ -28155,14 +28177,14 @@ def test_vino_armada_BLOQUEADA_no_promete_la_fecha_de_una_guia_que_no_va_a_exist
                   fecha_del_lote=CORTE_DE_PRUEBA_VINO_ARMADA)),
         patch("app.main._cajas_para_elegir_por_articulo", return_value=_cajas_de_un_articulo()),
     ):
-        bloqueada = cliente.get("/compras/30/vino-armada").text.split("</style>")[-1]
+        bloqueada = _marcado(cliente.get("/compras/30/vino-armada").text)
 
     with (
         patch("app.main.compra_para_marcar_armada", return_value=_compra_recepcionada_sin_marca()),
         patch("app.main._dependencias_con_nombres", return_value=_lote_entero()),
         patch("app.main._cajas_para_elegir_por_articulo", return_value=_cajas_de_un_articulo()),
     ):
-        abierta = cliente.get("/compras/30/vino-armada").text.split("</style>")[-1]
+        abierta = _marcado(cliente.get("/compras/30/vino-armada").text)
 
     assert "va a quedar fechada" not in bloqueada
     # Y LAS DOS DIRECCIONES: sin esto, sacar la línea entera pasaría el test.
@@ -28183,7 +28205,7 @@ def test_la_marca_VUELVE_en_el_reintento_de_las_cinco_pantallas():
 
     def elegidas(html):
         return re.findall(r'<option value="(\d+)"[^>]*\bselected\b',
-                          html.split("</style>")[-1], re.S)
+                          _marcado(html), re.S)
 
     def comunes(articulo_revienta=False):
         articulo = (patch("app.main.obtener_articulo", side_effect=Exception("se cayó la base"))
@@ -28996,3 +29018,334 @@ def test_TODA_pantalla_de_un_sector_esta_LINKEADA_desde_algun_lado():
         "decididas que ya están linkeadas (sacalas de la lista): "
         f"{sorted(set(PANTALLAS_SIN_LINK_DECIDIDAS) - sin_link)}"
     )
+
+
+# ── La doble confirmación de "vino armada" ─────────────────────────────────
+#
+# La marca dice que la mercadería llega YA ARMADA en caja nuestra: al
+# recepcionarla el sistema genera la guía R solo y descuenta esas cajas. Puesta
+# por error no rompe nada que se vea —no hay error, no hay hueco— y ya entró un
+# dedazo por acá: la compra de Pera del 16/09, marcada contra una ficha de
+# envase perdido, que hubo que desmarcar con un `.sql` a mano.
+#
+# POR QUÉ UN MODAL Y NO UN TILDE: el tilde sirve cuando el caso normal es un
+# click y la excepción es rara —la fecha retroactiva—. Acá la marca ES la
+# excepción, así que lo que corresponde es el paso que obliga a leer.
+
+
+ANFITRIONES_DE_FRAGMENTOS = {
+    # El fragmento se devuelve como JSON y la pantalla lo mete con innerHTML,
+    # así que su propio <script> NO se ejecuta: el modal tiene que estar ya
+    # cableado en la pantalla que lo recibe. Por eso el disparador es un
+    # listener en `document` y no uno por formulario — agarra también los
+    # formularios que llegan después.
+    "_fragmento_revision_comanda_multiple.html": "compra_fotos_multiples.html",
+}
+
+
+def _incluye_de_cada_plantilla():
+    import re as _re
+
+    grafo = {}
+    for nombre in os.listdir("templates"):
+        if not nombre.endswith(".html"):
+            continue
+        texto = io.open("templates/" + nombre, encoding="utf-8").read()
+        grafo[nombre] = set(_re.findall(r'{%-?\s*include\s+"([^"]+)"', texto))
+    return grafo
+
+
+def _cierre(nombre, grafo, vistos=None):
+    vistos = set() if vistos is None else vistos
+    for hijo in grafo.get(nombre, ()):
+        if hijo not in vistos:
+            vistos.add(hijo)
+            _cierre(hijo, grafo, vistos)
+    return vistos
+
+
+def test_TODA_pantalla_que_puede_marcar_VINO_ARMADA_trae_la_doble_confirmacion():
+    """El conjunto ENCONTRADO contra el DECIDIDO, en las dos direcciones.
+
+    Son siete superficies y seis rutas, y lo que las une no es una lista sino
+    dos hechos del marcado: incluir `_caja_en_origen.html`, o tener el
+    `<select name="ficha_en_origen_id">` escrito a mano (la pantalla del botón
+    "Vino armada"). Una lista escrita a mano protege las siete de hoy; esto
+    protege a la octava, que es la que nadie va a recordar.
+
+    Y falla también al revés —una pantalla que trae el modal y ya no puede
+    marcar—, para que el cartel no quede colgado donde no hay nada que
+    confirmar.
+    """
+    import re as _re
+
+    grafo = _incluye_de_cada_plantilla()
+
+    def puede_marcar(nombre):
+        texto = io.open("templates/" + nombre, encoding="utf-8").read()
+        if _re.search(r'<select[^>]*name="ficha_en_origen_id"', texto):
+            return True
+        return "_caja_en_origen.html" in _cierre(nombre, grafo) | {nombre}
+
+    marcadoras = {n for n in grafo if puede_marcar(n)}
+    assert marcadoras, "el barrido no encontró NINGUNA: el ancla está mal"
+
+    # El fragmento que se renderiza solo no es una pantalla: su modal vive en
+    # la que lo recibe. Los demás son partials, y se cubren por su pantalla.
+    def es_pantalla(nombre):
+        return "<body" in io.open("templates/" + nombre, encoding="utf-8").read()
+
+    necesitan = {n for n in marcadoras if es_pantalla(n)}
+    for fragmento, anfitrion in ANFITRIONES_DE_FRAGMENTOS.items():
+        if fragmento in marcadoras:
+            necesitan.add(anfitrion)
+
+    traen = {n for n in grafo if "_confirmar_vino_armada.html" in _cierre(n, grafo)}
+
+    assert necesitan == traen, (
+        "pueden marcar y NO confirman: "
+        f"{sorted(necesitan - traen)} · "
+        "confirman y ya no pueden marcar (sacales el include): "
+        f"{sorted(traen - necesitan)}"
+    )
+    # Y el número, al lado: siete superficies son SEIS pantallas más el
+    # fragmento de la comanda múltiple, que se cubre por su anfitriona.
+    assert len(traen) == 7, sorted(traen)
+
+
+def test_el_modal_DICE_QUE_SIGNIFICA_la_marca_y_no_solo_pregunta_si_esta_seguro():
+    """Un "¿estás seguro?" no agrega información: el que se equivocó también
+    está seguro. Lo que frena el dedazo es leer qué dice la marca."""
+    with (
+        patch("app.main.obtener_proveedor", return_value=PROVEEDOR_DE_PRUEBA),
+        patch("app.main.listar_articulos", return_value=ARTICULOS_CON_UNIDAD_COMPRA),
+        patch("app.main.listar_compras_por_fecha_y_proveedor", return_value=[]),
+        patch("app.main._cajas_para_elegir_por_articulo", return_value=_cajas_de_un_articulo()),
+    ):
+        respuesta = cliente.get("/compras/nueva?proveedor_id=200")
+
+    # Del <dialog> para adelante: el texto del modal vive DESPUÉS de la
+    # costura, o sea justo del lado que `_marcado` descarta.
+    modal = respuesta.text.split(COSTURA_DEL_MODAL_ARMADA)[1].split("</dialog>")[0]
+
+    assert "llega YA ARMADA en caja nuestra" in modal
+    assert "vos le mandaste las cajas al puesto" in modal
+    # Las dos consecuencias, que son las que nadie tiene en la cabeza al
+    # apretar: se genera una guía R sola, y esas cajas salen del stock.
+    assert "guía R" in modal
+    assert "se descuentan del stock" in modal
+    # Y EL CASO CONTRARIO, dicho con todas las letras: sin esta línea el modal
+    # explica qué hace la marca y no dice cuándo NO va, que es el dedazo.
+    assert "llega en el cajón del proveedor, esto no va" in modal
+
+    # DOS SALIDAS, y las dos explícitas. Ninguna es "submit": el que manda el
+    # formulario es el JS después de confirmar, así que un click de más en el
+    # modal no puede guardar nada por su cuenta.
+    assert 'type="button" class="confirmar" id="modal-armada-confirmar"' in modal
+    assert 'type="button" class="volver" id="modal-armada-volver"' in modal
+    assert 'type="submit"' not in modal
+
+
+def _paginas_que_marcan():
+    """Las DOS FORMAS del control, que el modal reconoce por caminos distintos.
+
+    En las pantallas de carga el selector vive adentro de `[data-caja-en-origen]`
+    y el nombre del campo cambia (en la comanda lleva el prefijo del renglón).
+    En la del botón "Vino armada" el `<select name="ficha_en_origen_id">` está
+    escrito a mano y afuera de ese bloque. Son dos ramas del mismo `if`, y una
+    sola probada aprueba a las dos.
+    """
+    with (
+        patch("app.main.obtener_proveedor", return_value=PROVEEDOR_DE_PRUEBA),
+        patch("app.main.listar_articulos", return_value=ARTICULOS_CON_UNIDAD_COMPRA),
+        patch("app.main.listar_compras_por_fecha_y_proveedor", return_value=[]),
+        patch("app.main._cajas_para_elegir_por_articulo", return_value=_cajas_de_un_articulo()),
+    ):
+        carga = cliente.get("/compras/nueva?proveedor_id=200").text
+    with (
+        patch("app.main.compra_para_marcar_armada", return_value=_compra_recepcionada_sin_marca()),
+        patch("app.main._dependencias_con_nombres", return_value=_lote_entero()),
+        patch("app.main._cajas_para_elegir_por_articulo", return_value=_cajas_de_un_articulo()),
+    ):
+        boton = cliente.get("/compras/30/vino-armada").text
+    return {"la carga de una compra": carga, "el botón Vino armada": boton}
+
+
+# EL FORMULARIO SE BUSCA POR EL SELECTOR, no con `querySelector("form")`: la
+# pantalla de carga tiene TRES formularios —la barra, el de la compra y el de
+# cancelar— y el primero no es el de la compra. Con el primero, el submit no
+# lleva ninguna marca, el modal no sale (correctamente) y el test se lee como
+# "el modal no funciona". Es el corolario 47: el número podía moverse, pero
+# describía otra pantalla.
+_FORMULARIO = """document.querySelector(
+  '[data-caja-en-origen] select, select[name="ficha_en_origen_id"]').form"""
+# Se apaga la validación del navegador: si no, un campo obligatorio vacío frena
+# el submit ANTES y el modal no llega a decidir nada.
+#
+# Y SE MIDEN DOS COSAS DISTINTAS, porque una sola aprueba de más:
+#
+#   __enviado   los envíos que NO se cancelaron, o sea los que en la pantalla
+#               de verdad habrían guardado. Se lee de `defaultPrevented` y no
+#               de "me llegó el evento": una sonda que solo cuenta lo que le
+#               llega mide la PROPAGACIÓN, y un modal que abre el cartel y
+#               guarda igual la pasa entera. Lo midió el canario que le saca
+#               el `preventDefault` y no hacía caer nada.
+#   __pantalla  las veces que corren los `onsubmit` de la pantalla (el
+#               normalizarCodigoPuesto de la manual). Con el envío frenado
+#               tienen que correr CERO veces: hoy son inofensivos, y el día
+#               que uno apague el botón para evitar el doble envío, apagarlo
+#               con el modal abierto deja al que vuelve sin poder mandar.
+#
+# La sonda va en `document` y en CAPTURA, registrada DESPUÉS que la del modal:
+# dos listeners del mismo nodo y la misma fase corren en orden de registro, y
+# `stopPropagation` no frena al de al lado. Así ve el evento aunque el modal lo
+# haya detenido, que es justo lo que hay que poder distinguir.
+_PREPARAR = """() => {
+  const form = %s;
+  form.noValidate = true;
+  window.__form = form;
+  window.__enviado = 0;
+  window.__pantalla = 0;
+  document.addEventListener('submit', (e) => {
+    if (!e.defaultPrevented) { window.__enviado++; }
+    e.preventDefault();
+  }, true);
+  form.addEventListener('submit', () => { window.__pantalla++; });
+  return {formularios: document.querySelectorAll('form').length,
+          selectores_en_el_form: form.querySelectorAll(
+            '[data-caja-en-origen] select, select[name="ficha_en_origen_id"]').length};
+}""" % _FORMULARIO
+_MANDAR = "() => window.__form.requestSubmit()"
+_ESTADO = """() => ({
+  enviado: window.__enviado,
+  pantalla: window.__pantalla,
+  abierto: document.getElementById('modal-vino-armada').open,
+})"""
+_MARCAR = """() => {
+  const select = document.querySelector(
+    '[data-caja-en-origen] select, select[name="ficha_en_origen_id"]');
+  const articulo = document.getElementById('articulo_id');
+  if (articulo) { articulo.value = '5'; articulo.dispatchEvent(new Event('change')); }
+  select.value = '3';
+  return select.value;
+}"""
+
+
+def test_el_modal_FRENA_el_guardado_de_la_marca_y_las_dos_salidas_HACEN_LO_QUE_DICEN():
+    """El atributo es la intención; lo que el operario tiene adelante lo decide
+    el navegador (corolario 32).
+
+    Un assert sobre el marcado prueba que el <dialog> está escrito. No prueba
+    que el submit se frene, que "Volver" no guarde, ni —lo peor de todo— que
+    "Sí" mande: un modal que traba para siempre es la pantalla colgada, y eso
+    no lo ve ningún test de texto.
+    """
+    pytest.importorskip("playwright", reason="frenar un submit es del navegador")
+
+    async def correr(html):
+        from playwright.async_api import async_playwright
+
+        from scripts.medir_layout import CHROMIUM
+
+        async with async_playwright() as pw:
+            navegador = await pw.chromium.launch(executable_path=CHROMIUM)
+            pagina = await navegador.new_page(viewport={"width": 390, "height": 844})
+            reventados = []
+            pagina.on("pageerror", lambda e: reventados.append(str(e)))
+            await pagina.set_content(html)
+            # El denominador al lado: un cero de "no frenó" sobre un
+            # formulario que no tiene el selector no dice nada de la pantalla.
+            contexto = await pagina.evaluate(_PREPARAR)
+
+            pasos = {}
+            # 1) SIN marca no molesta a nadie: la compra normal es la del cajón
+            #    del proveedor y es la que se carga todos los días.
+            await pagina.evaluate(_MANDAR)
+            pasos["sin marca"] = await pagina.evaluate(_ESTADO)
+
+            elegida = await pagina.evaluate(_MARCAR)
+            await pagina.evaluate(_MANDAR)
+            pasos["con marca"] = await pagina.evaluate(_ESTADO)
+
+            await pagina.click("#modal-armada-volver")
+            pasos["tras volver"] = await pagina.evaluate(_ESTADO)
+
+            await pagina.evaluate(_MANDAR)
+            await pagina.click("#modal-armada-confirmar")
+            pasos["tras confirmar"] = await pagina.evaluate(_ESTADO)
+
+            await navegador.close()
+        return elegida, pasos, reventados, contexto
+
+    for pantalla, html in _paginas_que_marcan().items():
+        elegida, pasos, reventados, contexto = asyncio.run(correr(html))
+        assert contexto["selectores_en_el_form"] == 1, f"{pantalla}: {contexto}"
+        assert elegida == "3", f"{pantalla}: el fixture no llegó a poner la marca"
+        assert not reventados, f"{pantalla}: {reventados}"
+        assert pasos == {
+            # Pasa derecho: ni el modal ni nada. La compra del cajón del
+            # proveedor es la de todos los días y no puede pagar este peaje.
+            "sin marca": {"enviado": 1, "pantalla": 1, "abierto": False},
+            # Frenado: el envío no avanzó Y los onsubmit de la pantalla
+            # tampoco corrieron.
+            "con marca": {"enviado": 1, "pantalla": 1, "abierto": True},
+            # Volver no guarda nada, y deja la pantalla como estaba.
+            "tras volver": {"enviado": 1, "pantalla": 1, "abierto": False},
+            # Y confirmar MANDA: un modal que traba para siempre es la
+            # pantalla colgada, y eso no lo ve ningún test de texto.
+            "tras confirmar": {"enviado": 2, "pantalla": 2, "abierto": False},
+        }, f"{pantalla}: {pasos}"
+
+
+def test_los_dos_botones_del_modal_se_TOCAN_CON_EL_PULGAR_y_entra_en_390px():
+    """Mobile-first, y acá con una razón de más: los dos botones hacen cosas
+    opuestas y uno es el que no se puede apretar por error.
+
+    Por eso van uno DEBAJO del otro y a ancho completo —dos al lado a 390px se
+    aprietan— y con aire en el medio.
+    """
+    pytest.importorskip("playwright", reason="el tamaño de un botón es CSS")
+
+    async def medir(html):
+        from playwright.async_api import async_playwright
+
+        from scripts.medir_layout import CHROMIUM
+
+        async with async_playwright() as pw:
+            navegador = await pw.chromium.launch(executable_path=CHROMIUM)
+            pagina = await navegador.new_page(viewport={"width": 390, "height": 844})
+            await pagina.set_content(html)
+            await pagina.evaluate("() => document.getElementById('modal-vino-armada').showModal()")
+            leido = await pagina.evaluate("""() => {
+              const d = document.getElementById('modal-vino-armada');
+              const caja = d.getBoundingClientRect();
+              const botones = [...d.querySelectorAll('button')].map((b) => {
+                const c = b.getBoundingClientRect();
+                return {alto: c.height, arriba: c.top, abajo: c.bottom, izq: c.left, der: c.right};
+              });
+              return {
+                botones: botones,
+                se_sale: caja.left < 0 || caja.right > innerWidth,
+                se_corta_abajo: caja.bottom > innerHeight,
+                desborde_pagina: document.documentElement.scrollWidth
+                                 - document.documentElement.clientWidth,
+              };
+            }""")
+            await navegador.close()
+        return leido
+
+    for pantalla, html in _paginas_que_marcan().items():
+        leido = asyncio.run(medir(html))
+        # El denominador, para que un cero de hallazgos no se lea igual que
+        # "no miré ninguno" (corolario 53).
+        assert len(leido["botones"]) == 2, f"{pantalla}: {leido}"
+        for boton in leido["botones"]:
+            assert boton["alto"] >= 44, f"{pantalla}: {leido['botones']}"
+        uno, dos = leido["botones"]
+        assert dos["arriba"] - uno["abajo"] >= 12, f"{pantalla}: pegados, {leido['botones']}"
+        # Y UNO DEBAJO DEL OTRO: si comparten renglón, el de volver queda al
+        # lado del de confirmar, que es el que más caro sale apretar de más.
+        assert dos["arriba"] >= uno["abajo"], f"{pantalla}: en el mismo renglón"
+        assert not leido["se_sale"], f"{pantalla}: {leido}"
+        assert not leido["se_corta_abajo"], f"{pantalla}: {leido}"
+        assert leido["desborde_pagina"] == 0, f"{pantalla}: {leido}"
