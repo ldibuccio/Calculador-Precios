@@ -698,7 +698,7 @@
            viajan a la pantalla hasta que alguien los pide. Y no hace falta
            una consulta por renglón al abrir la sección. #}
         <button type="button" class="boton-lotes" onclick="verLotes({{ r.id }}, {{ pedido.id }})"
-                id="ver-lotes-{{ r.id }}">De dónde salió</button>
+                id="ver-lotes-{{ r.id }}">Elegir el lote</button>
         <form method="post" action="/deposito/pedido/{{ pedido.id }}/renglones/{{ r.id }}/desarmar">
           <input type="hidden" name="cliente_id" value="{{ cliente_id }}">
           <input type="hidden" name="fecha" value="{{ fecha }}">
@@ -779,7 +779,7 @@
     function verLotes(renglonId, pedidoId) {
       const caja = document.getElementById("salio-de-" + renglonId);
       const boton = document.getElementById("ver-lotes-" + renglonId);
-      if (!caja.hidden) { caja.hidden = true; boton.textContent = "De dónde salió"; return; }
+      if (!caja.hidden) { caja.hidden = true; boton.textContent = "Elegir el lote"; return; }
 
       boton.textContent = "Buscando...";
       fetch("/deposito/pedido/renglones/" + renglonId + "/lotes")
