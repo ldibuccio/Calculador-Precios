@@ -14,6 +14,7 @@ import psycopg2
 from core.envases import (como_queda_la_cuenta, efecto_en_la_cuenta,
                           envase_derivado_de_la_ficha, hay_que_reponer)
 from core.magnitudes import repartir_magnitudes
+from core.matcheo_comanda import normalizar_texto
 from core.vino_armada import motivo_para_no_marcar_armada, motivo_sin_lote_por_el_corte
 
 DATABASE_URL_ENV_VAR = "DATABASE_URL"
@@ -4654,7 +4655,7 @@ def listar_fotos_para_limpiar(fecha_corte) -> list[str]:
     candidato si TODAS las guías que lo usan son de antes de fecha_corte —
     MAX(fecha de guía) por ruta, una sola pasada.
 
-    Los CUATRO tipos del bucket entran acá, con el MISMO corte: una sola
+    Los SEIS tipos del bucket entran acá, con el MISMO corte: una sola
     perilla de retención. Que sea la misma es una decisión, no una
     herencia — si alguno tiene que durar distinto, la razón va escrita acá.
 
@@ -4662,6 +4663,13 @@ def listar_fotos_para_limpiar(fecha_corte) -> list[str]:
     - balanza (fotos_recepcion), por la fecha de su compra.
     - capturas del mail (fotos_pedido), por la fecha del pedido.
     - archivos de precios (precios_venta_historial), por cuando se subieron.
+    - fotos de merma (fotos_merma), por la fecha del movimiento.
+    - vales de vacíos del depósito (vacios_deposito_devoluciones).
+
+    (Este párrafo decía CUATRO y ya listaba cuatro cuando la función tocaba
+    seis: la merma entró sin que nadie lo actualizara. Es el comentario que
+    envejece en el mismo commit que lo vuelve falso — corregido el 18/09, al
+    entrar el sexto.)
 
     Los dos últimos NO estaban, y sus archivos no se borraban nunca: ni
     siquiera aparecían como candidatos. Entran ahora porque el bucket pasó
@@ -4721,8 +4729,21 @@ def listar_fotos_para_limpiar(fecha_corte) -> list[str]:
                 SELECT f.foto_ruta FROM fotos_merma f
                 JOIN remitos_segunda r ON r.id = f.salida_segunda_id
                 WHERE r.fecha_operacion < %s
+                UNION
+                -- EL VALE DE VACÍOS DEL DEPÓSITO. La ruta es una columna y no
+                -- una tabla de fotos, igual que en precios, así que va con
+                -- GROUP BY + MAX: nada impide que dos vales compartan archivo.
+                --
+                -- La ANULADA también entra: la foto es el registro de lo que
+                -- se afirmó y no se borra al anular, pero a los 3 años se va
+                -- como todo lo demás.
+                SELECT d.foto_ruta FROM vacios_deposito_devoluciones d
+                WHERE d.foto_ruta IS NOT NULL
+                GROUP BY d.foto_ruta
+                HAVING MAX(d.creado_en) < ((%s::date)::timestamp AT TIME ZONE 'America/Argentina/Buenos_Aires')
                 """,
-                (fecha_corte, fecha_corte, fecha_corte, fecha_corte, fecha_corte, fecha_corte),
+                (fecha_corte, fecha_corte, fecha_corte, fecha_corte, fecha_corte, fecha_corte,
+                 fecha_corte),
             )
             filas = cursor.fetchall()
         return [fila[0] for fila in filas]
@@ -4763,11 +4784,21 @@ def olvidar_foto_borrada(foto_ruta: str) -> None:
                 "UPDATE precios_venta_historial SET foto_ruta = NULL WHERE foto_ruta = %s", (foto_ruta,)
             )
             filas_tocadas += cursor.rowcount
+            # Tampoco se borra la fila del vale, y por lo mismo: la devolución
+            # es el dato —cuántos cajones salieron y contra qué compra— y la
+            # foto era de dónde salió. Borrarla se llevaría el movimiento de
+            # stock puesto.
+            cursor.execute(
+                "UPDATE vacios_deposito_devoluciones SET foto_ruta = NULL WHERE foto_ruta = %s",
+                (foto_ruta,),
+            )
+            filas_tocadas += cursor.rowcount
             if filas_tocadas == 0:
                 raise ValueError(
                     f"El archivo {foto_ruta} ya se borró del Storage y no tenía fila en ninguna "
                     "de las tablas que guardan rutas (fotos_guia, fotos_recepcion, fotos_pedido, "
-                    "fotos_merma, precios_venta_historial): o alguien la borró en el medio, o esta "
+                    "fotos_merma, precios_venta_historial, vacios_deposito_devoluciones): o alguien "
+                    "la borró en el medio, o esta "
                     "función está mirando tablas que no son"
                 )
         conexion.commit()
@@ -12935,3 +12966,475 @@ def detallar_envases_a_reponer() -> dict:
             if filas else "Ningún envase debajo de su aviso"
         ),
     }
+
+
+# ============================================================================
+# VACÍOS DEL DEPÓSITO — los cajones DEL PROVEEDOR DE COMPRAS
+#
+# NO ES EL CIRCUITO DEL PUESTO, que existe desde antes y vive en
+# `vacios_recibidos` / `vacios_devueltos` / `conteos_vacios` con su propio
+# universo (`proveedores_puesto`, `clientes_puesto`, `tipos_envase_puesto`).
+# Allá un cliente del puesto TRAE cajones y un proveedor del puesto los
+# retira; acá el cajón LLEGA CON LA MERCADERÍA y se le devuelve al proveedor
+# que la vendió. No comparten una sola tabla, y los dos "proveedor" son
+# tablas distintas.
+#
+# Y `tipos_cajon` NO ES `envases`: `envases` es la caja NUESTRA con su costo,
+# la que se le factura al cliente. `tipos_cajon` es el cajón AJENO en el que
+# llega la fruta. Uno se paga, el otro se devuelve.
+# ============================================================================
+
+# LAS COLUMNAS EN UN SOLO LUGAR Y EN ORDEN, por lo mismo que en el stock de
+# cajas: hay dos lectores y el que direccione por índice no nombra ninguna
+# columna, así que el día que la consulta gane o pierda una el `grep` del
+# campo no lo encuentra. Ahí eso reventó TODO guardado con un
+# "tuple index out of range" y ningún test en rojo.
+COLUMNAS_STOCK_DE_VACIOS_DEPOSITO = (
+    "id", "nombre", "tipo_cajon", "desde",
+    "contados", "recibidos", "devueltos", "stock",
+    "esperando_recepciones", "esperando_devoluciones", "esperando_desde",
+)
+
+# EL COMPARADOR NO ES PROPIO: es el MISMO de la cuenta de cajas
+# (`COMPARADOR_DESDE_EL_CONTEO`), y se importa en vez de copiarse. Es la
+# misma pregunta —¿lo del día del conteo ya está adentro de lo contado?— y
+# escribirla dos veces es exactamente como la asimetría del día del corte
+# apareció ocho veces en siete lugares que no se nombraban entre sí.
+#
+# Lo que la decide no es este archivo sino la PANTALLA, que le dice al que
+# arranca la cuenta los tres casos: contar lo que ya llegó y fechar hoy,
+# fechar ANTES para que una recepción vieja se sume, y nunca las dos cosas
+# juntas. Ver el corolario 77 en CLAUDE.md.
+_SQL_STOCK_DE_VACIOS_DEPOSITO = """
+    WITH base AS (
+        -- EL MÁS VIEJO, no el último. Un conteo posterior que re-basara la
+        -- cuenta sería un ajuste disfrazado: pisaría el stock sin dejar
+        -- rastro, que es justo lo que `ajustes_vacios` del puesto se niega
+        -- a hacer con todas las letras. Acá el conteo ARRANCA la cuenta una
+        -- vez y después el stock se deriva.
+        SELECT DISTINCT ON (c.proveedor_id)
+               c.proveedor_id, c.cantidad, c.fecha
+          FROM conteos_vacios_deposito c
+         ORDER BY c.proveedor_id, c.fecha ASC, c.id ASC
+    ),
+    -- LAS ENTRADAS NO SE CARGAN: SON LAS RECEPCIONES. No hay tabla de
+    -- entradas ni campo que alguien tenga que acordarse de llenar — el dato
+    -- ya lo carga Depósito porque necesita otra cosa. Un campo cuya única
+    -- consecuencia fuera que este stock quede bien es exactamente el que se
+    -- deja de llenar en dos semanas.
+    --
+    -- `cantidad_cajones_real` es lo ACEPTADO. Lo que se rechaza vuelve con
+    -- la mercadería en el cajón del proveedor, así que esos cajones nunca
+    -- se quedaron y no hay nada que devolver por ellos.
+    recibidos AS (
+        SELECT co.proveedor_id,
+               SUM(COALESCE(co.cantidad_cajones_real, co.cantidad_cajones)) AS cajones
+          FROM compras co
+          JOIN base b ON b.proveedor_id = co.proveedor_id
+         WHERE co.estado = 'recepcionado'
+           AND co.procesada_el IS NOT NULL
+           AND (co.procesada_el AT TIME ZONE 'America/Argentina/Buenos_Aires')::date
+               {comp} b.fecha
+         GROUP BY co.proveedor_id
+    ),
+    devueltos AS (
+        SELECT d.proveedor_id, SUM(d.cantidad) AS cajones
+          FROM vacios_deposito_devoluciones d
+          JOIN base b ON b.proveedor_id = d.proveedor_id
+         WHERE d.anulado_el IS NULL
+           AND (d.creado_en AT TIME ZONE 'America/Argentina/Buenos_Aires')::date
+               {comp} b.fecha
+         GROUP BY d.proveedor_id
+    ),
+    -- LO QUE ESPERA AL CONTEO, Y NO PASA POR `base` A PROPÓSITO. Las dos
+    -- patas de arriba entran por `base`, así que un proveedor sin conteo no
+    -- produce ni una fila: sus recepciones existen, están bien cargadas, y
+    -- no se ven en ningún lado. El que entra y lee "la cuenta no arrancó" no
+    -- tiene forma de saber que hay cuarenta cajones invisibles.
+    --
+    -- Copiarles el `JOIN base` a estas dos daría CERO justo en el único caso
+    -- que les importa — un cero que no puede dar otra cosa, adentro del
+    -- arreglo escrito para eso. Lo cuida el test que lee el cuerpo de las
+    -- dos CTE y exige que la palabra `base` no esté.
+    --
+    -- Y VAN SEPARADAS: se cargan en pantallas distintas. Un solo "5
+    -- esperando" manda a buscar entre las devoluciones una recepción que
+    -- nunca estuvo ahí.
+    esperando_recep AS (
+        SELECT co.proveedor_id,
+               COUNT(*) AS recepciones,
+               MIN((co.procesada_el AT TIME ZONE 'America/Argentina/Buenos_Aires')::date) AS desde
+          FROM compras co
+         WHERE co.estado = 'recepcionado'
+           AND co.procesada_el IS NOT NULL
+         GROUP BY co.proveedor_id
+    ),
+    esperando_dev AS (
+        SELECT d.proveedor_id,
+               COUNT(*) AS devoluciones,
+               MIN((d.creado_en AT TIME ZONE 'America/Argentina/Buenos_Aires')::date) AS desde
+          FROM vacios_deposito_devoluciones d
+         WHERE d.anulado_el IS NULL
+         GROUP BY d.proveedor_id
+    )
+    SELECT p.id, p.nombre, tc.nombre AS tipo_cajon,
+           b.fecha AS desde,
+           b.cantidad AS contados,
+           COALESCE(r.cajones, 0) AS recibidos,
+           COALESCE(v.cajones, 0) AS devueltos,
+           b.cantidad + COALESCE(r.cajones, 0) - COALESCE(v.cajones, 0) AS stock,
+           -- EN CERO CUANDO EL CONTEO SÍ ESTÁ, para que la columna signifique
+           -- UNA sola cosa: cuántos movimientos son invisibles por falta de
+           -- conteo. Una columna que significa dos cosas según otra columna
+           -- no es una columna, son dos.
+           CASE WHEN b.proveedor_id IS NULL THEN COALESCE(er.recepciones, 0) ELSE 0 END
+               AS esperando_recepciones,
+           CASE WHEN b.proveedor_id IS NULL THEN COALESCE(ed.devoluciones, 0) ELSE 0 END
+               AS esperando_devoluciones,
+           CASE WHEN b.proveedor_id IS NULL THEN LEAST(er.desde, ed.desde) END
+               AS esperando_desde
+      FROM proveedores p
+      LEFT JOIN tipos_cajon tc ON tc.id = p.tipo_cajon_id
+      LEFT JOIN base b         ON b.proveedor_id = p.id
+      LEFT JOIN recibidos r    ON r.proveedor_id = p.id
+      LEFT JOIN devueltos v    ON v.proveedor_id = p.id
+      LEFT JOIN esperando_recep er ON er.proveedor_id = p.id
+      LEFT JOIN esperando_dev ed   ON ed.proveedor_id = p.id
+     WHERE p.activo = true
+       AND (b.proveedor_id IS NOT NULL
+            OR er.proveedor_id IS NOT NULL
+            OR ed.proveedor_id IS NOT NULL)
+     ORDER BY (b.proveedor_id IS NULL), 8 DESC NULLS LAST, p.nombre
+"""
+
+
+def stock_de_vacios_deposito() -> list[dict]:
+    """Los cajones de cada proveedor que hay en el galpón. DERIVADO, una fila por proveedor.
+
+    NO HAY UNA COLUMNA CON EL STOCK y no la va a haber: se recalcula en cada
+    lectura sumando el conteo que arrancó la cuenta, las recepciones
+    posteriores y las devoluciones. De ahí sale, gratis, que anular una
+    devolución corrija el stock sola — no hay un segundo lugar que alguien
+    tenga que acordarse de mantener al día.
+
+    SOLO APARECEN LOS PROVEEDORES QUE TIENEN ALGO: un conteo, una recepción
+    o una devolución. Los cuarenta y pico del catálogo enteros serían una
+    lista que nadie lee en el celular, y el que no tiene nada no tiene nada
+    que mirar.
+
+    Y con cada fila vienen `esperando_recepciones`, `esperando_devoluciones`
+    y `esperando_desde`: cuántos movimientos ya cargados NO se están
+    contando porque ese proveedor todavía no tiene conteo. Sin eso, "la
+    cuenta no arrancó" y "hay cuarenta cajones que no te puedo mostrar" se
+    dibujan exactamente igual.
+    """
+    conexion = obtener_conexion()
+    try:
+        with conexion.cursor() as cursor:
+            cursor.execute(
+                _SQL_STOCK_DE_VACIOS_DEPOSITO.format(comp=COMPARADOR_DESDE_EL_CONTEO)
+            )
+            filas = cursor.fetchall()
+    finally:
+        conexion.close()
+    return [dict(zip(COLUMNAS_STOCK_DE_VACIOS_DEPOSITO, f)) for f in filas]
+
+
+def _stock_de_vacios_en_la_misma_transaccion(cursor, proveedor_id: int) -> int:
+    """El stock derivado de ESE proveedor, leído con el cursor que va a escribir.
+
+    LA FOTO LA SACA EL SERVER Y NO LA RUTA, y es lo único que después permite
+    reconstruir contra qué se cargó una devolución. Calculada en la ruta y
+    pasada como argumento, dos cargas simultáneas guardarían la misma foto.
+
+    POR NOMBRE Y NO POR ÍNDICE: acá es donde en la cuenta de cajas vivía un
+    `fila[8]` que dejó de existir el día que la consulta perdió una columna
+    — y siguió pareciendo correcto, porque un lector por índice no nombra
+    ninguna columna.
+    """
+    cursor.execute(
+        _SQL_STOCK_DE_VACIOS_DEPOSITO.format(comp=COMPARADOR_DESDE_EL_CONTEO)
+    )
+    for fila in cursor.fetchall():
+        proveedor = dict(zip(COLUMNAS_STOCK_DE_VACIOS_DEPOSITO, fila))
+        if proveedor["id"] == proveedor_id and proveedor["stock"] is not None:
+            return int(proveedor["stock"])
+    return 0
+
+
+def crear_conteo_vacios_deposito(proveedor_id: int, cantidad: int, fecha) -> int:
+    """Arranca (o registra) el conteo físico de los cajones de un proveedor. Devuelve su id.
+
+    DECIDE LA BASE Y ACÁ SE TRADUCE EL ERROR: que la cantidad no sea negativa
+    lo rechaza el CHECK de `conteos_vacios_deposito`. No se pre-chequea — un
+    pre-chequeo en Python es una segunda copia de la regla, y el día que se
+    separen la que rechaza deja de ser la que el código cree que rechaza.
+
+    CERO ES UNA CANTIDAD VÁLIDA, y no es un descuido del CHECK: contar cero
+    es contar. Es además el camino para que una recepción ya cargada SE SUME
+    —conteo en cero, fechado antes de esa recepción— que es uno de los tres
+    casos que la pantalla explica.
+    """
+    conexion = obtener_conexion()
+    try:
+        with conexion.cursor() as cursor:
+            antes = _stock_de_vacios_en_la_misma_transaccion(cursor, proveedor_id)
+            cursor.execute(
+                """
+                INSERT INTO conteos_vacios_deposito
+                    (proveedor_id, cantidad, fecha, stock_sistema)
+                VALUES (%s, %s, %s, %s)
+                RETURNING id
+                """,
+                (proveedor_id, cantidad, fecha, antes),
+            )
+            conteo_id = cursor.fetchone()[0]
+        conexion.commit()
+        return conteo_id
+    finally:
+        conexion.close()
+
+
+def crear_devolucion_vacios(proveedor_id: int, compra_id: int, cantidad: int,
+                            importe: float | None = None,
+                            foto_ruta: str | None = None) -> int:
+    """Le devuelve al proveedor SUS cajones vacíos, contra una compra concreta. Devuelve su id.
+
+    `compra_id` ES OBLIGATORIO y viaja hasta el INSERT: el vale no es una
+    cuenta corriente contra el proveedor, vive pegado a la compra contra la
+    que se entregó. Lo ata el NOT NULL de la base.
+
+    EL IMPORTE NO TOCA `compras.importe` NI EL COSTEO, y es una decisión del
+    dueño, no un pendiente: es plata de ENVASE y no de mercadería, y el
+    sistema ya trata al envase por su lado. Meterlo adentro del importe de la
+    compra mezclaría dos cosas que hoy están separadas y re-escribiría un
+    número que ya se cargó en Administración. El neto se lee SUMANDO las dos
+    —la devolución guarda `compra_id`, así que es un join— no cambiando una.
+    """
+    conexion = obtener_conexion()
+    try:
+        with conexion.cursor() as cursor:
+            antes = _stock_de_vacios_en_la_misma_transaccion(cursor, proveedor_id)
+            cursor.execute(
+                """
+                INSERT INTO vacios_deposito_devoluciones
+                    (proveedor_id, compra_id, cantidad, importe, foto_ruta, stock_sistema)
+                VALUES (%s, %s, %s, %s, %s, %s)
+                RETURNING id
+                """,
+                (proveedor_id, compra_id, cantidad, importe, foto_ruta, antes),
+            )
+            devolucion_id = cursor.fetchone()[0]
+        conexion.commit()
+        return devolucion_id
+    finally:
+        conexion.close()
+
+
+def anular_devolucion_vacios(devolucion_id: int) -> None:
+    """Anula una devolución. NUNCA la borra: el registro queda como corrección.
+
+    LA EXISTENCIA SE PREGUNTA CON UN SELECT SIN AGREGADO, que es lo único que
+    puede contestar "no hay". Con un `count(*)` la fila vuelve con 0 aunque
+    no haya nada que contar, así que `fetchone() is None` no es None JAMÁS y
+    la guarda no se dispara — el mismo hecho que en plpgsql hace que
+    `if not found` después de un agregado no salte nunca.
+
+    Y NO PISA UN `anulado_el` YA PUESTO: anular dos veces borraría cuándo se
+    anuló de verdad, que es peor que no anular.
+    """
+    conexion = obtener_conexion()
+    try:
+        with conexion.cursor() as cursor:
+            cursor.execute(
+                "SELECT anulado_el FROM vacios_deposito_devoluciones WHERE id = %s",
+                (devolucion_id,),
+            )
+            fila = cursor.fetchone()
+            if fila is None:
+                raise ValueError("Esa devolución no existe.")
+            if fila[0] is not None:
+                raise ValueError("Esa devolución ya estaba anulada.")
+            cursor.execute(
+                "UPDATE vacios_deposito_devoluciones SET anulado_el = now() WHERE id = %s",
+                (devolucion_id,),
+            )
+        conexion.commit()
+    finally:
+        conexion.close()
+
+
+def listar_devoluciones_vacios(proveedor_id: int, limite: int = 30) -> list[dict]:
+    """Las devoluciones de un proveedor, la más nueva primero. Las anuladas TAMBIÉN.
+
+    Se muestran las anuladas a propósito: una devolución que desaparece de la
+    lista deja al que la cargó buscando qué hizo mal. Viene `anulada` para que
+    la pantalla la pinte como lo que es — una corrección, no un hueco.
+    """
+    conexion = obtener_conexion()
+    try:
+        with conexion.cursor() as cursor:
+            cursor.execute(
+                """
+                SELECT d.id, d.cantidad, d.importe, d.foto_ruta,
+                       (d.creado_en AT TIME ZONE 'America/Argentina/Buenos_Aires')::date,
+                       d.anulado_el IS NOT NULL,
+                       d.compra_id, a.nombre, c.fecha_operacion
+                  FROM vacios_deposito_devoluciones d
+                  JOIN compras c   ON c.id = d.compra_id
+                  JOIN articulos a ON a.id = c.articulo_id
+                 WHERE d.proveedor_id = %s
+                 ORDER BY d.creado_en DESC, d.id DESC
+                 LIMIT %s
+                """,
+                (proveedor_id, limite),
+            )
+            filas = cursor.fetchall()
+    finally:
+        conexion.close()
+    return [
+        {"id": f[0], "cantidad": f[1], "importe": f[2], "foto_ruta": f[3],
+         "fecha": f[4], "anulada": f[5], "compra_id": f[6],
+         "articulo": f[7], "fecha_compra": f[8]}
+        for f in filas
+    ]
+
+
+def compras_para_vale_de_vacios(proveedor_id: int, limite: int = 40) -> list[dict]:
+    """Las compras recepcionadas de ese proveedor, para elegir contra cuál va el vale.
+
+    Solo las RECEPCIONADAS: un vale contra una compra que todavía no llegó
+    describe cajones que no están en el galpón. La pantalla no ofrece lo que
+    la escritura después rechazaría — un callejón es peor que no ofrecer nada.
+    """
+    conexion = obtener_conexion()
+    try:
+        with conexion.cursor() as cursor:
+            cursor.execute(
+                """
+                SELECT c.id, c.fecha_operacion, a.nombre,
+                       COALESCE(c.cantidad_cajones_real, c.cantidad_cajones)
+                  FROM compras c
+                  JOIN articulos a ON a.id = c.articulo_id
+                 WHERE c.proveedor_id = %s
+                   AND c.estado = 'recepcionado'
+                 ORDER BY c.fecha_operacion DESC, c.id DESC
+                 LIMIT %s
+                """,
+                (proveedor_id, limite),
+            )
+            filas = cursor.fetchall()
+    finally:
+        conexion.close()
+    return [{"id": f[0], "fecha": f[1], "articulo": f[2], "cajones": f[3]} for f in filas]
+
+
+def listar_tipos_cajon() -> list[dict]:
+    """El catálogo de tipos de cajón del depósito, activos, por nombre."""
+    conexion = obtener_conexion()
+    try:
+        with conexion.cursor() as cursor:
+            cursor.execute(
+                "SELECT id, nombre FROM tipos_cajon WHERE activo = true ORDER BY nombre"
+            )
+            filas = cursor.fetchall()
+    finally:
+        conexion.close()
+    return [{"id": f[0], "nombre": f[1]} for f in filas]
+
+
+def crear_tipo_cajon(nombre: str) -> int:
+    """Agrega un tipo de cajón. Devuelve su id.
+
+    EL PLEGADO ESTÁ ESCRITO UNA SOLA VEZ, en `normalizar_texto`, y la base
+    solo hace cumplir la unicidad de lo que Python escribió. No hay una
+    segunda expresión en SQL que pueda separarse de ésta — que es como "Cajón
+    Chico" entró al lado de "cajon  chico" en la tabla de al lado.
+
+    Y NO SE PRE-PREGUNTA "¿ya existe?": se intenta insertar y se traduce la
+    violación del unique. Preguntar antes es la regla escrita dos veces, y
+    entre la pregunta y el INSERT cabe otra carga.
+    """
+    normalizado = normalizar_texto(nombre)
+    if not normalizado:
+        raise ValueError("Poné un nombre para el cajón.")
+    conexion = obtener_conexion()
+    try:
+        with conexion.cursor() as cursor:
+            try:
+                cursor.execute(
+                    "INSERT INTO tipos_cajon (nombre, nombre_normalizado) VALUES (%s, %s) RETURNING id",
+                    # El nombre que se MUESTRA también colapsa los espacios de
+                    # adentro: si no, "Cajón  Chico" y "Cajón Chico" se ven
+                    # distintos en la pantalla y el índice los considera el
+                    # mismo — dos cosas que el operario no puede conciliar.
+                    (" ".join(nombre.split()), normalizado),
+                )
+            except psycopg2.errors.UniqueViolation:
+                conexion.rollback()
+                # SI EL CONSTRAINT RECHAZA Y NO ENCONTRAMOS EL MOTIVO, ESO SE
+                # DICE: es la señal de que las dos reglas se separaron, y
+                # tragarla es cómo se pierde meses después.
+                with conexion.cursor() as buscador:
+                    buscador.execute(
+                        "SELECT nombre FROM tipos_cajon WHERE nombre_normalizado = %s",
+                        (normalizado,),
+                    )
+                    fila = buscador.fetchone()
+                if fila is None:
+                    raise ValueError(
+                        "La base rechazó el cajón por repetido y no encuentro cuál es: "
+                        "el plegado de Python y el de la base dejaron de coincidir."
+                    )
+                raise ValueError(f"Ese cajón ya está cargado como «{fila[0]}».")
+            tipo_id = cursor.fetchone()[0]
+        conexion.commit()
+        return tipo_id
+    finally:
+        conexion.close()
+
+
+def asignar_tipo_cajon(proveedor_id: int, tipo_cajon_id: int | None) -> None:
+    """En qué cajón entrega ese proveedor. UNO SOLO.
+
+    Es un atributo del proveedor y no una segunda dimensión de la cuenta,
+    porque un proveedor entrega siempre en el mismo tipo: el tipo es CÓMO SE
+    LLAMA su cajón, no un eje contra el cual contar. El circuito del puesto
+    sí tiene las dos dimensiones —allá un cliente trae cajones de varios
+    tipos— y por eso todas sus tablas llevan `tipo_envase_id`. La diferencia
+    no es de estilo.
+    """
+    conexion = obtener_conexion()
+    try:
+        with conexion.cursor() as cursor:
+            cursor.execute(
+                "UPDATE proveedores SET tipo_cajon_id = %s, actualizado_en = now() WHERE id = %s",
+                (tipo_cajon_id, proveedor_id),
+            )
+        conexion.commit()
+    finally:
+        conexion.close()
+
+
+def buscar_tipo_cajon_por_nombre(nombre: str) -> int | None:
+    """El id del tipo de cajón que se llame así, o None. Pliega igual que el alta.
+
+    USA `normalizar_texto`, que es la MISMA función con la que se escribió
+    `nombre_normalizado`. Una comparación escrita a mano acá sería la regla
+    dos veces: la que busca dejaría de encontrar lo que la que guarda
+    considera repetido, y el que tipea "Cajón Chico" se comería un rechazo
+    sin ver dónde está el que ya existe.
+    """
+    normalizado = normalizar_texto(nombre)
+    if not normalizado:
+        return None
+    conexion = obtener_conexion()
+    try:
+        with conexion.cursor() as cursor:
+            cursor.execute(
+                "SELECT id FROM tipos_cajon WHERE nombre_normalizado = %s", (normalizado,)
+            )
+            fila = cursor.fetchone()
+    finally:
+        conexion.close()
+    return None if fila is None else int(fila[0])

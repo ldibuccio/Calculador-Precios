@@ -1,0 +1,183 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Vacíos de {{ p.nombre }}</title>
+<style>
+  :root { font-family: -apple-system, system-ui, sans-serif; }
+  body { margin: 0; padding: 1rem; background: #f5f5f5; color: #222; }
+  h2 { font-size: 1.05rem; margin: 0 0 0.75rem; }
+  .tarjeta { background: #fff; border-radius: 10px; padding: 1rem;
+             margin-bottom: 1rem; box-shadow: 0 1px 3px rgba(0,0,0,.1); }
+  .error { background: #fee2e2; color: #991b1b; padding: .75rem 1rem;
+           border-radius: 8px; margin-bottom: 1rem; font-size: .95rem; }
+  .aviso { background: #dcfce7; color: #166534; padding: .75rem 1rem;
+           border-radius: 8px; margin-bottom: 1rem; font-size: .95rem; }
+  .hueco { background: #fef3c7; color: #92400e; padding: .6rem .75rem;
+           border-radius: 8px; margin: .5rem 0 0; font-size: .9rem; }
+  .stock { font-size: 1.6rem; font-weight: 700; }
+  .stock.sin-arrancar { font-size: 1rem; font-weight: 500; color: #6b7280; }
+  .patas { display: flex; flex-wrap: wrap; gap: .4rem .9rem;
+           font-size: .85rem; color: #555; margin: .35rem 0 0; }
+  .patas span { white-space: nowrap; }
+  .fila { display: flex; flex-wrap: wrap; gap: .5rem; align-items: flex-end; }
+  .campo { display: flex; flex-direction: column; flex: 1 1 8rem; min-width: 0; }
+  label { font-size: .85rem; margin-bottom: .2rem; }
+  input, select { font-size: 1rem; padding: .6rem; min-height: 44px;
+                  border: 1px solid #cbd5e1; border-radius: 8px; min-width: 0; }
+  button { font-size: 1rem; padding: .7rem 1.1rem; min-height: 44px;
+           border: 0; border-radius: 8px; background: #2563eb; color: #fff;
+           font-weight: 600; flex: 1 1 8rem; }
+  .ayuda { font-size: .82rem; color: #6b7280; margin: .5rem 0 0; }
+  /* LA LISTA EN TARJETAS Y NO EN TABLA: a 390px una tabla de cinco columnas
+     o se corta o se arrastra de costado, y lo que queda afuera es siempre lo
+     de la derecha — que acá es el botón de anular. */
+  .vale { border-top: 1px solid #e5e7eb; padding: .7rem 0; }
+  .vale:first-of-type { border-top: 0; }
+  .vale-cabeza { display: flex; flex-wrap: wrap; gap: .5rem;
+                 align-items: baseline; }
+  .vale-cantidad { font-size: 1.05rem; font-weight: 600; }
+  /* El nombre del artículo lo tipea una persona y acá viaja adentro del
+     renglón del vale: sin esto, uno sin espacios arrastra la tarjeta entera
+     de costado. El nombre del PROVEEDOR no necesita nada — va en la barra,
+     que ya se achica sola. */
+  .vale-dato { font-size: .85rem; color: #555; overflow-wrap: anywhere; }
+  .vale.anulada .vale-cantidad, .vale.anulada .vale-dato {
+    color: #9ca3af; text-decoration: line-through; }
+  .etiqueta-anulada { background: #f3f4f6; color: #6b7280; border-radius: 6px;
+                      padding: .1rem .45rem; font-size: .78rem;
+                      text-decoration: none; }
+  .acciones { display: flex; flex-wrap: wrap; gap: .5rem; margin-top: .5rem; }
+  .acciones a, .acciones button { flex: 0 1 auto; min-height: 44px;
+                                  line-height: 28px; font-size: .9rem; }
+  .acciones a { display: inline-block; padding: .5rem .9rem; border-radius: 8px;
+                border: 1px solid #cbd5e1; color: #1d4ed8; text-decoration: none; }
+  .anular { background: #fff; color: #b91c1c; border: 1px solid #fecaca; }
+  .vacio { color: #6b7280; font-size: .95rem; }
+</style>
+</head>
+<body>
+{% set barra_sector = "compras" %}
+{% set barra_titulo = p.nombre %}
+{% set barra_atras = "/compras/vacios" %}
+{% include "_barra_navegacion.html" %}
+
+{% if error %}<div class="error">{{ error }}</div>{% endif %}
+{% if aviso %}<div class="aviso">{{ aviso }}</div>{% endif %}
+
+<div class="tarjeta">
+  {% if p.desde %}
+    <div class="stock">{{ p.stock }} cajones</div>
+    <div class="patas">
+      <span>contados {{ p.contados }}</span>
+      <span>recibidos +{{ p.recibidos }}</span>
+      <span>devueltos −{{ p.devueltos }}</span>
+      <span>desde {{ p.desde.strftime('%d/%m/%Y') }}</span>
+    </div>
+  {% else %}
+    <div class="stock sin-arrancar">La cuenta de este proveedor todavía no arrancó.</div>
+    <div class="hueco">
+      El conteo inicial se carga desde
+      <a href="/compras/vacios">Vacíos del depósito</a>. Hasta que esté, lo que
+      se cargue acá queda guardado y no se ve en ningún stock.
+    </div>
+  {% endif %}
+</div>
+
+<div class="tarjeta">
+  <h2>¿En qué cajón entrega?</h2>
+  <form method="post" action="/compras/vacios/{{ p.id }}/cajon">
+    <div class="fila">
+      <div class="campo">
+        <label for="tipo_cajon_id">Cajón</label>
+        <select id="tipo_cajon_id" name="tipo_cajon_id">
+          <option value="">Sin declarar</option>
+          {% for t in tipos %}
+          <option value="{{ t.id }}" {% if t.nombre == p.tipo_cajon %}selected{% endif %}>{{ t.nombre }}</option>
+          {% endfor %}
+        </select>
+      </div>
+      <div class="campo">
+        <label for="nombre_nuevo">…o escribí uno que no esté</label>
+        <input id="nombre_nuevo" name="nombre_nuevo" type="text" placeholder="Cajón chico">
+      </div>
+      <button type="submit">Guardar cajón</button>
+    </div>
+    <p class="ayuda">Uno solo: un proveedor entrega siempre en el mismo tipo de cajón.</p>
+  </form>
+</div>
+
+<div class="tarjeta">
+  <h2>Devolverle cajones</h2>
+  {% if compras %}
+  <form method="post" action="/compras/vacios/{{ p.id }}/devolucion" enctype="multipart/form-data">
+    <div class="fila">
+      <div class="campo">
+        <label for="compra_id">¿Contra qué compra va el vale?</label>
+        <select id="compra_id" name="compra_id" required>
+          <option value="">Elegí la compra</option>
+          {% for c in compras %}
+          <option value="{{ c.id }}">{{ c.fecha.strftime('%d/%m') }} · {{ c.articulo }} · {{ c.cajones|int }} cajones</option>
+          {% endfor %}
+        </select>
+      </div>
+      <div class="campo">
+        <label for="cantidad">¿Cuántos cajones le devolvés?</label>
+        <input id="cantidad" name="cantidad" type="number" min="1" step="1" required>
+      </div>
+      <div class="campo">
+        <label for="importe">Importe del vale (opcional)</label>
+        <input id="importe" name="importe" type="text" inputmode="decimal" placeholder="5000">
+      </div>
+      <div class="campo">
+        <label for="foto">Foto del vale (opcional)</label>
+        <input id="foto" name="foto" type="file" accept="image/*" capture="environment">
+      </div>
+      <button type="submit">Guardar la devolución</button>
+    </div>
+    <p class="ayuda">
+      El importe del vale <strong>no se le descuenta a la compra</strong>: es plata
+      de envase y va por su lado. El neto se lee sumando las dos.
+    </p>
+  </form>
+  {% else %}
+  <p class="vacio">
+    Este proveedor no tiene ninguna compra recepcionada, así que no hay contra
+    qué aplicar un vale todavía.
+  </p>
+  {% endif %}
+</div>
+
+<div class="tarjeta">
+  <h2>Devoluciones</h2>
+  {% for d in devoluciones %}
+  <div class="vale {% if d.anulada %}anulada{% endif %}">
+    <div class="vale-cabeza">
+      <span class="vale-cantidad">{{ d.cantidad }} cajones</span>
+      <span class="vale-dato">{{ d.fecha.strftime('%d/%m/%Y') }}</span>
+      {% if d.importe is not none %}<span class="vale-dato">${{ '{:,.0f}'.format(d.importe).replace(',', '.') }}</span>{% endif %}
+      <span class="vale-dato">contra {{ d.articulo }} del {{ d.fecha_compra.strftime('%d/%m') }}</span>
+      {% if d.anulada %}<span class="etiqueta-anulada">anulada</span>{% endif %}
+    </div>
+    {% if not d.anulada %}
+    <div class="acciones">
+      {% if d.foto_ruta %}
+      <a href="/compras/vacios/devolucion/{{ d.id }}/foto?proveedor_id={{ p.id }}">Ver el vale</a>
+      {% endif %}
+      <form method="post" action="/compras/vacios/devolucion/{{ d.id }}/anular">
+        <input type="hidden" name="proveedor_id" value="{{ p.id }}">
+        <button class="anular" type="submit">Anular</button>
+      </form>
+    </div>
+    {% endif %}
+  </div>
+  {% else %}
+  <p class="vacio">Todavía no se le devolvió ningún cajón.</p>
+  {% endfor %}
+</div>
+
+{% include "_pie_version.html" %}
+
+</body>
+</html>

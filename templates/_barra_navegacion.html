@@ -122,6 +122,15 @@
     font-weight: 800;
     line-height: 1.15;
     padding: 0 0.4rem 0 0.6rem;
+    /* Y EL FALLBACK DE DOS LÍNEAS NECESITA ESTO PARA EXISTIR: el script
+       de abajo achica hasta 0.9rem y, si aun así no entra, saca el nowrap
+       para que envuelva. Una palabra SIN ESPACIOS no tiene dónde envolver,
+       así que el fallback no hacía nada y el título estiraba la página.
+       Medido a 390px con el nombre de un proveedor sin espacios: la página
+       desbordaba 371px. Hasta el 18/09 ningún título venía de algo que
+       tipea una persona —eran todos literales del código— y por eso el
+       caso no existía; el detalle de Vacíos del depósito lo estrenó. */
+    overflow-wrap: anywhere;
   }
   .barra-titulo.ajustado-nowrap { white-space: nowrap; }
   .barra-empresa {

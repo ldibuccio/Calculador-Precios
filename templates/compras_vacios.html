@@ -1,0 +1,166 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Vacíos del depósito</title>
+<style>
+  :root { font-family: -apple-system, system-ui, sans-serif; }
+  body { margin: 0; padding: 1rem; background: #f5f5f5; color: #222; }
+  h2 { font-size: 1.05rem; margin: 0 0 0.75rem; }
+  .tarjeta { background: #fff; border-radius: 10px; padding: 1rem;
+             margin-bottom: 1rem; box-shadow: 0 1px 3px rgba(0,0,0,.1); }
+  .error { background: #fee2e2; color: #991b1b; padding: .75rem 1rem;
+           border-radius: 8px; margin-bottom: 1rem; font-size: .95rem; }
+  .aviso { background: #dcfce7; color: #166534; padding: .75rem 1rem;
+           border-radius: 8px; margin-bottom: 1rem; font-size: .95rem; }
+  /* EL HUECO SE PINTA, NO SE CALLA. Un proveedor sin conteo tiene sus
+     recepciones cargadas y ninguna se ve: "la cuenta no arrancó" y "hay
+     cuarenta cajones que no te puedo mostrar" se dibujarían exactamente
+     igual, y el que compró los cuarenta se va creyendo que no cargó nada. */
+  .hueco { background: #fef3c7; color: #92400e; padding: .6rem .75rem;
+           border-radius: 8px; margin: .5rem 0 0; font-size: .9rem; }
+  .cabeza { display: flex; flex-wrap: wrap; align-items: baseline;
+            gap: .5rem; margin-bottom: .35rem; }
+  /* `overflow-wrap: anywhere` VA DONDE EL TEXTO LO TIPEA UNA PERSONA, y
+     solo ahí: el nombre del proveedor y el del cajón. Medido a 390px con un
+     nombre sin espacios: la página desbordaba 384px, o sea que la tarjeta
+     entera se arrastraba de costado. El largo de los nombres no lo
+     controlamos, así que un diseño que solo entra con los de hoy se rompe el
+     día que alguien cargue uno largo. */
+  .nombre { font-size: 1.1rem; font-weight: 600; overflow-wrap: anywhere; }
+  .cajon { font-size: .85rem; color: #6b7280; overflow-wrap: anywhere; }
+  .cajon.sin-declarar { color: #92400e; }
+  .stock { font-size: 1.6rem; font-weight: 700; }
+  .stock.sin-arrancar { font-size: 1rem; font-weight: 500; color: #6b7280; }
+  .patas { display: flex; flex-wrap: wrap; gap: .4rem .9rem;
+           font-size: .85rem; color: #555; margin: .35rem 0 .6rem; }
+  .patas span { white-space: nowrap; }
+  .fila { display: flex; flex-wrap: wrap; gap: .5rem; align-items: flex-end; }
+  .campo { display: flex; flex-direction: column; flex: 1 1 8rem; min-width: 0; }
+  label { font-size: .85rem; margin-bottom: .2rem; }
+  /* `min-width: 0` NO ES DECORACIÓN: un <input> adentro de un flex no baja de
+     su ancho intrínseco por más que se le ponga `flex`, así que sin esto lo
+     que cede es el botón de al lado — y se sale de la pantalla cuatro píxeles,
+     que es exactamente el tamaño que se redondea a cero al medir. */
+  input, select { font-size: 1rem; padding: .6rem; min-height: 44px;
+                  border: 1px solid #cbd5e1; border-radius: 8px; min-width: 0; }
+  button { font-size: 1rem; padding: .7rem 1.1rem; min-height: 44px;
+           border: 0; border-radius: 8px; background: #2563eb; color: #fff;
+           font-weight: 600; flex: 1 1 8rem; }
+  /* LA REGLA DE LA FECHA VA EN LA PANTALLA y no en un doc: el que arranca la
+     cuenta está acá y no va a ir a buscar nada. Y va con el cuerpo del texto,
+     no en letra chica — el caso que se equivoca (contar 40 Y fecharlo antes
+     de la recepción) suma dos veces, no descuadra nada y no avisa nunca. */
+  .regla-fecha { background: #eff6ff; color: #1e3a8a; border-radius: 8px;
+                 padding: .75rem .9rem; margin: .6rem 0 0; font-size: .9rem; }
+  .regla-fecha ul { margin: .5rem 0 0; padding-left: 1.1rem; }
+  .regla-fecha li { margin-bottom: .35rem; }
+  .regla-fecha li:last-child { margin-bottom: 0; }
+  /* SE VE QUE SE PUEDE ENTRAR: borde, color y subrayado. Un link del mismo
+     color que el texto de al lado y sin subrayar es un camino que funciona y
+     no existe — el único indicio sería el cursor, que en celular no hay. */
+  .ver { display: inline-block; margin-top: .4rem; font-size: .95rem;
+         color: #1d4ed8; text-decoration: underline; min-height: 44px;
+         line-height: 44px; }
+  .vacio { color: #6b7280; font-size: .95rem; }
+</style>
+</head>
+<body>
+
+{% set barra_sector = "compras" %}
+{% set barra_titulo = "Vacíos del depósito" %}
+{% set barra_atras = "/compras" %}
+{% include "_barra_navegacion.html" %}
+
+{% if error %}<div class="error">{{ error }}</div>{% endif %}
+{% if aviso %}<div class="aviso">{{ aviso }}</div>{% endif %}
+
+<div class="tarjeta">
+  <h2>Arrancar la cuenta de un proveedor</h2>
+  <form method="post" action="/compras/vacios/conteo">
+    <div class="fila">
+      <div class="campo">
+        <label for="proveedor_id">¿De qué proveedor contaste los cajones?</label>
+        <select id="proveedor_id" name="proveedor_id" required>
+          <option value="">Elegí un proveedor</option>
+          {% for p in proveedores if not p.desde %}
+          <option value="{{ p.id }}">{{ p.nombre }}</option>
+          {% endfor %}
+        </select>
+      </div>
+      <div class="campo">
+        <label for="cantidad">¿Cuántos cajones suyos hay?</label>
+        <input id="cantidad" name="cantidad" type="number" min="0" step="1" required>
+      </div>
+      <div class="campo">
+        <label for="fecha">¿Qué día los contaste?</label>
+        <input id="fecha" name="fecha" type="date" value="{{ hoy }}" required>
+      </div>
+      <button type="submit">Arrancar la cuenta</button>
+    </div>
+    <div class="regla-fecha">
+      <strong>Contá a la mañana, antes de que llegue la mercadería del día.</strong>
+      Desde la fecha que pongas se suman las recepciones, así que lo que entre
+      ese mismo día se cuenta arriba de lo que contaste.
+      <ul>
+        <li>Contaste los cajones que ya tenés: poné la cantidad y fechalo <strong>hoy</strong>.</li>
+        <li>Querés que una recepción ya cargada se sume: poné <strong>cero</strong> cajones
+            y fechalo <strong>antes</strong> de esa recepción. Contar cero es contar.</li>
+        <li>Nunca las dos juntas: contar los cajones <em>y</em> fecharlo antes de
+            la recepción los suma <strong>dos veces</strong>, y eso no se ve después.</li>
+      </ul>
+    </div>
+  </form>
+</div>
+
+<h2>Cajones en el galpón</h2>
+{% for p in proveedores %}
+<div class="tarjeta">
+  <div class="cabeza">
+    <span class="nombre">{{ p.nombre }}</span>
+    {% if p.tipo_cajon %}
+      <span class="cajon">{{ p.tipo_cajon }}</span>
+    {% else %}
+      <span class="cajon sin-declarar">sin declarar en qué cajón entrega</span>
+    {% endif %}
+  </div>
+  {% if p.desde %}
+    <div class="stock">{{ p.stock }} cajones</div>
+    <div class="patas">
+      <span>contados {{ p.contados }}</span>
+      <span>recibidos +{{ p.recibidos }}</span>
+      <span>devueltos −{{ p.devueltos }}</span>
+      <span>desde {{ p.desde.strftime('%d/%m/%Y') }}</span>
+    </div>
+  {% else %}
+    <div class="stock sin-arrancar">La cuenta de este proveedor todavía no arrancó.</div>
+    {% if p.esperando_recepciones or p.esperando_devoluciones %}
+    <div class="hueco">
+      Ya hay
+      {% if p.esperando_recepciones %}
+        <strong>{{ p.esperando_recepciones }} recepci{{ 'ón' if p.esperando_recepciones == 1 else 'ones' }}</strong>
+      {% endif %}
+      {% if p.esperando_recepciones and p.esperando_devoluciones %} y {% endif %}
+      {% if p.esperando_devoluciones %}
+        <strong>{{ p.esperando_devoluciones }} devoluci{{ 'ón' if p.esperando_devoluciones == 1 else 'ones' }}</strong>
+      {% endif %}
+      de este proveedor sin contar, desde el
+      <strong>{{ p.esperando_desde.strftime('%d/%m/%Y') }}</strong>.
+      Para que entren, fechá el conteo antes de ese día.
+    </div>
+    {% endif %}
+  {% endif %}
+  <a class="ver" href="/compras/vacios/{{ p.id }}">Ver y devolver cajones</a>
+</div>
+{% else %}
+<div class="tarjeta vacio">
+  Ningún proveedor tiene cajones que contar todavía: acá aparecen los que
+  tienen una recepción, una devolución o un conteo.
+</div>
+{% endfor %}
+
+{% include "_pie_version.html" %}
+
+</body>
+</html>

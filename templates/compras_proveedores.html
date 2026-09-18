@@ -189,6 +189,24 @@
              placeholder="N07P41" maxlength="6" autocapitalize="characters" autocomplete="off">
       <p class="ayuda">Es su identidad y no se puede cambiar después: una letra, dos números, la P y dos números. Por ejemplo N07P41.</p>
 
+      {# UNO SOLO, y por eso es un <select> y no una tabla de cruce: un
+         proveedor entrega siempre en el mismo cajón, así que el tipo es
+         CÓMO SE LLAMA EL SUYO y no un eje contra el cual contar. Va
+         OPCIONAL porque la columna es nullable a propósito: exigirlo acá
+         dejaría el alta más estricta que los cuarenta y pico que ya están
+         cargados sin cajón. #}
+      <label for="tipo_cajon_nuevo">¿En qué cajón entrega?</label>
+      <select id="tipo_cajon_nuevo" name="tipo_cajon_id">
+        <option value="">Todavía no sé</option>
+        {% for c in tipos_cajon %}
+        <option value="{{ c.id }}">{{ c.nombre }}</option>
+        {% endfor %}
+      </select>
+      <label for="cajon_nombre_nuevo">…o escribí uno que no esté</label>
+      <input type="text" id="cajon_nombre_nuevo" name="cajon_nombre_nuevo"
+             maxlength="60" autocomplete="off" placeholder="Cajón cosechero">
+      <p class="ayuda">Sirve para llevarle la cuenta de los cajones vacíos que hay que devolverle. Se puede cargar después desde Vacíos del depósito.</p>
+
       <button type="submit">Cargar proveedor</button>
     </form>
   </div>

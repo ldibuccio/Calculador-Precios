@@ -110,13 +110,23 @@ _MEDICION = """(opciones) => {
   // Y el piso es 1px, no 0: medio píxel de redondeo no es un solape.
   const solapes = [];
   let pares_mirados = 0;
+  //
+  // Y LO INLINE TAMPOCO SE APILA, que es la tercera forma y la encontró el
+  // 18/09 la pantalla de Vacíos: un <strong> adentro de un párrafo que
+  // ENVUELVE tiene por caja la UNIÓN de sus renglones, así que arranca en la
+  // línea donde el <strong> anterior todavía está. Medido: "14 recepciones"
+  // de 1334,6 a 1350,6 y "3 devoluciones" de 1334,6 a 1366,6 — 16px de
+  // "solape" y nada que se pise en la pantalla. El filtro de la columna no
+  // los saca: un inline envuelto ocupa el ancho entero, así que comparte
+  // columna con todo. `inline-block` SÍ se apila y se queda.
   const enFlujo = elemento => {
     const p = getComputedStyle(elemento).position;
     return p === "static" || p === "relative";
   };
+  const esCaja = elemento => getComputedStyle(elemento).display !== "inline";
   [...document.querySelectorAll("form, fieldset, section, div, main, body")].forEach(padre => {
     const hijos = [...padre.children].filter(
-      h => h.getBoundingClientRect().height > 0 && enFlujo(h)
+      h => h.getBoundingClientRect().height > 0 && enFlujo(h) && esCaja(h)
     );
     for (let i = 0; i < hijos.length - 1; i++) {
       const a = hijos[i].getBoundingClientRect(), b = hijos[i + 1].getBoundingClientRect();

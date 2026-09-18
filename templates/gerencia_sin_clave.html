@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Falta la clave de Gerencia</title>
+<title>Falta la clave de {{ puerta.titulo }}</title>
 <style>
   :root { font-family: -apple-system, system-ui, sans-serif; }
   body { margin: 0; padding: 1rem; background: #f5f5f5; color: #222; }
@@ -38,19 +38,25 @@
 </head>
 <body>
   <div class="tarjeta">
-    <h1>Esta pantalla está cerrada porque falta su clave</h1>
-    {# El default de Gerencia es al reves que acá: las pantallas de
-       consulta se abren igual sin clave, para que un deploy no trabe
-       nada. Esta ESCRIBE, asi que sin puerta no entra nadie. #}
-    <p>Corregir una recepción mueve la cotización del artículo y puede dejar
-       sin explicación el costo que una guía R ya congeló. No es una pantalla
-       que pueda quedar abierta a cualquiera que sepa la dirección.</p>
+    <h1>Esta pantalla de {{ puerta.titulo }} está cerrada porque falta su clave</h1>
+    {# EL SECTOR SALE DE `puerta` Y NO ESCRITO ACÁ. Esta pantalla la
+       comparten las tres zonas con clave, y hasta el 18/09 el texto era
+       entero de Gerencia: un POST de Compras sin la variable cargada
+       contestaba "Falta la clave de Gerencia" y explicaba que corregir una
+       recepción mueve la cotización. El que lo leía se iba a pedir la clave
+       equivocada — la url era una y los sectores, tres. #}
+    {# El default de las pantallas de CONSULTA es al revés que acá: se abren
+       igual sin clave, para que un deploy no trabe nada. Ésta ESCRIBE, así
+       que sin puerta no entra nadie. #}
+    <p>{{ puerta.ayuda }}</p>
+    <p>Esto que estabas por hacer <strong>escribe</strong>, así que no puede
+       quedar abierto a cualquiera que sepa la dirección.</p>
     <p>Falta cargar la variable <code>{{ variable }}</code> en Railway, en
        <strong>el servicio de esta empresa</strong> (cada una tiene la suya).
        En cuanto esté, esta pantalla pide la clave y se puede usar.</p>
-    <p>Las demás pantallas de Gerencia siguen funcionando: son de consulta y
-       no se traban por esto.</p>
-    <a class="volver" href="/inicio">Volver a Inicio</a>
+    <p>Las demás pantallas de {{ puerta.titulo }} siguen funcionando: son de
+       consulta y no se traban por esto.</p>
+    <a class="volver" href="{{ puerta.volver_a }}">{{ puerta.volver_texto }}</a>
   </div>
 {% include "_pie_version.html" %}
 </body>

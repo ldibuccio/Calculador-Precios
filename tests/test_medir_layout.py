@@ -345,6 +345,63 @@ def test_dos_botones_LADO_A_LADO_no_son_un_solape():
     assert medicion["solapes"] == []
 
 
+def test_dos_INLINE_de_un_parrafo_QUE_ENVUELVE_no_son_un_solape():
+    """La TERCERA forma que el detector no distinguía, del 18/09.
+
+    Un `<strong>` adentro de un párrafo que envuelve tiene por caja la UNIÓN
+    de sus renglones, así que empieza en la línea donde el `<strong>` de
+    antes todavía está. Salió midiendo el índice de Vacíos del depósito, en
+    el aviso de lo que espera al conteo: "14 recepciones" de 1334,6 a 1350,6
+    y "3 devoluciones" de 1334,6 a 1366,6 — 16px de "solape" con nada que se
+    pise en la pantalla.
+
+    Y el filtro de la columna compartida —el que saca los botones de lado a
+    lado— no los ve: un inline envuelto ocupa el ancho entero del párrafo,
+    así que comparte columna con todo lo que tenga al lado.
+    """
+    # El aviso va adentro de una tarjeta y con hermanos de BLOQUE, como en la
+    # pantalla: un fixture con puros inline deja el documento sin un solo par
+    # que mirar, y ahí `solapes == []` no distingue "no se pisa" de "no se
+    # miró". Lo agarró el propio assert del denominador.
+    html = """
+    <div style="width: 300px; font: 14px sans-serif">
+      <div>PUESTO DE EJEMPLO</div>
+      <div>La cuenta de este proveedor todavía no arrancó.</div>
+      <div>
+        Ya hay <strong>14 recepciones</strong> y
+        <strong>3 devoluciones de este proveedor sin contar</strong>, desde el
+        <strong>11/09/2026</strong>.
+      </div>
+    </div>
+    """
+    medicion = _medir(html, ancho=390)
+
+    assert medicion["solapes"] == []
+    # Y que los haya MIRADO, porque un cero sin pares es "no se miró ninguno"
+    # y se imprime igual (corolarios 45 y 53).
+    assert medicion["pares"] > 0
+
+
+def test_un_INLINE_BLOCK_que_se_pisa_SI_se_marca():
+    """La otra mitad del par: el filtro saca `inline`, no todo lo que no es bloque.
+
+    Un `inline-block` sí forma una caja y sí se apila, así que un margen
+    negativo que lo haga pisar al de arriba tiene que seguir saliendo. Sin
+    este caso, un filtro escrito de más —sacar todo lo que no sea `block`—
+    pasaría el test de arriba y apagaría el detector en media pantalla.
+    """
+    html = """
+    <div style="width: 300px">
+      <span style="display: inline-block; width: 100%; height: 40px">Arriba</span>
+      <span style="display: inline-block; width: 100%; height: 40px;
+                   margin-top: -12px">Abajo</span>
+    </div>
+    """
+    medicion = _medir(html, ancho=390)
+
+    assert medicion["solapes"], medicion
+
+
 def test_lo_POSICIONADO_que_se_pisa_a_PROPOSITO_no_cuenta_como_solape():
     """Un cartel flotante se pisa por diseño; marcarlo es marcar todo."""
     html = """

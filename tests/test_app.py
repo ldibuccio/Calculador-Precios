@@ -26449,6 +26449,10 @@ def test_reproceso_tiene_CANCELAR_que_solo_sale_al_hub_de_stock():
 
 # --- ABM de proveedores de compras ---
 
+# El catálogo de cajones que la pantalla lista para el alta. Inventado y que
+# se note: un nombre real acá se lee como una medición (regla de las capturas).
+TIPOS_CAJON_DE_PRUEBA = [{"id": 1, "nombre": "Cajón DE EJEMPLO"}]
+
 PROVEEDORES_ABM_DE_PRUEBA = [
     {"id": 1, "codigo_puesto": "N01P02", "nombre": "Don Pedro", "activo": True, "compras": 12},
     {"id": 2, "codigo_puesto": "L03P11", "nombre": "La Rosa", "activo": True, "compras": 1},
@@ -26457,7 +26461,8 @@ PROVEEDORES_ABM_DE_PRUEBA = [
 
 
 def test_abm_proveedores_compras_muestra_codigo_estado_y_cuantas_compras():
-    with patch("app.main.listar_proveedores_para_abm", return_value=PROVEEDORES_ABM_DE_PRUEBA):
+    with patch("app.main.listar_proveedores_para_abm", return_value=PROVEEDORES_ABM_DE_PRUEBA), \
+         patch("app.main.listar_tipos_cajon", return_value=TIPOS_CAJON_DE_PRUEBA):
         respuesta = cliente.get("/compras/proveedores")
 
     assert respuesta.status_code == 200
@@ -26479,7 +26484,8 @@ def test_el_ABM_de_proveedores_OFRECE_el_alta():
     antes de comprarle es un caso real y la única salida era inventar una
     compra.
     """
-    with patch("app.main.listar_proveedores_para_abm", return_value=PROVEEDORES_ABM_DE_PRUEBA):
+    with patch("app.main.listar_proveedores_para_abm", return_value=PROVEEDORES_ABM_DE_PRUEBA), \
+         patch("app.main.listar_tipos_cajon", return_value=TIPOS_CAJON_DE_PRUEBA):
         marcado = cliente.get("/compras/proveedores").text.split("</style>")[-1]
 
     assert 'action="/compras/proveedores/nuevo"' in marcado
@@ -26499,6 +26505,7 @@ def test_el_alta_de_proveedor_pasa_por_LA_MISMA_PUERTA_que_la_carga_de_compras()
         patch("app.main.buscar_proveedor_por_codigo", return_value=None),
         patch("app.main.obtener_o_crear_proveedor_por_codigo", return_value=(7, False)) as puerta,
         patch("app.main.listar_proveedores_para_abm", return_value=PROVEEDORES_ABM_DE_PRUEBA),
+        patch("app.main.listar_tipos_cajon", return_value=TIPOS_CAJON_DE_PRUEBA),
     ):
         respuesta = cliente.post(
             "/compras/proveedores/nuevo",
@@ -26539,6 +26546,7 @@ def test_el_FORMATO_mal_y_el_codigo_REPETIDO_dicen_cosas_distintas():
     """
     with (
         patch("app.main.listar_proveedores_para_abm", return_value=PROVEEDORES_ABM_DE_PRUEBA),
+        patch("app.main.listar_tipos_cajon", return_value=TIPOS_CAJON_DE_PRUEBA),
         patch("app.main.buscar_proveedor_por_codigo") as buscar,
         patch("app.main.obtener_o_crear_proveedor_por_codigo") as puerta,
     ):
@@ -26570,6 +26578,7 @@ def test_el_codigo_REPETIDO_se_MUESTRA_destacado_en_la_lista():
     de_baja = dict(PROVEEDORES_ABM_DE_PRUEBA[0], id=1, activo=False)
     with (
         patch("app.main.listar_proveedores_para_abm", return_value=[de_baja]),
+        patch("app.main.listar_tipos_cajon", return_value=TIPOS_CAJON_DE_PRUEBA),
         patch("app.main.buscar_proveedor_por_codigo",
               return_value={"id": 1, "codigo_puesto": "N07P41",
                             "nombre": de_baja["nombre"], "activo": False}),
@@ -26583,7 +26592,8 @@ def test_el_codigo_REPETIDO_se_MUESTRA_destacado_en_la_lista():
 
 
 def test_abm_proveedores_compras_el_activo_ofrece_baja_y_el_de_baja_ofrece_alta():
-    with patch("app.main.listar_proveedores_para_abm", return_value=PROVEEDORES_ABM_DE_PRUEBA):
+    with patch("app.main.listar_proveedores_para_abm", return_value=PROVEEDORES_ABM_DE_PRUEBA), \
+         patch("app.main.listar_tipos_cajon", return_value=TIPOS_CAJON_DE_PRUEBA):
         respuesta = cliente.get("/compras/proveedores")
 
     assert 'action="/compras/proveedores/1/baja"' in respuesta.text
@@ -26594,7 +26604,8 @@ def test_abm_proveedores_compras_el_activo_ofrece_baja_y_el_de_baja_ofrece_alta(
 
 
 def test_abm_proveedores_compras_la_confirmacion_de_baja_dice_cuantas_compras_tiene():
-    with patch("app.main.listar_proveedores_para_abm", return_value=PROVEEDORES_ABM_DE_PRUEBA):
+    with patch("app.main.listar_proveedores_para_abm", return_value=PROVEEDORES_ABM_DE_PRUEBA), \
+         patch("app.main.listar_tipos_cajon", return_value=TIPOS_CAJON_DE_PRUEBA):
         respuesta = cliente.get("/compras/proveedores")
 
     assert "Tiene 12 compras cargadas, que quedan como están." in respuesta.text
@@ -26604,7 +26615,8 @@ def test_abm_proveedores_compras_la_confirmacion_de_baja_dice_cuantas_compras_ti
 def test_abm_proveedores_compras_no_deja_editar_el_codigo():
     # codigo_puesto es la identidad: cambiarlo movería todas las compras a
     # otro proveedor. El formulario de edición manda solo el nombre.
-    with patch("app.main.listar_proveedores_para_abm", return_value=PROVEEDORES_ABM_DE_PRUEBA):
+    with patch("app.main.listar_proveedores_para_abm", return_value=PROVEEDORES_ABM_DE_PRUEBA), \
+         patch("app.main.listar_tipos_cajon", return_value=TIPOS_CAJON_DE_PRUEBA):
         respuesta = cliente.get("/compras/proveedores")
 
     bloque = respuesta.text.split('action="/compras/proveedores/1/renombrar"')[1].split("</form>")[0]
@@ -26625,7 +26637,8 @@ def test_renombrar_proveedor_compras_redirige_con_aviso():
 
 
 def test_renombrar_proveedor_compras_sin_nombre_da_400():
-    with patch("app.main.listar_proveedores_para_abm", return_value=PROVEEDORES_ABM_DE_PRUEBA):
+    with patch("app.main.listar_proveedores_para_abm", return_value=PROVEEDORES_ABM_DE_PRUEBA), \
+         patch("app.main.listar_tipos_cajon", return_value=TIPOS_CAJON_DE_PRUEBA):
         respuesta = cliente.post("/compras/proveedores/7/renombrar", data={"nombre": "   "})
 
     assert respuesta.status_code == 400
@@ -26650,6 +26663,7 @@ def test_baja_de_proveedor_compras_que_ya_no_existe_da_400():
     with (
         patch("app.main.cambiar_actividad_proveedor", side_effect=ValueError("Ese proveedor ya no existe.")),
         patch("app.main.listar_proveedores_para_abm", return_value=PROVEEDORES_ABM_DE_PRUEBA),
+        patch("app.main.listar_tipos_cajon", return_value=TIPOS_CAJON_DE_PRUEBA),
     ):
         respuesta = cliente.post("/compras/proveedores/7/baja")
 

@@ -47,18 +47,36 @@ def test_armar_ruta_unica_arranca_con_el_PREFIJO_DEL_TIPO():
     assert re.match(r"^comanda/\d{4}-\d{2}-\d{2}/saturno-\d+-[0-9a-f]{8}\.jpg$", ruta)
 
 
-def test_los_CUATRO_tipos_van_cada_uno_a_su_carpeta():
-    """Sin prefijo, una carpeta de fecha mezcla los cuatro y mirar el bucket no sirve.
+def test_TODOS_los_prefijos_del_modulo_van_cada_uno_a_su_carpeta():
+    """Sin prefijo, una carpeta de fecha los mezcla y mirar el bucket no sirve.
 
-    Los cuatro se prueban juntos porque se decidieron juntos: bautizados
-    de a uno, el quinto tipo vuelve a caer en la raíz.
+    ESTE TEST RECORRÍA SU PROPIA LISTA —cuatro nombres escritos a mano— y
+    por eso se comió a `PREFIJO_MERMA`, que es el quinto y entró sin que
+    nadie lo mirara. Su propio docstring lo había anticipado: *"bautizados
+    de a uno, el quinto tipo vuelve a caer en la raíz"*. Volvió a pasar
+    exactamente así.
+
+    Ahora compara el conjunto ENCONTRADO contra el DECIDIDO: los prefijos
+    salen del módulo con `dir()`, no de acá. Falla en las dos direcciones —
+    cuando aparece uno que nadie agregó a la lista de abajo, y cuando uno
+    de la lista deja de existir— y las dos son hallazgos.
     """
-    rutas = {
-        prefijo: _armar_ruta_unica("EJEMPLO", prefijo)
-        for prefijo in (PREFIJO_COMANDA, PREFIJO_PRECIOS, PREFIJO_PEDIDO, PREFIJO_PESAJE)
+    import core.storage as storage
+
+    encontrados = {
+        getattr(storage, nombre)
+        for nombre in dir(storage)
+        if nombre.startswith("PREFIJO_")
     }
-    assert sorted(rutas) == ["comanda", "pedido", "pesaje", "precios"]
-    for prefijo, ruta in rutas.items():
+    decididos = {"comanda", "precios", "pedido", "pesaje", "merma", "vacios"}
+    assert encontrados == decididos, (
+        "apareció (o se fue) un tipo de foto del bucket. Agregalo/sacalo también en "
+        "listar_fotos_para_limpiar y olvidar_foto_borrada, o sus archivos no se "
+        "borran nunca y el bucket no converge."
+    )
+
+    for prefijo in sorted(encontrados):
+        ruta = _armar_ruta_unica("EJEMPLO", prefijo)
         assert ruta.startswith(prefijo + "/"), f"{prefijo} no quedó en su carpeta: {ruta}"
 
 

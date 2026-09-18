@@ -2887,6 +2887,58 @@ Engancha con el corolario 80 por el otro extremo: allá lo derivado hace que
 mantener al día—; acá hace que **no haya nada que completar**. Es la misma
 propiedad cobrada dos veces.
 
+### Lo que encontró ESTRENAR el primer nombre TIPEADO en la barra (18/09)
+
+El detalle de Vacíos pone el nombre del proveedor en `barra_titulo`, y es la
+**primera pantalla del sistema que pone ahí algo que escribe una persona**:
+los otros dos títulos dinámicos —la pantalla de la clave y la de "en
+construcción"— traen texto del código. O sea que el caso lo estrenó esta
+pantalla, y lo que estrenó fue un agujero viejo.
+
+La barra achica el título hasta 0,9rem y, si aun así no entra, **le saca el
+`nowrap` para que envuelva en dos líneas**. Eso es el fallback previsto y
+está escrito en su comentario. Una palabra SIN ESPACIOS no tiene dónde
+envolver, así que el fallback no hacía nada: medido a 390px, la página
+desbordaba **371px** con un nombre de proveedor sin espacios. Se cierra con
+`overflow-wrap: anywhere`, que es lo que hace que el fallback exista.
+
+**Y el índice desbordaba 384px por su cuenta**, en el nombre y en el tipo de
+cajón. Los dos son lo mismo dicho dos veces: **el largo de un nombre no lo
+controlamos, así que toda pantalla que muestre uno se mide con un nombre que
+no se puede partir.** El par va completo —el impartible y el normal— porque
+un arreglo que rompa el caso cómodo para aguantar el raro pasaría el primero
+sin que nada caiga.
+
+**Y el desborde se lee de `desborde_pagina`**: en una pantalla de tarjetas la
+clave `desborde` viene clavada en 0 (corolario 47 adentro del resultado), así
+que el test que mira la que no es sale en verde sobre una pantalla que se
+arrastra de costado.
+
+### Y el 503 de las tres puertas decía "Gerencia" (18/09)
+
+Salió del mismo trabajo, por el primer POST de Vacíos: sin `CLAVE_COMPRAS`
+cargada contestaba **"Falta la clave de Gerencia"** y explicaba que *corregir
+una recepción mueve la cotización del artículo*. La pantalla es UNA y las
+puertas son TRES —Gerencia, Administración y Compras— y su texto estaba
+escrito entero para la primera.
+
+Es el **corolario 56 exacto** —la url era una; los sectores, tres— con la
+diferencia de que acá no hay un link que choque contra una clave ajena: hay
+un cartel que manda a pedir **la clave equivocada**, que es peor, porque el
+que lo lee cree que ya entendió. El arreglo es el mismo que el de aquel caso:
+lo que describe el CAMINO sale de `puerta` (el título, la ayuda, el volver) y
+deja de estar escrito en la plantilla.
+
+**Y el test pregunta por la jerga que NO puede aparecer** —`"Gerencia" not in
+marcado`— y no solo por el texto bueno: afirmar el nombre nuevo pasa igual si
+la frase vieja quedó tres líneas más abajo.
+
+**Lo que lo destapó no fue leerla: fue que un test nuevo diera 503 donde
+esperaba 303.** La pantalla llevaba así desde que la segunda puerta la reusó,
+y no la mira nadie — solo se dibuja cuando falta una variable de entorno, o
+sea en un deploy a medio configurar, que es justo cuando nadie está leyendo
+con atención.
+
 ### Y el vale NO toca el importe de la compra
 
 También del dueño: el descuento del vale vive SOLO en la fila de la
@@ -4543,6 +4595,30 @@ todos mis tests medían un fixture PLANTADO. Probaban la herramienta y no la
 pantalla. La diferencia es el defecto real volviendo con la suite en verde,
 y se cierra con un test que renderiza las dos pantallas de verdad y exige
 `solapes == []` con `pares > 0` al lado.
+
+#### Y la TERCERA forma de no-apilado es lo INLINE, del 18/09
+
+El filtro de la columna compartida saca los botones de lado a lado y **no
+puede ver ésta**: un `<strong>` adentro de un párrafo que ENVUELVE tiene por
+caja la UNIÓN de sus renglones, así que ocupa el ancho entero —comparte
+columna con todo— y arranca en la línea donde el `<strong>` de antes todavía
+está. Medido en el índice de Vacíos del depósito, en el aviso de lo que
+espera al conteo: `14 recepciones` de 1334,6 a 1350,6 y `3 devoluciones` de
+1334,6 a 1366,6. **16px de "solape" con nada que se pise en la pantalla.**
+
+Se saca preguntando `display !== "inline"`, y el `inline-block` se queda a
+propósito: ése sí forma una caja y sí se apila. Por eso el par plantado son
+dos —el párrafo que no tiene que marcar y un `inline-block` con margen
+negativo que sí—; con el filtro escrito de más (`=== "block"`) el primero
+pasa igual y el detector se apaga en media pantalla, que es el 53 otra vez.
+
+**Y el fixture del caso bueno nació sin poder contestar**: tenía puros hijos
+inline, así que después de filtrar el documento se quedaba **sin un solo par
+que mirar** y `solapes == []` era el cero de "no se miró ninguno". Lo agarró
+el `assert medicion["pares"] > 0` escrito al lado — el denominador del
+corolario 45 mordiendo adentro del test escrito para el 53. El arreglo es que
+el fixture se parezca a producción: el aviso va adentro de una tarjeta, con
+hermanos de bloque, como en la pantalla.
 
 ### Y el QUINTO es la CLAVE que se lee del resultado (17/09)
 

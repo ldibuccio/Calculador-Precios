@@ -49,6 +49,9 @@ PREFIJO_PRECIOS = "precios"
 PREFIJO_PEDIDO = "pedido"
 PREFIJO_PESAJE = "pesaje"
 PREFIJO_MERMA = "merma"
+# El vale de la devolución de vacíos del DEPÓSITO. No es el del puesto:
+# ese circuito no sube fotos.
+PREFIJO_VACIOS = "vacios"
 EXPIRACION_URL_FIRMADA_SEGUNDOS = 3600  # 1 hora
 TIMEOUT_HTTP_SEGUNDOS = 30
 

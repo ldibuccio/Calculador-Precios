@@ -297,6 +297,16 @@ from app.db import (
     movimientos_de_colegas,
     obtener_o_crear_colega,
     stock_de_envases,
+    stock_de_vacios_deposito,
+    crear_conteo_vacios_deposito,
+    crear_devolucion_vacios,
+    anular_devolucion_vacios,
+    listar_devoluciones_vacios,
+    compras_para_vale_de_vacios,
+    listar_tipos_cajon,
+    crear_tipo_cajon,
+    buscar_tipo_cajon_por_nombre,
+    asignar_tipo_cajon,
     crear_movimiento_envase,
     guardar_umbral_de_envase,
     contar_envases_a_reponer,
@@ -413,6 +423,7 @@ from core.storage import (
     obtener_url_foto,
     subir_archivo_comanda,
     subir_foto_comanda,
+    PREFIJO_VACIOS,
 )
 
 UNIDADES_VENTA_VALIDAS = {"kilo", "unidad", "cubeta"}
@@ -4326,14 +4337,15 @@ def _renderizar_pantalla_proveedores_compras(
 ):
     try:
         proveedores = listar_proveedores_para_abm()
+        tipos_cajon = listar_tipos_cajon()
     except Exception as error_db:
         raise HTTPException(status_code=500, detail=f"Error al conectar con la base de datos: {error_db}") from error_db
 
     return templates.TemplateResponse(
         request,
         "compras_proveedores.html",
-        {"proveedores": proveedores, "error": error, "aviso": aviso,
-         "destacado_id": destacado_id},
+        {"proveedores": proveedores, "tipos_cajon": tipos_cajon,
+         "error": error, "aviso": aviso, "destacado_id": destacado_id},
         status_code=status_code,
     )
 
@@ -4357,7 +4369,10 @@ def ver_proveedores_compras(request: Request, aviso: str | None = None, destacad
 
 
 @app.post("/compras/proveedores/nuevo")
-def crear_proveedor_compras_ruta(request: Request, nombre: str = Form(""), codigo_puesto: str = Form("")):
+def crear_proveedor_compras_ruta(request: Request, nombre: str = Form(""),
+                                 codigo_puesto: str = Form(""),
+                                 tipo_cajon_id: str = Form(""),
+                                 cajon_nombre_nuevo: str = Form("")):
     """Alta a mano. Pasa por la MISMA puerta que usa la carga de compras.
 
     El INSERT vive en un solo lugar (`obtener_o_crear_proveedor_por_codigo`):
@@ -4413,8 +4428,27 @@ def crear_proveedor_compras_ruta(request: Request, nombre: str = Form(""), codig
             request, error=f"No se pudo guardar el proveedor: {error_db}", status_code=500
         )
 
+    # EL CAJÓN SE ESCRIBE DESPUÉS Y NO ADENTRO DEL ALTA: el INSERT del
+    # proveedor vive en un solo lugar (`obtener_o_crear_proveedor_por_codigo`)
+    # y lo comparte con la carga de compras, donde nadie declara un cajón.
+    # Meterlo ahí sería darle un parámetro a la puerta de todos los días para
+    # servir a la de una vez.
+    #
+    # Y NO ROMPE EL ALTA SI FALLA: el proveedor ya está creado, que es lo que
+    # se vino a hacer. Un 500 acá dejaría al que carga creyendo que no se
+    # guardó nada, y volvería a intentarlo contra un código que ya existe.
+    aviso_cajon = ""
+    try:
+        tipo_id = _tipo_cajon_elegido(tipo_cajon_id, cajon_nombre_nuevo)
+        if tipo_id is not None:
+            asignar_tipo_cajon(proveedor_id, tipo_id)
+    except Exception as error_cajon:
+        aviso_cajon = (f" El proveedor quedó cargado, pero el cajón no: {error_cajon}. "
+                       "Se puede cargar desde Vacíos del depósito.")
+
     parametros = urlencode({
-        "aviso": f'Proveedor "{nombre_limpio}" ({codigo_valor}) cargado. Ya se puede elegir al cargar una compra.',
+        "aviso": (f'Proveedor "{nombre_limpio}" ({codigo_valor}) cargado. '
+                  f"Ya se puede elegir al cargar una compra.{aviso_cajon}"),
         "destacado_id": proveedor_id,
     })
     return RedirectResponse(url=f"/compras/proveedores?{parametros}", status_code=303)
@@ -4742,6 +4776,278 @@ def guardar_umbral_caja_ruta(request: Request, envase_id: str = Form(""), umbral
 
     return RedirectResponse(
         url="/compras/cajas?" + urlencode({"aviso": "Aviso guardado."}), status_code=303)
+
+
+# ============================================================================
+# VACÍOS DEL DEPÓSITO — los cajones del proveedor de COMPRAS
+#
+# Vive en Compras porque es el proveedor de Compras el que los reclama, y
+# queda detrás de la clave de Gerencia SOLA: la puerta se aplica por PREFIJO
+# en el middleware, así que estas rutas nacen cerradas sin escribir una línea.
+#
+# NO ES `/puesto/vacios`, que existe desde antes y es otro circuito entero:
+# allá un cliente del puesto TRAE cajones y un proveedor del puesto los
+# retira. Acá el cajón llega CON la mercadería. No comparten una sola tabla.
+# ============================================================================
+
+
+def _renderizar_vacios(request: Request, *, error: str | None = None,
+                       aviso: str | None = None, status_code: int = 200):
+    """El índice: cuántos cajones de cada proveedor hay en el galpón."""
+    try:
+        proveedores = stock_de_vacios_deposito()
+    except Exception as error_db:
+        raise HTTPException(
+            status_code=500, detail=f"Error al conectar con la base de datos: {error_db}"
+        ) from error_db
+
+    return templates.TemplateResponse(
+        request,
+        "compras_vacios.html",
+        {"proveedores": proveedores, "error": error, "aviso": aviso,
+         "hoy": _hoy_argentina().isoformat()},
+        status_code=status_code,
+    )
+
+
+@app.get("/compras/vacios")
+def ver_vacios_deposito(request: Request, aviso: str | None = None):
+    """Los cajones del proveedor que están en el galpón, DERIVADOS en cada lectura.
+
+    LAS ENTRADAS NO SE CARGAN: son las recepciones. Lo único que se carga a
+    mano es el conteo que arranca la cuenta y la devolución.
+    """
+    return _renderizar_vacios(request, aviso=aviso)
+
+
+@app.post("/compras/vacios/conteo")
+def cargar_conteo_vacios(request: Request, proveedor_id: str = Form(""),
+                         cantidad: str = Form(""), fecha: str = Form("")):
+    """La foto que ARRANCA la cuenta de un proveedor.
+
+    CERO ES UNA RESPUESTA VÁLIDA y la pantalla lo dice: es el camino para que
+    una recepción ya cargada se sume —conteo en cero, fechado antes de esa
+    recepción— sin inventar cajones que no se contaron.
+
+    Desde su fecha se cuentan las recepciones, y el recorte es `>=` (el MISMO
+    `COMPARADOR_DESDE_EL_CONTEO` de la cuenta de cajas, no uno propio). Por
+    eso la pantalla pide contar A LA MAÑANA: la foto no viene neta del
+    trabajo del día, así que contando a la tarde lo que llegó ese día se
+    sumaría dos veces.
+    """
+    if not proveedor_id.strip().isdigit():
+        return _renderizar_vacios(request, error="Elegí un proveedor.", status_code=400)
+
+    texto = cantidad.strip()
+    if not texto.isdigit():
+        return _renderizar_vacios(
+            request,
+            error="Los cajones contados tienen que ser un número entero. Cero vale: contar cero es contar.",
+            status_code=400,
+        )
+
+    try:
+        dia = date.fromisoformat(fecha.strip())
+    except ValueError:
+        return _renderizar_vacios(request, error="Poné la fecha del conteo.", status_code=400)
+
+    try:
+        crear_conteo_vacios_deposito(int(proveedor_id), int(texto), dia)
+    except Exception as error_db:
+        return _renderizar_vacios(
+            request, error=f"No se pudo guardar el conteo: {error_db}", status_code=400)
+
+    return RedirectResponse(
+        url="/compras/vacios?" + urlencode({"aviso": "La cuenta de ese proveedor arrancó."}),
+        status_code=303)
+
+
+def _renderizar_vacios_proveedor(request: Request, proveedor_id: int, *,
+                                 error: str | None = None, aviso: str | None = None,
+                                 status_code: int = 200):
+    """El detalle de un proveedor: su cajón, sus devoluciones y la carga del vale.
+
+    EL `status_code` NO VA EN LA FIRMA DE LA RUTA, y no es estilo: FastAPI lo
+    tomaría como query param, así que `?status_code=500` lo elegiría quien
+    escriba la URL. Por eso el render es privado y la ruta lo llama — el
+    mismo reparto que la pantalla de Cajas.
+
+    EL VALE SE CARGA ACÁ Y NO EN EL ÍNDICE porque hay que elegir contra qué
+    compra va, y las compras de cuarenta proveedores en una sola pantalla son
+    una lista que nadie abre en el celular.
+    """
+    try:
+        proveedores = stock_de_vacios_deposito()
+        fila = next((p for p in proveedores if p["id"] == proveedor_id), None)
+        compras = compras_para_vale_de_vacios(proveedor_id)
+        devoluciones = listar_devoluciones_vacios(proveedor_id)
+        tipos = listar_tipos_cajon()
+    except Exception as error_db:
+        raise HTTPException(
+            status_code=500, detail=f"Error al conectar con la base de datos: {error_db}"
+        ) from error_db
+
+    if fila is None:
+        raise HTTPException(status_code=404, detail="Ese proveedor no tiene cajones que contar")
+
+    return templates.TemplateResponse(
+        request,
+        "compras_vacios_proveedor.html",
+        {"p": fila, "compras": compras, "devoluciones": devoluciones,
+         "tipos": tipos, "error": error, "aviso": aviso},
+        status_code=status_code,
+    )
+
+
+@app.get("/compras/vacios/{proveedor_id}")
+def ver_vacios_de_proveedor(request: Request, proveedor_id: int,
+                            error: str | None = None, aviso: str | None = None):
+    """El detalle de un proveedor."""
+    return _renderizar_vacios_proveedor(request, proveedor_id, error=error, aviso=aviso)
+
+
+def _tipo_cajon_elegido(tipo_cajon_id: str, nombre_nuevo: str) -> int | None:
+    """En qué cajón entrega un proveedor, resuelto en UN SOLO LUGAR.
+
+    Lo preguntan DOS pantallas —el alta de Proveedores y el detalle de
+    Vacíos— y es la misma regla: si tipeó un nombre gana el nombre, y si ese
+    nombre ya existe se REUSA en vez de crear un duplicado; si no, el de la
+    lista; si no, ninguno (la columna es nullable a propósito).
+
+    Escrita dos veces son dos reglas, y la que se separe no falla: crea un
+    "Cajón Chico" al lado del que ya estaba, y el stock de vacíos queda
+    partido en dos tipos que nadie va a notar.
+    """
+    texto = " ".join(nombre_nuevo.split())
+    if texto:
+        return buscar_tipo_cajon_por_nombre(texto) or crear_tipo_cajon(texto)
+    if tipo_cajon_id.strip().isdigit():
+        return int(tipo_cajon_id)
+    return None
+
+
+@app.post("/compras/vacios/{proveedor_id}/cajon")
+def guardar_tipo_cajon_de_proveedor(request: Request, proveedor_id: int,
+                                    tipo_cajon_id: str = Form(""),
+                                    nombre_nuevo: str = Form("")):
+    """En qué cajón entrega este proveedor. UNO SOLO.
+
+    EL CAMPO DE TEXTO NO ES UN ATAJO: los cuarenta y pico de proveedores que
+    ya estaban tienen la columna en NULL —la migración no podía inventarla—
+    así que el que empiece a usar esto va a tener que bautizar el cajón la
+    primera vez. Sin esta puerta, la única forma sería SQL a mano, que es
+    exactamente el agujero que este proyecto ya pagó dos veces.
+
+    Si el nombre tipeado ya existe se REUSA en vez de rebotar: el que carga
+    está declarando en qué cajón entrega, no administrando un catálogo, y
+    hacerlo volver a elegirlo de una lista sería cobrarle un paso por algo
+    que el sistema ya sabe.
+    """
+    try:
+        asignar_tipo_cajon(proveedor_id, _tipo_cajon_elegido(tipo_cajon_id, nombre_nuevo))
+    except ValueError as invalido:
+        return _renderizar_vacios_proveedor(request, proveedor_id, error=str(invalido),
+                                           status_code=400)
+    except Exception as error_db:
+        return _renderizar_vacios_proveedor(
+            request, proveedor_id, error=f"No se pudo guardar el cajón: {error_db}",
+            status_code=500)
+
+    return RedirectResponse(url=f"/compras/vacios/{proveedor_id}?" +
+                            urlencode({"aviso": "Cajón guardado."}), status_code=303)
+
+
+@app.post("/compras/vacios/{proveedor_id}/devolucion")
+async def cargar_devolucion_vacios(request: Request, proveedor_id: int,
+                                   compra_id: str = Form(""), cantidad: str = Form(""),
+                                   importe: str = Form(""),
+                                   foto: UploadFile | None = File(None)):
+    """El vale: se le devuelven al proveedor SUS cajones, contra una compra concreta.
+
+    LA FOTO NO TRABA, igual que la de balanza: si no se puede subir, la
+    devolución se guarda lo mismo y el cartel lo dice. Un camión no se para
+    por una foto, y perder el movimiento de stock es peor que perder la
+    evidencia.
+
+    EL IMPORTE NO TOCA `compras.importe` NI EL COSTEO — es plata de envase y
+    va por su lado. El neto se lee sumando las dos.
+    """
+    if not compra_id.strip().isdigit():
+        return _renderizar_vacios_proveedor(
+            request, proveedor_id, error="Elegí contra qué compra va el vale.", status_code=400)
+
+    texto = cantidad.strip()
+    if not texto.isdigit() or int(texto) <= 0:
+        return ver_vacios_de_proveedor(
+            request, proveedor_id,
+            error="Los cajones devueltos tienen que ser un número entero mayor que cero.",
+            status_code=400)
+
+    valor_importe = None
+    if importe.strip():
+        try:
+            valor_importe = float(importe.replace(".", "").replace(",", ".").strip())
+        except ValueError:
+            return ver_vacios_de_proveedor(
+                request, proveedor_id, error="El importe del vale no es un número.", status_code=400)
+        if valor_importe < 0:
+            return ver_vacios_de_proveedor(
+                request, proveedor_id, error="El importe del vale no puede ser negativo.",
+                status_code=400)
+
+    foto_ruta, aviso_foto = None, ""
+    if foto is not None and foto.filename:
+        bytes_foto = await foto.read()
+        comprimida = _comprimir_foto_jpeg(bytes_foto) if bytes_foto else None
+        if comprimida is None:
+            aviso_foto = " La foto no se pudo leer y el vale quedó sin ella."
+        else:
+            try:
+                foto_ruta = subir_foto_comanda(
+                    comprimida, f"vale-{proveedor_id}", prefijo=PREFIJO_VACIOS)
+            except Exception:
+                logger.exception("No se pudo subir la foto del vale de vacíos")
+                aviso_foto = " La foto no se pudo subir y el vale quedó sin ella."
+
+    try:
+        crear_devolucion_vacios(proveedor_id, int(compra_id), int(texto),
+                                importe=valor_importe, foto_ruta=foto_ruta)
+    except Exception as error_db:
+        return _renderizar_vacios_proveedor(
+            request, proveedor_id, error=f"No se pudo guardar la devolución: {error_db}",
+            status_code=400)
+
+    return RedirectResponse(
+        url=f"/compras/vacios/{proveedor_id}?" +
+            urlencode({"aviso": f"Devolución de {texto} cajones guardada.{aviso_foto}"}),
+        status_code=303)
+
+
+@app.post("/compras/vacios/devolucion/{devolucion_id}/anular")
+def anular_devolucion_vacios_ruta(request: Request, devolucion_id: int,
+                                  proveedor_id: str = Form("")):
+    """Anula una devolución. El stock se corrige SOLO: no vive en ninguna columna."""
+    destino = proveedor_id if proveedor_id.strip().isdigit() else ""
+    try:
+        anular_devolucion_vacios(devolucion_id)
+    except ValueError as invalido:
+        return RedirectResponse(
+            url=f"/compras/vacios/{destino}?" + urlencode({"error": str(invalido)}),
+            status_code=303)
+
+    return RedirectResponse(
+        url=f"/compras/vacios/{destino}?" +
+            urlencode({"aviso": "Devolución anulada. El stock ya lo refleja."}),
+        status_code=303)
+
+
+@app.get("/compras/vacios/devolucion/{devolucion_id}/foto")
+def ver_foto_del_vale(devolucion_id: int, proveedor_id: int):
+    """URL firmada de la foto del vale."""
+    for devolucion in listar_devoluciones_vacios(proveedor_id):
+        if devolucion["id"] == devolucion_id and devolucion["foto_ruta"]:
+            return RedirectResponse(url=obtener_url_foto(devolucion["foto_ruta"]), status_code=303)
+    raise HTTPException(status_code=404, detail="Ese vale no tiene foto")
 
 
 @app.get("/compras/{compra_id}/editar")
