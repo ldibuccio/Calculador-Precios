@@ -1387,6 +1387,48 @@ Aplicado el 09/09 con `es_segunda`: la migración corrida en las dos bases
 mano por su `ultimo_conteo` del 26/08. Lo que decide si las tres pantallas
 andan es Frutamax.
 
+### Y "NO VOTA" ES POR MEDICIÓN, NO POR BASE (18/09, y es del dueño)
+
+Los dos párrafos de arriba están escritos como si *"Palmala no vota"* fuera
+un **atributo de la base**, y así se venía aplicando desde el 09/09: se
+descartaba de entrada cualquier número que saliera de ahí. **Eso es un
+recorte de más, y el mecanismo del corolario 24 nunca dijo eso.**
+
+Lo que el 24 dice es que **el TESTIGO decide**, y cada medición tiene el
+suyo: la última recepción, la última guía R, el último pedido armado. Son
+preguntas distintas y pueden contestar distinto sobre la misma base. Una
+base puede estar quieta para los armados y en marcha para las recepciones —
+y entonces **vota en una medición y no en la otra**.
+
+**El caso que lo destapó**, y es la mejor prueba de que el atajo estaba mal:
+la verificación de la migración de Vacíos trajo, el 18/09,
+
+    PALMALA  1·1·1·1·1·1·1·1 · 44 proveedores · última recepción 17/09
+
+y ese testigo es `max(procesada_el) where estado = 'recepcionado'` —
+**exactamente la misma pregunta** que sostiene el *"no recepciona desde el
+01/09"* de este archivo. Palmala recepcionó ayer. O sea que toda medición
+sobre RECEPCIONES que se descartó ahí en los últimos días se descartó sin
+mirar su testigo.
+
+**Cómo se aplica, y cuesta lo mismo que descartarla a mano**: antes de
+decidir si una base vota, mirar **el testigo de ESA medición** —no el que
+uno recuerda de otra— y su POBLACIÓN. `pesaje_1` trae `recepciones_2d` y
+`recepciones_7d` justamente para eso: con números parecidos a los de
+Frutamax el resultado es un dato, y con 2 sobre 5 el cero de al lado se
+descarta, pero **descartado por su propio denominador y no por el nombre de
+la base**.
+
+**Y ES LA ORACIÓN QUE EXPIRA, en su forma más cara.** El MECANISMO —una base
+quieta contesta cero a todo— no envejece nunca. Lo que envejeció es el
+ESTADO que se anotó al lado para ilustrarlo, y como ese estado se escribió en
+imperativo (*"lo que hay que mirar es Frutamax"*) se leyó como regla. Un
+estado con forma de regla es peor que un estado: **nadie lo vuelve a
+verificar, porque las reglas no se verifican.**
+
+La forma de escribirlo que no expira es la que este corolario tiene arriba:
+*el testigo dice si la base vota*. La que expira es *esta base no vota*.
+
 Corolario 25, del 08/09, y es el hermano exacto del 23: **un argumento
 puede ser CORRECTO y llevar al número equivocado, porque lo que falla no es
 el razonamiento sino la premisa que nadie midió.**
