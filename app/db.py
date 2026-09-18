@@ -6934,6 +6934,11 @@ def corregir_cantidad_renglon(renglon_id: int, cantidad) -> bool:
     ya armado se puede corregir —el súper cambia el pedido después de que
     armaste— y la pantalla muestra el diff, que es justamente para qué está.
 
+    LO QUE SÍ SE CAE ES EL TILDE DE CONTROL. Es la misma regla que ya estaba
+    escrita para el desarmado: lo que Administración controló fue este renglón
+    contra este pedido, y con el número movido el tilde afirma algo sobre otra
+    cosa. Queda armado y sin controlar, que es el estado normal.
+
     `cantidad_original` SE ESCRIBE UNA SOLA VEZ, con el COALESCE: la segunda
     corrección ya tiene guardado con qué nació el renglón y pisarlo borraría
     el único dato que contesta "la orden de compra dice 5 y el sistema 8, por
@@ -6965,7 +6970,17 @@ def corregir_cantidad_renglon(renglon_id: int, cantidad) -> bool:
                 """
                 UPDATE pedidos_renglones
                    SET cantidad = %s,
-                       cantidad_original = COALESCE(cantidad_original, cantidad)
+                       cantidad_original = COALESCE(cantidad_original, cantidad),
+                       -- EL TILDE DE CONTROL SE CAE, y es por la misma razón
+                       -- que lo tira `desmarcar_renglon_armado`: lo que
+                       -- Administración controló fue ESTE renglón contra
+                       -- ESTE pedido. Movido el número, el tilde estaría
+                       -- afirmando algo sobre otra cosa. El armado NO se
+                       -- toca —`cantidad_armada` es cuánto salió y es otra
+                       -- pregunta— así que el renglón queda armado y sin
+                       -- controlar, que es el estado normal y el que el
+                       -- CHECK `controlado_solo_armado` permite.
+                       controlado_el = NULL
                  WHERE id = %s
                 """,
                 (cantidad, renglon_id),

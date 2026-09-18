@@ -4052,6 +4052,37 @@ def test_corregir_cantidad_guarda_CON_QUE_NACIO_el_renglon():
     assert parametros == (8, 11)
 
 
+def test_corregir_la_cantidad_TIRA_EL_TILDE_de_control_y_NO_toca_el_armado():
+    """Las dos mitades, y son opuestas a propósito.
+
+    El ARMADO no se toca: `cantidad_armada` es cuánto salió de verdad y es
+    otra pregunta que lo pedido. Un renglón armado se corrige —el súper
+    cambia el pedido después— y la pantalla muestra el diff, que es para eso.
+
+    El TILDE sí se cae, por la misma razón que ya estaba escrita para el
+    desarmado: lo que Administración controló fue este renglón contra este
+    pedido, y con el número movido estaría afirmando algo sobre otra cosa.
+    """
+    conexion, cursor = _conexion_falsa([(5.0, None)])
+
+    with patch("app.db.obtener_conexion", return_value=conexion):
+        corregir_cantidad_renglon(11, 8)
+
+    consulta, _ = _sql_y_parametros_que_contienen(cursor, "UPDATE pedidos_renglones")
+    # SE MIRA LO QUE EL UPDATE ESCRIBE —el SET, sin sus comentarios— y no el
+    # texto entero: el comentario de al lado NOMBRA `cantidad_armada` para
+    # explicar por qué no se toca, así que un `not in` sobre la consulta
+    # completa matchea la prosa y falla contra el código bueno (corolario 38).
+    set_clause = consulta[consulta.index("SET"):consulta.index("WHERE")]
+    escrito = "\n".join(l for l in set_clause.splitlines() if not l.strip().startswith("--"))
+    assert "controlado_el = NULL" in escrito
+    # Y lo que NO tiene que estar: tocar el armado acá convertiría "me
+    # pidieron 3 más" en "armá de nuevo".
+    assert "armado_el" not in escrito
+    assert "cantidad_armada" not in escrito
+    assert "kilos_enviados" not in escrito
+
+
 def test_corregir_cantidad_con_EL_MISMO_numero_no_escribe_nada():
     """Marcar como corregido un renglón que nadie cambió lo dejaría señalado
     para siempre por un click."""
