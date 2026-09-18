@@ -103,9 +103,15 @@ del mismo día— ya eran tres líneas antes del kilaje y siguen siendo tres.
 Cero desborde y cero solapes contra el input de al lado. El agregado sale
 gratis a lo alto.
 
-**Lo que sigue esperando a `kilajes_1` es el otro**: el corte del stock por
-kilaje, que sí necesita un umbral. Los dos estaban en este documento y son
-decisiones distintas.
+**El otro —el corte del stock por kilaje, que sí necesita un umbral— se hizo
+el MISMO DÍA** (`CORTE_DE_RACIMO = 0.25`, core/kilajes.py), con `kilajes_1`
+corrida en las dos bases. Los dos estaban en este documento y eran decisiones
+distintas; las dos están tomadas.
+
+Queda anotado que esta oración decía *"lo que sigue esperando"* hasta el
+18/09, cuando ya estaba construido: es el comentario que envejece en el mismo
+commit que lo vuelve falso, y lo que la hizo visible fue ir a buscar la lista
+de pendientes en el repo en vez de recordarla.
 
 ## Y la PARED se quedó afuera — corregido el 18/09
 
