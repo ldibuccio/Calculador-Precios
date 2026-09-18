@@ -3731,9 +3731,10 @@ que se está yendo.** Una recepción de anteayer todavía se reconstruye —el
 cajón puede estar en el piso, el que la recibió se acuerda— y una de la
 semana pasada no. Con siete días el número sería ~19 por la medición del
 12/09, que es el tamaño exacto del aviso que este proyecto ya decidió no
-construir una vez; con dos son ~5. Queda por confirmar con
-`db/pesaje_1_cuantas_sin_evidencia.sql`: **si diera mucho más, lo que hay que
-mover no es el umbral sino la unidad.**
+construir una vez; con dos son ~5. Se confirmó con `db/pesaje_1_cuantas_sin_evidencia.sql` el
+18/09 —Frutamax dio 6— y el criterio con que se leyó queda escrito porque es
+lo que decide la próxima: **si hubiera dado mucho más, lo que hay que mover no
+es el umbral sino la unidad.**
 
 #### CONFIRMADO el 18/09, y Palmala dio el TRIPLE (y votó)
 
@@ -4764,6 +4765,48 @@ porque era la clave equivocada. La regla, que cuesta cero: **en una pantalla
 de tarjetas se lee `desborde_pagina`, o se usa `imprimir` y no se toca el
 diccionario.**
 
+### Y el SEXTO es una TARJETA haciendo de contenedor con scroll (18/09)
+
+El primer límite dice que un `overflow-x: auto` se come el desborde de la
+página. Ésa es la forma con la que se descubrió, y **se leyó como si la
+condición fuera el `overflow-x`**: el que buscaba el caso iba a grepear
+contenedores con scroll. La condición es más ancha, y en Armar Pedido la
+cumple una tarjeta común.
+
+Medido con un proveedor sin espacios en el selector de lote:
+
+```
+                                  desborde de PAGINA   lo que se sale de su caja
+con el corte puesto (hoy)                0px                  nada
+sin el corte (como estaba)               0px            div.salio-de +207px
+```
+
+**Las dos columnas de la izquierda son el mismo número, y una de las dos
+pantallas se arrastraba de costado.** El que mira el desborde de página no
+puede ver esto, y el canario tampoco: romper el arreglo NO MUEVE ese número,
+así que sale a la vez "la pantalla está bien" y "el canario no aplica" — las
+dos lecturas tranquilizadoras juntas, que es exactamente lo del quinto límite.
+
+Lo que sí lo ve es sondear **cuánto se sale CADA elemento de su caja**
+(`scrollWidth − clientWidth` sobre todos), que es la misma sonda del primer
+límite aplicada sin saber de antemano quién la contiene. Por eso los dos tests
+nuevos del renglón del lote miden por elemento y no por página.
+
+**La regla corta, entonces**: el desborde de página no es cero porque la
+pantalla esté bien — es cero mientras algún ancestro lo absorba, y en una
+pantalla de tarjetas casi siempre hay uno. **Un cero de página solo vale con el
+canario que lo hace crecer**; si romper el arreglo no lo mueve, hay que bajar a
+medir por elemento antes de darlo por bueno.
+
+### Y las filas que dibuja el JS no están en la pantalla que se mide
+
+Del mismo día y es la otra mitad: el selector de lote arma sus filas con lo que
+devuelve un `fetch`, así que una medición sobre el HTML servido mira una
+pantalla **donde el renglón que se está probando no existe**. No da un número
+mal: da el número correcto de otra cosa, y el denominador —cuántas filas se
+dibujaron— es lo único que lo dice. Los dos tests lo llevan (`dibujadas == 2`)
+al lado de `mirados`, por lo mismo que el corolario 53 pide el suyo.
+
 ## Corolario 54: el total DIMENSIONA, la magnitud unitaria DETECTA
 
 Del 12/09, y es reutilizable: no es de las alertas de compras, es de
@@ -5070,6 +5113,45 @@ que el test que venía a cuidarlo era ciego exactamente ahí.
 aria-label="Volver atrás"`. Es el corolario 59 (preguntar por la posición
 gramatical) traducido: allá la palabra clave que precede al nombre de la
 tabla, acá el atributo que solo ese elemento tiene.
+
+### Y un ARREGLO puede mudar dónde matchea un assert, y dejar sin guardia lo que el test dice mirar (18/09)
+
+`test_las_DOS_pantallas_que_eligen_lote_DIBUJAN_el_kilaje` preguntaba
+`"lote.kilaje" in marcado` sobre cada plantilla. Estaba bien mientras la única
+mención fuera la del selector. Ese día la PARED de Reproceso ganó su
+`{% if lote.kilaje %}` —el arreglo de este mismo turno— y desde ahí **el assert
+pasaba por la pared**: el selector, que es lo que el test se llama a sí mismo,
+podía perderlo entero. Medido con el canario que se lo borra al helper del JS:
+**cayó CERO.**
+
+Lo que lo vuelve distinto del corolario 4 —un assert que nunca pudo fallar— es
+que **éste sí podía, y dejó de poder por un cambio CORRECTO en otro lugar del
+mismo archivo.** No hay nada mal escrito que señalar, ni en el assert ni en el
+arreglo: el que agrega la segunda mención no tiene por qué saber que hay un
+`in` file-wide dependiendo de que haya una sola.
+
+**La señal, y se hace al agregar la mención, no al leer el test**: cuando un
+cambio escribe por segunda vez en un archivo un nombre que ya estaba —una
+variable, una clase, una columna— grepear ese nombre **en los tests**. Si algún
+assert lo busca con un `in` sobre el archivo entero, ese assert acaba de
+cambiar de sujeto. Es el corolario 3 (grepear quién CONSTRUYE, no el campo)
+aplicado a los tests: el que se rompe no nombra el lugar por el que empezó a
+pasar.
+
+El arreglo es el de siempre —anclar en algo que solo pueda ser lo que se quiso
+probar—, y acá lo que solo puede ser el renglón del selector es la expresión
+que lo pega: `lote.kilaje ? " de " + lote.kilaje : ""`, contada `== 1`. El
+conteo importa tanto como la expresión: con un `in`, una tercera copia del
+rótulo pasaría igual.
+
+**Y la misma frase estaba escrita en otros DOS lugares afirmando lo contrario**
+— el mensaje del commit que agregó el kilaje (*"la pared de Reproceso lo trae
+también: ahí se está decidiendo qué hacer"*) y el comentario del fixture de esos
+tests (*"el contenido por bulto de cada lote, que la pared dibuja al lado del
+quedan"*). Las dos envejecieron **en el commit que las volvió falsas**, que es
+el corolario 28, y ninguna de las dos podía fallar: un mensaje de commit no lo
+corre nadie, y el comentario de un fixture describe lo que el autor creía estar
+preparando.
 
 ## Corolario 58: un `return_value` contesta TODAS las llamadas, así que el día que aparece una segunda pregunta contesta las dos
 

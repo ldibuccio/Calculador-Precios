@@ -185,7 +185,8 @@
      pantalla no muestra números del sistema. Plegado por default — el que
      no quiere mirar nada no mira nada. */
   .salio-de { border-top: 1px dashed #ddd; margin-top: 0.55rem; padding-top: 0.55rem; }
-  .salio-de-resumen { margin: 0 0 0.5rem; font-size: 0.85rem; color: #444; line-height: 1.35; }
+  .salio-de-resumen { margin: 0 0 0.5rem; font-size: 0.85rem; color: #444; line-height: 1.35;
+                      overflow-wrap: anywhere; }
   .boton-lotes {
     padding: 0.6rem 0.8rem;
     background: #fff;
@@ -198,7 +199,15 @@
     white-space: nowrap;
   }
   .fila-lote-armado { display: flex; align-items: center; gap: 0.6rem; margin-top: 0.5rem; }
-  .fila-lote-armado span { flex: 1; font-size: 0.85rem; color: #444; }
+  /* EL NOMBRE DEL PROVEEDOR LO TIPEA UNA PERSONA, así que puede no tener un
+     solo espacio donde cortar. Medido a 390px con un proveedor impartible: la
+     pared sola desbordaba 141px y con el selector abierto 232px, y eso era así
+     desde antes del kilaje —el renglón largo ya traía el nombre para desempatar
+     dos lotes del mismo día—. `min-width: 0` es la otra mitad en los que viven
+     en un flex: sin eso el <span> no baja de su ancho intrínseco y lo que cede
+     es el input de al lado. */
+  .fila-lote-armado span { flex: 1; min-width: 0; font-size: 0.85rem; color: #444;
+                          overflow-wrap: anywhere; }
   .fila-lote-armado input {
     width: 5rem; padding: 0.55rem 0.4rem; text-align: right;
     border: 1px solid #ccc; border-radius: 8px; font-size: 1rem;

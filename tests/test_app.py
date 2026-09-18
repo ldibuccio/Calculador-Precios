@@ -22464,7 +22464,9 @@ def _pantalla_de_reproceso_con(datos, **parches):
         "app.main._fichas_por_cliente_y_articulo": {},
         # El contenido por bulto de cada lote, que la pared dibuja al lado
         # del "quedan": es una lectura de la base y la pide TODO re-render
-        # de esta pantalla, incluido el de error.
+        # de esta pantalla, incluido el de error. (Este comentario afirmaba
+        # eso desde el 18/09 a la mañana y la pared no lo dibujaba: se
+        # escribió describiendo lo que el autor creía estar preparando.)
         "app.main.contenido_por_bulto_de_lotes": {},
         # El catálogo de cajas de la pregunta "¿usaste una caja nuestra?".
         # Está acá y no en cada test porque lo pide TODO re-render de esta
@@ -22585,6 +22587,85 @@ def test_sin_ninguna_guia_de_hoy_el_renglon_NO_SE_DIBUJA():
     etiqueta, adentro = _renglon_de_las_guias_de_hoy(respuesta.text)
     assert adentro.strip() == ""
     assert "hidden" in etiqueta
+
+
+def _renglones_de_la_pared(html):
+    """Los <li> de la pared, RECORTADOS A SU <ul>.
+
+    La palabra `kilaje` aparece en otros tres lugares de esta pantalla —el
+    helper del JS, su comentario y el selector— así que un `in respuesta.text`
+    la encuentra con la pared entera vacía. Es el corolario 4 en HTML: el
+    assert va anclado al elemento que se quiso probar, no a la palabra suelta.
+    """
+    marca = re.search(r'<ul class="pared-lotes"[^>]*>(.*?)</ul>', html, re.S)
+    assert marca, "no se encontró la lista de lotes de la pared"
+    return [renglon.strip() for renglon in re.findall(r"<li>(.*?)</li>", marca.group(1), re.S)]
+
+
+def test_la_pared_dice_DE_CUANTO_es_cada_bulto_igual_que_el_selector():
+    """El kilaje hace MÁS falta en la pared que en el selector, y hasta el
+    18/09 estaba solo en el segundo.
+
+    Cuando no alcanza, `dibujarDesglose` esconde el selector —"el detalle ya
+    está en la pared: repetirlo abajo solo agrega ruido"— así que esta lista
+    es LO ÚNICO que el operario tiene contra los cajones que ve en el piso.
+    Y "quedan 13" no se puede leer sin saber 13 de qué: trece cajones de 16 k
+    y trece de 10 k no sirven para lo mismo.
+
+    El dato viajaba desde el primer día —`freno["lotes"]` sale del mismo
+    `_desglose_para_pantalla` que el selector— y la plantilla no lo imprimía.
+    El commit que agregó el kilaje dice que "la pared lo trae también" y el
+    fixture de estos tests dice "que la pared dibuja al lado del quedan": las
+    dos frases envejecieron en el mismo commit que las volvió falsas.
+    """
+    freno = StockInsuficienteParaReproceso(40.0, 18.0, [
+        {"tipo_lote": "guia", "origen_id": 101, "fecha_lote": date(2026, 8, 28),
+         "detalle": "", "restante": 13.0},
+        # EL AJUSTE NO DECLARA CONTENIDO y no se inventa: su renglón sale sin
+        # kilaje. Es la mitad que el caso feliz no puede ver — un número
+        # deducido de cualquier cosa pasa el assert de arriba y miente acá.
+        {"tipo_lote": "ajuste", "origen_id": 77, "fecha_lote": date(2026, 9, 2),
+         "detalle": "", "restante": 5.0},
+    ])
+    respuesta = _pantalla_de_reproceso_con(
+        {"cliente_id": "1", "articulo_id": "1", "bultos_tomados": "40",
+         "bultos_primera": "38", "bultos_segunda": "0", "bultos_merma": "2",
+         "fecha": "2026-09-02", "ficha_id": "901"},
+        **{"app.main.crear_reproceso": {"side_effect": freno},
+           "app.main.contenido_por_bulto_de_lotes": {
+               "return_value": {"guia:101": {"contenido": 16.0, "unidad": "kilo"}}}},
+    )
+
+    assert respuesta.status_code == 400
+    renglones = _renglones_de_la_pared(respuesta.text)
+    assert renglones == ["28/08 · quedan 13.0 de 16 k", "02/09 · quedan 5.0"]
+
+
+def test_el_renglon_de_un_LOTE_lo_escribe_UNA_sola_funcion_en_esa_pantalla():
+    """La pared y el selector dibujan el MISMO lote en la misma pantalla.
+
+    Escritos dos veces se separaron, y así estuvieron: la pared decía
+    "28/08 — 13.0" y el selector "28/08 · quedan 13.0 de 16 k". No es que uno
+    estuviera mal — es que el mismo cajón se leía de dos formas a tres
+    centímetros de distancia, y al que elige de cuál sacar eso lo obliga a
+    resolver si son el mismo.
+
+    Se mide por el TEXTO que se escribe una sola vez y no por la cantidad de
+    llamadas: un tercer lugar que vuelva a inlinear el rótulo trae su propio
+    " · quedan " y este assert cae.
+    """
+    marcado = io.open("templates/deposito_stock_reproceso.html", encoding="utf-8").read()
+    cuerpo = marcado.split("</style>")[-1]
+
+    assert cuerpo.count(' · quedan "') == 1, "el rótulo del lote volvió a estar escrito dos veces"
+    # Se cuenta la LLAMADA y no el nombre: `rotuloDeLote(lote)` a secas
+    # matchea también la línea que la DEFINE, así que da 3 con las dos
+    # listas cableadas y daría 2 con una sola — el assert habría pasado
+    # con la pared sin cablear. Es el corolario 59 (la posición, no la
+    # palabra) y lo encontró este mismo assert al escribirlo mal.
+    assert cuerpo.count("function rotuloDeLote(lote)") == 1
+    assert cuerpo.count("textContent = rotuloDeLote(lote)") == 2, (
+        "la pared y el selector tienen que dibujar el lote con el mismo rótulo")
 
 
 def test_el_freno_con_CERO_lotes_ese_dia_igual_explica_que_hacer():
@@ -29619,16 +29700,168 @@ def test_el_contenido_del_lote_sale_de_lo_PESADO_con_el_estimado_de_respaldo():
     assert 'if tipo == "guia"' in cuerpo
 
 
+_PROVEEDOR_IMPARTIBLE = "EJEMPLOdistribuidoradelsurhortalizasymasynombresinespacios"
+
+_PINTAR_SELECTOR_DE_REPROCESO = """(detalle) => {
+  LOTES = [
+    {clave: "guia:101", tipo_lote: "guia", origen_id: 101, fecha: "28/08",
+     restante: 133.5, detalle: "EJEMPLO Distribuidora del Sur", kilaje: "16.5 k"},
+    {clave: "guia:102", tipo_lote: "guia", origen_id: 102, fecha: "28/08",
+     restante: 12.25, detalle: detalle, kilaje: "10 u"}];
+  // LOS DOS con bultos: el resumen nombra solo los lotes elegidos, así que
+  // con el impartible en cero ese renglón queda con el nombre corto y el
+  // canario de su corte no muerde (lo dio en 0 la primera vez).
+  PROPUESTA = {"guia:101": 5, "guia:102": 3}; EDITANDO = true; TOCADO = true;
+  document.getElementById("desglose").hidden = false;
+  document.getElementById("desglose-filas").hidden = false;
+  dibujarFilas(); mostrarResumen();
+  return document.querySelectorAll(".fila-lote").length;
+}"""
+
+_PINTAR_SELECTOR_DE_ARMAR = """(detalle) => {
+  const caja = document.querySelector('[id^="salio-de-"]');
+  if (!caja) return 0;
+  const id = caja.id.replace("salio-de-", "");
+  LOTES_POR_RENGLON[id] = {sin_lote: 0, propuesta: {"guia:101": 5, "guia:102": 3}, lotes: [
+    {clave: "guia:101", tipo_lote: "guia", origen_id: 101, fecha: "28/08",
+     restante: 133.5, detalle: "EJEMPLO Distribuidora del Sur", kilaje: "16.5 k"},
+    {clave: "guia:102", tipo_lote: "guia", origen_id: 102, fecha: "28/08",
+     restante: 12.25, detalle: detalle, kilaje: "10 u"}]};
+  dibujarLotes(id);
+  caja.hidden = false;
+  return document.querySelectorAll(".fila-lote-armado").length;
+}"""
+
+
+async def _medir_sobrantes(html, pintar):
+    """Cuánto se sale CADA elemento de su caja, con las filas del lote dibujadas.
+
+    `pintar` existe porque las filas del selector las arma el JS con lo que
+    devuelve un fetch: sin ejecutarlo, la medición mira una pantalla donde el
+    renglón que se está probando no está — que es el cero del corolario 47 por
+    el lado de lo que no se miró.
+    """
+    from playwright.async_api import async_playwright
+
+    from scripts.medir_layout import CHROMIUM
+
+    async with async_playwright() as pw:
+        navegador = await pw.chromium.launch(executable_path=CHROMIUM)
+        pagina = await navegador.new_page(viewport={"width": 390, "height": 844})
+        await pagina.set_content(html)
+        dibujadas = await pagina.evaluate(pintar, _PROVEEDOR_IMPARTIBLE)
+        salida = await pagina.evaluate(_SOBRA_POR_ELEMENTO)
+        await navegador.close()
+        salida["dibujadas"] = dibujadas
+        return salida
+
+
+_SOBRA_POR_ELEMENTO = """() => {
+  const doc = document.documentElement;
+  const fuera = [...document.querySelectorAll('*')]
+    .map(e => ({sel: e.tagName.toLowerCase()
+                     + (e.className ? "." + String(e.className).split(" ")[0] : ""),
+                sobra: e.scrollWidth - e.clientWidth}))
+    .filter(x => x.sobra > 2);
+  return {pagina: doc.scrollWidth - doc.clientWidth,
+          mirados: document.querySelectorAll('*').length,
+          fuera: fuera.map(x => x.sel + " +" + x.sobra + "px")};
+}"""
+
+
+def test_el_renglon_del_lote_aguanta_un_PROVEEDOR_SIN_ESPACIOS_a_390px():
+    """El nombre del proveedor lo tipea una persona y puede no tener dónde cortar.
+
+    Y sale JUSTO en el renglón largo: el proveedor viaja solo para desempatar
+    dos lotes del mismo día, o sea en la fila que ya es la más cargada.
+
+    SE MIDE POR ELEMENTO Y NO POR PÁGINA, que es lo que este caso enseñó: en
+    Armar Pedido el bloque se salía 207px de su tarjeta y
+    `documentElement.scrollWidth` daba CERO igual —la tarjeta se lo come— así
+    que un test contra el desborde de página habría pasado con la pantalla
+    arrastrándose de costado. Es el corolario 47 con la tarjeta en el papel del
+    contenedor con scroll.
+
+    El par va completo: el nombre normal tiene que seguir entrando en las
+    mismas líneas. Un arreglo que rompa el caso cómodo para aguantar el raro
+    pasaría el primero sin que nada caiga.
+    """
+    pytest.importorskip("playwright", reason="el ancho de una caja lo decide el navegador")
+
+    freno = StockInsuficienteParaReproceso(40.0, 18.0, [
+        {"tipo_lote": "guia", "origen_id": 101, "fecha_lote": date(2026, 8, 28),
+         "detalle": "EJEMPLO Distribuidora del Sur", "restante": 133.5},
+        {"tipo_lote": "guia", "origen_id": 102, "fecha_lote": date(2026, 8, 28),
+         "detalle": _PROVEEDOR_IMPARTIBLE, "restante": 12.25},
+    ])
+    respuesta = _pantalla_de_reproceso_con(
+        {"cliente_id": "1", "articulo_id": "1", "bultos_tomados": "40",
+         "bultos_primera": "38", "bultos_segunda": "0", "bultos_merma": "2",
+         "fecha": "2026-09-02", "ficha_id": "901"},
+        **{"app.main.crear_reproceso": {"side_effect": freno},
+           "app.main.contenido_por_bulto_de_lotes": {
+               "return_value": {"guia:101": {"contenido": 16.5, "unidad": "kilo"}}}},
+    )
+    assert respuesta.status_code == 400
+    assert _PROVEEDOR_IMPARTIBLE in respuesta.text
+
+    medir = _medir_sobrantes
+
+    medicion = asyncio.run(medir(respuesta.text, _PINTAR_SELECTOR_DE_REPROCESO))
+    # El denominador: sin él, "no se sale ninguno" y "no se miró ninguno" se
+    # imprimen igual y significan lo contrario (corolario 45). Y `dibujadas`
+    # es el segundo: la pared es server-rendered y las filas del selector las
+    # pinta el JS, así que sin ese número el test mide media pantalla.
+    assert medicion["mirados"] > 50, medicion
+    assert medicion["dibujadas"] == 2, medicion
+    assert medicion["fuera"] == [], medicion["fuera"]
+
+
+def test_el_selector_de_ARMAR_aguanta_el_mismo_proveedor_sin_espacios():
+    """La otra pantalla que dibuja lotes, y la que tenía el desborde más grande.
+
+    Acá el bloque se salía 207px de su tarjeta con `desborde de página` en
+    CERO, que es por qué esto se mide por elemento.
+    """
+    pytest.importorskip("playwright", reason="el ancho de una caja lo decide el navegador")
+
+    with (
+        patch("app.main._hoy_argentina", return_value=date(2026, 8, 21)),
+        patch("app.main.listar_clientes", return_value=CLIENTES_PARA_SELECTOR),
+        patch("app.main.listar_pedidos_vigentes_con_armado", return_value=[]),
+        patch("app.main.obtener_pedido_vigente", return_value=PEDIDO_VIGENTE_DE_PRUEBA),
+        patch("app.main.listar_sucursales_pedido",
+              return_value=[dict(s) for s in SUCURSALES_PEDIDO_DE_PRUEBA]),
+        patch("app.main.listar_renglones_pedido", return_value=RENGLONES_ARMADO_DE_PRUEBA),
+        patch("app.main.fichas_con_cajas_armadas", return_value=set()),
+        patch("app.main.listar_fichas_por_cliente", return_value=FICHAS_PEDIDO_DE_PRUEBA),
+        patch("app.main.listar_mails_pedido_sin_procesar_de_cliente", return_value=[]),
+    ):
+        respuesta = cliente.get(
+            "/deposito/pedido/armar?cliente_id=1&fecha=2026-08-21&sucursal=VL")
+
+    assert respuesta.status_code == 200
+    medicion = asyncio.run(_medir_sobrantes(respuesta.text, _PINTAR_SELECTOR_DE_ARMAR))
+    assert medicion["mirados"] > 50, medicion
+    assert medicion["dibujadas"] == 2, medicion
+    assert medicion["fuera"] == [], medicion["fuera"]
+
+
 def test_las_DOS_pantallas_que_eligen_lote_DIBUJAN_el_kilaje():
     """El dato viaja en el JSON para las dos; que llegue no es que se vea.
 
     Son dos pantallas y un solo `_desglose_para_pantalla`: si una lo dibuja y
     la otra no, el mismo lote dice una cosa en Reproceso y otra en Armar.
     """
+    # SE PREGUNTA POR LA EXPRESIÓN QUE LO PEGA AL RENGLÓN, no por la palabra.
+    # Hasta el 18/09 esto era `"lote.kilaje" in marcado`, y ese día la pared de
+    # Reproceso ganó su `{% if lote.kilaje %}`: desde ahí el assert lo matcheaba
+    # con el SELECTOR sin cablear, que es lo que el test dice mirar. Lo destapó
+    # un canario que borró el kilaje del helper del JS y no hizo caer nada.
     for plantilla in ("templates/deposito_stock_reproceso.html",
                       "templates/deposito_pedido_armar.html"):
-        marcado = io.open(plantilla, encoding="utf-8").read()
-        assert "lote.kilaje" in marcado, plantilla
+        cuerpo = io.open(plantilla, encoding="utf-8").read().split("</style>")[-1]
+        assert cuerpo.count('lote.kilaje ? " de " + lote.kilaje : ""') == 1, plantilla
 
 
 # ── El stock por kilaje, en el detalle por artículo ────────────────────────

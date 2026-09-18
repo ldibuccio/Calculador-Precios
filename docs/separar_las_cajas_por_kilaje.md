@@ -106,3 +106,40 @@ gratis a lo alto.
 **Lo que sigue esperando a `kilajes_1` es el otro**: el corte del stock por
 kilaje, que sí necesita un umbral. Los dos estaban en este documento y son
 decisiones distintas.
+
+## Y la PARED se quedó afuera — corregido el 18/09
+
+El párrafo de arriba y el mensaje del commit decían que la pared de Reproceso
+traía el kilaje "también". **El dato viajaba y la plantilla no lo imprimía**:
+`freno["lotes"]` sale del mismo `_desglose_para_pantalla`, así que cada lote
+llegaba con su `kilaje` y los dos renglones de la pared —el de Jinja y su
+gemelo de JS— lo tiraban.
+
+**Y es donde más falta hace**, que es lo que lo vuelve el caso y no un olvido:
+cuando no alcanza, `dibujarDesglose` esconde el selector a propósito —*"el
+detalle ya está en la pared: repetirlo abajo solo agrega ruido"*— así que esa
+lista es LO ÚNICO que el operario tiene contra los cajones que ve en el piso.
+El selector lo dice cuando sí alcanza; la pared se callaba cuando no.
+
+El rótulo quedó escrito **una sola vez** (`rotuloDeLote`) y la pared usa el
+mismo texto que el selector, palabra por palabra: hasta ese día el mismo cajón
+se leía `28/08 — 13.0` arriba y `28/08 · quedan 13.0 de 16 k` tres centímetros
+más abajo, en la MISMA pantalla.
+
+### El desborde que apareció midiendo, y era anterior al kilaje
+
+El proveedor lo tipea una persona y viaja justo en el renglón largo —solo
+aparece para desempatar dos lotes del mismo día—. Medido a 390px con un nombre
+sin espacios:
+
+| | pared sola | pared + selector |
+|---|---|---|
+| desborde de PÁGINA | 141px → 0 | 232px → 0 |
+
+Y en Armar Pedido el desborde de página daba **0 las dos veces** mientras el
+bloque se salía **207px de su tarjeta**: ahí solo lo vio sondear elemento por
+elemento. Cinco reglas ganaron `overflow-wrap: anywhere` (y `min-width: 0` las
+dos que viven en un flex, que es la otra mitad), con un canario por regla.
+
+**El kilaje no costó una línea**: el renglón normal sigue en 36px de dos
+líneas, y el impartible pasa de desbordar a envolver.
