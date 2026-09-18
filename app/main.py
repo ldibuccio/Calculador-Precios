@@ -353,6 +353,7 @@ from core.magnitudes import (
 )
 from core.exportar_compras import generar_excel_listado_compras, generar_pdf_listado_compras
 from core.exportar_disponibles import generar_excel_disponibles
+from core.kilajes import pilas_por_formato
 from core.exportar_remanente import generar_excel_remanente
 from core.exportar_precios import (
     TEXTO_SIGUE_VIGENTE,
@@ -9577,12 +9578,31 @@ def ver_stock_articulo_deposito(request: Request, articulo_id: int):
     reparto = repartir_fifo(entradas, salidas_para_reparto(salidas))
     con_resto = [l for l in reparto["lotes"] if l["restante"] > 0]
     agotados = [l for l in reparto["lotes"] if l["restante"] <= 0]
+    # EL STOCK POR KILAJE. Sale de los MISMOS lotes que la lista de abajo, no
+    # de una cuenta nueva: las pilas suman exactamente el restante de este
+    # artículo porque son ese restante, agrupado. Una segunda consulta "que
+    # sume lo mismo" sería la quinta versión de la cuenta de stock, y las
+    # cuatro que hay ya se separaron entre sí una vez cada una.
+    contenidos = _contenidos_de(con_resto)
+    pilas = pilas_por_formato([
+        {
+            "contenido": (contenidos.get(f"{l['tipo_lote']}:{l['origen_id']}") or {}).get("contenido"),
+            "unidad": (contenidos.get(f"{l['tipo_lote']}:{l['origen_id']}") or {}).get("unidad"),
+            "bultos": l["restante"],
+        }
+        for l in con_resto
+    ])
     return templates.TemplateResponse(
         request,
         "deposito_stock_articulo.html",
         {
             "articulo": articulo,
             "patas": patas,
+            # UNA SOLA PILA NO SE MUESTRA: el número de arriba ya la dice, y
+            # 52 de los 57 artículos de las dos bases tienen un formato solo.
+            # Repetirlo en una tarjeta propia sería ruido en la pantalla que
+            # se abre justamente cuando un total no cuadra.
+            "pilas": pilas if len(pilas) > 1 else [],
             "lotes": con_resto,
             "agotados": agotados,
             "sin_lote": reparto["sin_lote"],

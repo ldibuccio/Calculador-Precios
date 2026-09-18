@@ -20699,6 +20699,9 @@ def test_ver_pedido_muestra_los_mails_trabados_del_cliente_con_revisar():
         patch("app.main.obtener_condiciones_pedido", return_value=None),
         patch("app.main.listar_mails_pedido_sin_procesar_de_cliente", return_value=mails) as mock_mails,
         patch("app.main.obtener_pedido_vigente", return_value=None),
+        # El contenido por bulto de cada lote: es una lectura de la
+        # base y el stock por kilaje la pide en cada render.
+        patch("app.main.contenido_por_bulto_de_lotes", return_value={}),
     ):
         respuesta = cliente.get("/deposito/pedido?cliente_id=1")
 
@@ -20771,6 +20774,9 @@ def test_stock_por_guia_muestra_LAS_SEIS_PATAS_de_donde_sale_el_numero():
         patch("app.main.entradas_y_salidas_stock_articulo", return_value=([], _salidas_fifo(0.0))),
         patch("app.main.stock_deposito_por_articulo",
               return_value=[dict(f) for f in FILAS_STOCK_DE_PRUEBA]),
+        # El contenido por bulto de cada lote: es una lectura de la
+        # base y el stock por kilaje la pide en cada render.
+        patch("app.main.contenido_por_bulto_de_lotes", return_value={}),
     ):
         respuesta = cliente.get("/administracion/stock/sistema/1")
 
@@ -20785,16 +20791,19 @@ def test_stock_por_guia_muestra_LAS_SEIS_PATAS_de_donde_sale_el_numero():
 def test_stock_articulo_reparte_fifo_y_muestra_lo_que_queda_por_lote():
     entradas = [
         {"fecha_orden": date(2026, 8, 20), "momento_orden": datetime(2026, 8, 20, 10), "orden": (date(2026, 8, 20), datetime(2026, 8, 20, 10)),
-         "tipo_lote": "guia", "fecha_lote": date(2026, 8, 20), "detalle": "Norte 15",
+         "tipo_lote": "guia", "origen_id": 501, "fecha_lote": date(2026, 8, 20), "detalle": "Norte 15",
          "motivo": None, "cantidad": 8.0},
         {"fecha_orden": date(2026, 8, 22), "momento_orden": datetime(2026, 8, 22, 10), "orden": (date(2026, 8, 22), datetime(2026, 8, 22, 10)),
-         "tipo_lote": "guia", "fecha_lote": date(2026, 8, 22), "detalle": "Norte 15",
+         "tipo_lote": "guia", "origen_id": 502, "fecha_lote": date(2026, 8, 22), "detalle": "Norte 15",
          "motivo": None, "cantidad": 10.0},
     ]
     with (
         patch("app.main.obtener_articulo", return_value={"id": 1, "nombre": "Banana"}),
         patch("app.main.entradas_y_salidas_stock_articulo", return_value=(entradas, _salidas_fifo(11.0))),
         patch("app.main.stock_deposito_por_articulo", return_value=[]),
+        # El contenido por bulto de cada lote: es una lectura de la
+        # base y el stock por kilaje la pide en cada render.
+        patch("app.main.contenido_por_bulto_de_lotes", return_value={}),
     ):
         respuesta = cliente.get("/administracion/stock/sistema/1")
 
@@ -20812,6 +20821,9 @@ def test_stock_articulo_negativo_muestra_los_bultos_sin_lote():
         patch("app.main.obtener_articulo", return_value={"id": 2, "nombre": "Anco"}),
         patch("app.main.entradas_y_salidas_stock_articulo", return_value=([], _salidas_fifo(5.0))),
         patch("app.main.stock_deposito_por_articulo", return_value=[]),
+        # El contenido por bulto de cada lote: es una lectura de la
+        # base y el stock por kilaje la pide en cada render.
+        patch("app.main.contenido_por_bulto_de_lotes", return_value={}),
     ):
         respuesta = cliente.get("/administracion/stock/sistema/2")
 
@@ -24723,6 +24735,9 @@ def test_el_atras_jerarquico_esta_declarado_en_todo_el_sistema():
         patch("app.main.obtener_articulo", return_value={"id": 2, "nombre": "Anco"}),
         patch("app.main.entradas_y_salidas_stock_articulo", return_value=([], _salidas_fifo(0.0))),
         patch("app.main.stock_deposito_por_articulo", return_value=[]),
+        # El contenido por bulto de cada lote: es una lectura de la
+        # base y el stock por kilaje la pide en cada render.
+        patch("app.main.contenido_por_bulto_de_lotes", return_value={}),
     ):
         respuesta = cliente.get("/administracion/stock/sistema/2")
     assert ancla.format(destino="/administracion/stock/remanente") in respuesta.text
@@ -25820,6 +25835,9 @@ def test_stock_por_guia_nombra_los_bultos_tomados_por_guias_R_en_las_salidas():
         patch("app.main.obtener_articulo", return_value={"id": 1, "nombre": "Tomate Redondo"}),
         patch("app.main.entradas_y_salidas_stock_articulo", return_value=([], _salidas_fifo(648.0))),
         patch("app.main.stock_deposito_por_articulo", return_value=[]),
+        # El contenido por bulto de cada lote: es una lectura de la
+        # base y el stock por kilaje la pide en cada render.
+        patch("app.main.contenido_por_bulto_de_lotes", return_value={}),
     ):
         respuesta = cliente.get("/administracion/stock/sistema/1")
 
@@ -29590,3 +29608,82 @@ def test_las_DOS_pantallas_que_eligen_lote_DIBUJAN_el_kilaje():
                       "templates/deposito_pedido_armar.html"):
         marcado = io.open(plantilla, encoding="utf-8").read()
         assert "lote.kilaje" in marcado, plantilla
+
+
+# ── El stock por kilaje, en el detalle por artículo ────────────────────────
+
+
+def _entradas_de_dos_formatos():
+    """Dos compras del mismo artículo en cajones distintos: 16 k y 5 k."""
+    return [
+        {"fecha_orden": date(2026, 9, 10), "momento_orden": datetime(2026, 9, 10, 10),
+         "orden": (date(2026, 9, 10), datetime(2026, 9, 10, 10)),
+         "tipo_lote": "guia", "origen_id": 601, "fecha_lote": date(2026, 9, 10),
+         "detalle": "EJEMPLO Uno", "motivo": None, "cantidad": 10.0},
+        {"fecha_orden": date(2026, 9, 12), "momento_orden": datetime(2026, 9, 12, 10),
+         "orden": (date(2026, 9, 12), datetime(2026, 9, 12, 10)),
+         "tipo_lote": "guia", "origen_id": 602, "fecha_lote": date(2026, 9, 12),
+         "detalle": "EJEMPLO Uno", "motivo": None, "cantidad": 4.0},
+    ]
+
+
+def _stock_de_articulo_con(contenidos, entradas=None):
+    with (
+        patch("app.main.obtener_articulo", return_value={"id": 1, "nombre": "EJEMPLO Cherry"}),
+        patch("app.main.entradas_y_salidas_stock_articulo",
+              return_value=(entradas if entradas is not None else _entradas_de_dos_formatos(), [])),
+        patch("app.main.stock_deposito_por_articulo", return_value=[]),
+        patch("app.main.contenido_por_bulto_de_lotes", return_value=contenidos),
+    ):
+        return cliente.get("/administracion/stock/sistema/1")
+
+
+def test_el_stock_por_kilaje_PARTE_lo_que_queda_y_las_pilas_SUMAN_el_total():
+    """El total de arriba suma bultos de tamaños distintos: acá está partido.
+
+    Y las pilas salen de LOS MISMOS LOTES que la lista de abajo, así que
+    suman el restante por construcción. Una consulta propia "que sume lo
+    mismo" sería la quinta versión de la cuenta de stock.
+    """
+    respuesta = _stock_de_articulo_con({
+        "guia:601": {"contenido": 16.0, "unidad": "kilo"},
+        "guia:602": {"contenido": 5.0, "unidad": "kilo"},
+    })
+
+    assert respuesta.status_code == 200
+    marcado = respuesta.text.split("</style>")[-1]
+    assert "De qué formato es lo que queda" in marcado
+    assert "Cajones de 5 k" in marcado
+    assert "Cajones de 16 k" in marcado
+    # 10 + 4 = 14, que es el mismo número que el resumen de arriba.
+    assert "EJEMPLO Cherry: 14 bultos" in marcado
+
+
+def test_con_UN_SOLO_formato_la_tarjeta_NO_aparece():
+    """52 de los 57 artículos de las dos bases tienen un formato solo.
+
+    Es la mitad que el caso bueno no puede ver: una tarjeta que sale siempre
+    repite el total de arriba en la pantalla que se abre justamente cuando un
+    total no cuadra.
+    """
+    respuesta = _stock_de_articulo_con({
+        "guia:601": {"contenido": 16.0, "unidad": "kilo"},
+        # 18,7 contra 16 es 16,9%: el MISMO cajón pesado dos veces, que es lo
+        # que pasa con Lima, Pepino y Cabutia. No es otro formato.
+        "guia:602": {"contenido": 18.7, "unidad": "kilo"},
+    })
+
+    assert "De qué formato es lo que queda" not in respuesta.text.split("</style>")[-1]
+
+
+def test_el_lote_SIN_contenido_declarado_va_a_su_propia_pila_y_lo_dice():
+    """Un ajuste o el stock inicial no declaran formato.
+
+    Repartirlos entre las otras pilas sería inventar; dejarlos afuera haría
+    que las pilas no sumen el total. Van con su nombre.
+    """
+    respuesta = _stock_de_articulo_con({"guia:601": {"contenido": 16.0, "unidad": "kilo"}})
+
+    marcado = respuesta.text.split("</style>")[-1]
+    assert "Sin formato declarado" in marcado
+    assert "Cajones de 16 k" in marcado

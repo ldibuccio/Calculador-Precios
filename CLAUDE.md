@@ -1260,9 +1260,26 @@ Corolario 23, del 08/09, y es el primero de esta lista que anota un ACIERTO
 Estaba planeado el desglose del Remanente por contenido de cajón: pantalla
 nueva, renglón "sin dato", y aviso de descuadre para cuando el desglose no
 sumara al total. Antes de codear se corrieron dos consultas de menos de 2500
-caracteres. `arts_mezclados` dio **0**: ningún artículo tiene dos tamaños de
-cajón conviviendo, así que **el Remanente ya suma bultos comparables** y no
+caracteres. `arts_mezclados` dio **0**: ningún artículo tenía dos tamaños de
+cajón conviviendo, así que **el Remanente ya sumaba bultos comparables** y no
 había nada que desglosar. Ver `docs/desglose_del_remanente_por_contenido.md`.
+
+**Y EL 18/09 SE RETOMÓ, que es exactamente lo que el propio documento decía
+que iba a pasar** (*"si algún día se compra el mismo artículo en dos formatos,
+esta consulta lo va a mostrar y se retoma"*). `kilajes_1` encontró cinco
+artículos multiformato en las dos bases. **No es que la medición del 08/09
+estuviera mal: es que `remanente_1` recorta DESDE EL CORTE**, o sea tres días
+de compras el día que se corrió, y `kilajes_1` mira noventa. Las dos son
+ciertas sobre su ventana, y una sola de las dos contesta "¿este artículo se
+compra en más de un formato?".
+
+Eso deja el aviso para la próxima vez que una consulta barata borre una
+pantalla, y es la mitad que a este corolario le faltaba: **antes de dar por
+inexistente un caso, mirar contra qué VENTANA se lo buscó.** Un cero sobre
+tres días de compras no dice lo mismo que un cero sobre noventa, y los dos se
+imprimen igual. Es el corolario 69 —el recorte de la medición no es el de la
+decisión— del lado de NO construir, que es donde no deja rastro: la pantalla
+que no se hizo no se queja.
 
 Es el corolario 6 dado vuelta. Allá una medición falsa mandó a perseguir 212
 cajas que no existían: **la consulta de diagnóstico decide qué se arregla

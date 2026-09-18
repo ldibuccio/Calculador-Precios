@@ -23,8 +23,41 @@ Remanente **ya suma bultos comparables**, y la pantalla que se iba a
 construir no tenía nada que desglosar.
 
 La premisa no era falsa en teoría —el esquema permite dos formatos— sino que
-**no ocurre en los datos**. Si algún día se compra el mismo artículo en dos
+**no ocurría en los datos**. Si algún día se compra el mismo artículo en dos
 formatos, esta consulta lo va a mostrar y se retoma.
+
+## SE RETOMÓ el 18/09, y la ventana es la mitad que faltaba
+
+`kilajes_1` (90 días, las dos bases) encontró **cinco artículos
+multiformato**: Cherry (4 formatos en Palmala, 3 en Frutamax), Batata 3,
+Zanahoria Cubito 2 y Mango 2. Con el corte del 25%, que está medido.
+
+**`remanente_1` no se equivocó: mide DESDE EL CORTE**, o sea tres días de
+compras el día que se corrió. `kilajes_1` mira noventa. Las dos son ciertas
+sobre su ventana y solo una contesta "¿este artículo se compra en más de un
+formato?". Al retomar esta medición, correrla con la ventana ancha — y sobre
+**Palmala**, que es el pendiente escrito al pie de este documento y es
+justamente la base con más artículos partidos.
+
+**Lo que se construyó es el detalle por artículo, no el Remanente**, y la
+razón es de la cuenta y no del volumen: la porción de SUELTOS del Remanente
+**sale por resta** (`stock del artículo − cajas en fichas`), y su comentario
+dice por qué —*"así las porciones suman el total del artículo sin que se
+pueda perder ni duplicar"*—. Partirla por formato necesita saber de qué lotes
+se compone ese saldo, y eso es el reparto FIFO: otra cuenta, con otro piso
+(corolario 7). Las partes no tienen por qué sumar la resta, y ahí vuelve el
+aviso de descuadre que esta pantalla ya había planeado una vez.
+
+En `/administracion/stock/sistema/{id}` ese problema no existe: las pilas
+salen de LOS MISMOS lotes que la lista de abajo, así que suman el restante
+por construcción.
+
+**Y esa pantalla es, además, la medición que falta.** Cuántas filas ganaría
+el Remanente no sale de `racimos_25` —que cuenta formatos COMPRADOS en 90
+días, no formatos con saldo simultáneo— y no se puede escribir en SQL sin
+reimplementar el FIFO. Se contesta abriendo los cinco artículos partidos: los
+que muestren más de una pila son los que le darían filas nuevas al Remanente;
+los que muestren una sola, no le dan ninguna.
 
 ## Medición 2 — `db/remanente_2_cuanto_queda_sin_dato.sql` (Frutamax)
 
