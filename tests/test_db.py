@@ -10058,3 +10058,60 @@ def test_el_rojo_a_su_fecha_solo_mira_los_pedidos_VIGENTES():
 
     assert "DISTINCT ON (cliente_id, fecha_operacion)" in _SQL_ARMADOS_DESDE
     assert "ORDER BY cliente_id, fecha_operacion, creado_en DESC" in _SQL_ARMADOS_DESDE
+
+
+def test_el_rojo_a_su_fecha_NUNCA_mira_mas_atras_que_el_CORTE():
+    """El piso se clampea contra el corte, y hoy la ventana de siete días no lo alcanza.
+
+    Está puesto igual porque siete es una constante que alguien va a querer
+    mover, y el día que la mueva más atrás del corte esto empieza a contar
+    ARTEFACTOS sin que nada avise: `corte2_frutamax.sql` fecha los
+    `stock_inicial` en `fecha_operacion = corte`, así que todo armado anterior
+    al corte queda descubierto por construcción y no porque haya faltado algo.
+    Medido con el caso plantado: un artículo cuya única entrada es su stock
+    inicial, con un armado el 29/08, sale rojo por 40 bultos.
+
+    LOS DOS CASOS, porque uno solo no distingue un clamp de un no-clamp: con
+    la ventana CORTA gana la ventana (el clamp no tiene que hacer nada) y con
+    la ventana LARGA gana el corte. Un `piso = corte + 1` a secas pasaría el
+    segundo y rompería el primero; un `piso = desde` pasaría el primero y no
+    el segundo.
+
+    Y `corte + 1` y no `corte`: la foto del corte se toma a la tarde, así que
+    ya viene neta del trabajo de ese día (corolario 12).
+    """
+    from datetime import date
+
+    import app.db as db
+
+    CORTE = date(2026, 9, 5)
+    pedidos = []
+
+    class _Cursor:
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *a):
+            return False
+
+        def execute(self, consulta, parametros=None):
+            if "corte_modelo" in consulta:
+                self.fila = (CORTE,)
+                self.filas = [(CORTE,)]
+            else:
+                pedidos.append(parametros[0])
+                self.filas = []
+
+        def fetchone(self):
+            return self.fila
+
+        def fetchall(self):
+            return self.filas
+
+    with patch.object(db, "obtener_conexion") as conexion:
+        conexion.return_value.cursor.return_value = _Cursor()
+        db.dias_articulo_en_rojo(date(2026, 9, 12))    # ventana corta: gana ella
+        db.dias_articulo_en_rojo(date(2026, 7, 1))     # ventana larga: gana el corte
+
+    assert pedidos == [date(2026, 9, 12), date(2026, 9, 6)], (
+        f"el piso tiene que ser el MÁS NUEVO entre la ventana y corte+1, y fue {pedidos}")

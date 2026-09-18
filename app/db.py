@@ -7,6 +7,7 @@ core/lector_comandas.py.
 
 import os
 import re
+from datetime import timedelta
 from contextlib import contextmanager
 
 import psycopg2
@@ -11036,7 +11037,22 @@ def dias_articulo_en_rojo(desde) -> list[dict]:
     conexion = obtener_conexion()
     try:
         with conexion.cursor() as cursor:
-            cursor.execute(_SQL_ARMADOS_DESDE, (desde,))
+            # EL PISO NUNCA CRUZA EL CORTE, y hoy no hace falta: la ventana son
+            # siete días y el corte está a trece. Está puesto porque siete es
+            # una constante que alguien va a querer mover, y el día que la
+            # mueva más allá del corte esto empieza a contar ARTEFACTOS sin que
+            # nada avise: `corte2_frutamax.sql` fecha los `stock_inicial` en
+            # `fecha_operacion = corte`, así que TODO armado anterior al corte
+            # queda descubierto por construcción — no porque haya faltado algo.
+            # Medido con el caso plantado: un artículo cuya única entrada es su
+            # stock inicial, armado el 29/08, sale rojo por 40 bultos.
+            #
+            # `corte + 1` y no `corte`: la foto del corte se toma a la tarde,
+            # así que ya viene neta del trabajo de ese día y contar el armado
+            # del propio corte lo resta dos veces (corolario 12). Medido: con
+            # el día del corte adentro, 1 caso pasa a 2 y 18 bultos a 43.
+            piso = max(desde, _fecha_corte(cursor) + timedelta(days=1))
+            cursor.execute(_SQL_ARMADOS_DESDE, (piso,))
             armados = cursor.fetchall()
             saldos: dict = {}
             for fecha in sorted({fila[2] for fila in armados}):
