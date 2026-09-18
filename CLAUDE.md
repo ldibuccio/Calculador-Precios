@@ -684,6 +684,31 @@ la base adelante**, y si las dos filas salen idénticas en todo menos el
 testigo, eso es exactamente lo esperado y no una razón para pegar una sola.
 La regla de arriba dice correr en las dos; ésta dice **mostrar las dos**.
 
+#### Y LA FILA SE ANOTA EN `db/corridas_confirmadas.md`, no citada en un corolario
+
+Del 18/09, y salió de una auditoría que no pudo contestar una pregunta que
+tenía la respuesta en el repo: *"¿las tres migraciones de Vacíos corrieron en
+Frutamax?"*. Habían corrido. Lo que faltaba era el registro — **la única fila
+anotada era la de Palmala, y estaba citada adentro del corolario de abajo para
+ilustrar cómo el testigo dice si una base vota.**
+
+**Una fila citada para ilustrar no es un registro**, y la diferencia no es de
+prolijidad: el que audita busca confirmaciones y no la encuentra, porque está
+archivada bajo otro tema. El que la escribió tampoco se acuerda. Así que la
+pregunta se vuelve irrespondible desde el repo y hay que ir a molestar al
+dueño — que es justo lo que un registro evita.
+
+**Y el costo de no tenerlo es el del corte**: sin poder contestar si una
+migración corrió, la única salida honesta es tratar el código que depende de
+ella como sospechoso. Con 24 verificaciones y dos bases, eso no escala.
+
+**Por qué el registro NO va al pie de cada `.sql`**, que es donde uno lo
+pondría: esos archivos se pegan en el editor de Supabase y ninguno puede pasar
+los 2500 caracteres. Varios están a menos de cincuenta del límite, así que
+cuatro líneas de registro adentro los volverían intruncables — se arreglaría
+el registro rompiendo la migración. Va en un archivo aparte, que no se pega en
+ningún lado y no tiene límite.
+
 #### Y el TESTIGO dice la BASE; el NOMBRE de la migración dice cuál es (18/09)
 
 El testigo cubre una sola de las dos formas de confundir dos filas, y el 18/09
