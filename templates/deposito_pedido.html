@@ -87,8 +87,41 @@
     border-top: 1px solid #eee;
     font-size: 0.95rem;
   }
+  /* EL NOMBRE DE LA FICHA LO TIPEA UNA PERSONA y puede no tener un solo
+     espacio donde cortar. Medido a 390px con un nombre impartible: el renglón
+     se salía 135px de su tarjeta y la página 103px, y era así desde antes de
+     que esta pantalla tuviera el panel de corregir. `min-width: 0` es la otra
+     mitad: adentro de un flex el <span> no baja de su ancho intrínseco, y lo
+     que cede es la cantidad de al lado. */
+  .renglon > span:first-child { min-width: 0; overflow-wrap: anywhere; }
   .renglon:first-of-type { border-top: none; }
   .renglon .cantidad { font-weight: 800; font-size: 1.05rem; white-space: nowrap; }
+  /* LAS DOS MARCAS DE QUE ACÁ METIÓ MANO UNA PERSONA. Van en el renglón y no
+     en un listado aparte: el que concilia contra la orden de compra está
+     mirando ESTE renglón, no una lista de excepciones en otra pantalla. */
+  .marca-a-mano {
+    display: inline-block; margin-left: 0.35rem; padding: 0.05rem 0.35rem;
+    border-radius: 0.6rem; background: #fef3c7; color: #92400e;
+    font-size: 0.7rem; font-weight: 800; vertical-align: middle;
+  }
+  .marca-pedia { display: block; font-size: 0.7rem; font-weight: 600; color: #92400e; }
+  /* EL PANEL ARRANCA CERRADO y lo abre un botón, así la pantalla que se mira
+     todos los días —leer el pedido— no se llena de inputs. Lo de adentro es
+     un formulario por renglón: son pocos y cambia uno por vez. */
+  .boton-tocar {
+    display: block; width: 100%; min-height: 44px; margin-top: 0.75rem;
+    border: 1px solid #d4d4d8; border-radius: 0.5rem; background: #fff;
+    font-size: 0.95rem; font-weight: 700; color: #333; cursor: pointer;
+  }
+  .panel-tocar { display: none; margin-top: 0.6rem; }
+  .panel-tocar.abierto { display: block; }
+  .fila-tocar { display: flex; align-items: center; gap: 0.5rem; margin-top: 0.5rem; }
+  .fila-tocar span { flex: 1; min-width: 0; font-size: 0.9rem; overflow-wrap: anywhere; }
+  .fila-tocar input[type="number"] { width: 5rem; min-height: 44px; margin: 0; text-align: right; }
+  .fila-tocar button { min-height: 44px; padding: 0 0.7rem; }
+  .alta-renglon { margin-top: 0.75rem; padding-top: 0.6rem; border-top: 1px dashed #d4d4d8; }
+  .alta-renglon select, .alta-renglon input { min-height: 44px; }
+  .alta-renglon .fila-tocar select { flex: 1; min-width: 0; }
   .fila-total {
     display: flex;
     justify-content: space-between;
@@ -440,7 +473,8 @@
     {% if filas %}
       {% for r in filas %}
       <div class="renglon">
-        <span>{{ r.nombre_venta }}</span>
+        <span>{{ r.nombre_venta }}{% if r.agregado_a_mano_el %}<span class="marca-a-mano">A MANO</span>{% endif %}
+          {%- if r.cantidad_original is not none %}<span class="marca-pedia">la comanda decía {{ r.cantidad_original|numero }}</span>{% endif %}</span>
         <span class="cantidad">
           {# El "<" y no "!=": la segunda copia vieja del criterio. #}
           {% if r.armado_el and r.cantidad_armada is not none and r.cantidad_armada|float < r.cantidad|float %}
@@ -466,6 +500,48 @@
       <span class="{% if s.incompletos %}mal{% endif %}">{{ s.armado_real|numero }} bultos{% if s.incompletos %} — {{ s.incompletos }} incompleto{{ "s" if s.incompletos != 1 else "" }}{% endif %}</span>
     </div>
     {% endif %}
+
+    {# EL SÚPER LLAMA Y CAMBIA EL PEDIDO. Hasta acá la única salida era
+       recargar la comanda entera, que le cuesta el armado a todo renglón
+       cuya cantidad se haya movido. Arranca cerrado: leer el pedido es lo
+       que se hace todos los días y no tiene por qué verse lleno de inputs. #}
+    <button type="button" class="boton-tocar" data-abre="tocar-{{ loop.index0 }}">
+      El súper cambió el pedido
+    </button>
+    <div class="panel-tocar" id="tocar-{{ loop.index0 }}">
+      {% for r in filas %}
+      <form method="post" action="/deposito/pedido/{{ pedido.id }}/renglones/{{ r.id }}/cantidad" class="fila-tocar">
+        <input type="hidden" name="cliente_id" value="{{ cliente_id }}">
+        <input type="hidden" name="fecha" value="{{ fecha }}">
+        <span>{{ r.nombre_venta }}</span>
+        <input type="number" name="cantidad" step="0.01" min="0.01" value="{{ r.cantidad|numero }}" required
+               aria-label="Bultos pedidos de {{ r.nombre_venta }}">
+        <button type="submit">Corregir</button>
+      </form>
+      {% endfor %}
+
+      {# Y el alta, al pie del mismo panel: es la misma conversación por
+         teléfono —"subime esto, agregame esto otro"— y separarla en dos
+         pantallas la partiría en dos viajes. #}
+      <form method="post" action="/deposito/pedido/{{ pedido.id }}/renglones/agregar" class="alta-renglon">
+        <input type="hidden" name="cliente_id" value="{{ cliente_id }}">
+        <input type="hidden" name="fecha" value="{{ fecha }}">
+        <input type="hidden" name="sucursal" value="{{ s.sucursal }}">
+        <div class="fila-tocar">
+          {# SOLO LAS FICHAS DE ESTE CLIENTE, que es el límite pedido. Y se
+             elige la ficha, no el artículo: el artículo lo deriva el server. #}
+          <select name="ficha_id" required aria-label="Artículo a agregar a {{ s.sucursal }}">
+            <option value="" selected disabled>Agregar un artículo...</option>
+            {% for f in fichas_cliente %}
+            <option value="{{ f.id }}">{{ f.nombre }}</option>
+            {% endfor %}
+          </select>
+          <input type="number" name="cantidad" step="0.01" min="0.01" required
+                 aria-label="Bultos a agregar" placeholder="bultos">
+          <button type="submit">Agregar</button>
+        </div>
+      </form>
+    </div>
   </div>
   {% endfor %}
 
@@ -506,6 +582,19 @@
   {% endif %}
 
   <script>
+    // EL PANEL DE "EL SÚPER CAMBIÓ EL PEDIDO". Un listener en el documento y
+    // no uno por botón: las tarjetas se dibujan en el server, pero un
+    // listener delegado no se rompe el día que alguna llegue por innerHTML
+    // (corolario 83).
+    document.addEventListener("click", function (evento) {
+      const boton = evento.target.closest("[data-abre]");
+      if (!boton) return;
+      const panel = document.getElementById(boton.dataset.abre);
+      if (!panel) return;
+      const abierto = panel.classList.toggle("abierto");
+      boton.textContent = abierto ? "Listo" : "El súper cambió el pedido";
+    });
+
     function marcarSinPedido(formulario, fechaMostrar) {
       if (!confirm("¿Marcar que el " + fechaMostrar + " no hubo pedido? La alerta lo deja de contar. Se puede deshacer.")) {
         return false;

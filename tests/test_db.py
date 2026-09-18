@@ -100,6 +100,9 @@ from app.db import (
     registrar_revision_casilla,
     desmarcar_renglon_armado,
     marcar_renglon_armado,
+    agregar_renglon_a_pedido,
+    contar_renglones_agregados_a_mano,
+    corregir_cantidad_renglon,
     crear_pedido,
     borrar_foto_pedido,
     guardar_alias_en_ficha,
@@ -3942,6 +3945,218 @@ def test_crear_pedido_corregido_traslada_los_tildes_solo_a_renglones_identicos()
     assert "nuevo.sucursal IS NOT DISTINCT FROM viejo.sucursal" in consulta_traslado
     assert "nuevo.cantidad = viejo.cantidad" in consulta_traslado
     assert parametros_traslado == (52, 50)
+
+
+# ── El renglón que el súper pide por teléfono ──────────────────────────────
+# Hasta el 18/09 un artículo que la comanda no traía, o una cantidad que
+# cambió, obligaban a RECARGAR el pedido entero: el nuevo anula al viejo y
+# todo renglón cuya cantidad se movió pierde su armado.
+
+
+def _pedido_para_agregar(filas=None):
+    """cliente del pedido · artículo de la ficha · la sucursal existe · no hay duplicado."""
+    return _conexion_falsa(filas if filas is not None else [(1, None), (7,), (1,), None, (99,)])
+
+
+def test_agregar_renglon_el_ARTICULO_sale_de_la_FICHA_y_no_del_llamador():
+    """La firma no acepta `articulo_id` y el INSERT lo toma de lo que devolvió
+    la consulta de la ficha. Es la misma regla que `confirmar_pedido`: un
+    artículo que viajara por el formulario podría no ser el de esa ficha."""
+    conexion, cursor = _pedido_para_agregar()
+
+    with patch("app.db.obtener_conexion", return_value=conexion):
+        renglon_id = agregar_renglon_a_pedido(50, 901, "VL", 5)
+
+    assert renglon_id == 99
+    consulta_ficha = _sql_que_contiene(cursor, "FROM fichas_logistica")
+    # La ficha se busca CON el cliente del pedido: es el límite pedido —solo
+    # lo que ese cliente tiene ficha para recibir— y va en el WHERE, no en un
+    # if de la pantalla.
+    assert "WHERE id = %s AND cliente_id = %s" in consulta_ficha
+    consulta_insert, parametros = _sql_y_parametros_que_contienen(cursor, "INSERT INTO pedidos_renglones")
+    assert "agregado_a_mano_el" in consulta_insert
+    assert "now()" in consulta_insert
+    # 7 es el articulo_id que devolvió la ficha; 901 la ficha elegida.
+    assert parametros == (50, "VL", 7, 901, 5)
+    conexion.commit.assert_called_once()
+
+
+def test_agregar_renglon_RECHAZA_la_ficha_de_OTRO_cliente():
+    # La consulta de la ficha no devuelve nada: esa ficha no es de este cliente.
+    conexion, cursor = _conexion_falsa([(1, None), None])
+
+    with patch("app.db.obtener_conexion", return_value=conexion):
+        with pytest.raises(ValueError, match="no es de este cliente"):
+            agregar_renglon_a_pedido(50, 901, "VL", 5)
+
+    conexion.commit.assert_not_called()
+
+
+def test_agregar_renglon_RECHAZA_una_sucursal_que_el_pedido_no_tiene():
+    """No es purismo: la pantalla de armar itera `pedidos_sucursales`, así que
+    un renglón con una sucursal que no está ahí existiría sin que nadie pueda
+    verlo — el camino que funciona y no se ve (corolario 68)."""
+    conexion, cursor = _conexion_falsa([(1, None), (7,), None])
+
+    with patch("app.db.obtener_conexion", return_value=conexion):
+        with pytest.raises(ValueError, match="no tiene la sucursal"):
+            agregar_renglon_a_pedido(50, 901, "ZZ", 5)
+
+    conexion.commit.assert_not_called()
+
+
+def test_agregar_renglon_RECHAZA_el_articulo_QUE_YA_ESTA_y_manda_a_corregirlo():
+    """El caso más común del dueño: el artículo vino en la comanda EN CERO, o
+    sea que el renglón YA EXISTE. Agregar un segundo contaría la demanda dos
+    veces en la Rentabilidad, que suma por fecha y artículo."""
+    conexion, cursor = _conexion_falsa([(1, None), (7,), (1,), (1,)])
+
+    with patch("app.db.obtener_conexion", return_value=conexion):
+        with pytest.raises(ValueError, match="corregile la cantidad"):
+            agregar_renglon_a_pedido(50, 901, "VL", 5)
+
+    conexion.commit.assert_not_called()
+
+
+def test_agregar_renglon_RECHAZA_un_pedido_ANULADO():
+    conexion, cursor = _conexion_falsa([(1, datetime(2026, 9, 18, 10, 0))])
+
+    with patch("app.db.obtener_conexion", return_value=conexion):
+        with pytest.raises(ValueError, match="anulado"):
+            agregar_renglon_a_pedido(50, 901, "VL", 5)
+
+
+def test_agregar_renglon_pregunta_la_existencia_SIN_AGREGADO():
+    """Con `count(*)` la fila vuelve con 0 y `fetchone() is None` no se cumple
+    nunca: el pedido inexistente entraría igual (corolario 27)."""
+    import inspect
+
+    from app.db import agregar_renglon_a_pedido as funcion
+
+    cuerpo = inspect.getsource(funcion)
+    consulta_existencia = cuerpo[cuerpo.index("SELECT cliente_id"):cuerpo.index("fila = cursor.fetchone()")]
+    assert "count(" not in consulta_existencia.lower()
+
+
+def test_corregir_cantidad_guarda_CON_QUE_NACIO_el_renglon():
+    conexion, cursor = _conexion_falsa([(5.0, None)])
+
+    with patch("app.db.obtener_conexion", return_value=conexion):
+        cambio = corregir_cantidad_renglon(11, 8)
+
+    assert cambio is True
+    consulta, parametros = _sql_y_parametros_que_contienen(cursor, "UPDATE pedidos_renglones")
+    # EL COALESCE ES LA REGLA: la segunda corrección no pisa el original, que
+    # es lo único que contesta "la OC dice 5 y el sistema 8, por qué".
+    assert "cantidad_original = COALESCE(cantidad_original, cantidad)" in consulta
+    assert parametros == (8, 11)
+
+
+def test_corregir_cantidad_con_EL_MISMO_numero_no_escribe_nada():
+    """Marcar como corregido un renglón que nadie cambió lo dejaría señalado
+    para siempre por un click."""
+    conexion, cursor = _conexion_falsa([(5.0, None)])
+
+    with patch("app.db.obtener_conexion", return_value=conexion):
+        cambio = corregir_cantidad_renglon(11, 5.0)
+
+    assert cambio is False
+    assert not [c for c in cursor.execute.call_args_list if "UPDATE" in c.args[0]]
+    conexion.commit.assert_not_called()
+
+
+def test_corregir_cantidad_RECHAZA_un_renglon_anulado():
+    conexion, cursor = _conexion_falsa([(5.0, datetime(2026, 9, 18, 10, 0))])
+
+    with patch("app.db.obtener_conexion", return_value=conexion):
+        with pytest.raises(ValueError, match="anulado"):
+            corregir_cantidad_renglon(11, 8)
+
+
+def test_recargar_CONSERVA_los_renglones_agregados_a_mano():
+    """Decisión del dueño: si el súper agregó un artículo por teléfono, eso es
+    real y no está en el mail. Que una recarga lo borre es mercadería ya
+    armada que desaparece sin que nada avise."""
+    conexion, cursor = _conexion_falsa([(52,)])
+
+    with patch("app.db.obtener_conexion", return_value=conexion):
+        crear_pedido(1, date(2026, 8, 21), "texto", None, [], [], reemplaza_a_pedido_id=50)
+
+    # SE ANCLA EN `viejo.cantidad_original`, que solo está en la copia de los
+    # RENGLONES: `viejo.agregado_a_mano_el` lo dicen las dos copias —la de la
+    # sucursal también— y la de la sucursal va primero, así que el assert
+    # contestaba por la vecina (corolario 4). Lo agarró este mismo test al
+    # escribirlo mal.
+    copia, parametros = _sql_y_parametros_que_contienen(cursor, "viejo.cantidad_original")
+    assert "INSERT INTO pedidos_renglones" in copia
+    assert "viejo.agregado_a_mano_el IS NOT NULL" in copia
+    assert "viejo.anulado_el IS NULL" in copia
+    # GANA EL DEL MAIL si el pedido nuevo ya trae ese (artículo, sucursal).
+    assert "NOT EXISTS" in copia
+    assert "nuevo.articulo_id IS NOT DISTINCT FROM viejo.articulo_id" in copia
+    assert "nuevo.sucursal IS NOT DISTINCT FROM viejo.sucursal" in copia
+    assert parametros == (52, 50, 52)
+
+
+def test_la_copia_del_renglon_a_mano_va_ANTES_del_traslado_del_armado():
+    """El orden no es estilo: el renglón copiado tiene que EXISTIR para que el
+    UPDATE del traslado le devuelva su tilde. Al revés, un renglón agregado a
+    mano y ya armado se conserva SIN armar, que es exactamente la mercadería
+    que desaparece que esto vino a evitar."""
+    conexion, cursor = _conexion_falsa([(52,)])
+
+    with patch("app.db.obtener_conexion", return_value=conexion):
+        crear_pedido(1, date(2026, 8, 21), "texto", None, [], [], reemplaza_a_pedido_id=50)
+
+    consultas = [llamada.args[0] for llamada in cursor.execute.call_args_list]
+    # `viejo.cantidad_original` está SOLO en la copia de los renglones. Con
+    # `viejo.agregado_a_mano_el` —que también dice la copia de la sucursal, y
+    # esa va primero— este test pasaba con la copia de renglones movida
+    # DESPUÉS del traslado, que es exactamente el bug que dice cuidar.
+    posicion_copia = next(i for i, c in enumerate(consultas) if "viejo.cantidad_original" in c)
+    posicion_traslado = next(i for i, c in enumerate(consultas) if "SET armado_el = viejo.armado_el" in c)
+    assert posicion_copia < posicion_traslado
+
+
+def test_la_SUCURSAL_del_renglon_a_mano_se_copia_si_el_mail_nuevo_no_la_trae():
+    conexion, cursor = _conexion_falsa([(52,)])
+
+    with patch("app.db.obtener_conexion", return_value=conexion):
+        crear_pedido(1, date(2026, 8, 21), "texto", None, [], [], reemplaza_a_pedido_id=50)
+
+    copia = _sql_que_contiene(cursor, "INSERT INTO pedidos_sucursales (pedido_id, sucursal, orden_compra")
+    assert "SELECT DISTINCT" in copia
+    assert "viejo.agregado_a_mano_el IS NOT NULL" in copia
+    assert "NOT EXISTS" in copia
+
+
+def test_el_listado_del_pedido_TRAE_LAS_DOS_MARCAS_de_la_base():
+    """El valor lo entrega el mock, así que lo único que puede ver QUÉ COLUMNAS
+    pide la consulta es un assert sobre el TEXTO del SQL (corolario 65). Sin
+    ellas la pantalla no distingue un renglón de la comanda de uno que puso
+    una persona, y se ve exactamente igual que antes."""
+    import inspect
+
+    from app.db import listar_renglones_pedido as funcion
+
+    cuerpo = inspect.getsource(funcion)
+    consulta = cuerpo[cuerpo.index("SELECT r.id"):cuerpo.index("FROM pedidos_renglones")]
+    assert "r.agregado_a_mano_el" in consulta
+    assert "r.cantidad_original" in consulta
+
+
+def test_contar_renglones_a_mano_solo_cuenta_los_VIGENTES():
+    """Un renglón anulado no se copia al pedido nuevo: contarlo haría que el
+    aviso prometa conservar algo que no se conserva."""
+    conexion, cursor = _conexion_falsa([(2,)])
+
+    with patch("app.db.obtener_conexion", return_value=conexion):
+        assert contar_renglones_agregados_a_mano(50) == 2
+
+    consulta, parametros = cursor.execute.call_args.args
+    assert "agregado_a_mano_el IS NOT NULL" in consulta
+    assert "anulado_el IS NULL" in consulta
+    assert parametros == (50,)
 
 
 def test_contar_pedidos_incompletos_cuenta_los_armados_por_menos_y_trae_el_mas_viejo():

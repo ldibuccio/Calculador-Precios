@@ -196,7 +196,10 @@ from app.db import (
     agregar_foto_guia,
     agregar_foto_guia_del_dia,
     agregar_foto_pedido,
+    agregar_renglon_a_pedido,
     asignar_ficha_a_renglon_pedido,
+    contar_renglones_agregados_a_mano,
+    corregir_cantidad_renglon,
     borrar_dia_sin_pedido,
     borrar_foto_guia,
     borrar_foto_pedido,
@@ -16665,6 +16668,14 @@ def _contexto_revision_pedido(cliente_id, cliente_nombre, fecha_valor, datos, te
         "texto_original": texto_original,
         "fotos_data": fotos_data,
         "pedido_vigente": pedido_vigente,
+        # CUÁNTOS RENGLONES A MANO VA A CONSERVAR ESTA RECARGA. El que pega
+        # una comanda nueva tiene que saber que el resultado no va a ser
+        # solo lo que pegó: los renglones que agregó a mano sobreviven, y un
+        # total que no cuadra contra lo pegado sin esta línea se lee como un
+        # error de lectura de la IA.
+        "renglones_a_mano_vigentes": (
+            contar_renglones_agregados_a_mano(pedido_vigente["id"]) if pedido_vigente else 0
+        ),
         "mail": mail,
         # Cómo se leyó, SIEMPRE a la vista: "estructura" (las cantidades
         # salen de la tabla, sin IA), "ia" (el parser no pudo: mirar con
@@ -17520,6 +17531,79 @@ def asignar_renglon_pedido_ruta(
 
     return RedirectResponse(
         url=f"/deposito/pedido?{urlencode({'cliente_id': cliente_id, 'fecha': fecha})}", status_code=303
+    )
+
+
+@app.post("/deposito/pedido/{pedido_id}/renglones/agregar")
+def agregar_renglon_pedido_ruta(
+    pedido_id: int,
+    cliente_id: int = Form(...),
+    fecha: str = Form(""),
+    ficha_id: str = Form(""),
+    sucursal: str = Form(""),
+    cantidad: str = Form(""),
+):
+    """Agrega a mano un artículo que el súper pidió y la comanda no traía.
+
+    Se elige la FICHA y no el artículo, igual que en el resto del circuito
+    de pedidos: el artículo lo deriva la base de la ficha, que además es el
+    límite pedido —solo lo que ese cliente tiene ficha para recibir—.
+
+    Las cuatro guardas viven en `agregar_renglon_a_pedido` y no acá: un
+    formulario armado a mano no pasa por esta ruta con los valores que la
+    pantalla ofrece. Acá solo se traduce el `ValueError` a un 400 con el
+    motivo adentro, que es lo que el operario necesita leer.
+    """
+    try:
+        ficha_id_valor = int(ficha_id)
+    except ValueError:
+        raise HTTPException(status_code=400, detail="Elegí el artículo.")
+    cantidad_valor = _numero_pedido_o_none(cantidad)
+    if cantidad_valor is None:
+        raise HTTPException(status_code=400, detail="Poné cuántos bultos pidieron.")
+
+    try:
+        agregar_renglon_a_pedido(pedido_id, ficha_id_valor, sucursal, cantidad_valor)
+    except ValueError as invalido:
+        raise HTTPException(status_code=400, detail=str(invalido)) from invalido
+    except Exception as error_db:
+        raise HTTPException(status_code=500, detail=f"No se pudo agregar el renglón: {error_db}") from error_db
+
+    return RedirectResponse(
+        url=f"/deposito/pedido?{urlencode({'cliente_id': cliente_id, 'fecha': fecha, 'aviso': 'Renglón agregado a mano.'})}",
+        status_code=303,
+    )
+
+
+@app.post("/deposito/pedido/{pedido_id}/renglones/{renglon_id}/cantidad")
+def corregir_cantidad_renglon_ruta(
+    pedido_id: int,
+    renglon_id: int,
+    cliente_id: int = Form(...),
+    fecha: str = Form(""),
+    cantidad: str = Form(""),
+):
+    """Corrige lo que el súper PIDIÓ en un renglón que ya está cargado.
+
+    No toca el armado: `cantidad_armada` es cuánto salió de verdad y es
+    otra pregunta. Un renglón ya armado se puede corregir —el súper cambia
+    el pedido después— y la pantalla muestra el diff.
+    """
+    cantidad_valor = _numero_pedido_o_none(cantidad)
+    if cantidad_valor is None:
+        raise HTTPException(status_code=400, detail="Poné cuántos bultos pidieron.")
+
+    try:
+        cambio = corregir_cantidad_renglon(renglon_id, cantidad_valor)
+    except ValueError as invalido:
+        raise HTTPException(status_code=400, detail=str(invalido)) from invalido
+    except Exception as error_db:
+        raise HTTPException(status_code=500, detail=f"No se pudo corregir la cantidad: {error_db}") from error_db
+
+    aviso = "Cantidad corregida." if cambio else "La cantidad ya era ésa: no se cambió nada."
+    return RedirectResponse(
+        url=f"/deposito/pedido?{urlencode({'cliente_id': cliente_id, 'fecha': fecha, 'aviso': aviso})}",
+        status_code=303,
     )
 
 

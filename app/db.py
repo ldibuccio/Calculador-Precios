@@ -6523,6 +6523,71 @@ def crear_pedido(
                 )
 
             if reemplaza_a_pedido_id is not None:
+                # LOS RENGLONES AGREGADOS A MANO SOBREVIVEN A LA RECARGA, y
+                # esto va ANTES del traslado del armado a propósito: el
+                # renglón copiado tiene que existir para que el traslado de
+                # abajo le devuelva su tilde.
+                #
+                # La decisión es del dueño (18/09): "si el súper agregó un
+                # artículo por teléfono, eso es real y no está en el mail.
+                # Que una recarga lo borre significa que al operario se le
+                # desaparece mercadería que ya armó, sin que nada avise". Y
+                # el mail corregido no lo va a traer nunca — si lo trajera,
+                # ya no sería un renglón agregado a mano.
+                #
+                # GANA EL DEL MAIL cuando el pedido nuevo YA trae ese
+                # (artículo, sucursal). No son dos pedidos: es el mismo
+                # dicho dos veces —pediste por teléfono y después llegó por
+                # mail— así que conservar los dos contaría la demanda dos
+                # veces en la Rentabilidad, que suma por fecha y artículo. Y
+                # entre los dos gana la comanda porque es contra ella que se
+                # concilia la orden de compra, porque es más nueva, y porque
+                # la razón de existir del manual era justamente que el mail
+                # no lo traía. El armado no se pierde: el traslado de abajo
+                # lo lleva del viejo al del mail si la cantidad coincide.
+                #
+                # Y la SUCURSAL se copia si falta: la pantalla de armar itera
+                # `pedidos_sucursales`, así que un renglón conservado cuya
+                # sucursal el mail nuevo ya no trae existiría sin que nadie
+                # pueda verlo (corolario 68).
+                cursor.execute(
+                    """
+                    INSERT INTO pedidos_sucursales (pedido_id, sucursal, orden_compra, total_bultos_declarado)
+                    SELECT DISTINCT %s, viejo.sucursal, NULL, NULL
+                      FROM pedidos_renglones viejo
+                     WHERE viejo.pedido_id = %s
+                       AND viejo.agregado_a_mano_el IS NOT NULL
+                       AND viejo.anulado_el IS NULL
+                       AND viejo.sucursal IS NOT NULL
+                       AND NOT EXISTS (SELECT 1 FROM pedidos_sucursales s
+                                        WHERE s.pedido_id = %s AND s.sucursal = viejo.sucursal)
+                    """,
+                    (pedido_id, reemplaza_a_pedido_id, pedido_id),
+                )
+                cursor.execute(
+                    """
+                    INSERT INTO pedidos_renglones
+                        (pedido_id, sucursal, articulo_id, ficha_id, texto_codigo,
+                         texto_descripcion, cantidad, agregado_a_mano_el, cantidad_original)
+                    SELECT %s, viejo.sucursal, viejo.articulo_id, viejo.ficha_id,
+                           viejo.texto_codigo, viejo.texto_descripcion, viejo.cantidad,
+                           viejo.agregado_a_mano_el, viejo.cantidad_original
+                      FROM pedidos_renglones viejo
+                     WHERE viejo.pedido_id = %s
+                       AND viejo.agregado_a_mano_el IS NOT NULL
+                       AND viejo.anulado_el IS NULL
+                       AND NOT EXISTS (
+                           SELECT 1 FROM pedidos_renglones nuevo
+                            WHERE nuevo.pedido_id = %s
+                              AND nuevo.articulo_id IS NOT DISTINCT FROM viejo.articulo_id
+                              AND nuevo.sucursal IS NOT DISTINCT FROM viejo.sucursal
+                       )
+                    """,
+                    (pedido_id, reemplaza_a_pedido_id, pedido_id),
+                )
+                # `agregado_a_mano_el` viaja con su hora ORIGINAL y no con
+                # now(): es la misma adición de aquel día, no una nueva.
+
                 # Traslado del armado: el tilde (y la cantidad parcial)
                 # viajan SOLO a los renglones IDÉNTICOS al pedido viejo
                 # (misma sucursal, mismo artículo, misma cantidad) — lo ya
@@ -6694,7 +6759,12 @@ def listar_renglones_pedido(pedido_id: int) -> list[dict]:
                 SELECT r.id, r.sucursal, r.articulo_id, a.nombre AS articulo_nombre,
                        r.ficha_id, COALESCE(NULLIF(TRIM(fl.nombre_cliente), ''), a.nombre) AS nombre_venta,
                        r.texto_codigo, r.texto_descripcion, r.cantidad, r.armado_el, r.cantidad_armada,
-                       r.kilos_enviados, r.anulado_el
+                       r.kilos_enviados, r.anulado_el,
+                       -- Las dos marcas de "acá metió mano una persona". Sin
+                       -- ellas la pantalla no puede distinguir un renglón que
+                       -- vino en la comanda de uno que agregué yo, que es
+                       -- exactamente lo que el dueño pidió que se viera.
+                       r.agregado_a_mano_el, r.cantidad_original
                 FROM pedidos_renglones r
                 LEFT JOIN articulos a ON a.id = r.articulo_id
                 LEFT JOIN fichas_logistica fl ON fl.id = r.ficha_id
@@ -6733,6 +6803,175 @@ def asignar_ficha_a_renglon_pedido(renglon_id: int, ficha_id: int) -> None:
                 (ficha_id, renglon_id),
             )
         conexion.commit()
+    finally:
+        conexion.close()
+
+
+def contar_renglones_agregados_a_mano(pedido_id: int) -> int:
+    """Cuántos renglones VIGENTES de un pedido se agregaron a mano.
+
+    Lo usa el aviso de la recarga: el que pega una comanda nueva tiene que
+    saber que el resultado no va a ser solo lo que pegó. Cuenta los
+    vigentes porque un renglón anulado no se copia al pedido nuevo — el
+    aviso estaría prometiendo conservar algo que no se conserva.
+    """
+    conexion = obtener_conexion()
+    try:
+        with conexion.cursor() as cursor:
+            cursor.execute(
+                """
+                SELECT count(*) FROM pedidos_renglones
+                 WHERE pedido_id = %s AND agregado_a_mano_el IS NOT NULL
+                   AND anulado_el IS NULL
+                """,
+                (pedido_id,),
+            )
+            (cantidad,) = cursor.fetchone()
+        return int(cantidad)
+    finally:
+        conexion.close()
+
+
+def agregar_renglon_a_pedido(pedido_id: int, ficha_id: int, sucursal: str, cantidad) -> int:
+    """Agrega A MANO un renglón a un pedido YA CARGADO. Devuelve el id del renglón.
+
+    El caso: el súper pide por teléfono un artículo que la comanda no traía.
+    Hasta el 18/09 la única salida era recargar el pedido entero —el nuevo
+    anula al viejo— y eso le cuesta el armado a todo renglón cuya cantidad
+    haya cambiado.
+
+    EL ARTÍCULO SALE DE LA FICHA, acá adentro, y no viaja por el formulario.
+    Es la misma regla que `confirmar_pedido` y que `asignar_ficha_a_renglon_
+    pedido`: la ficha es la clave de VENTA (precio, kilaje, envase, el nombre
+    que ve el que arma) y el artículo la de COMPRA. Un `articulo_id` que
+    llegara del POST podría no ser el de la ficha elegida.
+
+    CUATRO GUARDAS, y las cuatro van ACÁ y no en la pantalla — un formulario
+    armado a mano no ve ningún cartel:
+
+    1. El pedido existe y no está anulado.
+    2. **La ficha es de ESE cliente.** Es el límite que pidió el dueño: solo
+       artículos que ese cliente tiene ficha para recibir, no el catálogo.
+    3. **La sucursal es una de las del pedido.** No es texto libre: la
+       pantalla de armar itera `pedidos_sucursales`, así que un renglón con
+       una sucursal que no está ahí existiría y no se vería nunca.
+    4. **No hay ya un renglón vigente con ese artículo en esa sucursal.** Si
+       lo hay —el caso más común, el que vino en la comanda EN CERO— lo que
+       corresponde es corregirle la cantidad, no agregar un segundo: dos
+       renglones del mismo artículo y sucursal cuentan la demanda dos veces
+       en la Rentabilidad, que suma por fecha y artículo.
+
+    La existencia se lee con un SELECT SIN AGREGADO: con `count(*)` la fila
+    vuelve con 0 y `fetchone() is None` no se cumple nunca (corolario 27).
+    """
+    if float(cantidad) <= 0:
+        raise ValueError("La cantidad tiene que ser mayor a cero.")
+    nombre_sucursal = " ".join(str(sucursal).split())
+    if not nombre_sucursal:
+        raise ValueError("Falta la sucursal.")
+
+    conexion = obtener_conexion()
+    try:
+        with conexion.cursor() as cursor:
+            cursor.execute("SELECT cliente_id, anulado_el FROM pedidos WHERE id = %s", (pedido_id,))
+            fila = cursor.fetchone()
+            if fila is None:
+                raise ValueError("No existe ese pedido.")
+            cliente_id, anulado_el = fila
+            if anulado_el is not None:
+                raise ValueError("Ese pedido está anulado: no se le pueden agregar renglones.")
+
+            cursor.execute(
+                "SELECT articulo_id FROM fichas_logistica WHERE id = %s AND cliente_id = %s",
+                (ficha_id, cliente_id),
+            )
+            fila_ficha = cursor.fetchone()
+            if fila_ficha is None:
+                raise ValueError("Esa ficha no es de este cliente.")
+            (articulo_id,) = fila_ficha
+
+            cursor.execute(
+                "SELECT 1 FROM pedidos_sucursales WHERE pedido_id = %s AND sucursal = %s",
+                (pedido_id, nombre_sucursal),
+            )
+            if cursor.fetchone() is None:
+                raise ValueError(f"El pedido no tiene la sucursal {nombre_sucursal}.")
+
+            cursor.execute(
+                """
+                SELECT 1 FROM pedidos_renglones
+                 WHERE pedido_id = %s AND articulo_id = %s AND sucursal = %s
+                   AND anulado_el IS NULL
+                """,
+                (pedido_id, articulo_id, nombre_sucursal),
+            )
+            if cursor.fetchone() is not None:
+                raise ValueError(
+                    f"Ese artículo ya está en {nombre_sucursal}: corregile la cantidad en vez de agregarlo de nuevo."
+                )
+
+            cursor.execute(
+                """
+                INSERT INTO pedidos_renglones
+                    (pedido_id, sucursal, articulo_id, ficha_id, cantidad, agregado_a_mano_el)
+                VALUES (%s, %s, %s, %s, %s, now())
+                RETURNING id
+                """,
+                (pedido_id, nombre_sucursal, articulo_id, ficha_id, cantidad),
+            )
+            (renglon_id,) = cursor.fetchone()
+        conexion.commit()
+        return renglon_id
+    finally:
+        conexion.close()
+
+
+def corregir_cantidad_renglon(renglon_id: int, cantidad) -> bool:
+    """Corrige A MANO lo que el súper pidió en un renglón. True si cambió algo.
+
+    `cantidad` es LO PEDIDO, no lo armado: `cantidad_armada` es otra columna
+    y otra pregunta ("cuánto salió de verdad"), y ésta no la toca. Un renglón
+    ya armado se puede corregir —el súper cambia el pedido después de que
+    armaste— y la pantalla muestra el diff, que es justamente para qué está.
+
+    `cantidad_original` SE ESCRIBE UNA SOLA VEZ, con el COALESCE: la segunda
+    corrección ya tiene guardado con qué nació el renglón y pisarlo borraría
+    el único dato que contesta "la orden de compra dice 5 y el sistema 8, por
+    qué".
+
+    Y NO HACE NADA si el número es el mismo: marcar como corregido un renglón
+    que nadie cambió lo dejaría señalado para siempre por un click.
+    """
+    if float(cantidad) <= 0:
+        raise ValueError("La cantidad tiene que ser mayor a cero.")
+
+    conexion = obtener_conexion()
+    try:
+        with conexion.cursor() as cursor:
+            cursor.execute(
+                "SELECT cantidad, anulado_el FROM pedidos_renglones WHERE id = %s",
+                (renglon_id,),
+            )
+            fila = cursor.fetchone()
+            if fila is None:
+                raise ValueError("No existe ese renglón.")
+            cantidad_vieja, anulado_el = fila
+            if anulado_el is not None:
+                raise ValueError("Ese renglón está anulado: desanulalo antes de corregirle la cantidad.")
+            if float(cantidad_vieja) == float(cantidad):
+                return False
+
+            cursor.execute(
+                """
+                UPDATE pedidos_renglones
+                   SET cantidad = %s,
+                       cantidad_original = COALESCE(cantidad_original, cantidad)
+                 WHERE id = %s
+                """,
+                (cantidad, renglon_id),
+            )
+        conexion.commit()
+        return True
     finally:
         conexion.close()
 

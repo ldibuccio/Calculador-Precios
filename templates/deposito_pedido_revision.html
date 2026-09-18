@@ -163,6 +163,12 @@
 
   {% if pedido_vigente %}
   <div class="aviso">Ya hay un pedido vigente para esta fecha (cargado {{ pedido_vigente.creado_en|fecha_hora }}). Al guardar, este lo REEMPLAZA: el anterior se anula y queda de registro.</div>
+  {% if renglones_a_mano_vigentes %}
+  {# LO QUE SE CONSERVA NO ES SOLO LO QUE PEGASTE. Sin este renglón, el total
+     del pedido guardado no cuadra contra la comanda que se acaba de pegar y
+     eso se lee como un error de lectura de la IA. #}
+  <div class="aviso">Ese pedido tiene {{ renglones_a_mano_vigentes }} renglón{{ "es" if renglones_a_mano_vigentes != 1 else "" }} agregado{{ "s" if renglones_a_mano_vigentes != 1 else "" }} a mano: se conserva{{ "n" if renglones_a_mano_vigentes != 1 else "" }}. Si la comanda nueva ya trae ese artículo en esa sucursal, manda la comanda y el agregado a mano se descarta.</div>
+  {% endif %}
   {% endif %}
 
   <form method="post" action="/deposito/pedido/cargar/confirmar" id="form-confirmar">

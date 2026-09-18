@@ -16517,13 +16517,13 @@ SUCURSALES_PEDIDO_DE_PRUEBA = [
 RENGLONES_PEDIDO_DE_PRUEBA = [
     {"id": 10, "sucursal": "VL", "articulo_id": None, "articulo_nombre": None, "ficha_id": None, "nombre_venta": None,
      "texto_codigo": "99999", "texto_descripcion": "RADICHETA", "cantidad": 5.0, "armado_el": None, "cantidad_armada": None,
-     "kilos_enviados": None, "anulado_el": None},
+     "kilos_enviados": None, "anulado_el": None, "agregado_a_mano_el": None, "cantidad_original": None},
     {"id": 11, "sucursal": "VL", "articulo_id": 1, "articulo_nombre": "Banana", "ficha_id": 901, "nombre_venta": "Banana",
      "texto_codigo": "90101", "texto_descripcion": "BANANA", "cantidad": 225.0, "armado_el": None, "cantidad_armada": None,
-     "kilos_enviados": None, "anulado_el": None},
+     "kilos_enviados": None, "anulado_el": None, "agregado_a_mano_el": None, "cantidad_original": None},
     {"id": 12, "sucursal": "BZ", "articulo_id": 2, "articulo_nombre": "Batata", "ficha_id": 902, "nombre_venta": "Batata",
      "texto_codigo": "90102", "texto_descripcion": "BATATA", "cantidad": 40.0, "armado_el": None, "cantidad_armada": None,
-     "kilos_enviados": None, "anulado_el": None},
+     "kilos_enviados": None, "anulado_el": None, "agregado_a_mano_el": None, "cantidad_original": None},
 ]
 
 FICHAS_PEDIDO_DE_PRUEBA = [
@@ -16853,14 +16853,221 @@ def test_confirmar_pedido_sube_las_capturas_como_respaldo():
 RENGLONES_ARMADO_DE_PRUEBA = [
     {"id": 11, "sucursal": "VL", "articulo_id": 1, "articulo_nombre": "Banana", "ficha_id": 901, "nombre_venta": "Banana",
      "texto_codigo": "90101", "texto_descripcion": "BANANA", "cantidad": 15.0,
-     "armado_el": None, "cantidad_armada": None, "kilos_enviados": None, "anulado_el": None},
+     "armado_el": None, "cantidad_armada": None, "kilos_enviados": None, "anulado_el": None, "agregado_a_mano_el": None, "cantidad_original": None},
     {"id": 12, "sucursal": "VL", "articulo_id": 2, "articulo_nombre": "Batata", "ficha_id": 902, "nombre_venta": "Batata",
      "texto_codigo": "90102", "texto_descripcion": "BATATA", "cantidad": 20.0,
-     "armado_el": datetime(2026, 8, 21, 13, 0), "cantidad_armada": 12.0, "kilos_enviados": 120.0, "anulado_el": None},
+     "armado_el": datetime(2026, 8, 21, 13, 0), "cantidad_armada": 12.0, "kilos_enviados": 120.0, "anulado_el": None, "agregado_a_mano_el": None, "cantidad_original": None},
     {"id": 13, "sucursal": "BZ", "articulo_id": 1, "articulo_nombre": "Banana", "ficha_id": 901, "nombre_venta": "Banana",
      "texto_codigo": "90101", "texto_descripcion": "BANANA", "cantidad": 40.0,
-     "armado_el": datetime(2026, 8, 21, 13, 5), "cantidad_armada": None, "kilos_enviados": None, "anulado_el": None},
+     "armado_el": datetime(2026, 8, 21, 13, 5), "cantidad_armada": None, "kilos_enviados": None, "anulado_el": None, "agregado_a_mano_el": None, "cantidad_original": None},
 ]
+
+
+def _pedido_con_renglones(renglones):
+    """La pantalla del pedido del día con estos renglones."""
+    with (
+        patch("app.main._hoy_argentina", return_value=date(2026, 8, 21)),
+        patch("app.main.listar_clientes", return_value=CLIENTES_PARA_SELECTOR),
+        patch("app.main.listar_pedidos_vigentes_con_armado", return_value=[]),
+        patch("app.main.obtener_pedido_vigente", return_value=PEDIDO_VIGENTE_DE_PRUEBA),
+        patch("app.main.listar_sucursales_pedido",
+              return_value=[dict(s) for s in SUCURSALES_PEDIDO_DE_PRUEBA]),
+        patch("app.main.listar_renglones_pedido", return_value=renglones),
+        patch("app.main.listar_fichas_por_cliente", return_value=FICHAS_PEDIDO_DE_PRUEBA),
+        patch("app.main.listar_mails_pedido_sin_procesar_de_cliente", return_value=[]),
+        patch("app.main.obtener_condiciones_pedido", return_value=None),
+        patch("app.main.obtener_mail_de_pedido", return_value=None),
+        patch("app.main.fichas_con_cajas_armadas", return_value=set()),
+        patch("app.main.listar_fotos_pedido", return_value=[]),
+    ):
+        return cliente.get("/deposito/pedido?cliente_id=1&fecha=2026-08-21")
+
+
+def test_el_renglon_AGREGADO_A_MANO_se_ve_marcado_en_la_pantalla():
+    """El pedido llega por mail y el sistema lo lee. Un renglón que puso una
+    persona tiene que distinguirse: el día que algo no cierre contra la orden
+    de compra del súper, eso es lo primero que hay que mirar."""
+    renglones = [dict(r) for r in RENGLONES_ARMADO_DE_PRUEBA]
+    renglones[0]["agregado_a_mano_el"] = datetime(2026, 8, 21, 11, 30)
+
+    respuesta = _pedido_con_renglones(renglones)
+
+    assert respuesta.status_code == 200
+    marcado = respuesta.text.split("</style>")[-1]
+    assert marcado.count('<span class="marca-a-mano">A MANO</span>') == 1
+
+
+def test_un_pedido_SIN_renglones_a_mano_no_muestra_ninguna_marca():
+    """El control del par: una marca que sale siempre no distingue nada, y un
+    detector que marca todo se ve igual de trabajador que uno que funciona."""
+    respuesta = _pedido_con_renglones([dict(r) for r in RENGLONES_ARMADO_DE_PRUEBA])
+
+    marcado = respuesta.text.split("</style>")[-1]
+    assert "marca-a-mano" not in marcado
+
+
+def test_la_cantidad_CORREGIDA_dice_que_decia_la_comanda():
+    """No alcanza con marcar que se tocó: lo que contesta "la OC dice 5 y el
+    sistema 8, por qué" es el número viejo, y por eso se guarda el VALOR."""
+    renglones = [dict(r) for r in RENGLONES_ARMADO_DE_PRUEBA]
+    renglones[0]["cantidad"] = 8.0
+    renglones[0]["cantidad_original"] = 5.0
+
+    respuesta = _pedido_con_renglones(renglones)
+
+    marcado = respuesta.text.split("</style>")[-1]
+    assert "la comanda decía 5" in marcado
+
+
+def test_el_alta_de_un_renglon_OFRECE_SOLO_las_fichas_de_ESE_cliente():
+    """El límite pedido por el dueño: no cualquier cosa del catálogo, lo que
+    ese cliente tiene ficha para recibir. La pantalla lo ofrece así y la
+    escritura lo exige igual — ofrecer algo que el POST rechaza es un
+    callejón, y lo contrario es peor."""
+    respuesta = _pedido_con_renglones([dict(r) for r in RENGLONES_ARMADO_DE_PRUEBA])
+
+    marcado = respuesta.text.split("</style>")[-1]
+    assert 'action="/deposito/pedido/50/renglones/agregar"' in marcado
+    for ficha in FICHAS_PEDIDO_DE_PRUEBA:
+        assert f'<option value="{ficha["id"]}">' in marcado
+
+
+def test_agregar_un_renglon_PASA_LA_SUCURSAL_DE_SU_TARJETA_y_no_una_cualquiera():
+    """Cada tarjeta de sucursal tiene su propio formulario con la sucursal
+    clavada: un selector de sucursal libre dejaría cargar un renglón para una
+    sucursal que el pedido no tiene, y ese renglón no se vería nunca."""
+    respuesta = _pedido_con_renglones([dict(r) for r in RENGLONES_ARMADO_DE_PRUEBA])
+
+    marcado = respuesta.text.split("</style>")[-1]
+    for sucursal in SUCURSALES_PEDIDO_DE_PRUEBA:
+        assert f'<input type="hidden" name="sucursal" value="{sucursal["sucursal"]}">' in marcado
+
+
+def test_agregar_renglon_TRADUCE_el_motivo_del_rechazo_y_no_devuelve_un_500():
+    """El operario tiene que leer POR QUÉ no entró. Un 500 lo manda a
+    preguntar; el motivo lo manda a corregir el renglón que ya está."""
+    with patch("app.main.agregar_renglon_a_pedido",
+               side_effect=ValueError("Ese artículo ya está en VL: corregile la cantidad.")):
+        respuesta = cliente.post(
+            "/deposito/pedido/50/renglones/agregar",
+            data={"cliente_id": "1", "fecha": "2026-08-21", "ficha_id": "901",
+                  "sucursal": "VL", "cantidad": "5"},
+            follow_redirects=False,
+        )
+
+    assert respuesta.status_code == 400
+    assert "corregile la cantidad" in respuesta.text
+
+
+def test_corregir_la_cantidad_AVISA_cuando_el_numero_ya_era_ese():
+    """Un 303 mudo se lee como "se guardó": el operario se va creyendo que
+    cambió algo. La ruta distingue los dos casos porque la función devuelve
+    si escribió o no."""
+    with patch("app.main.corregir_cantidad_renglon", return_value=False):
+        respuesta = cliente.post(
+            "/deposito/pedido/50/renglones/11/cantidad",
+            data={"cliente_id": "1", "fecha": "2026-08-21", "cantidad": "15"},
+            follow_redirects=False,
+        )
+
+    assert respuesta.status_code == 303
+    # El aviso viaja URL-encoded en el location, así que se lee decodificado:
+    # un `in` sobre el crudo no matchea nunca y el assert sería inútil.
+    assert "no se cambió nada" in urllib.parse.unquote_plus(respuesta.headers["location"])
+
+
+def test_la_RECARGA_avisa_cuantos_renglones_a_mano_va_a_conservar():
+    """Condición del dueño: "el que recarga tiene que saber que el resultado no
+    es solo lo que pegó".
+
+    Sin esta línea el total del pedido guardado no cuadra contra la comanda
+    que se acaba de pegar, y eso se lee como un error de lectura de la IA —
+    que es la primera sospecha razonable y manda a mirar el lugar equivocado.
+    """
+    from app.main import _contexto_revision_pedido
+
+    datos = {"bloques": [{
+        "empresa": "EJEMPLO SA",
+        "sucursales": [{"sucursal": "VL", "orden_compra": "1257673", "total_bultos": 5}],
+        "renglones": [{"codigo": "90101", "descripcion": "BANANA",
+                       "cantidades": {"VL": 5}, "confianza": "alta"}],
+    }]}
+    with (
+        patch("app.main.listar_fichas_por_cliente", return_value=FICHAS_PEDIDO_DE_PRUEBA),
+        patch("app.main.obtener_pedido_vigente", return_value={"id": 50, "creado_en": datetime(2026, 8, 21, 9, 0)}),
+        patch("app.main.contar_renglones_agregados_a_mano", return_value=2) as contador,
+    ):
+        contexto = _contexto_revision_pedido(1, "EJEMPLO SA", date(2026, 8, 21), datos, "", [])
+
+    assert contexto is not None
+    assert contexto["renglones_a_mano_vigentes"] == 2
+    # Se cuenta sobre EL PEDIDO VIGENTE, que es el que la recarga va a anular
+    # y del que se copian los renglones.
+    contador.assert_called_once_with(50)
+
+
+def test_sin_pedido_vigente_no_se_cuenta_nada_ni_se_consulta_la_base():
+    """El control del par: la primera carga del día no tiene a quién
+    conservarle nada, y preguntar igual sería una consulta por un pedido que
+    no existe."""
+    from app.main import _contexto_revision_pedido
+
+    datos = {"bloques": [{
+        "empresa": "EJEMPLO SA",
+        "sucursales": [{"sucursal": "VL", "orden_compra": "1257673", "total_bultos": 5}],
+        "renglones": [{"codigo": "90101", "descripcion": "BANANA",
+                       "cantidades": {"VL": 5}, "confianza": "alta"}],
+    }]}
+    with (
+        patch("app.main.listar_fichas_por_cliente", return_value=FICHAS_PEDIDO_DE_PRUEBA),
+        patch("app.main.obtener_pedido_vigente", return_value=None),
+        patch("app.main.contar_renglones_agregados_a_mano") as contador,
+    ):
+        contexto = _contexto_revision_pedido(1, "EJEMPLO SA", date(2026, 8, 21), datos, "", [])
+
+    assert contexto["renglones_a_mano_vigentes"] == 0
+    contador.assert_not_called()
+
+
+_ABRIR_EL_PANEL_DEL_PEDIDO = """() => {
+  const botones = [...document.querySelectorAll("[data-abre]")];
+  botones.forEach(b => b.click());
+  // El denominador es cuántos FORMULARIOS quedaron a la vista, no cuántos
+  // elementos tiene el documento: el panel existe en el DOM aunque esté
+  // cerrado, así que contar elementos da el mismo número abierto y cerrado y
+  // no distingue "se abrió" de "no se abrió" (corolario 53).
+  return document.querySelectorAll(".panel-tocar.abierto form").length;
+}"""
+
+
+def test_el_panel_de_corregir_ABIERTO_no_desborda_a_390px():
+    """El nombre de la ficha lo tipea una persona y puede no tener dónde
+    cortar. Se mide con el panel ABIERTO —cerrado, sus inputs no ocupan nada y
+    el cero no dice nada de ellos— y POR ELEMENTO: en una pantalla de tarjetas
+    el desborde de página lo absorbe la tarjeta y da 0 igual (corolario 47).
+
+    El par va completo: el nombre normal tiene que seguir entrando. Un arreglo
+    que rompa el caso cómodo para aguantar el raro pasaría el primero sin que
+    nada caiga.
+    """
+    pytest.importorskip("playwright", reason="el ancho de una caja lo decide el navegador")
+
+    for etiqueta, nombre in (("normal", "Banana Ecuador"), ("impartible", _PROVEEDOR_IMPARTIBLE)):
+        renglones = [dict(r) for r in RENGLONES_ARMADO_DE_PRUEBA]
+        renglones[0] = dict(renglones[0], nombre_venta=nombre,
+                            agregado_a_mano_el=datetime(2026, 8, 21, 11, 30))
+        fichas = [dict(FICHAS_PEDIDO_DE_PRUEBA[0], nombre=nombre)] + \
+            [dict(f) for f in FICHAS_PEDIDO_DE_PRUEBA[1:]]
+
+        with patch("app.main.listar_fichas_por_cliente", return_value=fichas):
+            respuesta = _pedido_con_renglones(renglones)
+        assert respuesta.status_code == 200, etiqueta
+
+        medicion = asyncio.run(_medir_sobrantes(respuesta.text, _ABRIR_EL_PANEL_DEL_PEDIDO))
+        # `dibujadas` son los formularios del panel abierto: sin ese número,
+        # "no se sale nada" y "el panel no se abrió" se imprimen igual.
+        assert medicion["dibujadas"] >= 3, (etiqueta, medicion)
+        assert medicion["fuera"] == [], (etiqueta, medicion["fuera"])
 
 
 def test_armar_pedido_muestra_las_sucursales_con_progreso_y_oc():
@@ -20390,7 +20597,7 @@ def test_terminar_pedido_no_cuenta_renglones_sin_sucursal_como_pendientes():
     renglones = [dict(r) for r in RENGLONES_ARMADO_DE_PRUEBA] + [
         {"id": 14, "sucursal": None, "articulo_id": 3, "articulo_nombre": "Kiwi", "ficha_id": 903, "nombre_venta": "Kiwi",
          "texto_codigo": "90103", "texto_descripcion": "KIWI", "cantidad": 0,
-         "armado_el": None, "cantidad_armada": None, "kilos_enviados": None, "anulado_el": None},
+         "armado_el": None, "cantidad_armada": None, "kilos_enviados": None, "anulado_el": None, "agregado_a_mano_el": None, "cantidad_original": None},
     ]
     with (
         patch("app.main._hoy_argentina", return_value=date(2026, 8, 21)),
@@ -25707,7 +25914,7 @@ def _renglon(**cambios):
     base = {"id": 11, "sucursal": "VL", "articulo_id": 1, "articulo_nombre": "Banana",
             "ficha_id": 901, "nombre_venta": "Banana", "texto_codigo": "90101",
             "texto_descripcion": "BANANA", "cantidad": 10.0, "armado_el": None,
-            "cantidad_armada": None, "kilos_enviados": None, "anulado_el": None}
+            "cantidad_armada": None, "kilos_enviados": None, "anulado_el": None, "agregado_a_mano_el": None, "cantidad_original": None}
     base.update(cambios)
     return base
 

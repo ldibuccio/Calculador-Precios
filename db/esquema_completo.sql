@@ -774,6 +774,16 @@ create table pedidos_renglones (
     -- cuenta (todos sus renglones vigentes y armados tienen tilde), asi que
     -- un renglon nuevo lo vuelve incompleto solo.
     controlado_el     timestamptz,
+    -- Cuando se agrego este renglon A MANO a un pedido ya cargado: el super
+    -- pidio por telefono algo que la comanda no traia. NULL = vino en el mail,
+    -- que es el caso normal. Existe porque pedidos.origen es del PEDIDO y no
+    -- del renglon, asi que sin esto los dos son indistinguibles.
+    agregado_a_mano_el timestamptz,
+    -- Con que cantidad NACIO el renglon, si despues alguien la corrigio a
+    -- mano. NULL = nunca se corrigio. Guarda el VALOR y no una hora: la
+    -- pregunta del dia que algo no cierra es "la OC dice 5 y el sistema 8,
+    -- por que", y eso lo contesta el numero viejo.
+    cantidad_original numeric,
     -- Sin artículo no hay ficha: un renglón sin identificar no puede traer
     -- una ficha colgada (y al revés sí: identificado sin ficha es posible).
     constraint pedidos_renglones_ficha_solo_identificados
@@ -792,6 +802,10 @@ comment on table pedidos_renglones is 'Un renglon por articulo Y sucursal. artic
 comment on column pedidos_renglones.kilos_enviados is 'Kilos REALES con los que el depósito mandó el renglón (se cargan al tildar; editables). NULL = sin armar. Es el número que se factura.';
 comment on column pedidos_renglones.anulado_el is 'Renglón que no se va a armar: anulado (baja lógica), fuera del progreso, nunca borrado.';
 comment on column pedidos_renglones.controlado_el is 'Cuando Administracion tildo este renglon como controlado en Buscar Pedidos. NULL = sin controlar. No guarda quien: el sistema no tiene usuarios. Se limpia al desarmar el renglon (lo obliga el CHECK pedidos_renglones_controlado_solo_armado).';
+
+comment on column pedidos_renglones.agregado_a_mano_el is 'Cuando se agrego este renglon a mano a un pedido YA CARGADO. NULL = vino en la comanda, que es el caso normal. Existe porque pedidos.origen es del PEDIDO y no del renglon: sin esto un articulo que el super agrego por telefono es indistinguible de uno que vino en el mail, y el dia que algo no cierre contra la orden de compra eso es lo primero que hay que mirar. Guarda CUANDO y nada mas, igual que controlado_el: el sistema no tiene usuarios, asi que un quien seria un campo sin consecuencia.';
+
+comment on column pedidos_renglones.cantidad_original is 'Con que cantidad NACIO este renglon, si despues alguien la corrigio a mano. NULL = nunca se corrigio y cantidad es la de siempre. Guarda el VALOR y no un timestamp a proposito: la pregunta que aparece el dia que algo no cierra es "la orden de compra dice 5 y el sistema dice 8, por que", y eso lo contesta el numero viejo, no la hora. Se escribe UNA sola vez, en la primera correccion.';
 
 comment on column pedidos_renglones.ficha_id is 'La ficha con la que el cliente pidió este renglón: la clave de VENTA (precio, kilaje, envase y el nombre que ve el que arma). Sale del código del cliente al matchear. articulo_id sigue al lado como clave de COMPRA — es lo que descuenta stock, y dos fichas del mismo artículo descuentan del mismo stock. NULL = renglón sin identificar, o ficha borrada después.';
 

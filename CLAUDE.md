@@ -5147,6 +5147,29 @@ que lo pega: `lote.kilaje ? " de " + lote.kilaje : ""`, contada `== 1`. El
 conteo importa tanto como la expresión: con un `in`, una tercera copia del
 rótulo pasaría igual.
 
+**Y VOLVIÓ EL 18/09, en el mismo turno, por la otra causa posible.** Allá el
+assert se mudó porque un ARREGLO agregó la segunda mención; acá porque **el
+mismo commit agregó una SEGUNDA SENTENCIA** que la contenía: la recarga copia
+los renglones a mano y, al lado, la sucursal que falte — y las dos dicen
+`viejo.agregado_a_mano_el`. Dos tests quedaron anclados ahí, y la copia de la
+sucursal va primero:
+
+- el que afirma QUÉ copia el INSERT terminó leyendo el de sucursales;
+- y el que afirma que la copia va **ANTES del traslado del armado** pasaba con
+  la copia de renglones movida DESPUÉS — o sea, con el bug que su nombre dice
+  cuidar puesto.
+
+Los dos se anclan ahora en `viejo.cantidad_original`, que solo la copia de
+renglones tiene. **Y a los dos los encontró el canario, no la lectura**: el
+primero falló en rojo al escribirlo, el segundo pasó en verde y solo se vio
+porque el canario que borra la copia entera dio 1 donde tenía que dar 2.
+
+**La regla corta, con las dos causas juntas**: un `in` sobre un archivo entero
+afirma "esto está en algún lado", no "esto está donde digo". Cualquier segunda
+mención —la agregue un arreglo o la agregue el mismo commit— le cambia el
+sujeto sin que nada se ponga rojo. El ancla tiene que ser algo que **solo**
+pueda estar en el lugar que se quiere probar.
+
 **Y la misma frase estaba escrita en otros DOS lugares afirmando lo contrario**
 — el mensaje del commit que agregó el kilaje (*"la pared de Reproceso lo trae
 también: ahí se está decidiendo qué hacer"*) y el comentario del fixture de esos
@@ -7796,6 +7819,35 @@ El canario estaba mal puesto, no la medición. Lo que sí desborda es el
 RÓTULO, y con eso el número saltó de 0 a 480px. **Antes de leer un canario de
 layout en cero, preguntarse si lo que se rompió puede mover ese número.**
 
+## Y la SEXTA lectura del canario en cero: el contador solo cuenta `FAILED`
+
+Del 18/09. Dos canarios seguidos dieron **0**, y no era ninguna de las cinco
+causas escritas. El parche cortaba con `t.index(marca)` y **la marca aparecía
+DOS veces** —`INSERT INTO pedidos_sucursales` está en el insert normal y en la
+copia nueva—, así que el corte empezó en el primero y se llevó puesto medio
+`crear_pedido`. El archivo quedó sin parsear, pytest reportó un error de
+COLECCIÓN, y mi contador era `re.findall(r"^FAILED ...")`: **un error de
+colección no imprime ni una línea `FAILED`**, así que el canario informó cero
+caídos sobre una suite que no llegó a correr.
+
+O sea que el cero significaba lo contrario de todas las lecturas anteriores:
+no es que nada se rompiera, es que **se rompió tanto que la medición no
+existió**.
+
+**Las dos señales, y las dos cuestan una línea:**
+
+1. **El canario imprime la COLA del resumen de pytest**, no solo su lista de
+   caídos. `2687 passed` y `error during collection` se distinguen de un
+   vistazo; dos listas vacías, no.
+2. **Y el parche se valida con `ast.parse` antes de correr nada.** Si el
+   archivo mutado no parsea, el canario no midió: eso es un canario roto y hay
+   que decirlo así, no anotar un cero.
+
+Y la causa de fondo es la de siempre en este archivo, en una herramienta:
+**`str.index` de un fragmento que aparece dos veces contesta por el primero.**
+Es el corolario 4 fuera de un assert — el ancla suelta que matchea al vecino,
+ahora cortando código en vez de verificándolo.
+
 ## Corolario 80: una cuenta DERIVADA convierte "completar el dato" en "arreglarlo", y eso decide si hay que recargar
 
 Del 17/09, y es la propiedad que más veces salvó a este sistema, vista del
@@ -7972,6 +8024,107 @@ que la premisa se cae. Es el corolario 29 en su parte buena (*un cambio que
 todavía no tiene usuarios se escribe de forma que deshacerlo sea gratis*),
 con el mecanismo dicho: la forma de que sea gratis es que la regla tenga un
 solo lugar.
+
+## EL RENGLÓN QUE EL SÚPER PIDE POR TELÉFONO (18/09)
+
+El pedido llega por mail y el sistema lo lee. Después el súper llama: *"subime
+a 8 lo de Banana, y agregame 5 de Lima que no te puse"*. Hasta el 18/09 la
+única salida era **recargar el pedido entero**, y eso le cuesta el armado a
+todo renglón cuya cantidad se haya movido — el traslado solo viaja donde
+(artículo, sucursal, cantidad) son idénticos.
+
+**Y LAS DOS MITADES ERAN LA MISMA COSA, que es lo que el planteo no veía.** El
+pedido del dueño separaba "agregar un renglón" de "corregir una cantidad,
+que eso lo puedo editar". **No se podía editar**: `pedidos_renglones.cantidad`
+no tenía un solo UPDATE en todo el código —los seis que existen tocan
+`ficha_id`, `armado_el`, `cantidad_armada`, `kilos_enviados`, `anulado_el` y
+`controlado_el`— así que las dos iban por la misma puerta, que era recargar.
+
+**Y el artículo "que no estaba" suele ESTAR.** El confirmar guarda los
+renglones sin cantidad igual, con `cantidad = 0` y sin sucursal: *"nada del
+mail se pierde"*. Si vino en la comanda en cero, el renglón existe y lo que
+falta es darle cantidad — por eso el alta **rechaza** el artículo que ya está
+en esa sucursal y manda a corregirlo. Dos renglones del mismo artículo y
+sucursal cuentan la demanda dos veces en la Rentabilidad, que suma por fecha y
+artículo.
+
+### Las dos marcas, y por qué son dos columnas y no una
+
+El dueño lo pidió así: *"quiero que se vea que ese renglón lo puse yo y no
+vino en el mail, porque el día que algo no cierre contra la orden de compra
+eso es lo primero que hay que mirar"*. `pedidos.origen` es del PEDIDO y no del
+renglón, así que no alcanzaba.
+
+| | qué guarda | qué pregunta contesta |
+|---|---|---|
+| `agregado_a_mano_el` | CUÁNDO | ¿este renglón vino en la comanda? |
+| `cantidad_original` | el NÚMERO VIEJO | la OC dice 5 y el sistema 8, ¿por qué? |
+
+**La segunda guarda un valor y no una hora a propósito.** Un timestamp dice
+que alguien tocó; el número viejo dice qué decía la comanda, que es la
+pregunta que de verdad aparece. Y se escribe **una sola vez**, con un
+`COALESCE`: la segunda corrección pisaría el único dato que contesta.
+
+### Y el renglón a mano SOBREVIVE A LA RECARGA — con el mail ganando el empate
+
+Decisión del dueño: *"si el súper agregó un artículo por teléfono, eso es real
+y no está en el mail. Que una recarga lo borre significa que al operario se le
+desaparece mercadería que ya armó, sin que nada avise. Y el mail corregido no
+lo va a traer nunca — si lo trajera, ya no sería un renglón agregado a mano"*.
+
+**Cuando SÍ lo trae, gana el del mail**, y las cuatro razones:
+
+1. **No son dos pedidos: es el mismo dicho dos veces** —pediste por teléfono y
+   después llegó por mail—, así que conservar los dos duplica la demanda.
+2. **La comanda es el documento contra el que se concilia la orden de compra.**
+3. Es **más nueva**.
+4. Y **la razón de existir del manual se apagó**: existía porque el mail no lo
+   traía.
+
+El empate se resuelve por **(artículo, sucursal)**, y el armado no se pierde:
+el traslado que ya existía lo lleva del viejo al del mail cuando la cantidad
+coincide. Si la cantidad cambió no viaja, que es lo que el sistema ya hace con
+cualquier renglón cuyo número se movió.
+
+**Y hay DOS detalles de orden que no son estilo:**
+
+- **La copia va ANTES del traslado del armado.** Al revés, el renglón
+  conservado aparece SIN armar — que es exactamente la mercadería que
+  desaparece que esto vino a evitar.
+- **La SUCURSAL se copia si el mail nuevo ya no la trae.** La pantalla de
+  armar itera `pedidos_sucursales`: sin eso el renglón conservado existiría
+  sin que nadie pueda verlo (corolario 68).
+
+**Y la recarga AVISA cuántos va a conservar**, que fue la otra condición: sin
+esa línea el total del pedido guardado no cuadra contra la comanda que se
+acaba de pegar, y eso se lee como un error de lectura de la IA — la primera
+sospecha razonable, y manda a mirar el lugar equivocado.
+
+## Corolario 84: una premisa del DUEÑO también se verifica, y la que se cae agranda el pedido
+
+Del 18/09. El pedido venía con una premisa adentro: *"no es que pidan más
+cantidad de algo que ya está, **eso lo puedo editar**"*. Era falsa, y lo dijo
+un `grep` de los seis `UPDATE pedidos_renglones` que existen: ninguno toca
+`cantidad`.
+
+**Lo que se habría construido creyéndole es media función.** El caso "me
+pidieron 5 más de algo que ya estaba" —que es el más común de los dos— habría
+seguido necesitando recargar el pedido entero, y el dueño se habría enterado
+usándolo.
+
+Y no es la familia del corolario 71, donde el dato del galpón llega mal porque
+se pregunta en medio de un arreglo. **Acá la premisa es sobre EL SISTEMA, no
+sobre el mundo** — y de esas el repo es la fuente, no la memoria de nadie. La
+regla, entonces, es la que separa las dos:
+
+> **Lo que el dueño sabe del GALPÓN se le pregunta. Lo que afirma del SISTEMA
+> se verifica en el código, aunque venga en la misma oración.**
+
+Las dos mitades importan. Discutirle un hecho del negocio es perder el tiempo
+—él lo ve todos los días y nosotros no—; creerle una afirmación sobre lo que
+el código puede hacer es construir sobre una lectura que él no tiene por qué
+tener. La frase de este caso tenía las dos: el hecho del negocio (el súper
+agrega por teléfono) era cierto, y el del sistema (lo puedo editar) era falso.
 
 ## Corolario 82: un canario que hace caer MÁS tests de los que su avería explica está midiendo sobre un árbol ya roto
 
