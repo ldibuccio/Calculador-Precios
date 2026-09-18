@@ -1429,6 +1429,18 @@ verificar, porque las reglas no se verifican.**
 La forma de escribirlo que no expira es la que este corolario tiene arriba:
 *el testigo dice si la base vota*. La que expira es *esta base no vota*.
 
+**CONFIRMADO el mismo día, y no era chico lo que se estaba descartando**:
+`pesaje_1` sobre Palmala dio **70 recepciones en 7 días y 240 en 90** —
+población de sobra— y **16 de 40 sin ninguna evidencia de pesaje en dos días,
+contra 6 de 44 en Frutamax**. O sea que la base "que no vota" tenía la tasa
+TRIPLE, y el atajo de descartarla por nombre venía tapando el número más
+grande de los dos. Ver "El pesaje" más arriba.
+
+Y la mitad que no cambia: **Palmala sigue sin votar en guías R y en
+armados**, porque esos testigos siguen diciendo lo que decían. Las dos cosas
+son ciertas sobre la misma base al mismo tiempo, y eso es exactamente lo que
+un atributo de la base no puede expresar.
+
 Corolario 25, del 08/09, y es el hermano exacto del 23: **un argumento
 puede ser CORRECTO y llevar al número equivocado, porque lo que falla no es
 el razonamiento sino la premisa que nadie midió.**
@@ -3722,6 +3734,73 @@ semana pasada no. Con siete días el número sería ~19 por la medición del
 construir una vez; con dos son ~5. Queda por confirmar con
 `db/pesaje_1_cuantas_sin_evidencia.sql`: **si diera mucho más, lo que hay que
 mover no es el umbral sino la unidad.**
+
+#### CONFIRMADO el 18/09, y Palmala dio el TRIPLE (y votó)
+
+```
+FRUTAMAX   6 de 44 en 2d (14%) ·  18 de 117 en 7d (15%) · población 90d 526
+PALMALA   16 de 40 en 2d (40%) ·  35 de  70 en 7d (50%) · población 90d 240
+```
+
+La predicción escrita decía *"con dos días son ~5"* y Frutamax dio 6: la
+ventana queda. **Palmala VOTÓ** —70 recepciones en 7 días, 240 en 90— y es
+el caso que corrigió el *"Palmala no vota"* escrito como atributo de la base.
+
+**EL NÚMERO QUE SE CITA ES EL DE 7 DÍAS, no el de 2.** El 40% sale de n=40 y
+su error estándar es ±7,7 puntos: ese 40 vive entre 25% y 55%, así que "cuatro
+de cada diez" es más preciso de lo que el dato aguanta. El de 7 días —**la
+mitad de las recepciones**, n=70— es el que se sostiene, y encima es peor.
+
+**Y la razón entre las dos bases es 2,9× (2d) y 3,3× (7d), no 2×.** Es el
+corolario 15 otra vez —la glosa al contar un resultado se vuelve un hecho— y
+acá el número iba a ir a una conversación con el galpón.
+
+**La forma más limpia del contraste no es ninguna de esas dos**: recepciones
+con LAS DOS evidencias, que es lo que se quiere que pase.
+
+```
+FRUTAMAX  72 de 117 limpias = 62%
+PALMALA   10 de  70 limpias = 14%
+```
+
+#### Y `solo_sin_foto` NO ERA "solo": era el TOTAL
+
+Las dos columnas se llamaban `solo_*` y contaban **todas** las de cada
+condición, las del cruce incluidas. Leídas como grupos aparte, la resta sale
+mal — y salió mal el mismo día: se leyó *"solo sin foto 19, sin evidencia 18,
+casi iguales"* como dos poblaciones parecidas, cuando lo que pasa es que
+**18 de esas 19 SON las mismas.** En Frutamax hay UNA sola recepción sin foto
+donde alguien igual tocó el número.
+
+Es el corolario 8 —el nombre lleva el alcance— adentro de una consulta de
+diagnóstico, que es donde más caro sale: **el que la corre no va a leer el
+`filter`, va a leer el encabezado de la columna.** Renombradas a `sin_foto_7d`
+y `sin_tocar_7d`, y con `CON_UN_OR_habria_disparado_7d` calculada en la
+consulta en vez de de cabeza.
+
+**Y ese OR es la confirmación más dura del cruce**: en Palmala habría
+disparado sobre **60 de 70 recepciones, el 86%**. Es *más hallazgos que
+población condena la heurística* en su forma más limpia — un criterio que
+marca seis de cada siete no está contando lo raro, está contando la norma.
+
+#### La UNIDAD no se mueve todavía, y lo que lo decide es lo que pase después
+
+La regla escrita dice que un número grande manda a mover la unidad, y 16 en
+dos días lo parece. **No aplica, y la razón es de forma**: esta alerta
+devuelve UNA fila con una magnitud, no dieciséis avisos. El caso que aquella
+regla rechazó era una lista de veintiún ítems para atender de a uno.
+
+Lo que sí es cierto es que en Palmala **los 16 tienen UNA causa** —el dueño
+lo llamó *"un hábito, no un olvido"*— y una lista de 16 con una sola causa no
+se trabaja ítem por ítem: se arregla la causa una vez. Pero eso no rompe la
+alerta: **la alerta hizo exactamente su trabajo**, que era hacer visible el
+hábito.
+
+**El test, y hay que dejarlo escrito porque es la única forma de saberlo**:
+si el número BAJA después de la conversación con el depósito, la unidad
+estaba bien y la alerta sirvió. **Si no baja, entonces sí la unidad está mal**
+— sería una causa que un conteo por recepción no puede mover, y ahí el aviso
+tiene que pasar a la unidad de la causa.
 
 ### Y lo que queda ANOTADO Y NO HECHO
 
