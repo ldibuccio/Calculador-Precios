@@ -8258,6 +8258,43 @@ Ninguna de las tres sola alcanza, y esto es lo que costó el turno:
 fechado el 17 en vez del 18, la consulta da 0. Sin ése, una consulta que marque
 todo pasa igual todos los casos positivos (corolario 30 y 53).
 
+### Y el número corregido tenía UNA SEGUNDA lectura equivocada adentro
+
+Con las seis patas puestas, `rojo_a_su_fecha_1` dio **45 días-artículo en rojo
+sobre 446 y 2355 "bultos descubiertos"** en Frutamax. El 45 es correcto. El
+2355 **no son bultos: son bultos-DÍA.**
+
+`saldo` es el déficit PARADO de ese día, así que sumarlo a lo largo de los días
+cuenta el mismo faltante una vez por día que dura. Medido con el caso plantado:
+un artículo que sale **10 bultos sin cubrir UNA vez** y queda así tres días
+aporta **30**. La mercadería que salió descubierta es 10.
+
+Es el corolario 13 exacto —una cuenta exacta sobre lo que mide, que deja de
+contestar la pregunta con la que se la va a citar— y la pregunta con la que se
+la iba a citar era la del dueño: *"2355 bultos, mercadería que salió sin tener
+con qué"*. Ese número está inflado por cuánto duró cada déficit, no por cuánta
+mercadería salió.
+
+**Las dos cuentas van SEPARADAS y con nombre propio**, porque las dos sirven y
+significan cosas distintas:
+
+| | qué cuenta | para qué |
+|---|---|---|
+| `BULTOS_SIN_COBERTURA` | lo que se DESCUBRIÓ ese día (el déficit que creció) | cuánta mercadería salió sin cubrir |
+| `BULTOS_DIA` | el déficit parado, sumado por día | cuánto tiempo estuvo descubierto |
+
+**Y el filtro que faltaba era más grande que el nombre**: un renglón armado en
+CERO —que existe porque el confirmar guarda todo lo del mail— producía un
+día-artículo en rojo sin que saliera un solo bulto. Con el `having sum(...) > 0`
+puesto, el caso plantado pasa de 4 casos a 2. O sea que el 45 real es más chico
+todavía, y la parte que se iba tenía la forma de "sigue pasando" sin que pasara
+nada nuevo.
+
+**Cómo se reconoce sin sufrirlo**: cuando una cuenta suma un ESTADO a lo largo
+del tiempo —un saldo, un pendiente, un descubierto—, preguntarse si la unidad
+del resultado es la cosa o la cosa POR TIEMPO. Si un caso que no cambia hace
+crecer el número, es por tiempo, y el nombre tiene que decirlo.
+
 ### Lo que NO hay que hacer con el número mientras tanto
 
 El 192 alcanzó a salir en un mensaje, y eso es lo caro: **un número falso viaja

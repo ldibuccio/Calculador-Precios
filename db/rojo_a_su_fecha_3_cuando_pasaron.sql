@@ -42,16 +42,16 @@ recien as (
                   over (partition by articulo_id order by fecha), 0) as nuevo
     from (select articulo_id, fecha, greatest(-saldo, 0) as falta from dias) f
 )
-select count(*) filter (where falta > 0) as DIAS_ARTICULO_EN_ROJO,
-       count(distinct articulo_id) filter (where falta > 0) as ARTICULOS_DISTINTOS,
-       coalesce(sum(nuevo), 0) as BULTOS_SIN_COBERTURA,
-       coalesce(sum(falta), 0) as BULTOS_DIA,
-       max(fecha) filter (where falta > 0) as EL_MAS_RECIENTE,
-       count(*) as DIAS_ARTICULO_POBLACION,
-       (select max(fecha_operacion) from pedidos where anulado_el is null)
- as TESTIGO_ultimo_pedido
-  from recien;
+select date_trunc('week', r.fecha)::date as SEMANA_DESDE,
+       count(*) filter (where r.falta > 0) as EN_ROJO,
+       count(*) as DIAS_ARTICULO,
+       round(100.0 * count(*) filter (where r.falta > 0) / count(*), 1) as PCT_SEMANA,
+       sum(r.nuevo) as SIN_COBERTURA,
+       count(distinct r.articulo_id) filter (where r.falta > 0) as ARTICULOS
+  from recien r
+ group by 1
+ order by 1;
 
--- SEIS PATAS de _SQL_SUMAS_STOCK: con menos inventa rojos (corolario 85).
--- SIN_COBERTURA es lo DESCUBIERTO ese dia y BULTOS_DIA el deficit parado:
--- sale 10 sin cubrir y sigue asi 3 dias, descubrio 10 y no 30.
+-- EN_ROJO sobre los DIAS_ARTICULO de LA MISMA semana: sin el denominador por
+-- semana, una semana con pocos armados se lee como una semana sana.
+-- LAS SEIS PATAS de _SQL_SUMAS_STOCK (app/db.py).

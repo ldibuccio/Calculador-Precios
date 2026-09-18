@@ -12510,6 +12510,7 @@ def test_recalcular_alertas_usa_las_ventanas_de_cada_control():
         "contar_casillas_sin_revisar": VACIO,
         "contar_envases_a_reponer": VACIO,
         "contar_recepciones_sin_pesaje": VACIO,
+        "contar_dias_articulo_en_rojo": VACIO,
     }
     with ExitStack() as pila:
         pila.enter_context(patch("app.main._hoy_argentina", return_value=HOY_DE_PRUEBA))
@@ -12538,6 +12539,7 @@ def test_recalcular_alertas_usa_las_ventanas_de_cada_control():
     faltantes = mocks["contar_cajones_faltantes"]
     kilos = mocks["contar_diferencia_de_kilos"]
     sin_pesaje = mocks["contar_recepciones_sin_pesaje"]
+    rojo = mocks["contar_dias_articulo_en_rojo"]
 
     assert resumen["corrio"] is True and resumen["fallaron"] == 0
     # "Más de 48 horas" = de anteayer para atrás; señas y comprados, 7 días.
@@ -12564,6 +12566,12 @@ def test_recalcular_alertas_usa_las_ventanas_de_cada_control():
     # para mirar algo que se está yendo: una recepción de anteayer todavía se
     # reconstruye y una de la semana pasada no.
     sin_pesaje.assert_called_once_with(date(2026, 8, 4))
+    # ROJO A SU FECHA: SIETE días, y por el motivo contrario al del pesaje. Ahí
+    # la ventana es corta porque el caso se está yendo; acá el día en rojo es un
+    # hecho cerrado que no se borra con la compra del día siguiente, así que la
+    # ventana no la decide lo que se pierde sino cuánto dura la conversación con
+    # el galpón. Medido: 45 días-artículo sobre 446 en toda la historia (10%).
+    rojo.assert_called_once_with(date(2026, 7, 30))
     # Kilos faltantes: LA MISMA ventana y el MISMO umbral que su hermana, y
     # eso es a propósito — son dos caras del mismo cotejo y dos ventanas
     # distintas harían que una compra apareciera en una y no en la otra sin

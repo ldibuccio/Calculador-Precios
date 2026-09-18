@@ -42,16 +42,18 @@ recien as (
                   over (partition by articulo_id order by fecha), 0) as nuevo
     from (select articulo_id, fecha, greatest(-saldo, 0) as falta from dias) f
 )
-select count(*) filter (where falta > 0) as DIAS_ARTICULO_EN_ROJO,
-       count(distinct articulo_id) filter (where falta > 0) as ARTICULOS_DISTINTOS,
-       coalesce(sum(nuevo), 0) as BULTOS_SIN_COBERTURA,
-       coalesce(sum(falta), 0) as BULTOS_DIA,
-       max(fecha) filter (where falta > 0) as EL_MAS_RECIENTE,
-       count(*) as DIAS_ARTICULO_POBLACION,
-       (select max(fecha_operacion) from pedidos where anulado_el is null)
- as TESTIGO_ultimo_pedido
-  from recien;
+select ar.nombre as ARTICULO,
+       count(*) filter (where r.falta > 0) as DIAS_EN_ROJO,
+       sum(r.nuevo) as SIN_COBERTURA,
+       max(r.falta) as PEOR_DIA,
+       round(100.0 * sum(r.nuevo) / sum(sum(r.nuevo)) over (), 1) as PCT,
+       round(100.0 * sum(sum(r.nuevo)) over (order by sum(r.nuevo) desc, ar.nombre
+             rows unbounded preceding) / sum(sum(r.nuevo)) over (), 1) as PCT_ACUM,
+       max(r.fecha) filter (where r.falta > 0) as ULTIMO,
+       (select count(*) from dias) as POBLACION
+  from recien r join articulos ar on ar.id = r.articulo_id
+ group by ar.nombre
+having sum(r.nuevo) > 0
+ order by 3 desc;
 
--- SEIS PATAS de _SQL_SUMAS_STOCK: con menos inventa rojos (corolario 85).
--- SIN_COBERTURA es lo DESCUBIERTO ese dia y BULTOS_DIA el deficit parado:
--- sale 10 sin cubrir y sigue asi 3 dias, descubrio 10 y no 30.
+-- Si tres se llevan el 80%, es de esos tres. SEIS PATAS de _SQL_SUMAS_STOCK.

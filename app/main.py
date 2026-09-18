@@ -133,6 +133,8 @@ from app.db import (
     contar_reprocesos_sin_costo_posible,
     contar_bultos_esperando_guia_r,
     bultos_esperando_guia_r_por_articulo,
+    contar_dias_articulo_en_rojo,
+    dias_articulo_en_rojo,
     contar_stock_deposito_negativo,
     crear_conteo_stock,
     crear_movimiento_stock,
@@ -526,6 +528,19 @@ DIAS_ALERTA_KILOS_FALTANTES = 7
 # `db/pesaje_1_cuantas_sin_evidencia.sql` corrida en las dos bases: si diera
 # mucho más, lo que hay que mover no es el umbral sino la unidad.
 DIAS_SIN_PESAJE = 2
+
+# LA VENTANA DEL ROJO A SU FECHA. Siete y no dos —que es lo del pesaje— porque
+# el hecho que mira ES ESTABLE: un día en rojo no se borra con la compra del
+# día siguiente (verificado poniéndole una compra posterior encima), así que no
+# hay nada que se esté yendo. Siete es lo que dura la conversación con el
+# galpón: "¿qué pasó el martes con el arándano?" todavía se puede contestar.
+#
+# Y el número que decidió que siete sirve es 45 días-artículo en rojo sobre una
+# población de 446 en toda la historia de Frutamax (10%), medido el 18/09 con
+# `db/rojo_a_su_fecha_1`. El primer número que salió fue 192 sobre 446 y era
+# falso —la consulta tenía dos de las seis patas del stock— y con ése la
+# conclusión habría sido "dispara todos los días, no sirve" (corolario 85).
+DIAS_ROJO_A_SU_FECHA = 7
 
 from core.zona import ARGENTINA  # noqa: E402  (la zona va escrita en UN solo lugar)
 REGEX_CODIGO_PUESTO = re.compile(r"^[NL][0-9]{2}P[0-9]{2}$")
@@ -12760,6 +12775,42 @@ def _detalle_recepciones_sin_pesaje() -> dict:
     }
 
 
+def _detalle_dias_articulo_en_rojo() -> dict:
+    """Los días en que se armó un artículo sin tener con qué, el más viejo arriba.
+
+    EL MÁS VIEJO ARRIBA, al revés que el pesaje: acá el caso viejo NO se
+    apaga solo. Un día en rojo es un hecho cerrado —esa mercadería salió y
+    nada la cubría— y sigue siendo cierto la semana que viene, así que la
+    lista es una cola de trabajo y no un aviso que envejece.
+
+    Las tres columnas son las que el dueño pidió y son las que lo vuelven
+    investigable: QUÉ artículo, QUÉ día y CUÁNTO faltaba. Sin la fecha, un
+    "Arándano, faltan 18" manda a mirar el stock de hoy, que probablemente
+    ya cerró — que es justamente lo que esta alerta viene a resolver.
+
+    `Se armó` va al lado de `Faltaban` porque son dos números distintos y el
+    segundo no se deduce del primero: se pueden armar 30 faltando 18.
+    """
+    filas = dias_articulo_en_rojo(
+        _hoy_argentina() - timedelta(days=DIAS_ROJO_A_SU_FECHA))
+    renglones = [
+        [
+            _formatear_fecha_corta(fila["fecha"]),
+            fila["articulo"],
+            _formatear_numero(fila["falta"]),
+            _formatear_numero(fila["armado"]),
+        ]
+        for fila in filas
+    ]
+    return {
+        "columnas": ["Día", "Artículo", "Faltaban", "Se armó"],
+        "filas": renglones,
+        "resumen": f"{len(renglones)} día{'s' if len(renglones) != 1 else ''}"
+                   f" en {len({f['articulo'] for f in filas})} artículo"
+                   f"{'s' if len({f['articulo'] for f in filas}) != 1 else ''}",
+    }
+
+
 def _detalle_articulos_incotizables() -> dict:
     """Los artículos comprados que no se pueden cotizar, y CUÁL de las dos cosas falta.
 
@@ -13114,6 +13165,32 @@ ALERTAS = [
         # mandaría al operario a un módulo que ya no es suyo.
         modulos=("administracion",),
         contar=lambda: contar_stock_deposito_negativo(),
+    ),
+    DefinicionAlerta(
+        codigo="rojo_a_su_fecha",
+        titulo="Días en que se armó un artículo sin tener con qué",
+        titulo_corto="Armados sin stock ese día",
+        url="/administracion/stock/remanente",
+        texto_link="Ver en Stock del Depósito",
+        # LA DE ARRIBA MIRA HOY Y ÉSTA EL DÍA EN QUE PASÓ, y por eso son dos y
+        # no una. `contar_stock_deposito_negativo` corre sin tope de fecha: un
+        # faltante que el ingreso del día siguiente cubre no dispara nunca.
+        # Medido con Arándano —12 bultos el 16, armado de 30 el 17, 18 más el
+        # 18—: al 17 daba −18, hoy da 0, y la de arriba contestaba 0.
+        #
+        # NO LA REEMPLAZA. "Hoy tengo artículos en rojo" es accionable ahora;
+        # ésta es "qué días salió mercadería que nada cubría", que es un hecho
+        # cerrado y no se apaga solo. Sacar la de hoy sería tirar una señal que
+        # funciona para tapar un agujero que es de otra.
+        #
+        # Y NO MIRA `sin_lote`, que era la señal obvia: mezcla dos poblaciones.
+        # Medido con el par —el faltante real da negativo al 17 y sin_lote 18;
+        # una salida que SEÑALA un lote que otra ya consumió da negativo 0 y
+        # sin_lote 20—. Lo segundo no es un faltante: la mercadería estaba.
+        modulos=("administracion",),
+        contar=lambda: contar_dias_articulo_en_rojo(
+            _hoy_argentina() - timedelta(days=DIAS_ROJO_A_SU_FECHA)),
+        detallar=_detalle_dias_articulo_en_rojo,
     ),
     DefinicionAlerta(
         codigo="armado_esperando_guia_r",

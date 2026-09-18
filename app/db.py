@@ -10967,6 +10967,114 @@ def contar_bultos_esperando_guia_r() -> dict:
     }
 
 
+# LOS ARMADOS DE LA VENTANA, con su fecha. La regla de los pedidos VIGENTES
+# (un pedido recargado no se anula: deja de ser el vigente) está escrita siete
+# veces más en este archivo — no se unifica acá, pero el día que se unifique
+# ésta entra en la lista.
+_SQL_ARMADOS_DESDE = """
+    WITH vigentes AS (
+        SELECT DISTINCT ON (cliente_id, fecha_operacion) id
+        FROM pedidos WHERE anulado_el IS NULL
+        ORDER BY cliente_id, fecha_operacion, creado_en DESC
+    )
+    SELECT r.articulo_id, a.nombre,
+           (r.armado_el AT TIME ZONE 'America/Argentina/Buenos_Aires')::date AS fecha,
+           SUM(COALESCE(r.cantidad_armada, r.cantidad)) AS bultos
+    FROM pedidos_renglones r
+    JOIN vigentes v ON v.id = r.pedido_id
+    JOIN articulos a ON a.id = r.articulo_id
+    WHERE r.armado_el IS NOT NULL AND r.anulado_el IS NULL AND r.articulo_id IS NOT NULL
+      AND (r.armado_el AT TIME ZONE 'America/Argentina/Buenos_Aires')::date >= %s
+    GROUP BY 1, 2, 3
+    -- UN ARMADO DE CERO NO ES UNA SALIDA: el renglón existe (se confirmó el
+    -- pedido y nada del mail se pierde) pero no salió un bulto, así que ese
+    -- día no se armó nada sin tener con qué. Sin esto, un artículo que queda
+    -- descubierto suma un caso por cada día que alguien le cargue un renglón
+    -- en cero, y el número crece sin que pase nada nuevo.
+    HAVING SUM(COALESCE(r.cantidad_armada, r.cantidad)) > 0
+"""
+
+# El saldo de CADA artículo a la fecha tope. Se le pega a _sql_sumas_stock, que
+# es LA cuenta del stock —las seis patas— en vez de escribirla de nuevo: una
+# consulta con menos patas inventa rojos en todo artículo que se mueva por guía
+# R, y eso ya costó un número falso (corolario 85).
+_SELECT_SALDO_POR_ARTICULO = """
+    SELECT a.id,
+           COALESCE(e.total, 0) + COALESCE(r.total, 0) + COALESCE(aj.total, 0)
+           + COALESCE(rp.entradas, 0) - COALESCE(rp.salidas, 0) - COALESCE(s.total, 0)
+    FROM articulos a
+    LEFT JOIN entradas e ON e.articulo_id = a.id
+    LEFT JOIN salidas s ON s.articulo_id = a.id
+    LEFT JOIN reingresos r ON r.articulo_id = a.id
+    LEFT JOIN ajustes aj ON aj.articulo_id = a.id
+    LEFT JOIN reproc rp ON rp.articulo_id = a.id
+"""
+
+
+def dias_articulo_en_rojo(desde) -> list[dict]:
+    """Los días en que se armó un artículo SIN TENER CON QUÉ, a la fecha de ese día.
+
+    LO QUE ESTO VE Y `contar_stock_deposito_negativo` NO: aquella corre sin
+    tope de fecha, o sea que mira el saldo de HOY, y un faltante que el ingreso
+    del día siguiente cubre no dispara nunca. Medido con el caso de Arándano
+    contra el esquema real —12 bultos el 16, armado de 30 el 17, 18 más el 18—:
+
+        al 17/09  −18        HOY  0        la alerta de hoy: 0
+
+    Son DOS preguntas y las dos sirven: "hoy tengo artículos en rojo" es
+    accionable ahora, y ésta es "qué días salió mercadería que nada cubría".
+
+    UNA CONSULTA POR FECHA DE ARMADO, y no una sola que rejuegue todo: el saldo
+    a cada fecha sale de `_sql_sumas_stock`, que es la cuenta real del stock. La
+    ventana son siete días, así que son a lo sumo ocho consultas por recálculo
+    —uno cada seis horas— y cada una es la del Remanente, que corre en cada
+    carga de esa pantalla. Reescribirla en una sola pasada sería una segunda
+    versión de la cuenta, que es exactamente lo que dio 192 donde había 45.
+
+    Devuelve una fila por (artículo, día) con `falta` = cuánto faltaba ESE día.
+    """
+    conexion = obtener_conexion()
+    try:
+        with conexion.cursor() as cursor:
+            cursor.execute(_SQL_ARMADOS_DESDE, (desde,))
+            armados = cursor.fetchall()
+            saldos: dict = {}
+            for fecha in sorted({fila[2] for fila in armados}):
+                cursor.execute(
+                    _sql_sumas_stock(por_articulo=False) + _SELECT_SALDO_POR_ARTICULO,
+                    (fecha,),
+                )
+                saldos[fecha] = {fila[0]: float(fila[1]) for fila in cursor.fetchall()}
+            filas = []
+            for articulo_id, nombre, fecha, bultos in armados:
+                saldo = saldos[fecha].get(articulo_id, 0.0)
+                if saldo < 0:
+                    filas.append({
+                        "articulo": nombre, "fecha": fecha,
+                        "falta": -saldo, "armado": float(bultos),
+                    })
+            filas.sort(key=lambda f: (f["fecha"], f["articulo"]))
+            return filas
+    finally:
+        conexion.close()
+
+
+def contar_dias_articulo_en_rojo(desde) -> dict:
+    """El conteo de `dias_articulo_en_rojo`, para el registro de alertas.
+
+    `mas_viejo` y no otro nombre: es la clave que lee `normalizar_conteo`, y
+    estrenar uno propio la dejaría afuera sin que nada avise — el banner
+    mostraría el caso sin fecha.
+    """
+    filas = dias_articulo_en_rojo(desde)
+    return {
+        "casos": len(filas),
+        "articulos": len({f["articulo"] for f in filas}),
+        "bultos": sum(f["falta"] for f in filas),
+        "mas_viejo": min((f["fecha"] for f in filas), default=None),
+    }
+
+
 def contar_stock_deposito_negativo() -> int:
     """Auditoría: cuántos artículos del depósito tienen stock por debajo de cero.
 

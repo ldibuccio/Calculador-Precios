@@ -9995,3 +9995,66 @@ def test_la_guarda_del_conteo_LEE_la_unidad_de_compra_EN_LA_MISMA_TRANSACCION():
     assert "unidad_compra" in consulta
     assert "FROM articulos" in consulta
     assert "FOR UPDATE" in consulta
+
+
+def test_el_rojo_A_SU_FECHA_le_PIDE_el_saldo_a_sql_sumas_stock_y_no_lo_reescribe():
+    """La cuenta del stock se REUSA, no se vuelve a escribir. Es el corolario 85.
+
+    La primera versión de esta medición tenía DOS de las seis patas —compras y
+    armados— y dio 192 días-artículo en rojo sobre 446. El número real es 45:
+    sin `reingresos`, `ajustes` y el reproceso, todo artículo que se mueve por
+    guía R sale rojo todos los días.
+
+    Por eso el test no pregunta por el resultado —un mock se lo entregaría
+    igual (corolario 65)— sino por la ESTRUCTURA: que haya una llamada a
+    `_sql_sumas_stock` en el cuerpo, y que las dos consultas propias de la
+    función NO nombren las tablas de las patas. Si alguien reescribe la cuenta
+    acá, tiene que escribir `reprocesos` o `movimientos_stock` en alguna de las
+    dos, y ahí cae.
+    """
+    import ast as _ast
+
+    arbol = _ast.parse(io.open("app/db.py", encoding="utf-8").read())
+    funcion = next(n for n in _ast.walk(arbol)
+                   if isinstance(n, _ast.FunctionDef) and n.name == "dias_articulo_en_rojo")
+    llamadas = {n.func.id for n in _ast.walk(funcion)
+                if isinstance(n, _ast.Call) and isinstance(n.func, _ast.Name)}
+    assert "_sql_sumas_stock" in llamadas, (
+        "la cuenta del stock tiene que salir de _sql_sumas_stock, no escribirse de nuevo")
+
+    from app.db import _SELECT_SALDO_POR_ARTICULO, _SQL_ARMADOS_DESDE
+    propias = (_SELECT_SALDO_POR_ARTICULO + _SQL_ARMADOS_DESDE).lower()
+    for tabla in ("reprocesos", "movimientos_stock", "from compras"):
+        assert tabla not in propias, f"{tabla} sale de _sql_sumas_stock, no de acá"
+
+
+def test_un_armado_de_CERO_no_es_un_dia_en_rojo():
+    """El renglón armado en cero existe y no sacó un bulto, así que no cuenta.
+
+    El confirmar guarda los renglones sin cantidad igual —"nada del mail se
+    pierde"— así que un artículo puede tener renglones en cero muchos días. Sin
+    este filtro, un artículo que quedó descubierto suma un caso por cada uno de
+    esos días y el número crece sin que pase nada nuevo. Medido contra el
+    esquema real: 4 casos con el filtro sacado, 2 con él puesto.
+
+    Va como test del TEXTO y no del resultado porque el filtro vive en el SQL:
+    con un cursor falso la fila la entrega el mock y el HAVING no se ejercita
+    (corolario 65).
+    """
+    from app.db import _SQL_ARMADOS_DESDE
+
+    assert "HAVING SUM(COALESCE(r.cantidad_armada, r.cantidad)) > 0" in _SQL_ARMADOS_DESDE
+
+
+def test_el_rojo_a_su_fecha_solo_mira_los_pedidos_VIGENTES():
+    """Un pedido RECARGADO no se anula: deja de ser el vigente.
+
+    Sin la regla de vigentes, el mismo armado se cuenta dos veces —una por el
+    pedido viejo y otra por el nuevo— y el día sale en rojo por un faltante que
+    no existe. Verificado plantando un pedido recargado: la regla vigentes ve 1
+    armado y `anulado_el IS NULL` a secas ve 2.
+    """
+    from app.db import _SQL_ARMADOS_DESDE
+
+    assert "DISTINCT ON (cliente_id, fecha_operacion)" in _SQL_ARMADOS_DESDE
+    assert "ORDER BY cliente_id, fecha_operacion, creado_en DESC" in _SQL_ARMADOS_DESDE
