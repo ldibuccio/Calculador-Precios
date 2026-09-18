@@ -7438,3 +7438,53 @@ que la premisa se cae. Es el corolario 29 en su parte buena (*un cambio que
 todavía no tiene usuarios se escribe de forma que deshacerlo sea gratis*),
 con el mecanismo dicho: la forma de que sea gratis es que la regla tenga un
 solo lugar.
+
+## Corolario 82: un canario que hace caer MÁS tests de los que su avería explica está midiendo sobre un árbol ya roto
+
+Del 18/09, y es del dueño. **Todos los corolarios del canario hasta acá son
+sobre el CERO** —las cinco lecturas de "no mordió"—. Éste es el otro extremo
+y no estaba escrito: **el canario que muerde de más.**
+
+El caso. Seis canarios sobre la puerta de desmarcar, cada uno con su test.
+El primero reportó **14 caídos**, y entre ellos
+`test_ver_corregir_recepcion_compra_muestra_formulario_precargado`, que no
+tiene nada que ver con la avería. La suite ya estaba roja: la pantalla había
+ganado un colaborador y el fixture compartido no lo parcheaba, así que trece
+tests se iban a la base de verdad. El canario no rompió nada de eso — lo
+heredó.
+
+**Y el rojo no es la señal, que es lo que hay que entender.** Un canario que
+muerde SALE en rojo: eso es exactamente lo que se fue a buscar, y se lee como
+éxito. Lo único que distinguía "mordió" de "mordió y encima el árbol estaba
+roto" era **el NÚMERO**, y el número solo dice algo si uno sabe de antemano
+cuánto tenía que dar.
+
+> **Antes de leer un canario, contar.** Una avería de una línea hace caer los
+> tests que miran esa línea — casi siempre uno, a veces dos. Si caen catorce,
+> lo que hay que revisar no es el canario: es el árbol.
+
+### Por qué el reflejo va para el otro lado
+
+Con un canario en cero uno ya sabe que tiene que sospechar: está escrito
+cinco veces en este archivo. Con un canario que muerde **no hay sospecha que
+disparar**, porque el resultado es el que se esperaba. Es el mismo mecanismo
+del corolario 19 —la salvaguarda funcionó, el dato estaba a la vista, y no se
+leyó— aplicado al momento en que uno está más conforme.
+
+Y es la misma familia del corolario 45 (una medición que devuelve un total
+trae el total esperado al lado): **`14 caídos` sin el `1 esperado` al lado no
+se puede leer.** El canario que dice *"cayeron 14"* y el que dice *"cayeron
+14 y esperaba 1"* son el mismo comando con una columna más.
+
+### Lo accionable, y cuesta una corrida
+
+**La suite entera en VERDE antes de lanzar la tanda**, y el número anotado.
+Es la misma regla que el `.bak` y el primer plano: el canario mide una
+diferencia, así que necesita que el punto de partida esté definido. Un
+canario lanzado sobre un árbol rojo no mide nada — igual que uno lanzado en
+segundo plano mientras otra cosa toca los archivos.
+
+Engancha con **"un canario que MUTA archivos no se corre en segundo plano"**
+por el mismo lado: las dos son sobre el ESTADO DE PARTIDA. Allá lo que lo
+contamina es otro proceso; acá, un rojo que ya estaba. Y las dos se ven igual
+desde adentro del resultado.

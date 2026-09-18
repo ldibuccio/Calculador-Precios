@@ -7183,10 +7183,20 @@ def buscar_renglones_pedidos(cliente_id: int, fecha_desde, fecha_hasta) -> list[
                 SELECT v.fecha_operacion, v.id AS pedido_id, r.id, r.sucursal, r.articulo_id,
                        COALESCE(a.nombre, r.texto_descripcion, r.texto_codigo) AS articulo_nombre,
                        r.cantidad, r.cantidad_armada, r.kilos_enviados, r.armado_el, r.anulado_el,
-                       r.controlado_el, ps.orden_compra
+                       r.controlado_el, ps.orden_compra,
+                       -- EN QUE UNIDAD estan los `kilos_enviados` de ESTE
+                       -- renglon. La columna se llama kilos y guarda la
+                       -- magnitud de LA FICHA: kilos, unidades o cubetas.
+                       -- Sin esta columna la pantalla suma las tres en un
+                       -- solo total y no hay nada que se vea raro.
+                       fl.unidad_venta
                 FROM vigentes v
                 JOIN pedidos_renglones r ON r.pedido_id = v.id
                 LEFT JOIN articulos a ON a.id = r.articulo_id
+                -- LEFT: un renglon sin ficha asignada tiene que VOLVER, con
+                -- la unidad en NULL. Con un JOIN normal desapareceria del
+                -- remito y el total cerraria contra menos de lo que se mando.
+                LEFT JOIN fichas_logistica fl ON fl.id = r.ficha_id
                 LEFT JOIN pedidos_sucursales ps
                        ON ps.pedido_id = v.id AND ps.sucursal = r.sucursal
                 ORDER BY v.fecha_operacion DESC, r.sucursal,

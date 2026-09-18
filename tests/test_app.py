@@ -20407,26 +20407,32 @@ def test_terminar_pedido_no_cuenta_renglones_sin_sucursal_como_pendientes():
 # DOS sucursales armadas con órdenes de compra DISTINTAS, a propósito: con
 # una sola, o con la misma OC en las dos, una pantalla que mostrara una sola
 # OC para todo el pedido pasaría igual. Es el rival plantado.
+#
+# Y CON `unidad_venta`, que es como viene de la base desde el 18/09: los
+# `kilos_enviados` están en la magnitud de LA FICHA. Las dos armadas van en
+# kilo a propósito —es el caso normal, y el que prueba que con una sola
+# unidad la pantalla dibuja la misma línea de siempre—; el caso mezclado
+# tiene su propio fixture abajo.
 RENGLONES_BUSCAR_DE_PRUEBA = [
     {"fecha_operacion": date(2026, 8, 21), "pedido_id": 71, "id": 11, "sucursal": "VL", "articulo_id": 1,
      "articulo_nombre": "Banana", "cantidad": 15.0, "cantidad_armada": 12.0,
      "kilos_enviados": 240.0, "armado_el": datetime(2026, 8, 21, 13, 0), "anulado_el": None,
-     "orden_compra": "4417", "controlado_el": None},
+     "orden_compra": "4417", "controlado_el": None, "unidad_venta": "kilo"},
     {"fecha_operacion": date(2026, 8, 21), "pedido_id": 71, "id": 14, "sucursal": "BZ", "articulo_id": 3,
      "articulo_nombre": "Zapallo", "cantidad": 10.0, "cantidad_armada": 10.0,
      "kilos_enviados": 95.0, "armado_el": datetime(2026, 8, 21, 13, 30), "anulado_el": None,
-     "orden_compra": "9902", "controlado_el": None},
+     "orden_compra": "9902", "controlado_el": None, "unidad_venta": "kilo"},
     # Sin armar: no se entregó, así que no se lista ni suma.
     {"fecha_operacion": date(2026, 8, 21), "pedido_id": 71, "id": 12, "sucursal": "BZ", "articulo_id": 2,
      "articulo_nombre": "Batata", "cantidad": 40.0, "cantidad_armada": None,
      "kilos_enviados": None, "armado_el": None, "anulado_el": None,
-     "orden_compra": "9902", "controlado_el": None},
+     "orden_compra": "9902", "controlado_el": None, "unidad_venta": "kilo"},
     # El pedido del 20/08 queda con CERO armados: su tarjeta igual tiene que
     # aparecer, porque es justo donde "Anular" está permitido.
     {"fecha_operacion": date(2026, 8, 20), "pedido_id": 72, "id": 13, "sucursal": "VL", "articulo_id": 1,
      "articulo_nombre": "Banana", "cantidad": 10.0, "cantidad_armada": None,
      "kilos_enviados": None, "armado_el": None, "anulado_el": datetime(2026, 8, 20, 13, 0),
-     "orden_compra": None, "controlado_el": None},
+     "orden_compra": None, "controlado_el": None, "unidad_venta": "kilo"},
 ]
 
 
@@ -20539,10 +20545,19 @@ def test_exportar_armar_remito_pdf_y_excel():
     assert 'filename="Remito_2026-08-15_a_2026-08-22.xlsx"' in excel.headers["content-disposition"]
 
 
-def test_el_Excel_de_pedidos_tiene_LAS_SEIS_COLUMNAS_y_Armado_va_VACIA():
-    """Fecha · Artículo · Cantidad · Kilos por bulto · Kilos totales · Armado.
+def test_el_Excel_de_pedidos_tiene_LAS_SIETE_COLUMNAS_y_Armado_va_VACIA():
+    """Fecha · Artículo · Cantidad · Kilos por bulto · Kilos totales · Unidad · Armado.
 
-    La última va vacía a propósito: es la que se tilda a mano sobre el
+    ERA DE SEIS hasta el 18/09 y este test defendía ese número. "Unidad"
+    entró porque `kilos_enviados` guarda la magnitud de LA FICHA —kilos,
+    unidades o cubetas— y una hoja que dice "Kilos totales" sobre las tres
+    no se puede facturar.
+
+    Y va en COLUMNA PROPIA, no pegada al número como en el PDF: una celda
+    con "160 kg" deja de ser un número y no se puede sumar. La columna
+    conserva las dos cosas.
+
+    La última sigue vacía a propósito: es la que se tilda a mano sobre el
     papel. Y se verifica que la fila CIERRE — por bulto × cantidad =
     totales — que es la razón por la que "kilos por bulto" se divide en vez
     de salir del contenido nominal de la ficha.
@@ -20559,13 +20574,13 @@ def test_el_Excel_de_pedidos_tiene_LAS_SEIS_COLUMNAS_y_Armado_va_VACIA():
         )
 
     hoja = load_workbook(io.BytesIO(excel.content)).active
-    filas = [[c.value for c in fila] for fila in hoja.iter_rows(max_col=6)]
+    filas = [[c.value for c in fila] for fila in hoja.iter_rows(max_col=7)]
 
     encabezados = [f for f in filas if f[0] == "Fecha"]
     assert encabezados, filas
     for encabezado in encabezados:
         assert encabezado == ["Fecha", "Artículo", "Cantidad", "Kilos por bulto",
-                              "Kilos totales", "Armado"]
+                              "Kilos totales", "Unidad", "Armado"]
 
     # El título de cada sección lleva la sucursal Y su orden de compra.
     titulos = [f[0] for f in filas if isinstance(f[0], str) and f[0].startswith("Pedido del")]
@@ -20577,7 +20592,8 @@ def test_el_Excel_de_pedidos_tiene_LAS_SEIS_COLUMNAS_y_Armado_va_VACIA():
     assert banana[2] == 12.0          # Cantidad
     assert banana[3] == 20.0          # Kilos por bulto: 240 / 12
     assert banana[4] == 240.0         # Kilos totales
-    assert banana[5] is None          # Armado: VACÍA
+    assert banana[5] == "kg"          # Unidad: la de la ficha
+    assert banana[6] is None          # Armado: VACÍA
     # La fila cierra: por bulto × cantidad = totales.
     assert banana[3] * banana[2] == banana[4]
 

@@ -16387,11 +16387,31 @@ def _grupos_buscar_pedidos(renglones: list[dict]) -> tuple[list[dict], dict]:
     contenido nominal de la ficha da números redondos y puede no coincidir
     con el total de al lado — dos columnas que no multiplican bien son
     peores que una columna de menos.
+
+    Y EL TOTAL SE PARTE POR UNIDAD, que es lo del 18/09. `kilos_enviados`
+    se llama kilos y guarda LA MAGNITUD DE LA FICHA: kilos, unidades o
+    cubetas. Sumarlos todos en un número daba "1.240" para un remito de
+    800 kilos, 400 unidades y 40 cubetas — un número que no es de nada, y
+    sin nada que se viera raro.
+
+    CON UNA SOLA UNIDAD SE VE IGUAL QUE ANTES, que es la parte que lo hace
+    barato: el caso normal —todas las fichas del cliente en kilos— devuelve
+    un solo subtotal y la pantalla dibuja la misma línea de siempre. La
+    partición solo se nota cuando de verdad hay dos magnitudes.
+
+    Y NO SE ESCONDE EL TOTAL cuando se mezclan: un total por unidad es un
+    número verdadero y comparable adentro de su unidad. Esconderlo sería
+    tapar información que existe; sumarlo sería inventar una que no.
+
+    Un renglón SIN FICHA no tiene unidad, y eso no es un hueco que haya que
+    tapar: se cuenta en su propia pila (`sin_unidad`) en vez de caer al
+    primer subtotal, que es lo que haría un `or "kilo"` escrito acá.
     """
     grupos: list[dict] = []
     grupos_por_fecha: dict = {}
     total_kilos = 0.0
     total_bultos = 0.0
+    por_unidad: dict = {}
     sin_kilaje = 0
     anulados = 0
     sin_armar = 0
@@ -16406,6 +16426,7 @@ def _grupos_buscar_pedidos(renglones: list[dict]) -> tuple[list[dict], dict]:
                 "sucursales": [],
                 "kilos": 0.0,
                 "bultos": 0.0,
+                "por_unidad": {},
                 "sin_kilaje": 0,
                 "sin_armar": 0,
                 # El pedido VIGENTE de esa fecha: un grupo es exactamente un
@@ -16436,12 +16457,19 @@ def _grupos_buscar_pedidos(renglones: list[dict]) -> tuple[list[dict], dict]:
         kilos = float(renglon["kilos_enviados"]) if renglon["kilos_enviados"] is not None else None
 
         sucursal = _sucursal_del_grupo(grupo, renglon)
+        # LA UNIDAD DE ESTE RENGLON, que es la de su ficha. El sufijo sale
+        # del MISMO mapa que usa Armar Pedido: escrito acá otra vez, un día
+        # la pantalla que arma dice "u" y la que factura dice "un.".
+        unidad = renglon.get("unidad_venta")
+        sufijo = SUFIJOS_FICHA_REPROCESO.get(unidad, "")
         sucursal["filas"].append({
             "renglon_id": renglon["id"],
             "articulo_nombre": renglon["articulo_nombre"] or "(sin identificar)",
             "sucursal": renglon["sucursal"],
             "bultos": bultos,
             "kilos": kilos,
+            "unidad": unidad,
+            "sufijo_unidad": sufijo,
             "kilos_por_bulto": (kilos / bultos) if (kilos is not None and bultos) else None,
             "controlado": renglon.get("controlado_el") is not None,
         })
@@ -16453,20 +16481,64 @@ def _grupos_buscar_pedidos(renglones: list[dict]) -> tuple[list[dict], dict]:
             sucursal["kilos"] += kilos
             grupo["kilos"] += kilos
             total_kilos += kilos
+            # Y EL MISMO NUMERO PARTIDO POR UNIDAD, en los tres niveles. El
+            # de arriba se conserva porque hay pantallas y tests que lo leen;
+            # lo que se muestra es éste.
+            for donde in (sucursal, grupo, por_unidad):
+                pila = donde if donde is por_unidad else donde["por_unidad"]
+                pila[unidad] = pila.get(unidad, 0.0) + kilos
         else:
             sucursal["sin_kilaje"] += 1
             grupo["sin_kilaje"] += 1
             sin_kilaje += 1
 
+    # LOS TRES NIVELES POR LA MISMA FUNCION. Convertidos cada uno por su
+    # lado, el dia que cambie el orden o el rotulo cambia en uno y no en los
+    # otros dos, y el remito dice "u" arriba y "unidad" abajo.
+    for grupo in grupos:
+        for sucursal in grupo["sucursales"]:
+            sucursal["por_unidad"] = _totales_por_unidad(sucursal["por_unidad"])
+        grupo["por_unidad"] = _totales_por_unidad(grupo["por_unidad"])
+
     totales = {
         "kilos": total_kilos,
         "bultos": total_bultos,
+        "por_unidad": _totales_por_unidad(por_unidad),
         "sin_kilaje": sin_kilaje,
         "anulados": anulados,
         "sin_armar": sin_armar,
         "renglones": len(renglones),
     }
     return grupos, totales
+
+
+def _totales_por_unidad(acumulado: dict) -> list[dict]:
+    """El dict {unidad: total} como lista ordenada, con su sufijo puesto.
+
+    LO ARMA UNA SOLA FUNCION y la llaman los tres niveles —sucursal, fecha y
+    el total de arriba— porque los tres tienen que decir lo mismo: si el de
+    arriba dice "kg" y el de la sucursal "kilos", el que factura tiene que
+    decidir si son la misma cosa.
+
+    EL ORDEN ES FIJO y no por tamaño: kilos, unidades, cubetas, y al final
+    lo que no tiene ficha. Ordenado por el total, dos remitos del mismo
+    cliente salen con las filas en distinto orden segun lo que se mando ese
+    dia, y comparar dos remitos pasa a ser leerlos enteros.
+
+    `sin_unidad` es el renglon sin ficha, y va NOMBRADO en vez de escondido:
+    es la unica pila cuyo total no se puede comparar con nada, asi que
+    dejarla sin rotulo la haria pasar por kilos.
+    """
+    orden = {"kilo": 0, "unidad": 1, "cubeta": 2}
+    filas = []
+    for unidad, total in acumulado.items():
+        filas.append({
+            "unidad": unidad,
+            "sufijo": SUFIJOS_FICHA_REPROCESO.get(unidad, "sin unidad"),
+            "total": total,
+        })
+    filas.sort(key=lambda f: (orden.get(f["unidad"], 9), f["sufijo"]))
+    return filas
 
 
 def _sucursal_del_grupo(grupo: dict, renglon: dict) -> dict:
@@ -16491,6 +16563,7 @@ def _sucursal_del_grupo(grupo: dict, renglon: dict) -> dict:
         "filas": [],
         "kilos": 0.0,
         "bultos": 0.0,
+        "por_unidad": {},
         "sin_kilaje": 0,
     }
     grupo["sucursales"].append(sucursal)

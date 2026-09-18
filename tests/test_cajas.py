@@ -1646,3 +1646,196 @@ def test_la_pantalla_pregunta_por_LA_MISMA_guarda_que_la_escritura():
                    "corregir_recepcion_compra"):
         cuerpo = fuente.split(f"def {nombre}")[1].split("\ndef ")[0]
         assert filtro in cuerpo, f"{nombre} dejo de preguntar por la guia viva igual"
+
+
+# ---------------------------------------------------------------------------
+# EL REMITO CON DOS MAGNITUDES (B5)
+# ---------------------------------------------------------------------------
+#
+# `pedidos_renglones.kilos_enviados` se llama kilos y guarda LA MAGNITUD DE LA
+# FICHA: kilos, unidades o cubetas. Armar Remito los sumaba todos en un solo
+# numero — un remito de 160 kg + 400 u + 40 cubetas daba "600", que no es de
+# nada, y sin nada que se viera raro.
+
+def _renglon_remito(id, articulo, kilos, unidad, sucursal="VL"):
+    from datetime import date as _date, datetime as _dt
+    return {"fecha_operacion": _date(2026, 9, 18), "pedido_id": 90, "id": id,
+            "sucursal": sucursal, "articulo_id": id, "articulo_nombre": articulo,
+            "cantidad": 10.0, "cantidad_armada": None, "kilos_enviados": kilos,
+            "armado_el": _dt(2026, 9, 18, 10, 0), "anulado_el": None,
+            "controlado_el": None, "orden_compra": "OC-1", "unidad_venta": unidad}
+
+
+MEZCLADO = [
+    _renglon_remito(1, "Tomate EJEMPLO", 160.0, "kilo"),
+    _renglon_remito(2, "Mango EJEMPLO", 400.0, "unidad"),
+    _renglon_remito(3, "Frutilla EJEMPLO", 40.0, "cubeta"),
+]
+
+
+def test_el_total_del_remito_se_PARTE_por_unidad_en_vez_de_sumar_las_tres():
+    from app.main import _grupos_buscar_pedidos
+    _, totales = _grupos_buscar_pedidos(MEZCLADO)
+    assert [(f["total"], f["sufijo"]) for f in totales["por_unidad"]] == [
+        (160.0, "kg"), (400.0, "u"), (40.0, "cub.")
+    ]
+
+
+def test_el_ORDEN_de_las_pilas_es_FIJO_y_no_por_tamano():
+    """Ordenadas por total, dos remitos del mismo cliente salen con las filas
+    en distinto orden segun lo que se mando ese dia, y comparar dos remitos
+    pasa a ser leerlos enteros."""
+    from app.main import _grupos_buscar_pedidos
+    # La cubeta pesa MAS que los kilos: por tamaño saldria primera.
+    al_reves = [_renglon_remito(1, "Tomate EJEMPLO", 5.0, "kilo"),
+                _renglon_remito(3, "Frutilla EJEMPLO", 900.0, "cubeta")]
+    _, totales = _grupos_buscar_pedidos(al_reves)
+    assert [f["sufijo"] for f in totales["por_unidad"]] == ["kg", "cub."]
+
+
+def test_con_UNA_SOLA_unidad_devuelve_UNA_pila_y_se_ve_como_antes():
+    """El caso normal, y el unico que distingue "parte cuando hay que partir"
+    de "parte siempre" (corolario 30)."""
+    from app.main import _grupos_buscar_pedidos
+    _, totales = _grupos_buscar_pedidos([
+        _renglon_remito(1, "Tomate EJEMPLO", 160.0, "kilo"),
+        _renglon_remito(2, "Pera EJEMPLO", 90.0, "kilo"),
+    ])
+    assert [(f["total"], f["sufijo"]) for f in totales["por_unidad"]] == [(250.0, "kg")]
+
+
+def test_un_renglon_SIN_FICHA_va_en_su_propia_pila_y_DICE_que_no_tiene_unidad():
+    """Y no cae al primer subtotal, que es lo que haria un `or "kilo"`: un
+    numero sin rotulo al lado de otros que dicen "kg" se lee como kilos."""
+    from app.main import _grupos_buscar_pedidos
+    _, totales = _grupos_buscar_pedidos([
+        _renglon_remito(1, "Tomate EJEMPLO", 160.0, "kilo"),
+        _renglon_remito(9, "Sin ficha EJEMPLO", 12.0, None),
+    ])
+    pilas = {f["sufijo"]: f["total"] for f in totales["por_unidad"]}
+    assert pilas == {"kg": 160.0, "sin unidad": 12.0}
+
+
+def test_LOS_TRES_NIVELES_se_parten_igual_y_por_la_MISMA_funcion():
+    """Sucursal, fecha y el total de arriba. Convertidos cada uno por su lado,
+    el dia que cambie el rotulo cambia en uno y el remito dice "u" arriba y
+    "unidad" abajo."""
+    from app.main import _grupos_buscar_pedidos
+    grupos, totales = _grupos_buscar_pedidos(MEZCLADO)
+    del_grupo = [(f["total"], f["sufijo"]) for f in grupos[0]["por_unidad"]]
+    de_la_sucursal = [(f["total"], f["sufijo"]) for f in grupos[0]["sucursales"][0]["por_unidad"]]
+    de_arriba = [(f["total"], f["sufijo"]) for f in totales["por_unidad"]]
+    assert del_grupo == de_la_sucursal == de_arriba
+
+
+def test_el_SUFIJO_sale_del_MISMO_mapa_que_usa_Armar_Pedido():
+    """Escrito dos veces, un dia la pantalla que arma dice "u" y la que
+    factura dice "un.", y el que compara las dos tiene que decidir si son la
+    misma cosa. Se afirma por REFERENCIA y no copiando la tabla."""
+    fuente = io.open("app/main.py", encoding="utf-8").read()
+    cuerpo = fuente.split("def _grupos_buscar_pedidos")[1].split("\ndef ")[0]
+    assert "SUFIJOS_FICHA_REPROCESO" in cuerpo
+    cuerpo_helper = fuente.split("def _totales_por_unidad")[1].split("\ndef ")[0]
+    assert "SUFIJOS_FICHA_REPROCESO" in cuerpo_helper
+
+
+def test_la_consulta_del_remito_TRAE_la_unidad_de_la_ficha():
+    """Corolario 65: con el mock la fila la entrega el fixture, asi que lo
+    unico que ve QUE columna pidio la consulta es el texto del SQL. Y el modo
+    de falla es mudo — sin la columna, todas las pilas caen en "sin unidad" y
+    el remito deja de decir kilos donde decia kilos."""
+    fuente = io.open("app/db.py", encoding="utf-8").read()
+    cuerpo = fuente.split("def buscar_renglones_pedidos")[1].split("\ndef ")[0]
+    sql = cuerpo.split('"""', 2)[2]
+    sin_comentarios = "\n".join(l for l in sql.split("\n") if "--" not in l)
+    assert "fl.unidad_venta" in sin_comentarios
+    # Y el JOIN es LEFT: un renglon sin ficha tiene que VOLVER, con la unidad
+    # en NULL. Con un JOIN normal desapareceria del remito y el total
+    # cerraria contra menos de lo que se mando.
+    assert "LEFT JOIN fichas_logistica fl ON fl.id = r.ficha_id" in sin_comentarios
+
+
+def _exportables_del_remito(renglones):
+    with (
+        patch("app.main._hoy_argentina", return_value=date(2026, 9, 18)),
+        patch("app.main.obtener_cliente", return_value={"id": 1, "nombre": "Cliente EJEMPLO"}),
+        patch("app.main.buscar_renglones_pedidos", return_value=list(renglones)),
+        patch("app.main.listar_clientes", return_value=[{"id": 1, "nombre": "Cliente EJEMPLO"}]),
+    ):
+        filtros = "cliente_id=1&fecha_desde=2026-09-15&fecha_hasta=2026-09-18"
+        return (cliente.get(f"/administracion/pedidos/buscar?{filtros}"),
+                cliente.get(f"/administracion/pedidos/buscar/exportar-pdf?{filtros}"),
+                cliente.get(f"/administracion/pedidos/buscar/exportar-excel?{filtros}"))
+
+
+def test_la_PANTALLA_del_remito_dice_la_unidad_en_cada_renglon_y_parte_el_total():
+    pantalla, _, _ = _exportables_del_remito(MEZCLADO)
+    assert pantalla.status_code == 200
+    marcado = pantalla.text.split("</style>")[-1]
+    # Cada renglon con SU unidad, no todos con "kg".
+    assert "160 kg" in marcado and "400 u" in marcado and "40 cub." in marcado
+    # Y el total de arriba NO es un solo numero que sume las tres.
+    assert "600 kg" not in marcado
+
+
+def test_el_EXCEL_del_remito_pone_la_unidad_en_COLUMNA_y_una_fila_de_total_por_unidad():
+    from openpyxl import load_workbook
+    _, _, excel = _exportables_del_remito(MEZCLADO)
+    assert excel.status_code == 200
+    hoja = load_workbook(io.BytesIO(excel.content)).active
+    filas = [[c.value for c in f] for f in hoja.iter_rows(max_col=7)]
+
+    mango = next(f for f in filas if f[1] == "Mango EJEMPLO")
+    # El numero SIGUE SIENDO NUMERO: pegarle "400 u" adentro lo vuelve texto
+    # y deja de poder sumarse, que es para lo que existe una planilla.
+    # NUMERO y no texto. `float` a secas no sirve: openpyxl devuelve 400.0
+    # como int, asi que el assert caia por el TIPO y no por lo que importa.
+    assert mango[4] == 400.0 and not isinstance(mango[4], str)
+    assert mango[5] == "u"
+
+    totales = [f for f in filas if f[0] == "Total"]
+    assert [(f[4], f[5]) for f in totales] == [(160.0, "kg"), (400.0, "u"), (40.0, "cub.")]
+    # Los BULTOS van SOLO en la primera: son comparables entre unidades, asi
+    # que repetirlos en cada fila los contaria tres veces.
+    assert totales[0][2] == 30.0
+    assert [f[2] for f in totales[1:]] == [None, None]
+
+
+def test_el_PDF_del_remito_sale_y_no_es_el_de_una_sola_unidad():
+    """El PDF se verifica por que SALE y por su largo, no por su texto: es un
+    binario y extraerle el texto seria una segunda implementacion del
+    generador adentro del test. Lo que decide el contenido es el test de
+    `_texto_por_unidad`, que es la funcion que los dos comparten."""
+    _, pdf, _ = _exportables_del_remito(MEZCLADO)
+    assert pdf.status_code == 200
+    assert pdf.content[:4] == b"%PDF"
+    assert len(pdf.content) > 1000
+
+
+def test_las_DOS_exportables_y_la_pantalla_dicen_el_MISMO_sufijo():
+    """Tres superficies, un solo mapa. Si el PDF dice "u" y el Excel
+    "unidad", el que compara los dos archivos tiene que decidir si son la
+    misma cosa."""
+    from core.exportar_pedidos import _texto_por_unidad
+    from app.main import _grupos_buscar_pedidos
+    _, totales = _grupos_buscar_pedidos(MEZCLADO)
+    assert _texto_por_unidad(totales, sufijo_sin_kilaje=False) == "160 kg + 400 u + 40 cub."
+
+
+def test_el_RENGLON_del_PDF_dice_su_unidad_y_no_kg_para_todos():
+    """El agujero que encontro el canario: el test del PDF verificaba que
+    SALIERA —status 200, %PDF, largo— y eso no ve el texto de una celda.
+    Devolverle el "kg" fijo a cada renglon no hacia caer nada.
+
+    Se afirma sobre `_texto_kilos`, que es la funcion que arma esa celda: el
+    PDF es un binario y extraerle el texto seria una segunda implementacion
+    del generador adentro del test."""
+    from core.exportar_pedidos import _texto_kilos
+    assert _texto_kilos({"kilos": 160.0, "sufijo_unidad": "kg"}) == "160 kg"
+    assert _texto_kilos({"kilos": 400.0, "sufijo_unidad": "u"}) == "400 u"
+    assert _texto_kilos({"kilos": 40.0, "sufijo_unidad": "cub."}) == "40 cub."
+    # Sin ficha lo DICE: un numero sin rotulo al lado de otros que dicen "kg"
+    # se lee como kilos.
+    assert _texto_kilos({"kilos": 12.0, "sufijo_unidad": None}) == "12 sin unidad"
+    # Y el caso sin kilaje no gana una unidad de la nada.
+    assert _texto_kilos({"kilos": None, "sufijo_unidad": "kg"}) == "SIN KILAJE"

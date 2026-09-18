@@ -254,7 +254,13 @@
 
   {% if grupos %}
   <div class="total">
-    <div class="numero-grande">{{ totales.kilos|numero }} kg</div>
+    {# UNA LINEA POR UNIDAD. `kilos_enviados` guarda la magnitud de LA FICHA
+       —kilos, unidades o cubetas— asi que un solo numero sumaba las tres y
+       no era de nada. Con una sola unidad, que es el caso normal, esto
+       dibuja exactamente la misma linea de antes. #}
+    {% for u in totales.por_unidad %}
+    <div class="numero-grande">{{ u.total|numero }} {{ u.sufijo }}</div>
+    {% endfor %}
     <div class="detalle">{{ totales.bultos|numero }} bultos en {{ grupos|length }} pedido{{ "s" if grupos|length != 1 }}.</div>
     {% if totales.sin_kilaje or totales.anulados or totales.sin_armar %}
     <p class="afuera">{% if totales.sin_kilaje %}{{ totales.sin_kilaje }} {% if totales.sin_kilaje == 1 %}renglón{% else %}renglones{% endif %} sin kilaje (no suman kilos).{% endif %}{% if totales.sin_armar %} {{ totales.sin_armar }} sin armar, fuera de la lista y del total.{% endif %}{% if totales.anulados %} De ésos, {{ totales.anulados }} anulado{{ "s" if totales.anulados != 1 }}.{% endif %}</p>
@@ -299,10 +305,10 @@
         </label>
         <div class="nombre">
           {{ f.articulo_nombre }}
-          <span class="detalle">{{ f.bultos|numero }} bultos{% if f.kilos_por_bulto is not none %} × {{ f.kilos_por_bulto|numero }} kg{% endif %}</span>
+          <span class="detalle">{{ f.bultos|numero }} bultos{% if f.kilos_por_bulto is not none %} × {{ f.kilos_por_bulto|numero }} {{ f.sufijo_unidad or "?" }}{% endif %}</span>
         </div>
         <div class="kilos">
-          {% if f.kilos is not none %}{{ f.kilos|numero }} kg
+          {% if f.kilos is not none %}{{ f.kilos|numero }} {{ f.sufijo_unidad or "sin unidad" }}
           {% else %}<span class="sin-kilaje">sin kilaje</span>{% endif %}
           <span class="bultos">{{ f.bultos|numero }} bultos</span>
         </div>
@@ -310,13 +316,13 @@
       {% endfor %}
       <div class="fila-subtotal subtotal-sucursal">
         <span>{{ s.sucursal_mostrar }}</span>
-        <span>{{ s.kilos|numero }} kg{% if s.sin_kilaje %} ({{ s.sin_kilaje }} sin kilaje){% endif %} · {{ s.bultos|numero }} bultos</span>
+        <span>{% for u in s.por_unidad %}{{ u.total|numero }} {{ u.sufijo }}{% if not loop.last %} + {% endif %}{% endfor %}{% if s.sin_kilaje %} ({{ s.sin_kilaje }} sin kilaje){% endif %} · {{ s.bultos|numero }} bultos</span>
       </div>
     </div>
     {% endfor %}
     <div class="fila-subtotal">
       <span>Subtotal del pedido</span>
-      <span>{{ g.kilos|numero }} kg{% if g.sin_kilaje %} ({{ g.sin_kilaje }} sin kilaje){% endif %} · {{ g.bultos|numero }} bultos</span>
+      <span>{% for u in g.por_unidad %}{{ u.total|numero }} {{ u.sufijo }}{% if not loop.last %} + {% endif %}{% endfor %}{% if g.sin_kilaje %} ({{ g.sin_kilaje }} sin kilaje){% endif %} · {{ g.bultos|numero }} bultos</span>
     </div>
     {% if g.armados %}
     <p class="estado-control {% if g.controlados == g.armados %}completo{% endif %}">

@@ -56,9 +56,37 @@ def _formatear_numero(valor) -> str:
 
 
 def _texto_kilos(fila: dict) -> str:
+    """El total de la fila CON SU UNIDAD, que puede no ser kilos.
+
+    `kilos_enviados` se llama kilos y guarda la magnitud de LA FICHA. Un
+    remito con mango por unidad y tomate por kilo tenia las dos columnas
+    diciendo "kg", y el que factura no tenia como ver la diferencia.
+
+    Sin ficha no hay unidad, y eso se DICE: un numero sin rotulo al lado de
+    otros que dicen "kg" se lee como kilos.
+    """
     if fila["kilos"] is None:
         return "SIN KILAJE"
-    return f"{_formatear_numero(fila['kilos'])} kg"
+    return f"{_formatear_numero(fila['kilos'])} {fila.get('sufijo_unidad') or 'sin unidad'}"
+
+
+def _texto_por_unidad(donde: dict, sufijo_sin_kilaje: bool = True) -> str:
+    """El subtotal PARTIDO POR UNIDAD: "160 kg + 400 u".
+
+    UNA SOLA FUNCION para los tres niveles y para las dos exportables, por lo
+    mismo que la pantalla: si el PDF dice "u" y el Excel "unidad", el que
+    compara los dos archivos tiene que decidir si son la misma cosa.
+
+    Con una sola unidad —el caso normal— devuelve exactamente la linea de
+    siempre, asi que el remito de un cliente que vende todo por kilo no
+    cambia en nada.
+    """
+    partes = [f"{_formatear_numero(u['total'])} {u['sufijo']}"
+              for u in donde.get("por_unidad", [])]
+    texto = " + ".join(partes) if partes else "0"
+    if sufijo_sin_kilaje and donde.get("sin_kilaje"):
+        texto += f" ({donde['sin_kilaje']} sin kilaje)"
+    return texto
 
 
 def _titulo_de_sucursal(grupo: dict, sucursal: dict) -> str:
@@ -173,7 +201,7 @@ def generar_pdf_pedidos(
                 estilos_filas.append(("BACKGROUND", (0, indice + 2), (-1, indice + 2), GRIS_FILA_ALTERNADA))
 
         indice_subtotal = len(datos_tabla)
-        subtotal_kilos = f"{_formatear_numero(sucursal['kilos'])} kg"
+        subtotal_kilos = _texto_por_unidad(sucursal, sufijo_sin_kilaje=False)
         if sucursal["sin_kilaje"]:
             subtotal_kilos += f" ({sucursal['sin_kilaje']} sin kilaje)"
         datos_tabla.append(
@@ -211,7 +239,8 @@ def generar_pdf_pedidos(
         elementos.append(Spacer(1, 16))
         elementos.append(
             Paragraph(
-                f"Total: {_formatear_numero(totales['bultos'])} bultos — {_formatear_numero(totales['kilos'])} kg enviados",
+                f"Total: {_formatear_numero(totales['bultos'])} bultos — "
+                f"{_texto_por_unidad(totales, sufijo_sin_kilaje=False)} enviados",
                 estilo_total,
             )
         )
@@ -228,6 +257,34 @@ def generar_pdf_pedidos(
 
     documento.build(elementos, onFirstPage=_encabezado_pagina, onLaterPages=_encabezado_pagina)
     return buffer.getvalue()
+
+
+def _subtotal_por_unidad(hoja, fila_actual, rotulo, donde, fuente, fuente_marca):
+    """Escribe una fila de subtotal POR CADA unidad y devuelve la fila siguiente.
+
+    Los BULTOS van solo en la primera: son comparables entre unidades —un
+    bulto es un bulto— así que repetirlos en cada fila los contaría varias
+    veces para el que sume la columna.
+
+    Sin ninguna unidad (nada con kilaje) escribe igual la fila del rótulo con
+    los bultos: una sección que desaparece se lee como una sección que no se
+    exportó.
+    """
+    filas = donde.get("por_unidad") or [{"sufijo": "", "total": None}]
+    for indice, unidad in enumerate(filas):
+        hoja.cell(row=fila_actual, column=1, value=rotulo).font = fuente
+        if indice == 0:
+            celda = hoja.cell(row=fila_actual, column=3, value=float(donde["bultos"]))
+            celda.font = fuente
+        if unidad["total"] is not None:
+            celda = hoja.cell(row=fila_actual, column=5, value=round(float(unidad["total"]), 2))
+            celda.font = fuente
+            hoja.cell(row=fila_actual, column=6, value=unidad["sufijo"]).font = fuente
+        if indice == 0 and donde.get("sin_kilaje"):
+            hoja.cell(row=fila_actual, column=7,
+                      value=f"{donde['sin_kilaje']} sin kilaje").font = fuente_marca
+        fila_actual += 1
+    return fila_actual
 
 
 def generar_excel_pedidos(
@@ -263,7 +320,12 @@ def generar_excel_pedidos(
     if not grupos:
         hoja.cell(row=fila_actual, column=1, value="No se encontraron pedidos con estos filtros.").font = fuente_normal
 
-    encabezados = ("Fecha", "Artículo", "Cantidad", "Kilos por bulto", "Kilos totales", "Armado")
+    # SIETE COLUMNAS y no seis: "Unidad" se agregó el 18/09. En el PDF la
+    # unidad va pegada al número porque se lee; acá no puede, porque una
+    # celda con "160 kg" deja de ser un número y no se puede sumar. La
+    # columna propia conserva las dos cosas.
+    encabezados = ("Fecha", "Artículo", "Cantidad", "Kilos por bulto",
+                   "Kilos totales", "Unidad", "Armado")
     # Una sección POR SUCURSAL, con su orden de compra en el título.
     for grupo in grupos:
         for sucursal in grupo["sucursales"]:
@@ -287,26 +349,22 @@ def generar_excel_pedidos(
                 else:
                     hoja.cell(row=fila_actual, column=4, value="—")
                     hoja.cell(row=fila_actual, column=5, value="SIN KILAJE").font = fuente_marca
-                # La columna 6 (Armado) se deja VACÍA a propósito: se tilda
+                hoja.cell(row=fila_actual, column=6,
+                          value=fila.get("sufijo_unidad") or "sin unidad")
+                # La columna 7 (Armado) se deja VACÍA a propósito: se tilda
                 # a mano sobre el papel.
                 fila_actual += 1
 
-            hoja.cell(row=fila_actual, column=1, value="Subtotal").font = fuente_subtotal
-            celda = hoja.cell(row=fila_actual, column=3, value=float(sucursal["bultos"]))
-            celda.font = fuente_subtotal
-            celda = hoja.cell(row=fila_actual, column=5, value=round(float(sucursal["kilos"]), 2))
-            celda.font = fuente_subtotal
-            if sucursal["sin_kilaje"]:
-                hoja.cell(row=fila_actual, column=6, value=f"{sucursal['sin_kilaje']} sin kilaje").font = fuente_marca
-            fila_actual += 2
+            # UNA FILA DE SUBTOTAL POR UNIDAD. Un solo número sumaría kilos
+            # con unidades, y en una celda numérica eso no se ve nunca. Los
+            # bultos van en la primera, que son comparables entre unidades.
+            fila_actual = _subtotal_por_unidad(
+                hoja, fila_actual, "Subtotal", sucursal, fuente_subtotal, fuente_marca)
+            fila_actual += 1
 
     if grupos:
-        hoja.cell(row=fila_actual, column=1, value="Total").font = fuente_total
-        celda = hoja.cell(row=fila_actual, column=3, value=float(totales["bultos"]))
-        celda.font = fuente_total
-        celda = hoja.cell(row=fila_actual, column=5, value=round(float(totales["kilos"]), 2))
-        celda.font = fuente_total
-        fila_actual += 1
+        fila_actual = _subtotal_por_unidad(
+            hoja, fila_actual, "Total", totales, fuente_total, fuente_marca)
         if totales["sin_kilaje"] or totales["anulados"] or totales["sin_armar"]:
             hoja.cell(
                 row=fila_actual, column=1,
