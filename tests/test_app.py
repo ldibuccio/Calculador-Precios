@@ -29349,3 +29349,117 @@ def test_los_dos_botones_del_modal_se_TOCAN_CON_EL_PULGAR_y_entra_en_390px():
         assert not leido["se_sale"], f"{pantalla}: {leido}"
         assert not leido["se_corta_abajo"], f"{pantalla}: {leido}"
         assert leido["desborde_pagina"] == 0, f"{pantalla}: {leido}"
+
+
+# ── La comanda MÚLTIPLE: el fragmento llega por innerHTML ──────────────────
+#
+# `innerHTML` inserta el marcado y NO ejecuta los `<script>` que trae adentro
+# —es del estándar, no un bug— así que el cableado que `_caja_en_origen.html`
+# lleva consigo no corría: el bloque de "¿viene ya armada?" llegaba `hidden` y
+# se quedaba escondido para siempre. Medido antes del arreglo: `display: none`
+# de verdad, no solo el atributo. Una función que existe y no se puede usar.
+
+
+def _fragmento_de_comanda(articulo_id):
+    from uuid import uuid4
+
+    from app.main import templates
+
+    return templates.env.get_template("_fragmento_revision_comanda_multiple.html").render({
+        "articulos": ARTICULOS_CON_UNIDAD_COMPRA,
+        "codigo_puesto_sugerido": "N07P41",
+        "nombre_sugerido": "EJEMPLO Uno",
+        "renglones": [{
+            "texto_leido": "", "articulo_id": articulo_id, "cantidad_cajones": 10,
+            "contenido_por_cajon": 16, "segunda_por_cajon": "", "importe": 100,
+            "sena": None, "nota_margen": "", "advertencia": False,
+            "descartado": False, "ficha_en_origen_id": None, "tipo_retiro": "Clark",
+        }],
+        "foto_preview": "", "carga_token": uuid4().hex,
+    })
+
+
+def test_la_comanda_MULTIPLE_puede_MARCAR_que_la_compra_vino_armada():
+    """El atributo es la intención; el `display` es el efecto (corolario 32).
+
+    Acá el marcado siempre estuvo bien —el bloque llega entero, con su select y
+    sus opciones— y lo que faltaba era que el navegador lo mostrara. Un test de
+    HTML no puede ver la diferencia: por eso esto corre en un navegador y llama
+    a `mostrarRevision`, que es la función REAL de la pantalla, en vez de
+    imitar la inyección.
+    """
+    pytest.importorskip("playwright", reason="que un <script> corra es del navegador")
+
+    with (
+        patch("app.main.listar_proveedores", return_value=PROVEEDORES_DE_PRUEBA),
+        patch("app.main._cajas_para_elegir_por_articulo", return_value=_cajas_de_un_articulo()),
+    ):
+        anfitriona = cliente.get("/compras/nueva/fotos").text
+        con_caja = _fragmento_de_comanda(5)
+        # Sin artículo elegido ninguna caja aplica: es el caso que TIENE que
+        # seguir escondido. Sin él, un cableado que mostrara todo pasaría igual.
+        sin_caja = _fragmento_de_comanda(None)
+
+    sonda = """() => {
+      const b = document.querySelector('[data-caja-en-origen]');
+      const s = b ? b.querySelector('select') : null;
+      return {bloques: document.querySelectorAll('[data-caja-en-origen]').length,
+              display: b ? getComputedStyle(b).display : null,
+              opciones: s ? [...s.options].map((o) => o.value) : null};
+    }"""
+
+    async def correr():
+        from playwright.async_api import async_playwright
+
+        from scripts.medir_layout import CHROMIUM
+
+        async with async_playwright() as pw:
+            navegador = await pw.chromium.launch(executable_path=CHROMIUM)
+            pagina = await navegador.new_page(viewport={"width": 390, "height": 844})
+            reventados = []
+            pagina.on("pageerror", lambda e: reventados.append(str(e)))
+            await pagina.set_content(anfitriona)
+
+            pasos = {}
+            await pagina.evaluate("(html) => mostrarRevision(html)", con_caja)
+            pasos["la primera comanda"] = await pagina.evaluate(sonda)
+            # LA SEGUNDA ES LA QUE IMPORTA: con una bandera global de "ya
+            # cableado", los bloques de la comanda siguiente se saltean y
+            # quedan escondidos — el mismo síntoma, una comanda más tarde.
+            await pagina.evaluate("(html) => mostrarRevision(html)", con_caja)
+            pasos["la segunda comanda"] = await pagina.evaluate(sonda)
+            await pagina.evaluate("(html) => mostrarRevision(html)", sin_caja)
+            pasos["un artículo sin cajas"] = await pagina.evaluate(sonda)
+
+            # Y la marca, una vez que se puede poner, pasa por la doble
+            # confirmación como en las otras seis pantallas.
+            await pagina.evaluate("(html) => mostrarRevision(html)", con_caja)
+            confirma = await pagina.evaluate("""() => {
+              const s = document.querySelector('[data-caja-en-origen] select');
+              s.value = '3';
+              const form = s.form;
+              form.noValidate = true;
+              let enviado = 0;
+              document.addEventListener('submit', (e) => {
+                if (!e.defaultPrevented) { enviado++; }
+                e.preventDefault();
+              }, true);
+              form.requestSubmit();
+              return {enviado: enviado,
+                      abierto: document.getElementById('modal-vino-armada').open};
+            }""")
+            await navegador.close()
+        return pasos, confirma, reventados
+
+    pasos, confirma, reventados = asyncio.run(correr())
+    assert not reventados, reventados
+    assert pasos == {
+        "la primera comanda": {"bloques": 1, "display": "block", "opciones": ["", "3"]},
+        "la segunda comanda": {"bloques": 1, "display": "block", "opciones": ["", "3"]},
+        # El denominador al lado: "escondido" y "no hay bloque" se ven igual
+        # desde un assert de display, y solo uno de los dos es correcto acá.
+        "un artículo sin cajas": {"bloques": 1, "display": "none", "opciones": [""]},
+    }, pasos
+    # El modal frena el envío también acá: el fragmento llega después de que el
+    # listener se registró, y por eso el disparador va en `document`.
+    assert confirma == {"enviado": 0, "abierto": True}, confirma

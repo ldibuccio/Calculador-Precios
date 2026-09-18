@@ -473,9 +473,30 @@
       }
     }
 
+    // EL MARCADO QUE ENTRA POR innerHTML NO EJECUTA SUS <script>. Es del
+    // estándar, no un bug del navegador, y se lleva puesto el cableado que
+    // cada partial trae adentro: el bloque de "¿viene ya armada?" llegaba
+    // acá `hidden` y se quedaba escondido para siempre — una función que
+    // existe y no se puede usar (corolario 83). Volver a crear el nodo es lo
+    // único que los corre.
+    //
+    // Y VA EN LA PANTALLA QUE INYECTA, no en el partial: el que escriba el
+    // próximo bloque con `<script>` adentro no tiene por qué saber que su
+    // marcado viaja por acá. Lo que sí tiene que cumplir es ser
+    // RE-EJECUTABLE, porque esto lo corre de nuevo en cada comanda revisada.
+    function ejecutarLosScriptsDe(contenedor) {
+      if (!contenedor) return;
+      contenedor.querySelectorAll("script").forEach(function (viejo) {
+        const nuevo = document.createElement("script");
+        nuevo.textContent = viejo.textContent;
+        viejo.parentNode.replaceChild(nuevo, viejo);
+      });
+    }
+
     function mostrarRevision(html) {
       document.getElementById("contenido-fragmento").innerHTML = html;
       document.getElementById("contenedor-revision").style.display = "block";
+      ejecutarLosScriptsDe(document.getElementById("contenido-fragmento"));
       inicializarDescartes();
       actualizarBotonGuardar();
     }
@@ -532,6 +553,9 @@
       }
 
       document.getElementById("contenedor-revision").style.display = "block";
+      // También acá: los renglones se rearman desde un DOMParser, y ahí los
+      // <script> tampoco se ejecutan nunca.
+      ejecutarLosScriptsDe(document.getElementById("contenido-fragmento"));
       inicializarDescartes();
       actualizarBotonGuardar();
     }

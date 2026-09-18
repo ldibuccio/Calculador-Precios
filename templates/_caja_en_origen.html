@@ -53,49 +53,69 @@
   // bloque escondido para siempre —arranca `hidden`— y eso no se ve. Un
   // control que no aparece no se reporta.
   //
-  // La guarda de abajo lo hace idempotente: el cableado recorre TODOS los
-  // bloques de la página, así que registrarlo una vez alcanza aunque la
-  // comanda repita el control una vez por renglón.
-  if (!window.__cajasEnOrigenCableadas) {
-    window.__cajasEnOrigenCableadas = true;
+  // Y TIENE QUE PODER CORRER TARDE Y DOS VECES. La comanda MÚLTIPLE recibe
+  // este bloque por `innerHTML`, que NO ejecuta los `<script>` que vienen
+  // adentro; la pantalla que lo recibe los vuelve a crear (corolario 83).
+  // Eso obliga a dos cosas que un cableado de carga no necesita:
+  //
+  //   · engancharse a `DOMContentLoaded` sería NO CORRER NUNCA, porque
+  //     cuando el fragmento llega ese evento ya pasó;
+  //   · la guarda no puede ser una bandera de módulo. Con una sola, la
+  //     SEGUNDA comanda revisada trae bloques nuevos y el cableado los
+  //     saltea — y el modo de falla es el de siempre: el bloque queda
+  //     escondido, que es exactamente como se ve un artículo sin cajas.
+  //     Se marca BLOQUE POR BLOQUE, así llamarlo de más no cuesta nada.
+  (function () {
+    if (!window.cablearCajasEnOrigen) {
+      // Las opciones se sacan y se vuelven a poner desde una copia guardada
+      // al cablear el bloque: esconder un <option> con CSS no es confiable en
+      // todos los navegadores, y lo que el operario tiene adelante lo decide
+      // el navegador, no el atributo.
+      const CAJAS_DE_CADA_BLOQUE = new WeakMap();
 
-    // Las opciones se sacan y se vuelven a poner desde una copia guardada al
-    // cargar la pantalla: esconder un <option> con CSS no es confiable en
-    // todos los navegadores, y lo que el operario tiene adelante lo decide el
-    // navegador, no el atributo.
-    const CAJAS_DE_CADA_BLOQUE = new WeakMap();
-
-    function actualizarCajasEnOrigen(bloque) {
-      const select = bloque.querySelector("select");
-      const articulo = document.getElementById(bloque.dataset.articuloSelect);
-      if (!select || !articulo) return;
-
-      const todas = CAJAS_DE_CADA_BLOQUE.get(bloque) || [];
-      const suyas = todas.filter((o) => o.dataset.articulo === String(articulo.value));
-      const elegida = select.value;
-      select.length = 1;
-      suyas.forEach((o) => select.appendChild(o));
-      // Si la caja que estaba elegida no es de este artículo, vuelve al "no":
-      // dejarla puesta guardaría una marca que la base rechaza.
-      select.value = suyas.some((o) => o.value === elegida) ? elegida : "";
-      bloque.hidden = suyas.length === 0;
-    }
-
-    document.addEventListener("DOMContentLoaded", function () {
-      document.querySelectorAll("[data-caja-en-origen]").forEach(function (bloque) {
+      function actualizarCajasEnOrigen(bloque) {
         const select = bloque.querySelector("select");
         const articulo = document.getElementById(bloque.dataset.articuloSelect);
         if (!select || !articulo) return;
-        CAJAS_DE_CADA_BLOQUE.set(bloque, Array.from(select.options).slice(1));
-        articulo.addEventListener("change", function () {
-          actualizarCajasEnOrigen(bloque);
-        });
-        // Y AL CARGAR, no solo al cambiar de artículo: en modo editar y en la
-        // comanda el artículo ya viene elegido, y sin esto el selector
-        // arrancaría con las cajas de TODOS los artículos.
-        actualizarCajasEnOrigen(bloque);
-      });
-    });
-  }
+
+        const todas = CAJAS_DE_CADA_BLOQUE.get(bloque) || [];
+        const suyas = todas.filter((o) => o.dataset.articulo === String(articulo.value));
+        const elegida = select.value;
+        select.length = 1;
+        suyas.forEach((o) => select.appendChild(o));
+        // Si la caja que estaba elegida no es de este artículo, vuelve al "no":
+        // dejarla puesta guardaría una marca que la base rechaza.
+        select.value = suyas.some((o) => o.value === elegida) ? elegida : "";
+        bloque.hidden = suyas.length === 0;
+      }
+
+      window.cablearCajasEnOrigen = function () {
+        document.querySelectorAll("[data-caja-en-origen]:not([data-cableado])")
+          .forEach(function (bloque) {
+            const select = bloque.querySelector("select");
+            const articulo = document.getElementById(bloque.dataset.articuloSelect);
+            // Sin su <select> de artículo no se puede filtrar nada, y el
+            // bloque queda SIN marcar a propósito: si llega después, la
+            // llamada siguiente lo agarra.
+            if (!select || !articulo) return;
+            bloque.dataset.cableado = "1";
+            CAJAS_DE_CADA_BLOQUE.set(bloque, Array.from(select.options).slice(1));
+            articulo.addEventListener("change", function () {
+              actualizarCajasEnOrigen(bloque);
+            });
+            // Y AL CABLEAR, no solo al cambiar de artículo: en modo editar y
+            // en la comanda el artículo ya viene elegido, y sin esto el
+            // selector arrancaría con las cajas de TODOS los artículos.
+            actualizarCajasEnOrigen(bloque);
+          });
+      };
+    }
+
+    if (document.readyState === "loading") {
+      document.addEventListener("DOMContentLoaded", window.cablearCajasEnOrigen);
+    } else {
+      window.cablearCajasEnOrigen();
+    }
+  })();
 </script>
 {% endif %}

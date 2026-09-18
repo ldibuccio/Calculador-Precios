@@ -1710,13 +1710,12 @@ escrito a mano. **Las siete pasan ahora por el mismo modal**, y lo cuida un
 test que compara el conjunto ENCONTRADO contra el DECIDIDO en vez de una
 lista escrita a mano — la octava pantalla no la va a recordar nadie.
 
-**Y la comanda MÚLTIPLE no puede marcar hoy**, medido y no deducido: su
+**Y la comanda MÚLTIPLE no podía marcar**, medido y no deducido: su
 fragmento llega por `innerHTML`, que no ejecuta los `<script>` que trae, así
-que el bloque queda en `display: none` de verdad y el selector no aparece
-nunca. Es un agujero aparte —una función que existe y nadie puede usar— y
-está anotado en el corolario 83 con el número al lado. El modal ya está
-cableado en su pantalla anfitriona, así que el día que se destape, la
-confirmación ya está puesta.
+que el bloque quedaba en `display: none` de verdad y el selector no aparecía
+nunca. Era un agujero aparte —una función que existe y nadie puede usar— y
+**se arregló el mismo 18/09**: ver el corolario 83. Las siete superficies
+pueden marcar y las siete pasan por el modal.
 
 ### Y DESDE EL 17/09 HAY UN TEST, porque la variante peor es la ruta sin botón
 
@@ -7586,10 +7585,39 @@ comanda MÚLTIPLE (innerHTML)             true    none       false     true
 
 **`display: none` de verdad, no el atributo**: el efecto, no la intención
 (corolario 32). Así que en la comanda múltiple el selector de "¿viene ya
-armada?" **no se puede usar** — llega, ocupa lugar en el DOM, manda su valor
-vacío, y nadie lo ve nunca. Es la ruta sin botón del corolario 31 en su
-variante más callada: no hay `.sql` a mano que se repita ni incidente que
+armada?" **no se podía usar** — llegaba, ocupaba lugar en el DOM, mandaba su
+valor vacío, y nadie lo veía nunca. Es la ruta sin botón del corolario 31 en
+su variante más callada: no hay `.sql` a mano que se repita ni incidente que
 alguien recuerde, porque la función no se pide — se supone.
+
+### ARREGLADO el 18/09, y son DOS mitades que hacen falta las dos
+
+**En la pantalla que INYECTA**: volver a crear cada `<script>` del marcado
+recibido, que es lo único que los corre. Va ahí y no en el partial porque el
+que escriba el próximo bloque con `<script>` adentro no tiene por qué saber
+que su marcado viaja por acá.
+
+**Y en el PARTIAL**: ser re-ejecutable, que son dos cosas y ninguna se ve
+leyendo el arreglo de la otra mitad.
+
+1. **`DOMContentLoaded` ya pasó** cuando el fragmento llega, así que un
+   cableado enganchado ahí se registra y **no corre nunca**. Hay que
+   preguntar `document.readyState` y llamar directo si el documento ya está.
+   Sin esto, re-ejecutar el script no cambia nada — y el canario lo confirma:
+   cae el mismo test que sin re-ejecutarlo.
+2. **La guarda no puede ser una bandera de módulo.** `if
+   (!window.__yaCablee)` deja la PRIMERA comanda perfecta y saltea los
+   bloques de la segunda, con el mismo síntoma un minuto más tarde. Se marca
+   BLOQUE POR BLOQUE (`[data-caja-en-origen]:not([data-cableado])`), y así
+   llamarlo de más no cuesta nada.
+
+**Medido llamando a `mostrarRevision`, que es la función de la pantalla y no
+una imitación del test**: primera comanda `display block · opciones ['', '3']`,
+segunda igual, y un artículo sin cajas en `display none · opciones ['']` — el
+caso que tiene que seguir escondido, sin el cual un cableado que mostrara todo
+pasaría igual. Los cuatro canarios (sacar la re-ejecución, volver al
+`DOMContentLoaded` solo, volver a la guarda global, mostrar siempre el bloque)
+hacen caer ese test y solo ése.
 
 ### Lo que decide dónde va un partial nuevo
 
