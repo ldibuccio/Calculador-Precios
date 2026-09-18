@@ -5422,7 +5422,7 @@ def test_crear_reproceso_lee_el_corte_UNA_sola_vez():
     ]
 
     with patch("app.db.obtener_conexion", return_value=conexion):
-        crear_reproceso(1, 10, 8, 0, 2, date(2026, 8, 20), caja_declarada=SIN_CAJA_NUESTRA_DECLARADA)
+        crear_reproceso(1, 10, 8, 0, 2, date(2026, 8, 20))
 
     lecturas = [c for c in cursor.execute.call_args_list if "corte_modelo" in c.args[0]]
     assert len(lecturas) == 1
@@ -5470,31 +5470,6 @@ def test_total_reingresos_rechazo_excluye_anulados():
     consulta = cursor.execute.call_args.args[0]
     assert "anulado_el IS NULL AND tipo = 'reingreso_rechazo'" in consulta
     assert total == 11.0
-
-
-def test_la_consulta_de_GUIAS_R_trae_lo_que_decide_si_falta_declarar_la_caja():
-    """EL CANARIO LO PIDIÓ, y es el corolario 65 otra vez.
-
-    Toda la pantalla de Guías R mockea `listar_reprocesos_por_rango`, así que
-    el fixture entrega `lleva_caja_nuestra` y las dos de la ficha SIN MIRAR
-    UNA LETRA DEL SQL. Sacarlas del SELECT no hacía caer un solo test —y el
-    modo de falla es mudo: la pantalla sale igual, con un campo menos, y las
-    guías que esperan la caja dejan de poder completarse para siempre.
-
-    Se mira el TEXTO porque el valor no viene de la consulta: viene del
-    fixture. Y CALIFICADO POR ALIAS (corolario 4): `envase_id` está en
-    `reprocesos` Y en `fichas_logistica`, así que un `in` pelado matchea la
-    columna equivocada.
-    """
-    import inspect as _inspect
-    from app import db as _db
-
-    fuente = _inspect.getsource(_db.listar_reprocesos_por_rango)
-    select = fuente.split("FROM reprocesos rp")[0]
-
-    assert "rp.lleva_caja_nuestra" in select
-    assert "f.envase_id AS ficha_envase_id" in select
-    assert "f.envase_variable AS ficha_envase_variable" in select
 
 
 def test_listar_reprocesos_por_rango_filtra_por_articulo_solo_si_se_lo_piden():
@@ -5967,7 +5942,7 @@ def test_el_piso_de_fecha_NO_deja_cargar_una_guia_R_ANTES_del_corte():
 
     with patch("app.db.obtener_conexion", return_value=conexion):
         with pytest.raises(ReprocesoAnteriorAlCorte) as levantada:
-            crear_reproceso(1, 10, 8, 0, 2, date(2026, 8, 14), caja_declarada=SIN_CAJA_NUESTRA_DECLARADA)
+            crear_reproceso(1, 10, 8, 0, 2, date(2026, 8, 14))
 
     assert levantada.value.corte == date(2026, 8, 15)
     assert levantada.value.fecha == date(2026, 8, 14)
@@ -5985,123 +5960,31 @@ def test_el_piso_SALE_de_corte_modelo_y_no_de_una_constante():
 
     with patch("app.db.obtener_conexion", return_value=conexion):
         with pytest.raises(ReprocesoAnteriorAlCorte) as levantada:
-            crear_reproceso(1, 10, 8, 0, 2, date(2026, 8, 25), caja_declarada=SIN_CAJA_NUESTRA_DECLARADA)
+            crear_reproceso(1, 10, 8, 0, 2, date(2026, 8, 25))
 
     assert levantada.value.corte == date(2026, 9, 1)
 
 
-def test_declarar_la_caja_de_una_guia_YA_CARGADA_solo_escribe_ESAS_DOS_columnas():
-    """La puerta de las que YA ESTÁN, y no recalcula nada.
+def test_con_ficha_VARIABLE_la_guia_R_ENTRA_y_escribe_EL_ENVASE_DE_LA_FICHA():
+    """ESTE TEST AFIRMABA LO CONTRARIO entre el 17 y el 18/09.
 
-    NO HACE FALTA RECARGARLAS: el stock de cajas se deriva en cada lectura,
-    así que estas dos columnas alcanzan para que la guía empiece a descontar.
-    Medido contra el esquema real con el caso de Frutamax —dos guías de 10 y
-    6 cajas de primera, ficha variable, conteo del mismo día—: el stock pasó
-    de 500 a 484 con solo este UPDATE, y declarando "descartable" se quedó en
-    500. Es la misma propiedad que hace que anular una guía R corrija el
-    stock sola.
+    Decía que con ficha variable la guía NO SE GUARDABA hasta que alguien
+    contestara en qué caja quedó armada, y era el guardián de un selector que
+    dejaba elegir una caja DISTINTA de la que la ficha declara. La caja sale
+    de la ficha y no se puede armar en otra.
 
-    Y SOLO ESAS DOS: los consumos y el costo se congelaron al cargar la guía.
-    Declarar en qué caja quedó es decir en qué salió, no rehacer el FIFO.
+    Lo que el flag decide es SI se usa una caja nuestra, no CUÁL — y en una
+    guía R ese "si" ya está contestado por el hecho de que la guía exista:
+    anota `bultos_primera`, o sea cajas ARMADAS. El caso descartable es
+    exactamente aquel en que no se reprocesa nada y no hay guía R.
+
+    El envase se afirma POR EL NÚMERO (9, el de la ficha) y no por `True`: un
+    assert de que "lleva caja" pasaría igual con el envase en NULL, que es el
+    hueco que el stock de cajas cuenta aparte.
     """
-    from app.db import declarar_la_caja_de_una_guia
-
-    # La guía existe, no está anulada, y su ficha es VARIABLE.
-    conexion, cursor = _conexion_falsa(filas_fetchone=[(901, False), (7, True)])
-
-    with patch("app.db.obtener_conexion", return_value=conexion):
-        declarar_la_caja_de_una_guia(176, (True, 7))
-
-    updates = [c for c in cursor.execute.call_args_list if "UPDATE" in c.args[0]]
-    assert len(updates) == 1
-    assert updates[0].args[1] == (True, 7, 176)
-    # NADA de consumos ni de costo: si esto tocara el FIFO, una guía vieja
-    # cambiaría de costo por declarar en qué caja salió.
-    for prohibido in ("reprocesos_consumos", "costo_total", "costo_por_bulto"):
-        assert prohibido not in updates[0].args[0]
-
-
-def test_una_guia_que_SI_puede_derivar_su_caja_NO_se_declara_a_mano():
-    """La guarda que impide re-etiquetar la historia.
-
-    Con ficha de envase FIJO el envase sale de la ficha, y dejar que alguien
-    lo pise acá sería exactamente lo que este proyecto se negó a hacer con
-    `unidad_compra`: cambiarle el significado a lo ya escrito sin mover un
-    número y sin que nada avise.
-
-    Y LA PREGUNTA ES LA MISMA que decide si la pantalla ofrece el selector,
-    así que no puede haber un botón que esta guarda después rechace — un
-    callejón es peor que no ofrecer nada.
-    """
-    from app.db import declarar_la_caja_de_una_guia
-
-    # Ficha con envase 7 y NO variable: el server ya derivó su caja.
-    conexion, cursor = _conexion_falsa(filas_fetchone=[(901, False), (7, False)])
-
-    with patch("app.db.obtener_conexion", return_value=conexion):
-        with pytest.raises(ValueError) as rebote:
-            declarar_la_caja_de_una_guia(176, (True, 9))
-
-    assert "su ficha" in str(rebote.value)
-    assert not [c for c in cursor.execute.call_args_list if "UPDATE" in c.args[0]]
-
-
-def test_una_guia_ANULADA_no_se_completa():
-    """Ya no cuenta para nada, y completarle un dato daría a entender que sí."""
-    from app.db import declarar_la_caja_de_una_guia
-
-    conexion, cursor = _conexion_falsa(filas_fetchone=[(901, True)])
-
-    with patch("app.db.obtener_conexion", return_value=conexion):
-        with pytest.raises(ValueError) as rebote:
-            declarar_la_caja_de_una_guia(176, (True, 7))
-
-    assert "anulada" in str(rebote.value)
-    assert not [c for c in cursor.execute.call_args_list if "UPDATE" in c.args[0]]
-
-
-def test_con_ficha_VARIABLE_y_sin_contestar_la_guia_R_NO_SE_GUARDA():
-    """EL BUG QUE ESTO VINO A CERRAR, y era silencioso.
-
-    Con Mango o Cherry —las dos fichas variables— el envase NO se puede
-    derivar: lo decide el cajón de ESA compra. Hasta el 17/09 eso se escribía
-    como NULL sin que nada avisara, así que la caja salía, era nuestra, y no
-    se descontaba NUNCA — en los dos artículos que más se mueven.
-
-    El parámetro `envase_declarado` estaba puesto desde el primer día y NO
-    TENÍA UN SOLO ESCRITOR: la pregunta se diseñó y nunca se construyó. Es el
-    corolario 72 sobre un parámetro en vez de sobre una columna.
-
-    Y LA PARED VA DONDE SE ESCRIBE: que la pantalla ponga `required` no
-    alcanza — un formulario armado a mano entra sin ver el cartel.
-    """
-    # La ficha existe, tiene envase, y es VARIABLE.
-    conexion, cursor = _conexion_falsa(filas_fetchone=[_CORTE, (7, True)])
-
-    with patch("app.db.obtener_conexion", return_value=conexion):
-        with pytest.raises(ValueError) as rebote:
-            crear_reproceso(1, 10, 8, 0, 2, date(2026, 8, 25), cliente_id=1, ficha_id=901)
-
-    assert "caja nuestra" in str(rebote.value)
-    # Y NO ESCRIBIÓ NADA. Sin esto, "rebota" y "rebota después de escribir a
-    # medias" se leen igual desde el test.
-    inserts = [c for c in cursor.execute.call_args_list
-               if "INSERT INTO reprocesos" in c.args[0]]
-    assert inserts == []
-
-
-def test_CONTESTANDO_la_misma_carga_entra_y_escribe_LO_QUE_SE_CONTESTO():
-    """EL CASO QUE TIENE QUE PASAR, y es el único que separa "la guarda
-    funciona" de "la guarda frena siempre".
-
-    Una batería de rechazos la pasa entera cualquier guarda que aborte
-    siempre (corolario 30), y acá eso dejaría la pantalla trabada para Mango
-    y Cherry sin un solo test en rojo.
-
-    Y verifica que lo DECLARADO gane sobre la derivación: la misma ficha
-    variable que arriba rebotaba, acá escribe True y la caja 7.
-    """
-    conexion, cursor = _conexion_falsa(filas_fetchone=[_CORTE, (7, True), (31,)])
+    # La ficha existe, tiene envase 9, y es VARIABLE. El SELECT pide UNA
+    # columna: la regla ya no mira el flag.
+    conexion, cursor = _conexion_falsa(filas_fetchone=[_CORTE, (9,), (32,)])
     cursor.description = COLUMNAS_LOTES
     cursor.fetchall.side_effect = [
         [_lote_compra(101, date(2026, 8, 15), 20.0, 1000.0)],
@@ -6110,13 +5993,29 @@ def test_CONTESTANDO_la_misma_carga_entra_y_escribe_LO_QUE_SE_CONTESTO():
     ]
 
     with patch("app.db.obtener_conexion", return_value=conexion):
-        numero = crear_reproceso(1, 10, 8, 0, 2, date(2026, 8, 25), cliente_id=1,
-                                 ficha_id=901, caja_declarada=(True, 7))
+        numero = crear_reproceso(1, 10, 8, 0, 2, date(2026, 8, 25), cliente_id=1, ficha_id=901)
 
-    assert numero == 31
+    assert numero == 32
     insert = next(c for c in cursor.execute.call_args_list
                   if "INSERT INTO reprocesos" in c.args[0])
-    assert True in insert.args[1] and 7 in insert.args[1]
+    assert insert.args[1][-2:] == (True, 9), (
+        f"tenía que escribir la caja de la ficha; escribió {insert.args[1][-2:]}"
+    )
+
+
+def test_la_regla_de_la_caja_NO_LE_PIDE_A_LA_BASE_el_flag_variable():
+    """Y se afirma sobre el TEXTO del SELECT, no sobre el valor.
+
+    Con el mock, la fila la entrega el fixture: lo único que ve QUÉ columna
+    pidió la consulta es el SQL. Y acá el modo de falla es mudo — pidiendo
+    `envase_variable` de más no se rompe nada hoy, y queda una lectura que
+    invita a volver a ramificar por el flag.
+    """
+    fuente = io.open("app/db.py", encoding="utf-8").read()
+    cuerpo = fuente.split("def _envase_de_esta_guia")[1].split("\ndef ")[0]
+    assert "envase_variable" not in cuerpo, (
+        "la caja sale de la ficha: el flag no entra en esta lectura"
+    )
 
 
 def test_una_ficha_de_envase_FIJO_no_pregunta_NADA_y_lo_deriva_sola():
@@ -6127,8 +6026,8 @@ def test_una_ficha_de_envase_FIJO_no_pregunta_NADA_y_lo_deriva_sola():
     test, una guarda que exija SIEMPRE pasa los dos de arriba y rompe la
     pantalla para todos los demás artículos.
     """
-    # Ficha con envase 7 y NO variable.
-    conexion, cursor = _conexion_falsa(filas_fetchone=[_CORTE, (7, False), (32,)])
+    # Ficha con envase 7. El SELECT pide una sola columna.
+    conexion, cursor = _conexion_falsa(filas_fetchone=[_CORTE, (7,), (32,)])
     cursor.description = COLUMNAS_LOTES
     cursor.fetchall.side_effect = [
         [_lote_compra(101, date(2026, 8, 15), 20.0, 1000.0)],
@@ -6137,8 +6036,6 @@ def test_una_ficha_de_envase_FIJO_no_pregunta_NADA_y_lo_deriva_sola():
     ]
 
     with patch("app.db.obtener_conexion", return_value=conexion):
-        # SIN `caja_declarada`, que es como la va a llamar la pantalla para
-        # toda ficha fija: no se pregunta nada y entra igual.
         numero = crear_reproceso(1, 10, 8, 0, 2, date(2026, 8, 25), cliente_id=1, ficha_id=901)
 
     assert numero == 32
@@ -6163,7 +6060,7 @@ def test_el_dia_DEL_corte_si_se_puede_cargar():
     ]
 
     with patch("app.db.obtener_conexion", return_value=conexion):
-        numero = crear_reproceso(1, 10, 8, 0, 2, date(2026, 8, 15), caja_declarada=SIN_CAJA_NUESTRA_DECLARADA)
+        numero = crear_reproceso(1, 10, 8, 0, 2, date(2026, 8, 15))
 
     assert numero == 30
 
@@ -6202,7 +6099,7 @@ def test_crear_reproceso_congela_consumos_fifo_y_todo_el_costo_a_la_primera():
     ]
 
     with patch("app.db.obtener_conexion", return_value=conexion):
-        numero = crear_reproceso(1, 6, 4, 1, 1, date(2026, 8, 25), cliente_id=7, caja_declarada=SIN_CAJA_NUESTRA_DECLARADA)
+        numero = crear_reproceso(1, 6, 4, 1, 1, date(2026, 8, 25), cliente_id=7)
 
     assert numero == 12
     inserts = [c for c in cursor.execute.call_args_list if "INSERT INTO" in c.args[0]]
@@ -6224,11 +6121,7 @@ def test_crear_reproceso_congela_consumos_fifo_y_todo_el_costo_a_la_primera():
     # "no sabemos", que el stock de cajas cuenta aparte como hueco.
     assert inserts[0].args[1] == (
         1, date(2026, 8, 25), 6, 4, 1, 1, 6600.0, 1650.0, 7, None, False, "normal", None,
-        # lleva_caja_nuestra y envase_id: FALSE y None, no None y None. La
-        # carga contestó "salió en el cajón del proveedor", y eso es un HECHO
-        # DECLARADO — distinto de "nadie dijo", que es lo que había antes y
-        # se veía igual en la pantalla.
-        False, None,
+        None, None,
     )
     # Consumos congelados, del lote más viejo primero, con su costo.
     assert inserts[1].args[1] == (12, "compra", 101, 101, 3.0, 1000.0)
@@ -6254,7 +6147,7 @@ def test_crear_reproceso_con_lote_sin_precio_deja_el_costo_incompleto():
     ]
 
     with patch("app.db.obtener_conexion", return_value=conexion):
-        crear_reproceso(1, 10, 8, 0, 0, date(2026, 8, 25), caja_declarada=SIN_CAJA_NUESTRA_DECLARADA)
+        crear_reproceso(1, 10, 8, 0, 0, date(2026, 8, 25))
 
     inserts = [c for c in cursor.execute.call_args_list if "INSERT INTO" in c.args[0]]
     assert inserts[0].args[1][6] is None
@@ -6280,7 +6173,7 @@ def test_el_freno_traba_lo_que_los_lotes_no_cubren_y_NO_escribe_nada():
 
     with patch("app.db.obtener_conexion", return_value=conexion):
         with pytest.raises(StockInsuficienteParaReproceso) as levantada:
-            crear_reproceso(1, 5, 4, 0, 1, date(2026, 8, 25), caja_declarada=SIN_CAJA_NUESTRA_DECLARADA)
+            crear_reproceso(1, 5, 4, 0, 1, date(2026, 8, 25))
 
     # La excepción trae lo que la pantalla necesita para explicarlo sola.
     assert levantada.value.declarado == 5.0
@@ -6310,7 +6203,7 @@ def test_el_freno_compara_contra_los_RESTANTES_no_contra_el_neto():
 
     with patch("app.db.obtener_conexion", return_value=conexion):
         with pytest.raises(StockInsuficienteParaReproceso) as levantada:
-            crear_reproceso(1, 4, 4, 0, 0, date(2026, 8, 25), caja_declarada=SIN_CAJA_NUESTRA_DECLARADA)
+            crear_reproceso(1, 4, 4, 0, 0, date(2026, 8, 25))
 
     assert levantada.value.disponible == 0.0
 
@@ -6333,7 +6226,7 @@ def test_el_freno_NO_cuenta_las_salidas_DEL_MISMO_DIA():
     ]
 
     with patch("app.db.obtener_conexion", return_value=conexion):
-        numero = crear_reproceso(1, 44, 40, 0, 4, date(2026, 8, 31), caja_declarada=SIN_CAJA_NUESTRA_DECLARADA)
+        numero = crear_reproceso(1, 44, 40, 0, 4, date(2026, 8, 31))
 
     assert numero == 16
     inserts = [c for c in cursor.execute.call_args_list if "INSERT INTO" in c.args[0]]
@@ -6368,7 +6261,7 @@ def test_EL_CASO_DE_LOS_56_DE_UN_LOTE_DE_40_lo_que_el_dia_ya_tomo_se_descuenta()
 
     with patch("app.db.obtener_conexion", return_value=conexion):
         with pytest.raises(StockInsuficienteParaReproceso) as levantada:
-            crear_reproceso(1, 26, 24, 0, 2, date(2026, 9, 14), caja_declarada=SIN_CAJA_NUESTRA_DECLARADA)
+            crear_reproceso(1, 26, 24, 0, 2, date(2026, 9, 14))
 
     assert levantada.value.disponible == 10.0
     # Y la pared no es muda: dice QUÉ guía de hoy se lo llevó. Sin esto, el
@@ -6397,7 +6290,7 @@ def test_EL_CONTROL_del_caso_de_los_56_sin_nada_tomado_hoy_la_MISMA_carga_entra(
     ]
 
     with patch("app.db.obtener_conexion", return_value=conexion):
-        numero = crear_reproceso(1, 26, 24, 0, 2, date(2026, 9, 14), caja_declarada=SIN_CAJA_NUESTRA_DECLARADA)
+        numero = crear_reproceso(1, 26, 24, 0, 2, date(2026, 9, 14))
 
     assert numero == 307
 
@@ -6417,7 +6310,7 @@ def test_lo_que_TODAVIA_ENTRA_despues_de_lo_de_hoy_no_rebota():
     ]
 
     with patch("app.db.obtener_conexion", return_value=conexion):
-        numero = crear_reproceso(1, 10, 9, 0, 1, date(2026, 9, 14), caja_declarada=SIN_CAJA_NUESTRA_DECLARADA)
+        numero = crear_reproceso(1, 10, 9, 0, 1, date(2026, 9, 14))
 
     assert numero == 308
 
@@ -6443,7 +6336,7 @@ def test_EL_REPARTO_NO_CAMBIA_la_propuesta_sale_de_los_lotes_ENTEROS():
     ]
 
     with patch("app.db.obtener_conexion", return_value=conexion):
-        crear_reproceso(1, 10, 10, 0, 0, date(2026, 9, 14), caja_declarada=SIN_CAJA_NUESTRA_DECLARADA)
+        crear_reproceso(1, 10, 10, 0, 0, date(2026, 9, 14))
 
     consumos = [c.args[1] for c in cursor.execute.call_args_list
                 if "INSERT INTO reprocesos_consumos" in c.args[0]]
@@ -6477,7 +6370,6 @@ def test_un_lote_YA_SOBRE_ATRIBUIDO_aporta_CERO_y_no_se_come_a_los_otros():
         numero = crear_reproceso(
             1, 20, 20, 0, 0, date(2026, 9, 14),
             reparto=[{"tipo_lote": "guia", "origen_id": 102, "bultos": 20.0}],
-            caja_declarada=SIN_CAJA_NUESTRA_DECLARADA,
         )
 
     assert numero == 310
@@ -6530,7 +6422,7 @@ def test_un_lote_POSTERIOR_a_la_fecha_del_reproceso_no_cuenta():
 
     with patch("app.db.obtener_conexion", return_value=conexion):
         with pytest.raises(StockInsuficienteParaReproceso) as levantada:
-            crear_reproceso(1, 8, 8, 0, 0, date(2026, 8, 20), caja_declarada=SIN_CAJA_NUESTRA_DECLARADA)
+            crear_reproceso(1, 8, 8, 0, 0, date(2026, 8, 20))
 
     assert levantada.value.disponible == 0.0
 
@@ -6561,7 +6453,7 @@ def test_el_reparto_editado_por_el_operario_se_escribe_y_queda_MARCADO():
     ]
 
     with patch("app.db.obtener_conexion", return_value=conexion):
-        crear_reproceso(1, 10, 9, 0, 1, date(2026, 8, 25), reparto=reparto, caja_declarada=SIN_CAJA_NUESTRA_DECLARADA)
+        crear_reproceso(1, 10, 9, 0, 1, date(2026, 8, 25), reparto=reparto)
 
     inserts = [c for c in cursor.execute.call_args_list if "INSERT INTO" in c.args[0]]
     # POR NOMBRE y no `[-1]`: la última columna dejó de ser ésta el día que
@@ -6593,7 +6485,7 @@ def test_confirmar_el_desglose_sin_tocarlo_NO_lo_marca_como_editado():
     ]
 
     with patch("app.db.obtener_conexion", return_value=conexion):
-        crear_reproceso(1, 10, 9, 0, 1, date(2026, 8, 25), reparto=igual_al_fifo, caja_declarada=SIN_CAJA_NUESTRA_DECLARADA)
+        crear_reproceso(1, 10, 9, 0, 1, date(2026, 8, 25), reparto=igual_al_fifo)
 
     inserts = [c for c in cursor.execute.call_args_list if "INSERT INTO" in c.args[0]]
     assert _valor_insertado(cursor, "consumos_editados", "INSERT INTO reprocesos\n") is False
@@ -6619,7 +6511,7 @@ def test_un_reparto_que_pide_mas_de_lo_que_hay_en_un_lote_no_se_guarda():
 
     with patch("app.db.obtener_conexion", return_value=conexion):
         with pytest.raises(RepartoDesactualizado):
-            crear_reproceso(1, 10, 9, 0, 1, date(2026, 8, 25), reparto=reparto, caja_declarada=SIN_CAJA_NUESTRA_DECLARADA)
+            crear_reproceso(1, 10, 9, 0, 1, date(2026, 8, 25), reparto=reparto)
 
     assert not [c for c in cursor.execute.call_args_list if "INSERT INTO" in c.args[0]]
     conexion.commit.assert_not_called()
@@ -6640,8 +6532,7 @@ def test_un_reparto_que_no_suma_lo_declarado_no_se_guarda():
     with patch("app.db.obtener_conexion", return_value=conexion):
         with pytest.raises(RepartoDesactualizado):
             crear_reproceso(1, 5, 4, 0, 1, date(2026, 8, 25),
-                            reparto=[{"tipo_lote": "guia", "origen_id": 101, "bultos": 4.0}],
-                            caja_declarada=SIN_CAJA_NUESTRA_DECLARADA)
+                            reparto=[{"tipo_lote": "guia", "origen_id": 101, "bultos": 4.0}])
 
     assert not [c for c in cursor.execute.call_args_list if "INSERT INTO" in c.args[0]]
 
@@ -7035,30 +6926,20 @@ def test_obtener_renglon_para_reingreso_trae_todo_y_el_devuelto_acumulado():
     assert renglon["ya_devuelto"] == 5.0
 
 
-def test_el_renglon_TRAE_EL_ENVASE_DE_LA_FICHA_o_la_pregunta_se_apaga_sola():
-    """Mirando el TEXTO del SQL, porque el valor lo entrega el fixture (corolario 65).
+def test_el_renglon_para_reingreso_VUELVE_aunque_NO_TENGA_FICHA():
+    """El JOIN con la ficha es LEFT y eso no es cosmético: con un JOIN normal
+    el reingreso de un renglón sin ficha asignada daría 404.
 
-    Con un cursor falso, `ficha_envase_id` llega igual con la columna sacada
-    del SELECT: el mock no mira una letra de la consulta. Y el modo de falla
-    es mudo — sin las dos columnas, `envase_derivado_de_la_ficha` ve una ficha
-    con `envase_id` en None, contesta "envase perdido, no preguntes", y la
-    pantalla deja de preguntar para SIEMPRE. Ni un error, ni un hueco: el
-    reingreso vuelve a guardarse sin decir en qué caja volvió, que es
-    exactamente como se veía antes de que esto existiera.
-
-    Con el ALIAS y no `envase_id` suelto: la consulta nombra cuatro tablas y
-    `r.ficha_id` ya está ahí, así que un assert sin calificar puede matchear
-    lo que no se quiso probar (corolario 4).
+    Hasta el 18/09 este test además exigía que la consulta trajera
+    `ficha_envase_id` y `ficha_envase_variable`, para que la pantalla supiera
+    si preguntar en qué caja volvió. Esa pregunta no existe: sus columnas se
+    dropearon el 17/09 (db/envases_9) y las dos del SELECT no las leía nadie
+    — corolario 72, una columna que se pide y nadie consume.
     """
     consulta = "\n".join(
         linea for linea in inspect.getsource(obtener_renglon_para_reingreso).split("\n")
         if "--" not in linea
     )
-    assert "fl.envase_id AS ficha_envase_id" in consulta
-    assert "fl.envase_variable AS ficha_envase_variable" in consulta
-    # Y el JOIN es LEFT: un renglón sin ficha asignada tiene que VOLVER —con
-    # las dos columnas en NULL, que es "preguntá"— y no desaparecer de la
-    # consulta. Con un JOIN normal el reingreso de ese renglón daría 404.
     assert "LEFT JOIN fichas_logistica fl ON fl.id = r.ficha_id" in consulta
 
 

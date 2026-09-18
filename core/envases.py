@@ -108,73 +108,42 @@ def cajas_que_mueve_la_guia(tipo: str, bultos_primera, lleva_caja_nuestra) -> fl
 def envase_derivado_de_la_ficha(ficha: dict | None) -> tuple[bool | None, int | None, bool]:
     """Qué caja nuestra le corresponde a esta ficha: (lleva, envase_id, hay_que_preguntar).
 
-    LA CONTESTAN DOS OPERACIONES y por eso el nombre dice FICHA y no guía: la
-    guía R, que LLENA una caja, y el reingreso que vuelve a cajón grande, que
-    la VACÍA. Las dos preguntan lo mismo —¿en qué caja nuestra está esto?— y
-    escrita dos veces se separan el día que alguien arregle una.
+    LA CAJA SALE SIEMPRE DE LA FICHA. No se puede armar en otra: la ficha ES
+    el acuerdo con el cliente ("Día compra mango en Caja Chica de 10 u"), así
+    que preguntarla de nuevo abajo es preguntar dos veces lo mismo — y encima
+    deja elegir una distinta de la que la ficha declara.
 
-    LO ESCRIBE SIEMPRE EL SERVER y la pantalla solo PREGUNTA cuando no se
-    puede derivar. Guardarlo únicamente en las fichas variables dejaría el
-    conteo de cajas de las fijas leyéndose de la ficha de HOY, y el día que
-    alguien le cambie el envase a una ficha se re-etiquetaría la historia en
-    silencio — es lo mismo que nos negamos a hacer con `unidad_compra`.
+        ficha con envase       -> (True, su envase, False)
+        ficha SIN envase       -> (False, None, False)  envase perdido
+        SIN FICHA (sin asignar)-> (None, None, True)    no hay de dónde sacarlo
 
-    Los tres casos, y el tercero no estaba en el pedido pero sale de la misma
-    regla: si no se puede derivar, se pregunta.
+    `envase_variable` NO ENTRA ACÁ, y eso es una corrección del 18/09. Ese
+    flag decide SI se usa una caja nuestra, no CUÁL — lo dice la única cuenta
+    que lo lee, `envases_por_unidad_de_venta`, unas líneas más abajo: para el
+    caso variable devuelve 0 (el cajón ya es chico, sale como vino) o
+    `1/contenido_ficha`, que es LA CAJA DE LA FICHA a la tasa de la ficha.
+    No hay ninguna rama que busque otro envase.
 
-        ficha con envase FIJO      -> (True, su envase, False)
-        ficha con envase VARIABLE  -> hay que preguntar: el envase se decide
-                                      por compra y puede ser descartable
-        SIN FICHA (sin asignar)    -> hay que preguntar: sin ficha no hay de
-                                      dónde derivarlo
+    Y en una guía R ese "si" ya está contestado por el hecho de que la guía
+    exista: una guía R anota `bultos_primera`, o sea cajas ARMADAS. El caso
+    descartable es exactamente aquel en que no se reprocesa nada y no hay
+    guía R. Así que en este camino el flag no tiene nada que aportar.
 
-    Una ficha SIN ENVASE es envase perdido (manzana, pera, arándano): sale en
-    el cajón del proveedor y no hay caja nuestra que contar. Eso NO es un
-    hueco y por eso devuelve (False, None, False) y no "preguntá".
+    LA ÚNICA QUE SIGUE PREGUNTANDO ES LA GUÍA SIN FICHA, y su arreglo no es
+    un selector de cajas: es ASIGNARLE LA FICHA, que ya existe en Guías R y
+    vuelve a derivar. Un selector de cajas ahí dejaría elegir una que no es
+    la del cliente al que se le entregó.
+
+    LO ESCRIBE SIEMPRE EL SERVER y queda GUARDADO, no derivado en cada
+    lectura: leerlo de la ficha de HOY haría que cambiarle el envase a una
+    ficha re-etiquete la historia en silencio — lo mismo que nos negamos a
+    hacer con `unidad_compra`.
     """
     if ficha is None:
         return None, None, True
     if ficha.get("envase_id") is None:
         return False, None, False
-    if ficha.get("envase_variable"):
-        return None, None, True
     return True, ficha["envase_id"], False
-
-
-# LA RESPUESTA A "¿QUEDÓ ARMADA EN CAJA NUESTRA?", como viaja en el formulario.
-#
-# Tres valores y no dos: "" es SIN CONTESTAR, que no es lo mismo que "no".
-# Juntarlos haría que no contestar se guarde como "no lleva caja", y entonces
-# la caja sale, nadie la descuenta, y el sistema afirma que no había ninguna —
-# que es peor que el hueco, porque un hueco se ve y una afirmación falsa no.
-SIN_CAJA_NUESTRA = "no"
-
-
-def declaracion_de_caja(valor: str | None) -> tuple[bool, int | None] | None:
-    """Lo que contestó el operario, como (lleva_caja_nuestra, envase_id).
-
-    None = no contestó. El que decide si eso se puede guardar es quien
-    ESCRIBE, no esta función: acá solo se traduce.
-
-    PREGUNTA POR LA FORMA DEL DATO y no contra una lista de valores buenos
-    (corolario 30): un id de envase es un entero positivo y eso no lo puede
-    imitar ningún texto de la pantalla. Chequear contra el catálogo sería una
-    segunda copia de la lista de envases, que se separa el día que alguien
-    agregue uno — y además la FK de la base ya rechaza un id que no existe,
-    que es donde tiene que vivir esa regla.
-
-        ""      -> None          no contestó
-        "no"    -> (False, None) salió en el cajón del proveedor
-        "7"     -> (True, 7)     salió en la caja 7
-    """
-    limpio = (valor or "").strip()
-    if not limpio:
-        return None
-    if limpio == SIN_CAJA_NUESTRA:
-        return False, None
-    if limpio.isdigit() and int(limpio) > 0:
-        return True, int(limpio)
-    raise ValueError("No entendí en qué caja quedó armada.")
 
 
 def hay_que_reponer(envase: dict) -> bool:

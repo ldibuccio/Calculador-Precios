@@ -442,51 +442,7 @@
       </select>
       <button type="submit">Guardar ficha</button>
     </form>
-
     </details>
-    {# EN QUÉ CAJA QUEDÓ ARMADA, para las que no lo pudieron derivar. Es la
-       puerta de LAS QUE YA ESTÁN: la pregunta de la pantalla de Reproceso
-       cierra el agujero desde hoy, y éstas se cargaron antes de que
-       existiera. Sin esto habría que anularlas y recargarlas, o tocarlas por
-       SQL a mano.
-
-       SOLO SE OFRECE CUANDO LA ESCRITURA LO ACEPTA (`falta_la_caja`, que sale
-       de la misma función que usa la guarda): un selector que el POST después
-       rechaza es un callejón, y eso es peor que no ofrecer nada.
-
-       Y VA AFUERA DEL `<details>`, no adentro. Ahí estuvo un rato y era el
-       camino que funciona y no se ve: ese bloque se titula "Corregir la
-       ficha" y arranca CERRADO cuando la guía ya tiene ficha — que es
-       justamente el caso de éstas—. La pregunta habría existido, respondido y
-       tenido sus tests en verde, con nadie llegando. Y además son dos
-       operaciones distintas: la ficha dice a qué producto fueron las cajas,
-       ésta en qué caja salieron. #}
-    {% if g.falta_la_caja %}
-    <p class="ojo-conteo">Esta guía R <strong>no dice en qué caja quedó
-      armada</strong>, así que esas cajas todavía no se descuentan del stock.
-      Su ficha no lo define sola — el envase lo decide el cajón de esa
-      compra.</p>
-    <form class="asignar" method="post"
-          action="/administracion/stock/guias-r/{{ g.id }}/declarar-caja">
-      <input type="hidden" name="fecha_desde" value="{{ fecha_desde }}">
-      <input type="hidden" name="fecha_hasta" value="{{ fecha_hasta }}">
-      <input type="hidden" name="articulo_id" value="{{ articulo_id if articulo_id is not none else '' }}">
-      <input type="hidden" name="guia" value="{{ guia }}">
-      {# SIN PRECARGA: con envase variable no hay valor dominante —si lo
-         hubiera, la ficha no sería variable— y un valor plausible puesto
-         solo invita a aceptarlo con el mismo click que ya se iba a hacer. #}
-      <select name="caja_nuestra" required
-              aria-label="En qué caja quedó armada la guía R{{ g.id }}">
-        <option value="" selected>¿Usaste una caja nuestra?</option>
-        <option value="no">Descartable — salió en el cajón que vino</option>
-        {% for caja in cajas_del_galpon %}
-        <option value="{{ caja.id }}">Sí, en {{ caja.nombre }}</option>
-        {% endfor %}
-      </select>
-      <button type="submit">Guardar la caja</button>
-    </form>
-    {% endif %}
-
     {% endif %}
     {# En una guía ANULADA no va NADA de esto: ni el cruce, ni el costo, ni
        el detalle de lotes. Lo tomado ya volvió a sus lotes y la primera

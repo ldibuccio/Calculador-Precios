@@ -52,7 +52,6 @@ from app.costeo import (
 # también es del motor y trae su propia guarda del cero.
 from core.envases import (
     ORIGENES_DE_COLEGA,
-    declaracion_de_caja,
     envase_derivado_de_la_ficha,
     hay_que_reponer,
 )
@@ -183,7 +182,6 @@ from app.db import (
     salidas_stock_articulos,
     listar_reprocesos_por_rango,
     asignar_ficha_a_reproceso,
-    declarar_la_caja_de_una_guia,
     listar_ultimos_conteos_stock,
     eliminar_compras_del_dia_por_proveedor,
     eliminar_ficha,
@@ -11191,16 +11189,9 @@ def _fichas_por_cliente_y_articulo() -> dict[str, list[dict]]:
             sufijo = SUFIJOS_FICHA_REPROCESO.get(ficha.get("unidad_venta"), "")
             kilaje = (f"{_formatear_numero(ficha['contenido_caja'])} {sufijo}".strip()
                       if ficha.get("contenido_caja") else "")
-            # `pregunta_caja` SALE DE LA MISMA REGLA que usa el server al
-            # escribir, no de un `if ficha["envase_variable"]` escrito acá:
-            # son la pantalla y la guarda contestando lo mismo, y escritas
-            # dos veces se separan el día que alguien toque una. El que la
-            # pantalla pregunte de más es molesto; que pregunte de menos deja
-            # el hueco que esto vino a cerrar.
-            _, _, pregunta = envase_derivado_de_la_ficha(ficha)
             por_clave.setdefault(clave, []).append(
                 {"id": ficha["id"], "nombre": etiquetas[ficha["id"]],
-                 "kilaje": kilaje, "pregunta_caja": pregunta}
+                 "kilaje": kilaje}
             )
     for fichas in por_clave.values():
         fichas.sort(key=lambda f: _clave_alfabetica(f["nombre"]))
@@ -11313,12 +11304,6 @@ def _renderizar_pantalla_reproceso(request: Request, *, precarga=None, aviso=Non
         clientes = listar_clientes()
         ayudas = _ayudas_ficha_por_cliente_y_articulo()
         fichas_elegibles = _fichas_por_cliente_y_articulo()
-        # LAS CAJAS QUE SE PUEDEN ELEGIR cuando la ficha no lo define sola.
-        # Se ofrecen TODAS las activas y no solo la de la ficha: con envase
-        # variable la de la ficha es referencia —lo dice el comment de la
-        # columna— así que ofrecer solo ésa sería precargar la respuesta que
-        # justamente no tiene valor dominante.
-        cajas_del_galpon = listar_envases()
         # El piso del selector de fecha. Es COMODIDAD, no la regla: la
         # regla vive en crear_reproceso y es la que rechaza. Acá solo
         # evita que el operario elija una fecha que después va a rebotar.
@@ -11331,7 +11316,6 @@ def _renderizar_pantalla_reproceso(request: Request, *, precarga=None, aviso=Non
         "clientes": clientes,
         "ayudas_ficha": ayudas,
         "fichas_elegibles": fichas_elegibles,
-        "cajas_del_galpon": cajas_del_galpon,
         "precarga": precarga or {},
         "hoy": _hoy_argentina().isoformat(),
         "corte": corte.isoformat(),
@@ -11474,7 +11458,6 @@ def cargar_reproceso_ruta(
     bultos_merma: str = Form(""),
     fecha: str = Form(""),
     ficha_id: str = Form(""),
-    caja_nuestra: str = Form(""),
     reparto: str = Form(""),
     confirmado: str = Form(""),
 ):
@@ -11547,7 +11530,6 @@ def cargar_reproceso_ruta(
             "bultos_merma": bultos_merma,
             "fecha": fecha,
             "ficha_id": ficha_id,
-            "caja_nuestra": caja_nuestra,
         }
         return _renderizar_pantalla_reproceso(request, precarga=precarga, error=error, status_code=400)
 
@@ -11562,7 +11544,6 @@ def cargar_reproceso_ruta(
         "bultos_merma": bultos_merma,
         "fecha": fecha,
         "ficha_id": ficha_id,
-        "caja_nuestra": caja_nuestra,
     }
 
     # "sin_asignar" es una ELECCIÓN, no el resultado de no contestar: el
@@ -11571,17 +11552,6 @@ def cargar_reproceso_ruta(
     ficha_valor = None
     if ficha_id.strip().isdigit():
         ficha_valor = int(ficha_id)
-
-    # EN QUÉ CAJA QUEDÓ ARMADA. Lo traduce `core/envases`, que es donde vive
-    # la regla; acá solo se atrapa el valor que no tiene forma de dato. Lo que
-    # decide si HACE FALTA es `crear_reproceso`, adentro de la transacción y
-    # leyendo la ficha: acá no se puede saber sin ir a la base, y preguntarlo
-    # antes para escribir después son dos reglas que se separan.
-    try:
-        caja_declarada = declaracion_de_caja(caja_nuestra)
-    except ValueError as invalida:
-        return _renderizar_pantalla_reproceso(
-            request, precarga=precarga, error=str(invalida), status_code=400)
 
     # EL AVISO DE LA FECHA HACIA ATRÁS, con el molde de las señas: se cuenta
     # ANTES de escribir, la pantalla muestra el número y pide el segundo
@@ -11623,7 +11593,6 @@ def cargar_reproceso_ruta(
         numero_guia = crear_reproceso(
             articulo["id"], tomados_valor, primera_valor, segunda_valor, merma_valor, fecha_valor,
             cliente_id=cliente["id"], ficha_id=ficha_valor, reparto=reparto_valor,
-            caja_declarada=caja_declarada,
         )
     except StockInsuficienteParaReproceso as freno:
         # EL FRENO. No hay "la cargo igual": la pantalla vuelve con todo
@@ -11884,7 +11853,6 @@ def ver_guias_r(request: Request, fecha_desde: str | None = None, fecha_hasta: s
         fichas_por_articulo = _cajas_para_elegir_por_articulo()
         fichas_por_cliente = _fichas_por_cliente_y_articulo()
         articulos = listar_articulos()
-        cajas_del_galpon = listar_envases()
     except Exception as error_db:
         raise HTTPException(status_code=500, detail=f"Error al conectar con la base de datos: {error_db}") from error_db
 
@@ -11902,26 +11870,6 @@ def ver_guias_r(request: Request, fecha_desde: str | None = None, fecha_hasta: s
             guia_r["fichas_elegibles"] = fichas_por_articulo.get(guia_r["articulo_id"], [])
             guia_r["fichas_son_del_cliente"] = False
 
-        # ¿HAY QUE PREGUNTARLE EN QUÉ CAJA QUEDÓ? Dos condiciones y las dos
-        # hacen falta: que no lo haya declarado (NULL) y que no lo pueda
-        # derivar de su ficha.
-        #
-        # La segunda sale de la MISMA función que usa el server al escribir y
-        # que `declarar_la_caja_de_una_guia` usa para rechazar. Escrita acá
-        # como `envase_variable is True` sería la tercera copia, y la que se
-        # separe ofrece un botón que la escritura después rechaza — un
-        # callejón, que es peor que no ofrecer nada.
-        ficha = None
-        if guia_r["ficha_id"] is not None:
-            ficha = {"envase_id": guia_r["ficha_envase_id"],
-                     "envase_variable": guia_r["ficha_envase_variable"]}
-        _, _, hay_que_preguntar = envase_derivado_de_la_ficha(ficha)
-        guia_r["falta_la_caja"] = (
-            guia_r["lleva_caja_nuestra"] is None
-            and hay_que_preguntar
-            and guia_r["anulado_el"] is None
-            and guia_r["tipo"] != "inicial"
-        )
 
     # QUÉ FICHAS SE CONTARON DESPUÉS DE SU GUÍA. Cambiarle la ficha a una guía
     # mueve sus cajas de una pila a otra, y si esa pila ya se contó, la foto
@@ -11956,7 +11904,6 @@ def ver_guias_r(request: Request, fecha_desde: str | None = None, fecha_hasta: s
             "sin_costo_posible": sin_costo_posible,
             "cruces_por_guia": cruces_por_guia,
             "fichas_por_articulo": fichas_por_articulo,
-            "cajas_del_galpon": cajas_del_galpon,
             "fecha_desde": desde.isoformat(),
             "fecha_hasta": hasta.isoformat(),
             # El selector se arma con TODOS los artículos y no con los que
@@ -12032,45 +11979,6 @@ def asignar_ficha_a_reproceso_ruta(request: Request, reproceso_id: int,
     parametros["aviso"] = (
         f"Guía R{reproceso_id}: quedó sin asignar." if ficha_valor is None
         else f"Guía R{reproceso_id}: ficha asignada."
-    )
-    return RedirectResponse(url=f"/administracion/stock/guias-r?{urlencode(parametros)}", status_code=303)
-
-
-@app.post("/administracion/stock/guias-r/{reproceso_id}/declarar-caja")
-def declarar_la_caja_de_una_guia_ruta(request: Request, reproceso_id: int,
-                                      caja_nuestra: str = Form(""),
-                                      fecha_desde: str = Form(""), fecha_hasta: str = Form(""),
-                                      articulo_id: str = Form(""), guia: str = Form("")):
-    """Completa en qué caja quedó armada una guía R que no lo pudo derivar.
-
-    ES LA PUERTA DE LAS QUE YA ESTÁN: la pregunta de la pantalla de Reproceso
-    cierra el agujero desde hoy, y estas son las que se cargaron antes de que
-    existiera. Sin esta ruta habría que ANULARLAS Y RECARGARLAS —o tocarlas
-    por SQL a mano, que es el agujero que el corolario 31 persigue.
-
-    NO RECALCULA NADA y no hace falta: el stock de cajas se deriva en cada
-    lectura, así que la guía empieza a descontar sola en el próximo render.
-    """
-    parametros = _filtros_de_guias_r(fecha_desde, fecha_hasta, articulo_id, guia)
-    try:
-        declarado = declaracion_de_caja(caja_nuestra)
-        if declarado is None:
-            raise ValueError("Elegí en qué caja quedó armada.")
-        declarar_la_caja_de_una_guia(reproceso_id, declarado)
-    except ValueError as error:
-        # Dato mal pedido, no una falla del sistema: se muestra en la
-        # pantalla, nunca un 500.
-        parametros["error"] = str(error)
-        return RedirectResponse(url=f"/administracion/stock/guias-r?{urlencode(parametros)}", status_code=303)
-    except Exception as error_db:
-        parametros["error"] = f"No se pudo declarar la caja: {error_db}"
-        return RedirectResponse(url=f"/administracion/stock/guias-r?{urlencode(parametros)}", status_code=303)
-
-    lleva, _ = declarado
-    parametros["aviso"] = (
-        f"Guía R{reproceso_id}: quedó declarada en caja nuestra y ya descuenta."
-        if lleva else
-        f"Guía R{reproceso_id}: descartable, no gastó ninguna caja nuestra."
     )
     return RedirectResponse(url=f"/administracion/stock/guias-r?{urlencode(parametros)}", status_code=303)
 

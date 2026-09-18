@@ -25,18 +25,20 @@ select count(*) filter (where r.tipo = 'en_origen'
    and r.fecha_operacion >= b.f;
 
 -- ---------------------------------------------------------------------------
--- LO QUE LA PREGUNTA DEL 17/09 NO CIERRA. La pantalla de Reproceso ya exige
--- decir en que caja quedo armada, asi que `normales_sin_declarar` deja de
--- crecer desde hoy. Quedan DOS cosas y esta consulta las dimensiona:
+-- CUANTAS GUIAS R NO DICEN EN QUE CAJA SE ARMARON, y por que camino.
 --
---   EN_ORIGEN_sin_declarar   la compra que llega YA ARMADA genera su guia R
---                            sola, y ahi NO HAY A QUIEN PREGUNTARLE. Con
---                            ficha variable queda en NULL igual que antes.
---                            Negarse ahi seria una pared en un camino frio.
---   compras_armadas_SIN_ENVASE  el selector de "viene armada en caja nuestra"
---                            ofrece TODAS las fichas del articulo, incluidas
---                            las de envase perdido. Marcar una ahi es una
---                            contradiccion que nadie frena.
+-- CONTESTA OTRA COSA DESDE EL 18/09. Se escribio para dimensionar el agujero
+-- de `en_origen` —la compra que llega ya armada genera su guia R sola— y ese
+-- agujero SE CERRO SIN CONSTRUIR NADA: la caja sale de la ficha, asi que la
+-- guia en origen la deriva igual que las normales.
 --
--- `compras_armadas_EN_FICHA_VARIABLE` es el techo del primero: sin una sola,
--- el agujero de en_origen no existe hoy y no hay nada que construir.
+-- Lo que contesta hoy: CUANTAS FILAS VIEJAS quedan en NULL. Son de dos clases
+-- y las dos se arreglan derivando de la ficha:
+--
+--   anteriores al 16/09   la columna no existia y la migracion no backfillea
+--   ficha VARIABLE        la regla vieja las trataba como "hay que preguntar"
+--
+-- `compras_armadas_SIN_ENVASE` es otra cosa y sigue viva: compras marcadas
+-- "viene en caja nuestra" contra una ficha de envase perdido, que no tiene
+-- ninguna. El selector dejo de ofrecerlas y la escritura las rechaza; esta
+-- columna cuenta las que ya estaban.

@@ -6981,50 +6981,70 @@ hecho que se mide.** Y acá con el agravante de que el ancla elegida la mueve
 una persona desde una pantalla, así que el número del aviso cambia según qué
 día alguien haya dicho que contó las cajas.
 
-### El bug REAL está abajo y no es un aviso: `envase_declarado` no tiene escritor
+### El bug que creí encontrar abajo NO EXISTÍA, y lo construí igual (18/09)
 
-`envase_derivado_de_la_ficha` define tres casos y el tercero dice **"si no se
-puede derivar, se PREGUNTA"**. `_envase_de_esta_guia` recibe `envase_declarado`
-para eso. **`grep` del nombre en `app/`, `core/` y `templates/`: cero.** La
-pantalla de Reproceso no nombra la palabra "envase" ni una vez.
+Dejo el diagnóstico viejo tachado porque el error de método vale más que el
+hallazgo que decía tener.
 
-O sea que la pregunta se diseñó, se le dejó el parámetro, y **nunca se
-construyó** — corolario 72 sobre un parámetro en vez de sobre una columna, y
-corolario 31 sobre una pregunta en vez de sobre un botón. Con ficha variable la
-caja sale, es nuestra, y no se descuenta **nunca**, en silencio y para siempre.
+**Lo que escribí el 17/09**: `envase_derivado_de_la_ficha` define tres casos
+y el tercero dice *"si no se puede derivar, se PREGUNTA"*;
+`_envase_de_esta_guia` recibe `envase_declarado` para eso y **no tenía un solo
+escritor**. De ahí salió que con ficha variable la caja sale, es nuestra, y no
+se descuenta nunca. Construí la pregunta en Reproceso, la puerta en Guías R, y
+la negativa que no deja guardar sin contestar.
 
-**Y por eso el aviso NO se mudó a Alertas**: una alerta sobre eso dispararía
-sobre algo que **no se puede arreglar desde ninguna pantalla** —asignar la
-ficha no alcanza: `asignar_ficha_a_reproceso` vuelve a derivar y con ficha
-variable vuelve a dar NULL—. Es el cartel que se aprende a esquivar, antes de
-existir. Lo que hay que construir es la pregunta; la alerta recién sirve
-después.
+**El parámetro no esperaba una pantalla: no tenía que existir.** El dueño lo
+dijo en una frase: *"ya elegí la ficha arriba —Caja Chica Día — 10 u— y ahí
+está la caja. Preguntarlo de nuevo abajo es preguntar dos veces lo mismo, y
+encima deja elegir una caja distinta de la que declaré."*
 
-**LA PREGUNTA SE CONSTRUYÓ EL 17/09**, así que la mitad de arriba ya no
-describe el sistema: la pantalla de Reproceso pregunta *"¿Usaste una caja
-nuestra?"* cuando la ficha no lo define sola, y `crear_reproceso` **no guarda
-sin esa respuesta**. Lo que sigue abierto es el camino `en_origen` —la compra
-que llega ya armada genera su guía R sola y ahí no hay a quién preguntarle— y
-se dimensiona con `db/cajas_9_lo_que_queda_sin_declarar.sql`.
+**Y era verificable sin salir del repo**, que es lo que más duele. La única
+otra cuenta que lee `envase_variable` es `envases_por_unidad_de_venta`
+(core/envases.py), y sus dos ramas son:
 
-Lo que NO envejeció es el criterio: la alerta sigue sin construirse, y ahora
-por la razón opuesta — el caso que se podía arreglar ya se arregla en la
-pantalla donde ocurre, que es mejor que avisar después.
+```python
+if envase_variable and contenido_del_bulto <= contenido_ficha:
+    return 0.0          # descartable: el cajón ya es chico, sale como vino
+return 1.0 / contenido_ficha   # LA CAJA DE LA FICHA, a la tasa de la ficha
+```
 
-**Y LAS QUE YA ESTABAN TAMBIÉN TIENEN PUERTA (17/09)**, así que la frase de
-arriba sobre que "no se puede arreglar desde ninguna pantalla" dejó de valer
-para ellas: Guías R ofrece declarar la caja de las que no la pudieron
-derivar. Medido en Frutamax: `sin_declarar 2 de 22`, las dos
-`ficha_variable`, `DERIVABLE_es_un_hueco 0` — o sea que no había ninguna de
-las que se cierran asignando la ficha, y las dos esperaban exactamente esta
-pregunta.
+**No hay ninguna rama que busque otro envase.** O sea que el flag decide **SI**
+se usa una caja nuestra, no **CUÁL** — y en una guía R ese "si" ya está
+contestado por el hecho de que la guía exista: anota `bultos_primera`, o sea
+cajas ARMADAS. El caso descartable es exactamente aquel en que no se reprocesa
+nada y no hay guía R.
 
-**No hace falta recargarlas.** El stock de cajas se deriva en cada lectura,
-así que declarar la caja alcanza para que la guía empiece a descontar.
-Medido contra el esquema real con el caso de Frutamax —dos guías de 10 y 6
-cajas de primera, ficha variable, conteo del mismo día—: el stock pasó de
-500 a 484 con solo el UPDATE de esas dos columnas, y declarando
-"descartable" se quedó en 500.
+**Dónde me equivoqué, con precisión**: el docstring de esa función llama al
+caso no-descartable *"es caja chica"*, y leí eso como que nombraba **otro**
+envase. La función devuelve `1/contenido_ficha`. **Construí sobre una frase de
+la prosa y nunca sobre el valor de retorno** — que es el corolario 38/59 corrido
+de lugar: allá el comentario rompe un test porque nombra la cosa que el test
+busca; acá el comentario nombra una cosa del galpón y la leí como si nombrara
+una columna.
+
+**Y la señal estaba escrita por mí, en el mismo commit que introdujo el caso.**
+El docstring de `envase_derivado_de_la_ficha` decía, textual: *"Los tres casos,
+y el tercero **no estaba en el pedido** pero sale de la misma regla"*. Es el
+corolario 29 —un requisito que nadie enunció— con la vuelta de que esta vez lo
+dejé anotado al lado y no me detuvo. **Escribir "esto no me lo pidieron" no es
+lo mismo que preguntarlo.**
+
+**Lo que se hizo el 18/09**: la regla devuelve la caja de la ficha también
+para la variable. Como las tres pantallas preguntan por esa función —el
+selector de Reproceso, el `falta_la_caja` de Guías R y la guarda del server—
+la pregunta desapareció de las tres con un solo cambio. Eso es lo único que
+salió bien de haberla escrito una sola vez.
+
+**Y `en_origen` se cerró de arriba**: la compra que llega ya armada deriva
+igual que las otras, así que la columna `compras.envase_en_origen_id` que
+estaba por migrarse **no hizo falta**. Es el corolario 23 en el último
+momento posible — la medición que borra la pantalla antes de escribirla,
+salvo que acá la borró el dueño leyendo la pantalla ya escrita.
+
+**La única que sigue sin poder derivar es la guía SIN FICHA**, y su arreglo no
+es un selector de cajas: es asignarle la ficha, que ya existe en Guías R y
+vuelve a derivar. Un selector ahí dejaría elegir una caja que no es la del
+cliente al que se le entregó.
 
 ### La forma general
 
@@ -7071,7 +7091,32 @@ gasto_en_cajas` que nada usa hace creer al próximo que lee la ruta que la
 pantalla todavía lo muestra. La función se conserva donde vive; el cableado
 muerto se corta.
 
-## Corolario 79: un parámetro sin escritor es una FUNCIÓN QUE FALTA, y se lee como una que está
+## Corolario 79: un parámetro sin escritor es una FUNCIÓN QUE FALTA — o una que SOBRA
+
+**LEER PRIMERO, del 18/09: el caso de abajo se resolvió AL REVÉS y eso cambia
+el corolario, no solo su ejemplo.** `envase_declarado` no esperaba una
+pantalla: **no tenía que existir**. La regla que lo pedía trataba la ficha
+variable como un caso a preguntar, y la caja sale siempre de la ficha.
+
+O sea que un parámetro sin escritor tiene **DOS** explicaciones —falta
+cablearlo, o sobra— y **las dos se ven idénticas**: el parámetro está, el `if`
+que lo usa está escrito y probado, y la pantalla se ve entera. La pregunta de
+abajo (*¿quién lo PASA?*) encuentra el síntoma y **no distingue los dos
+casos**. La que los separa no es de código: es **¿el hecho del mundo que este
+parámetro afirma, ocurre?** — y eso se pregunta, no se grepea.
+
+Es literalmente el corolario 72 con su corrección del 17/09 (la columna
+`liberadas`, que sumaba cajas que se van a la basura), repetido un día después
+sobre un parámetro. **Dos veces la misma semana construí la mitad que
+cableaba en vez de preguntar si el caso existía**, y las dos veces la premisa
+costaba una pregunta de una línea. La que funciona es la abierta —*"¿qué pasa
+con la caja cuando…?"*— y no la cerrada, que tiene dos respuestas y una es un
+asentimiento (corolario 71).
+
+Lo que sigue en pie sin cambios es el MECANISMO: un parámetro que solo pasan
+sus tests no es un parámetro con default. Lo que cambia es qué se hace después
+de encontrarlo.
+
 
 Del 17/09, y es el corolario 72 sobre un parámetro en vez de sobre una
 columna — con un agravante que lo vuelve peor: **una columna sin escritor
@@ -7128,33 +7173,26 @@ adorno— corrido al argumento: allá había que contar llamadores de la funció
 acá de un parámetro. Y las dos veces lo que engaña es que **el código
 existe, es correcto, y tiene tests verdes**.
 
-### Y quién se niega NO es quien lee: es el llamador
+### Lo que quedó de las dos subsecciones que había acá
 
-La guarda podía ir adentro de `_envase_de_esta_guia`, que es donde se detecta
-el caso. **No va ahí**, y la razón es el corolario 75: ese núcleo lo comparten
-el camino manual —que tiene una persona en la pantalla que acaba de armar las
-cajas y sabe en cuál las puso— y el de la compra que llega armada, que **no
-tiene a quién preguntarle**. Negarse adentro sería una pared en un camino
-frío: no falla al migrar, no falla en la verificación, y aparece el día que
-alguien la cruza.
+Describían cómo se había cableado la negativa: que la política vive en el
+llamador y no en el núcleo (corolario 75), y que una guarda que solo lee una
+fila va ARRIBA, junto al piso de la fecha, y no abajo con el costo — lo
+segundo lo destapó un canario: con el stock también corto, el operario veía
+la pared del stock primero, iba a cargar una recepción, volvía, y recién ahí
+se enteraba de que faltaba contestar un select.
 
-Por eso el núcleo devuelve `falta_declarar` y **el que decide es el
-llamador** (`exigir_caja_declarada=True`, en un solo lugar). La detección y
-la política son dos cosas, y juntarlas es lo que fabrica la pared.
-
-### Y la guarda va ARRIBA, junto al piso más barato
-
-Quedó primero abajo, al lado del costo, y el canario lo destapó: con el stock
-también corto, el operario veía **la pared del stock primero**, iba a cargar
-una recepción, volvía, y recién ahí se enteraba de que además faltaba
-contestar un select. Dos viajes por dos preguntas que se contestan en la
-misma pantalla — y un FIFO rejugado entero para una request que iba a rebotar.
-
-**La regla: una guarda que solo necesita leer una fila va con las otras
-baratas, antes de cualquier cuenta.** El orden de las guardas no es estilo: es
-cuántas veces vuelve el que carga.
+**Las dos son ciertas y ninguna tiene hoy un caso en este sistema**, porque
+la negativa se fue entera. Se dejan dichas en un párrafo en vez de borradas:
+**el orden de las guardas no es estilo, es cuántas veces vuelve el que
+carga**, y eso va a volver a hacer falta.
 
 ## Y un canario que dice `[0]` sobre un campo VACÍO no probó nada
+
+*(La pregunta de la que salió este caso se borró el 18/09 — la caja sale de
+la ficha. La quinta lectura del canario en cero no se mueve: es del
+MECANISMO, y el campo de abajo es el ESTADO que se anotó al lado para
+ilustrarlo.)*
 
 Del 17/09, y salió de la tanda de esta misma pregunta. De doce canarios, uno
 dio **0**: sacarle a la ruta la línea que devuelve la respuesta al rearmar el
@@ -7215,6 +7253,14 @@ vive en una columna, hay dos lugares y hay que tocar los dos.
 
 ### Y la puerta de las que YA ESTÁN no es la misma que la pregunta nueva
 
+*(El 18/09 la pregunta Y la puerta se borraron las dos: no había nada que
+preguntar. Lo que sigue valiendo entero es el párrafo de arriba —completar el
+dato de origen ES el arreglo cuando el número se deriva— y es justo lo que
+hace que a las dos guías de Frutamax les alcance un backfill de dos filas en
+vez de una anulación. Lo de abajo describe una puerta que ya no existe, y se
+deja por el argumento del CALLEJÓN, que vale para cualquier botón: ofrecer
+algo que la escritura después rechaza es peor que no ofrecer nada.)*
+
 Son dos construcciones y hacen falta las dos: la pregunta en Reproceso cierra
 el agujero **desde hoy**, y sin una puerta para las que ya están, lo viejo
 solo se arregla anulando y recargando —o tocando la base a mano, que es el
@@ -7248,6 +7294,11 @@ serie — para probar la segunda hay que pasar la primera, y un fixture que
 rebota antes las aprueba a las dos sin mirar ninguna.
 
 ## Y un formulario adentro de un `<details>` que arranca CERRADO es el corolario 68 antes de nacer
+
+*(El formulario del ejemplo se borró el 18/09. El hallazgo es del MECANISMO
+—mirar qué CONTIENE a lo que se agrega— y no del formulario, así que se
+queda. Y de paso es la mejor prueba de que un canario puede contestar sobre
+algo que no era su pregunta: aquél preguntaba por una guarda.)*
 
 Del 17/09. La pregunta de la caja quedó escrita adentro del bloque
 `<details class="corregir-ficha">` de Guías R, que se titula **"Corregir la

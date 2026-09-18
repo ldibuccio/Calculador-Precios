@@ -20910,7 +20910,6 @@ RENGLON_REINGRESO_DE_PRUEBA = {
     # FIJO, que es el caso común. Sin estas dos el fixture haría que la
     # pantalla preguntara siempre —`.get` devuelve None y un None se lee como
     # "sin ficha"— y los tests defenderían la pregunta en el caso donde no va.
-    "ficha_envase_id": 4, "ficha_envase_variable": False,
 }
 
 
@@ -22158,17 +22157,7 @@ def _salidas_fifo(total, fecha=None):
 # --- Reproceso (tanda 1): pantalla de operario y Guías R ---
 
 
-# Las cajas del galpón que ofrece la pregunta "¿usaste una caja nuestra?".
-# Nombres de EJEMPLO y que se note: una captura con nombres reales se lee
-# como producción.
-CAJAS_DEL_GALPON = [
-    {"id": 7, "nombre": "Caja EJEMPLO Grande"},
-    {"id": 8, "nombre": "Caja EJEMPLO Chica"},
-]
-
-
-def _get_reproceso(articulos_stock=None, fichas=None, espia_total=None,
-                   cajas=None):
+def _get_reproceso(articulos_stock=None, fichas=None, espia_total=None):
     # articulos_stock son los artículos CON SUELTOS que devuelve la base ya
     # filtrados: desde el 31/08 el filtro vive en listar_articulos_para_reproceso
     # (probado en test_db) y no en la ruta.
@@ -22191,190 +22180,8 @@ def _get_reproceso(articulos_stock=None, fichas=None, espia_total=None,
         # El parche ES, él solo, la aserción de que `app.main` importa este
         # nombre: si no está, mock.patch levanta AttributeError antes de
         # ejercitar una línea (corolario 51).
-        patch("app.main.listar_envases",
-              return_value=CAJAS_DEL_GALPON if cajas is None else cajas),
     ):
         return cliente.get("/deposito/stock/reproceso")
-
-
-def test_lo_que_SE_CONTESTO_llega_al_server_traducido():
-    """El cable entre el select y `crear_reproceso`.
-
-    Es la mitad que el test del texto no puede ver: la pantalla puede
-    dibujar la pregunta perfecta y la ruta tirar la respuesta, y eso se vería
-    exactamente igual — el bug del 12/09 con la marca de "viene armada", que
-    seis caminos declaraban en su firma y dos no guardaban.
-    """
-    with patch("app.main.crear_reproceso", return_value=77) as mock_crear, \
-         patch("app.main.obtener_cliente", return_value={"id": 1, "nombre": "Día"}), \
-         patch("app.main.obtener_articulo", return_value={"id": 1, "nombre": "Mango"}), \
-         patch("app.main._hoy_argentina", return_value=date(2026, 8, 25)), \
-         patch("app.main.contar_guias_r_afectadas_por_fecha", return_value=0):
-        respuesta = cliente.post("/deposito/stock/reproceso", data={
-            "cliente_id": "1", "articulo_id": "1", "bultos_tomados": "30",
-            "bultos_primera": "20", "bultos_segunda": "0", "bultos_merma": "0",
-            "fecha": "2026-08-25", "ficha_id": "904", "caja_nuestra": "7",
-        }, follow_redirects=False)
-
-    assert respuesta.status_code == 303
-    assert mock_crear.call_args.kwargs["caja_declarada"] == (True, 7)
-
-
-def test_contestar_QUE_NO_no_es_lo_mismo_que_NO_CONTESTAR():
-    """Los dos llegan distinto, y de eso depende todo.
-
-    "No, salió en el cajón del proveedor" es un HECHO DECLARADO —(False,
-    None)— y no contestar es None. Si la ruta los mandara igual, no contestar
-    se guardaría como "no lleva caja": la caja sale, nadie la descuenta, y el
-    sistema afirma que no había ninguna. Un hueco se ve; una afirmación falsa
-    no.
-    """
-    def _postear(caja_nuestra):
-        with patch("app.main.crear_reproceso", return_value=77) as mock_crear, \
-             patch("app.main.obtener_cliente", return_value={"id": 1, "nombre": "Día"}), \
-             patch("app.main.obtener_articulo", return_value={"id": 1, "nombre": "Mango"}), \
-             patch("app.main._hoy_argentina", return_value=date(2026, 8, 25)), \
-             patch("app.main.contar_guias_r_afectadas_por_fecha", return_value=0):
-            cliente.post("/deposito/stock/reproceso", data={
-                "cliente_id": "1", "articulo_id": "1", "bultos_tomados": "30",
-                "bultos_primera": "20", "bultos_segunda": "0", "bultos_merma": "0",
-                "fecha": "2026-08-25", "ficha_id": "904", "caja_nuestra": caja_nuestra,
-            }, follow_redirects=False)
-        return mock_crear.call_args.kwargs["caja_declarada"]
-
-    assert _postear("no") == (False, None)
-    assert _postear("") is None
-
-
-def test_si_la_guia_REBOTA_por_falta_de_caja_NO_se_pierde_lo_tipeado():
-    """El re-render por error es donde peor se pierde un campo.
-
-    El que reintenta corrige lo que la pantalla le señaló y NO vuelve a
-    revisar lo que ya había llenado — y eso es lo correcto, la pantalla le
-    dijo qué estaba mal. Así que un campo que se cae acá se va sin que nadie
-    lo mire, y lo que queda guardado es una guía bien cargada salvo por eso.
-
-    Y ADEMÁS ES 400 Y NO 500: sin su propia rama, el ValueError de la guarda
-    caía en el `except Exception` de abajo, que renderiza SIN precarga. Un
-    select sin contestar le costaría al operario tipear la pantalla entera.
-    """
-    with patch("app.main.crear_reproceso",
-               side_effect=ValueError("Falta decir si quedó armada en una caja nuestra.")), \
-         patch("app.main.obtener_cliente", return_value={"id": 1, "nombre": "Día"}), \
-         patch("app.main.obtener_articulo", return_value={"id": 1, "nombre": "Mango"}), \
-         patch("app.main._hoy_argentina", return_value=date(2026, 8, 25)), \
-         patch("app.main.contar_guias_r_afectadas_por_fecha", return_value=0), \
-         patch("app.main.listar_articulos_para_reproceso", return_value=[{"id": 1, "nombre": "Mango"}]), \
-         patch("app.main.listar_envases", return_value=CAJAS_DEL_GALPON), \
-         patch("app.main.listar_clientes", return_value=CLIENTES_PARA_SELECTOR), \
-         patch("app.main.listar_fichas_de_todos_los_clientes", return_value=[]), \
-         patch("app.main.fecha_corte", return_value=date(2026, 8, 20)):
-        respuesta = cliente.post("/deposito/stock/reproceso", data={
-            "cliente_id": "1", "articulo_id": "1", "bultos_tomados": "30",
-            "bultos_primera": "20", "bultos_segunda": "3", "bultos_merma": "1",
-            "fecha": "2026-08-25", "ficha_id": "904", "caja_nuestra": "",
-        }, follow_redirects=False)
-
-    assert respuesta.status_code == 400
-    assert "caja nuestra" in respuesta.text
-    # TODO lo que tipeó, de vuelta puesto.
-    for tipeado in ('value="30"', 'value="20"', 'value="3"', 'value="1"'):
-        assert tipeado in respuesta.text, f"se perdió {tipeado} al rebotar"
-
-
-def test_la_respuesta_YA_DADA_vuelve_PUESTA_cuando_rebota_por_OTRA_cosa():
-    """El canario lo encontró: el otro test de re-render era CIEGO acá.
-
-    Posteaba `caja_nuestra=""` —el caso que rebota POR eso— así que sacarle
-    la línea a la precarga no cambiaba nada: se perdía un vacío. Es el
-    corolario 30 exacto: una batería de casos donde el campo va vacío no
-    distingue "el valor vuelve" de "la línea está en el dict".
-
-    Acá la respuesta SÍ está dada y lo que rebota es el stock. Si se
-    perdiera, el operario contesta de nuevo algo que ya había contestado —
-    y peor, puede contestar distinto.
-    """
-    freno = StockInsuficienteParaReproceso(30.0, 10.0, [])
-    respuesta = _pantalla_de_reproceso_con(
-        {"cliente_id": "1", "articulo_id": "1", "bultos_tomados": "30",
-         "bultos_primera": "20", "bultos_segunda": "0", "bultos_merma": "0",
-         "fecha": "2026-09-02", "ficha_id": "904", "caja_nuestra": "7"},
-        **{"app.main.crear_reproceso": {"side_effect": freno},
-           "app.main.listar_envases": {"return_value": CAJAS_DEL_GALPON}},
-    )
-
-    assert respuesta.status_code == 400
-    marcado = respuesta.text.split("</style>")[-1]
-    opciones = marcado[marcado.index('<select id="caja_nuestra"'):]
-    opciones = opciones[:opciones.index("</select>")]
-    assert 'value="7"' in opciones and "selected" in opciones
-    # Y NO quedó el "Elegí..." marcado: eso sería haberla perdido.
-    assert 'value="" selected' not in opciones
-
-
-def test_la_pantalla_PREGUNTA_en_que_caja_quedo_cuando_la_ficha_no_lo_define():
-    """La pregunta que el server esperaba desde el primer día y nadie construyó.
-
-    `envase_declarado` estaba en la firma de `_envase_de_esta_guia` con su
-    docstring explicando que "si no se puede derivar, se pregunta" — y el
-    `grep` del nombre en app/, core/ y templates/ daba CERO. Con ficha
-    variable la caja salía, era nuestra, y no se descontaba nunca.
-
-    LA PANTALLA OFRECE LAS DOS RESPUESTAS POSIBLES, no una: la caja nuestra
-    (cuál) y el cajón del proveedor. Sin la segunda, el que sacó la
-    mercadería en el cajón que vino no tiene qué contestar y va a elegir
-    cualquiera con tal de guardar.
-    """
-    respuesta = _get_reproceso(articulos_stock=[{"id": 1, "nombre": "Banana"}],
-                               fichas=[FICHA_VARIABLE_REPROCESO])
-    assert respuesta.status_code == 200
-    marcado = respuesta.text.split("</style>")[-1]
-
-    # ANCLADO EN EL ELEMENTO y no en una palabra suelta: "caja" aparece en
-    # media pantalla, empezando por el rótulo de la ficha (corolario 50).
-    assert '<select id="caja_nuestra" name="caja_nuestra">' in marcado
-    assert "¿Usaste una caja nuestra?" in marcado
-    # "Descartable" ES LA PALABRA DEL GALPÓN —la misma que el costeo usa para
-    # el mango y el cherry que salen en el cajón que vinieron— y lo que
-    # significa va al lado, porque el rótulo hace la pregunta y no nombra el
-    # mecanismo.
-    assert 'value="no"' in marcado and "Descartable" in marcado
-    assert "salió en el cajón que vino" in marcado
-    # Y las cajas del galpón, con el id que el server espera.
-    assert 'value="7"' in marcado and "Caja EJEMPLO Grande" in marcado
-
-    # SIN PRECARGA: con envase variable no hay valor dominante —si lo
-    # hubiera, la ficha no sería variable— y un valor plausible puesto solo
-    # invita a aceptarlo con el mismo click que ya se iba a hacer.
-    opciones = marcado[marcado.index('<select id="caja_nuestra"'):]
-    opciones = opciones[:opciones.index("</select>")]
-    assert opciones.count("selected") == 1
-    assert 'value="" selected' in opciones
-
-
-def test_la_pregunta_de_la_caja_ARRANCA_ESCONDIDA_y_la_decide_la_MISMA_regla():
-    """Dos mitades, y las dos hacen falta.
-
-    ESCONDIDA: con envase fijo el server deriva la respuesta, así que
-    preguntar sería pedir dos veces el mismo dato. El bloque se dibuja
-    siempre —el JS lo muestra cuando la ficha elegida lo pide— y arranca con
-    `hidden`.
-
-    Y QUIÉN LO PIDE VIAJA EN EL DATO, no en un `if` del JS: `pregunta_caja`
-    lo pone `envase_derivado_de_la_ficha`, que es la MISMA función que el
-    server usa al escribir. Escrita dos veces se separan, y la copia de la
-    pantalla se va sin que nada se vea roto — la guía entra igual y el hueco
-    vuelve.
-    """
-    respuesta = _get_reproceso(articulos_stock=[{"id": 1, "nombre": "Banana"}],
-                               fichas=[FICHA_ANALISIS, FICHA_VARIABLE_REPROCESO])
-    marcado = respuesta.text.split("</style>")[-1]
-
-    assert '<div class="caja-nuestra" id="caja-nuestra" hidden>' in marcado
-    # La fija dice que NO hay que preguntar y la variable que SÍ, en el mismo
-    # JSON que el JS lee.
-    assert '"pregunta_caja": false' in respuesta.text.lower()
-    assert '"pregunta_caja": true' in respuesta.text.lower()
 
 
 def test_reproceso_lista_los_articulos_con_sueltos_por_nombre_y_sin_numeros():
@@ -22447,7 +22254,7 @@ def test_reproceso_guarda_con_cliente_y_el_aviso_repite_solo_lo_cargado():
     assert respuesta.status_code == 303
     # El cliente queda en la guía R como DATO (el stock sigue sin dueño).
     mock_crear.assert_called_once_with(1, 30.0, 20.0, 5.0, 5.0, date(2026, 8, 25), cliente_id=1, ficha_id=None,
-                                       reparto=None, caja_declarada=None)
+                                       reparto=None)
     destino = respuesta.headers["location"]
     # "Guía R12: tomé 30... para Día..." — lo cargado, jamás costos ni stock.
     assert "Gu%C3%ADa+R12" in destino
@@ -22483,7 +22290,6 @@ def test_el_reproceso_guarda_A_QUE_FICHA_fueron_las_cajas():
     assert respuesta.status_code == 303
     mock_crear.assert_called_once_with(
         1, 30.0, 20.0, 5.0, 5.0, date(2026, 8, 25), cliente_id=1, ficha_id=901, reparto=None,
-        caja_declarada=None
     )
     # Asignada, el aviso no dice nada de "sin asignar".
     assert "sin+asignar" not in respuesta.headers["location"]
@@ -22511,7 +22317,6 @@ def test_SIN_ASIGNAR_es_una_eleccion_y_el_aviso_lo_dice():
     assert respuesta.status_code == 303
     mock_crear.assert_called_once_with(
         1, 30.0, 20.0, 0.0, 0.0, date(2026, 8, 25), cliente_id=1, ficha_id=None, reparto=None,
-        caja_declarada=None
     )
     assert "sin+asignar" in respuesta.headers["location"]
 
@@ -22617,7 +22422,6 @@ def _pantalla_de_reproceso_con(datos, **parches):
         # El catálogo de cajas de la pregunta "¿usaste una caja nuestra?".
         # Está acá y no en cada test porque lo pide TODO re-render de esta
         # pantalla, incluidos los de error — que es donde más se olvida.
-        "app.main.listar_envases": CAJAS_DEL_GALPON,
     }
     with ExitStack() as pila:
         for destino, valor in contexto.items():
@@ -22937,13 +22741,11 @@ def test_reproceso_sin_cliente_da_400():
         patch("app.main.obtener_articulo", return_value={"id": 1, "nombre": "Tomate Perita"}),
         patch("app.main.crear_reproceso") as mock_crear,
         patch("app.main.listar_articulos_para_reproceso", return_value=[]),
-        patch("app.main.listar_envases", return_value=CAJAS_DEL_GALPON),
         patch("app.main.listar_clientes", return_value=[]),
         patch("app.main.listar_fichas_de_todos_los_clientes", return_value=[]),
         patch("app.main.listar_clientes", return_value=CLIENTES_PARA_SELECTOR),
         patch("app.main._hoy_argentina", return_value=date(2026, 8, 25)),
         patch("app.main.fecha_corte", return_value=date(2026, 8, 20)),
-        patch("app.main.listar_envases", return_value=CAJAS_DEL_GALPON),
     ):
         respuesta = cliente.post(
             "/deposito/stock/reproceso",
@@ -22957,7 +22759,7 @@ def test_reproceso_sin_cliente_da_400():
 
 
 def test_reproceso_sin_nada_producido_da_400():
-    with patch("app.main.crear_reproceso") as mock_crear, patch("app.main.listar_articulos_para_reproceso", return_value=[]), patch("app.main.listar_clientes", return_value=[]), patch("app.main.listar_fichas_de_todos_los_clientes", return_value=[]), patch("app.main._hoy_argentina", return_value=date(2026, 8, 25)), patch("app.main.fecha_corte", return_value=date(2026, 8, 20)), patch("app.main.listar_envases", return_value=CAJAS_DEL_GALPON):
+    with patch("app.main.crear_reproceso") as mock_crear, patch("app.main.listar_articulos_para_reproceso", return_value=[]), patch("app.main.listar_clientes", return_value=[]), patch("app.main.listar_fichas_de_todos_los_clientes", return_value=[]), patch("app.main._hoy_argentina", return_value=date(2026, 8, 25)), patch("app.main.fecha_corte", return_value=date(2026, 8, 20)):
         respuesta = cliente.post(
             "/deposito/stock/reproceso",
             data={"articulo_id": "1", "bultos_tomados": "5", "bultos_primera": "",
@@ -22970,7 +22772,7 @@ def test_reproceso_sin_nada_producido_da_400():
 
 
 def test_reproceso_fecha_futura_da_400():
-    with patch("app.main.crear_reproceso") as mock_crear, patch("app.main.listar_articulos_para_reproceso", return_value=[]), patch("app.main.listar_clientes", return_value=[]), patch("app.main.listar_fichas_de_todos_los_clientes", return_value=[]), patch("app.main._hoy_argentina", return_value=date(2026, 8, 25)), patch("app.main.fecha_corte", return_value=date(2026, 8, 20)), patch("app.main.listar_envases", return_value=CAJAS_DEL_GALPON):
+    with patch("app.main.crear_reproceso") as mock_crear, patch("app.main.listar_articulos_para_reproceso", return_value=[]), patch("app.main.listar_clientes", return_value=[]), patch("app.main.listar_fichas_de_todos_los_clientes", return_value=[]), patch("app.main._hoy_argentina", return_value=date(2026, 8, 25)), patch("app.main.fecha_corte", return_value=date(2026, 8, 20)):
         respuesta = cliente.post(
             "/deposito/stock/reproceso",
             data={"articulo_id": "1", "bultos_tomados": "5", "bultos_primera": "3",
@@ -23109,8 +22911,6 @@ GUIAS_R_DE_PRUEBA = [
      "costo_total": 33000.0, "costo_por_bulto_primera": 1650.0,
      "creado_en": datetime(2026, 8, 25, 15, 0), "anulado_el": None,
      "tipo": "normal", "compra_origen_id": None,
-    "lleva_caja_nuestra": None, "ficha_envase_id": None, "ficha_envase_variable": None,
-     "lleva_caja_nuestra": None, "ficha_envase_id": None, "ficha_envase_variable": None,
      "articulo_nombre": "Tomate Perita",
      "consumos": [
          {"origen": "compra", "origen_id": 101, "bultos": 20.0, "costo_por_bulto": 1000.0,
@@ -23123,8 +22923,6 @@ GUIAS_R_DE_PRUEBA = [
      "costo_total": None, "costo_por_bulto_primera": None,
      "creado_en": datetime(2026, 8, 25, 16, 0), "anulado_el": datetime(2026, 8, 25, 17, 0),
      "tipo": "normal", "compra_origen_id": None,
-    "lleva_caja_nuestra": None, "ficha_envase_id": None, "ficha_envase_variable": None,
-     "lleva_caja_nuestra": None, "ficha_envase_id": None, "ficha_envase_variable": None,
      "articulo_nombre": "Anco",
      "consumos": [
          {"origen": "ajuste", "origen_id": 1, "bultos": 4.0, "costo_por_bulto": None,
@@ -23142,7 +22940,6 @@ GUIA_R_ESPERANDO_PRECIO = {
     "costo_total": None, "costo_por_bulto_primera": None,
     "creado_en": datetime(2026, 8, 25, 18, 0), "anulado_el": None,
     "tipo": "normal", "compra_origen_id": None,
-    "lleva_caja_nuestra": None, "ficha_envase_id": None, "ficha_envase_variable": None,
      "articulo_nombre": "Tomate Perita",
     "consumos": [
         {"origen": "compra", "origen_id": 103, "bultos": 10.0, "costo_por_bulto": None,
@@ -23155,7 +22952,6 @@ def test_guias_r_muestra_trazabilidad_costo_y_marca_incompleto():
     with (
         patch("app.main._hoy_argentina", return_value=date(2026, 8, 25)),
         patch("app.main.listar_reprocesos_por_rango", return_value=[dict(g) for g in GUIAS_R_DE_PRUEBA]),
-        patch("app.main.listar_envases", return_value=CAJAS_DEL_GALPON),
         patch("app.main.listar_articulos",
               return_value=[{"id": 1, "nombre": "EJEMPLO Uno"},
                             {"id": 5, "nombre": "EJEMPLO Cinco"}]),
@@ -23188,7 +22984,6 @@ def test_guias_r_una_guia_VIGENTE_sin_costo_si_muestra_el_cartel_y_el_detalle():
     # el precio de una COMPRA, y ese precio puede llegar.
     with (
         patch("app.main.listar_reprocesos_por_rango", return_value=[dict(GUIA_R_ESPERANDO_PRECIO)]),
-        patch("app.main.listar_envases", return_value=CAJAS_DEL_GALPON),
         patch("app.main.contar_reprocesos_sin_costo_posible", return_value={"casos": 0, "mas_viejo": None}),
         patch("app.main.listar_fichas_de_todos_los_clientes", return_value=[]),
         patch("app.main.listar_clientes", return_value=CLIENTES_PARA_SELECTOR),
@@ -23215,7 +23010,6 @@ def test_guias_r_una_guia_SIN_COSTO_POSIBLE_no_ofrece_el_boton_que_no_puede_hace
     guia = dict(GUIAS_R_DE_PRUEBA[1], id=20, anulado_el=None)
     with (
         patch("app.main.listar_reprocesos_por_rango", return_value=[guia]),
-        patch("app.main.listar_envases", return_value=CAJAS_DEL_GALPON),
         patch("app.main.contar_reprocesos_sin_costo_posible", return_value={"casos": 0, "mas_viejo": None}),
         patch("app.main.listar_fichas_de_todos_los_clientes", return_value=[]),
         patch("app.main.listar_clientes", return_value=CLIENTES_PARA_SELECTOR),
@@ -23242,7 +23036,6 @@ def test_guias_r_el_consumo_del_compensatorio_no_se_puede_completar():
     ])
     with (
         patch("app.main.listar_reprocesos_por_rango", return_value=[guia]),
-        patch("app.main.listar_envases", return_value=CAJAS_DEL_GALPON),
         patch("app.main.contar_reprocesos_sin_costo_posible", return_value={"casos": 0, "mas_viejo": None}),
         patch("app.main.listar_fichas_de_todos_los_clientes", return_value=[]),
         patch("app.main.listar_clientes", return_value=CLIENTES_PARA_SELECTOR),
@@ -23263,7 +23056,6 @@ def test_guias_r_muestra_el_total_de_las_que_no_se_pueden_cerrar_nunca():
     cargar" al lado para que nadie lo lea como un pendiente."""
     with (
         patch("app.main.listar_reprocesos_por_rango", return_value=[]),
-        patch("app.main.listar_envases", return_value=CAJAS_DEL_GALPON),
         patch("app.main.contar_reprocesos_sin_costo_posible",
               return_value={"casos": 7, "mas_viejo": date(2026, 8, 31)}),
         patch("app.main.listar_fichas_de_todos_los_clientes", return_value=[]),
@@ -23292,7 +23084,6 @@ def test_guias_r_una_guia_ANULADA_no_grita_nada():
     cruces = [{"reproceso_id": 21, "cliente_salida_nombre": "Vea", "bultos": 3.0}]
     with (
         patch("app.main.listar_reprocesos_por_rango", return_value=[guia]),
-        patch("app.main.listar_envases", return_value=CAJAS_DEL_GALPON),
         patch("app.main.listar_articulos",
               return_value=[{"id": 1, "nombre": "EJEMPLO Uno"},
                             {"id": 5, "nombre": "EJEMPLO Cinco"}]),
@@ -23555,7 +23346,6 @@ def test_guias_r_muestra_el_boton_completar_solo_en_incompletas():
     with (
         patch("app.main._hoy_argentina", return_value=date(2026, 8, 25)),
         patch("app.main.listar_reprocesos_por_rango", return_value=[dict(g) for g in GUIAS_R_DE_PRUEBA]),
-        patch("app.main.listar_envases", return_value=CAJAS_DEL_GALPON),
         patch("app.main.listar_articulos",
               return_value=[{"id": 1, "nombre": "EJEMPLO Uno"},
                             {"id": 5, "nombre": "EJEMPLO Cinco"}]),
@@ -23575,7 +23365,6 @@ def test_guias_r_muestra_el_boton_completar_solo_en_incompletas():
     with (
         patch("app.main._hoy_argentina", return_value=date(2026, 8, 25)),
         patch("app.main.listar_reprocesos_por_rango", return_value=con_incompleta),
-        patch("app.main.listar_envases", return_value=CAJAS_DEL_GALPON),
         patch("app.main.listar_articulos",
               return_value=[{"id": 1, "nombre": "EJEMPLO Uno"},
                             {"id": 5, "nombre": "EJEMPLO Cinco"}]),
@@ -24200,7 +23989,6 @@ def test_guias_r_solo_ofrece_las_fichas_DEL_CLIENTE_de_la_guia():
     ]
     with (
         patch("app.main.listar_reprocesos_por_rango", return_value=guias),
-        patch("app.main.listar_envases", return_value=CAJAS_DEL_GALPON),
         patch("app.main.contar_reprocesos_sin_costo_posible", return_value={"casos": 0, "mas_viejo": None}),
         patch("app.main.listar_fichas_de_todos_los_clientes", return_value=fichas),
         patch("app.main.listar_clientes", return_value=CLIENTES_PARA_SELECTOR),
@@ -24246,7 +24034,6 @@ def test_guias_r_SIN_cliente_sigue_viendo_todas_las_del_articulo():
     ]
     with (
         patch("app.main.listar_reprocesos_por_rango", return_value=guias),
-        patch("app.main.listar_envases", return_value=CAJAS_DEL_GALPON),
         patch("app.main.contar_reprocesos_sin_costo_posible", return_value={"casos": 0, "mas_viejo": None}),
         patch("app.main.listar_fichas_de_todos_los_clientes", return_value=fichas),
         patch("app.main.listar_clientes", return_value=CLIENTES_PARA_SELECTOR),
@@ -24285,7 +24072,6 @@ def test_guias_r_muestra_el_cliente_cuando_la_ficha_es_de_OTRO():
     ]
     with (
         patch("app.main.listar_reprocesos_por_rango", return_value=guias),
-        patch("app.main.listar_envases", return_value=CAJAS_DEL_GALPON),
         patch("app.main.contar_reprocesos_sin_costo_posible", return_value={"casos": 0, "mas_viejo": None}),
         patch("app.main.listar_fichas_de_todos_los_clientes", return_value=fichas),
         patch("app.main.listar_clientes", return_value=CLIENTES_PARA_SELECTOR),
@@ -24317,7 +24103,6 @@ def test_guias_r_NO_repite_el_cliente_cuando_el_titulo_ya_lo_dice():
     ]
     with (
         patch("app.main.listar_reprocesos_por_rango", return_value=guias),
-        patch("app.main.listar_envases", return_value=CAJAS_DEL_GALPON),
         patch("app.main.contar_reprocesos_sin_costo_posible", return_value={"casos": 0, "mas_viejo": None}),
         patch("app.main.listar_fichas_de_todos_los_clientes", return_value=fichas),
         patch("app.main.listar_clientes", return_value=CLIENTES_PARA_SELECTOR),
@@ -24359,7 +24144,6 @@ def test_guias_r_muestra_la_ficha_y_deja_completar_la_que_no_tiene():
     ]
     with (
         patch("app.main.listar_reprocesos_por_rango", return_value=guias),
-        patch("app.main.listar_envases", return_value=CAJAS_DEL_GALPON),
         patch("app.main.contar_reprocesos_sin_costo_posible", return_value={"casos": 0, "mas_viejo": None}),
         patch("app.main.listar_fichas_de_todos_los_clientes", return_value=fichas),
         patch("app.main.listar_clientes", return_value=CLIENTES_PARA_SELECTOR),
@@ -24405,7 +24189,6 @@ def test_guias_r_marca_las_guias_donde_el_reparto_lo_eligio_el_OPERARIO():
     ]
     with (
         patch("app.main.listar_reprocesos_por_rango", return_value=guias),
-        patch("app.main.listar_envases", return_value=CAJAS_DEL_GALPON),
         patch("app.main.contar_reprocesos_sin_costo_posible", return_value={"casos": 0, "mas_viejo": None}),
         patch("app.main.listar_fichas_de_todos_los_clientes", return_value=[]),
         patch("app.main.listar_clientes", return_value=CLIENTES_PARA_SELECTOR),
@@ -24435,7 +24218,6 @@ def test_SIN_ASIGNAR_va_en_su_propio_grupo_no_al_lado_de_las_cajas():
                "nombre_cliente": "Banana Bolivia", "articulo_nombre": "Banana"}]
     with (
         patch("app.main.listar_reprocesos_por_rango", return_value=guias),
-        patch("app.main.listar_envases", return_value=CAJAS_DEL_GALPON),
         patch("app.main.contar_reprocesos_sin_costo_posible", return_value={"casos": 0, "mas_viejo": None}),
         patch("app.main.listar_fichas_de_todos_los_clientes", return_value=fichas),
         patch("app.main.listar_clientes", return_value=CLIENTES_PARA_SELECTOR),
@@ -24468,7 +24250,6 @@ def test_una_guia_anulada_no_ofrece_asignar_ficha():
                   ficha_nombre=None, anulado_el=datetime(2026, 8, 26, 10, 0))]
     with (
         patch("app.main.listar_reprocesos_por_rango", return_value=guias),
-        patch("app.main.listar_envases", return_value=CAJAS_DEL_GALPON),
         patch("app.main.contar_reprocesos_sin_costo_posible", return_value={"casos": 0, "mas_viejo": None}),
         patch("app.main.listar_fichas_de_todos_los_clientes", return_value=[]),
         patch("app.main.listar_clientes", return_value=CLIENTES_PARA_SELECTOR),
@@ -24559,7 +24340,6 @@ def _guias_r(guias, conteos=None, articulo_id=None, guia=None):
         # El catálogo de cajas para la pregunta "¿en qué caja quedó armada?"
         # de las guías que no lo pudieron derivar. El parche ES, él solo, la
         # aserción de que `app.main` importa el nombre (corolario 51).
-        patch("app.main.listar_envases", return_value=CAJAS_DEL_GALPON),
     ):
         respuesta = cliente.get(url)
     respuesta.mock_listar = mock_listar
@@ -24712,37 +24492,6 @@ def test_una_guia_R_SIN_FICHA_lo_dice_EN_EL_TITULO_y_no_queda_el_articulo_pelado
     assert 'action="/administracion/stock/guias-r/180/asignar-ficha"' in cuerpo
 
 
-# LA GUÍA QUE FALTA COMPLETAR: ficha VARIABLE —Mango, Cherry— y la caja sin
-# declarar. Es el caso real de Frutamax del 17/09: 2 de 22 guías, las dos
-# `ficha_variable`, esperando la pregunta que no existía.
-GUIA_SIN_LA_CAJA = {
-    "id": 177, "articulo_id": 1, "ficha_id": 5, "fecha_operacion": date(2026, 9, 17),
-    "bultos_tomados": 12.0, "bultos_primera": 10.0, "bultos_segunda": 0.0, "bultos_merma": 0.0,
-    "costo_total": 450000.0, "costo_por_bulto_primera": 45000.0,
-    "creado_en": datetime(2026, 9, 17, 10, 0), "anulado_el": None,
-    "articulo_nombre": "Mango", "cliente_id": 1, "cliente_nombre": "Día",
-    "ficha_nombre": "MANGO", "consumos": [],
-    "lleva_caja_nuestra": None, "ficha_envase_id": 1, "ficha_envase_variable": True,
-    "tipo": "normal", "compra_origen_id": None,
-}
-
-# LA GUÍA VIEJA: ficha de envase FIJO y la caja en NULL, que es como quedaron
-# las anteriores al 16/09 —la migración agregó la columna y no backfillea—.
-# EL CANARIO LA PIDIÓ: sin ella, sacarle a la ruta la condición de "no lo
-# puede derivar" no hacía caer nada, porque la otra guía de control tiene
-# `lleva_caja_nuestra` en True y ya la excluye la PRIMERA condición. Un
-# control que se cae por el motivo equivocado no es un control.
-GUIA_VIEJA_SIN_CAJA = {
-    "id": 179, "articulo_id": 1, "ficha_id": 5, "fecha_operacion": date(2026, 9, 10),
-    "bultos_tomados": 10.0, "bultos_primera": 10.0, "bultos_segunda": 0.0, "bultos_merma": 0.0,
-    "costo_total": 450000.0, "costo_por_bulto_primera": 45000.0,
-    "creado_en": datetime(2026, 9, 10, 10, 0), "anulado_el": None,
-    "articulo_nombre": "Morron Rojo", "cliente_id": 1, "cliente_nombre": "Día",
-    "ficha_nombre": "M.ROJO GRA", "consumos": [],
-    "lleva_caja_nuestra": None, "ficha_envase_id": 1, "ficha_envase_variable": False,
-    "tipo": "normal", "compra_origen_id": None,
-}
-
 GUIA_CON_FICHA = {
     "id": 176, "articulo_id": 1, "ficha_id": 5, "fecha_operacion": date(2026, 9, 7),
     "bultos_tomados": 10.0, "bultos_primera": 10.0, "bultos_segunda": 0.0, "bultos_merma": 0.0,
@@ -24750,103 +24499,8 @@ GUIA_CON_FICHA = {
     "creado_en": datetime(2026, 9, 7, 10, 0), "anulado_el": None,
     "articulo_nombre": "Morron Rojo", "cliente_id": 1, "cliente_nombre": "Día",
     "ficha_nombre": "M.ROJO GRA", "consumos": [],
-    # LAS TRES DE LA CAJA, como las devuelve la consulta real. Esta ficha
-    # tiene envase FIJO (variable en False), así que el server derivó su caja
-    # sola y `lleva_caja_nuestra` viene en True: NO es de las que hay que
-    # completar. Es el fixture que separa el caso que pregunta del que no.
-    "lleva_caja_nuestra": True, "ficha_envase_id": 1, "ficha_envase_variable": False,
     "tipo": "normal", "compra_origen_id": None,
 }
-
-
-def test_la_guia_SIN_LA_CAJA_ofrece_completarla_y_la_que_puede_derivarla_NO():
-    """El par, y hacen falta los dos.
-
-    OFRECER: es la puerta de las que ya están. Sin ella, las dos guías de
-    Frutamax del 17/09 solo se podían arreglar anulándolas y recargándolas, o
-    tocando la base a mano — que es el agujero del corolario 31.
-
-    Y NO OFRECER donde la ficha define sola la caja: ahí el server ya la
-    derivó, y dejar que alguien la pise sería re-etiquetar la historia. La
-    escritura lo rechaza, así que ofrecerlo sería un callejón.
-    """
-    con_hueco = _guias_r([dict(GUIA_SIN_LA_CAJA)])
-    assert con_hueco.status_code == 200
-    marcado = con_hueco.text.split("</style>")[-1]
-
-    assert '/administracion/stock/guias-r/177/declarar-caja' in marcado
-    assert "no dice en qué caja quedó" in marcado
-    assert "Descartable" in marcado
-    assert "Caja EJEMPLO Grande" in marcado
-
-    # Y SE VE SIN ABRIR NADA: no adentro del `<details>` de "Corregir la
-    # ficha", que arranca cerrado justo cuando la guía ya tiene ficha — que
-    # es el caso de éstas. Un camino que funciona y no se ve no existe.
-    antes_del_details = marcado[:marcado.index("<details")]
-    despues = marcado[marcado.index("</details>"):]
-    assert "declarar-caja" in despues and "declarar-caja" not in antes_del_details
-
-    # EL CONTROL: la misma pantalla, con una guía cuya ficha SÍ define la
-    # caja. Sin esto, un selector que se dibuja siempre pasa el assert de
-    # arriba y le ofrece a todo el mundo pisar lo que el server derivó.
-    derivable = _guias_r([dict(GUIA_CON_FICHA)])
-    assert "declarar-caja" not in derivable.text.split("</style>")[-1]
-
-    # Y EL CONTROL QUE EL CANARIO PIDIÓ: la guía VIEJA, con la caja en NULL
-    # igual que la de arriba, pero cuya ficha SÍ la define. La primera
-    # condición no la excluye —su caja está en NULL— así que es la única que
-    # puede ver si la segunda existe. La escritura la rechaza, así que
-    # ofrecerla sería un callejón.
-    vieja = _guias_r([dict(GUIA_VIEJA_SIN_CAJA)])
-    assert "declarar-caja" not in vieja.text.split("</style>")[-1]
-
-
-def test_una_guia_ANULADA_sin_caja_NO_ofrece_completarla():
-    """Ya no cuenta para nada: completarle un dato daría a entender que sí.
-
-    Y la pantalla tiene que coincidir con la escritura, que también la
-    rechaza — si ofreciera, el operario apretaría y se comería un error por
-    algo que la pantalla le propuso.
-    """
-    anulada = _guias_r([dict(GUIA_SIN_LA_CAJA, id=178,
-                             anulado_el=datetime(2026, 9, 17, 12, 0))])
-    assert "declarar-caja" not in anulada.text.split("</style>")[-1]
-
-
-def test_declarar_la_caja_desde_la_pantalla_VUELVE_A_LA_LISTA_con_los_filtros():
-    """Volver sin los filtros deja al que estaba completando guías de Mango
-    mirando las 22 de nuevo, una por cada guía que completa."""
-    with patch("app.main.declarar_la_caja_de_una_guia") as mock_declarar:
-        respuesta = cliente.post(
-            "/administracion/stock/guias-r/177/declarar-caja",
-            data={"caja_nuestra": "7", "fecha_desde": "2026-09-01",
-                  "fecha_hasta": "2026-09-17", "articulo_id": "1", "guia": ""},
-            follow_redirects=False)
-
-    assert respuesta.status_code == 303
-    mock_declarar.assert_called_once_with(177, (True, 7))
-    destino = respuesta.headers["location"]
-    for filtro in ("fecha_desde=2026-09-01", "fecha_hasta=2026-09-17", "articulo_id=1"):
-        assert filtro in destino, f"se perdió {filtro} al volver"
-    assert "aviso=" in destino
-
-
-def test_declarar_SIN_elegir_nada_NO_escribe_y_lo_dice():
-    """"" no es "no": no contestar no se puede guardar como "no lleva caja".
-
-    Si se guardara así, la caja sale, nadie la descuenta, y el sistema AFIRMA
-    que no había ninguna. Un hueco se ve; una afirmación falsa no.
-    """
-    with patch("app.main.declarar_la_caja_de_una_guia") as mock_declarar:
-        respuesta = cliente.post(
-            "/administracion/stock/guias-r/177/declarar-caja",
-            data={"caja_nuestra": "", "fecha_desde": "", "fecha_hasta": "",
-                  "articulo_id": "", "guia": ""},
-            follow_redirects=False)
-
-    assert respuesta.status_code == 303
-    mock_declarar.assert_not_called()
-    assert "error=" in respuesta.headers["location"]
 
 
 def test_guias_r_con_ficha_puesta_el_selector_NO_arranca_abierto():
@@ -24910,8 +24564,6 @@ def test_guias_r_muestran_para_quien_y_el_cruce_con_datos():
         "bultos_merma": 1.0, "costo_total": 12000.0, "costo_por_bulto_primera": 1200.0,
         "creado_en": datetime(2026, 8, 24, 10, 0), "anulado_el": None,
         "tipo": "normal", "compra_origen_id": None,
-    "lleva_caja_nuestra": None, "ficha_envase_id": None, "ficha_envase_variable": None,
-     "lleva_caja_nuestra": None, "ficha_envase_id": None, "ficha_envase_variable": None,
         "articulo_nombre": "Tomate Perita", "cliente_id": 1, "cliente_nombre": "Día",
         "ficha_id": None, "consumos": [],
     }
@@ -24919,7 +24571,6 @@ def test_guias_r_muestran_para_quien_y_el_cruce_con_datos():
     with (
         patch("app.main._hoy_argentina", return_value=date(2026, 8, 25)),
         patch("app.main.listar_reprocesos_por_rango", return_value=[guia, guia_vieja]),
-        patch("app.main.listar_envases", return_value=CAJAS_DEL_GALPON),
         patch("app.main.contar_reprocesos_sin_costo_posible", return_value={"casos": 0, "mas_viejo": None}),
         patch("app.main.listar_fichas_de_todos_los_clientes", return_value=[]),
         patch("app.main.listar_clientes", return_value=CLIENTES_PARA_SELECTOR),
@@ -26687,7 +26338,6 @@ def test_reproceso_tiene_CANCELAR_que_solo_sale_al_hub_de_stock():
     """
     with (
         patch("app.main.listar_articulos_para_reproceso", return_value=[]),
-        patch("app.main.listar_envases", return_value=CAJAS_DEL_GALPON),
         patch("app.main.listar_clientes", return_value=[]),
         patch("app.main._ayudas_ficha_por_cliente_y_articulo", return_value={}),
         patch("app.main._fichas_por_cliente_y_articulo", return_value={}),

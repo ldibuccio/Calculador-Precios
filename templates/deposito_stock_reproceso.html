@@ -268,52 +268,6 @@
       </select>
       <p class="ayuda-ficha" id="ayuda-sin-asignar"></p>
 
-      {# ¿QUEDÓ ARMADA EN CAJA NUESTRA? Solo cuando la ficha NO lo define
-         sola — la variable (Mango, Cherry) y la guía sin asignar. Con envase
-         fijo el server lo deriva y preguntar sería pedir dos veces el mismo
-         dato.
-
-         HASTA EL 17/09 ESTA PREGUNTA NO EXISTÍA. El server la esperaba desde
-         el primer día (`envase_declarado` en `_envase_de_esta_guia`) y no
-         tenía un solo escritor, así que con ficha variable la caja salía, era
-         nuestra, y no se descontaba nunca — en silencio, y en los dos
-         artículos que más se mueven.
-
-         ARRANCA ESCONDIDO y lo muestra el JS cuando la ficha elegida lo
-         pide. El `hidden` se respeta porque NINGUNA regla de esta hoja le da
-         `display` a `.caja-nuestra`: con un `display:` puesto, `[hidden]`
-         pierde —viene sin `!important`— y el bloque queda a la vista con la
-         orden de esconderse dada. El atributo es la INTENCIÓN, el CSS es el
-         efecto. #}
-      <div class="caja-nuestra" id="caja-nuestra" hidden>
-        <label for="caja_nuestra">¿Usaste una caja nuestra?</label>
-        <select id="caja_nuestra" name="caja_nuestra">
-          {# SIN PRECARGA, y es la regla de esta casa: precargar sirve cuando
-             hay un valor DOMINANTE, y acá no lo hay por definición — si lo
-             hubiera, la ficha no sería variable. Un valor plausible puesto
-             solo invita a aceptarlo con el mismo click que ya se iba a hacer. #}
-          <option value="" {% if not precarga.caja_nuestra %}selected{% endif %}>Elegí...</option>
-          {# "DESCARTABLE" ES LA PALABRA DEL GALPÓN, y por eso va primero: el
-             costeo la usa desde siempre para el mango y el cherry que salen
-             en el cajón que vinieron (`_envases_por_unidad_ponderado`:
-             "descartable (0 cajas)"). El rótulo nombra la cosa del galpón y
-             lo que significa va al lado — el que no conoce la palabra
-             entiende igual, y el que la conoce la reconoce. #}
-          <option value="no" {% if precarga.caja_nuestra == "no" %}selected{% endif %}>
-            Descartable — salió en el cajón que vino
-          </option>
-          {% for caja in cajas_del_galpon %}
-          <option value="{{ caja.id }}"
-                  {% if precarga.caja_nuestra|string == caja.id|string %}selected{% endif %}>
-            Sí, en {{ caja.nombre }}
-          </option>
-          {% endfor %}
-        </select>
-        <p class="ayuda-ficha">El mango viene en cajón grande y lo pasás a caja
-          de Día. Si vino en cajón chico, sale en ese mismo: eso es
-          descartable y no gastás ninguna.</p>
-      </div>
-
       <label for="bultos_tomados">Bultos que tomé</label>
       <input type="number" id="bultos_tomados" name="bultos_tomados" min="1" step="1" inputmode="numeric" required
              placeholder="¿Cuántos saqué del stock?" value="{{ precarga.bultos_tomados or "" }}">
@@ -394,12 +348,6 @@
         ? ficha.kilaje + " por caja, según la ficha " + ficha.nombre + "."
         : ((cliente && articulo && AYUDAS_FICHA[cliente + ":" + articulo]) || "");
       document.getElementById("ayuda-ficha").textContent = texto;
-      // ACÁ Y NO ADENTRO DE `llenarFichas`: ésa tiene un `return` temprano
-      // cuando falta el cliente o el artículo, y ése es justo el momento en
-      // que el bloque tiene que esconderse. Un `hidden` que no se aplica
-      // porque la función salió antes deja el campo a la vista pidiendo algo
-      // que todavía no se puede contestar.
-      mostrarCajaNuestra();
     }
 
     function llenarFichas(cliente, articulo) {
@@ -441,36 +389,6 @@
       document.getElementById("ayuda-sin-asignar").textContent = fichas.length
         ? ""
         : "Este cliente no tiene fichas cargadas de este artículo: va a quedar sin asignar.";
-    }
-
-    // ---- ¿QUEDÓ ARMADA EN CAJA NUESTRA? ----
-    // Se pregunta SOLO cuando la ficha no lo define sola. Quién lo decide no
-    // se recalcula acá: viaja como `pregunta_caja` en cada ficha, puesto por
-    // la MISMA función que el server usa al escribir. Un `f.envase_variable`
-    // leído en el JS sería la regla escrita dos veces, y la copia de la
-    // pantalla se separa sin que nada se vea roto — la guía entra igual y el
-    // hueco vuelve.
-    //
-    // Y "sin asignar" también pregunta: sin ficha no hay de dónde derivar.
-    function mostrarCajaNuestra() {
-      const cliente = document.getElementById("cliente_id").value;
-      const articulo = document.getElementById("articulo_id").value;
-      const elegida = document.getElementById("ficha_id").value;
-      const fichas = (cliente && articulo && FICHAS[cliente + ":" + articulo]) || [];
-      const ficha = fichas.find(function (f) { return String(f.id) === elegida; });
-
-      const hace_falta = elegida === "sin_asignar" || (ficha && ficha.pregunta_caja);
-      const bloque = document.getElementById("caja-nuestra");
-      const campo = document.getElementById("caja_nuestra");
-      if (!bloque || !campo) { return; }
-
-      bloque.hidden = !hace_falta;
-      // EL `required` VIAJA CON EL BLOQUE: un campo escondido y obligatorio
-      // traba el submit sin que se vea qué falta, y el navegador no puede
-      // enfocar lo que no está en pantalla. La pared de verdad está en el
-      // server; esto es para que se cumpla cómodo.
-      campo.required = !!hace_falta;
-      if (!hace_falta) { campo.value = ""; }
     }
 
     // ---- EL DESGLOSE: de qué lotes sale lo que declaró ----

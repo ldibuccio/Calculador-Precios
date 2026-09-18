@@ -20,8 +20,6 @@ from app.db import (
 from app.main import PUERTA_COMPRAS, app
 from core.envases import (
     ORIGENES_DE_COLEGA,
-    SIN_CAJA_NUESTRA,
-    declaracion_de_caja,
     SIGNO_POR_TIPO_DE_GUIA,
     como_queda_la_cuenta,
     efecto_en_la_cuenta,
@@ -35,7 +33,10 @@ cliente = TestClient(app, base_url="https://testserver")
 ESQUEMA = io.open("db/esquema_completo.sql", encoding="utf-8").read()
 
 FICHA_FIJA = {"envase_id": 7, "envase_variable": False}
-FICHA_VARIABLE = {"envase_id": 7, "envase_variable": True}
+# CON OTRO ENVASE que la fija, a propósito: con las dos en 7, una regla que
+# devolviera el envase de la fija para las dos pasaría el test igual y no se
+# vería. El id es el que tiene que distinguirlas.
+FICHA_VARIABLE = {"envase_id": 9, "envase_variable": True}
 FICHA_SIN_ENVASE = {"envase_id": None, "envase_variable": False}
 
 
@@ -43,33 +44,40 @@ FICHA_SIN_ENVASE = {"envase_id": None, "envase_variable": False}
 # Las reglas puras
 # ---------------------------------------------------------------------------
 
-def test_la_RESPUESTA_del_operario_se_traduce_y_lo_que_NO_TIENE_FORMA_rebota():
-    """Tres valores, y "" NO es "no".
+def test_el_envase_SALE_DE_LA_FICHA_aunque_sea_VARIABLE():
+    """`envase_variable` NO decide cuál caja: decide si se usa una.
 
-    JUNTARLOS SERÍA EL BUG CON OTRA ROPA: no contestar se guardaría como "no
-    lleva caja", y entonces la caja sale, nadie la descuenta, y el sistema
-    AFIRMA que no había ninguna. Un hueco se ve; una afirmación falsa no.
+    Entre el 17 y el 18/09 este test afirmaba lo contrario —variable pedía
+    preguntar— y esa afirmación sostuvo un selector en Reproceso que dejaba
+    elegir una caja DISTINTA de la que la ficha declara. Era el guardián de
+    ese bug: el arreglo lo rompe, y la primera lectura de ese rojo es "me
+    equivoqué yo" (corolario 22).
+
+    Lo que lo cierra está en `envases_por_unidad_de_venta`, que es la única
+    otra cuenta que lee el flag: para el caso variable devuelve 0 o
+    `1/contenido_ficha` —LA CAJA DE LA FICHA a la tasa de la ficha—, y no
+    tiene ninguna rama que busque otro envase.
     """
-    assert declaracion_de_caja("") is None
-    assert declaracion_de_caja("   ") is None
-    assert declaracion_de_caja(None) is None
-    assert declaracion_de_caja(SIN_CAJA_NUESTRA) == (False, None)
-    assert declaracion_de_caja("7") == (True, 7)
-
-    # PREGUNTA POR LA FORMA DEL DATO (corolario 30): un id es un entero
-    # positivo, y eso no lo puede imitar ningún texto de la pantalla.
-    for basura in ("0", "-3", "si", "abc", "7.5"):
-        with pytest.raises(ValueError):
-            declaracion_de_caja(basura)
-
-
-def test_el_envase_se_DERIVA_de_la_ficha_fija_y_se_PREGUNTA_cuando_no_se_puede():
     assert envase_derivado_de_la_ficha(FICHA_FIJA) == (True, 7, False)
-    # Variable: el envase lo decide el cajón de ESA compra, no la ficha.
-    assert envase_derivado_de_la_ficha(FICHA_VARIABLE) == (None, None, True)
-    # Sin ficha no hay de dónde derivarlo. No estaba en el pedido y sale de
-    # la misma regla: si no se puede derivar, se pregunta.
+    assert envase_derivado_de_la_ficha(FICHA_VARIABLE) == (True, 9, False)
+    # Y LA ÚNICA QUE SIGUE PREGUNTANDO ES LA SIN FICHA. Su arreglo tampoco es
+    # un selector de cajas: es asignarle la ficha, que vuelve a derivar.
     assert envase_derivado_de_la_ficha(None) == (None, None, True)
+
+
+def test_el_flag_VARIABLE_no_aparece_en_la_regla_de_la_caja():
+    """Y se afirma sobre el CUERPO, no sobre los tres casos de arriba.
+
+    Un test de valores lo pasa igual una regla que lea el flag y devuelva lo
+    mismo por casualidad con estos fixtures. Que la palabra no esté es lo
+    único que dice que el flag salió del camino.
+    """
+    fuente = io.open("core/envases.py", encoding="utf-8").read()
+    cuerpo = fuente.split("def envase_derivado_de_la_ficha")[1].split("\ndef ")[0]
+    codigo = cuerpo.split('"""', 2)[2]
+    assert "envase_variable" not in codigo, (
+        "la caja sale de la ficha: el flag decide si se usa una, no cuál"
+    )
 
 
 def test_una_ficha_SIN_ENVASE_no_es_un_hueco_es_envase_perdido():

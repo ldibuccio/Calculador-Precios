@@ -9119,13 +9119,6 @@ def obtener_renglon_para_reingreso(renglon_id: int) -> dict | None:
                        ps.orden_compra,
                        COALESCE(r.cantidad_armada, r.cantidad) AS bultos_armados,
                        r.kilos_enviados,
-                       -- EL ENVASE DE LA FICHA, para que la pantalla sepa si
-                       -- tiene que PREGUNTAR en qué caja volvió. Sin estas dos
-                       -- columnas la pregunta no aparece nunca y el reingreso
-                       -- que vacía una caja vuelve a guardarse sin decir cuál
-                       -- — que es exactamente lo que se ve igual que antes.
-                       fl.envase_id AS ficha_envase_id,
-                       fl.envase_variable AS ficha_envase_variable,
                        COALESCE(d.devuelto, 0) AS ya_devuelto
                 FROM pedidos_renglones r
                 JOIN vigentes v ON v.id = r.pedido_id
@@ -10524,13 +10517,12 @@ def asignar_ficha_a_reproceso(reproceso_id: int, ficha_id: int | None) -> None:
             # que es el modo de falla de todas las columnas que este archivo
             # persigue.
             #
-            # Con ficha VARIABLE sigue sin poder derivarse (el envase lo
-            # decide el cajón de esa compra) y por eso el helper devuelve las
-            # dos en NULL: el hueco se queda, que es verdad.
-            # El tercer valor se descarta A PROPOSITO: asignar la ficha no puede
-            # negarse. Con ficha variable vuelve a dar NULL y eso es verdad — el
-            # envase lo decide el cajon de ESA compra y acá no hay quien conteste.
-            lleva_caja, envase_de_la_caja, _ = _envase_de_esta_guia(cursor, ficha_id, None)
+            # Y CON LA FICHA PUESTA SIEMPRE SE PUEDE DERIVAR: la caja sale
+            # de la ficha. Por eso asignar la ficha es el arreglo COMPLETO de
+            # una guía sin asignar, y no hace falta ninguna otra puerta que
+            # pregunte en qué caja quedó — hubo una entre el 17 y el 18/09 y
+            # dejaba elegir una caja distinta de la que la ficha declara.
+            lleva_caja, envase_de_la_caja = _envase_de_esta_guia(cursor, ficha_id)
             cursor.execute(
                 """
                 UPDATE reprocesos
@@ -10538,67 +10530,6 @@ def asignar_ficha_a_reproceso(reproceso_id: int, ficha_id: int | None) -> None:
                  WHERE id = %s
                 """,
                 (ficha_id, lleva_caja, envase_de_la_caja, reproceso_id),
-            )
-        conexion.commit()
-    finally:
-        conexion.close()
-
-
-def declarar_la_caja_de_una_guia(reproceso_id: int, declarado: tuple) -> None:
-    """Completa en qué caja quedó armada una guía R que no lo pudo derivar.
-
-    ES LA PUERTA DE LAS QUE YA ESTÁN. La pregunta en la pantalla de Reproceso
-    cierra el agujero desde hoy; ésta es para las que se cargaron antes de que
-    existiera y quedaron con `lleva_caja_nuestra` en NULL.
-
-    Y NO HACE FALTA RECARGARLAS NI RECALCULAR NADA: el stock de cajas se
-    deriva en cada lectura, así que escribir estas dos columnas alcanza para
-    que la guía empiece a descontar. Medido contra el esquema real: dos guías
-    de 10 y 6 cajas de primera pasaron el stock de 500 a 484 con solo este
-    UPDATE. Es la misma propiedad que hace que anular una guía R corrija el
-    stock sola.
-
-    SOLO LAS QUE NO LO PUEDEN DERIVAR, y esa guarda es lo importante: con
-    ficha de envase FIJO el envase sale de la ficha, y dejar que alguien lo
-    pise acá sería re-etiquetar la historia — exactamente lo que este
-    proyecto se negó a hacer con `unidad_compra`. Si la ficha lo define, esto
-    rechaza.
-
-    Tampoco toca una guía ANULADA: ya no cuenta para nada, y completarle un
-    dato daría a entender que vuelve a contar.
-    """
-    lleva, envase_id = declarado
-
-    conexion = obtener_conexion()
-    try:
-        with conexion.cursor() as cursor:
-            # SIN agregado: `fetchone() is None` sobre un `count(*)` nunca es
-            # None y la guarda no distinguiría "no existe" de "existe"
-            # (corolario 27).
-            cursor.execute(
-                "SELECT ficha_id, anulado_el IS NOT NULL FROM reprocesos WHERE id = %s",
-                (reproceso_id,),
-            )
-            fila = cursor.fetchone()
-            if fila is None:
-                raise ValueError("Esa guía R no existe.")
-            ficha_id, anulada = fila
-            if anulada:
-                raise ValueError("Esa guía R está anulada: no hay nada que completar.")
-
-            # LA MISMA función que decide si la pantalla pregunta y la que
-            # escribe al crear. Preguntarlo con una condición propia acá sería
-            # la tercera copia, y la que se separe deja entrar lo que las
-            # otras dos rechazan.
-            _, _, hay_que_preguntar = _envase_de_esta_guia(cursor, ficha_id, None)
-            if not hay_que_preguntar:
-                raise ValueError(
-                    "Esta guía R saca la caja de su ficha: no se declara a mano."
-                )
-
-            cursor.execute(
-                "UPDATE reprocesos SET lleva_caja_nuestra = %s, envase_id = %s WHERE id = %s",
-                (lleva, envase_id, reproceso_id),
             )
         conexion.commit()
     finally:
@@ -10764,7 +10695,7 @@ def crear_reproceso(
     cliente_id: int | None = None,
     ficha_id: int | None = None,
     reparto: list[dict] | None = None,
-    caja_declarada: tuple | None = None,
+
 ) -> int:
     """Carga una guía R: el SERVER frena, reparte y congela consumos y costo. Devuelve el número de guía.
 
@@ -10799,10 +10730,8 @@ def crear_reproceso(
     recibe Banana Ecuador — así que esa derivación es ambigua por diseño
     y lo va a ser siempre.
 
-    caja_declarada: (lleva_caja_nuestra, envase_id), lo que contestó el
-    operario. HACE FALTA cuando la ficha no lo define sola —la variable, y
-    la guía sin asignar— y si no viene, esto NO GUARDA. Es la única puerta
-    que se niega, porque es la única donde hay alguien que puede contestar.
+    EN QUÉ CAJA quedó armada no se pregunta: sale de la ficha, y lo escribe
+    `_crear_reproceso` para los dos caminos a la vez.
     """
     conexion = obtener_conexion()
     try:
@@ -10818,12 +10747,6 @@ def crear_reproceso(
                 cliente_id=cliente_id,
                 ficha_id=ficha_id,
                 reparto=reparto,
-                envase_declarado=caja_declarada,
-                # EXIGE CONTESTAR, y es el único camino que lo hace: acá hay
-                # una persona en la pantalla que acaba de armar las cajas y
-                # sabe en cuál las puso. El de la compra que llega armada no
-                # tiene a quién preguntarle, así que ahí sigue en False.
-                exigir_caja_declarada=True,
             )
         conexion.commit()
         return reproceso_id
@@ -10831,7 +10754,7 @@ def crear_reproceso(
         conexion.close()
 
 
-def _envase_de_esta_guia(cursor, ficha_id, envase_declarado) -> tuple:
+def _envase_de_esta_guia(cursor, ficha_id) -> tuple:
     """(lleva_caja_nuestra, envase_id) de una guía R que se está por escribir.
 
     La ficha se LEE ACÁ ADENTRO, en la misma transacción que el INSERT, y no
@@ -10839,43 +10762,31 @@ def _envase_de_esta_guia(cursor, ficha_id, envase_declarado) -> tuple:
     llamador de `_crear_reproceso` la columna se escribiría en NULL y la
     pantalla volvería a mostrar una sola cosa sin que nada se vea roto.
 
-    `envase_declarado` es lo que contestó la persona cuando hubo que
-    preguntar, y GANA sobre la derivación: con ficha variable el envase lo
-    decide el cajón de ESA compra, no la ficha. None = no se preguntó.
+    NO PREGUNTA NADA Y NO RECIBE NINGUNA RESPUESTA, y eso es una corrección
+    del 18/09. Entre el 17 y el 18 recibió un `envase_declarado` que ganaba
+    sobre la derivación, porque la regla trataba la ficha VARIABLE como un
+    caso a preguntar. Era falso: ese flag decide si se usa una caja nuestra,
+    no cuál, y la caja sale siempre de la ficha (ver
+    `envase_derivado_de_la_ficha`). Preguntarlo dejaba elegir una caja
+    distinta de la que la ficha declara, que es peor que no preguntar.
 
-    Si hacía falta preguntar y nadie contestó, quedan las dos en NULL: eso es
-    "no se declaró". NO es cero consumido — un cero se sumaría al total como
-    si fuera un hecho.
-
-    DEVUELVE TRES COSAS Y LA TERCERA ES `falta_declarar`, que es lo que hace
-    posible negarse. Hasta el 17/09 devolvía dos y el NULL se escribía en
-    silencio: con ficha variable —Mango y Cherry, los que más se mueven— la
-    caja salía, era nuestra, y no se descontaba NUNCA. El parámetro
-    `envase_declarado` estaba puesto desde el primer día y NO TENÍA UN SOLO
-    ESCRITOR: la pregunta se diseñó y nunca se construyó.
-
-    Y el que se niega es EL LLAMADOR y no esta función, a propósito: el
-    camino manual tiene una persona adelante que puede contestar, y el de la
-    compra que llega armada no. Negarse acá sería una pared en un camino frío
-    —la recepción de una compra en caja nuestra con ficha variable— que no
-    falla al migrar, no falla en la verificación, y aparece el día que alguien
-    lo cruza.
+    Con una guía SIN FICHA quedan las dos en NULL: eso es "no se pudo
+    derivar", y NO es cero consumido — un cero se sumaría al total como si
+    fuera un hecho. Se arregla asignándole la ficha, que vuelve a derivar.
     """
     ficha = None
     if ficha_id is not None:
         # SIN agregado: `fetchone() is None` sobre un `count(*)` nunca es None.
         cursor.execute(
-            "SELECT envase_id, envase_variable FROM fichas_logistica WHERE id = %s",
+            "SELECT envase_id FROM fichas_logistica WHERE id = %s",
             (ficha_id,),
         )
         fila = cursor.fetchone()
         if fila is not None:
-            ficha = {"envase_id": fila[0], "envase_variable": fila[1]}
+            ficha = {"envase_id": fila[0]}
 
-    lleva, envase_id, hay_que_preguntar = envase_derivado_de_la_ficha(ficha)
-    if hay_que_preguntar and envase_declarado is not None:
-        return (*envase_declarado, False)
-    return lleva, envase_id, hay_que_preguntar
+    lleva, envase_id, _ = envase_derivado_de_la_ficha(ficha)
+    return lleva, envase_id
 
 
 def _crear_reproceso(
@@ -10891,8 +10802,6 @@ def _crear_reproceso(
     reparto: list[dict] | None = None,
     tipo: str = "normal",
     compra_origen_id: int | None = None,
-    envase_declarado: tuple | None = None,
-    exigir_caja_declarada: bool = False,
 ) -> int:
     """El NUCLEO de la guia R, con el cursor abierto. Los dos frenos viven aca.
 
@@ -10934,27 +10843,13 @@ def _crear_reproceso(
     if fecha_operacion < corte:
         raise ReprocesoAnteriorAlCorte(fecha_operacion, corte)
 
-    # EN QUÉ CAJA se armó esta primera. Lo resuelve el SERVER siempre: con
-    # ficha de envase fijo lo deriva de la ficha, y `envase_declarado` solo
-    # llega cuando la ruta tuvo que preguntar (ficha variable, o sin ficha).
-    # Escribirlo acá y no en la ruta es lo que hace que los DOS caminos que
-    # crean una guía R —la normal y la de la compra que vino armada— salgan
-    # con el dato puesto: el que falta, por definición, no nombra la columna.
-    #
-    # Y VA ACÁ ARRIBA, JUNTO AL PISO DE LA FECHA, no abajo con el costo: es
-    # una lectura de una fila y no necesita el FIFO, así que rebotar acá le
-    # ahorra al que carga rejugar el reparto entero para nada. Abajo, el que
-    # tenía las dos cosas mal veía primero la pared del stock, iba a cargar
-    # una recepción, volvía, y recién ahí se enteraba de que además faltaba
-    # contestar un select — dos viajes por dos preguntas que se contestan en
-    # la misma pantalla.
-    lleva_caja, envase_de_la_caja, falta_declarar = _envase_de_esta_guia(
-        cursor, ficha_id, envase_declarado)
-    if falta_declarar and exigir_caja_declarada:
-        raise ValueError(
-            "Falta decir si quedó armada en una caja nuestra: esta ficha no lo "
-            "define sola."
-        )
+    # EN QUÉ CAJA se armó esta primera. SALE DE LA FICHA y lo resuelve el
+    # SERVER: no hay nada que preguntarle a nadie, porque no se puede armar en
+    # otra caja que la de la ficha. Escribirlo acá y no en la ruta es lo que
+    # hace que los DOS caminos que crean una guía R —la normal y la de la
+    # compra que vino armada— salgan con el dato puesto: el que falta, por
+    # definición, no nombra la columna.
+    lleva_caja, envase_de_la_caja = _envase_de_esta_guia(cursor, ficha_id)
 
     entradas, salidas = _entradas_y_salidas_stock(cursor, articulo_id, corte)
     # Los lotes A LA FECHA DEL REPROCESO, con el recorte asimétrico
@@ -11289,20 +11184,7 @@ def listar_reprocesos_por_rango(fecha_desde, fecha_hasta, articulo_id=None,
                        -- cliente PUEDE terminar en la ficha de otro, y la
                        -- pantalla lo necesita para poder mostrarlo: el
                        -- título sale de la FICHA y taparía la diferencia.
-                       f.cliente_id AS ficha_cliente_id,
-                       -- EN QUÉ CAJA QUEDÓ ARMADA. NULL = no se declaró, y
-                       -- esta pantalla es donde se completa: sin la columna
-                       -- acá, la pregunta no se puede ofrecer y el hueco se
-                       -- queda para siempre sin que nada se vea roto — la
-                       -- pantalla sale igual, con un campo menos.
-                       rp.lleva_caja_nuestra,
-                       -- Las dos de la FICHA, para decidir si esta guía puede
-                       -- derivar su caja sola. Van crudas y la regla la
-                       -- aplica `envase_derivado_de_la_ficha`: escrita acá
-                       -- como un `f.envase_variable IS TRUE` sería la tercera
-                       -- copia de la misma pregunta.
-                       f.envase_id AS ficha_envase_id,
-                       f.envase_variable AS ficha_envase_variable
+                       f.cliente_id AS ficha_cliente_id
                 FROM reprocesos rp
                 JOIN articulos a ON a.id = rp.articulo_id
                 LEFT JOIN clientes cl ON cl.id = rp.cliente_id
