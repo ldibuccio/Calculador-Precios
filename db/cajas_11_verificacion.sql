@@ -3,7 +3,8 @@ with base as (
     from movimientos_envase
    where origen = 'conteo_inicial' and anulado_el is null
 )
-select count(*) filter (where r.lleva_caja_nuestra is null
+select 'cajas_11' as QUE_MIGRACION,
+  count(*) filter (where r.lleva_caja_nuestra is null
                           and r.ficha_id is not null)              as sin_declarar_CON_ficha,
        count(*) filter (where r.lleva_caja_nuestra is null
                           and r.ficha_id is null)                  as sin_ficha_se_quedan,

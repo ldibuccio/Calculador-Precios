@@ -1,4 +1,4 @@
-select
+select 'envases_11_sin_la_caja' as QUE_MIGRACION,
   (select count(*) from information_schema.columns
     where table_name = 'movimientos_stock'
       and column_name in ('envase_id', 'lleva_caja_nuestra'))     as columnas_de_0,

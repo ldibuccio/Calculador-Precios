@@ -12,7 +12,8 @@
 --
 -- `huerfanos_viejos` es lo que la migración NO arregla: las filas que ya
 -- quedaron desconectadas. Ese número decide si hace falta un rescate.
-select (select count(*) from pg_constraint
+select 'precios_no_se_desconectan' as QUE_MIGRACION,
+  (select count(*) from pg_constraint
          where conname = 'precios_venta_historial_ficha_id_fkey'
            and confdeltype = 'a')                                   as guarda_no_action,
        (select count(*) from pg_constraint

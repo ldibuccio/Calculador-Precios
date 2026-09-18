@@ -6,7 +6,7 @@
 -- magnitud que falta, porque NO SE PUEDE. Hoy cada compra tiene una sola
 -- —kilos o conteo— y la otra no está en ningún lado. Inventarla sería el
 -- factor otra vez. Por eso esto CUENTA y NOMBRA, no escribe.
-select
+select 'dos_magnitudes_2' as QUE_MIGRACION,
     -- El factor, ido.
     (select count(*) from information_schema.columns
       where table_name = 'articulos' and column_name = 'kilos_por_unidad')  as factor_que_quedo,

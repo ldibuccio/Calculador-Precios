@@ -11,7 +11,7 @@
 -- bien: la columna nace vacía y la pantalla todavía no la escribe. Al lado
 -- va `ultima_merma` como testigo: sin él, un 0 de "no se cargó ninguna" se
 -- lee igual que un 0 de "acá no pasa nada".
-select
+select 'agregar_ficha_a_la_merma_3' as QUE_MIGRACION,
     (select count(*) from information_schema.columns
       where table_name = 'movimientos_stock' and column_name = 'ficha_id')   as columna,
     (select count(*) from pg_constraint

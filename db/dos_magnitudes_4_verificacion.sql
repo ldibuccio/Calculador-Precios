@@ -1,6 +1,6 @@
 -- Verificación de dos_magnitudes_3. UNA fila siempre. Correr en LAS DOS
 -- bases y pegar las dos filas con el nombre de la base adelante.
-select
+select 'dos_magnitudes_4' as QUE_MIGRACION,
     (select count(*) from information_schema.columns
       where table_name = 'articulos' and column_name = 'unidad_conteo')     as columna,
     (select count(*) from pg_constraint

@@ -21,7 +21,7 @@ with d as (
   where conrelid = 'movimientos_stock'::regclass
     and conname = 'movimientos_stock_destino_rechazo_check'
 )
-select
+select 'devolucion_al_proveedor' as QUE_MIGRACION,
   (select count(*) from information_schema.columns
     where table_name = 'movimientos_stock'
       and column_name = 'proveedor_devolucion_id') as col_proveedor,

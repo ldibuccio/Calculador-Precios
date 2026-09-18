@@ -684,6 +684,41 @@ la base adelante**, y si las dos filas salen idénticas en todo menos el
 testigo, eso es exactamente lo esperado y no una razón para pegar una sola.
 La regla de arriba dice correr en las dos; ésta dice **mostrar las dos**.
 
+#### Y el TESTIGO dice la BASE; el NOMBRE de la migración dice cuál es (18/09)
+
+El testigo cubre una sola de las dos formas de confundir dos filas, y el 18/09
+apareció la otra: **dos filas de la MISMA base y de DOS MIGRACIONES distintas**
+se leyeron como las dos bases de una. `1 · 1 · 0 · población · testigo` es el
+resultado bueno de cualquiera de las 24 verificaciones de este repo, así que
+con el testigo puesto las filas siguen siendo indistinguibles *entre
+migraciones* — el testigo contesta "de qué base", no "de qué migración".
+
+Costó un corte de producción: se pidieron las cuatro filas, llegaron dos, se
+leyeron como las dos bases al día, y se mergeó código que dependía de una
+migración que no había corrido en ninguna. La pantalla de armar pedidos tiró
+`column r.cantidad_original does not exist` a la mañana siguiente.
+
+**Y la segunda mitad casi se repite en espejo el mismo día**: llegó UNA fila,
+que podía leerse como "las dos bases". Lo que la identificó fue la población
+—1921 es Frutamax, 1103 es Palmala— o sea el testigo haciendo otra vez el
+trabajo de identificar en vez de el suyo.
+
+Por eso, desde el 18/09, **las 24 verificaciones abren con
+`'<nombre_de_la_migración>' as QUE_MIGRACION`**, como primera columna. Es lo
+primero que se lee al pegar la fila, y no hay que acordarse de nada:
+
+```
+renglon_agregado_a_mano     · 1 · 1 · 0 · 1921 · 19/09
+renglon_cantidad_corregida  · 1 · 1 · 0 · 1921 · 19/09
+```
+
+Las dos filas de arriba son de la MISMA base y se ve. Antes eran idénticas.
+
+**Las dos columnas son de trabajos distintos y hacen falta las dos**: el
+testigo dice de qué BASE, el nombre de qué MIGRACIÓN. Con una sola, la
+confusión se muda a la otra dimensión — que es exactamente lo que pasó entre
+la mañana y la tarde del mismo día.
+
 
 Corolario 16, del 08/09, y es una PRÁCTICA, no un patrón de bug: **un test
 de "esto no está duplicado" hay que correrlo con la duplicación puesta, o
@@ -8177,6 +8212,27 @@ _SQL_SUMAS_STOCK`) y de verificarla **contra la función misma**, no contra la
 intuición. Es el corolario 71 —una regla escrita dos veces con distinto
 poder— con la vuelta de que acá la copia sin poder es la que decide qué se
 arregla después.
+
+### La regla del MOMENTO, que es la que falló (del dueño)
+
+> **Una consulta de diagnóstico que decide si algo se construye tiene que
+> COLISIONAR CONTRA LA REGLA REAL antes de leer su número. No después.**
+
+Las tres formas de abajo estaban todas disponibles el día que escribí
+`arandano_2`, y las corrí **recién cuando el número volvió del dueño**. Ese
+orden es todo el error: para cuando colisioné, el 192 ya había salido en un
+mensaje, ya tenía la autoridad de una medición, y ya estaba por decidir la
+ventana de una alerta.
+
+**Y no es que haya faltado rigor al verificar: faltó verificar ANTES.** Una
+colisión hecha después no es una verificación — es una autopsia. Sirve para
+saber qué pasó; no para impedir que el número viaje.
+
+Lo que lo vuelve accionable es que el disparador es fácil de reconocer:
+**el momento es cuando la consulta va a devolver un número que alguien va a
+leer**, no cuando la consulta se termina de escribir. Si el resultado va a
+salir de mi pantalla —a un mensaje, a un doc, a una decisión— la colisión ya
+tiene que estar hecha.
 
 ### Cómo se verifica, y son TRES cosas distintas
 

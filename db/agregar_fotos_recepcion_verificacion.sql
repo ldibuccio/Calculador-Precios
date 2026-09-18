@@ -7,7 +7,7 @@
 --
 -- ultima_recepcion / recepcionadas son el TESTIGO DE ACTIVIDAD: sin él, una
 -- base detenida contesta cero a todo y el cero se lee como "acá está bien".
-select
+select 'agregar_fotos_recepcion' as QUE_MIGRACION,
   (select count(*) from pg_class
     where relname = 'fotos_recepcion'
       and relnamespace = 'public'::regnamespace)                         as tabla,

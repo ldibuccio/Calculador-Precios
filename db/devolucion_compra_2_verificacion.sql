@@ -1,9 +1,8 @@
 -- Verificacion de db/devolucion_compra_1_columna.sql.
 --
 -- CONTEOS POR NOMBRE y no una lista: con una lista, "todo bien" y "no
--- corrio" son la misma pantalla vacia. Y contar los constraint POR NOMBRE
--- es lo que la hace servir — un "¿existe algun check?" daria 1 y taparia
--- que el que se agrego es otro.
+-- corrio" son la misma pantalla vacia. Y por NOMBRE es lo que la hace
+-- servir: un "¿existe algun check?" daria 1 y taparia que es otro.
 --
 -- `columna 1 · solo_devolucion 1 · compra_o_proveedor 1` es el resultado
 -- bueno, y da lo mismo en las DOS bases por diseño. Por eso van los
@@ -19,7 +18,7 @@
 -- "todo bien", que es lo unico que importa. Una verificacion que corriera
 -- antes tendria que no nombrar la columna, y entonces no podria contar los
 -- ofensores, que es lo que de verdad vale mirar.
-select
+select 'devolucion_compra_2' as QUE_MIGRACION,
     (select count(*) from information_schema.columns
       where table_name = 'movimientos_stock'
         and column_name = 'compra_devolucion_id')                  as columna,

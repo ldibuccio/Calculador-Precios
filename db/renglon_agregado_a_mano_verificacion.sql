@@ -1,4 +1,4 @@
-select
+select 'renglon_agregado_a_mano' as QUE_MIGRACION,
   (select count(*) from information_schema.columns
     where table_name = 'pedidos_renglones'
       and column_name = 'agregado_a_mano_el')              as COLUMNA_de_1,

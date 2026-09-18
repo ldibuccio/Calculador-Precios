@@ -1,4 +1,4 @@
-select
+select 'colegas_4' as QUE_MIGRACION,
   (select count(*) from information_schema.tables
     where table_schema = 'public' and table_name = 'colegas')          as tabla_colegas_de_1,
   (select count(*) from information_schema.columns
@@ -21,7 +21,6 @@ select
   (select max(fecha_operacion) from movimientos_envase
     where anulado_el is null)                                          as TESTIGO_ultimo_movimiento;
 
--- ---------------------------------------------------------------------------
 -- Verificacion de los bloques 1 a 3. SE CORRE APARTE, nunca pegada a un `do`:
 -- juntos el editor se queda con la ultima y el `do` NO SE EJECUTA, sin error
 -- y con "no rows" — la salida normal de un `do` que si corrio.

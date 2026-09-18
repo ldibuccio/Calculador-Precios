@@ -5,7 +5,7 @@
 -- Esperado: movido_ok 1, sigue_en_stock 0, incoherentes 0.
 -- `ultimo_reingreso` es el testigo de actividad: sin él, una base sin
 -- reingresos devuelve todo en cero y el cero se lee como éxito.
-select
+select 'mover_un_reingreso_a_segunda' as QUE_MIGRACION,
     (select count(*) from movimientos_stock
       where id = 97 and destino_rechazo = 'segunda'
         and bultos_segunda = 10)                              as movido_ok,

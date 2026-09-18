@@ -11,7 +11,7 @@
 --
 -- Conteos y no una lista: con conteos siempre vuelve una fila y el cero se ve.
 -- Con una lista, "todo bien" y "no corrio" son la misma pantalla vacia.
-select
+select 'compra_en_caja_nuestra_2' as QUE_MIGRACION,
   (select count(*) from information_schema.columns
     where table_schema = 'public' and table_name = 'reprocesos'
       and column_name = 'compra_origen_id')                      as col_compra_origen,

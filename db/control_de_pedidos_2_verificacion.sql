@@ -14,7 +14,7 @@
 -- solos: `ultimo_armado` dice si la base arma pedidos, y `renglones_7d`
 -- contra cuánto se está contando. En una base quieta los tres ceros son
 -- verdaderos y no significan nada.
-select
+select 'control_de_pedidos_2' as QUE_MIGRACION,
     (select count(*) from information_schema.columns
       where table_name = 'pedidos_renglones' and column_name = 'controlado_el')  as columna,
     (select count(*) from pg_constraint

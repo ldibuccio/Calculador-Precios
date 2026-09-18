@@ -1,4 +1,4 @@
-select
+select 'renglon_cantidad_corregida' as QUE_MIGRACION,
   (select count(*) from information_schema.columns
     where table_name = 'pedidos_renglones'
       and column_name = 'cantidad_original')               as COLUMNA_de_1,

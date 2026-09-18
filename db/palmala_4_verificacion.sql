@@ -22,7 +22,8 @@ x as (
     left join fichas_logistica f on f.id = r.ficha_id
     where p.anulado_el is null and r.anulado_el is null
 )
-select count(*) filter (where ficha_id is not null)          as con_ficha,
+select 'palmala_4' as QUE_MIGRACION,
+  count(*) filter (where ficha_id is not null)          as con_ficha,
        count(*) filter (where ficha_id is null)              as todavia_sin_ficha,
        count(*) filter (where ficha_id is not null
                           and ficha_articulo <> articulo_id) as cruzados_articulo,

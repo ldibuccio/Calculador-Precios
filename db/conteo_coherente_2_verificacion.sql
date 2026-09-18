@@ -11,7 +11,7 @@
 -- con una fecha. `contados` no es un problema: es la población contra la que
 -- el check tiene algo que decir (corolario 45) — si diera 0, el check estaría
 -- puesto y no podría rechazar nada, y eso hay que saberlo.
-select
+select 'conteo_coherente_2' as QUE_MIGRACION,
     (select count(*) from pg_constraint
       where conrelid = 'articulos'::regclass
         and conname = 'articulos_conteo_coherente')                     as guarda,

@@ -5,7 +5,7 @@
 --
 -- `ultima_salida` es el TESTIGO DE ACTIVIDAD: sin él, una base sin un solo
 -- remito devuelve todo en cero y el cero se lee como éxito.
-select
+select 'agregar_merma_de_segunda_5' as QUE_MIGRACION,
     (select count(*) from information_schema.columns
       where table_schema = 'public' and table_name = 'remitos_segunda'
         and column_name = 'destino')                                  as columna_destino,

@@ -1,4 +1,4 @@
-select
+select 'vacios_deposito_4' as QUE_MIGRACION,
   (select count(*) from pg_tables where schemaname = 'public'
      and tablename = 'tipos_cajon')                                as t_tipos_cajon,
   (select count(*) from information_schema.columns
@@ -32,9 +32,9 @@ select
 --
 -- Las OCHO primeras columnas tienen que dar 1. Se cuentan POR DEFINICIÓN y no
 -- por nombre: un check con el nombre puesto y otro texto adentro existe igual.
--- `to_regclass` y no `::regclass` para que una tabla que falta cuente 0 en SU
--- columna en vez de reventar la consulta y dejar las otras siete sin contestar.
+-- `to_regclass` y no `::regclass`: una tabla que falta cuenta 0 en SU columna
+-- en vez de reventar la consulta y dejar las otras siete sin contestar.
 --
 -- LAS DOS ÚLTIMAS NO SON ADORNO: las ocho primeras dan lo mismo en las dos
--- bases por diseño, así que las filas son indistinguibles y el testigo es lo
--- único que dice de cuál base es cada una. Se pegan LAS DOS.
+-- bases por diseño, así que el testigo es lo único que dice de cuál base es
+-- la fila. Se pegan LAS DOS.

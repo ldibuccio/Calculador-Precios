@@ -10,7 +10,7 @@
 -- Probada corriéndola ANTES y DESPUÉS, y con el CHECK cambiado por otro
 -- del mismo nombre: ahí `guarda_formato` cae a 0 y el nombre solo diría 1.
 
-select
+select 'agregar_cuit_a_proveedores' as QUE_MIGRACION,
   (select count(*) from information_schema.columns
     where table_name = 'proveedores' and column_name = 'cuit') as col_cuit,
 

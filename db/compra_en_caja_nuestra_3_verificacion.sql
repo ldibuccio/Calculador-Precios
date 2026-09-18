@@ -1,6 +1,6 @@
 -- VERIFICACION de la marca "viene armada en caja nuestra" en la compra.
 -- Esperado en una base que todavia no la usa: 1 · 1 · 0 · 0 + poblacion y testigo.
-select
+select 'compra_en_caja_nuestra_3' as QUE_MIGRACION,
   (select count(*) from information_schema.columns
     where table_schema='public' and table_name='compras'
       and column_name='ficha_en_origen_id')                         as col_ficha_en_origen,

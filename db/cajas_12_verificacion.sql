@@ -1,4 +1,5 @@
-select count(*) filter (where c.ficha_en_origen_id is null)        as la_663_desmarcada,
+select 'cajas_12' as QUE_MIGRACION,
+  count(*) filter (where c.ficha_en_origen_id is null)        as la_663_desmarcada,
        count(*) filter (where c.ficha_en_origen_id is not null)    as sigue_marcada,
        (select count(*) from reprocesos
          where compra_origen_id = 663 and anulado_el is null)      as guias_VIVAS_de_la_663,

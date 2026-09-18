@@ -1,4 +1,4 @@
-select
+select 'envases_6' as QUE_MIGRACION,
  (select count(*) from information_schema.columns
    where table_name = 'envases' and column_name = 'umbral_reposicion')      as col_umbral,
  (select count(*) from information_schema.tables

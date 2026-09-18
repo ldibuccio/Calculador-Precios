@@ -6,7 +6,7 @@
 -- está bien todavía (nadie contó segunda aún). `ultimo_conteo` es el TESTIGO
 -- DE ACTIVIDAD: sin él, una base sin un solo conteo devuelve todo en cero y
 -- los ceros se leen como "acá no hay problema".
-select
+select 'agregar_conteo_de_segunda_3' as QUE_MIGRACION,
     (select count(*) from information_schema.columns
       where table_schema = 'public' and table_name = 'conteos_stock'
         and column_name = 'es_segunda')                             as columna_puesta,
