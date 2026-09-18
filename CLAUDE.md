@@ -2758,6 +2758,11 @@ puertas por las que pasa:
    circuito de vacíos como cualquier otro y no hay nada que hacer. **Si
    vuelve en caja de Día, la caja se va con ella.**
 
+   (Cuando esto se escribió, *"el circuito de vacíos"* era uno solo y no
+   hacía falta decir cuál. Desde el 18/09 son DOS: acá es **el del
+   DEPÓSITO** —el cajón es de un proveedor de Compras— y no el del puesto.
+   Ver "HAY DOS CIRCUITOS DE VACÍOS Y NO SE TOCAN".)
+
 Las tres son el mismo hecho —una caja nuestra deja el depósito sin pasar por
 vacíos— y ninguna de las tres lo anota.
 
@@ -2812,6 +2817,88 @@ sin que nada se descuadre. Es exactamente el perfil del campo que se deja
 de llenar (ver "Un campo sin consecuencia se llena vacío"), así que
 conviene mirar a las dos semanas si se está cargando. Si no se carga, la
 salida no es insistir: es darle consecuencia o sacarlo.
+
+## HAY DOS CIRCUITOS DE VACÍOS Y NO SE TOCAN (18/09)
+
+Escrito el día que nació el segundo, y a propósito **antes** de que alguien
+los confunda: es la familia de *dos cosas distintas con el mismo nombre*
+—la que este archivo paga una y otra vez— atajada por una vez en el momento
+de bautizar y no en la próxima lectura.
+
+| | **VACÍOS DEL PUESTO** (desde antes) | **VACÍOS DEL DEPÓSITO** (18/09) |
+|---|---|---|
+| de quién es el cajón | de un `proveedores_puesto` | de un `proveedores` de Compras |
+| cómo entra | un `clientes_puesto` lo trae, con seña o vale | **llega con la mercadería**, en la recepción |
+| cómo sale | el proveedor del puesto lo retira con el camión | se le devuelve al proveedor que lo vendió |
+| dónde vive | `vacios_recibidos` · `vacios_devueltos` · `conteos_vacios` · `ajustes_vacios` | `vacios_deposito_devoluciones` · `conteos_vacios_deposito` |
+| su catálogo | `tipos_envase_puesto` | `tipos_cajon` |
+
+**No comparten una sola tabla, y los dos "proveedor" son tablas distintas.**
+Lo único que comparten es la palabra, y por eso las tablas nuevas la llevan
+con `_deposito` pegado: un `conteos_vacios` a secas al lado de un
+`conteos_vacios_deposito` se distingue leyendo, que es lo único que se hace
+a las tres de la mañana.
+
+**Y `tipos_cajon` no es `envases`**, que es la tercera cosa que dice algo
+parecido: `envases` es LA CAJA NUESTRA con su costo, la que se le factura al
+cliente. `tipos_cajon` es el cajón AJENO en el que llega la fruta. Uno se
+paga, el otro se devuelve.
+
+### El stock es por PROVEEDOR, y el tipo de cajón no es una segunda dimensión
+
+Decisión del dueño: **un proveedor entrega siempre en el mismo tipo de
+cajón**, y se declara una vez en el alta. De ahí sale que
+`proveedores.tipo_cajon_id` sea UNA columna y no una tabla de cruce: el tipo
+es **cómo se llama el cajón de ese proveedor**, no un eje contra el cual
+contar. El circuito del puesto sí tiene las dos dimensiones, y por eso todas
+sus tablas llevan `tipo_envase_id` — la diferencia no es de estilo, es que
+allá un cliente trae cajones de varios tipos y acá no.
+
+La columna va **NULLABLE a propósito**: los proveedores ya cargados no la
+tienen y exigirla dejaría sin poder recepcionarles.
+
+### Y LA REGLA QUE ESTO DEJA: derivar es lo único que hace inmune al campo que no se llena
+
+Es del dueño, del 18/09, y es la parte CONSTRUCTIVA de *"un campo sin
+consecuencia se llena vacío"* — aquella sección dice que el arreglo está del
+lado del sistema, y ésta dice cuál es:
+
+> **Un dato que se DERIVA no tiene un campo del que acordarse, así que no
+> puede dejar de llenarse.**
+
+Las entradas de vacíos del depósito no se cargan: salen de las recepciones,
+que ya existen y las carga alguien porque necesita otra cosa. No hay
+formulario, no hay tilde, no hay nada que un operario pueda saltear en dos
+semanas.
+
+**Y el contraste está en este mismo archivo, tres párrafos más arriba**: el
+préstamo de cajas vacías al puesto **sí** es un campo, y su única
+consecuencia es que un aviso salte a tiempo. Ése es el que está en riesgo, y
+por eso tiene puesta su advertencia. Los dos son del mismo módulo y del mismo
+mes; lo que los separa es si el dato ya existía en otro lado.
+
+**Cómo se usa al diseñar, y es una pregunta**: antes de agregar un campo,
+*¿este número se puede sacar de algo que alguien ya carga por otro motivo?*
+Si la respuesta es sí, el campo no va — y lo que se gana no es una pantalla
+más corta: es que el dato no pueda faltar.
+
+Engancha con el corolario 80 por el otro extremo: allá lo derivado hace que
+*completar el dato de origen SEA el arreglo* —no hay una segunda columna que
+mantener al día—; acá hace que **no haya nada que completar**. Es la misma
+propiedad cobrada dos veces.
+
+### Y el vale NO toca el importe de la compra
+
+También del dueño: el descuento del vale vive SOLO en la fila de la
+devolución. **Es plata de ENVASE, no de mercadería**, y el sistema ya trata
+al envase por su lado — meterlo adentro de `compras.importe` mezclaría dos
+cosas que hasta hoy están separadas, y encima re-escribiría un número que ya
+se cargó en Administración.
+
+El neto, el día que haga falta, **se lee sumando las dos, no cambiando una**.
+Y se puede: la devolución guarda `compra_id`, así que la resta es un join y
+no una reconstrucción. Es el criterio de siempre —una cuenta se compone, no
+se pisa— dicho sobre plata en vez de sobre stock.
 
 ## El dato de uso decide qué MEJORAR, no qué SACAR
 
