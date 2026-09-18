@@ -4640,6 +4640,13 @@ def _puerta_de_gerencia_abierta(request):
         patch("app.main.listar_fotos_de_guia", return_value=[]),
         patch("app.main.listar_fotos_de_recepcion", return_value=[]),
         patch("app.main.listar_clientes", return_value=[]),
+        # La marca de "vino armada", que la pantalla lee para ofrecer sacarla.
+        # Por default SIN marca, que es el caso de casi todas las compras;
+        # los tests que miran ese bloque la parchean ellos.
+        patch("app.main.marca_en_origen_de_la_compra",
+              return_value={"ficha_id": None, "codigo_cliente": None,
+                            "envase_nombre": None, "cliente_nombre": None,
+                            "guias_vivas": []}),
     ):
         cliente.cookies.set("acceso_gerencia", _firma_acceso_gerencia("secreta"))
         try:

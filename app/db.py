@@ -3353,6 +3353,116 @@ def dependencias_del_lote_de_compra(compra_id: int, nueva_cantidad: float | None
     return resultado
 
 
+def marca_en_origen_de_la_compra(compra_id: int) -> dict:
+    """¿Esta compra dice que vino armada en caja nuestra, y su guía R sigue viva?
+
+    LAS DOS COSAS EN UNA LECTURA a propósito: la pantalla que ofrece
+    desmarcarla necesita las dos para no ser un callejón. Con la guía viva el
+    botón no va —la escritura lo rechaza— y lo que hay que mostrar es cuál
+    anular; preguntadas por separado, un día una pantalla ofrece lo que la
+    otra sabe que no se puede.
+
+    `ficha_id` en None es "no está marcada", que es el caso normal y no un
+    hueco: la inmensa mayoría de las compras llegan en el cajón del proveedor.
+    """
+    conexion = obtener_conexion()
+    try:
+        with conexion.cursor() as cursor:
+            # SIN agregado: `fetchone() is None` sobre un `count(*)` nunca es
+            # None y no distinguiría "no existe" de "existe" (corolario 27).
+            cursor.execute(
+                """
+                SELECT c.ficha_en_origen_id, f.nombre_cliente, e.nombre, cl.nombre
+                FROM compras c
+                LEFT JOIN fichas_logistica f ON f.id = c.ficha_en_origen_id
+                LEFT JOIN envases e ON e.id = f.envase_id
+                LEFT JOIN clientes cl ON cl.id = f.cliente_id
+                WHERE c.id = %s
+                """,
+                (compra_id,),
+            )
+            fila = cursor.fetchone()
+            if fila is None:
+                raise ValueError("Esa compra no existe.")
+            ficha_id, codigo, envase, cliente = fila
+
+            cursor.execute(
+                """
+                SELECT id FROM reprocesos
+                WHERE compra_origen_id = %s AND anulado_el IS NULL
+                ORDER BY id
+                """,
+                (compra_id,),
+            )
+            vivas = [f"R{f[0]}" for f in cursor.fetchall()]
+    finally:
+        conexion.close()
+
+    return {"ficha_id": ficha_id, "codigo_cliente": codigo,
+            "envase_nombre": envase, "cliente_nombre": cliente,
+            "guias_vivas": vivas}
+
+
+def desmarcar_compra_armada_en_origen(compra_id: int) -> None:
+    """Saca la marca "vino armada en caja nuestra" de una compra mal marcada.
+
+    ES LA INVERSA DE `marcar_compra_armada_en_origen`, y no es simétrica a
+    propósito: aquélla marca Y carga la guía R en la misma transacción; ésta
+    NO anula nada y EXIGE que la guía ya no esté. Anular tiene su propia
+    pantalla en Guías R, y hacerlo también acá sería la misma operación
+    escrita dos veces — la copia que se separe anularía guías que la otra
+    puerta no anula.
+
+    Es además la MISMA precondición que pide `corregir_recepcion_compra`, con
+    el mismo orden y nombrando la guía igual: mientras la guía viva exista,
+    la compra y la guía dicen lo mismo uno a uno y sacarle la marca a una
+    dejaría a la otra afirmando un reproceso que nadie declaró.
+
+    Deshacerlo NO MUEVE NINGÚN NÚMERO. Medido contra el esquema real: el
+    stock del artículo da lo mismo antes de la guía, con la guía, anulada y
+    desmarcada — y con las cajas YA ARMADAS el armado vuelve a tomar del
+    cajón, con `sin_lote` en cero. El reparto se rejuega en cada lectura.
+
+    NO se restringe a las recepcionadas: una compra pendiente mal marcada se
+    corrige desde Editar Compra, pero negarlo acá sería una pared en un
+    camino que no molesta a nadie.
+    """
+    conexion = obtener_conexion()
+    try:
+        with conexion.cursor() as cursor:
+            cursor.execute(
+                "SELECT ficha_en_origen_id FROM compras WHERE id = %s", (compra_id,)
+            )
+            fila = cursor.fetchone()
+            if fila is None:
+                raise ValueError("Esa compra no existe.")
+            if fila[0] is None:
+                raise ValueError("Esta compra no está marcada como armada en caja nuestra.")
+
+            cursor.execute(
+                """
+                SELECT id FROM reprocesos
+                WHERE compra_origen_id = %s AND anulado_el IS NULL
+                ORDER BY id
+                """,
+                (compra_id,),
+            )
+            vivas = [f[0] for f in cursor.fetchall()]
+            if vivas:
+                raise ValueError(
+                    "Esta compra todavía tiene viva la guía R "
+                    + ", ".join(f"R{g}" for g in vivas)
+                    + ". Anulá esa guía desde Guías R y volvé."
+                )
+
+            cursor.execute(
+                "UPDATE compras SET ficha_en_origen_id = NULL WHERE id = %s", (compra_id,)
+            )
+        conexion.commit()
+    finally:
+        conexion.close()
+
+
 def corregir_recepcion_compra(
     compra_id: int,
     cantidad_cajones_real: float,

@@ -111,6 +111,7 @@ from app.db import (
     contar_senas_pendientes_viejas,
     contar_stock_vacios_negativos,
     corregir_recepcion_compra,
+    desmarcar_compra_armada_en_origen,
     activar_casilla_pedidos,
     actualizar_casilla_pedidos,
     crear_articulo,
@@ -329,6 +330,7 @@ from app.db import (
     listar_estado_alertas,
     agregar_foto_recepcion,
     listar_fotos_de_recepcion,
+    marca_en_origen_de_la_compra,
     deficit_de_cajas_por_ficha,
     obtener_uso_storage_bucket,
     recepcionar_compra,
@@ -5417,7 +5419,7 @@ def ver_detalle_compra(request: Request, compra_id: int, aviso: str | None = Non
 
 def _renderizar_pantalla_corregir_recepcion(
     request: Request, compra_id: int, *, error: str | None = None, aviso=None,
-    precarga=None, status_code: int = 200
+    precarga=None, desmarcada: bool = False, status_code: int = 200
 ):
     try:
         compra = obtener_detalle_compra(compra_id)
@@ -5433,6 +5435,12 @@ def _renderizar_pantalla_corregir_recepcion(
         # click de distancia en otra pantalla.
         fotos_guia = _fotos_de_la_guia_de(compra) if compra else []
         fotos_balanza = listar_fotos_de_recepcion(compra_id) if compra else []
+        # ¿VINO ARMADA, Y SU GUÍA R SIGUE VIVA? Las dos salen de UNA lectura
+        # porque deciden juntas: con la guía viva el botón de desmarcar no va
+        # —la escritura lo rechaza— y lo que corresponde mostrar es cuál
+        # anular. Ofrecer un botón que el POST después rechaza es un
+        # callejón, y eso es peor que no ofrecer nada.
+        marca = marca_en_origen_de_la_compra(compra_id) if compra else None
     except Exception as error_db:
         raise HTTPException(status_code=500, detail=f"Error al conectar con la base de datos: {error_db}") from error_db
 
@@ -5444,6 +5452,7 @@ def _renderizar_pantalla_corregir_recepcion(
         "compra_corregir_recepcion.html",
         {"compra": compra, "error": error, "dependencias": dependencias,
          "fotos_guia": fotos_guia, "fotos_balanza": fotos_balanza,
+         "marca": marca, "desmarcada": desmarcada,
          "aviso": aviso, "precarga": precarga or {}},
         status_code=status_code,
     )
@@ -5641,7 +5650,7 @@ def cargar_ingreso_retroactivo(
 
 
 @app.get("/gerencia/compras/{compra_id}/corregir-recepcion")
-def ver_corregir_recepcion_compra(request: Request, compra_id: int):
+def ver_corregir_recepcion_compra(request: Request, compra_id: int, desmarcada: str = ""):
     """Formulario para corregir los valores reales de una compra ya recepcionada (ej. error de tipeo en Depósito).
 
     VIVE EN GERENCIA, y tiene que vivir acá: la cookie de la clave se emite
@@ -5658,7 +5667,52 @@ def ver_corregir_recepcion_compra(request: Request, compra_id: int):
     puerta = _puerta_de_gerencia_para_escribir(request)
     if puerta is not None:
         return puerta
-    return _renderizar_pantalla_corregir_recepcion(request, compra_id)
+    return _renderizar_pantalla_corregir_recepcion(
+        request, compra_id, desmarcada=bool(desmarcada.strip()))
+
+
+@app.post("/gerencia/compras/{compra_id}/desmarcar-armada")
+def desmarcar_armada_ruta(request: Request, compra_id: int):
+    """Saca la marca "vino armada en caja nuestra" de una compra mal marcada.
+
+    VIVE ACÁ Y NO EN BUSCAR COMPRAS, que es donde se MARCA, y la razón no es
+    de comodidad: desmarcar exige que la guía R esté anulada, y anular vive
+    detrás de la clave de Administración. Ofrecerlo en una pantalla sin clave
+    sería ofrecer algo cuya precondición el que lo ve no puede cumplir — el
+    link que manda a una puerta ajena (corolario 56).
+
+    Y ACÁ LA PRECONDICIÓN YA ESTABA ESCRITA: `corregir_recepcion_compra`
+    rebota con la misma guía viva, con el mismo mensaje. Poner el desmarcar
+    en otra pantalla habría sido una segunda copia de esa regla.
+
+    SOLO DESMARCA, no marca. Marcar carga la guía R en la misma transacción y
+    ya tiene su puerta en Buscar Compras; un selector de fichas acá sería una
+    segunda forma de marcar, con su propia regla al lado de la que existe.
+
+    Y VA EN SU PROPIO FORMULARIO, no como un campo del de arriba: ahí habría
+    que re-tipear los valores reales para cambiar una marca, y aceptar de
+    nuevo unos números que no se querían tocar es justo lo que este proyecto
+    dice del valor precargado plausible.
+    """
+    puerta = _puerta_de_gerencia_para_escribir(request)
+    if puerta is not None:
+        return puerta
+
+    try:
+        desmarcar_compra_armada_en_origen(compra_id)
+    except ValueError as invalida:
+        # Dato mal pedido, no una falla del sistema: se muestra en la
+        # pantalla, nunca un 500.
+        return _renderizar_pantalla_corregir_recepcion(
+            request, compra_id, error=str(invalida), status_code=400
+        )
+    except Exception as error_db:
+        raise HTTPException(status_code=500, detail=f"Error al conectar con la base de datos: {error_db}") from error_db
+
+    return RedirectResponse(
+        url=f"/gerencia/compras/{compra_id}/corregir-recepcion?desmarcada=1",
+        status_code=303,
+    )
 
 
 @app.post("/gerencia/compras/{compra_id}/corregir-recepcion")

@@ -1488,3 +1488,161 @@ def test_la_consulta_del_CATALOGO_trae_las_dos_columnas_del_filtro():
         "el catálogo de cajas por artículo filtra las de envase perdido con "
         "estas dos: la consulta las tiene que traer"
     )
+
+
+# ---------------------------------------------------------------------------
+# DESMARCAR UNA COMPRA MAL MARCADA COMO "VINO ARMADA"
+# ---------------------------------------------------------------------------
+#
+# El 18/09 aparecio una compra de Pera marcada contra una ficha de envase
+# perdido. El filtro de 2770e7c impide que vuelva a pasar; esta es la puerta
+# para la que ya estaba, y para la proxima que se marque mal por otro motivo.
+#
+# Vive en Corregir Recepcion y no en Buscar Compras —que es donde se MARCA—
+# porque desmarcar exige que la guia R este anulada, y anular vive detras de
+# la clave de Administracion.
+
+def _pantalla_corregir(marca, estado="recepcionado"):
+    compra = {"id": 663, "proveedor_nombre": "Proveedor EJEMPLO",
+              "proveedor_codigo_puesto": "N01P01", "articulo_nombre": "Pera EJEMPLO",
+              "guia_id": 105, "guia_punto": 2, "estado": estado,
+              "cantidad_cajones_real": 5.0, "contenido_por_cajon_real": 18.0,
+              "cantidad_kilos_real": 90.0, "cantidad_cajones": 5.0,
+              "contenido_por_cajon": 18.0, "cantidad_kilos": 90.0,
+              "cantidad_fraccion": None, "cantidad_fraccion_real": None,
+              "unidad_compra": "kilo", "unidad_conteo": None,
+              "cantidad_cajones_rechazada": None, "motivo_rechazo": None,
+              "importe": 40000.0, "articulo_id": 1}
+    from app.main import _firma_acceso_gerencia
+    with (
+        patch.dict(os.environ, {"CLAVE_GERENCIA": "secreta"}),
+        patch("app.main.obtener_detalle_compra", return_value=compra),
+        patch("app.main._dependencias_con_nombres", return_value=None),
+        patch("app.main._fotos_de_la_guia_de", return_value=[]),
+        patch("app.main.listar_fotos_de_recepcion", return_value=[]),
+        # El parche ES, el solo, la asercion de que `app.main` importa el
+        # nombre (corolario 51).
+        patch("app.main.marca_en_origen_de_la_compra", return_value=marca),
+    ):
+        cliente.cookies.set("acceso_gerencia", _firma_acceso_gerencia("secreta"))
+        try:
+            return cliente.get("/gerencia/compras/663/corregir-recepcion")
+        finally:
+            cliente.cookies.clear()
+
+
+SIN_GUIA_VIVA = {"ficha_id": 21, "codigo_cliente": "PERA COMERCI",
+                 "envase_nombre": None, "cliente_nombre": "Cliente EJEMPLO",
+                 "guias_vivas": []}
+CON_GUIA_VIVA = dict(SIN_GUIA_VIVA, guias_vivas=["R354"])
+NO_MARCADA = {"ficha_id": None, "codigo_cliente": None, "envase_nombre": None,
+              "cliente_nombre": None, "guias_vivas": []}
+
+
+def test_la_compra_MARCADA_y_sin_guia_viva_OFRECE_sacarle_la_marca():
+    """SOBRE LA RESPUESTA ENTERA y anclado en atributos, no con
+    split("</style>")[-1]: esta pantalla incluye `_fotos_guia.html`, que trae
+    su propio <style>, asi que el ultimo corte se come el bloque entero y el
+    assert falla diciendo que no esta cuando esta (corolario 50)."""
+    texto = _pantalla_corregir(SIN_GUIA_VIVA).text
+    assert 'action="/gerencia/compras/663/desmarcar-armada"' in texto
+    assert "<h3>Esta compra dice que vino armada en caja nuestra</h3>" in texto
+    # Y dice de que ficha, porque "sacar la marca" sin decir cual invita a
+    # sacarla de la compra equivocada.
+    assert "PERA COMERCI" in texto
+
+
+def test_con_la_GUIA_VIVA_no_hay_boton_y_dice_CUAL_anular():
+    """El callejon: ofrecer algo que la escritura despues rechaza es peor que
+    no ofrecer nada — el que lo aprieta se come un error por algo que la
+    pantalla le propuso."""
+    texto = _pantalla_corregir(CON_GUIA_VIVA).text
+    assert 'action="/gerencia/compras/663/desmarcar-armada"' not in texto
+    assert "<strong>Primero anulá R354</strong>" in texto
+
+
+def test_una_compra_SIN_marca_no_muestra_nada_de_esto():
+    """El caso normal, y el unico que distingue "ofrece cuando corresponde"
+    de "ofrece siempre" (corolario 30)."""
+    texto = _pantalla_corregir(NO_MARCADA).text
+    assert "desmarcar-armada" not in texto
+    assert "<h3>Esta compra dice que vino armada en caja nuestra</h3>" not in texto
+
+
+def _cursor_desmarcar(ficha, guias_vivas):
+    """El orden de los fetchone/fetchall es el orden en que la funcion pregunta."""
+    cursor = MagicMock()
+    cursor.fetchone.side_effect = [(ficha,)]
+    cursor.fetchall.side_effect = [[(g,) for g in guias_vivas]]
+    conexion = MagicMock()
+    conexion.cursor.return_value.__enter__.return_value = cursor
+    return conexion, cursor
+
+
+def _desmarcar(ficha=21, guias_vivas=()):
+    from app.db import desmarcar_compra_armada_en_origen
+    conexion, cursor = _cursor_desmarcar(ficha, guias_vivas)
+    with patch("app.db.obtener_conexion", return_value=conexion):
+        desmarcar_compra_armada_en_origen(663)
+    return conexion, cursor
+
+
+def test_desmarcar_pone_la_marca_en_NULL_y_COMMITEA():
+    """El caso FELIZ, que es el unico que distingue una guarda que funciona de
+    una que siempre frena (corolario 30)."""
+    conexion, cursor = _desmarcar()
+    consulta, parametros = next(
+        c.args for c in cursor.execute.call_args_list
+        if "UPDATE compras" in c.args[0]
+    )
+    assert "ficha_en_origen_id = NULL" in consulta
+    assert parametros == (663,)
+    conexion.commit.assert_called_once()
+
+
+def test_desmarcar_con_la_GUIA_VIVA_rebota_NOMBRANDOLA_y_no_escribe():
+    from app.db import desmarcar_compra_armada_en_origen
+    conexion, cursor = _cursor_desmarcar(21, [354])
+    with patch("app.db.obtener_conexion", return_value=conexion):
+        with pytest.raises(ValueError) as rebote:
+            desmarcar_compra_armada_en_origen(663)
+    # NOMBRA la guia: un "no se puede" que no dice que lo retiene manda a
+    # adivinar, y es la misma frase que ya da corregir_recepcion_compra.
+    assert "R354" in str(rebote.value)
+    assert not [c for c in cursor.execute.call_args_list if "UPDATE compras" in c.args[0]]
+    conexion.commit.assert_not_called()
+
+
+def test_desmarcar_una_que_NO_esta_marcada_rebota():
+    from app.db import desmarcar_compra_armada_en_origen
+    conexion, cursor = _cursor_desmarcar(None, [])
+    with patch("app.db.obtener_conexion", return_value=conexion):
+        with pytest.raises(ValueError, match="no está marcada"):
+            desmarcar_compra_armada_en_origen(663)
+    conexion.commit.assert_not_called()
+
+
+def test_desmarcar_NO_anula_la_guia_y_eso_es_una_DECISION():
+    """Anular tiene su propia pantalla en Guias R. Hacerlo tambien aca seria
+    la misma operacion escrita dos veces, y la copia que se separe anularia
+    guias que la otra puerta no anula.
+
+    Se afirma sobre el TEXTO de la funcion, no sobre el resultado: con la
+    guia viva rebota antes de llegar a ningun UPDATE, asi que un test de
+    comportamiento pasa igual con un `anulado_el = now()` escrito adentro."""
+    fuente = io.open("app/db.py", encoding="utf-8").read()
+    cuerpo = fuente.split("def desmarcar_compra_armada_en_origen")[1].split("\ndef ")[0]
+    codigo = cuerpo.split('"""', 2)[2]
+    assert "anulado_el = " not in codigo and "anular" not in codigo.lower()
+
+
+def test_la_pantalla_pregunta_por_LA_MISMA_guarda_que_la_escritura():
+    """Las dos leen las guias vivas de `reprocesos` con el mismo filtro. Si se
+    separan, la pantalla ofrece un boton que el POST despues rechaza — el
+    callejon que este bloque vino a evitar."""
+    fuente = io.open("app/db.py", encoding="utf-8").read()
+    filtro = "WHERE compra_origen_id = %s AND anulado_el IS NULL"
+    for nombre in ("marca_en_origen_de_la_compra", "desmarcar_compra_armada_en_origen",
+                   "corregir_recepcion_compra"):
+        cuerpo = fuente.split(f"def {nombre}")[1].split("\ndef ")[0]
+        assert filtro in cuerpo, f"{nombre} dejo de preguntar por la guia viva igual"

@@ -1640,6 +1640,44 @@ escribe un `.sql` a mano para la misma FORMA de operación, eso ya no es un
 arreglo puntual — es una función que falta. La primera vez es un
 incidente; la segunda es un diagnóstico.
 
+### Y el 18/09 se construyó en la PRIMERA, por pedido del dueño
+
+*"Esta es la primera vez y va a haber una segunda."* Una compra de Pera
+quedó marcada como "vino armada en caja nuestra" contra una ficha de envase
+perdido, y **Editar Compra está bloqueada para las recepcionadas**, así que
+no había pantalla que pudiera sacarle la marca.
+
+El criterio es el mismo que el de las fichas borradas —**medir antes de
+construir la CURA; no antes de cerrar la PUERTA**— aplicado a una tercera
+cosa: acá la puerta ya estaba cerrada (2770e7c) y lo que faltaba era el
+camino para lo que ya había entrado. El `.sql` de un solo uso
+(`db/cajas_12_*.sql`) y la pantalla se hicieron el mismo día, y el `.sql`
+sigue siendo el que corrige ESA fila: la pantalla es para la próxima.
+
+**DÓNDE va la puerta se decidió por la PRECONDICIÓN, no por comodidad.**
+Desmarcar exige que la guía R esté anulada, y anular vive detrás de la clave
+de Administración. En Buscar Compras —que es donde se MARCA y no tiene
+clave— habría sido ofrecer algo cuya precondición el que lo ve no puede
+cumplir: el corolario 56, el link que manda a una puerta ajena. En Corregir
+Recepción, además, **la precondición ya estaba escrita**: esa función rebota
+con la misma guía viva y con el mismo mensaje, así que el desmarcar la reusa
+en vez de estrenar una segunda copia.
+
+**Y la inversa NO es simétrica, a propósito.** Marcar carga la guía R en la
+misma transacción; desmarcar **no anula nada** y exige que la guía ya no
+esté. Anular tiene su propia pantalla, y hacerlo también acá sería la misma
+operación escrita dos veces — la copia que se separe anularía guías que la
+otra puerta no anula. Lo cuida un test que lee el CUERPO de la función y
+exige que la palabra no esté: con la guía viva rebota antes de llegar a
+ningún UPDATE, así que un test de comportamiento pasa igual con un
+`anulado_el = now()` escrito adentro.
+
+**Y el botón solo aparece donde la escritura ACEPTA**: con la guía viva se
+muestra cuál anular y no hay botón. Las dos mitades preguntan por el mismo
+filtro y hay un test que lo exige en las TRES funciones que lo usan —
+ofrecer algo que el POST después rechaza es un callejón, y eso es peor que
+no ofrecer nada.
+
 ### Y DESDE EL 17/09 HAY UN TEST, porque la variante peor es la ruta sin botón
 
 `/compras/cajas` se construyó entera —migración en las dos bases, pantalla,

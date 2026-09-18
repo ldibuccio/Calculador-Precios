@@ -108,6 +108,37 @@
     font-size: 0.85rem;
     text-decoration: none;
   }
+  .marca-armada {
+    border: 1px solid #d6a400;
+    background: #fffaf0;
+    border-radius: 8px;
+    padding: 0.85rem;
+    margin-top: 1rem;
+  }
+  .marca-armada h3 { margin: 0 0 0.4rem; font-size: 1rem; }
+  .marca-armada p { margin: 0 0 0.6rem; font-size: 0.9rem; line-height: 1.4; }
+  /* 44px de alto: es el minimo para tocarlo con el pulgar, que es regla de
+     este proyecto. Y ancho completo porque en 390px un boton al lado del
+     texto se desborda. */
+  .marca-armada button {
+    width: 100%;
+    min-height: 44px;
+    border: 0;
+    border-radius: 6px;
+    background: #b36b00;
+    color: #fff;
+    font-size: 1rem;
+    font-weight: 600;
+    cursor: pointer;
+  }
+  .desmarcada {
+    border: 1px solid #2e7d32;
+    background: #f1f8f2;
+    border-radius: 8px;
+    padding: 0.85rem;
+    margin-top: 1rem;
+    font-size: 0.9rem;
+  }
 </style>
 </head>
 <body>
@@ -129,6 +160,41 @@
 
   {% if error %}
   <div class="error">{{ error }}</div>
+  {% endif %}
+
+  {% if desmarcada %}
+  <div class="desmarcada">Listo: esta compra ya no dice que vino armada en
+    caja nuestra.</div>
+  {% endif %}
+
+  {# VINO ARMADA, Y SE PUEDE SACAR. Marcar vive en Buscar Compras —y carga la
+     guia R en la misma transaccion—; aca SOLO se desmarca, porque desmarcar
+     exige que la guia este anulada y anular vive detras de esta misma clave.
+
+     Y EL BOTON SOLO APARECE DONDE LA ESCRITURA ACEPTA: con la guia viva se
+     muestra cual anular y NO hay boton. Ofrecer algo que el POST despues
+     rechaza es un callejon — el que lo aprieta se come un error por algo que
+     la pantalla le propuso. #}
+  {% if marca and marca.ficha_id %}
+  <div class="marca-armada">
+    <h3>Esta compra dice que vino armada en caja nuestra</h3>
+    <p>En {{ marca.envase_nombre or "una ficha SIN envase (envase perdido)" }}{% if marca.cliente_nombre %},
+      de {{ marca.cliente_nombre }}{% endif %}{% if marca.codigo_cliente %}
+      ({{ marca.codigo_cliente }}){% endif %}.</p>
+    {% if marca.guias_vivas %}
+    <p><strong>Primero anulá {{ marca.guias_vivas | join(", ") }}</strong> desde
+      Guías R. Mientras esa guía exista, la compra y la guía dicen lo mismo uno
+      a uno y sacarle la marca a una dejaría a la otra afirmando un reproceso
+      que nadie declaró.</p>
+    {% else %}
+    <p>Si en realidad llegó en el cajón del proveedor, sacale la marca. No
+      mueve ningún número: el stock y el reparto se rejuegan en cada lectura.</p>
+    <form method="post" action="/gerencia/compras/{{ compra.id }}/desmarcar-armada"
+          onsubmit="return confirm('¿Sacarle la marca de armada a esta compra?');">
+      <button type="submit">No vino armada: sacar la marca</button>
+    </form>
+    {% endif %}
+  </div>
   {% endif %}
 
   <div class="tarjeta">
