@@ -100,6 +100,17 @@ comment on column articulos.merma_porcentaje is 'Porcentaje de merma esperado de
 -- ----------------------------------------------------------------------------
 -- 2. PROVEEDORES — identidad estable: codigo_puesto (ej. N07P41)
 -- ----------------------------------------------------------------------------
+create table tipos_cajon (
+    id                 bigint generated always as identity primary key,
+    nombre             text not null,
+    nombre_normalizado text not null unique,
+    activo             boolean not null default true,
+    creado_en          timestamptz not null default now()
+);
+
+comment on table tipos_cajon is 'Catálogo de tipos de cajón FÍSICO de los proveedores de Compras (el envase en el que llega la mercadería al depósito). NO es tipos_envase_puesto —ese es del circuito del puesto— ni envases, que es el costo de la caja nuestra facturada al cliente.';
+comment on column tipos_cajon.nombre_normalizado is 'nombre en minúsculas, sin acentos ni espacios de más. El UNIQUE evita el mismo cajón escrito de tres formas, igual que en proveedores_puesto.';
+
 create table proveedores (
     id              bigint generated always as identity primary key,
     nombre          text not null,
@@ -107,6 +118,7 @@ create table proveedores (
     actualizado_en  timestamptz not null default now(),
     codigo_puesto   text unique not null check (codigo_puesto ~ '^[NL][0-9]{2}P[0-9]{2}$'),
     activo          boolean not null default true,
+    tipo_cajon_id   bigint references tipos_cajon (id),
     -- Once dígitos sin guiones, y NULLABLE: la mayoría de los puestos no lo
     -- tiene cargado y exigirlo dejaría sin poder crear un proveedor en el
     -- Mercado. Ver db/agregar_cuit_a_proveedores.sql.
@@ -631,6 +643,51 @@ comment on column ajustes_vacios.cantidad is 'Cajones del ajuste: positiva suma,
 comment on column ajustes_vacios.motivo is 'Motivo obligatorio, escrito a mano. Sin motivo no se guarda (el CHECK lo garantiza también en la base).';
 comment on column ajustes_vacios.stock_sistema is 'Stock del sistema (recibidos − devueltos + ajustes, SIN este ajuste) en el instante de guardar — misma foto que en devoluciones y conteos.';
 comment on column ajustes_vacios.anulado_el is 'NULL = ajuste vigente. Igual que los demás movimientos: anular deja el registro visible, nunca se borra.';
+
+-- ----------------------------------------------------------------------------
+-- 11 bis. VACÍOS DEL DEPÓSITO — los cajones del proveedor de COMPRAS
+-- Universo aparte del circuito del puesto de arriba, y a propósito: allá el
+-- cliente del puesto trae cajones y un proveedor_puesto los retira; acá el
+-- cajón llega al depósito CON la mercadería y se le devuelve al proveedor
+-- que la vendió. Las dos puntas, las dos tablas y los dos catálogos son
+-- distintos, y juntarlos por compartir la palabra "vacíos" es cómo dos cosas
+-- con el mismo nombre se cobran en la próxima lectura.
+--
+-- LAS ENTRADAS NO SE CARGAN: se derivan de las recepciones. Un campo más que
+-- alguien tiene que acordarse de llenar, cuya única consecuencia es que el
+-- aviso salte a tiempo, es exactamente el campo que se deja de llenar.
+-- ----------------------------------------------------------------------------
+
+create table vacios_deposito_devoluciones (
+    id             bigint generated always as identity primary key,
+    proveedor_id   bigint  not null references proveedores (id),
+    compra_id      bigint  not null references compras (id),
+    cantidad       integer not null check (cantidad > 0),
+    importe        numeric check (importe is null or importe >= 0),
+    foto_ruta      text,
+    stock_sistema  integer not null,
+    creado_en      timestamptz not null default now(),
+    anulado_el     timestamptz
+);
+
+comment on table vacios_deposito_devoluciones is 'Salida: se le devuelven al proveedor SUS cajones vacíos. Es lo único que se carga a mano del circuito del depósito — las entradas se derivan de las recepciones.';
+comment on column vacios_deposito_devoluciones.compra_id is 'CONTRA QUÉ COMPRA se aplica el vale. Obligatorio: el descuento no es una cuenta corriente contra el proveedor, vive pegado a la compra concreta contra la que se entregó el vale.';
+comment on column vacios_deposito_devoluciones.importe is 'Lo que ese vale descuenta, si tiene importe. NO toca compras.importe ni el costeo: el descuento vive SOLO acá. NULLABLE porque una devolución puede no tener plata atrás.';
+comment on column vacios_deposito_devoluciones.stock_sistema is 'Stock derivado (entradas − devoluciones, sin este movimiento) EN el instante de guardar. Mismo criterio que vacios_devueltos del puesto.';
+comment on column vacios_deposito_devoluciones.anulado_el is 'NULL = vigente. Se anula, nunca se borra: el stock lo excluye y el registro queda como corrección.';
+
+create table conteos_vacios_deposito (
+    id             bigint generated always as identity primary key,
+    proveedor_id   bigint  not null references proveedores (id),
+    cantidad       integer not null check (cantidad >= 0),
+    fecha          date    not null,
+    stock_sistema  integer not null,
+    creado_en      timestamptz not null default now()
+);
+
+comment on table conteos_vacios_deposito is 'Conteo físico de los cajones de un proveedor que hay en el galpón. El primero de cada proveedor es su BASE: antes de él no hay cuenta, y las recepciones anteriores a su fecha quedan absorbidas.';
+comment on column conteos_vacios_deposito.fecha is 'El día del conteo, que es lo que decide qué recepciones se suman y cuáles quedan absorbidas. Va aparte de creado_en porque se puede contar hoy y fechar ayer.';
+comment on column conteos_vacios_deposito.stock_sistema is 'Stock derivado EN el instante del conteo, guardado del lado del server: el que cuenta no lo ve. Si lo viera, transcribe en vez de contar.';
 
 -- ----------------------------------------------------------------------------
 -- 12. ÍNDICES DE RENDIMIENTO
