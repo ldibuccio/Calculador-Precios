@@ -4145,8 +4145,9 @@ construir (corolario 23) existe para no inventar pantallas que nadie va a
 mirar: ahí el número decide SI el problema existe. Acá el problema no
 dependía del número — la FK dice `set null` y eso desconecta, haya pasado
 una vez o ninguna. El número dimensiona el RESCATE de lo ya roto, que es
-otra decisión y sigue abierta. **Medir antes de construir la CURA; no antes
-de cerrar la PUERTA.**
+otra decisión —**y esa se cerró el mismo 14/09 en cero: no hubo ningún precio
+desconectado en ninguna de las dos bases**, así que no hay nada que rescatar.
+**Medir antes de construir la CURA; no antes de cerrar la PUERTA.**
 
 Los precios cuelgan de la FICHA, y esa FK es `on delete set null`. Así que
 borrar una ficha **no borra sus precios: les pone `ficha_id` en NULL.** Y
@@ -4267,9 +4268,11 @@ pantalla las fichas sin precio: antes salía marcada en amarillo y ahora no
 sale. La diferencia importa para el que lea esto buscando el síntoma —
 pasó de estar mal etiquetada a ser invisible.)
 
-La PUERTA ya está cerrada; lo que ese número decide es si hace falta un
-rescate de lo que quedó roto antes, y hasta que alguien lo corra el tamaño
-no se sabe.
+La PUERTA ya está cerrada, y el número que decidía si hacía falta un rescate
+**se corrió el mismo día y dio CERO en las dos bases**: nunca se desconectó un
+precio, así que no quedó ninguna ficha invisible por esto. Lo que sigue
+valiendo es el síntoma descrito arriba, para el día que aparezca uno por otra
+vía.
 
 ### Y el docstring de la ruta decía lo CONTRARIO que el de la función
 
