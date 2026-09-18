@@ -76,8 +76,33 @@ forma de saber que entró.
   un artículo aparece partido y sus compras no fueron tocadas, ése es el caso
   a mirar antes de creerle.
 
-## Y lo de Reproceso va SIN umbral
+## Y lo de Reproceso iba SIN umbral — HECHO el 18/09
 
-Al elegir el lote, la pantalla muestra proveedor y fecha y **no de cuántos
-kilos son las cajas**. Eso se agrega siempre y no depende de ningún criterio:
+Al elegir el lote, la pantalla mostraba proveedor y fecha y **no de cuántos
+kilos son las cajas**. Se agregó siempre y sin depender de ningún criterio:
 ahí se quiere el número exacto de lo que se va a usar.
+
+Quedó pegado al "quedan", y no al final del renglón, porque **no es un dato
+más sobre el lote: es la unidad del número de al lado.** "Quedan 12" no se
+puede leer sin saber 12 de qué.
+
+Y salió en las DOS pantallas que eligen lote —Reproceso y el "De dónde salió"
+de Armar Pedido— porque las dos dibujan las filas con el mismo
+`_desglose_para_pantalla`. Con una sola, el mismo lote diría una cosa acá y
+otra allá.
+
+**Lo que NO tiene el dato no lo inventa**: solo los lotes de COMPRA declaran
+contenido (`tipo_lote = 'guia'`, cuyo `origen_id` es el id de la compra). Un
+ajuste o el stock inicial no, y su fila se dibuja sin eso. Lo cuida el test
+del ajuste, que es la mitad que un caso feliz no puede ver: un kilaje
+deducido de cualquier cosa pasaría el assert del caso bueno y mentiría ahí.
+
+**Medido a 390px, que es donde vive esta pantalla**: el renglón corto sigue
+en 18px de una línea, y el largo —el que trae proveedor porque hay dos lotes
+del mismo día— ya eran tres líneas antes del kilaje y siguen siendo tres.
+Cero desborde y cero solapes contra el input de al lado. El agregado sale
+gratis a lo alto.
+
+**Lo que sigue esperando a `kilajes_1` es el otro**: el corte del stock por
+kilaje, que sí necesita un umbral. Los dos estaban en este documento y son
+decisiones distintas.

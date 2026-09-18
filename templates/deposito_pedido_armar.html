@@ -793,8 +793,11 @@
         const fila = document.createElement("div");
         fila.className = "fila-lote-armado";
         const texto = document.createElement("span");
+        // Con el kilaje pegado al "quedaban", por lo mismo que en Reproceso:
+        // el número de al lado no se puede leer sin la unidad del bulto.
         texto.textContent = (lote.detalle ? lote.fecha + " · " + lote.detalle : lote.fecha)
-          + " · quedaban " + lote.restante;
+          + " · quedaban " + lote.restante
+          + (lote.kilaje ? " de " + lote.kilaje : "");
         const campo = document.createElement("input");
         campo.type = "number";
         campo.id = "lote-" + renglonId + "-" + lote.clave;

@@ -526,8 +526,14 @@
         const fila = document.createElement("div");
         fila.className = "fila-lote";
         const texto = document.createElement("span");
+        // EL KILAJE VA PEGADO AL "QUEDAN", no al final: "quedan 12" no se
+        // puede leer sin saber 12 de qué. Doce cajones de 16 k y doce de 10
+        // son cosas distintas, y acá se está eligiendo justamente eso.
+        // Vacío cuando el lote no lo declara — un ajuste no tiene contenido
+        // y no se inventa.
         texto.textContent = (lote.detalle ? lote.fecha + " · " + lote.detalle : lote.fecha)
-          + " · quedan " + lote.restante;
+          + " · quedan " + lote.restante
+          + (lote.kilaje ? " de " + lote.kilaje : "");
         const campo = document.createElement("input");
         campo.type = "number";
         campo.id = "lote-" + lote.clave;

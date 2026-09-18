@@ -22443,6 +22443,10 @@ def _pantalla_de_reproceso_con(datos, **parches):
         "app.main.listar_clientes": [{"id": 1, "nombre": "Día"}],
         "app.main._ayudas_ficha_por_cliente_y_articulo": {},
         "app.main._fichas_por_cliente_y_articulo": {},
+        # El contenido por bulto de cada lote, que la pared dibuja al lado
+        # del "quedan": es una lectura de la base y la pide TODO re-render
+        # de esta pantalla, incluido el de error.
+        "app.main.contenido_por_bulto_de_lotes": {},
         # El catálogo de cajas de la pregunta "¿usaste una caja nuestra?".
         # Está acá y no en cada test porque lo pide TODO re-render de esta
         # pantalla, incluidos los de error — que es donde más se olvida.
@@ -22638,14 +22642,22 @@ def test_el_desglose_muestra_el_proveedor_SOLO_para_desempatar_el_mismo_dia():
          "detalle": "Rodríguez", "restante": 5.0},
     ]
 
-    with patch("app.main.lotes_para_reproceso",
-               return_value={"lotes": lotes, "sin_lote": 0, "stock": 30}):
+    with (
+        # El kilaje sale de una lectura aparte; acá se parchea en
+        # vacío, que es el caso del lote que no declara contenido.
+        patch("app.main.contenido_por_bulto_de_lotes", return_value={}),
+        patch("app.main.lotes_para_reproceso",
+               return_value={"lotes": lotes, "sin_lote": 0, "stock": 30}),
+    ):
         datos = cliente.get("/deposito/stock/reproceso/desglose"
                             "?articulo_id=1&fecha=2026-09-02&bultos=20").json()
 
     # El 28/08 está solo ese día: no necesita proveedor.
     assert datos["lotes"][0] == {"clave": "guia:101", "tipo_lote": "guia", "origen_id": 101,
-                                 "fecha": "28/08", "restante": 13.0, "detalle": ""}
+                                 "fecha": "28/08", "restante": 13.0, "detalle": "",
+                                 # Sin contenido declarado el renglón no
+                                 # lo inventa: el hueco es verdadero.
+                                 "kilaje": ""}
     # Los dos del 02/09 sí, o no se distinguen.
     assert datos["lotes"][1]["detalle"] == "Vitale"
     assert datos["lotes"][2]["detalle"] == "Rodríguez"
@@ -22658,8 +22670,13 @@ def test_el_desglose_propone_del_mas_viejo_primero_y_avisa_si_no_alcanza():
         {"tipo_lote": "guia", "origen_id": 102, "fecha_lote": date(2026, 9, 2),
          "detalle": "Vitale", "restante": 12.0},
     ]
-    with patch("app.main.lotes_para_reproceso",
-               return_value={"lotes": lotes, "sin_lote": 0, "stock": 25}):
+    with (
+        # El kilaje sale de una lectura aparte; acá se parchea en
+        # vacío, que es el caso del lote que no declara contenido.
+        patch("app.main.contenido_por_bulto_de_lotes", return_value={}),
+        patch("app.main.lotes_para_reproceso",
+               return_value={"lotes": lotes, "sin_lote": 0, "stock": 25}),
+    ):
         alcanza = cliente.get("/deposito/stock/reproceso/desglose"
                               "?articulo_id=1&fecha=2026-09-02&bultos=20").json()
         no_alcanza = cliente.get("/deposito/stock/reproceso/desglose"
@@ -22688,10 +22705,15 @@ def test_el_aviso_de_la_PANTALLA_tambien_descuenta_lo_que_el_dia_ya_tomo():
     """
     lotes = [{"tipo_lote": "guia", "origen_id": 101, "fecha_lote": date(2026, 9, 1),
               "detalle": "Norte 15", "restante": 40.0}]
-    with patch("app.main.lotes_para_reproceso",
+    with (
+        # El kilaje sale de una lectura aparte; acá se parchea en
+        # vacío, que es el caso del lote que no declara contenido.
+        patch("app.main.contenido_por_bulto_de_lotes", return_value={}),
+        patch("app.main.lotes_para_reproceso",
                return_value={"lotes": lotes, "sin_lote": 0, "stock": 40,
                              "tomado_hoy": [{"reproceso_id": 300, "origen": "compra",
-                                             "origen_id": 101, "bultos": 30.0}]}):
+                                             "origen_id": 101, "bultos": 30.0}]}),
+    ):
         datos = cliente.get("/deposito/stock/reproceso/desglose"
                             "?articulo_id=1&fecha=2026-09-02&bultos=26").json()
 
@@ -22711,8 +22733,13 @@ def test_EL_CONTROL_del_aviso_sin_nada_tomado_hoy_los_MISMOS_26_alcanzan():
     """
     lotes = [{"tipo_lote": "guia", "origen_id": 101, "fecha_lote": date(2026, 9, 1),
               "detalle": "Norte 15", "restante": 40.0}]
-    with patch("app.main.lotes_para_reproceso",
-               return_value={"lotes": lotes, "sin_lote": 0, "stock": 40, "tomado_hoy": []}):
+    with (
+        # El kilaje sale de una lectura aparte; acá se parchea en
+        # vacío, que es el caso del lote que no declara contenido.
+        patch("app.main.contenido_por_bulto_de_lotes", return_value={}),
+        patch("app.main.lotes_para_reproceso",
+               return_value={"lotes": lotes, "sin_lote": 0, "stock": 40, "tomado_hoy": []}),
+    ):
         datos = cliente.get("/deposito/stock/reproceso/desglose"
                             "?articulo_id=1&fecha=2026-09-02&bultos=26").json()
 
@@ -22729,8 +22756,13 @@ def test_los_lotes_VACIOS_no_llegan_a_la_pantalla():
         {"tipo_lote": "guia", "origen_id": 102, "fecha_lote": date(2026, 9, 2),
          "detalle": "Vitale", "restante": 12.0},
     ]
-    with patch("app.main.lotes_para_reproceso",
-               return_value={"lotes": lotes, "sin_lote": 0, "stock": 12}):
+    with (
+        # El kilaje sale de una lectura aparte; acá se parchea en
+        # vacío, que es el caso del lote que no declara contenido.
+        patch("app.main.contenido_por_bulto_de_lotes", return_value={}),
+        patch("app.main.lotes_para_reproceso",
+               return_value={"lotes": lotes, "sin_lote": 0, "stock": 12}),
+    ):
         datos = cliente.get("/deposito/stock/reproceso/desglose"
                             "?articulo_id=1&fecha=2026-09-02&bultos=5").json()
 
@@ -25816,7 +25848,12 @@ def test_el_desglose_de_un_renglon_armado_trae_la_propuesta_y_los_lotes():
         # ofrece. Acá es False: este renglón sale de cajones y está bien.
         "ficha_con_envase": False,
     }
-    with patch("app.main.desglose_de_renglon_armado", return_value=desglose):
+    with (
+        # El kilaje sale de una lectura aparte; acá se parchea en
+        # vacío, que es el caso del lote que no declara contenido.
+        patch("app.main.contenido_por_bulto_de_lotes", return_value={}),
+        patch("app.main.desglose_de_renglon_armado", return_value=desglose),
+    ):
         datos = cliente.get("/deposito/pedido/renglones/55/lotes").json()
 
     assert datos["armado"] == 15.0
@@ -25825,14 +25862,22 @@ def test_el_desglose_de_un_renglon_armado_trae_la_propuesta_y_los_lotes():
     assert datos["propuesta"] == {"guia:101": 13.0, "guia:102": 2.0}
     # Fecha y cantidad; el proveedor no viaja porque cada día tiene un lote solo.
     assert datos["lotes"][0] == {"clave": "guia:101", "tipo_lote": "guia", "origen_id": 101,
-                                 "fecha": "28/08", "restante": 13.0, "detalle": ""}
+                                 "fecha": "28/08", "restante": 13.0, "detalle": "",
+                                 # Sin contenido declarado el renglón no
+                                 # lo inventa: el hueco es verdadero.
+                                 "kilaje": ""}
 
 
 def test_un_renglon_SIN_TILDAR_no_tiene_desglose_que_mostrar():
     """Antes del tilde esta pantalla no muestra números del sistema: el que
     arma todavía no declaró nada, y si los ve arma contra el sistema en vez
     de contra el piso."""
-    with patch("app.main.desglose_de_renglon_armado", return_value=None):
+    with (
+        # El kilaje sale de una lectura aparte; acá se parchea en
+        # vacío, que es el caso del lote que no declara contenido.
+        patch("app.main.contenido_por_bulto_de_lotes", return_value={}),
+        patch("app.main.desglose_de_renglon_armado", return_value=None),
+    ):
         respuesta = cliente.get("/deposito/pedido/renglones/55/lotes")
 
     assert respuesta.status_code == 404
@@ -26911,7 +26956,7 @@ def test_los_TRES_que_miran_los_lotes_de_una_guia_R_aplican_la_pared():
     assert "bultos_en_los_lotes(lotes_netos)" in desglose
     assert "descontar_lo_tomado_hoy(lotes, reparto.get(\"tomado_hoy\", []))" in desglose
     assert "propuesta_fifo(lotes, bultos)" in desglose
-    assert "_desglose_para_pantalla(lotes)" in desglose
+    assert "_desglose_para_pantalla(lotes, _contenidos_de(lotes))" in desglose
     # Y que no quede ninguna lectura de la lista sin filtrar.
     assert "reparto[\"lotes\"]" not in desglose.replace(
         "lotes_permitidos(reparto[\"lotes\"], SALIDA_REPROCESO)", ""
@@ -29463,3 +29508,85 @@ def test_la_comanda_MULTIPLE_puede_MARCAR_que_la_compra_vino_armada():
     # El modal frena el envío también acá: el fragmento llega después de que el
     # listener se registró, y por eso el disparador va en `document`.
     assert confirma == {"enviado": 0, "abierto": True}, confirma
+
+
+# ── De cuánto es cada bulto del lote, al elegir de cuál sacar ──────────────
+#
+# "Quedan 12" no se puede leer sin saber 12 de qué: doce cajones de 16 k y
+# doce de 10 k no sirven para lo mismo, y el que reprocesa necesita el número
+# exacto de lo que va a usar. Va SIEMPRE y sin umbral —al revés que el corte
+# del stock por kilaje, que espera a medir cuántos artículos se parten—
+# porque acá no es una clasificación: es la unidad del número de al lado.
+
+
+def test_el_desglose_dice_DE_CUANTO_es_cada_bulto_del_lote():
+    lotes = [
+        {"tipo_lote": "guia", "origen_id": 101, "fecha_lote": date(2026, 8, 28),
+         "detalle": "EJEMPLO Uno", "restante": 13.0},
+        {"tipo_lote": "ajuste", "origen_id": 77, "fecha_lote": date(2026, 9, 2),
+         "detalle": "", "restante": 5.0},
+    ]
+    with (
+        patch("app.main.contenido_por_bulto_de_lotes",
+              return_value={"guia:101": {"contenido": 16.0, "unidad": "kilo"}}),
+        patch("app.main.lotes_para_reproceso",
+              return_value={"lotes": lotes, "sin_lote": 0, "stock": 18}),
+    ):
+        datos = cliente.get("/deposito/stock/reproceso/desglose"
+                            "?articulo_id=1&fecha=2026-09-02&bultos=5").json()
+
+    assert datos["lotes"][0]["kilaje"] == "16 k"
+    # EL AJUSTE NO LO DECLARA Y NO SE INVENTA. Es la mitad que un test del
+    # caso bueno no puede ver: un `kilaje` deducido de cualquier cosa pasaría
+    # el assert de arriba y mentiría acá.
+    assert datos["lotes"][1]["kilaje"] == ""
+
+
+def test_el_kilaje_del_lote_lleva_la_UNIDAD_en_la_que_esta_escrito():
+    """Un artículo que se compra contado dice unidades, no kilos.
+
+    El sufijo sale del MISMO filtro que etiqueta el contenido por cajón en el
+    resto del sistema: escrito acá a mano sería una copia más de la tabla de
+    letras, y la que se separe va a decir kilos de una unidad.
+    """
+    from app.main import _kilaje_del_lote
+
+    assert _kilaje_del_lote({"contenido": 16.0, "unidad": "kilo"}) == "16 k"
+    assert _kilaje_del_lote({"contenido": 10.0, "unidad": "unidad"}) == "10 u"
+    assert _kilaje_del_lote({"contenido": 5.0, "unidad": "cubeta"}) == "5 c"
+    assert _kilaje_del_lote(None) == ""
+
+
+def test_el_contenido_del_lote_sale_de_lo_PESADO_con_el_estimado_de_respaldo():
+    """El valor lo entrega el mock, así que el único que puede ver QUÉ COLUMNA
+    pide la consulta es un assert sobre el texto del SQL (corolario 65).
+
+    Y las dos mitades importan: sin el COALESCE, una compra que nadie pesó
+    queda sin kilaje —el hueco donde había dato—; al revés, leer solo el
+    estimado diría 16 donde se pesaron 18.
+    """
+    import inspect
+
+    from app.db import contenido_por_bulto_de_lotes
+
+    cuerpo = inspect.getsource(contenido_por_bulto_de_lotes)
+    consulta = cuerpo[cuerpo.index("SELECT"):cuerpo.index("WHERE")]
+    assert "COALESCE(c.contenido_por_cajon_real, c.contenido_por_cajon)" in consulta
+    # La unidad, que es lo único que `unidad_compra` sigue diciendo: en qué
+    # unidad está escrito ese contenido. Deducirla la re-etiquetaría.
+    assert "a.unidad_compra" in consulta
+    # SOLO los lotes de COMPRA: el `origen_id` de los otros tipos no es un id
+    # de compra y preguntar por él traería la fila de otra cosa.
+    assert 'if tipo == "guia"' in cuerpo
+
+
+def test_las_DOS_pantallas_que_eligen_lote_DIBUJAN_el_kilaje():
+    """El dato viaja en el JSON para las dos; que llegue no es que se vea.
+
+    Son dos pantallas y un solo `_desglose_para_pantalla`: si una lo dibuja y
+    la otra no, el mismo lote dice una cosa en Reproceso y otra en Armar.
+    """
+    for plantilla in ("templates/deposito_stock_reproceso.html",
+                      "templates/deposito_pedido_armar.html"):
+        marcado = io.open(plantilla, encoding="utf-8").read()
+        assert "lote.kilaje" in marcado, plantilla

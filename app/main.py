@@ -62,6 +62,8 @@ from core.motor_costeo import (
     precio_sugerido_multi_concepto as calcular_precio_sugerido,
     utilidad_real_multi_concepto as calcular_utilidad_real,
 )
+import psycopg2
+
 from app.db import (
     actualizar_articulo,
     actualizar_cantidad_compra,
@@ -87,6 +89,7 @@ from app.db import (
     contar_mails_pedido_sin_procesar,
     contar_pedidos_con_renglones_sin_identificar,
     contar_pedidos_incompletos,
+    contenido_por_bulto_de_lotes,
     desmarcar_renglon_armado,
     devoluciones_de_la_compra,
     fecha_de_la_primera_foto_de_balanza,
@@ -11315,14 +11318,54 @@ def _guias_de_hoy_para_pantalla(tomado_hoy: list[dict]) -> list[dict]:
     ]
 
 
-def _desglose_para_pantalla(lotes: list[dict]) -> list[dict]:
-    """Los lotes como los ve el OPERARIO: fecha y cantidad, y nada más.
+def _contenidos_de(lotes: list[dict]) -> dict[str, dict]:
+    """El contenido por bulto de estos lotes, o vacío si la base no contesta.
+
+    Se traga el error a propósito y devuelve `{}`: sin el kilaje las filas se
+    dibujan como se dibujaban ayer, y que no se pueda leer una columna de
+    `compras` no puede dejar sin REPARTIR. El `except` es angosto —solo lo
+    que la base puede tirar— para que un NameError explote como lo que es y
+    no se convierta en una degradación permanente y muda.
+    """
+    try:
+        return contenido_por_bulto_de_lotes(
+            [(lote["tipo_lote"], lote["origen_id"]) for lote in lotes])
+    except psycopg2.Error:
+        logger.exception("No se pudo leer el contenido por bulto de los lotes")
+        return {}
+
+
+def _kilaje_del_lote(contenido: dict | None) -> str:
+    """"16 k" para pegar al lado de la fecha, o vacío si el lote no lo declara.
+
+    El sufijo sale del MISMO filtro que etiqueta el contenido por cajón en las
+    otras trece pantallas: escrito acá a mano sería la cuarta copia de la
+    misma tabla de letras, y la que se separe va a decir kilos de una unidad.
+    """
+    if not contenido:
+        return ""
+    return f"{_formatear_numero(contenido['contenido'])} {_sufijo_unidad(contenido['unidad'])}".strip()
+
+
+def _desglose_para_pantalla(lotes: list[dict], contenidos: dict[str, dict]) -> list[dict]:
+    """Los lotes como los ve el OPERARIO: fecha, de cuánto es el bulto, y cuántos quedan.
 
     El proveedor aparece SOLO cuando hay dos lotes del mismo día y sin él
     no se distinguirían. En 390px un renglón cargado de datos se vuelve
     ilegible y el operario deja de mirarlo, que es lo contrario de lo que
     el desglose busca. La regla es de la PANTALLA, no del dato: el detalle
     completo sigue estando en Guías R, que es de Administración.
+
+    EL KILAJE ES LA EXCEPCIÓN a esa regla de austeridad, y por eso va siempre
+    y sin umbral: no es un dato de más sobre el lote, es la unidad en la que
+    está escrito el número de al lado. "Quedan 12" no se puede leer sin saber
+    12 de qué — doce cajones de 16 k y doce de 10 k son cosas distintas, y el
+    que elige de cuál sacar está eligiendo justamente eso.
+
+    `contenidos` viene del llamador y es OBLIGATORIO a propósito: es una
+    lectura de la base y esta función no toca la base. Con default, el
+    llamador que se olvidara dibujaría filas sin kilaje —que es exactamente
+    como se ven las de un lote que no lo tiene— y nadie lo notaría.
     """
     visibles = [lote for lote in lotes if lote["restante"] > 0]
     del_mismo_dia = {}
@@ -11339,6 +11382,10 @@ def _desglose_para_pantalla(lotes: list[dict]) -> list[dict]:
             "restante": round(float(lote["restante"]), 2),
             # Solo para desempatar: si ese día hay un lote solo, no viaja.
             "detalle": (lote["detalle"] or "") if del_mismo_dia[lote["fecha_lote"]] > 1 else "",
+            # Vacío cuando el lote no lo declara (un ajuste, el stock
+            # inicial): la fila lo omite en vez de inventar un número.
+            "kilaje": _kilaje_del_lote(
+                contenidos.get(f"{lote['tipo_lote']}:{lote['origen_id']}")),
         }
         for lote in visibles
     ]
@@ -11440,7 +11487,7 @@ def desglose_reproceso(articulo_id: int, fecha: str = "", bultos: float = 0):
             # día ya se llevó se dice aparte, en `guias_de_hoy`: un lote que
             # dijera 10 con una propuesta de 20 encima sería peor que el
             # hueco que vino a explicar.
-            "lotes": _desglose_para_pantalla(lotes),
+            "lotes": _desglose_para_pantalla(lotes, _contenidos_de(lotes)),
             "disponible": disponible,
             "alcanza": round(float(bultos) - disponible, 2) <= 0,
             "propuesta": propuesta,
@@ -11660,7 +11707,7 @@ def cargar_reproceso_ruta(
                 "fecha": fecha_valor.strftime("%d/%m"),
                 "declarado": _formatear_numero(freno.declarado),
                 "disponible": _formatear_numero(freno.disponible),
-                "lotes": _desglose_para_pantalla(freno.lotes),
+                "lotes": _desglose_para_pantalla(freno.lotes, _contenidos_de(freno.lotes)),
                 "guias_de_hoy": _guias_de_hoy_para_pantalla(freno.tomado_hoy),
             },
             status_code=400,
@@ -17561,7 +17608,7 @@ def lotes_del_renglon_armado(renglon_id: int):
         {
             "armado": desglose["armado"],
             "editado": desglose["editado"],
-            "lotes": _desglose_para_pantalla(desglose["lotes"]),
+            "lotes": _desglose_para_pantalla(desglose["lotes"], _contenidos_de(desglose["lotes"])),
             "propuesta": desglose["propuesta"],
             "ficha_con_envase": desglose["ficha_con_envase"],
         }

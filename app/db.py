@@ -6766,6 +6766,57 @@ def _borrar_lotes_elegidos(cursor, renglon_id: int) -> None:
     cursor.execute("DELETE FROM pedidos_renglones_lotes_elegidos WHERE renglon_id = %s", (renglon_id,))
 
 
+def contenido_por_bulto_de_lotes(claves: list[tuple[str, int]]) -> dict[str, dict]:
+    """De cuánto es cada bulto de estos lotes, para el que ELIGE de cuál sacar.
+
+    Tres cajones no son tres cajones: uno de 16 kg y uno de 10 no sirven para
+    lo mismo, y el que reprocesa necesita el número exacto de lo que va a
+    usar. Sin esto la fila dice fecha, proveedor y cuántos quedan — todo menos
+    lo único que cambia la decisión.
+
+    SOLO CONTESTA POR LOS LOTES DE COMPRA (`tipo_lote = 'guia'`, cuyo
+    `origen_id` es el id de la compra): son los únicos que tienen el contenido
+    DECLARADO. Un ajuste o el stock inicial no lo tienen, y no se deduce — un
+    campo derivado acierta en la mayoría y miente en un tercio. La fila de
+    esos lotes se dibuja sin el dato, que es verdadero: no lo sabemos.
+
+    Lo REAL primero y el estimado de respaldo, que es la misma regla que usa
+    la cuenta de stock: lo pesado es lo que hay en el piso, y el estimado
+    entra solo donde nadie pesó.
+
+    La unidad sale de `articulos.unidad_compra`, que es exactamente lo que esa
+    columna deprecada sigue diciendo: en qué unidad está escrito
+    `compras.contenido_por_cajon`. Deducirla de otra cosa la re-etiquetaría.
+    """
+    ids = [origen_id for tipo, origen_id in claves if tipo == "guia"]
+    if not ids:
+        return {}
+
+    conexion = obtener_conexion()
+    try:
+        with conexion.cursor() as cursor:
+            cursor.execute(
+                """
+                SELECT c.id,
+                       COALESCE(c.contenido_por_cajon_real, c.contenido_por_cajon),
+                       a.unidad_compra
+                FROM compras c
+                JOIN articulos a ON a.id = c.articulo_id
+                WHERE c.id = ANY(%s)
+                """,
+                (ids,),
+            )
+            filas = cursor.fetchall()
+    finally:
+        conexion.close()
+
+    return {
+        f"guia:{compra_id}": {"contenido": float(contenido), "unidad": unidad}
+        for compra_id, contenido, unidad in filas
+        if contenido is not None and float(contenido) > 0
+    }
+
+
 def desglose_de_renglon_armado(renglon_id: int) -> dict | None:
     """De qué lotes salió este renglón armado, para mostrárselo al que lo armó.
 
