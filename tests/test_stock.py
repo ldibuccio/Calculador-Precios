@@ -457,7 +457,7 @@ def test_bajar_un_lote_NO_deja_bultos_sin_lote_si_hay_otros_que_lo_cubren():
     entradas = [_lote_con_origen(1, 10), _lote_con_origen(3, 10)]
     salidas = [_salida_fechada(5, 12)]
 
-    antes, despues = sin_lote_si_el_lote_cambia(entradas, salidas, "guia", 1, 5)
+    antes, despues = sin_lote_si_el_lote_cambia(entradas, salidas, "guia", 1, nueva_cantidad=5)
 
     assert antes == 0
     assert despues == 0
@@ -468,7 +468,7 @@ def test_bajar_un_lote_por_debajo_de_lo_que_salio_deja_bultos_sin_lote():
     entradas = [_lote_con_origen(1, 10)]
     salidas = [_salida_fechada(5, 10)]
 
-    antes, despues = sin_lote_si_el_lote_cambia(entradas, salidas, "guia", 1, 6)
+    antes, despues = sin_lote_si_el_lote_cambia(entradas, salidas, "guia", 1, nueva_cantidad=6)
 
     assert antes == 0
     assert despues == 4  # 10 salieron, el lote ahora da 6
@@ -480,7 +480,7 @@ def test_SUBIR_un_lote_nunca_deja_nada_sin_lote():
     entradas = [_lote_con_origen(3, 10)]
     salidas = [_salida_fechada(1, 4), _salida_fechada(5, 8)]
 
-    antes, despues = sin_lote_si_el_lote_cambia(entradas, salidas, "guia", 3, 20)
+    antes, despues = sin_lote_si_el_lote_cambia(entradas, salidas, "guia", 3, nueva_cantidad=20)
 
     assert despues <= antes
 
@@ -824,3 +824,110 @@ def test_un_lote_de_MATERIA_PRIMA_se_llama_guia_de_un_lado_y_compra_del_otro():
         [{"origen": "compra", "origen_id": 101, "bultos": 30.0}],
     )
     assert netos[0]["restante"] == 10.0
+
+
+# --- Mover una compra de DÍA: la misma simulación, el otro campo ---
+
+
+def test_mover_un_lote_HACIA_ATRAS_no_deja_nada_sin_lote():
+    """Un lote más viejo cubre lo mismo y más — igual que subir la cantidad.
+
+    Es el control que hace falta para que el otro test signifique algo: sin
+    él, una simulación que devolviera siempre el mismo número los pasaría a
+    los dos (corolario 53 — el detector tiene que poder dar LAS DOS
+    respuestas).
+    """
+    entradas = [_lote_con_origen(10, 10)]
+    salidas = [_salida_fechada(16, 4)]
+
+    antes, despues = sin_lote_si_el_lote_cambia(
+        entradas, salidas, "guia", 10, nueva_fecha=date(2026, 9, 8)
+    )
+
+    assert antes == 0
+    assert despues == 0
+
+
+def test_mover_un_lote_DESPUES_de_la_salida_que_cubria_la_deja_sin_lote():
+    """El caso que el aviso tiene que ver: el lote pasa a entrar después del
+    armado que se lo comió, así que ese armado se queda sin lote — y nada se
+    descuadra, porque el Remanente no mira de qué lote salió cada bulto."""
+    entradas = [_lote_con_origen(10, 10)]
+    salidas = [_salida_fechada(16, 4)]
+
+    antes, despues = sin_lote_si_el_lote_cambia(
+        entradas, salidas, "guia", 10, nueva_fecha=date(2026, 9, 17)
+    )
+
+    assert antes == 0
+    assert despues == 4
+
+
+def test_mover_un_lote_AL_MISMO_DIA_de_la_salida_todavia_la_cubre():
+    """El borde, y es el que fija DÓNDE está la raya.
+
+    `lote_posterior_a_la_salida` compara FECHAS con `>` estricto: un lote
+    cargado a la tarde cubre una salida de esa misma mañana, porque en el
+    galpón pasaron el mismo día. Sin este caso, mover la raya un día no
+    rompería ningún test.
+    """
+    entradas = [_lote_con_origen(10, 10)]
+    salidas = [_salida_fechada(16, 4)]
+
+    _, despues = sin_lote_si_el_lote_cambia(
+        entradas, salidas, "guia", 10, nueva_fecha=date(2026, 9, 16)
+    )
+
+    assert despues == 0
+
+
+def test_sin_pedir_NINGUN_cambio_las_dos_mitades_dan_LO_MISMO():
+    """Una simulación que devolviera dos números distintos sin que se le pida
+    cambiar nada estaría midiendo otra cosa."""
+    entradas = [_lote_con_origen(10, 10)]
+    salidas = [_salida_fechada(16, 4)]
+
+    antes, despues = sin_lote_si_el_lote_cambia(entradas, salidas, "guia", 10)
+
+    assert antes == despues
+
+
+def test_la_simulacion_solo_toca_EL_lote_que_se_le_nombra():
+    """Con un origen que no existe, nada cambia. Es lo que separa "simula ese
+    lote" de "simula todos"."""
+    entradas = [_lote_con_origen(10, 10)]
+    salidas = [_salida_fechada(16, 4)]
+
+    antes, despues = sin_lote_si_el_lote_cambia(
+        entradas, salidas, "guia", 999, nueva_fecha=date(2026, 9, 18)
+    )
+
+    assert antes == despues == 0
+
+
+def test_mover_de_fecha_CONSERVA_el_momento_que_desempata_dentro_del_dia():
+    """Y se prueba LLAMANDO A LA FUNCIÓN, no armando el lote movido a mano.
+
+    La primera versión de este test construía el lote con `orden_de` de su
+    lado y verificaba `repartir_fifo`: pasaba con la simulación rota, porque
+    no la tocaba. El canario lo dijo —dio 0— y lo que estaba mal era el test.
+
+    El caso: un lote que se mueve AL MISMO DÍA que otro. Ahí el momento es lo
+    único que desempata, y la versión que lo lee de una clave `momento_orden`
+    —que app/db.py pone y un lote de test no tiene— devuelve None: el `sorted`
+    de repartir_fifo compara None contra un entero y levanta TypeError. O sea
+    que este test NO afirma un número: afirma que la cuenta se puede hacer.
+    """
+    entradas = [
+        _lote_fechado(10, 5, tipo_lote="guia", origen_id=1),
+        _lote_fechado(12, 5, tipo_lote="guia", origen_id=2),
+    ]
+    salidas = [_salida_fechada(14, 6)]
+
+    antes, despues = sin_lote_si_el_lote_cambia(
+        entradas, salidas, "guia", 1, nueva_fecha=date(2026, 9, 12)
+    )
+
+    # Los dos lotes quedan el 12/09 y juntos cubren la salida: nada sin lote.
+    assert antes == 0
+    assert despues == 0

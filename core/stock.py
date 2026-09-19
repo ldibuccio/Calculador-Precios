@@ -46,6 +46,38 @@ def fecha_de_orden(orden):
     return None
 
 
+def orden_de(fecha, momento):
+    """El "orden" del FIFO para un hecho: (fecha real, momento de carga).
+
+    ES LA INVERSA DE `fecha_de_orden` y va pegada a ella, porque la forma de
+    la tupla es UNA regla y hasta hoy estaba escrita en dos lugares que no se
+    nombran: la construía `_entradas_y_salidas_stock_varios` (app/db.py) y la
+    leía esta función. El comentario de allá ya lo decía —"el orden se arma
+    acá y en ningún otro lado: antes cada pantalla lo rehacía con la misma
+    línea copiada"— y la simulación de mover un lote de fecha era justo el
+    tercer lugar que iba a copiarla.
+    """
+    return (fecha, momento)
+
+
+def momento_de_orden(orden):
+    """El MOMENTO de carga de un "orden", o None si ese orden no lo trae.
+
+    La otra mitad de `fecha_de_orden`, y las tres —ésta, aquélla y `orden_de`—
+    son las ÚNICAS que saben la forma de la tupla. Existe porque mover un lote
+    de día conserva su momento por definición: lo que cambia es el día, no el
+    lugar que ocupa adentro del día.
+
+    Se lee del ORDEN y no de una clave `momento_orden` al lado: esa clave la
+    pone app/db.py y un lote armado en un test no la tiene, así que leerla
+    daría None y el `sorted` de `repartir_fifo` reventaría comparando None
+    contra un entero. El orden siempre está — es lo que el reparto exige.
+    """
+    if isinstance(orden, (tuple, list)) and len(orden) > 1:
+        return orden[1]
+    return None
+
+
 # ── Qué lote prefiere cada salida ────────────────────────────────────────
 #
 # El FIFO ordena por FECHA y hasta acá no miraba QUÉ era cada lote, así que
@@ -612,29 +644,46 @@ def validar_reparto_declarado(
     return None
 
 
-def sin_lote_si_el_lote_cambia(entradas, salidas, tipo_lote, origen_id, nueva_cantidad) -> tuple[float, float]:
-    """(sin_lote de ahora, sin_lote si ese lote pasara a tener `nueva_cantidad`).
+def sin_lote_si_el_lote_cambia(
+    entradas, salidas, tipo_lote, origen_id, *, nueva_cantidad=None, nueva_fecha=None
+) -> tuple[float, float]:
+    """(sin_lote de ahora, sin_lote si ese lote cambiara de cantidad y/o de FECHA).
 
-    Es la cuenta del aviso de Corregir Recepción, y se hace SIMULANDO en vez
-    de estimando: se corre el mismo reparto dos veces y se compara. Bajar un
-    lote no rompe siempre —si el artículo tiene otros, el FIFO reacomoda las
-    salidas solo—, así que un aviso que salte por "bajaste la cantidad"
-    gritaría casi siempre en falso, y un cartel que aparece igual se deja de
-    leer. Acá el amarillo aparece solo cuando la diferencia es mayor a cero.
+    Es la cuenta del aviso de Corregir Recepción y la del de mover una compra
+    de día, y se hace SIMULANDO en vez de estimando: se corre el mismo reparto
+    dos veces y se compara. Bajar un lote no rompe siempre —si el artículo
+    tiene otros, el FIFO reacomoda las salidas solo—, así que un aviso que
+    salte por "bajaste la cantidad" gritaría casi siempre en falso, y un cartel
+    que aparece igual se deja de leer. Acá el amarillo aparece solo cuando la
+    diferencia es mayor a cero.
 
-    Subir tampoco se pregunta desde afuera: un lote más grande cubre lo mismo
-    y más, así que la diferencia da cero o negativa y no hay nada que avisar.
+    Subir la cantidad tampoco se pregunta desde afuera: un lote más grande
+    cubre lo mismo y más, así que la diferencia da cero o negativa.
+
+    LAS DOS SIMULACIONES SON LA MISMA y por eso van en UNA función. Mover un
+    lote de fecha rompe por el mismo mecanismo que achicarlo —una salida que
+    ese lote cubría deja de estar cubierta— y escribirla aparte serían dos
+    reglas que el día que se separen dicen números distintos sobre el mismo
+    hecho. `repartir_fifo` reordena por `orden` adentro, así que alcanza con
+    reemplazarlo: no hay que reordenar `entradas` acá.
+
+    La fecha nueva se convierte en orden con `orden_de`, que es la ÚNICA
+    definición de esa tupla — el momento de carga del lote se conserva, porque
+    lo que se está moviendo es el día y no el lugar que ocupa adentro del día.
     """
+    def cambiado(lote):
+        if lote.get("tipo_lote") != tipo_lote or lote.get("origen_id") != origen_id:
+            return lote
+        nuevo = dict(lote)
+        if nueva_cantidad is not None:
+            nuevo["cantidad"] = nueva_cantidad
+        if nueva_fecha is not None:
+            nuevo["fecha_orden"] = nueva_fecha
+            nuevo["orden"] = orden_de(nueva_fecha, momento_de_orden(lote.get("orden")))
+        return nuevo
+
     de_ahora = repartir_fifo(entradas, salidas)["sin_lote"]
-    con_el_nuevo = repartir_fifo(
-        [
-            dict(lote, cantidad=nueva_cantidad)
-            if lote.get("tipo_lote") == tipo_lote and lote.get("origen_id") == origen_id
-            else lote
-            for lote in entradas
-        ],
-        salidas,
-    )["sin_lote"]
+    con_el_nuevo = repartir_fifo([cambiado(lote) for lote in entradas], salidas)["sin_lote"]
     return de_ahora, con_el_nuevo
 
 

@@ -3348,7 +3348,9 @@ def dependencias_del_lote_de_compra(compra_id: int, nueva_cantidad: float | None
 
     if nueva_cantidad is not None and round(float(nueva_cantidad) - entraron, 2) < 0:
         limpias = salidas_para_reparto(salidas)
-        antes, despues = sin_lote_si_el_lote_cambia(entradas, limpias, "guia", compra_id, float(nueva_cantidad))
+        antes, despues = sin_lote_si_el_lote_cambia(
+            entradas, limpias, "guia", compra_id, nueva_cantidad=float(nueva_cantidad)
+        )
         resultado["sin_lote_de_mas"] = round(max(despues - antes, 0.0), 2)
         resultado["guias_rotas"] = documentos_que_no_entran(guias_r, float(nueva_cantidad))
 
@@ -9788,6 +9790,8 @@ def _entradas_y_salidas_stock_varios(cursor, articulo_ids: list[int], corte=None
     asumirla nunca; sale de corte_modelo. Es otro
     problema —la mezcla de unidades, E5— y necesita otro arreglo.
     """
+    from core.stock import orden_de
+
     ids = list(articulo_ids)
     entradas_por_articulo = {articulo_id: [] for articulo_id in ids}
     dirigidas_por_articulo = {articulo_id: [] for articulo_id in ids}
@@ -9904,8 +9908,11 @@ def _entradas_y_salidas_stock_varios(cursor, articulo_ids: list[int], corte=None
         lote = dict(zip(columnas, fila))
         # El "orden" del FIFO se arma acá y en ningún otro lado: antes cada
         # pantalla lo rehacía con la misma línea copiada, y alcanzaba con que
-        # una se olvidara para que su reparto ordenara por otra cosa.
-        lote["orden"] = (lote["fecha_orden"], lote["momento_orden"])
+        # una se olvidara para que su reparto ordenara por otra cosa. Desde el
+        # 19/09 la TUPLA en sí sale de `orden_de` (core/stock.py), pegada a su
+        # inversa `fecha_de_orden`: la simulación de mover un lote de fecha
+        # necesitaba rearmarla y ése era el tercer lugar que la copiaba.
+        lote["orden"] = orden_de(lote["fecha_orden"], lote["momento_orden"])
         entradas_por_articulo[lote.pop("articulo_id")].append(lote)
 
     # Las SALIDAS son las mismas que usa el FIFO de costo, ya fechadas y
