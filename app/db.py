@@ -2402,19 +2402,7 @@ def _insertar_compra_con_guia(
     puertas por las que este caso no se puede registrar, y el operario volvería
     a la guía R a mano. Va en la misma transacción que el insert.
     """
-    cursor.execute(
-        """
-        INSERT INTO guias_compra (fecha_operacion, proveedor_id)
-        VALUES (%s, %s)
-        ON CONFLICT (fecha_operacion, proveedor_id) DO NOTHING
-        """,
-        (fecha_operacion, proveedor_id),
-    )
-    cursor.execute(
-        "SELECT id FROM guias_compra WHERE fecha_operacion = %s AND proveedor_id = %s",
-        (fecha_operacion, proveedor_id),
-    )
-    (guia_id,) = cursor.fetchone()
+    guia_id, guia_punto = _guia_de_compra(cursor, fecha_operacion, proveedor_id)
 
     # La foto cuelga de la GUÍA, no del renglón: se registra una vez por
     # guía (el ON CONFLICT absorbe los N renglones de la misma comanda).
@@ -2424,9 +2412,6 @@ def _insertar_compra_con_guia(
             (guia_id, foto_ruta),
         )
 
-    cursor.execute("SELECT COUNT(*) FROM compras WHERE guia_id = %s", (guia_id,))
-    (cantidad_existente,) = cursor.fetchone()
-    guia_punto = cantidad_existente + 1
 
     if ingreso_directo_deposito:
         cursor.execute(
@@ -3254,7 +3239,9 @@ def marcar_compra_armada_en_origen(compra_id: int, ficha_en_origen_id: int) -> i
         conexion.close()
 
 
-def dependencias_del_lote_de_compra(compra_id: int, nueva_cantidad: float | None = None) -> dict | None:
+def dependencias_del_lote_de_compra(
+    compra_id: int, nueva_cantidad: float | None = None, nueva_recepcion=None
+) -> dict | None:
     """Qué salió del lote de esta compra, y qué pasaría si su cantidad bajara.
 
     Es lo que la pantalla de Corregir Recepción muestra ARRIBA del formulario:
@@ -3284,13 +3271,17 @@ def dependencias_del_lote_de_compra(compra_id: int, nueva_cantidad: float | None
     try:
         with conexion.cursor() as cursor:
             cursor.execute(
-                "SELECT articulo_id, cantidad_cajones_real, estado FROM compras WHERE id = %s",
+                """
+                SELECT articulo_id, cantidad_cajones_real, estado,
+                       (procesada_el AT TIME ZONE 'America/Argentina/Buenos_Aires')::date
+                FROM compras WHERE id = %s
+                """,
                 (compra_id,),
             )
             fila = cursor.fetchone()
             if fila is None or fila[2] != "recepcionado" or fila[1] is None:
                 return None
-            articulo_id, entraron = fila[0], float(fila[1])
+            articulo_id, entraron, fecha_del_lote = fila[0], float(fila[1]), fila[3]
 
             # Los consumos CONGELADOS de este lote, de la guía más vieja a la
             # más nueva: es el orden en que el lote se fue gastando.
@@ -3354,7 +3345,54 @@ def dependencias_del_lote_de_compra(compra_id: int, nueva_cantidad: float | None
         resultado["sin_lote_de_mas"] = round(max(despues - antes, 0.0), 2)
         resultado["guias_rotas"] = documentos_que_no_entran(guias_r, float(nueva_cantidad))
 
+    # MOVER EL LOTE DE DÍA entra por acá y no por una función aparte: el aviso
+    # que arma la pantalla es el MISMO —cuántos bultos quedan sin lote y qué
+    # guías R quedan diciendo algo que ya no se puede reconstruir— y dos
+    # versiones del mismo aviso se separan el día que una aprende algo.
+    #
+    # Solo se simula MOVER HACIA ADELANTE: un lote más viejo cubre lo mismo y
+    # más, igual que uno más grande, así que la diferencia da cero o negativa
+    # y preguntarla sería un cartel que aparece siempre.
+    if nueva_recepcion is not None and nueva_recepcion > fecha_del_lote:
+        limpias = salidas_para_reparto(salidas)
+        antes, despues = sin_lote_si_el_lote_cambia(
+            entradas, limpias, "guia", compra_id, nueva_fecha=nueva_recepcion
+        )
+        resultado["sin_lote_de_mas"] = round(max(despues - antes, 0.0), 2)
+        # Y ACÁ LAS ROTAS SE ELIGEN POR FECHA, no por acumulado. Una guía R
+        # anterior al día nuevo del lote se costeó contra mercadería que —con
+        # la fecha corregida— todavía no había entrado: no es que el lote se
+        # quedó corto, es que no existía. `documentos_que_no_entran` cuenta
+        # bultos y esta pregunta no es de bultos.
+        resultado["guias_rotas"] = [g for g in guias_r if g["fecha"] < nueva_recepcion]
+
     return resultado
+
+
+def _guias_en_origen_vivas(cursor, compra_id: int) -> list[int]:
+    """Las guías R que ESTA compra generó por venir armada, y que siguen vivas.
+
+    UNA SOLA VEZ, y hasta el 19/09 estaban TRES: la pantalla que ofrece
+    desmarcar, el desmarcar en sí y Corregir Recepción, cada una con el mismo
+    SELECT copiado. Mover la compra de fecha iba a ser la cuarta — y es el
+    momento exacto en que tres copias se vuelven cuatro, que es el único en
+    que se puede evitar gratis.
+
+    Devuelve los IDS y no el mensaje: la PRECONDICIÓN es una sola —mientras
+    esa guía viva, la compra y la guía dicen lo mismo uno a uno— y la cola
+    depende de lo que se estaba por hacer ("anulá y volvé a recepcionar" no
+    es lo mismo que "anulá y volvé"). Una cola compartida obligaría a que las
+    tres mandaran a hacer lo mismo, que es falso.
+    """
+    cursor.execute(
+        """
+        SELECT id FROM reprocesos
+        WHERE compra_origen_id = %s AND anulado_el IS NULL
+        ORDER BY id
+        """,
+        (compra_id,),
+    )
+    return [f[0] for f in cursor.fetchall()]
 
 
 def marca_en_origen_de_la_compra(compra_id: int) -> dict:
@@ -3390,15 +3428,7 @@ def marca_en_origen_de_la_compra(compra_id: int) -> dict:
                 raise ValueError("Esa compra no existe.")
             ficha_id, codigo, envase, cliente = fila
 
-            cursor.execute(
-                """
-                SELECT id FROM reprocesos
-                WHERE compra_origen_id = %s AND anulado_el IS NULL
-                ORDER BY id
-                """,
-                (compra_id,),
-            )
-            vivas = [f"R{f[0]}" for f in cursor.fetchall()]
+            vivas = [f"R{g}" for g in _guias_en_origen_vivas(cursor, compra_id)]
     finally:
         conexion.close()
 
@@ -3443,15 +3473,7 @@ def desmarcar_compra_armada_en_origen(compra_id: int) -> None:
             if fila[0] is None:
                 raise ValueError("Esta compra no está marcada como armada en caja nuestra.")
 
-            cursor.execute(
-                """
-                SELECT id FROM reprocesos
-                WHERE compra_origen_id = %s AND anulado_el IS NULL
-                ORDER BY id
-                """,
-                (compra_id,),
-            )
-            vivas = [f[0] for f in cursor.fetchall()]
+            vivas = _guias_en_origen_vivas(cursor, compra_id)
             if vivas:
                 raise ValueError(
                     "Esta compra todavía tiene viva la guía R "
@@ -3463,6 +3485,188 @@ def desmarcar_compra_armada_en_origen(compra_id: int) -> None:
                 "UPDATE compras SET ficha_en_origen_id = NULL WHERE id = %s", (compra_id,)
             )
         conexion.commit()
+    finally:
+        conexion.close()
+
+
+def _mismo_dia_otra_hora(momento, nuevo_dia):
+    """El mismo instante trasladado a `nuevo_dia`, conservando la HORA.
+
+    No es cosmético: `procesada_el` es a la vez la fecha que mueve el stock Y
+    el desempate del FIFO adentro del día (`momento_orden` de un lote de compra
+    ES esta columna). Mover el día poniendo una hora inventada —medianoche, o
+    `now()`— le cambia el lugar a la compra entre las demás recepciones de ese
+    día, que es un segundo cambio que nadie pidió.
+
+    Trabaja en hora ARGENTINA, que es la zona en la que `procesada_el` se lee
+    en todas las cuentas: tomar la hora en UTC movería el día en las compras de
+    la tarde.
+    """
+    from zoneinfo import ZoneInfo
+
+    argentina = ZoneInfo("America/Argentina/Buenos_Aires")
+    local = momento.astimezone(argentina)
+    return local.replace(year=nuevo_dia.year, month=nuevo_dia.month, day=nuevo_dia.day)
+
+
+def _guia_de_compra(cursor, fecha_operacion, proveedor_id: int) -> tuple[int, int]:
+    """La guía de ese proveedor ese día —creándola si no existe— y el punto que sigue.
+
+    Sale de `crear_compra`, donde estaba escrito en línea: mover una compra de
+    día es MUDARLA a la guía del día nuevo, y hacerlo con un `insert` copiado
+    sería la misma regla en dos lugares. La guía es `unique (fecha_operacion,
+    proveedor_id)`, así que el `on conflict do nothing` la reusa.
+
+    El punto es `count + 1` de esa guía y NO se renumera nada: el número es el
+    renglón del papel del proveedor y ya está escrito en otro lado.
+    """
+    cursor.execute(
+        """
+        INSERT INTO guias_compra (fecha_operacion, proveedor_id)
+        VALUES (%s, %s)
+        ON CONFLICT (fecha_operacion, proveedor_id) DO NOTHING
+        """,
+        (fecha_operacion, proveedor_id),
+    )
+    cursor.execute(
+        "SELECT id FROM guias_compra WHERE fecha_operacion = %s AND proveedor_id = %s",
+        (fecha_operacion, proveedor_id),
+    )
+    (guia_id,) = cursor.fetchone()
+    cursor.execute("SELECT COUNT(*) FROM compras WHERE guia_id = %s", (guia_id,))
+    (cuantas,) = cursor.fetchone()
+    return guia_id, cuantas + 1
+
+
+def mover_compra_de_fecha(compra_id: int, nueva_fecha, nueva_recepcion=None) -> dict:
+    # nueva_fecha y nueva_recepcion son DATES. La hora de la recepción no se
+    # pide ni se inventa: se conserva la que tenía (ver _mismo_dia_otra_hora).
+    """Mueve una compra de día: su fecha, su GUÍA y —si está recepcionada— su recepción.
+
+    SON DOS FECHAS Y NO UNA, a propósito. Una compra puede ser del 09 y haberse
+    recibido el 14: ese hueco es real y aplastarlo sería inventar un dato.
+
+      - `fecha_operacion` es el día de la compra. Mueve la ventana del costeo y
+        las búsquedas, y decide EN QUÉ GUÍA está. NO mueve el stock.
+      - `procesada_el` es cuándo entró al depósito. Es la que mueve el stock, el
+        FIFO y el orden de los lotes — medido el 19/09: cambiar sola la primera
+        deja el stock exactamente donde estaba.
+
+    Devuelve {"guia_id", "guia_punto", "guia_vieja_id", "quedo_vacia"}, para que
+    la pantalla pueda decir a qué guía fue a parar y si la vieja quedó sin
+    renglones. La guía vieja NO se borra aunque se vacíe: el número es el papel
+    del proveedor y no se recicla.
+
+    TRES GUARDAS, y las tres acá porque acá se escribe — un formulario armado a
+    mano no ve ningún cartel:
+
+    1. **El CORTE es un freno y no un aviso.** Una compra recibida el día del
+       corte o antes ya está adentro de la foto, que se toma a la tarde; meterla
+       ADEMÁS como lote la cuenta dos veces. Medido: con la recepción movida al
+       día del corte, el FIFO se queda sin el lote (`lotes 1 -> 0`, `sin_lote
+       0 -> 4`) y el Remanente NO SE MUEVE. Del otro lado no queda un dato raro
+       para mirar: quedan dos cuentas del mismo hecho contradiciéndose sin que
+       nada se ponga rojo.
+    2. **La guía R `en_origen` viva.** Esa guía dice uno a uno lo mismo que la
+       compra; moverle el día a una y no a la otra las separa en silencio. Misma
+       precondición que Corregir Recepción y que el desmarcar, y por eso sale de
+       `_guias_en_origen_vivas` y no de un SELECT copiado.
+    3. **La recepción no puede ser anterior a la compra.** Es el único orden que
+       el mundo impone: la mercadería no entra al depósito antes de comprarse.
+
+    LO QUE NO FRENA, por decisión del dueño (19/09): una guía R NORMAL viva
+    sobre el lote. Esa AVISA con su nombre y él decide — frenar ahí lo deja otra
+    vez sin salida, que es el problema que esto viene a resolver. Lo que salga
+    sin lote se ve en Stock por Guía y en el Remanente.
+
+    Y NO RECALCULA NADA DE LO CONGELADO. `reprocesos_consumos` y los costos de
+    la guía R quedan como están: son un documento de lo que se decidió aquel
+    día. Qué quedó viejo lo dice la pantalla DESPUÉS de guardar.
+    """
+    conexion = obtener_conexion()
+    try:
+        with conexion.cursor() as cursor:
+            # SIN agregado: `fetchone() is None` sobre un `count(*)` nunca es
+            # None y no distinguiría "no existe" de "existe" (corolario 27).
+            cursor.execute(
+                """
+                SELECT proveedor_id, fecha_operacion, estado, procesada_el, guia_id
+                FROM compras WHERE id = %s
+                """,
+                (compra_id,),
+            )
+            fila = cursor.fetchone()
+            if fila is None:
+                raise ValueError("Esa compra no existe.")
+            proveedor_id, fecha_vieja, estado, procesada_vieja, guia_vieja_id = fila
+
+            vivas = _guias_en_origen_vivas(cursor, compra_id)
+            if vivas:
+                raise ValueError(
+                    "Esta compra llegó armada en caja nuestra y generó la guía R "
+                    + ", ".join(f"R{g}" for g in vivas)
+                    + ". Esa guía dice lo mismo que la compra, uno a uno: anulala "
+                    "desde Guías R y volvé."
+                )
+
+            if estado == "recepcionado":
+                if nueva_recepcion is None:
+                    raise ValueError(
+                        "Esta compra está recepcionada: hace falta también la fecha "
+                        "en que entró al depósito, que es la que mueve el stock."
+                    )
+                if nueva_recepcion < nueva_fecha:
+                    raise ValueError(
+                        "La recepción no puede ser anterior a la compra: la "
+                        "mercadería no entra al depósito antes de comprarse."
+                    )
+                corte = _fecha_corte(cursor)
+                if nueva_recepcion <= corte:
+                    raise ValueError(
+                        f"El conteo del corte es del {corte:%d/%m} y se toma a la tarde, "
+                        "así que una compra recibida ese día o antes ya está contada "
+                        "adentro de esa foto. Fechar la recepción ahí la contaría dos "
+                        "veces: el Remanente la seguiría sumando y el FIFO se quedaría "
+                        f"sin el lote. La recepción tiene que ser posterior al {corte:%d/%m}."
+                    )
+
+            guia_id, guia_punto = _guia_de_compra(cursor, nueva_fecha, proveedor_id)
+
+            if estado == "recepcionado":
+                cursor.execute(
+                    """
+                    UPDATE compras
+                    SET fecha_operacion = %s, guia_id = %s, guia_punto = %s, procesada_el = %s
+                    WHERE id = %s
+                    """,
+                    (nueva_fecha, guia_id, guia_punto,
+                     _mismo_dia_otra_hora(procesada_vieja, nueva_recepcion), compra_id),
+                )
+            else:
+                # Sin recepción no hay `procesada_el` que mover, y escribirlo
+                # igual (en NULL) sería pisar con un dato que esta operación no
+                # tiene por qué conocer.
+                cursor.execute(
+                    "UPDATE compras SET fecha_operacion = %s, guia_id = %s, guia_punto = %s WHERE id = %s",
+                    (nueva_fecha, guia_id, guia_punto, compra_id),
+                )
+
+            quedo_vacia = False
+            if guia_vieja_id is not None and guia_vieja_id != guia_id:
+                cursor.execute(
+                    "SELECT COUNT(*) FROM compras WHERE guia_id = %s", (guia_vieja_id,)
+                )
+                (restantes,) = cursor.fetchone()
+                quedo_vacia = restantes == 0
+        conexion.commit()
+        return {
+            "guia_id": guia_id,
+            "guia_punto": guia_punto,
+            "guia_vieja_id": guia_vieja_id,
+            "quedo_vacia": quedo_vacia,
+            "fecha_vieja": fecha_vieja,
+            "recepcion_vieja": procesada_vieja,
+        }
     finally:
         conexion.close()
 
@@ -3511,15 +3715,7 @@ def corregir_recepcion_compra(
             # nada avise: un descuadre silencioso entre el lote y lo que se
             # armó de él. Se bloquea y se nombra la guía, porque un error que
             # no dice qué lo retiene manda a adivinar.
-            cursor.execute(
-                """
-                SELECT id FROM reprocesos
-                WHERE compra_origen_id = %s AND anulado_el IS NULL
-                ORDER BY id
-                """,
-                (compra_id,),
-            )
-            guias = [f[0] for f in cursor.fetchall()]
+            guias = _guias_en_origen_vivas(cursor, compra_id)
             if guias:
                 raise ValueError(
                     "Esta compra llegó armada en caja nuestra y generó la guía R "

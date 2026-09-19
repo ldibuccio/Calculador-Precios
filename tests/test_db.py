@@ -1,6 +1,6 @@
 import inspect
 import io
-from datetime import date, datetime, time
+from datetime import date, datetime, time, timezone
 import pytest
 from unittest.mock import MagicMock, call, patch
 
@@ -9859,7 +9859,7 @@ def test_el_FORMATO_del_codigo_de_puesto_de_Python_y_el_de_la_BASE_son_LA_MISMA_
     assert 0 < len(aceptados) < len(CASOS), "los casos no ejercitan las dos respuestas"
 
 
-# Las SEIS consultas que alimentan las pantallas donde se muestran las dos
+# Las consultas que alimentan las pantallas donde se muestran las dos
 # magnitudes del cajón. La lista es lo DECIDIDO; el test la compara contra lo
 # que encuentra, en los dos sentidos (corolario 60).
 CONSULTAS_QUE_MUESTRAN_LAS_DOS_MAGNITUDES = {
@@ -9869,6 +9869,24 @@ CONSULTAS_QUE_MUESTRAN_LAS_DOS_MAGNITUDES = {
     "listar_compras_procesadas_hoy_retiro": "Retiro, lo procesado hoy",
     "listar_compras_pendientes_retiro": "Retiro, lo pendiente",
     "buscar_compras": "Buscar compras",
+}
+
+
+# Y QUÉ CONSULTAS alimentan a cada pantalla. Emparejadas y no contadas: el
+# conteo suponía UNA consulta por pantalla y la relación es N a N en las dos
+# direcciones — tres pantallas leen `obtener_detalle_compra`, y Retiro dibuja
+# dos listas con dos consultas distintas.
+PANTALLAS_QUE_MUESTRAN_LAS_DOS_MAGNITUDES = {
+    "templates/administracion_ingresos.html": ("buscar_ingresos_deposito",),
+    "templates/compra_corregir_recepcion.html": ("obtener_detalle_compra",),
+    "templates/compra_detalle.html": ("obtener_detalle_compra",),
+    "templates/compra_mover_fecha.html": ("obtener_detalle_compra",),
+    "templates/compras_buscar.html": ("buscar_compras",),
+    "templates/compras_pendientes.html": ("listar_compras_sin_precio",),
+    "templates/logistica_retiro.html": (
+        "listar_compras_pendientes_retiro",
+        "listar_compras_procesadas_hoy_retiro",
+    ),
 }
 
 
@@ -9909,8 +9927,20 @@ def test_NINGUNA_pantalla_del_cajon_quedo_afuera_de_esa_lista():
         and not ruta.endswith("_magnitudes_del_cajon.html")
     )
     assert usan, "nadie usa el macro: el test no está mirando nada"
-    assert len(usan) == 6, f"cambió la cantidad de pantallas que lo usan: {usan}"
-    assert len(CONSULTAS_QUE_MUESTRAN_LAS_DOS_MAGNITUDES) == len(usan)
+    # LA PANTALLA SE EMPAREJA CON SU CONSULTA, y no se cuentan las dos listas.
+    # El conteo asumía UNA consulta por pantalla, y eso dejó de ser cierto el
+    # 19/09: Mover de fecha lee `obtener_detalle_compra`, la misma que el
+    # Detalle. Emparejado, el test sigue fallando cuando aparece una pantalla
+    # que nadie decidió Y cuando una consulta de la lista se queda sin
+    # pantalla — que es lo que el conteo pretendía cuidar.
+    assert set(PANTALLAS_QUE_MUESTRAN_LAS_DOS_MAGNITUDES) == set(usan), (
+        f"cambiaron las pantallas que muestran el macro: {usan}"
+    )
+    alimentan = {c for consultas in PANTALLAS_QUE_MUESTRAN_LAS_DOS_MAGNITUDES.values()
+                 for c in consultas}
+    assert alimentan == set(CONSULTAS_QUE_MUESTRAN_LAS_DOS_MAGNITUDES), (
+        "hay una consulta decidida que ya no alimenta ninguna pantalla, o al revés"
+    )
 
 
 def test_la_guarda_de_PYTHON_y_el_CHECK_son_LA_MISMA_regla():
@@ -10363,3 +10393,152 @@ def test_el_sin_lote_de_ANTES_no_cuenta_las_salidas_DEL_DIA_que_se_esta_cargando
     # tampoco mira las salidas del día, así que las dos cuentas coinciden
     # acá por la misma razón y no por casualidad.
     assert reparto["sin_lote"] == 0
+
+
+# ---------------------------------------------------------------------------
+# MOVER UNA COMPRA DE FECHA
+# ---------------------------------------------------------------------------
+#
+# Las DOS FECHAS no hacen lo mismo, y eso está medido contra el esquema real
+# (19/09): `fecha_operacion` mueve el costeo, las búsquedas y la GUÍA;
+# `procesada_el` mueve el stock, el FIFO y el orden de los lotes. Cambiar sola
+# la primera deja el Stock del Depósito exactamente donde estaba.
+
+_HOY_MOVER = date(2026, 9, 19)
+
+
+def _compra_para_mover(estado="recepcionado", corte=date(2026, 8, 30)):
+    """(conexion, cursor) con las lecturas que `mover_compra_de_fecha` hace, en orden."""
+    return _conexion_falsa(
+        filas_fetchone=[
+            (3, date(2026, 9, 9), estado,                    # proveedor, fecha, estado
+             datetime(2026, 9, 14, 14, 35, tzinfo=timezone.utc), 5),  # procesada_el, guia vieja
+            (corte,),                                        # _fecha_corte
+            (9,),                                            # la guía nueva
+            (2,),                                            # cuántas compras tiene ya
+            (1,),                                            # cuántas le quedan a la vieja
+        ],
+        filas_fetchall=[],                                   # ninguna guía R en origen viva
+    )
+
+
+def test_mover_de_fecha_FRENA_si_la_recepcion_cae_EL_DIA_DEL_CORTE():
+    """El único freno de esta pantalla, y no es una consecuencia para mirar.
+
+    La foto del corte se toma A LA TARDE, así que una compra recibida ese día
+    ya está contada adentro; meterla ADEMÁS como lote la cuenta dos veces.
+    Medido: con la recepción movida al día del corte el FIFO se queda sin el
+    lote (lotes 1 -> 0, sin_lote 0 -> 4) y el Stock del Depósito NO SE MUEVE —
+    del otro lado quedan dos cuentas del mismo hecho contradiciéndose sin que
+    nada se ponga rojo.
+
+    El `min` del input es la comodidad; la pared va donde se ESCRIBE, porque
+    un formulario armado a mano no ve ningún cartel.
+    """
+    conexion, _ = _compra_para_mover()
+    with patch("app.db.obtener_conexion", return_value=conexion):
+        with pytest.raises(ValueError) as rechazo:
+            db.mover_compra_de_fecha(77, date(2026, 8, 25), date(2026, 8, 30))
+
+    assert "30/08" in str(rechazo.value), "el error nombra la fecha del corte, no 'el corte'"
+    conexion.commit.assert_not_called()
+
+
+def test_mover_de_fecha_DEJA_PASAR_el_dia_siguiente_al_corte():
+    """El caso feliz PEGADO a la raya.
+
+    Sin él, el freno podría estar rechazando siempre y los tres casos
+    negativos saldrían igual de verdes (corolario 30): una batería de
+    negativos no distingue "la guarda funciona" de "la guarda frena todo".
+    """
+    conexion, cursor = _compra_para_mover()
+    with patch("app.db.obtener_conexion", return_value=conexion):
+        movida = db.mover_compra_de_fecha(77, date(2026, 8, 25), date(2026, 8, 31))
+
+    assert movida["guia_id"] == 9
+    conexion.commit.assert_called_once()
+
+
+def test_mover_de_fecha_FRENA_si_la_recepcion_es_ANTERIOR_a_la_compra():
+    """El único orden que el mundo impone: la mercadería no entra al depósito
+    antes de comprarse."""
+    conexion, _ = _compra_para_mover()
+    with patch("app.db.obtener_conexion", return_value=conexion):
+        with pytest.raises(ValueError, match="no entra al depósito antes"):
+            db.mover_compra_de_fecha(77, date(2026, 9, 16), date(2026, 9, 15))
+    conexion.commit.assert_not_called()
+
+
+def test_mover_de_fecha_FRENA_con_la_guia_R_EN_ORIGEN_viva_y_la_NOMBRA():
+    """Esa guía dice lo mismo que la compra, uno a uno: moverle el día a una y
+    no a la otra las separa en silencio.
+
+    Y la nombra: un error que no dice qué lo retiene manda a adivinar.
+    """
+    conexion, cursor = _compra_para_mover()
+    cursor.fetchall.return_value = [(31,)]
+    with patch("app.db.obtener_conexion", return_value=conexion):
+        with pytest.raises(ValueError, match="R31"):
+            db.mover_compra_de_fecha(77, date(2026, 9, 16), date(2026, 9, 17))
+    conexion.commit.assert_not_called()
+
+
+def test_mover_de_fecha_EXIGE_la_recepcion_si_la_compra_esta_recepcionada():
+    """Sin ella se movería la fecha de la compra y el stock quedaría donde
+    estaba — que es exactamente el malentendido que esta pantalla viene a
+    cerrar."""
+    conexion, _ = _compra_para_mover()
+    with patch("app.db.obtener_conexion", return_value=conexion):
+        with pytest.raises(ValueError, match="la que mueve el stock"):
+            db.mover_compra_de_fecha(77, date(2026, 9, 16))
+    conexion.commit.assert_not_called()
+
+
+def test_mover_una_compra_PENDIENTE_no_pide_ni_toca_la_recepcion():
+    """Sin recepción no hay `procesada_el` que mover, y escribirlo igual —en
+    NULL— sería pisar con un dato que esta operación no tiene por qué
+    conocer."""
+    conexion, cursor = _compra_para_mover(estado="pendiente")
+    with patch("app.db.obtener_conexion", return_value=conexion):
+        db.mover_compra_de_fecha(77, date(2026, 9, 16))
+
+    update = _sql_que_contiene(cursor, "UPDATE compras SET fecha_operacion")
+    assert "procesada_el" not in update
+    conexion.commit.assert_called_once()
+
+
+def test_mover_de_fecha_CONSERVA_LA_HORA_de_la_recepcion():
+    """`procesada_el` es a la vez la fecha que mueve el stock Y el desempate
+    del FIFO adentro del día. Poner una hora inventada —medianoche, o now()—
+    le cambia el lugar a la compra entre las demás recepciones de ese día, que
+    es un segundo cambio que nadie pidió."""
+    conexion, cursor = _compra_para_mover()
+    with patch("app.db.obtener_conexion", return_value=conexion):
+        db.mover_compra_de_fecha(77, date(2026, 9, 16), date(2026, 9, 17))
+
+    _, parametros = _sql_y_parametros_que_contienen(cursor, "procesada_el = %s")
+    nueva = parametros[3]
+    assert nueva.date() == date(2026, 9, 17)
+    # 14:35 UTC son las 11:35 en Argentina, y es ESA la que se conserva.
+    assert (nueva.hour, nueva.minute) == (11, 35), nueva
+
+
+def test_mover_de_fecha_avisa_cuando_la_guia_VIEJA_queda_sin_renglones():
+    """El número de guía es el papel del proveedor y no se recicla: la vacía se
+    queda. Que quedó vacía se dice, porque el que la busque mañana la va a
+    encontrar sin nada adentro."""
+    conexion, cursor = _compra_para_mover()
+    cursor.fetchone.side_effect = [
+        (3, date(2026, 9, 9), "recepcionado",
+         datetime(2026, 9, 14, 14, 35, tzinfo=timezone.utc), 5),
+        (date(2026, 8, 30),), (9,), (2,),
+        (0,),                      # la vieja quedó SIN renglones
+    ]
+    with patch("app.db.obtener_conexion", return_value=conexion):
+        movida = db.mover_compra_de_fecha(77, date(2026, 9, 16), date(2026, 9, 17))
+
+    assert movida["quedo_vacia"] is True
+    assert movida["guia_vieja_id"] == 5
+    # Y NO SE BORRA: ningún DELETE sobre guias_compra.
+    assert not any("DELETE" in ll.args[0].upper() and "guias_compra" in ll.args[0]
+                   for ll in cursor.execute.call_args_list)

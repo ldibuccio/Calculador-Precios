@@ -31447,3 +31447,320 @@ def test_las_DOS_pantallas_apagan_su_desglose_con_LA_MISMA_funcion():
     with patch("app.main._pilas_cierran", return_value=False):
         respuesta = _stock_por_guia(_LOTE_DEL_19, _salidas_fifo(8.0, date(2026, 9, 19)))
     assert "Los lotes no cierran contra el stock" in respuesta.text.split("</style>")[-1]
+
+
+# ---------------------------------------------------------------------------
+# MOVER UNA COMPRA DE FECHA (Gerencia)
+# ---------------------------------------------------------------------------
+#
+# SON DOS FECHAS Y NO UNA. Una compra puede ser del 09 y haberse recibido el
+# 14: aplastar ese hueco sería inventar un dato. Y las dos NO hacen lo mismo,
+# medido el 19/09 contra el esquema real — cambiar sola `fecha_operacion` deja
+# el stock y el FIFO exactamente donde estaban; la que los mueve es
+# `procesada_el`.
+
+_COMPRA_A_MOVER = {
+    "id": 77, "articulo_nombre": "EJEMPLO Fruta", "proveedor_nombre": "EJEMPLO Puesto",
+    "proveedor_codigo_puesto": "N01P01", "guia_id": 5, "guia_punto": 2,
+    "fecha_operacion": date(2026, 9, 9),
+    "procesada_el": datetime(2026, 9, 14, 14, 35, tzinfo=timezone.utc),
+    "estado": "recepcionado", "cantidad_cajones": 10, "contenido_por_cajon": 16,
+    "unidad_compra": "kilo", "unidad_conteo": None,
+    "cantidad_kilos": 160, "cantidad_fraccion": None,
+}
+_SIN_MARCA = {"ficha_id": None, "codigo_cliente": None, "envase_nombre": None,
+              "cliente_nombre": None, "guias_vivas": []}
+_SIN_DEPENDENCIAS = {"entraron": 10.0, "guias_r": [], "renglones": [], "salieron": 0.0,
+                     "sin_lote_de_mas": 0.0, "guias_rotas": []}
+
+
+def _pantalla_de_mover(dependencias=None, marca=None, compra=None):
+    return (
+        patch.dict(os.environ, {"CLAVE_GERENCIA": "secreta"}),
+        patch("app.main.obtener_detalle_compra", return_value=compra or _COMPRA_A_MOVER),
+        patch("app.main.marca_en_origen_de_la_compra", return_value=marca or _SIN_MARCA),
+        patch("app.main.fecha_corte", return_value=date(2026, 8, 30)),
+        patch("app.main.dependencias_del_lote_de_compra",
+              return_value=dependencias if dependencias is not None else _SIN_DEPENDENCIAS),
+        patch("app.main.listar_clientes", return_value=[]),
+    )
+
+
+def test_mover_de_fecha_pide_la_clave_de_GERENCIA():
+    """La puerta primero, y en el GET además del POST: la pantalla muestra qué
+    salió de este lote y para quién, que es información de la plata."""
+    cliente.cookies.clear()
+    with patch.dict(os.environ, {"CLAVE_GERENCIA": "secreta"}):
+        respuesta = cliente.get("/gerencia/compras/77/mover-fecha", follow_redirects=False)
+    assert respuesta.status_code != 200
+    assert "clave" in respuesta.text.lower()
+
+
+def test_mover_de_fecha_MUESTRA_LAS_DOS_fechas_y_dice_cual_mueve_el_stock():
+    """El hallazgo que cambió el pedido: `fecha_operacion` NO mueve el stock.
+
+    Si la pantalla mostrara una sola fecha, el que la usa creería que moviendo
+    la compra ya movió el stock — y no. Lo que se exige acá no es que estén los
+    dos campos: es que la ayuda DIGA cuál hace qué.
+    """
+    with ExitStack() as pila:
+        for cm in _pantalla_de_mover():
+            pila.enter_context(cm)
+        _con_clave_de_gerencia()
+        respuesta = cliente.get("/gerencia/compras/77/mover-fecha")
+    cliente.cookies.clear()
+
+    assert respuesta.status_code == 200
+    marcado = respuesta.text.split("</style>")[-1]
+    assert 'name="fecha_operacion"' in marcado
+    assert 'name="fecha_recepcion"' in marcado
+    assert "no mueve el stock" in marcado
+    assert "mueve el Stock del Depósito" in marcado
+
+
+def test_mover_de_fecha_NO_deja_elegir_el_dia_del_corte_ni_antes():
+    """El `min` del input es el día DESPUÉS del corte, no el corte.
+
+    La foto del corte se toma a la tarde, así que una compra recibida ese día
+    ya está contada adentro. El input es la comodidad; la pared está en
+    `mover_compra_de_fecha`, que es donde se escribe.
+    """
+    with ExitStack() as pila:
+        for cm in _pantalla_de_mover():
+            pila.enter_context(cm)
+        _con_clave_de_gerencia()
+        respuesta = cliente.get("/gerencia/compras/77/mover-fecha")
+    cliente.cookies.clear()
+
+    marcado = respuesta.text.split("</style>")[-1]
+    assert 'min="2026-08-31"' in marcado, "el corte es el 30/08: el primer día bueno es el 31"
+
+
+def test_mover_de_fecha_SIMULAR_muestra_los_bultos_que_quedan_sin_lote_y_las_guias():
+    """La consecuencia ARRIBA del botón, con las guías POR NOMBRE.
+
+    Y son DOS cosas distintas, medido: mover el lote a un día entre la guía R y
+    el armado deja `sin_lote` en cero Y rompe la guía R igual. Un aviso que solo
+    mirara el número diría que no pasa nada.
+    """
+    rotas = {**_SIN_DEPENDENCIAS, "sin_lote_de_mas": 4.0,
+             "guias_rotas": [{"reproceso_id": 12, "fecha": date(2026, 9, 12), "bultos": 3.0}]}
+    with ExitStack() as pila:
+        for cm in _pantalla_de_mover(dependencias=rotas):
+            pila.enter_context(cm)
+        _con_clave_de_gerencia()
+        respuesta = cliente.post(
+            "/gerencia/compras/77/mover-fecha",
+            data={"fecha_operacion": "2026-09-16", "fecha_recepcion": "2026-09-17",
+                  "accion": "simular"},
+            follow_redirects=False,
+        )
+    cliente.cookies.clear()
+
+    assert respuesta.status_code == 200
+    marcado = respuesta.text.split("</style>")[-1]
+    assert "R12" in marcado, "la guía rota va nombrada, no 'algunas'"
+    assert "quedan sin lote" in marcado
+
+
+def test_mover_de_fecha_SIMULAR_pregunta_por_LA_FECHA_QUE_SE_TIPEO():
+    """El mock entrega lo que le pidieron, no lo que el código le pidió.
+
+    El test de arriba pasa IGUAL con la ruta simulando `None` —el doble
+    devuelve la misma consecuencia pase lo que pase—, y el canario lo dijo:
+    reemplazar la fecha propuesta por None no hacía caer nada. Lo que hay que
+    afirmar es la LLAMADA, porque lo que se está probando es qué se pregunta,
+    no qué se contesta (corolario 40).
+
+    Y si esto se rompe, la pantalla muestra las consecuencias de un cambio que
+    nadie pidió: prolijas, plausibles y de otra fecha.
+    """
+    with ExitStack() as pila:
+        for cm in _pantalla_de_mover():
+            pila.enter_context(cm)
+        _con_clave_de_gerencia()
+        cliente.post(
+            "/gerencia/compras/77/mover-fecha",
+            data={"fecha_operacion": "2026-09-16", "fecha_recepcion": "2026-09-17",
+                  "accion": "simular"},
+            follow_redirects=False,
+        )
+        import app.main as main
+
+        llamada = main.dependencias_del_lote_de_compra.call_args
+    cliente.cookies.clear()
+
+    assert llamada.kwargs["nueva_recepcion"] == date(2026, 9, 17)
+
+
+def test_mover_de_fecha_SIMULAR_NO_ESCRIBE_NADA():
+    """El botón de ver es de solo lectura. Sin esto, "ver qué pasa" sería
+    exactamente lo que el usuario está tratando de evitar."""
+    with ExitStack() as pila:
+        for cm in _pantalla_de_mover():
+            pila.enter_context(cm)
+        mover = pila.enter_context(patch("app.main.mover_compra_de_fecha"))
+        _con_clave_de_gerencia()
+        cliente.post(
+            "/gerencia/compras/77/mover-fecha",
+            data={"fecha_operacion": "2026-09-16", "fecha_recepcion": "2026-09-17",
+                  "accion": "simular"},
+            follow_redirects=False,
+        )
+    cliente.cookies.clear()
+
+    mover.assert_not_called()
+
+
+def test_mover_de_fecha_GUARDAR_pasa_LAS_DOS_fechas_a_la_escritura():
+    """La estructura ENTERA de la llamada, no un subconjunto: el día que esta
+    operación gane un campo, que falle es la función del test."""
+    with ExitStack() as pila:
+        for cm in _pantalla_de_mover():
+            pila.enter_context(cm)
+        mover = pila.enter_context(patch(
+            "app.main.mover_compra_de_fecha",
+            return_value={"guia_id": 9, "guia_punto": 1, "guia_vieja_id": 5,
+                          "quedo_vacia": True, "fecha_vieja": date(2026, 9, 9),
+                          "recepcion_vieja": None},
+        ))
+        _con_clave_de_gerencia()
+        respuesta = cliente.post(
+            "/gerencia/compras/77/mover-fecha",
+            data={"fecha_operacion": "2026-09-16", "fecha_recepcion": "2026-09-17",
+                  "accion": "guardar"},
+            follow_redirects=False,
+        )
+    cliente.cookies.clear()
+
+    assert respuesta.status_code == 303
+    assert mover.call_args.args == (77, date(2026, 9, 16), date(2026, 9, 17))
+    assert mover.call_args.kwargs == {}
+
+
+def test_mover_de_fecha_avisa_si_la_guia_VIEJA_quedo_sin_renglones():
+    """El número de guía es el papel del proveedor y no se recicla: la guía
+    vacía se queda. Que quedó vacía se dice, porque el que la busque mañana
+    la va a encontrar sin nada adentro."""
+    with ExitStack() as pila:
+        for cm in _pantalla_de_mover():
+            pila.enter_context(cm)
+        pila.enter_context(patch(
+            "app.main.mover_compra_de_fecha",
+            return_value={"guia_id": 9, "guia_punto": 1, "guia_vieja_id": 5,
+                          "quedo_vacia": True, "fecha_vieja": date(2026, 9, 9),
+                          "recepcion_vieja": None},
+        ))
+        _con_clave_de_gerencia()
+        respuesta = cliente.post(
+            "/gerencia/compras/77/mover-fecha",
+            data={"fecha_operacion": "2026-09-16", "fecha_recepcion": "2026-09-17",
+                  "accion": "guardar"},
+            follow_redirects=False,
+        )
+    cliente.cookies.clear()
+
+    assert "5" in respuesta.headers["location"]
+    assert "sin+renglones" in respuesta.headers["location"]
+
+
+def test_mover_de_fecha_con_la_guia_R_EN_ORIGEN_viva_NO_DIBUJA_EL_FORMULARIO():
+    """Ofrecer algo que la escritura después rechaza es un callejón, y eso es
+    peor que no ofrecer nada. La pared reemplaza al formulario, y nombra cuál
+    anular — un error que no dice qué lo retiene manda a adivinar."""
+    with ExitStack() as pila:
+        for cm in _pantalla_de_mover(marca={**_SIN_MARCA, "guias_vivas": ["R31"]}):
+            pila.enter_context(cm)
+        _con_clave_de_gerencia()
+        respuesta = cliente.get("/gerencia/compras/77/mover-fecha")
+    cliente.cookies.clear()
+
+    marcado = respuesta.text.split("</style>")[-1]
+    assert "R31" in marcado
+    assert 'name="fecha_operacion"' not in marcado, "el formulario no va con la guía viva"
+
+
+def test_mover_de_fecha_esta_LINKEADO_desde_el_detalle_de_CUALQUIER_compra():
+    """El link va AFUERA del bloque de la recepción.
+
+    Ese bloque solo se dibuja con la compra recepcionada, y mover de día aplica
+    a cualquiera: colgarlo ahí habría sido abrir la puerta para el subconjunto
+    equivocado — el barrido de pantallas linkeadas saldría en verde y no habría
+    forma de llegar desde la mayoría de las filas.
+    """
+    marcado = io.open("templates/compra_detalle.html", encoding="utf-8").read()
+    marcado = marcado.split("</style>")[-1]
+    assert '/mover-fecha' in marcado
+    # y NO adentro del `{% if compra.estado == "recepcionado" %}` de la recepción
+    bloque = marcado.split('{% if compra.estado == "recepcionado" %}')
+    assert "/mover-fecha" in bloque[0] or "/mover-fecha" in bloque[-1].split("{% endif %}")[-1], (
+        "el link quedó adentro del bloque que solo ven las recepcionadas"
+    )
+
+
+_SONDA_POR_ELEMENTO = """() => {
+  const fuera = [];
+  document.querySelectorAll("*").forEach(e => {
+    const sobra = e.scrollWidth - e.clientWidth;
+    if (sobra > 1 && e.clientWidth > 0) fuera.push(
+      e.tagName.toLowerCase() + (e.className ? "." + String(e.className).split(" ")[0] : "")
+      + " +" + sobra + "px");
+  });
+  return {fuera: fuera,
+          pagina: document.documentElement.scrollWidth - document.documentElement.clientWidth,
+          mirados: document.querySelectorAll("*").length};
+}"""
+
+
+def test_mover_de_fecha_NO_SE_ARRASTRA_de_costado_con_un_nombre_que_no_se_puede_partir():
+    """El largo de un nombre no lo controlamos, así que la pantalla se mide con
+    uno que no tiene dónde envolver.
+
+    EL PAR VA COMPLETO —el impartible y el normal— porque un arreglo que
+    rompiera el caso cómodo para aguantar el raro pasaría el primero sin que
+    nada caiga.
+
+    Y SE MIDE POR ELEMENTO, no por página: en una pantalla de tarjetas el
+    desborde de página puede ser cero porque algún ancestro lo absorbe. Acá da
+    lo mismo que la página porque nada tiene scroll propio, y por eso se
+    imprimen los dos — el día que aparezca un contenedor con scroll, el de
+    página se va a quedar en cero y el por elemento no.
+
+    EL FIXTURE TARDÓ DOS VUELTAS EN SERVIR: la primera versión del nombre
+    largo tenía GUIONES, y un guion es un punto de corte válido — la sonda dio
+    cero con y sin el arreglo. Un caso plantado que no planta el caso no
+    distingue nada (corolario 36).
+    """
+    pytest.importorskip("playwright", reason="el desborde lo decide el navegador")
+
+    impartible = "FrutasyVerdurasdelMercadoCentralSociedadAnonimaSucursalNorteyTambienSur"
+
+    async def sondear(html):
+        from playwright.async_api import async_playwright
+
+        from scripts.medir_layout import CHROMIUM
+
+        async with async_playwright() as pw:
+            navegador = await pw.chromium.launch(executable_path=CHROMIUM)
+            pagina = await navegador.new_page(viewport={"width": 390, "height": 844})
+            await pagina.set_content(html)
+            medicion = await pagina.evaluate(_SONDA_POR_ELEMENTO)
+            await navegador.close()
+        return medicion
+
+    for nombre, etiqueta in ((impartible, "impartible"), ("EJEMPLO Fruta", "normal")):
+        compra = {**_COMPRA_A_MOVER, "articulo_nombre": nombre, "proveedor_nombre": nombre}
+        with ExitStack() as pila:
+            for cm in _pantalla_de_mover(compra=compra):
+                pila.enter_context(cm)
+            _con_clave_de_gerencia()
+            respuesta = cliente.get("/gerencia/compras/77/mover-fecha")
+        cliente.cookies.clear()
+
+        assert respuesta.status_code == 200
+        medicion = asyncio.run(sondear(respuesta.text))
+        # El DENOMINADOR al lado: un "no se sale nada" sobre cero elementos
+        # mirados se imprime igual que uno sobre una pantalla entera.
+        assert medicion["mirados"] > 30, f"{etiqueta}: se miraron {medicion['mirados']} elementos"
+        assert medicion["fuera"] == [], f"{etiqueta}: {medicion['fuera']}"
+        assert medicion["pagina"] == 0, f"{etiqueta}: la página desborda {medicion['pagina']}px"

@@ -341,6 +341,7 @@ from app.db import (
     obtener_cliente,
     obtener_compra,
     obtener_detalle_compra,
+    mover_compra_de_fecha,
     obtener_ficha,
     obtener_o_crear_cliente_puesto,
     buscar_proveedor_por_codigo,
@@ -5334,7 +5335,9 @@ def editar_compra(
     return RedirectResponse(url=destino, status_code=303)
 
 
-def _dependencias_con_nombres(compra_id: int, nueva_cantidad: float | None = None) -> dict | None:
+def _dependencias_con_nombres(
+    compra_id: int, nueva_cantidad: float | None = None, nueva_recepcion=None
+) -> dict | None:
     """Qué salió del lote de esta compra, con el NOMBRE del cliente en cada renglón.
 
     `dependencias_del_lote_de_compra` devuelve `cliente_id` porque no tiene
@@ -5343,7 +5346,9 @@ def _dependencias_con_nombres(compra_id: int, nueva_cantidad: float | None = Non
     "Vino armada"— y escrito en cada una, la segunda se olvida del `else` y
     muestra un hueco donde va el cliente.
     """
-    dependencias = dependencias_del_lote_de_compra(compra_id, nueva_cantidad=nueva_cantidad)
+    dependencias = dependencias_del_lote_de_compra(
+        compra_id, nueva_cantidad=nueva_cantidad, nueva_recepcion=nueva_recepcion
+    )
     if dependencias:
         clientes = {c["id"]: c["nombre"] for c in listar_clientes()}
         for renglon in dependencias["renglones"]:
@@ -5819,6 +5824,173 @@ def _renderizar_pantalla_corregir_recepcion(
          "marca": marca, "desmarcada": desmarcada,
          "aviso": aviso, "precarga": precarga or {}},
         status_code=status_code,
+    )
+
+
+def _validar_fechas_de_la_compra(fecha_operacion: str, fecha_recepcion: str) -> tuple[str | None, dict]:
+    """Las dos fechas del formulario, parseadas. Devuelve (error, {operacion, recepcion}).
+
+    Devuelve SIEMPRE el diccionario, aunque haya error: la pantalla se rearma
+    con lo que la persona tipeó y el campo que falló queda señalado. Perder lo
+    tipeado al reintentar es cómo se pierde el otro campo sin que nadie lo
+    mire (el que reintenta corrige lo que la pantalla le señaló, no lo que ya
+    había puesto).
+
+    La recepción vacía es válida: una compra que todavía no entró al depósito
+    no tiene ninguna. Que haga falta cuando SÍ está recepcionada lo decide
+    `mover_compra_de_fecha`, que es la que sabe el estado — y es donde se
+    escribe.
+    """
+    valores = {"operacion": None, "recepcion": None,
+               "operacion_texto": fecha_operacion, "recepcion_texto": fecha_recepcion}
+
+    texto = (fecha_operacion or "").strip()
+    if not texto:
+        return "Poné la fecha de la compra.", valores
+    try:
+        valores["operacion"] = date.fromisoformat(texto)
+    except ValueError:
+        return "La fecha de la compra no es una fecha válida.", valores
+
+    texto = (fecha_recepcion or "").strip()
+    if texto:
+        try:
+            valores["recepcion"] = date.fromisoformat(texto)
+        except ValueError:
+            return "La fecha de recepción no es una fecha válida.", valores
+
+    return None, valores
+
+
+def _renderizar_mover_fecha(
+    request: Request, compra_id: int, *, error=None, aviso=None,
+    propuesta=None, status_code: int = 200
+):
+    """La pantalla de mover una compra de día. UNA armadora para el GET, la
+    simulación y los reintentos del POST.
+
+    TODO SE VUELVE A LEER ACÁ y nada se arrastra del POST: entre que se abrió
+    la pantalla y se apretó el botón pudo armarse un pedido o cargarse una
+    guía R, y un reintento que repitiera la foto vieja mostraría consecuencias
+    que ya no son las que van a pasar.
+
+    `propuesta` son las dos fechas que el usuario está mirando —no las
+    guardadas— para que la simulación conteste sobre lo que EL eligió. Sin
+    eso la pantalla diría las consecuencias de un cambio que nadie pidió.
+    """
+    try:
+        compra = obtener_detalle_compra(compra_id)
+        if compra is None:
+            raise HTTPException(status_code=404, detail="Compra no encontrada")
+        # LA MARCA Y SU GUÍA VIVA, de una lectura: con la guía `en_origen` viva
+        # esto no se puede hacer y lo que corresponde mostrar es cuál anular.
+        # Ofrecer un botón que la escritura después rechaza es un callejón.
+        marca = marca_en_origen_de_la_compra(compra_id)
+        corte = fecha_corte()
+        # La simulación corre sobre la fecha de RECEPCIÓN, que es la que mueve
+        # el lote. La de compra no mueve el stock (medido el 19/09): cambiarla
+        # sola deja el Remanente y el FIFO exactamente donde estaban.
+        recepcion_propuesta = (propuesta or {}).get("recepcion")
+        dependencias = _dependencias_con_nombres(
+            compra_id, nueva_recepcion=recepcion_propuesta
+        )
+    except HTTPException:
+        raise
+    except Exception as error_db:
+        raise HTTPException(status_code=500, detail=f"Error al conectar con la base de datos: {error_db}") from error_db
+
+    return templates.TemplateResponse(
+        request,
+        "compra_mover_fecha.html",
+        {
+            "compra": compra,
+            "marca": marca,
+            "corte": corte,
+            # El PRIMER día permitido, no el corte: el `min` del input es
+            # inclusivo y el día del corte NO se puede elegir. Se calcula acá
+            # y no en la plantilla, que no puede sumar días sin un filtro.
+            "corte_minimo": (corte + timedelta(days=1)).isoformat() if corte else None,
+            "dependencias": dependencias,
+            "propuesta": propuesta or {},
+            "error": error,
+            "aviso": aviso,
+        },
+        status_code=status_code,
+    )
+
+
+@app.get("/gerencia/compras/{compra_id}/mover-fecha")
+def ver_mover_fecha_compra(request: Request, compra_id: int, aviso: str = ""):
+    """Mover una compra de día: su fecha, su guía y —si está recepcionada— su recepción.
+
+    VIVE EN GERENCIA por dónde está la cookie: se emite con path="/gerencia",
+    así que en cualquier otra URL no viaja y la puerta no existiría. Y la zona
+    es la correcta por lo que esto toca: mueve la ventana del costeo y puede
+    dejar una guía R costeada contra un lote que ya no está donde estaba.
+
+    SON DOS FECHAS Y SE VEN LAS DOS. Una compra puede ser del 09 y haberse
+    recibido el 14 — ese hueco es real y aplastarlo sería inventar un dato.
+    La de compra mueve el costeo y la guía; la de RECEPCIÓN mueve el stock.
+    """
+    puerta = _puerta_de_gerencia_para_escribir(request)
+    if puerta is not None:
+        return puerta
+    return _renderizar_mover_fecha(request, compra_id, aviso=aviso.strip() or None)
+
+
+@app.post("/gerencia/compras/{compra_id}/mover-fecha")
+def mover_fecha_compra_ruta(
+    request: Request,
+    compra_id: int,
+    fecha_operacion: str = Form(""),
+    fecha_recepcion: str = Form(""),
+    accion: str = Form("simular"),
+):
+    """"Simular" vuelve a dibujar la pantalla con las consecuencias; "guardar" escribe.
+
+    DOS BOTONES Y NO UNO, y no es un paso de más: la consecuencia de mover un
+    lote de día no se puede leer del formulario —depende de qué se llevó ese
+    lote y cuándo— así que hay que calcularla y mostrarla ANTES. Es el mismo
+    criterio que Corregir Recepción: con "editar y avisar" la decisión ya está
+    tomada cuando llega el cartel.
+
+    ACÁ NO SE RE-DECIDE NADA de lo que la pantalla mostró: las guardas —el
+    corte, la guía R en origen, el orden de las dos fechas— viven en
+    `mover_compra_de_fecha`, que es donde se escribe. Un formulario armado a
+    mano no ve ningún cartel.
+    """
+    puerta = _puerta_de_gerencia_para_escribir(request)
+    if puerta is not None:
+        return puerta
+
+    error, propuesta = _validar_fechas_de_la_compra(fecha_operacion, fecha_recepcion)
+    if error:
+        return _renderizar_mover_fecha(
+            request, compra_id, error=error, propuesta=propuesta, status_code=400
+        )
+
+    if accion != "guardar":
+        return _renderizar_mover_fecha(request, compra_id, propuesta=propuesta)
+
+    try:
+        movida = mover_compra_de_fecha(
+            compra_id, propuesta["operacion"], propuesta["recepcion"]
+        )
+    except ValueError as invalida:
+        # Dato mal pedido, no una falla del sistema: se muestra en la pantalla,
+        # nunca un 500.
+        return _renderizar_mover_fecha(
+            request, compra_id, error=str(invalida), propuesta=propuesta, status_code=400
+        )
+    except Exception as error_db:
+        raise HTTPException(status_code=500, detail=f"Error al conectar con la base de datos: {error_db}") from error_db
+
+    aviso = f"Movida a la guía {movida['guia_id']}.{movida['guia_punto']}."
+    if movida["quedo_vacia"]:
+        aviso += f" La guía {movida['guia_vieja_id']} quedó sin renglones."
+    return RedirectResponse(
+        url=f"/gerencia/compras/{compra_id}/mover-fecha?{urlencode({'aviso': aviso})}",
+        status_code=303,
     )
 
 

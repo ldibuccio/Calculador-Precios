@@ -351,6 +351,13 @@
     </div>
   </div>
 
+  {# MOVER DE FECHA, y va ACÁ y no adentro del bloque de la recepción: ese
+     bloque solo se dibuja cuando la compra está recepcionada, y mover de día
+     aplica a CUALQUIERA. Colgarlo ahí habría sido abrir la puerta para el
+     subconjunto equivocado — el link existe, el barrido lo ve, y no hay forma
+     de llegar desde la mayoría de las filas. #}
+  <a class="boton-secundario" href="/gerencia/compras/{{ compra.id }}/mover-fecha">Mover de fecha (Gerencia)</a>
+
   <a class="volver" href="/compras/buscar">Volver a Buscar Compras</a>
 {% include "_pie_version.html" %}
 </body>

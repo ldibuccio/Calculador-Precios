@@ -1,0 +1,226 @@
+{% from "_magnitudes_del_cajon.html" import magnitudes_del_cajon %}
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Mover de fecha</title>
+<style>
+  :root { font-family: -apple-system, system-ui, sans-serif; }
+  body { margin: 0; padding: 1rem; background: #f5f5f5; color: #222; }
+  h2 { font-size: 1.1rem; font-weight: 800; margin: 0 0 0.15rem; }
+  .tarjeta {
+    background: #fff; border-radius: 10px; padding: 1rem;
+    margin-bottom: 1rem; box-shadow: 0 1px 3px rgba(0, 0, 0, 0.1);
+  }
+  .puesto { color: #999; font-size: 0.8rem; margin: 0 0 0.85rem; }
+  /* LAS DOS FECHAS, una debajo de la otra y no lado a lado: a 390px dos
+     campos de fecha en fila quedan de 160px y el selector del sistema no
+     entra. Vertical es lo que sobra en celular. */
+  label { display: block; font-size: 0.85rem; font-weight: 700; margin: 0 0 0.3rem; }
+  .ayuda { display: block; font-weight: 400; color: #666; font-size: 0.8rem; margin: 0.15rem 0 0; }
+  input[type="date"] {
+    width: 100%; box-sizing: border-box; padding: 0.7rem;
+    font-size: 1rem; border: 1px solid #ccc; border-radius: 8px;
+    /* Sin esto un input no baja de su ancho intrinseco adentro de un flex y
+       lo que cede es lo que tiene al lado. */
+    min-width: 0;
+  }
+  .campo { margin-bottom: 1rem; }
+  .como-esta { font-size: 0.85rem; color: #666; margin: 0.3rem 0 0; }
+  /* LOS BOTONES: 44px de alto minimo, que es lo que se toca con el pulgar.
+     Y se envuelven en vez de desbordar. */
+  .botones { display: flex; flex-wrap: wrap; gap: 0.5rem; }
+  .botones button, .botones .boton-no {
+    flex: 1 1 8rem; min-height: 44px; padding: 0.8rem; border-radius: 8px;
+    font-size: 0.95rem; font-weight: 700; box-sizing: border-box;
+    cursor: pointer; text-align: center; text-decoration: none;
+    display: flex; align-items: center; justify-content: center;
+  }
+  button.boton-simular { background: #fff; color: #1d4ed8; border: 1px solid #1d4ed8; }
+  button.boton-guardar { background: #1d4ed8; color: #fff; border: none; }
+  button.boton-guardar[disabled] { background: #cbd5e1; color: #64748b; cursor: not-allowed; }
+  .boton-no { background: #fff; color: #444; border: 1px solid #ccc; }
+  .error { background: #fee2e2; color: #991b1b; padding: 0.75rem 1rem; border-radius: 8px; margin-bottom: 1rem; font-size: 0.95rem; }
+  .aviso-ok { background: #dcfce7; color: #166534; padding: 0.75rem 1rem; border-radius: 8px; margin-bottom: 1rem; font-size: 0.95rem; }
+  /* LA CONSECUENCIA. Amarillo (mira esto), no rojo (esta mal): mover una
+     compra de dia puede ser exactamente lo correcto. */
+  .consecuencia { background: #fef3c7; color: #92400e; padding: 0.9rem 1rem; border-radius: 8px; margin-bottom: 1rem; font-size: 0.95rem; }
+  .consecuencia p { margin: 0 0 0.6rem; }
+  .consecuencia p:last-child { margin-bottom: 0; }
+  .consecuencia .grande { font-weight: 800; font-size: 1rem; }
+  .consecuencia ul { margin: 0 0 0.6rem; padding-left: 1.1rem; }
+  .sin-consecuencia { background: #f0fdf4; color: #166534; padding: 0.9rem 1rem; border-radius: 8px; margin-bottom: 1rem; font-size: 0.95rem; }
+  .sin-consecuencia p { margin: 0; }
+  /* LA LISTA de lo que colgó del lote. Gris: es contexto, no un problema. */
+  .dependencias { border: 1px solid #ddd; border-radius: 10px; padding: 0.9rem; margin-bottom: 1rem; background: #fafafa; }
+  .dependencias h3 { margin: 0 0 0.5rem; font-size: 1rem; }
+  .dependencias h4 { margin: 0.8rem 0 0.3rem; font-size: 0.8rem; color: #666; letter-spacing: 0.03em; }
+  .dependencias ul { margin: 0; padding-left: 1.1rem; font-size: 0.9rem; color: #444; }
+  .dependencias li { margin-bottom: 0.15rem; }
+  .dependencias .vacio, .dependencias .titular { margin: 0; font-size: 0.95rem; line-height: 1.4; }
+  .dependencias .vacio { color: #666; }
+  .dependencias .titular { font-weight: 700; margin-bottom: 0.4rem; }
+  .dependencias .asimetria { margin: 0.85rem 0 0; font-size: 0.85rem; color: #666; line-height: 1.4; }
+  .pared { background: #fee2e2; color: #991b1b; padding: 0.9rem 1rem; border-radius: 8px; margin-bottom: 1rem; font-size: 0.95rem; }
+  .pared p { margin: 0 0 0.5rem; }
+  .pared p:last-child { margin-bottom: 0; }
+  /* Un nombre largo sin espacios no tiene donde envolver: sin esto se sale
+     de costado y la pagina se arrastra. */
+  .tarjeta, .dependencias, .consecuencia { overflow-wrap: anywhere; }
+</style>
+</head>
+<body>
+  {% set barra_sector = "gerencia" %}
+  {% set barra_titulo = "Mover de fecha" %}
+  {% set barra_atras = "/compras/" ~ compra.id ~ "/detalle" %}
+  {% include "_barra_navegacion.html" %}
+
+  {% if error %}
+  <div class="error">{{ error }}</div>
+  {% endif %}
+
+  {% if aviso %}
+  <div class="aviso-ok">{{ aviso }}</div>
+  {% endif %}
+
+  <div class="tarjeta">
+    <h2>{{ compra.articulo_nombre }}</h2>
+    <p class="puesto">{{ compra.proveedor_nombre }}{% if compra.proveedor_codigo_puesto %}
+      · {{ compra.proveedor_codigo_puesto }}{% endif %}
+      {%- if compra.guia_id %} · guía {{ compra.guia_id }}.{{ compra.guia_punto }}{% endif %}</p>
+    <p class="como-esta">{{ magnitudes_del_cajon(compra) }}</p>
+  </div>
+
+  {# LA PARED VA ARRIBA Y REEMPLAZA AL FORMULARIO. Con la guía R en origen
+     viva esto no se puede hacer, así que no se dibujan campos: ofrecer algo
+     que la escritura después rechaza es un callejón, y eso es peor que no
+     ofrecer nada. #}
+  {% if marca and marca.guias_vivas %}
+  <div class="pared">
+    <p><strong>Esta compra llegó armada en caja nuestra</strong> y generó la guía R
+      {{ marca.guias_vivas|join(", ") }}.</p>
+    <p>Esa guía dice lo mismo que la compra, uno a uno: si se le mueve el día a una
+      y no a la otra, quedan diciendo cosas distintas y nada avisa.</p>
+    <p>Anulá esa guía desde Guías R y volvé.</p>
+  </div>
+  {% else %}
+
+  {# LA CONSECUENCIA VA ARRIBA DEL BOTÓN y no después: con "mover y avisar" la
+     decisión ya está tomada cuando llega el cartel. #}
+  {% if propuesta.recepcion and dependencias %}
+    {% if dependencias.sin_lote_de_mas or dependencias.guias_rotas %}
+    <div class="consecuencia">
+      <p class="grande">Si movés la recepción a esa fecha:</p>
+      {% if dependencias.sin_lote_de_mas %}
+      <p><strong>{{ dependencias.sin_lote_de_mas|numero }} bultos</strong> quedan sin lote:
+        salieron antes de que —con la fecha nueva— esta mercadería hubiera entrado.
+        Se ven en Stock por Guía; ninguna cuenta se descuadra.</p>
+      {% endif %}
+      {% if dependencias.guias_rotas %}
+      <p>Estas guías R se costearon contra este lote y quedan diciendo algo que ya no
+        se puede reconstruir — se cargaron antes de la fecha nueva:</p>
+      <ul>
+        {% for g in dependencias.guias_rotas %}
+        <li>R{{ g.reproceso_id }} · {{ g.fecha|fecha_corta }} · {{ g.bultos|numero }} bultos</li>
+        {% endfor %}
+      </ul>
+      <p>Su costo queda como está: es el documento de lo que se decidió ese día y no
+        se recalcula.</p>
+      {% endif %}
+    </div>
+    {% else %}
+    <div class="sin-consecuencia">
+      <p>Con esa fecha no queda ningún bulto sin lote y ninguna guía R se rompe.</p>
+    </div>
+    {% endif %}
+  {% endif %}
+
+  <form method="post" action="/gerencia/compras/{{ compra.id }}/mover-fecha" class="tarjeta">
+    {# DOS FECHAS Y NO UNA, a propósito: una compra puede ser del 09 y haberse
+       recibido el 14, y aplastar ese hueco sería inventar un dato. #}
+    <div class="campo">
+      <label for="fecha_operacion">¿De qué día es la compra?
+        <span class="ayuda">El día del papel del proveedor. Mueve la guía y la ventana
+          del costeo; no mueve el stock.</span></label>
+      <input type="date" id="fecha_operacion" name="fecha_operacion"
+             value="{{ propuesta.operacion_texto or compra.fecha_operacion }}" required>
+      <p class="como-esta">Hoy dice {{ compra.fecha_operacion|fecha_corta }}.</p>
+    </div>
+
+    {% if compra.estado == "recepcionado" %}
+    <div class="campo">
+      <label for="fecha_recepcion">¿Qué día entró al depósito?
+        <span class="ayuda">Es la que mueve el Stock del Depósito y el orden de los
+          lotes. La hora se conserva.</span></label>
+      <input type="date" id="fecha_recepcion" name="fecha_recepcion"
+             value="{{ propuesta.recepcion_texto or (compra.procesada_el and compra.procesada_el.date()) or '' }}"
+             min="{{ corte_minimo }}" required>
+      <p class="como-esta">Hoy dice {{ compra.procesada_el|fecha_corta }}.
+        Tiene que ser posterior al corte ({{ corte|fecha_corta }}).</p>
+    </div>
+    {% else %}
+    {# Sin recepción no hay nada que mover ahí, y un campo vacío invitaría a
+       llenarlo con una fecha que esta compra todavía no tiene. #}
+    <p class="como-esta">Esta compra todavía no entró al depósito, así que solo se
+      mueve la fecha de la compra.</p>
+    {% endif %}
+
+    <div class="botones">
+      {# DOS BOTONES: la consecuencia no se lee del formulario —depende de qué
+         se llevó el lote y cuándo— así que hay que calcularla y mostrarla
+         antes. Simular es el primario mientras no se haya simulado. #}
+      <button type="submit" name="accion" value="simular" class="boton-simular">Ver qué pasa</button>
+      <button type="submit" name="accion" value="guardar" class="boton-guardar"
+              {% if compra.estado == "recepcionado" and not propuesta.recepcion %}disabled{% endif %}>Mover</button>
+    </div>
+    {% if compra.estado == "recepcionado" and not propuesta.recepcion %}
+    <p class="como-esta">Apretá “Ver qué pasa” primero: con una compra recepcionada
+      esto mueve el stock y conviene mirar qué se lleva puesto.</p>
+    {% endif %}
+  </form>
+  {% endif %}
+
+  {# LA LISTA de lo que ya salió de este lote. Va abajo del formulario a
+     propósito: es contexto permanente, no la consecuencia del cambio que se
+     está por hacer — ésa está arriba, pegada al botón. #}
+  {% if dependencias %}
+  <div class="dependencias">
+    <h3>Qué salió de este lote</h3>
+    {% if not dependencias.guias_r and not dependencias.renglones %}
+    <p class="vacio">Nada todavía. Los {{ dependencias.entraron|numero }} bultos siguen
+      enteros: ninguna guía R ni ningún renglón armado salió de acá.</p>
+    {% else %}
+    <p class="titular">De los {{ dependencias.entraron|numero }} bultos que entraron,
+      ya salieron {{ dependencias.salieron|numero }}.</p>
+
+    {% if dependencias.guias_r %}
+    <h4>GUÍAS R — {{ dependencias.guias_r|length }},
+      {{ dependencias.guias_r|sum(attribute="bultos")|numero }} bultos</h4>
+    <ul>
+      {% for g in dependencias.guias_r %}
+      <li>R{{ g.reproceso_id }} · {{ g.fecha|fecha_corta }} · {{ g.bultos|numero }} bultos</li>
+      {% endfor %}
+    </ul>
+    {% endif %}
+
+    {% if dependencias.renglones %}
+    <h4>RENGLONES ARMADOS — {{ dependencias.renglones|length }},
+      {{ dependencias.renglones|sum(attribute="bultos")|numero }} bultos</h4>
+    <ul>
+      {% for r in dependencias.renglones %}
+      <li>{{ r.cliente_nombre }} · {{ r.fecha|fecha_corta }} · {{ r.bultos|numero }} bultos</li>
+      {% endfor %}
+    </ul>
+    {% endif %}
+
+    <p class="asimetria">Las guías R están congeladas: dicen esto para siempre, pase
+      lo que pase acá. Los renglones armados los reparte el FIFO cada vez, así que
+      pueden cambiar solos.</p>
+    {% endif %}
+  </div>
+  {% endif %}
+
+{% include "_pie_version.html" %}
+</body>
+</html>

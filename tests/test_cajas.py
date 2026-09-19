@@ -1636,16 +1636,41 @@ def test_desmarcar_NO_anula_la_guia_y_eso_es_una_DECISION():
     assert "anulado_el = " not in codigo and "anular" not in codigo.lower()
 
 
-def test_la_pantalla_pregunta_por_LA_MISMA_guarda_que_la_escritura():
-    """Las dos leen las guias vivas de `reprocesos` con el mismo filtro. Si se
-    separan, la pantalla ofrece un boton que el POST despues rechaza — el
-    callejon que este bloque vino a evitar."""
-    fuente = io.open("app/db.py", encoding="utf-8").read()
-    filtro = "WHERE compra_origen_id = %s AND anulado_el IS NULL"
-    for nombre in ("marca_en_origen_de_la_compra", "desmarcar_compra_armada_en_origen",
-                   "corregir_recepcion_compra"):
-        cuerpo = fuente.split(f"def {nombre}")[1].split("\ndef ")[0]
-        assert filtro in cuerpo, f"{nombre} dejo de preguntar por la guia viva igual"
+def test_los_CUATRO_que_miran_la_guia_en_origen_LLAMAN_A_LA_MISMA_guarda():
+    """La pantalla que ofrece desmarcar, el desmarcar, Corregir Recepcion y
+    mover la compra de fecha: los cuatro preguntan lo mismo, y si se separan
+    uno ofrece un boton que el otro despues rechaza — el callejon.
+
+    Hasta el 19/09 el filtro estaba COPIADO en tres cuerpos y este test
+    comparaba su TEXTO. Ahora vive en `_guias_en_origen_vivas` y lo que se
+    exige es que los cuatro la LLAMEN, que es mas fuerte: borrar la guarda
+    los apaga a los cuatro, y esa es la unica prueba dura de que la regla
+    esta escrita una sola vez.
+
+    Se pregunta por el ARBOL —un nodo Call cuyo func es ese Name— y no por
+    una subcadena: el nombre de la guarda aparece en su propio docstring y en
+    el de los que la explican, asi que un `in` sobre el cuerpo pasaria igual
+    con la llamada sacada (corolario 59).
+    """
+    import ast
+
+    arbol = ast.parse(io.open("app/db.py", encoding="utf-8").read())
+    llamadores = set()
+    for nodo in ast.walk(arbol):
+        if not isinstance(nodo, ast.FunctionDef):
+            continue
+        for interno in ast.walk(nodo):
+            if (isinstance(interno, ast.Call)
+                    and isinstance(interno.func, ast.Name)
+                    and interno.func.id == "_guias_en_origen_vivas"):
+                llamadores.add(nodo.name)
+
+    assert llamadores == {
+        "marca_en_origen_de_la_compra",
+        "desmarcar_compra_armada_en_origen",
+        "corregir_recepcion_compra",
+        "mover_compra_de_fecha",
+    }, f"cambio quien pregunta por la guia en origen: {sorted(llamadores)}"
 
 
 # ---------------------------------------------------------------------------
