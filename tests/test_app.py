@@ -5911,7 +5911,10 @@ def test_eliminar_compra_exitosa_redirige_a_compras():
 
     assert respuesta.status_code == 303
     assert respuesta.headers["location"] == "/compras/buscar"
-    mock_eliminar.assert_called_once_with(30)
+    # CON SU ORIGEN: es lo que decide que fila queda en compras_eliminadas,
+    # y cada superficie pasa el suyo. Afirmar solo el id dejaria que las
+    # cuatro escribieran cualquiera.
+    mock_eliminar.assert_called_once_with(30, origen="compras")
     # Esta compra no tenía foto (eliminar_compra devolvió None): no hay
     # nada que borrar del Storage.
     mock_borrar_foto.assert_not_called()
@@ -6079,8 +6082,10 @@ def test_eliminar_varias_compras_exitosa_muestra_aviso_y_conserva_filtros():
 
     assert respuesta.status_code == 200
     assert mock_eliminar.call_count == 2
-    mock_eliminar.assert_any_call(30)
-    mock_eliminar.assert_any_call(31)
+    # Y el borrado MULTIPLE pasa su propio origen, distinto del de a uno:
+    # son dos superficies y en compras_eliminadas se distinguen.
+    mock_eliminar.assert_any_call(30, origen="compras_varias")
+    mock_eliminar.assert_any_call(31, origen="compras_varias")
     mock_borrar_foto.assert_not_called()
     assert '<div class="aviso">Se eliminaron 2 compras.</div>' in respuesta.text
     # Conserva los filtros que estaban activos cuando se apretó el borrado.
@@ -6106,7 +6111,8 @@ def test_eliminar_varias_compras_una_falla_no_corta_el_lote_y_avisa_sin_tecnicis
     # (ej. porque ya fue retirada o recepcionada). El mensaje al usuario no
     # debe mostrar ids ni el error crudo de Postgres, y sí debe nombrar el
     # renglón que no se pudo borrar de forma reconocible (artículo + proveedor).
-    def eliminar_side_effect(compra_id):
+    def eliminar_side_effect(compra_id, *, origen):
+        assert origen == "compras_varias", origen
         if compra_id == 31:
             raise Exception('update or delete on table "compras" violates foreign key constraint')
         return []
@@ -32076,7 +32082,7 @@ def test_borrar_desde_gerencia_PIDE_LA_CLAVE_y_FUERZA():
 
     assert respuesta.status_code == 303
     assert borrado.call_args.args == (77,)
-    assert borrado.call_args.kwargs == {"forzar": True}
+    assert borrado.call_args.kwargs == {"forzar": True, "origen": "gerencia"}
 
 
 def test_borrar_desde_gerencia_SIN_confirmar_no_escribe():

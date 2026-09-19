@@ -4852,7 +4852,27 @@ def lo_que_cuelga_de_la_compra(compra_id: int) -> list[dict]:
         conexion.close()
 
 
-def eliminar_compra(compra_id: int, forzar: bool = False) -> list[str]:
+# EL DELETE SE ARCHIVA A SI MISMO, en una sola sentencia. Con un SELECT
+# aparte habria una carrera entre leer la fila y borrarla, y con el archivo
+# en otro execute habria un camino donde la compra se va y el registro no
+# queda. Adentro de un CTE las dos cosas son la misma sentencia o no son.
+#
+# `to_jsonb(compras.*)` y no una lista de columnas: asi no hay nada que
+# actualizar el dia que compras gane una columna, que es como se pierde un
+# campo sin que nada falle (corolario 3).
+_SQL_BORRAR_Y_ARCHIVAR = """
+    WITH borrada AS (
+        DELETE FROM compras WHERE id = %s AND ({condicion})
+        RETURNING guia_id, to_jsonb(compras.*) AS fila
+    ), archivo AS (
+        INSERT INTO compras_eliminadas (compra_id, origen, fila)
+        SELECT (fila->>'id')::bigint, %s, fila FROM borrada
+    )
+    SELECT guia_id FROM borrada
+"""
+
+
+def eliminar_compra(compra_id: int, forzar: bool = False, *, origen: str) -> list[str]:
     """Borra una compra (borrado real), salvo que ya haya pasado por Depósito o por un retiro de verdad.
 
     `forzar` SALTEA EL BLOQUEO POR ESTADO y nada más. Es la puerta de
@@ -4931,12 +4951,12 @@ def eliminar_compra(compra_id: int, forzar: bool = False) -> list[str]:
                         + ". Anulá o corregí eso primero."
                     )
                 cursor.execute(
-                    "DELETE FROM compras WHERE id = %s RETURNING guia_id", (compra_id,)
+                    _SQL_BORRAR_Y_ARCHIVAR.format(condicion="TRUE"), (compra_id, origen)
                 )
             else:
                 cursor.execute(
-                    f"DELETE FROM compras WHERE id = %s AND ({_SQL_COMPRA_BORRABLE}) RETURNING guia_id",
-                    (compra_id,),
+                    _SQL_BORRAR_Y_ARCHIVAR.format(condicion=_SQL_COMPRA_BORRABLE),
+                    (compra_id, origen),
                 )
             fila = cursor.fetchone()
             if fila is None:
@@ -5326,15 +5346,26 @@ def eliminar_compras_del_dia_por_proveedor(fecha_operacion, proveedor_id: int) -
             )
             rutas_a_borrar = [f[0] for f in cursor.fetchall()]
 
+            # El MISMO archivo que el borrado de a una, y en la misma
+            # sentencia: son CUATRO las superficies que borran una compra y
+            # si ésta no escribiera, el registro tendría un agujero
+            # exactamente donde se borra de a muchas.
             cursor.execute(
                 f"""
-                DELETE FROM compras
-                WHERE fecha_operacion = %s AND proveedor_id = %s
-                  AND ({_SQL_COMPRA_BORRABLE})
+                WITH borradas AS (
+                    DELETE FROM compras
+                    WHERE fecha_operacion = %s AND proveedor_id = %s
+                      AND ({_SQL_COMPRA_BORRABLE})
+                    RETURNING to_jsonb(compras.*) AS fila
+                ), archivo AS (
+                    INSERT INTO compras_eliminadas (compra_id, origen, fila)
+                    SELECT (fila->>'id')::bigint, 'cancelar_dia', fila FROM borradas
+                )
+                SELECT count(*) FROM borradas
                 """,
                 (fecha_operacion, proveedor_id),
             )
-            borradas = cursor.rowcount
+            (borradas,) = cursor.fetchone()
         conexion.commit()
         return {"borradas": borradas, "protegidas": total - borradas, "rutas_a_borrar": rutas_a_borrar}
     finally:

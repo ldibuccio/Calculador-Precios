@@ -5510,16 +5510,18 @@ def _eliminar_compra_y_su_foto_si_corresponde_forzado(compra_id: int) -> None:
     y un default que se pueda pisar por error es cómo una puerta de Gerencia
     termina abierta en Buscar Compras.
     """
-    _borrar_fotos_del_storage(eliminar_compra(compra_id, forzar=True), f"la compra {compra_id}")
+    _borrar_fotos_del_storage(
+        eliminar_compra(compra_id, forzar=True, origen="gerencia"), f"la compra {compra_id}"
+    )
 
 
-def _eliminar_compra_y_su_foto_si_corresponde(compra_id: int) -> None:
+def _eliminar_compra_y_su_foto_si_corresponde(compra_id: int, *, origen: str) -> None:
     """Borra una compra y sus fotos del Storage: la de balanza siempre, la de comanda si era la última que la usaba.
 
     Si falla el borrado de la COMPRA en sí, esta función deja que la
     excepción se propague: eso sí lo tiene que ver quien llama.
     """
-    _borrar_fotos_del_storage(eliminar_compra(compra_id), f"la compra {compra_id}")
+    _borrar_fotos_del_storage(eliminar_compra(compra_id, origen=origen), f"la compra {compra_id}")
 
 
 @app.post("/compras/{compra_id}/eliminar")
@@ -5534,7 +5536,7 @@ async def eliminar_compra_ruta(request: Request, compra_id: int):
     articulo_id = str(form.get("articulo_id", ""))
 
     try:
-        _eliminar_compra_y_su_foto_si_corresponde(compra_id)
+        _eliminar_compra_y_su_foto_si_corresponde(compra_id, origen="compras")
     except ValueError as error:
         # Compra que no se puede borrar (recepcionada, retirada o "No
         # ingresó"): la regla y el mensaje vienen de eliminar_compra.
@@ -5593,7 +5595,7 @@ async def eliminar_varias_compras_ruta(request: Request):
     etiquetas_fallidas = []
     for compra_id in ids:
         try:
-            _eliminar_compra_y_su_foto_si_corresponde(compra_id)
+            _eliminar_compra_y_su_foto_si_corresponde(compra_id, origen="compras_varias")
         except Exception:
             logger.exception("No se pudo borrar la compra %s (borrado múltiple)", compra_id)
             etiquetas_fallidas.append(etiqueta_por_id.get(compra_id, "una compra"))
