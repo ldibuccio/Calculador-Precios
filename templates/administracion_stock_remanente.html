@@ -41,10 +41,9 @@
   a.porcion .cuanto::after { content: " ›"; color: #94a3b8; font-weight: 400; }
   /* EL LARGO DE UN NOMBRE NO LO CONTROLAMOS. Medido a 390px con un artículo
      sin espacios, esta pantalla desbordaba 213px y la tarjeta entera se
-     arrastraba de costado — y es MÁS VIEJO que el agrupado: el renglón ya
-     tenía el problema, lo que el agrupado agregó fue un segundo lugar donde
-     se ve. `min-width: 0` hace falta además del wrap: un hijo de flex no
-     baja de su ancho intrínseco por más que se le diga que envuelva. */
+     arrastraba de costado. `min-width: 0` hace falta además del wrap: un
+     hijo de flex no baja de su ancho intrínseco por más que se le diga que
+     envuelva. */
   .porcion .que { font-size: 1.05rem; line-height: 1.3; overflow-wrap: anywhere; min-width: 0; }
   .porcion .cuanto {
     font-size: 1.25rem;
@@ -151,60 +150,6 @@
     font-size: 0.9rem;
     text-align: right;
     line-height: 1.3;
-  }
-
-  /* LA CABECERA DEL ARTÍCULO. No es un renglón más: es el total de lo que
-     está abajo, y tiene que leerse como un encabezado o el que lo mire va a
-     tratar de tocarlo. Por eso NO lleva la flecha, va en versalita chica a
-     la izquierda con el número grande a la derecha, y se apoya en una raya
-     más marcada que la de las porciones. */
-  .cabeza-articulo {
-    display: flex;
-    justify-content: space-between;
-    align-items: baseline;
-    gap: 1rem;
-    padding: 0.85rem 0 0.35rem;
-    border-top: 2px solid #cbd5e1;
-  }
-  .cabeza-articulo:first-of-type { border-top: none; }
-  .cabeza-articulo .que {
-    font-size: 0.85rem;
-    font-weight: 800;
-    letter-spacing: 0.04em;
-    text-transform: uppercase;
-    color: #475569;
-    line-height: 1.3;
-    overflow-wrap: anywhere;
-    min-width: 0;
-  }
-  .cabeza-articulo .cuanto {
-    font-size: 1.35rem;
-    font-weight: 800;
-    white-space: nowrap;
-    font-variant-numeric: tabular-nums;
-  }
-  .cabeza-articulo.negativa .que,
-  .cabeza-articulo.negativa .cuanto-falta { color: #9a3412; }
-  /* Las porciones de un grupo van SANGRADAS y sin raya arriba: la raya
-     gruesa de la cabecera ya separó, y otra línea por renglón partiría el
-     grupo en tres cosas sueltas. */
-  a.porcion.en-grupo { padding-left: 0.9rem; border-top: 1px solid #f1f5f9; }
-  a.porcion.en-grupo .que { font-size: 0.95rem; color: #334155; }
-  a.porcion.en-grupo .cuanto { font-size: 1.05rem; }
-  /* LA SEGUNDA NO ENTRA EN EL TOTAL de arriba y el renglón lo dice: sin
-     esto, el que suma los renglones no le da la cabecera y no hay forma de
-     saber cuál de los dos está mal. */
-  .aparte {
-    display: inline-block;
-    margin-left: 0.4rem;
-    padding: 0.05rem 0.4rem;
-    background: #e2e8f0;
-    border-radius: 999px;
-    color: #475569;
-    font-size: 0.72rem;
-    font-weight: 700;
-    letter-spacing: 0.02em;
-    text-transform: uppercase;
   }
 
   .bloque-negativos {
@@ -319,42 +264,14 @@
     {% endif %}
 
     {# Cada porción es un renglón: en el piso son pilas distintas, en lugares
-       distintos y para cosas distintas. Y desde el 19/09, con EL TOTAL DEL
-       ARTÍCULO arriba cuando son varias — pedido del dueño: "Cherry aparece
-       como 41 y como 1 en dos renglones separados, y no hay ningún lugar
-       donde lea 42".
-
-       El argumento viejo ("sumarlas no le sirve a nadie que tenga que ir a
-       buscarlas") sigue siendo cierto PARA IR A BUSCAR, que es para lo que
-       están las porciones. Lo que no cubría es la otra pregunta: cuando algo
-       no cierra, lo primero que se mira es el artículo entero.
-
-       CON UNA SOLA PORCIÓN NO HAY CABECERA: el total y el renglón serían el
-       mismo número con el mismo nombre. Es la mayoría del catálogo, así que
-       la lista no se duplica — y de paso ese renglón solo YA muestra el
-       número del artículo, que es lo que se busca cuando falta algo. #}
-    {% if grupos %}
-      {% for g in grupos %}
-      {% if not g.sola %}
-      {# LA CABECERA NO ES UN LINK, a propósito: es un total, y un segundo
-         destino tocable arriba de tres renglones tocables a 390px es un
-         dedazo esperando. El detalle del artículo se abre desde cualquiera
-         de las porciones, y los negativos tienen su link en el bloque de
-         abajo. #}
-      <div class="cabeza-articulo{% if g.negativo %} negativa{% endif %}">
-        <span class="que">{{ g.articulo }}</span>
-        {% if g.negativo %}
-        <span class="cuanto-falta">Faltan explicar {{ g.faltan|numero }}</span>
-        {% else %}
-        <span class="cuanto">{{ g.total|numero }}</span>
-        {% endif %}
-      </div>
-      {% endif %}
+       distintos y para cosas distintas. Sin total por artículo — sumarlas no
+       le sirve a nadie que tenga que ir a buscarlas. #}
+    {% if porciones %}
       {# El renglón ENTERO es el link al movimiento de esa porción, no un
          link chiquito al lado: a 390 px el área tocable tiene que ser la
          fila. Va acá y no desde Movimientos porque la pregunta que contesta
          es "de este número, ¿cómo llegué?", y el número está justo acá. #}
-      {% for p in g.porciones %}
+      {% for p in porciones %}
       {# EL NEGATIVO VA EN LA LISTA, marcado, y no filtrado. Hasta el 19/09
          el renglón salía solo con `sueltos > 0`, así que un artículo corto
          no aparecía — ni en rojo ni en cero: no estaba. Y no era solo la
@@ -364,15 +281,14 @@
          derecha, que es la misma regla del bloque de abajo: "Faltan
          explicar 18" dice qué pasó; un "−18" en la columna de cantidades
          se lee como stock y se resta de algo. #}
-      <a class="porcion{% if not g.sola %} en-grupo{% endif %}{% if p.negativo %} negativa{% endif %}" href="/administracion/stock/remanente/porcion?articulo_id={{ p.articulo_id }}&fecha={{ fecha }}{% if p.ficha_id %}&ficha_id={{ p.ficha_id }}{% endif %}{% if p.es_segunda %}&segunda=1{% endif %}">
-        <span class="que">{% if g.sola %}{{ p.nombre }}{% else %}{{ p.corto }}{% endif %}{% if not p.en_el_total %}<span class="aparte">aparte</span>{% endif %}</span>
+      <a class="porcion{% if p.negativo %} negativa{% endif %}" href="/administracion/stock/remanente/porcion?articulo_id={{ p.articulo_id }}&fecha={{ fecha }}{% if p.ficha_id %}&ficha_id={{ p.ficha_id }}{% endif %}{% if p.es_segunda %}&segunda=1{% endif %}">
+        <span class="que">{{ p.nombre }}</span>
         {% if p.negativo %}
         <span class="cuanto-falta">Faltan explicar {{ p.faltan|numero }}</span>
         {% else %}
         <span class="cuanto">{{ p.bultos|numero }}</span>
         {% endif %}
       </a>
-      {% endfor %}
       {% endfor %}
     {% else %}
     <p class="vacio">No hay nada cargado.</p>

@@ -6947,6 +6947,35 @@ antes de discutir si conviene, **grepear en `tests/` el assert que lo niega**.
 Si existe, la discusión no es "¿lo agregamos?" sino "¿para qué pregunta se
 escribió esa razón, y es la que nos están haciendo?".
 
+#### Y LA RESPUESTA A LA QUEJA NO ERA AGRUPAR: revertido el mismo día
+
+El mecanismo de arriba queda entero y el ESTADO que se anotó al lado para
+ilustrarlo duró tres horas. Se agrupó el Remanente por artículo, con la
+cabecera del total arriba y las porciones abajo, y el dueño lo revirtió:
+*"El depósito lee 'Limón' y 'Limón Caja Día' como dos renglones planos y eso
+funciona. La cabecera con el total agrupado complica una pantalla que era
+clara."*
+
+**La queja era real y la solución era otra.** *"No hay ningún lugar donde lea
+42"* no pedía una cabecera: pedía poder leer el artículo entero cuando algo
+no cierra, y eso ya tiene su lugar —el renglón corto, que desde el 19/09
+muestra el número del artículo— sin tocar la lista. Encontrar el test que
+niega un dato dice que hay algo que discutir; **no dice cuál de las formas de
+darlo es la que va**, y ésa es una decisión de pantalla, no de test.
+
+**Y lo segundo es lo que más cuesta**: el agrupado *"ya te lo había dicho"* —
+estaba rechazado de antes. Llegó envuelto en un *"se me ocurre agrupar…
+pero decidilo vos"*, y un "decidilo vos" sobre algo que ya se rechazó **no es
+una licencia: es el momento de decir que ya se rechazó** y preguntar si
+cambió de opinión. La delegación se lee como permiso y es una pregunta.
+
+**Lo que sobrevivió al revert**, porque no era del agrupado: el
+`overflow-wrap` del renglón. Su comentario decía —y el canario lo confirmó
+las dos veces— que el desborde *"es MÁS VIEJO que el agrupado"*. Un arreglo
+que entra en el mismo commit que una decisión de producto tiene que poder
+quedarse cuando la decisión se cae, y para eso hay que separarlos al
+revertir en vez de dejar que el `git revert` decida.
+
 ### Por qué ningún test podía agarrarlo
 
 El test que cuida el camino al Detalle **estaba puesto y estaba verde**:
@@ -8203,10 +8232,14 @@ ahora cortando código en vez de verificándolo.
 
 ## Y la SÉPTIMA lectura del canario en cero: el fixture dibuja UNA sola de las dos ramas
 
-Del 19/09. El Remanente pasó a agrupar por artículo, y con eso el nombre del
-artículo se dibuja en **dos lugares distintos según el caso**: en la CABECERA
-cuando hay varias porciones, y en el RENGLÓN cuando hay una sola (adentro de
-un grupo el renglón dice solo su parte — "Suelto", "Caja Día").
+Del 19/09. (El agrupado que produjo el caso se revirtió ese mismo día —ver el
+corolario 68—. El MECANISMO no depende de él; lo que sigue es el estado que se
+anotó al lado para ilustrarlo.)
+
+El Remanente pasó a agrupar por artículo, y con eso el nombre del
+artículo se dibujaba en **dos lugares distintos según el caso**: en la CABECERA
+cuando había varias porciones, y en el RENGLÓN cuando había una sola (adentro
+de un grupo el renglón decía solo su parte — "Suelto", "Caja Día").
 
 Las dos necesitan `overflow-wrap`, y las dos lo tienen. El canario que se lo
 saca al RENGLÓN dio **0**.
@@ -8236,6 +8269,13 @@ renglón ya tenía el problema"*. Con el fixture arreglado, sacarle el wrap al
 renglón hace caer el test — o sea que el renglón sí desborda solo, y la
 frase pasó de ser plausible a estar medida. El canario que no mordía era
 también el que no podía confirmarla.
+
+**Y esa medición es lo que decidió qué se quedaba al revertir el agrupado**:
+sin ella, el `overflow-wrap` del renglón se iba con el `git revert` como una
+línea más del commit, y la pantalla plana volvía a desbordar 213px con un
+nombre sin espacios. Medido de nuevo con el agrupado ya afuera: el canario
+que se lo saca al renglón sigue haciendo caer **1** test, y el caso cómodo
+sigue en verde.
 
 ## Corolario 80: una cuenta DERIVADA convierte "completar el dato" en "arreglarlo", y eso decide si hay que recargar
 
