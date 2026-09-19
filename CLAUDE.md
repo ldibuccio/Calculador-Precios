@@ -1939,6 +1939,35 @@ tienen —el href se arma con `{{ contexto.base }}`, que un regex literal no
 puede resolver—, y `/compras/nueva` renderiza una pantalla que nadie linkea
 y quedó en la lista **marcada como deuda y no como excepción legítima**.
 
+### Y LA VARIANTE QUE EL BARRIDO NO PUEDE VER: la puerta que se abre para un SUBCONJUNTO (19/09)
+
+El test de arriba pregunta si la pantalla la linkea **alguien**. El detalle por
+artículo (`/administracion/stock/sistema/{id}`) **estaba linkeado** —desde los
+dos bloques del Remanente, ESPERANDO guía R y NEGATIVOS— así que el barrido
+salía en verde. Y no había forma de llegar para un artículo **sano**, que son
+casi todos.
+
+**El subconjunto era justo el equivocado**: se entra a ver de qué formato es lo
+que queda cuando el número se lee raro, no cuando el artículo ya está marcado
+como problema. La única puerta se abría para los casos que no motivan la
+pregunta.
+
+**Y se ve idéntica a una puerta**: la ruta existe, responde 200, tiene sus
+tests, y desde el Remanente se llega. Lo que falta no es el link — es el link
+**para la mayoría de las filas**, y eso ningún conteo de "¿la linkea alguien?"
+lo puede expresar.
+
+**La pregunta que lo encuentra**, y se hace al escribir el link: *¿para qué
+FRACCIÓN de las filas existe este camino?* Si la respuesta no es "todas", la
+que falta es la fracción que hay que nombrar. Es el corolario 45 corrido a los
+caminos — un conteo de puertas sin su denominador no se puede leer.
+
+**Y dónde va el camino lo decide la PUERTA, no la comodidad.** Lo natural era
+colgarlo del renglón de Stock del Depósito, que es de donde viene el que
+pregunta. `puerta_de_administracion` cubre **los GET** —no solo los POST, como
+la de Compras— así que ese link mandaría al operario contra una clave que no es
+suya (corolario 56). Se colgó de Movimiento, que ya está adentro del prefijo.
+
 Dos cosas que se llevan del método, más allá del botón:
 
 - **El `.sql` que se escribió para el incidente vale como camino
