@@ -218,7 +218,7 @@
           <tr>
             <td>{{ r.articulo_nombre }}</td>
             <td>{{ r.cantidad_cajones|numero }}</td>
-            <td>{{ r.contenido_por_cajon|kilos }}</td>
+            <td>{{ r.contenido_por_cajon|sin_decimales }}</td>
           </tr>
           {% endfor %}
         </tbody>

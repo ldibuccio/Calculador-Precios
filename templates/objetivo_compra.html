@@ -189,13 +189,13 @@
     </div>
     <p class="dato">
       Últ. compra: <strong>{{ fila.precio_bulto_ultima|moneda }}</strong>
-      × {{ fila.contenido_ultima|kilos }} {{ sufijo }}
+      × {{ fila.contenido_ultima|sin_decimales }} {{ sufijo }}
       ({{ fila.fecha_ultima_compra.strftime("%d/%m") }})
       — Venta vigente: {{ fila.precio_vigente|moneda }}/{{ sufijo }}
     </p>
     <div class="fila-kilos">
       <label>{% if fila.unidad_venta == "kilo" %}Kilos por cajón{% elif fila.unidad_venta == "unidad" %}Unidades por cajón{% else %}Cubetas por cajón{% endif %}</label>
-      <input class="input-kilos" type="text" inputmode="decimal" value="{{ fila.contenido_ultima|kilos }}">
+      <input class="input-kilos" type="text" inputmode="decimal" value="{{ fila.contenido_ultima|sin_decimales }}">
     </div>
     <div class="objetivo">
       <span class="etiqueta">Comprar el bulto a menos de</span>
@@ -254,7 +254,7 @@
 
       input.addEventListener("input", function () {
         var kilos = parseFloat(input.value.replace(",", "."));
-        if (!isFinite(kilos) || kilos <= 0) {
+        if (!isFinite(kilos) || sin_decimales <= 0) {
           bulto.textContent = "—";
           unidad.textContent = "";
           return;

@@ -26,8 +26,8 @@
 {%- set nombre_segunda = ("kilos", "declarados") if (unidad_compra or "kilo") != "kilo"
                          else (("cubetas", "declaradas") if unidad_conteo == "cubeta"
                                else ("unidades", "declaradas")) -%}
-<span class="magnitudes">{{ contenido|kilos }}{{ unidad_compra|sufijo_unidad }}{% if segunda is not none %}
-  <span class="magnitud-segunda" style="color:#555">· {{ segunda|kilos }}{{ (("kilo" if (unidad_compra or "kilo") != "kilo" else unidad_conteo))|sufijo_unidad }}</span>
+<span class="magnitudes">{{ contenido|sin_decimales }}{{ unidad_compra|sufijo_unidad }}{% if segunda is not none %}
+  <span class="magnitud-segunda" style="color:#555">· {{ segunda|sin_decimales }}{{ (("kilo" if (unidad_compra or "kilo") != "kilo" else unidad_conteo))|sufijo_unidad }}</span>
 {%- elif unidad_conteo or (unidad_compra or "kilo") != "kilo" %}
   <span class="magnitud-hueco" style="color:#b45309;font-style:italic">· sin {{ nombre_segunda[0] }} {{ nombre_segunda[1] }}</span>
 {%- endif %}</span>

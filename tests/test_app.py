@@ -34,7 +34,7 @@ from app.main import (
     _fecha_de_corte_limpieza_fotos,
     _formatear_bytes,
     _formatear_fecha_corta,
-    _formatear_kilos,
+    _formatear_sin_decimales,
     _formatear_moneda,
     _formatear_numero,
     _generar_preview_foto,
@@ -78,12 +78,12 @@ def test_formatear_moneda_redondea_al_peso_entero():
     assert _formatear_moneda(45000.6) == "$45.001"
 
 
-def test_formatear_kilos_muestra_entero_sin_decimales_ni_separador():
-    assert _formatear_kilos(1500.5) == "1500"
-    assert _formatear_kilos(16.0) == "16"
-    assert _formatear_kilos(16) == "16"
-    assert _formatear_kilos(1500) == "1500"
-    assert _formatear_kilos(None) == ""
+def test_formatear_sin_decimales_muestra_entero_sin_decimales_ni_separador():
+    assert _formatear_sin_decimales(1500.5) == "1500"
+    assert _formatear_sin_decimales(16.0) == "16"
+    assert _formatear_sin_decimales(16) == "16"
+    assert _formatear_sin_decimales(1500) == "1500"
+    assert _formatear_sin_decimales(None) == ""
 
 
 def test_sufijo_unidad_devuelve_la_letra_corta():
@@ -202,6 +202,89 @@ def test_ver_articulos_muestra_columna_grupo_con_sin_clasificar():
     assert "<th>Grupo</th>" in respuesta.text
     assert "Fruta" in respuesta.text
     assert "Sin clasificar" in respuesta.text
+
+
+def test_el_CATALOGO_pega_la_MAGNITUD_al_numero_de_la_referencia():
+    """Un número pelado en una columna donde dos filas vecinas hablan de cosas distintas.
+
+    `contenido_referencia` está expresada en `unidad_compra`, así que el Mango
+    dice 40 —UNIDADES— tres renglones abajo del Tomate diciendo 16 —KILOS— y el
+    rótulo "ref." que el CSS pone delante no distingue una de otra. La pantalla
+    de EDICIÓN ya lo cerró con su rótulo ("¿Cuántas unidades suele traer un
+    cajón?"); el listado era la otra mitad, y es la que se mira de corrido.
+
+    Se afirma en LOS DOS sentidos (corolario 60): que el contado diga `u` y que
+    el de kilos diga `k`. Con uno solo, un sufijo fijo pasa la mitad de los
+    casos — y el que está fijo en "k" es exactamente el bug que había.
+
+    El ancla es la celda entera y no el sufijo: una `u` suelta matchea
+    cualquier palabra del documento, empezando por el nombre del artículo.
+    """
+    contado = {"id": 7, "nombre": "EJEMPLO Uno", "unidad_compra": "unidad",
+               "unidad_conteo": "unidad", "contenido_referencia": 40, "grupo": "fruta"}
+    por_kilo = {"id": 8, "nombre": "EJEMPLO Dos", "unidad_compra": "kilo",
+                "unidad_conteo": None, "contenido_referencia": 16, "grupo": "fruta"}
+
+    with patch("app.main.listar_articulos", return_value=[contado, por_kilo]):
+        marcado = cliente.get("/compras/articulos").text.split("</style>")[-1]
+
+    assert "<td>40u</td>" in marcado, "la referencia del contado está en UNIDADES"
+    assert "<td>16k</td>" in marcado, "la del otro está en kilos"
+    assert "<td>40</td>" not in marcado, "el número pelado es el bug: no puede quedar ninguno"
+    assert "<td>16</td>" not in marcado
+
+
+def test_el_catalogo_trata_el_NULO_de_unidad_compra_como_KILO():
+    """El nulo es kilo, no "sin unidad", y son la mayoría del catálogo.
+
+    Lo dice el CHECK del esquema con su `coalesce(unidad_compra, 'kilo')`, y
+    desde el 15/09 un artículo nuevo NACE así porque el formulario dejó de
+    preguntar la columna. Sin el `or "kilo"` de la plantilla el sufijo sale
+    vacío justo en el caso más común, que es el que nadie va a ir a mirar.
+
+    Y el artículo SIN referencia sigue mostrando el guion: pegarle un sufijo a
+    la nada daría "k" sola, que se lee como un dato.
+    """
+    nulo = {"id": 9, "nombre": "EJEMPLO Tres", "unidad_compra": None,
+            "unidad_conteo": None, "contenido_referencia": 18, "grupo": "fruta"}
+    sin_referencia = dict(nulo, id=10, nombre="EJEMPLO Cuatro", contenido_referencia=None)
+
+    with patch("app.main.listar_articulos", return_value=[nulo, sin_referencia]):
+        marcado = cliente.get("/compras/articulos").text.split("</style>")[-1]
+
+    assert "<td>18k</td>" in marcado
+    assert "<td>-</td>" in marcado, "sin referencia no hay magnitud que nombrar"
+    assert "<td>k</td>" not in marcado
+
+
+def test_el_filtro_que_REDONDEA_no_se_llama_por_una_MAGNITUD_que_no_tiene():
+    """Se llamaba `kilos` y solo redondea: el nombre afirmaba lo que no sabe.
+
+    Era falso en CUATRO lugares, y ninguno es un borde: el macro de las dos
+    magnitudes lo llama sobre LAS DOS de la misma compra, `fichas.html` sobre
+    el contenido en unidad de VENTA, el formulario de compra sobre
+    `contenido_por_cajon`, y este catálogo sobre una referencia que para siete
+    artículos está en unidades o cubetas. El nombre lleva el alcance
+    (corolario 8) y éste no tiene ninguno.
+
+    El test pregunta por la JERGA QUE NO PUEDE APARECER además de por el nombre
+    bueno: afirmar `sin_decimales` pasa igual si quedó un `|kilos` en una
+    plantilla que nadie abrió. Se barre `templates/` entero, no una lista
+    escrita a mano (corolario 60) — la próxima plantilla no la va a recordar
+    nadie.
+    """
+    import re
+    from pathlib import Path
+
+    assert "sin_decimales" in templates.env.filters
+    assert "kilos" not in templates.env.filters
+
+    culpables = [
+        ruta.name
+        for ruta in Path("templates").glob("*.html")
+        if re.search(r"\|\s*kilos\b", ruta.read_text(encoding="utf-8"))
+    ]
+    assert culpables == [], f"quedó el filtro viejo en: {culpables}"
 
 
 def test_ver_articulos_incluye_link_a_inicio():

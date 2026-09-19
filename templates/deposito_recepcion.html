@@ -318,7 +318,7 @@
         <p class="proveedor-procesado">{{ p.proveedor_nombre }} ({{ p.proveedor_codigo_puesto }})</p>
         <p class="cantidad">{{ p.estado_label }} a las {{ p.procesada_el|hora }}</p>
         {% if p.estado == "recepcionado" and p.cantidad_cajones_real is not none and p.contenido_por_cajon_real is not none %}
-        <p class="cantidad">Recibido: {{ p.cantidad_cajones_real|numero }} cajones × {{ p.contenido_por_cajon_real|kilos }}{{ p.unidad_compra|sufijo_unidad }} = {{ (p.cantidad_cajones_real * p.contenido_por_cajon_real)|kilos }}{{ p.unidad_compra|sufijo_unidad }}</p>
+        <p class="cantidad">Recibido: {{ p.cantidad_cajones_real|numero }} cajones × {{ p.contenido_por_cajon_real|sin_decimales }}{{ p.unidad_compra|sufijo_unidad }} = {{ (p.cantidad_cajones_real * p.contenido_por_cajon_real)|sin_decimales }}{{ p.unidad_compra|sufijo_unidad }}</p>
         {% endif %}
         {# En gris y diciendo lo que FALTA: el que audita busca eso, no lo
            que está. Cuando están todas, la columna queda vacía.
@@ -362,7 +362,7 @@
       {% for c in guia.compras %}
       <div class="renglon">
         <p class="articulo-nombre">{{ c.articulo_nombre }}</p>
-        <p class="estimado">Estimado: {{ c.cantidad_cajones|numero }} cajones × {{ c.contenido_por_cajon|kilos }}{{ c.unidad_compra|sufijo_unidad }}</p>
+        <p class="estimado">Estimado: {{ c.cantidad_cajones|numero }} cajones × {{ c.contenido_por_cajon|sin_decimales }}{{ c.unidad_compra|sufijo_unidad }}</p>
 
         {# VIENE ARMADA EN CAJA NUESTRA: se AVISA y no se ofrece nada que
            elegir. La marca la puso el comprador al cargar la compra —él fue

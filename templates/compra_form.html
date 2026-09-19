@@ -310,7 +310,7 @@
           <tr>
             <td>{{ r.articulo_nombre }}</td>
             <td>{{ r.cantidad_cajones|numero }}</td>
-            <td>{{ r.contenido_por_cajon|kilos }}</td>
+            <td>{{ r.contenido_por_cajon|sin_decimales }}</td>
             <td>{{ r.importe|moneda }}</td>
             <td>{{ r.sena|moneda if r.sena is not none else "-" }}</td>
           </tr>

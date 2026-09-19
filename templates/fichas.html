@@ -227,7 +227,7 @@
             <td>{{ f.nombre_cliente or "-" }}</td>
             <td>{{ f.codigo_cliente or "-" }}</td>
             <td>{{ f.envase_nombre or "Sin envase" }}</td>
-            <td>{{ f.contenido_caja|kilos if f.contenido_caja is not none else "-" }}</td>
+            <td>{{ f.contenido_caja|sin_decimales if f.contenido_caja is not none else "-" }}</td>
             <td>{{ f.unidad_venta }}</td>
             <td>{{ "Variable" if f.envase_variable else "Fijo" }}</td>
             <td>

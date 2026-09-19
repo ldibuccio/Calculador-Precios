@@ -18,6 +18,37 @@ El sistema lo usa principalmente una sola persona, desde el **celular** — no d
 
 Esto aplica a toda pantalla nueva, no solo a las de compras.
 
+### Los 36px del renglón ya armado: es una decisión DE CONJUNTO, y la toma el dueño
+
+Del 19/09. Medidos a 390px sobre la pantalla RENDERIZADA —no sobre un
+`<button>` suelto escrito para la ocasión, que es la simulación que mide una
+pantalla imaginaria (corolario 52)— los tres controles del renglón ya armado:
+
+```
+GET 200 · renglones ARMADOS dibujados 1 · controles mirados 3
+.boton-lotes      "Elegir el lote"   36,2px   faltan 7,8
+.boton-destildar  "Destildar"        36,2px   faltan 7,8
+.boton-anular     "✗"                35,2px   faltan 8,8
+```
+
+**No se movió ninguno, y el argumento es del dueño**: los tres están abajo del
+umbral, así que subir uno solo lo deja desparejo en la misma fila y no arregla
+los otros dos. Es una decisión del renglón entero —cuánto vertical se le da a
+algo que ya está hecho y que en una pantalla larga se repite treinta veces— y
+**se toma mirándola en el galpón, con el pulgar**, no midiendo píxeles acá.
+
+Queda anotado **como una medición y no como una deuda**: que estén en 36 puede
+ser correcto para controles que se usan poco y conviven con treinta hermanos. El
+mínimo de 44 está escrito para lo que se toca; cuánto de esto se toca lo sabe el
+que arma. Lo que el número compra es que el día que se mire no haya que volver a
+medirlo.
+
+**Y la identidad va pegada al número** (corolario 53): `GET 200` y
+`ARMADOS 1 · mirados 3`. Sin eso, un `0 de 0 abajo del umbral` medido sobre la
+pantalla de una clave, o con la sección "Ya armado" todavía plegada, se imprime
+exactamente igual de prolijo que la medición buena — y las dos veces que pasó en
+este proyecto lo delató el denominador, nunca el número.
+
 ## El rótulo hace la PREGUNTA, la ayuda da un EJEMPLO
 
 Del 15/09, y es del dueño. Vale para toda pantalla, igual que el mobile-first.
@@ -408,7 +439,12 @@ escrita **tres veces**, y las tres son idénticas hoy:
 
     core/exportar_compras.py:35
     core/exportar_ingresos.py:41
-    app/main.py:1004          ← la que usa el filtro `sufijo_unidad`
+    app/main.py:1068          ← la que usa el filtro `sufijo_unidad`
+
+(Los números de línea envejecen en cada commit —el de `app/main.py` ya se
+movió del 1004 al 1068 el 19/09, sin que nadie tocara la tabla—, así que lo
+que se busca es `grep -rn "^SUFIJOS_UNIDAD_COMPRA" core/ app/`. Lo que no
+envejece es el test que las compara.)
 
 Decisión del dueño: **no urge y no se unifica hasta que haya que tocar
 alguna** — son tres líneas iguales y moverlas ahora es riesgo sin beneficio.
@@ -6225,23 +6261,131 @@ dicen lo mismo y la referencia cae en el campo rotulado con su unidad.
 **El riesgo es del caso que la pantalla nueva estrena**: un artículo que reciba
 `unidad_conteo` de ahora en adelante queda en `unidad_compra = 'kilo'` —la
 edición ni la nombra— así que su referencia cae en KILOS y su campo de conteo
-no se precarga nunca. Dos significados, ninguna señal.
+no se precarga nunca. ~~Dos significados, ninguna señal.~~ **La señal existe
+desde el 19/09 y la deuda es otra: ver "LA DEUDA NO ES 'DOS SIGNIFICADOS'"
+más abajo, en esta misma sección.**
 
 **Lo que se hizo, que es lo seguro**: el rótulo NOMBRA la magnitud
 ("¿Cuántos kilos suele traer un cajón?" / "¿Cuántas unidades..."). No cambia
 un dato; hace visible cuál es.
 
-**Lo que NO se hizo, y por qué**: clavar la referencia en kilos —que es lo que
-la dejaría con un solo significado en todo el catálogo— **re-etiqueta en
-silencio** la de los contados que tengan una cargada. Es exactamente lo que nos
-negamos a hacer al deprecar `unidad_compra`. Se decide con
-`db/referencia_1_en_que_magnitud_esta.sql`: si `contados_CON_referencia` da 0,
-no hay nada que re-etiquetar y clavarla sale gratis.
+**Lo que NO se hizo, y la consulta lo CERRÓ el 18/09**: clavar la referencia en
+kilos —que es lo que la dejaría con un solo significado en todo el catálogo—
+**re-etiqueta en silencio** la de los contados que ya tienen una cargada. Este
+párrafo decía que se decidía con `db/referencia_1_en_que_magnitud_esta.sql` y
+que si `contados_CON_referencia` daba 0 salía gratis. **No dio 0**:
+
+```
+FRUTAMAX  63 artículos · 4 contados · 4 CON referencia · 0 sin · en_kilos_con_conteo 0
+PALMALA   38 artículos · 4 contados · 3 CON referencia · 1 sin · en_kilos_con_conteo 0
+```
+
+Son **SIETE referencias reales** expresadas en unidades o cubetas. Clavarlas en
+kilos las re-etiqueta sin mover un número y sin que nada avise — exactamente lo
+que este proyecto se negó a hacer al deprecar `unidad_compra`. **Cerrado: no se
+clava, y la consulta ya no decide nada** (su cero era la condición, y la
+condición no se cumplió).
+
+**Y lo que se hizo en su lugar es lo contrario de clavar: que la magnitud viaje
+CON el número.** El rótulo de la pantalla de EDICIÓN ya lo hacía desde el 15/09;
+el que faltaba era **el listado del catálogo**, donde el Mango dice `ref. 40`
+—unidades— tres renglones abajo del Tomate diciendo `ref. 16`, que son kilos. El
+`ref.` que el CSS pone delante no distingue una de otra, y el listado es el que
+se mira de corrido. Desde el 19/09 dicen `40u` y `16k`, con el mismo
+`|sufijo_unidad` que `_magnitudes_del_cajon` ya usaba — **no una cuarta copia**
+de `SUFIJOS_UNIDAD_COMPRA`, que es el momento exacto en que tres se convierten
+en cuatro y el único en que se puede evitar gratis.
+
+**Y EL NULO ES KILO, no "sin unidad"**, que es donde el sufijo se caía justo en
+la mayoría del catálogo: lo dice el CHECK del esquema con su
+`coalesce(unidad_compra, 'kilo')`, y desde el 15/09 un artículo nuevo nace así
+porque el formulario dejó de preguntar la columna. Sin el `or "kilo"` de la
+plantilla, **el caso más común sale pelado** — y es el que nadie va a ir a
+mirar. Va con test propio, separado del de los dos contados, porque un sufijo
+clavado en `k` pasa el de los contados a medias y éste entero.
 
 **Y una segunda referencia para el conteo no va todavía**: el conteo es
 justamente lo que cambia con el formato (el mango viene en 40, 12 y 10, que es
 por lo que su referencia se vació). Precargar sirve con un valor DOMINANTE, y
 ahí no lo hay — precargar mal es lo que invita a aceptar mal.
+
+#### Y el filtro se llamaba `kilos` y lo único que hace es REDONDEAR
+
+Del 19/09, y salió de este mismo trabajo. `_formatear_kilos` no sabe de qué
+magnitud es el número que recibe: redondea a entero y saca la coma. **El nombre
+afirmaba una magnitud que la función no tiene**, y era falso en CUATRO lugares
+—ninguno un borde—:
+
+    _magnitudes_del_cajon.html   lo llama sobre LAS DOS magnitudes de la misma compra
+    fichas.html                  sobre el contenido en unidad de VENTA
+    compra_form.html             sobre `contenido_por_cajon`
+    articulos.html               sobre la referencia, que para siete está en unidades
+
+Pasó a **`sin_decimales`**, que es lo único cierto de él: el nombre lleva el
+alcance (corolario 8), y éste no tiene ninguno. La magnitud la pone quien llama,
+con `sufijo_unidad` al lado.
+
+**Y el test pregunta por la jerga que NO puede aparecer** además de por el
+nombre bueno —`"kilos" not in templates.env.filters`, y un barrido de
+`templates/` entero buscando `|kilos`—: afirmar el nombre nuevo pasa igual si
+quedó un `|kilos` en una plantilla que nadie abrió. El barrido compara el
+conjunto ENCONTRADO y no una lista escrita a mano (corolario 60): la próxima
+plantilla no la va a recordar nadie.
+
+**Y las dos mitades del renombre fallan de forma OPUESTA, que es por qué hacen
+falta las dos.** El nombre de la función rompe un `import` de la suite
+—`from app.main import _formatear_kilos`— y eso es un rojo que se lee. Un
+`|kilos` olvidado en una plantilla **no rompe nada al importar**: Jinja falla al
+RENDERIZAR, así que el único que lo ve es el operario, en la pantalla, el día
+que entre. Por eso el barrido es un test y no un `grep` corrido una vez.
+
+**Y el canario de la tanda fue ROMO y su número no decía nada.** Deshacer el
+registro del filtro dejando nueve plantillas con `|sin_decimales` hizo caer
+**210 tests**: no porque el barrido viera algo, sino porque nueve pantallas
+dejaron de renderizar. El que sí contesta es el FINO —registrar los dos nombres
+como alias, para que nada se rompa, y plantar UN `|kilos`—: ahí cae **1**, y es
+el barrido. Es el corolario 35 con otra ropa: *¿el código quedó roto de la forma
+que me importa, o quedó roto de otra?* — y un canario que rompe de MÁS contesta
+que sí por el motivo equivocado, con un número grande que se lee como rigor.
+
+#### LA DEUDA NO ES "DOS SIGNIFICADOS": ES "EL CONTEO NO TIENE REFERENCIA"
+
+Del 19/09, y es del dueño: *"anotado con el nombre equivocado, el próximo que lo
+lea va a buscar otra cosa"*.
+
+Tres párrafos más arriba esto decía **"Dos significados, ninguna señal"**, y la
+segunda mitad dejó de ser cierta: el rótulo de la edición (15/09) y el sufijo
+del listado (19/09) SON la señal. Así que el que lea "dos significados" va a ir
+a buscar una ambigüedad que ya no está, no la va a encontrar, y va a concluir
+que la deuda se pagó.
+
+**No se pagó, y es otra cosa.** El caso, en tres pasos:
+
+1. un artículo nuevo nace con `unidad_compra` en NULL —el formulario dejó de
+   preguntarla—, o sea en kilos;
+2. `_negar_si_el_conteo_contradice_la_unidad_de_compra` **lo deja ponerle un
+   conteo**: arranca con un `return` temprano cuando `unidad_compra` es falsy o
+   `'kilo'`, y con razón, porque no hay historia que contradecir;
+3. y entonces su `contenido_referencia` está en kilos y **su campo de CONTEO no
+   se precarga nunca**: `segunda_por_cajon` no tiene de dónde salir, porque no
+   existe una referencia para la segunda magnitud.
+
+O sea que lo que falta no es desambiguar un campo: **es un segundo campo que no
+existe.** Ese artículo va a declarar sus kilos con un número propuesto y sus
+unidades desde cero, en cada compra, para siempre.
+
+**Hoy son CERO casos**, medido: `en_kilos_con_conteo` dio 0 en las dos bases. Y
+la razón para no construirlo **no es el cero** —un cero nunca es razón para
+construir ni para no hacerlo (corolario 64)— sino la que ya está escrita arriba:
+**el conteo es justamente lo que cambia con el formato**. El mango viene en 40,
+12 y 10, que es por lo que su referencia se vació. Precargar sirve con un valor
+DOMINANTE y ahí no lo hay, así que una segunda referencia estaría mal casi
+siempre, y precargar mal es lo que invita a aceptar mal.
+
+**El día que se retome, la pregunta es por el DOMINANTE y no por el cero**: si
+aparece un artículo que se cuenta y viene siempre en el mismo formato, ése es el
+caso que pide la columna. Un `count(distinct ...)` sobre sus compras lo contesta
+antes de diseñar nada (corolario 23).
 
 #### Y una cuenta que NO estaba en la lista y es la que nadie iba a buscar
 

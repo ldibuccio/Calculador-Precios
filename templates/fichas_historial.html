@@ -89,7 +89,7 @@
     <div class="fecha">{{ h.registrado_en|fecha_hora }}</div>
     <div class="detalle">
       Envase: {{ h.envase_nombre or "sin envase" }}{{ " (variable)" if h.envase_variable else "" }}
-      · Contenido: {{ h.contenido_caja|kilos if h.contenido_caja is not none else "-" }}
+      · Contenido: {{ h.contenido_caja|sin_decimales if h.contenido_caja is not none else "-" }}
       · Unidad: {{ h.unidad_venta }}
       {% if h.nombre_cliente or h.codigo_cliente %}
       <br>Alias del cliente: {{ h.nombre_cliente or "-" }}{% if h.codigo_cliente %} (código {{ h.codigo_cliente }}){% endif %}

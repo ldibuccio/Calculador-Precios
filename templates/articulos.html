@@ -221,7 +221,18 @@
                sin conteo no tiene nada que declarar. Escribirlo lo hace parecer
                una configuración, que es de lo que se venía. #}
             <td>{% if articulo.unidad_conteo %}<span class="conteo">{{ articulo.unidad_conteo }}</span>{% endif %}</td>
-            <td>{{ articulo.contenido_referencia|kilos if articulo.contenido_referencia is not none else "-" }}</td>
+            {# LA MAGNITUD VIAJA CON EL NÚMERO, igual que en `_magnitudes_del_cajon`.
+               `contenido_referencia` está expresada en `unidad_compra`, así que
+               el Mango dice 40 UNIDADES tres renglones abajo del Tomate diciendo
+               16 KILOS, y el rótulo "ref." no los distingue. Un número pelado en
+               una columna donde dos filas vecinas hablan de cosas distintas es
+               exactamente el caso que la pantalla de edición ya cerró con su
+               rótulo — acá faltaba la otra mitad.
+               EL NULO ES KILO, no "sin unidad": lo dice el CHECK del esquema con
+               su `coalesce(unidad_compra, 'kilo')`, y desde el 15/09 un artículo
+               nuevo nace así porque el formulario dejó de preguntarlo. Sin el
+               `or "kilo"` el sufijo sale vacío justo en la mayoría del catálogo. #}
+            <td>{% if articulo.contenido_referencia is not none %}{{ articulo.contenido_referencia|sin_decimales }}{{ (articulo.unidad_compra or "kilo")|sufijo_unidad }}{% else %}-{% endif %}</td>
             <td>
               {% if articulo.grupo == "fruta" %}Fruta
               {% elif articulo.grupo == "hortaliza" %}Hortaliza

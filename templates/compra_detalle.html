@@ -283,7 +283,7 @@
         {{ diferencia_cajones_recepcion|numero }} cajones
       {% endif %}
       {% if diferencia_contenido_recepcion and diferencia_contenido_recepcion != 0 %}
-        {{ diferencia_contenido_recepcion|kilos }}{{ compra.unidad_compra|sufijo_unidad }} por cajón
+        {{ diferencia_contenido_recepcion|sin_decimales }}{{ compra.unidad_compra|sufijo_unidad }} por cajón
       {% endif %}
     </div>
     {% endif %}

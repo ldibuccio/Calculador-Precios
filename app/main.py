@@ -1016,8 +1016,20 @@ def _formatear_moneda(valor) -> str:
     return f"${'-' if negativo else ''}{_agrupar_miles(str(abs(entero)))}"
 
 
-def _formatear_kilos(valor) -> str:
-    """Formatea un peso en kilos como número entero, sin decimales ni coma (1500.5 -> "1500")."""
+def _formatear_sin_decimales(valor) -> str:
+    """Redondea a entero y lo devuelve sin coma (1500.5 -> "1500"). NO dice de qué magnitud es.
+
+    Se llamaba `kilos`, y ése era el problema: el nombre afirma una magnitud y
+    la función solo redondea. Lo usan trece lugares y en CUATRO lo que formatea
+    no son kilos — `_magnitudes_del_cajon.html` lo llama sobre LAS DOS
+    magnitudes de la misma compra, `fichas.html` sobre el contenido en unidad
+    de VENTA, y el catálogo sobre una referencia que para siete artículos está
+    en unidades o cubetas.
+
+    El nombre lleva el alcance (corolario 8): éste no tiene ninguno, y por eso
+    ahora dice lo único que es cierto de él. La magnitud la pone quien llama,
+    con `sufijo_unidad` al lado.
+    """
     if valor is None:
         return ""
     return str(round(float(valor)))
@@ -1084,7 +1096,7 @@ templates.env.filters["numero"] = _formatear_numero
 templates.env.filters["fecha_corta"] = _formatear_fecha_corta
 templates.env.filters["moneda"] = _formatear_moneda
 templates.env.filters["porcentaje"] = _formatear_porcentaje
-templates.env.filters["kilos"] = _formatear_kilos
+templates.env.filters["sin_decimales"] = _formatear_sin_decimales
 templates.env.filters["sufijo_unidad"] = _sufijo_unidad
 templates.env.filters["tamano"] = _formatear_bytes
 
