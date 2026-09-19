@@ -1677,6 +1677,31 @@ Tres cosas para la próxima:
    las dos consecuencias —se genera una guía R sola, esas cajas salen del
    stock— y dice con todas las letras cuándo NO va.
 
+   **Y HAY UN TERCER CASO, del 19/09 y también del dueño: que la acción
+   riesgosa sea la LEGÍTIMA Y FRECUENTE. Ahí no va ningún escalón — va el
+   AVISO, arriba del campo.** Cambiar el precio de una compra ya recepcionada
+   recostea hacia atrás todo lo que el FIFO le atribuye a ese lote, y aun así
+   **es lo que hay que hacer casi siempre**: el comprador renegocia. Un
+   `confirm()` ahí *"lo pasa el caso normal todas las veces"*, o sea que se
+   lo cobra a todos y no ataja a nadie — es el escalón que se aprende a
+   esquivar, que es la forma de no tener ninguno.
+
+   Los tres, entonces, y lo que los ordena es la FRECUENCIA de lo riesgoso:
+
+   | lo riesgoso es… | qué va |
+   |---|---|
+   | la excepción rara, y el caso normal es un click | el **tilde** |
+   | la excepción, y el caso normal ni pasa por ahí | el **modal** que obliga a leer |
+   | **la acción legítima de todos los días** | **ningún escalón: el aviso, ANTES del campo** |
+
+   Y la tercera fila sale de la misma frase que las otras dos —*el que se
+   equivocó también está seguro*— llevada un paso más: si la acción es
+   legítima, **no falta una decisión, falta información.** Preguntar "¿estás
+   seguro?" sobre algo que se hace todos los días no agrega ninguna, y lo que
+   sí agrega es decir qué se lleva puesto y nombrarlo —acá, las guías R que
+   quedan con su costo congelado—. Por eso el aviso va ARRIBA: debajo del
+   campo llega cuando el número ya se tipeó.
+
 Y el diagnóstico también se llevó una lección: la primera hipótesis fue
 que el auto-confirmado ignoraba el chequeo. **Se descartó corriendo la
 función real con el asunto real**, no leyendo el código: `'Pedido Dia
@@ -8428,6 +8453,43 @@ Los dos modos de falla eran mudos: sin el costo, el aviso nombra la guía y se
 calla el número, que es lo único que hace la comparación posible; sin el
 filtro, una guía R **anulada** aparece reclamando por un lote que ya no
 consume. Se cierran con un test del TEXTO del SQL, calificado por alias.
+
+### Y POR ESO EL CANARIO VA SIEMPRE: conocer la trampa no protege de pisarla
+
+Del 19/09, y es del dueño. Es la observación que convierte a este corolario
+en una práctica y no en una advertencia más, así que va pegada y no aparte.
+
+**La sección de arriba se escribió, y una hora después se cometió lo que
+describe, adentro del mismo commit.** No es que la regla estuviera vieja, ni
+lejos, ni en un archivo que nadie abre: estaba recién escrita, por mí, sobre
+el trabajo que estaba haciendo. **No frenó nada.** Lo agarró el canario.
+
+**Y el intervalo llegó a CERO, que es lo que no estaba medido.** Este archivo
+ya anota tres veces la misma forma —el corolario 33 lo dice del 20, el 18 de
+sí mismo, y el 16/09 lo dice del nombre repetido— y las tres se leen como
+descuidos de alguien que se olvidó. Acá no hubo nada que olvidar: la distancia
+entre escribir la regla y romperla fue un commit. **O sea que "lo tengo
+fresco" no es una protección, y ninguna cantidad de releer el archivo lo es**
+— que es justo lo que el corolario 19 dice de cualquier salvaguarda que haya
+que acordarse de leer.
+
+**El caso hermano, del 17/09, y tiene la misma forma con dos mensajes de
+distancia**: en el planteo del stock de cajas escribí que este sistema ya
+tiene tres pantallas llamadas "Stock" y que no había que agregar una cuarta,
+y dos mensajes después bauticé la pantalla nueva "Envases", que era el nombre
+de una que ya existía. La advertencia la había escrito yo, ese mismo día,
+sobre ese mismo trabajo.
+
+**Lo accionable, y es una sola frase**: la protección nunca es la regla
+escrita — es el CHEQUEO MECÁNICO hecho en el momento. Para el nombre, el
+`grep` antes de bautizar. Para el andamio, el canario antes de dar un test
+por bueno. Los dos cuestan menos de un minuto y los dos funcionan sin que
+nadie se acuerde de nada, que es la única propiedad que importa.
+
+Por eso el canario **no se saltea cuando el trabajo salió prolijo**, que es
+exactamente cuando uno lo quiere saltear: los cuatro casos de este corolario
+salieron de trabajos cuidados, con tests escritos a propósito, y los cuatro
+los encontró romper el código.
 
 ## Corolario 86: una foto POR CANARIO deja una avería puesta cuando dos tocan el mismo archivo
 

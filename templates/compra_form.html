@@ -422,50 +422,6 @@
     }
   </script>
 
-  {% if modo == "editar" %}
-  <script>
-    // Guardar un precio nuevo sobre una compra ya recepcionada cambia un
-    // costo que ya se pudo haber usado para calcular precios sugeridos —
-    // se avisa antes de guardar, mismo criterio de confirm() que el
-    // resto de las acciones importantes de esta pantalla. Este listener
-    // se registra ANTES que el de más abajo (que deshabilita los
-    // botones): si el usuario cancela acá, stopImmediatePropagation()
-    // frena también a ese otro listener, para no dejar los botones
-    // trabados en "Guardando..." de una acción que no se mandó.
-    (function () {
-      var form = document.getElementById("form-compra");
-      var importeInput = document.getElementById("importe");
-      var botonGuardar = document.getElementById("boton-guardar-compra");
-      if (!form || !importeInput || !botonGuardar) {
-        return;
-      }
-      var importeInicial = importeInput.value;
-      var compraRecepcionada = {{ "true" if compra and compra.estado == "recepcionado" else "false" }};
-      var seEligioGuardar = false;
-
-      botonGuardar.addEventListener("click", function () {
-        seEligioGuardar = true;
-      });
-
-      form.addEventListener("submit", function (evento) {
-        var eligioGuardarAhora = seEligioGuardar;
-        seEligioGuardar = false;
-        if (!eligioGuardarAhora || !compraRecepcionada || importeInput.value === importeInicial) {
-          return;
-        }
-        var confirmado = confirm(
-          "Vas a cambiar el precio de una compra ya recepcionada. Esto cambia el costo del artículo y " +
-          "puede afectar los precios sugeridos que ya se calcularon. ¿Confirmás guardar?"
-        );
-        if (!confirmado) {
-          evento.preventDefault();
-          evento.stopImmediatePropagation();
-        }
-      });
-    })();
-  </script>
-  {% endif %}
-
   {% if modo == "nueva" %}
   <script>
     // Adjuntar comanda: el botón abre el selector (en el celular ofrece

@@ -5830,29 +5830,6 @@ def test_ver_editar_compra_muestra_boton_volver_rojo():
     assert "confirmarVolver" in respuesta.text
 
 
-def test_ver_editar_compra_recepcionada_marca_la_bandera_js_para_el_aviso_de_precio():
-    compra_recepcionada = dict(COMPRA_DE_PRUEBA, estado="recepcionado", estado_retiro="retirado")
-    with (
-        patch("app.main.obtener_compra", return_value=compra_recepcionada),
-        patch("app.main.listar_articulos", return_value=ARTICULOS_DEL_CATALOGO),
-        patch("app.main.guias_r_congeladas_de_la_compra", return_value=[]),
-    ):
-        respuesta = cliente.get("/compras/30/editar")
-
-    assert "var compraRecepcionada = true;" in respuesta.text
-    assert "cambia el costo del artículo" in respuesta.text
-
-
-def test_ver_editar_compra_no_recepcionada_no_marca_la_bandera_js():
-    with (
-        patch("app.main.obtener_compra", return_value=COMPRA_DE_PRUEBA),
-        patch("app.main.listar_articulos", return_value=ARTICULOS_DEL_CATALOGO),
-    ):
-        respuesta = cliente.get("/compras/30/editar")
-
-    assert "var compraRecepcionada = false;" in respuesta.text
-
-
 def test_eliminar_compra_exitosa_redirige_a_compras():
     with (
         patch("app.main.eliminar_compra", return_value=[]) as mock_eliminar,
