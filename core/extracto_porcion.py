@@ -24,7 +24,21 @@ sueltos sin ser ningún evento).
 """
 
 SIN_EXPLICAR = "Sin explicar"
-SIN_GUIA_R = "Salieron sin guía R que las produzca"
+# EL RENGLÓN DEL FALTANTE, y su nombre viejo era FALSO SIEMPRE, no a veces.
+#
+# Se llamaba "Salieron sin guía R que las produzca", y el déficit del que sale
+# SOLO puede venir de una ficha SIN ENVASE: `_cajas_por_ficha` le pone
+# `(valor, 0.0)` a las fichas con envase —el déficit es cero duro, está escrito
+# así— y `deficit_de_cajas_por_ficha` filtra `deficit > 0`. O sea que el único
+# caso que llega acá es el de ENVASE PERDIDO (manzana, pera, arándano), que
+# sale en el cajón del proveedor y NO SE REPROCESA NUNCA: no va a tener una
+# guía R jamás, así que el cartel mandaba a cargar un papel que no existe.
+#
+# Es el corolario 22 otra vez y en el mismo lugar: el aviso "no hay cajas de
+# esta ficha" saltaba para las de envase perdido, que no van a tener cajas
+# armadas nunca. Acá la frase decía el mecanismo —una guía R, un lote, el
+# FIFO— en vez del hecho: se entregó más de lo que había.
+FALTABA = "Se entregó más de lo que había"
 
 # Qué mueve cada porción, y NO es lo mismo para las tres:
 #
@@ -181,7 +195,7 @@ def armar_extracto(eventos: dict, venia: float, quedo: float,
     else:
         filas = _eventos_de_sueltos(eventos)
         if deficit_nuevo:
-            filas.append(_renglon(SIN_GUIA_R, -deficit_nuevo))
+            filas.append(_renglon(FALTABA, -deficit_nuevo))
 
     explicado = round(sum(f["bultos"] for f in filas), 2)
     sin_explicar = round(quedo - venia - explicado, 2)

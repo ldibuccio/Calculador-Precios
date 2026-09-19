@@ -1,6 +1,6 @@
 """El extracto de una porción: los eventos EXPLICAN, no calculan el saldo."""
 
-from core.extracto_porcion import SIN_EXPLICAR, SIN_GUIA_R, armar_extracto
+from core.extracto_porcion import FALTABA, SIN_EXPLICAR, armar_extracto
 
 # Perita el 07/09: entraron 30 cajones de La Misión y la guía R143 tomó 10
 # cajones y armó 30 cajas para la ficha 7. El mismo reproceso mueve LAS DOS
@@ -211,7 +211,7 @@ def test_el_reproceso_SIN_ficha_no_inventa_destino():
     assert not any("→" in d for d in descripciones)
 
 
-def test_lo_que_salio_SIN_GUIA_R_tiene_nombre_y_no_cae_en_sin_explicar():
+def test_lo_que_FALTABA_tiene_nombre_y_no_cae_en_sin_explicar():
     """El caso de Limón del 08/09: armaron 35 cajas antes de cargar las guías R.
 
     Los sueltos salen de `total − Σ disponibles` y el disponible tiene
@@ -229,10 +229,33 @@ def test_lo_que_salio_SIN_GUIA_R_tiene_nombre_y_no_cae_en_sin_explicar():
     extracto = armar_extracto(eventos, venia=11.0, quedo=38.0, deficit_nuevo=10.0)
 
     renglones = {f["descripcion"]: f["bultos"] for f in extracto["filas"]}
-    assert renglones[SIN_GUIA_R] == -10.0
+    assert renglones[FALTABA] == -10.0
     # 11 + 40 − 10 = 41, quedó 38: el residuo de verdad son −3, y sigue a la vista.
     assert extracto["sin_explicar"] == -3.0
     assert renglones[SIN_EXPLICAR] == -3.0
+
+
+def test_el_renglon_del_faltante_NO_NOMBRA_la_guia_R():
+    """La frase vieja era FALSA SIEMPRE, no a veces, y por eso se pregunta por ella.
+
+    Decía "Salieron sin guía R que las produzca", y el déficit del que sale
+    SOLO puede venir de una ficha SIN ENVASE: `_cajas_por_ficha` le pone el
+    déficit en cero duro a las que tienen envase, y `deficit_de_cajas_por_ficha`
+    filtra `deficit > 0`. El único caso que llega acá es ENVASE PERDIDO
+    —manzana, pera, arándano— que no se reprocesa NUNCA: el cartel mandaba a
+    cargar un papel que para ese artículo no existe.
+
+    Se pregunta por la JERGA QUE NO PUEDE APARECER y no solo por el texto
+    bueno: afirmar la frase nueva pasa igual si la vieja quedó al lado.
+    """
+    eventos = {"compras": [], "reprocesos": [], "armados": [], "movimientos": [], "remitos": []}
+
+    extracto = armar_extracto(eventos, venia=12.0, quedo=-8.0, deficit_nuevo=20.0)
+
+    descripciones = " ".join(f["descripcion"] for f in extracto["filas"])
+    assert "Se entregó más de lo que había" in descripciones
+    assert "guía R" not in descripciones
+    assert "lote" not in descripciones.lower()
 
 
 def test_sin_deficit_nuevo_el_renglon_NO_aparece():
@@ -242,7 +265,7 @@ def test_sin_deficit_nuevo_el_renglon_NO_aparece():
 
     extracto = armar_extracto(eventos, venia=11.0, quedo=51.0, deficit_nuevo=0.0)
 
-    assert SIN_GUIA_R not in [f["descripcion"] for f in extracto["filas"]]
+    assert FALTABA not in [f["descripcion"] for f in extracto["filas"]]
     assert extracto["sin_explicar"] == 0.0
 
 
@@ -258,7 +281,7 @@ def test_el_deficit_es_de_los_SUELTOS_y_no_de_la_ficha_ni_de_la_segunda():
     de_segunda = armar_extracto(eventos, venia=0.0, quedo=0.0, es_segunda=True, deficit_nuevo=10.0)
 
     for extracto in (de_ficha, de_segunda):
-        assert SIN_GUIA_R not in [f["descripcion"] for f in extracto["filas"]]
+        assert FALTABA not in [f["descripcion"] for f in extracto["filas"]]
 
 
 # EL CASO DEL 09/09 EN FRUTAMAX, con los números reales de producción y el
