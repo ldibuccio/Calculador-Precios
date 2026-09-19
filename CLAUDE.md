@@ -1848,6 +1848,59 @@ escribe un `.sql` a mano para la misma FORMA de operación, eso ya no es un
 arreglo puntual — es una función que falta. La primera vez es un
 incidente; la segunda es un diagnóstico.
 
+### El TERCER disfraz: la operación existe, pero solo su versión DESTRUCTIVA
+
+Del 19/09, y es del dueño en una frase: *"la única salida hoy es anular y
+recargar. Es la tercera vez esta semana que algo se arregla así."*
+
+**Corregir la fecha de una guía R** no era un `.sql` a mano ni una ruta sin
+botón: se podía hacer, con dos clicks, desde una pantalla que está a la
+vista. Anular y volver a cargar. O sea que las dos señales que este corolario
+enumera —el archivo que se repite y el barrido de pantallas sin link— salen
+las dos en verde, y la operación igual falta.
+
+**Cómo se reconoce, y es lo único nuevo**: el que la hace **paga un costo que
+no tiene nada que ver con lo que quería cambiar.** Acá quería mover un día y
+tenía que borrar los consumos, el costo congelado y el número de guía, y
+rearmar todo a mano. Esa desproporción es la señal, y es la misma forma del
+corolario 29 al revés: allá una prueba costaba más que la función y delataba
+un requisito inventado; acá una corrección cuesta más que el dato que corrige
+y delata una función que falta.
+
+La pregunta que lo encuentra, y se hace cuando alguien cuenta cómo arregló
+algo: *¿lo que tuvo que deshacer es lo que quería cambiar?* Si no, la
+operación suave no existe.
+
+### Y LAS GUARDAS DE UNA CORRECCIÓN SON LAS DE LA CREACIÓN (19/09)
+
+La parte de diseño, y vale para cualquier pantalla que corrija un dato que
+en su momento pasó por un freno.
+
+Mover la fecha de una guía R tiene que preguntar **exactamente lo mismo** que
+preguntó la carga: *"¿habría entrado ese día?"*. Escrito de nuevo en la
+puerta de la corrección, eso es la regla escrita dos veces en su forma más
+cara — **la copia que se separe deja entrar por una puerta lo que la otra
+rechaza**, y nada se pone rojo, porque cada una es correcta por separado.
+
+Así que los dos frenos salieron de `_crear_reproceso` a una función que los
+dos caminos llaman (`_lotes_de_reproceso_a_su_fecha`), y **el test de
+cableado pasó de tres lectores a CUATRO**. Lo que lo demuestra no es que hoy
+coincidan: es que sacarle el filtro a esa única función haga caer a los
+cuatro.
+
+**Y la forma de que la pregunta sea literalmente la misma es ESCRIBIR
+PRIMERO y validar después**, adentro de la misma transacción. Con la guía ya
+puesta en la fecha nueva, su propia toma queda fuera del recorte y su propia
+primera es un lote prohibido para una guía R: no puede costearse a sí misma
+por ninguno de los dos lados, y no hizo falta escribir ninguna regla nueva
+para eso. Si la validación rechaza, la excepción sale y no se commitea nada.
+
+**Lo único que la corrección agrega de propio es la revisión LOTE POR LOTE**,
+y es el caso que el freno del total no puede ver: la suma entra y el lote que
+el documento congelado nombra puede ser de un día posterior al nuevo. El
+freno mira un número; esto mira los nombres. Es el corolario 13 otra vez —un
+total exacto deja de contestar la pregunta apenas la pregunta se afina.
+
 ### Y el 18/09 se construyó en la PRIMERA, por pedido del dueño
 
 *"Esta es la primera vez y va a haber una segunda."* Una compra de Pera
@@ -6826,6 +6879,39 @@ para qué población vale**. "No va el botón porque la tarjeta entera lleva
 ahí" es una afirmación sobre el celular; escrito así se ve solo el día que
 alguien lo lea pensando en escritorio. Es el corolario 8 —el nombre lleva el
 alcance— aplicado a la razón de un test.
+
+### Y la razón envejece cuando cambia lo que la FILA DICE, no el código (19/09)
+
+Segunda vez con la misma forma, y agrega el disparador que faltaba.
+`test_con_UN_SOLO_formato_el_desglose_NO_aparece` afirmaba una ausencia con
+su razón escrita al lado: *"un desglose que sale siempre repite el número de
+arriba"*. Era cierto mientras la fila dijera solo el reparto.
+
+El 19/09 la fila ganó **el kilaje y el proveedor**, y ahí dejó de repetir
+nada: le agrega lo único que el número no puede decir —*"41 bultos pueden ser
+200 kilos o 600"*—. Nadie tocó ese test ni esa condición; lo que cambió es
+**qué contiene la cosa cuya existencia el test discutía**. Y como 52 de los
+57 artículos de las dos bases tienen un formato solo, la regla vieja apagaba
+el dato justo en el caso normal.
+
+Con el 68 son dos disparadores distintos, y conviene tenerlos juntos porque
+se buscan distinto:
+
+| | qué cambió | cómo se encuentra |
+|---|---|---|
+| **corolario 68** | la POBLACIÓN (celular → escritorio) | escribir al lado para qué población vale |
+| **éste** | el CONTENIDO de lo que se omite | releer la razón el día que la cosa gana un campo |
+
+**Lo accionable, y se hace al AGREGAR el campo y no al leer el test**: cuando
+algo que una pantalla muestra gana un dato nuevo, grepear en `tests/` los
+asserts que niegan esa cosa. Una razón escrita sobre *"no aporta nada"* es
+una afirmación sobre su contenido, y un contenido nuevo la vence.
+
+**Y el rojo llega cuando el arreglo es correcto**, que es lo caro: el test
+cae al agregar la fila, y la primera lectura es *"me equivoqué"*. La pregunta
+sigue siendo la del corolario 22 — *¿este test afirma lo que hoy queremos que
+pase, o lo que pasaba?* — con la precisión de que acá la respuesta no está en
+el fixture sino en el comentario, y el comentario es el que convence.
 
 ### Por qué ningún test podía agarrarlo
 
