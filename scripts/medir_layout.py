@@ -68,10 +68,25 @@ nombre largo, y ahí nadie va a saber por qué.
 """
 
 import asyncio
+import os
 
-# El mismo que usan las capturas del proyecto: el contenedor lo trae
-# preinstalado y `playwright install` no corre acá.
-CHROMIUM = "/opt/pw-browsers/chromium"
+# EL NAVEGADOR, y el path NO puede estar clavado. El contenedor de
+# desarrollo trae chromium preinstalado en /opt/pw-browsers (por
+# PLAYWRIGHT_BROWSERS_PATH) y ahí `playwright install` no corre; el runner de
+# GitHub Actions lo instala en el cache de playwright, que está en otro lado.
+#
+# Clavado, los 30 tests de layout NO ARRANCAN en el runner:
+#
+#   BrowserType.launch: Failed to launch chromium because executable
+#   doesn't exist at /opt/pw-browsers/chromium
+#
+# Y eso se lee como "el runner mide distinto" cuando en realidad no midió
+# nada — que es la lectura que estuvo a punto de hacernos sacar del CI 30
+# tests sanos. Con None, playwright resuelve el suyo, que es lo correcto en
+# cualquier máquina donde se lo haya instalado.
+_CHROMIUM_DEL_CONTENEDOR = "/opt/pw-browsers/chromium"
+CHROMIUM = (_CHROMIUM_DEL_CONTENEDOR
+            if os.path.exists(_CHROMIUM_DEL_CONTENEDOR) else None)
 
 ANCHO_CELULAR = 390
 ALTO_CELULAR = 844
