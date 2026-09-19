@@ -3592,9 +3592,18 @@ de venta**. El numerador es plata y el denominador es contenido de compra,
 así que esa igualdad solo vale si la unidad en que se compra y la unidad en
 que se vende son la misma. **No hay ninguna conversión en ningún lado**:
 `grep conversion` sobre `app/costeo.py` y `core/motor_costeo.py` no devuelve
-nada, y `conversion_articulos_cliente` —que es lo único que se llama así—
-guarda **cómo llama cada cliente a cada artículo**, nombre y código propios,
-para interpretar sus pedidos por mail. No convierte unidades.
+nada, y lo único que se llama así es el ALIAS del cliente —**cómo llama
+cada cliente a cada artículo**, nombre y código propios, para interpretar sus
+pedidos por mail—. No convierte unidades.
+
+(Ese alias vivía en una tabla `conversion_articulos_cliente`, que este
+archivo nombraba en dos lugares hasta el 19/09. **Ya no existe**: se fusionó
+dentro de `fichas_logistica`, en las columnas `nombre_cliente` /
+`codigo_cliente`, y lo que todavía la nombra son tres comentarios que cuentan
+eso. La conclusión no se mueve —sigue sin haber conversión de unidades— y el
+nombre sí: el que lo grepee hoy no encuentra nada y no sabe si es porque no
+existe o porque buscó mal. Lo destapó el barrido de tablas del corolario 60,
+que la listó como muerta.)
 
 Analizar Artículo hereda el supuesto y **eso es lo correcto**: lo peligroso
 sería que esta pantalla usara una regla distinta a las demás, que es la
@@ -5743,6 +5752,71 @@ conjunto **ENCONTRADO** contra el **DECIDIDO** falla en las dos direcciones
 decidido— y las dos son hallazgos. Cuesta lo mismo escribirlo de una forma que
 de la otra, y solo una encuentra lo que uno no fue a buscar.
 
+### Y EL TEST DE COLUMNAS NO VE TABLAS (19/09)
+
+La frase es del dueño y es la forma corta del corolario 60. El 60 dice que
+una migración que cambia un COMPORTAMIENTO —un `on delete`, un CHECK— no
+agrega ninguna columna y por eso ningún test de columnas la ve. **Una tabla
+NUEVA tampoco agrega ninguna**, y es el mismo agujero por una puerta que
+nadie mira.
+
+`compras_eliminadas` se migró en las dos bases y `db/esquema_completo.sql`
+no la tenía. El guardia del 12/09 estaba puesto, andaba, y **no podía
+verlo**: busca `alter table ... add column`, y una tabla nueva no pasa por
+ahí. No es que faltara un test — es que el que había no tiene forma de
+expresar esta pregunta.
+
+**Y el daño no lo ve ninguna de las dos bases de hoy**, que corrieron la
+migración y quedaron bien: cae en **la base que todavía no existe**. La
+empresa siguiente nace sin la tabla, y como el archivo se escribe en la
+MISMA sentencia que el DELETE, ahí revienta todo borrado de compra — meses
+después, sin que nadie relacione una cosa con la otra. Es la familia de *una
+regla de unicidad no puede depender de una extensión de Postgres*: **lo que
+se pierde el día que se crea la base siguiente no es una regla.**
+
+**Y EL HUMO TAMPOCO LO AGARRA, medido y no supuesto.** Reproducido el estado
+exacto del 19/09 —la tabla sin `create`, sin índice y sin comments— cayó
+**un solo test, el nuevo**, con el humo en verde. El humo abre las 130
+pantallas contra una base cargada con el esquema, así que ve la tabla que
+falta solo si alguna consulta la nombra; `compras_eliminadas` todavía no la
+nombra ninguna, y el día que la nombre ya es tarde. Ese cero vale: dice que
+las dos guardas miran cosas distintas y que no hay una que cubra a la otra.
+
+**Lo que se construyó** es el hermano del de columnas, y lo importante es
+cómo pregunta: barre los `create table` de `db/*.sql`, resta los que alguna
+migración dropea, y compara el conjunto ENCONTRADO contra el DECIDIDO —las
+siete tablas muertas del diseño original, cada una con su razón al lado—.
+Falla en las dos direcciones, así que la lista no puede quedarse protegiendo
+lo que ya no pasa.
+
+**Y las siete muertas se verificaron, no se heredaron del encabezado**:
+ninguna aparece en POSICIÓN DE TABLA (`FROM|INTO|JOIN|UPDATE <tabla>`) en
+`app/` ni en `core/`. El grep del nombre suelto da **20 para `recepciones` y
+3 para `conversion_articulos_cliente`**, y las 23 son prosa y nombres de
+variable — es el corolario 59 exacto, y contestar con ese grep habría dejado
+tres tablas "vivas" que no lo están.
+
+**Dos cosas más que salieron del barrido, y las dos son del método:**
+
+- **La primera versión encontró una tabla llamada `if`**, matcheada adentro
+  del comentario de `agregar_disponibles.sql` que dice *"seguro de correr más
+  de una vez (create table if not exists...)"*. El comentario explica por qué
+  algo es así, así que NOMBRA la cosa que el test busca: la colisión está
+  garantizada por construcción (corolario 38/59). Los comentarios se sacan
+  antes de barrer.
+- **Y el contador del canario decía 0 con la suite diciendo "2 failed"**:
+  corrí pytest con `-rs`, que imprime los salteados y **no las líneas
+  `FAILED`**. Lo único que lo delató fue imprimir la cola del resumen al lado
+  del conteo, que es la señal que la sexta lectura del canario en cero ya
+  pedía. El que estaba roto era el canario.
+
+**Y de yapa, un SKIP que antes no estaba**: Postgres se había caído en el
+medio y el humo pasó a saltearse, así que una baseline de `2801 passed, 1
+skipped` se lee casi igual que una de `2802 passed`. Un test salteado no es
+un test verde, y el único que lo dice es el `-rs` — que es justamente la
+bandera con la que el canario no veía los FAILED. **Las dos banderas hacen
+falta y ninguna sola alcanza.**
+
 ## Corolario 61: una verificación que silencia `stderr` convierte un fallo en un resultado VACÍO, y un vacío se lee como cero
 
 Del 14/09, cerrando el turno. Para confirmar que no hubieran quedado bases de
@@ -6019,8 +6093,9 @@ unidad lo compra ese cliente.
    `precio(venta) / costo(compra)`, con las unidades mezcladas y sin que nada
    avise.
 4. **No hay ninguna conversión en ningún lado** — ya estaba escrito arriba y
-   se volvió a verificar. `conversion_articulos_cliente` es el alias del
-   cliente (nombre y código), no convierte unidades.
+   se volvió a verificar. Lo único que se llama así es el alias del cliente
+   (nombre y código), que hoy vive en `fichas_logistica` y no convierte
+   unidades.
 5. **La alerta no puede distinguir los dos casos**, y por eso se escribió
    `db/kiwi_1_error_de_carga_o_dos_clientes.sql`: parte por ARTÍCULO entre el
    que tiene fichas que **no se ponen de acuerdo entre sí** (multiunidad:

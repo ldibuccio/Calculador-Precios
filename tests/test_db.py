@@ -9208,6 +9208,100 @@ def test_toda_columna_que_agrega_una_MIGRACION_esta_en_el_esquema_completo():
     )
 
 
+def test_toda_TABLA_que_crea_una_MIGRACION_esta_en_el_esquema_completo():
+    """El test de arriba mira COLUMNAS, y una TABLA nueva le pasa al lado.
+
+    Del 19/09. `compras_eliminadas` se migró en las dos bases y
+    `db/esquema_completo.sql` no la tenía. El guardia del 12/09 estaba
+    puesto, andaba, y no podía verlo: busca `alter table ... add column`, y
+    una tabla nueva no agrega ninguna columna por esa vía.
+
+    Y el daño no lo ve ninguna de las dos bases de hoy, que corrieron la
+    migración y quedaron bien: cae en LA BASE QUE TODAVÍA NO EXISTE. La
+    empresa siguiente nace sin la tabla, y como el archivo se escribe en la
+    MISMA sentencia que el DELETE, ahí revienta todo borrado de compra —
+    meses después, sin que nadie relacione una cosa con la otra. Es la misma
+    familia que "una regla de unicidad no puede depender de una extensión de
+    Postgres": lo que se pierde el día que se crea la base siguiente no es
+    una regla.
+
+    COMPARA EL CONJUNTO ENCONTRADO CONTRA EL DECIDIDO, no recorre una lista
+    propia (corolario 60), así que falla en las dos direcciones: cuando
+    aparece una tabla que nadie decidió dejar afuera, Y cuando una de las
+    excluidas entra al esquema y la lista se queda protegiendo algo que ya
+    no pasa.
+
+    LAS SIETE EXCLUIDAS son las tablas muertas del diseño original, y su
+    razón está también en el encabezado de `esquema_completo.sql`. No se
+    dan por muertas de memoria: se verificó el 19/09 que ninguna aparece en
+    POSICIÓN DE TABLA (`FROM|INTO|JOIN|UPDATE <tabla>`) en `app/` ni en
+    `core/`. Un grep del nombre suelto da 20 para `recepciones` y 3 para
+    `conversion_articulos_cliente`, y las 23 son prosa y nombres de
+    variable — la de conversión, de hecho, se fusionó dentro de
+    `fichas_logistica` y lo que la nombra son comentarios que cuentan eso.
+    """
+    import io
+    import pathlib
+    import re
+
+    # LOS COMENTARIOS SE SACAN PRIMERO, y no es un detalle: la primera
+    # versión de este barrido devolvió una tabla llamada `if`, matcheada
+    # adentro del comentario de `agregar_disponibles.sql` que dice "seguro de
+    # correr más de una vez (create table if not exists...)". Un comentario
+    # explica por qué algo es así, así que NOMBRA la cosa que el test busca:
+    # la colisión está garantizada por construcción (corolario 59).
+    SIN_COMENTARIOS = re.compile(r"--[^\n]*")
+    CREA = re.compile(r"create\s+table\s+(?:if\s+not\s+exists\s+)?(\w+)", re.I)
+    BORRA = re.compile(r"drop\s+table\s+(?:if\s+exists\s+)?(\w+)", re.I)
+
+    # Las muertas del diseño original, con la razón al lado de cada una.
+    MUERTAS_A_PROPOSITO = {
+        "recepciones": "diseño viejo: hoy la recepción es un estado de compras",
+        "pedidos_supermercado": "diseño viejo: hoy son pedidos + pedidos_renglones",
+        "precios_dia": "diseño viejo: hoy precios_venta_historial",
+        "parametros_historial": "diseño viejo: hoy clientes_parametros_historial",
+        "aprendizaje_proveedores": "nunca se usó",
+        "resultados": "nunca se usó",
+        "conversion_articulos_cliente": "fusionada dentro de fichas_logistica",
+    }
+
+    def tablas(texto):
+        return {t.lower() for t in CREA.findall(SIN_COMENTARIOS.sub("", texto))}
+
+    esquema = io.open("db/esquema_completo.sql", encoding="utf-8").read()
+    en_el_esquema = tablas(esquema)
+
+    creadas, borradas = {}, set()
+    for ruta in sorted(pathlib.Path("db").glob("*.sql")):
+        if ruta.name == "esquema_completo.sql":
+            continue
+        texto = SIN_COMENTARIOS.sub("", io.open(ruta, encoding="utf-8").read())
+        for nombre in CREA.findall(texto):
+            creadas.setdefault(nombre.lower(), set()).add(ruta.name)
+        borradas |= {t.lower() for t in BORRA.findall(texto)}
+
+    # El denominador, que es lo único que distingue "ninguna falta" de "no se
+    # miró ninguna" (corolario 45). Con el regex roto, las dos dan lo mismo.
+    assert len(creadas) > 40, f"el barrido encontró solo {len(creadas)} tablas: revisá el regex"
+    assert len(en_el_esquema) > 40, f"el esquema tiene solo {len(en_el_esquema)} tablas: revisá el regex"
+
+    vivas = {t for t in creadas if t not in borradas}
+    faltan = {t for t in vivas if t not in en_el_esquema}
+
+    sin_decidir = {f"{t} (la crea {sorted(creadas[t])})" for t in faltan - set(MUERTAS_A_PROPOSITO)}
+    assert not sin_decidir, (
+        "Tablas que una migración crea y no están en db/esquema_completo.sql: "
+        f"{sorted(sin_decidir)}. Una base nueva nace sin ellas."
+    )
+
+    # La otra dirección: una excluida que entró al esquema sale de la lista,
+    # o la lista se queda protegiendo lo que ya no pasa (corolario 22).
+    ya_no_faltan = sorted(set(MUERTAS_A_PROPOSITO) & en_el_esquema)
+    assert not ya_no_faltan, (
+        f"{ya_no_faltan} ya están en el esquema: sacalas de MUERTAS_A_PROPOSITO."
+    )
+
+
 # --- Los DOS relojes: el de la base (UTC) y el del negocio (Argentina) ---
 #
 # `CURRENT_DATE` es la fecha del SERVIDOR de la base, que corre en UTC, y a
