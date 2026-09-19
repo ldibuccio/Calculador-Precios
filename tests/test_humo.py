@@ -38,23 +38,32 @@ import pytest
 RAIZ = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 
 
-def _hay_postgres_usable():
-    """Postgres arriba Y con permiso para crear la base de humo."""
-    try:
-        if subprocess.run(["pg_isready"], capture_output=True, timeout=5).returncode != 0:
-            return False
-        r = subprocess.run(["su", "postgres", "-c", "psql -q -c 'select 1'"],
-                           capture_output=True, timeout=10)
-        return r.returncode == 0
-    except Exception:  # noqa: BLE001
-        return False
+sys.path.insert(0, RAIZ)
+from scripts.humo import hay_postgres  # noqa: E402
 
 
-@pytest.mark.skipif(not _hay_postgres_usable(),
-                    reason="sin Postgres local: el humo se corre con "
-                           "`python3 scripts/humo.py` antes de desplegar")
+# EL INTERRUPTOR QUE CIERRA EL AGUJERO DEL SALTEO. Sin Postgres este test se
+# saltea, y **un test salteado se lee exactamente igual que uno verde** — en
+# una suite de 2750 es una `s` que nadie mira. Eso es tolerable en la máquina
+# de alguien y es inaceptable en el CI, que es justo donde este test es la
+# única evidencia de su clase.
+#
+# Con HUMO_OBLIGATORIO=1 —que el workflow pone— dejar de poder correrlo FALLA
+# en vez de saltear. Así, el día que el servicio de Postgres del runner no
+# levante, el CI se pone rojo en vez de dar verde sin haber mirado nada.
+OBLIGATORIO = os.environ.get("HUMO_OBLIGATORIO") == "1"
+
+
 def test_TODAS_las_pantallas_ABREN_contra_una_base_REAL():
     """Corre el humo en SUBPROCESO, para no filtrarle DATABASE_URL a la suite."""
+    if not hay_postgres():
+        if OBLIGATORIO:
+            pytest.fail(
+                "HUMO_OBLIGATORIO=1 y no hay un Postgres usable: el humo no "
+                "corrió, así que esta corrida NO VERIFICÓ NINGUNA PANTALLA "
+                "contra el esquema. Revisá el servicio de Postgres del runner.")
+        pytest.skip("sin Postgres local: el humo se corre con "
+                    "`python3 scripts/humo.py` antes de desplegar")
     r = subprocess.run([sys.executable, "scripts/humo.py"],
                        cwd=RAIZ, capture_output=True, text=True, timeout=600)
 

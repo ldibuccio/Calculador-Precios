@@ -104,17 +104,56 @@ def concretar(ruta):
     return concreta
 
 
-def hay_postgres():
-    try:
-        return subprocess.run(["pg_isready"], capture_output=True, timeout=5).returncode == 0
-    except Exception:
-        return False
+# CÓMO SE LE HABLA A POSTGRES, y son DOS entornos que no se parecen:
+#
+#   · el contenedor de desarrollo corre como root, con el Postgres del
+#     sistema y autenticación `peer` — ahí hay que pasar por `su postgres`;
+#   · el runner de GitHub Actions levanta Postgres como SERVICIO, en
+#     127.0.0.1, con usuario y contraseña, y no tiene usuario `postgres` en
+#     el sistema.
+#
+# Escrito para uno solo, en el otro no corre — y el modo de falla del
+# segundo es el caro: el test se SALTEA y un salteado se lee como verde.
+# Por eso la conexión sale del entorno cuando está, y solo cae a `su
+# postgres` cuando no hay nada configurado.
+def _config_conexion():
+    host = os.environ.get("PGHOST")
+    if not host:
+        return None            # sin nada en el entorno: el camino de `su postgres`
+    return {
+        "host": host,
+        "port": os.environ.get("PGPORT", "5432"),
+        "user": os.environ.get("PGUSER", "postgres"),
+        "password": os.environ.get("PGPASSWORD", ""),
+    }
 
 
 def _psql(sql=None, archivo=None, base="postgres"):
-    orden = f"psql -q -v ON_ERROR_STOP=1 -d {base} "
-    orden += f"-f {archivo}" if archivo else f"-c {sql!r}"
-    return subprocess.run(["su", "postgres", "-c", orden], capture_output=True, text=True)
+    cfg = _config_conexion()
+    argumentos = ["-q", "-v", "ON_ERROR_STOP=1", "-d", base]
+    argumentos += ["-f", archivo] if archivo else ["-c", sql]
+    if cfg is None:
+        orden = "psql -q -v ON_ERROR_STOP=1 -d " + base
+        orden += f" -f {archivo}" if archivo else f" -c {sql!r}"
+        return subprocess.run(["su", "postgres", "-c", orden],
+                              capture_output=True, text=True)
+    entorno = dict(os.environ, PGPASSWORD=cfg["password"])
+    return subprocess.run(
+        ["psql", "-h", cfg["host"], "-p", cfg["port"], "-U", cfg["user"]] + argumentos,
+        capture_output=True, text=True, env=entorno)
+
+
+def hay_postgres():
+    """Postgres arriba Y con permiso para crear la base de humo.
+
+    Pregunta por lo que hace falta de verdad —crear una base— y no solo si
+    el puerto contesta: un `pg_isready` en verde con un usuario que no puede
+    crear bases deja el humo salteado, que es el cero que tranquiliza.
+    """
+    try:
+        return _psql(sql="SELECT 1").returncode == 0
+    except Exception:  # noqa: BLE001
+        return False
 
 
 def preparar_base():
@@ -128,8 +167,12 @@ def preparar_base():
     r = _psql(archivo=os.path.join(RAIZ, "db/esquema_completo.sql"), base=BASE_DE_HUMO)
     if r.returncode != 0:
         raise RuntimeError(f"no cargó el esquema: {r.stderr[-500:]}")
-    _psql(sql="ALTER USER postgres PASSWORD 'humo'")
-    return "postgresql://postgres:humo@127.0.0.1:5432/" + BASE_DE_HUMO
+    cfg = _config_conexion()
+    if cfg is None:
+        _psql(sql="ALTER USER postgres PASSWORD 'humo'")
+        return f"postgresql://postgres:humo@127.0.0.1:5432/{BASE_DE_HUMO}"
+    return (f"postgresql://{cfg['user']}:{cfg['password']}"
+            f"@{cfg['host']}:{cfg['port']}/{BASE_DE_HUMO}")
 
 
 def siembra():
@@ -218,10 +261,20 @@ def abrir_todas(verbose=True):
                   "CLAVE_COMPRAS", "CLAVE_CONTROL_PUESTO"):
         os.environ.setdefault(clave, "humo-secreta")
 
-    sql = "/tmp/siembra_humo.sql"
-    io.open(sql, "w", encoding="utf-8").write(siembra())
-    os.chmod(sql, 0o644)
-    r = _psql(archivo=sql, base=BASE_DE_HUMO)
+    # ARCHIVO TEMPORAL ÚNICO, no una ruta fija de /tmp. Con `/tmp/siembra_
+    # humo.sql` el que corría segundo no podía pisar el archivo del primero
+    # —`PermissionError` con otro usuario— y eso habría roto el CI en el
+    # primer push: acá el humo lo corre root y en el runner no. El 644 es
+    # para que el usuario `postgres` lo pueda leer en el camino de `su`.
+    import tempfile
+    fd, sql = tempfile.mkstemp(prefix="siembra_humo_", suffix=".sql")
+    os.close(fd)
+    try:
+        io.open(sql, "w", encoding="utf-8").write(siembra())
+        os.chmod(sql, 0o644)
+        r = _psql(archivo=sql, base=BASE_DE_HUMO)
+    finally:
+        os.unlink(sql)
     if r.returncode != 0:
         raise RuntimeError(f"no sembró: {r.stderr[-800:]}")
 

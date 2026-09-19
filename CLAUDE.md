@@ -8605,6 +8605,66 @@ CONTROL · una columna inventada en otra consulta  -> MORDIÓ
 
 Y lo que **sí** cambia: desde hoy, un SQL que no parsea tiene dónde fallar
 antes de que lo encuentre el que está en el galpón.
+## Corolario 90: un workflow de CI no se puede correr donde se escribe, así que se prueba POR PARTES — y el simulacro del entorno da hallazgos Y artefactos
+
+Del 19/09, y sale de montar el gate que faltaba. **Un `.yml` de GitHub
+Actions es código que solo corre en un lugar donde no estoy**, así que la
+tentación es escribirlo, pushearlo, y usar el primer push como la primera
+corrida. Eso es exactamente lo que el gate viene a terminar: descubrir que
+algo no anda cuando ya está afuera.
+
+Lo que sí se puede probar acá es **cada pieza por separado**, y las tres que
+se probaron encontraron dos bugs reales:
+
+1. **El bash de cada paso se corre tal cual.** El paso que instala el cliente
+   decía `command -v psql || sudo apt-get update && sudo apt-get install`, y
+   `A || B && C` parsea como `(A||B) && C`: **con psql presente instalaba
+   igual**. Medido en bash, no leído — `bash -c 'true || echo B && echo C'`
+   imprime C.
+2. **La conexión a Postgres, por los DOS caminos.** El contenedor corre como
+   root con autenticación `peer` (`su postgres`); el runner levanta Postgres
+   como servicio en 127.0.0.1 con usuario y contraseña. Escrito para uno, en
+   el otro no corre — y el modo de falla del segundo es el caro: el test se
+   SALTEA y un salteado se lee igual que un verde.
+3. **La guarda del paso, con su par** (corolario 53): la corrida sin
+   salteados sale 0, y la misma con Postgres caído sale 1 **nombrando el test
+   que se salteó**. Un guardia que no puede dar las dos respuestas no es un
+   guardia.
+
+### El simulacro del entorno: un hallazgo REAL y un ARTEFACTO, y hay que separarlos
+
+Corriendo el humo **como un usuario que no es root**, que es lo más cerca del
+runner que se llega acá, salieron dos fallas y **solo una era del workflow**:
+
+| | qué pasó | ¿es del CI? |
+|---|---|---|
+| `PermissionError: /tmp/siembra_humo.sql` | ruta FIJA en /tmp: el archivo que dejó root no lo puede pisar otro usuario | **SÍ** — habría roto el primer push. Arreglado con `tempfile.mkstemp` |
+| `No module named 'idna'` | ese usuario no ve el `~/.local` de root | **no** — en el runner `pip install -r requirements.txt` lo trae, y está verificado que `idna` es dependencia declarada de `httpx` |
+
+**Y separarlos no es opcional**: perseguir el artefacto habría terminado
+agregando `idna` a `requirements.txt` —una dependencia que producción no
+necesita— para arreglar algo que no pasa. Es el corolario 6 con otra ropa: un
+diagnóstico falso decide qué se arregla después, y acá el diagnóstico falso lo
+produce el propio banco de pruebas.
+
+**Cómo se separan, y es una pregunta**: *¿esta falla la produce lo que estoy
+probando, o cómo lo estoy probando?* Se contesta yendo a la fuente —acá,
+`pip show httpx` diciendo que `idna` es suya— y no volviendo a correr el
+simulacro, que va a seguir fallando igual.
+
+### La mitad que NINGÚN archivo del repo puede cumplir
+
+El workflow corre y pone la corrida en rojo. **Railway despliega igual**,
+en paralelo, sin mirarlo — el CI avisa, no frena. Que además BLOQUEE es un
+interruptor de Railway (`Service → Settings → Deploy → "Wait for CI"`) y lo
+tiene que activar una persona.
+
+Eso va escrito **arriba de todo en el `.yml`**, y no en un doc: el que dentro
+de seis meses se pregunte por qué un deploy salió con el CI en rojo va a
+abrir el workflow, no este archivo. Y mientras ese interruptor esté apagado,
+el gate es **media guarda**: encuentra el bug y no lo frena, que es mejor que
+nada y no es lo que dice el título.
+
 ## Corolario 80: una cuenta DERIVADA convierte "completar el dato" en "arreglarlo", y eso decide si hay que recargar
 
 Del 17/09, y es la propiedad que más veces salvó a este sistema, vista del

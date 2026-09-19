@@ -1,0 +1,107 @@
+# EL GATE ANTES DEL DEPLOY.
+#
+# Railway despliega al push sin pasar por nada, así que hasta el 19/09 el que
+# descubría que una pantalla estaba caída era el dueño, con el galpón
+# esperando — tres veces ese día. Esto corre ANTES y pone la corrida en rojo.
+#
+# PARA QUE BLOQUEE EL DEPLOY HAY UN PASO QUE NO ESTÁ EN EL REPO Y LO TIENE QUE
+# HACER UNA PERSONA: en Railway, Service -> Settings -> Deploy, activar
+# "Wait for CI". Sin eso este workflow corre igual y Railway despliega en
+# paralelo sin mirarlo: el CI avisa, no frena. Es la mitad que ningún archivo
+# de acá adentro puede cumplir.
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+# Un push nuevo cancela el anterior: lo que importa es si la PUNTA está sana.
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  suite-y-humo:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_PASSWORD: humo
+        ports: ["5432:5432"]
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 10
+
+    env:
+      PGHOST: 127.0.0.1
+      PGPORT: "5432"
+      PGUSER: postgres
+      PGPASSWORD: humo
+      # Sin esto el humo se SALTEA cuando el servicio de Postgres no levanta,
+      # y un salteado se lee igual que un verde. Con el interruptor puesto,
+      # no poder correrlo FALLA.
+      HUMO_OBLIGATORIO: "1"
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+
+      - name: Dependencias
+        run: pip install -r requirements.txt
+
+      - name: Cliente psql
+        # El humo habla con Postgres por `psql`. La imagen del runner lo trae,
+        # pero eso es un supuesto sobre una imagen que no controlamos: si
+        # algún día no está, se instala en vez de fallar a mitad del humo con
+        # un error que no habla del problema.
+        run: |
+          # `command -v psql || A && B` parsea como `(cmd||A) && B`, así que
+          # con psql PRESENTE instalaba igual. Medido en bash, no leído.
+          if ! command -v psql; then
+            sudo apt-get update -qq && sudo apt-get install -y -qq postgresql-client
+          fi
+          psql --version
+
+      - name: Navegador para los tests de layout
+        # OCHO tests miden anchos, solapes y el mínimo tocable de 44px, y
+        # están guardados con `importorskip("playwright")`. playwright NO está
+        # en requirements.txt a propósito —producción no lo necesita— así que
+        # sin este paso esos ocho se SALTEAN en el CI, en silencio, y son
+        # justo los que agarraron los desbordes reales de este proyecto.
+        run: |
+          pip install playwright
+          playwright install --with-deps chromium
+
+      - name: El HUMO — las 128 pantallas contra una base real
+        # Va PRIMERO porque es el que ataca la clase de bug que llega a
+        # producción, y contesta en diez segundos en vez de en dos minutos.
+        run: python3 scripts/humo.py
+
+      - name: La suite entera
+        # SIN PIPE y mirando el $?, que es la regla del corolario 44: en un
+        # pipe el código de salida es el del ÚLTIMO comando, así que
+        # `pytest | tail` sale siempre en verde.
+        #
+        # Y FALLA SI HAY SALTEADOS: hoy la suite corre 2750 y no saltea
+        # ninguno. Un test salteado es indistinguible de uno verde en el
+        # resumen, así que sin esta guarda el CI se degrada solo — cada
+        # dependencia que falte en el runner apaga tests sin ponerse rojo.
+        run: |
+          python3 -m pytest tests/ -q > /tmp/suite.txt 2>&1; ESTADO=$?
+          tail -5 /tmp/suite.txt
+          if grep -qE "[0-9]+ skipped" /tmp/suite.txt; then
+            echo "::error::HAY TESTS SALTEADOS — esta corrida no los miró"
+            python3 -m pytest tests/ -q -rs 2>&1 | grep -E "^SKIPPED" | head -20
+            exit 1
+          fi
+          exit $ESTADO
