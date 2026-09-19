@@ -31366,3 +31366,84 @@ def test_la_pantalla_de_reproceso_DIBUJA_el_aviso_de_lo_que_salio_sin_lote():
     # Y que el JS lo llame: el bloque solo es un div vacío para siempre.
     assert "dibujarAvisoSinLote(datos, campos);" in marcado
     assert "datos.sin_lote_antes" in marcado
+
+
+# ---------------------------------------------------------------------------
+# STOCK POR GUÍA: SI NO CIERRA, SE CALLA (19/09)
+# ---------------------------------------------------------------------------
+
+_LOTE_DEL_19 = [
+    {"fecha_orden": date(2026, 9, 19), "momento_orden": datetime(2026, 9, 19, 10),
+     "orden": (date(2026, 9, 19), datetime(2026, 9, 19, 10)),
+     "tipo_lote": "reproceso", "origen_id": 433, "fecha_lote": date(2026, 9, 19),
+     "detalle": "Caja Día", "motivo": None, "cantidad": 25.0},
+]
+
+
+def _stock_por_guia(entradas, salidas):
+    with (
+        patch("app.main.obtener_articulo", return_value={"id": 1, "nombre": "Cherry"}),
+        patch("app.main.entradas_y_salidas_stock_articulo", return_value=(entradas, salidas)),
+        patch("app.main.stock_deposito_por_articulo", return_value=[]),
+        patch("app.main.contenido_por_bulto_de_lotes", return_value={}),
+    ):
+        return cliente.get("/administracion/stock/sistema/1")
+
+
+def test_stock_por_guia_NO_MUESTRA_los_lotes_si_no_cierran_contra_el_stock():
+    """El caso de Cherry del 19/09: la R433 decía "17 de 25" con 1 bulto en el piso.
+
+    Un restante solo baja por las salidas que el lote ABSORBIÓ. Las que ningún
+    lote cubre le restan al total y no le restan a ningún lote, así que los
+    restantes suman `stock + sin_lote` y dejan de ser mercadería — debajo de un
+    título que dice "Lo que queda".
+
+    EL PAR VA COMPLETO (corolario 53): el mismo fixture con la salida DESPUÉS
+    del lote cierra, y ahí el bloque tiene que seguir saliendo. Sin ese
+    control, una pantalla que no mostrara los lotes NUNCA pasaría igual.
+    """
+    # La salida es ANTERIOR al lote: no lo puede consumir, así que quedan
+    # 25 de restante, 25 sin lote y 0 de stock.
+    no_cierra = _stock_por_guia(_LOTE_DEL_19, _salidas_fifo(25.0, date(2026, 9, 18)))
+    assert no_cierra.status_code == 200
+    marcado = no_cierra.text.split("</style>")[-1]
+    assert "Los lotes no cierran contra el stock" in marcado
+    assert 'class="no-cierra"' in marcado
+    # Y NO dice el caso vacío, que con bultos afuera sería falso.
+    assert "No queda nada de ningún lote" not in marcado
+    # El restante fantasma no se dibuja en ningún lado.
+    assert '25 <span class="de">de 25</span>' not in marcado
+
+    # EL CONTROL: la misma salida, ya cubierta por su lote.
+    cierra = _stock_por_guia(_LOTE_DEL_19, _salidas_fifo(8.0, date(2026, 9, 19)))
+    assert cierra.status_code == 200
+    marcado_ok = cierra.text.split("</style>")[-1]
+    assert "Los lotes no cierran contra el stock" not in marcado_ok
+    assert '17 <span class="de">de 25</span>' in marcado_ok
+
+
+def test_las_DOS_pantallas_apagan_su_desglose_con_LA_MISMA_funcion():
+    """El kilaje ya tenía la regla; Stock por Guía la estrenó el 19/09.
+
+    Lo que demuestra que es UNA regla y no dos copias no es que hoy coincidan:
+    es que moviendo `_pilas_cierran` las dos la sigan. Escrita dos veces, la
+    que se separe deja una pantalla inventando stock y nada se pone rojo.
+    """
+    import ast
+
+    fuente = io.open("app/main.py", encoding="utf-8").read()
+    llamadores = {
+        nodo.name
+        for nodo in ast.walk(ast.parse(fuente))
+        if isinstance(nodo, (ast.FunctionDef, ast.AsyncFunctionDef))
+        and any(isinstance(n, ast.Call) and isinstance(n.func, ast.Name)
+                and n.func.id == "_pilas_cierran" for n in ast.walk(nodo))
+    }
+    assert llamadores == {"_pilas_de_cajones", "ver_stock_articulo_deposito"}, (
+        f"cambió quién apaga su desglose: {llamadores}")
+
+    # Y la pared se MUEVE: con la función diciendo que nunca cierra, la
+    # pantalla tiene que callarse aunque el FIFO dé perfecto.
+    with patch("app.main._pilas_cierran", return_value=False):
+        respuesta = _stock_por_guia(_LOTE_DEL_19, _salidas_fifo(8.0, date(2026, 9, 19)))
+    assert "Los lotes no cierran contra el stock" in respuesta.text.split("</style>")[-1]

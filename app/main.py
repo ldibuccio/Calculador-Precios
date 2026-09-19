@@ -9986,6 +9986,22 @@ def ver_stock_articulo_deposito(request: Request, articulo_id: int):
     reparto = repartir_fifo(entradas, salidas_para_reparto(salidas))
     con_resto = [l for l in reparto["lotes"] if l["restante"] > 0]
     agotados = [l for l in reparto["lotes"] if l["restante"] <= 0]
+
+    # SI NO CIERRA, SE CALLA — la misma regla que el desglose por kilaje, y
+    # LA MISMA FUNCIÓN. Un restante solo baja por las salidas que el lote
+    # ABSORBIÓ: las que ningún lote cubre le restan al total y no le restan a
+    # ningún lote, así que ese restante deja de ser mercadería y queda debajo
+    # de un título que dice "Lo que queda". El 19/09 Cherry mostraba 17 de una
+    # guía R cuya porción tenía 1 en el piso.
+    #
+    # LA CONDICIÓN ES `suma == stock` Y NO `suma − sin_lote == stock`, que es
+    # la que sale sola al leer la identidad: esa segunda **no puede dar falso
+    # nunca**, porque `suma = stock + sin_lote` se cumple por construcción en
+    # `repartir_fifo` (medido en cuatro casos, incluido el stock negativo).
+    # Sería el cero del corolario 47 adentro de la guarda. Las dos difieren
+    # exactamente en el `sin_lote`, así que ésta dispara cuando corresponde.
+    lotes_cierran = _pilas_cierran(
+        [{"bultos": l["restante"]} for l in con_resto], reparto["stock"])
     return templates.TemplateResponse(
         request,
         "deposito_stock_articulo.html",
@@ -9998,6 +10014,15 @@ def ver_stock_articulo_deposito(request: Request, articulo_id: int):
             # cajas armadas— y por eso metía la primera de las guías R en una
             # pila "sin formato declarado" que no son cajones crudos.
             "lotes": con_resto,
+            # LA REGLA VIAJA COMO BANDERA Y NO COMO LISTA VACÍA, y es UN solo
+            # lugar a propósito. Vaciar la lista ACÁ y además preguntar por la
+            # bandera en la plantilla son dos escrituras de la misma decisión:
+            # el canario lo dijo —devolverle `con_resto` sin condición no hacía
+            # caer NINGÚN test, porque la plantilla ya se callaba sola—. Y una
+            # lista vacía sin el porqué cae en el caso vacío ("No queda nada de
+            # ningún lote"), que con stock en el piso es peor que el número
+            # que se apagó.
+            "lotes_cierran": lotes_cierran,
             "agotados": agotados,
             "sin_lote": reparto["sin_lote"],
             "stock": reparto["stock"],

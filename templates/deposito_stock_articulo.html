@@ -30,6 +30,8 @@
   .resumen .numero { font-size: 1.5rem; font-weight: 800; color: #1d4ed8; }
   .resumen.negativo .numero { color: #dc2626; }
   .resumen .detalle { color: #666; font-size: 0.9rem; margin-top: 0.25rem; }
+  .no-cierra { margin: 0; padding: 0.75rem; background: #fff8e1;
+    border-left: 4px solid #f9a825; border-radius: 6px; line-height: 1.45; }
   .tarjeta-sin-lote {
     background: #fef2f2;
     border: 2px solid #dc2626;
@@ -168,7 +170,17 @@
 
   <div class="tarjeta">
     <h2>Lo que queda, por lote (el más viejo primero)</h2>
-    {% if lotes %}
+    {# SI NO CIERRA, SE CALLA. Misma regla y misma función que el desglose
+       por kilaje (`_pilas_cierran`): un restante solo baja por las salidas
+       que el lote ABSORBIÓ, así que con bultos sin lote los restantes suman
+       más que el stock y dejan de ser mercadería. Mostrarlos debajo de este
+       título sería inventar stock. La trazabilidad no se va: los agotados
+       siguen abajo, y el detalle de qué guía produjo qué está en Guías R. #}
+    {% if not lotes_cierran %}
+    <p class="no-cierra">Los lotes no cierran contra el stock: hay
+      <strong>{{ sin_lote|numero }} bultos</strong> que salieron sin lote, así que
+      lo que quedaría por lote no es mercadería que esté en el piso.</p>
+    {% elif lotes %}
       {% for l in lotes %}
       <div class="fila-lote">
         <div>
