@@ -3910,7 +3910,7 @@ def test_ver_detalle_compra_muestra_toda_la_historia():
     assert "Mzn Red" in respuesta.text
     assert "105.2" in respuesta.text
     assert "Retirado" in respuesta.text
-    assert "Retirado por Logística" in respuesta.text
+    assert "Logística (a mano)" in respuesta.text
     assert "Recibido" in respuesta.text
     assert "Esta guía todavía no tiene fotos" in respuesta.text
 
@@ -14506,11 +14506,59 @@ def test_logistica_no_tiene_boton_cooperativa():
     assert "Cooperativa" not in respuesta.text
 
 
-def test_detalle_tiene_etiqueta_para_el_origen_cooperativa():
+def test_las_SEIS_etiquetas_contestan_QUIEN_LO_MARCO_y_ninguna_quien_retira():
+    """Del 19/09, y es del dueño: "\"retirado por logística\" no me dice nada".
+
+    Las etiquetas de `retiro_origen` contestan QUIÉN LO MARCÓ. Quién lo
+    RETIRA lo contesta `tipo_retiro`, en su propia fila, una sola vez. Dos de
+    las seis lo decían igual —"a cargo del Carrero", "a cargo de la
+    Cooperativa"— y ésa era la misma cosa escrita dos veces para dos de los
+    seis casos, con la de Logística nombrando el sector y leyéndose como si
+    nombrara al que retiró.
+
+    EL ASSERT ES POR LA JERGA QUE NO PUEDE APARECER además de por el texto
+    bueno: afirmar el nombre nuevo pasa igual si "Retirado por" quedó en otra
+    de las seis.
+    """
     from app.main import ORIGENES_RETIRO_LABELS
 
-    assert ORIGENES_RETIRO_LABELS["automatico_cooperativa"] == "Retiro a cargo de la Cooperativa (automático)"
-    assert ORIGENES_RETIRO_LABELS["automatico_carro"] == "Retiro a cargo del Carrero (automático)"
+    assert ORIGENES_RETIRO_LABELS["automatico_cooperativa"] == "Automático, por ser Cooperativa"
+    assert ORIGENES_RETIRO_LABELS["automatico_carro"] == "Automático, por ser Carro"
+    assert ORIGENES_RETIRO_LABELS["logistica"] == "Logística (a mano)"
+
+    etiquetas = [v for v in ORIGENES_RETIRO_LABELS.values() if v]
+    assert len(etiquetas) == 6, etiquetas
+    for etiqueta in etiquetas:
+        assert "Retirado por" not in etiqueta, etiqueta
+        assert "a cargo de" not in etiqueta, etiqueta
+
+
+def test_el_detalle_separa_QUIEN_RETIRA_de_QUIEN_LO_MARCO():
+    """Dos filas, dos preguntas, y los rótulos las dicen.
+
+    Antes eran "Tipo de logística: Clark" en una tarjeta y "Origen: Retirado
+    por Logística" en la otra: las dos sonaban a lo mismo y el nombre que se
+    buscaba estaba en la que no lo parecía.
+    """
+    with (
+        patch("app.main.listar_fotos_de_recepcion", return_value=[]),
+        patch("app.main.obtener_detalle_compra", return_value=COMPRA_DETALLE_DE_PRUEBA),
+        patch("app.main.listar_fotos_de_guia", return_value=[]),
+    ):
+        respuesta = cliente.get("/compras/30/detalle")
+
+    # SIN split("</style>"): el Detalle incluye _fotos_guia.html, que trae su
+    # propio <style>, así que [-1] corta DE MÁS y devuelve la cola del
+    # incluido — la pantalla entera queda afuera y todo assert por la
+    # negativa pasa solo (corolario 50). El ancla es el <span> completo, que
+    # no puede aparecer ni en CSS ni en prosa.
+    texto = respuesta.text
+    assert respuesta.status_code == 200
+    assert '<span class="etiqueta">Retira</span>' in texto
+    assert '<span class="etiqueta">Marcado por</span>' in texto
+    # y el rótulo viejo no sobrevive en ninguna de las dos
+    assert "Tipo de logística" not in texto
+    assert '<span class="etiqueta">Origen</span>' not in texto
 
 
 # --- /logistica/consultar: el histórico de retiros ---

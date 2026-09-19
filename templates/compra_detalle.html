@@ -203,7 +203,7 @@
       <span class="valor">{{ compra.sena|moneda if compra.sena is not none else "-" }}</span>
     </div>
     <div class="dato">
-      <span class="etiqueta">Tipo de logística</span>
+      <span class="etiqueta">Retira</span>
       <span class="valor">{{ compra.tipo_retiro or "-" }}</span>
     </div>
   </div>
@@ -222,7 +222,7 @@
     {% endif %}
     {% if origen_retiro_label %}
     <div class="dato">
-      <span class="etiqueta">Origen</span>
+      <span class="etiqueta">Marcado por</span>
       <span class="valor">{{ origen_retiro_label }}</span>
     </div>
     {% endif %}

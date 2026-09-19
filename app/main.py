@@ -448,14 +448,26 @@ ESTADOS_RECEPCION_LABELS = {
     "rechazado": "Rechazo total",
     "no_ingresado": "No ingresó",
 }
+# QUIÉN LO MARCÓ como retirado, y nada más. La otra pregunta —QUIÉN LO
+# RETIRA— la contesta `tipo_retiro` en su propia fila del Detalle
+# ("Retira: Clark"), y hasta el 19/09 estas etiquetas la pisaban: "Retirado
+# por Logística" nombra al SECTOR que lo marcó y se lee como si nombrara al
+# que retiró, con el Clark de verdad tres renglones más arriba bajo "Tipo de
+# logística". El dato estaba en la pantalla y el rótulo lo tapaba.
+#
+# Y NINGUNA de las seis nombra a quien retira, a propósito: el depósito no
+# retira nada, solo confirma que llegó (del dueño, 19/09), así que el que
+# retiró es siempre el del `tipo_retiro` y se dice UNA vez, en su fila. Que
+# dos de estas dijeran "a cargo del Carrero" era la misma cosa escrita dos
+# veces para dos de los seis casos.
 ORIGENES_RETIRO_LABELS = {
     None: None,
-    "logistica": "Retirado por Logística",
-    "deposito": "Retiro automático (recepcionado en Depósito)",
+    "logistica": "Logística (a mano)",
+    "deposito": "Depósito, al recepcionar",
     "migracion": "Migración",
     "ingreso_directo": "Ingreso directo en Depósito",
-    "automatico_carro": "Retiro a cargo del Carrero (automático)",
-    "automatico_cooperativa": "Retiro a cargo de la Cooperativa (automático)",
+    "automatico_carro": "Automático, por ser Carro",
+    "automatico_cooperativa": "Automático, por ser Cooperativa",
 }
 # Hasta cuándo se ven los pedidos pasados en los listados de Pedido y
 # Armar Pedido (los FUTUROS van siempre): un pedido armado no desaparece
