@@ -17901,17 +17901,19 @@ def test_el_link_al_detalle_DICE_QUE_ES_EL_ARTICULO_ENTERO_y_no_esta_porcion():
     el que toca lee el total de abajo como el desglose del número de arriba y
     los dos no tienen por qué coincidir (corolario 8).
 
-    Y NO PROMETE el desglose por formato: las pilas salen de los lotes que
-    tienen restante HOY, y con un formato solo la tarjeta no se dibuja a
-    propósito. Un link que promete siempre lo que a veces no está es un
-    callejón — por eso dice "cuando hay más de un formato".
+    Y NO PROMETE el desglose por formato: desde el 19/09 el formato está
+    ARRIBA, en la tarjeta de lo que hay, que es donde se lo busca. Del otro
+    lado del link quedan los lotes. Prometerlo acá mandaría a cruzar una
+    pantalla para ver algo que ya está a la vista.
     """
     respuesta = _extracto(
         "/administracion/stock/remanente/porcion?articulo_id=1&fecha=2026-09-06")
 
     marcado = respuesta.text.split("</style>")[-1]
     assert "artículo entero" in marcado, "el alcance tiene que estar escrito"
-    assert "cuando hay más de un" in marcado, "no puede prometer el desglose siempre"
+    # La jerga que NO puede aparecer, y no solo el texto bueno: afirmar el
+    # nuevo pasa igual si la promesa vieja quedó tres líneas más abajo.
+    assert "cuando hay más de un" not in marcado, "el formato ya está en esta pantalla"
 
 
 def test_el_extracto_de_una_porcion_que_no_existe_da_404():
@@ -21362,8 +21364,19 @@ def test_stock_articulo_negativo_muestra_los_bultos_sin_lote():
 
     assert respuesta.status_code == 200
     assert "Anco: -5 bultos" in respuesta.text
-    # Sin lote, dicho tal cual: no se cuelga de ninguna guía.
-    assert "5 bultos salieron sin lote" in respuesta.text
+    # EL CARTEL DICE QUÉ HACER, no cómo funciona el FIFO. Texto del dueño,
+    # 19/09, contra la versión vieja de tres párrafos sobre trazabilidad y
+    # lotes señalados.
+    marcado = respuesta.text.split("</style>")[-1]
+    cartel = marcado.split('class="tarjeta-sin-lote"')[1].split("</div>")[0]
+    assert "5 bultos salieron antes de que se cargara la guía R que los produce." in cartel
+    assert "Cargala con la fecha en que se armaron." in cartel
+    # Y la jerga que NO puede volver, medida DENTRO del cartel y no sobre la
+    # pantalla: "FIFO" sigue estando en la ayuda de la lista de lotes, que es
+    # donde corresponde, así que un barrido de la página entera no podría
+    # preguntar por él (corolario 4).
+    for jerga in ("trazabilidad", "SEÑALAR", "FIFO", "salieron sin lote"):
+        assert jerga not in cartel, jerga
 
 
 def test_stock_articulo_inexistente_da_404():
@@ -30452,8 +30465,11 @@ def test_el_desglose_PARTE_los_cajones_y_las_pilas_SUMAN_el_total_de_la_porcion(
     """Cherry llega en cajones de 5, de 10 y de 15 bajo el mismo artículo.
 
     Las pilas salen de LOS LOTES DE COMPRA con restante —los cajones crudos—
-    y suman el "Quedó" de arriba, que es el número del Remanente para esa
+    y suman el número grande de arriba, que es el del Remanente para esa
     porción. Cierra por construcción y no por coincidencia.
+
+    Y CADA FILA LLEVA EL PROVEEDOR, que es pedido del dueño del 19/09: los
+    dos números que necesita para decidir son el kilaje y de quién vino.
     """
     respuesta = _movimiento_con_cajones({
         "guia:601": {"contenido": 16.0, "unidad": "kilo"},
@@ -30462,9 +30478,10 @@ def test_el_desglose_PARTE_los_cajones_y_las_pilas_SUMAN_el_total_de_la_porcion(
 
     assert respuesta.status_code == 200
     marcado = respuesta.text.split("</style>")[-1]
-    assert "De qué formato son" in marcado
-    assert "Cajones de 5 k" in marcado
-    assert "Cajones de 16 k" in marcado
+    assert '<div class="total">14 bultos</div>' in marcado
+    assert "<b>4</b> cajones de 5 k" in marcado
+    assert "<b>10</b> cajones de 16 k" in marcado
+    assert marcado.count('<span class="prov">— EJEMPLO Uno</span>') == 2
 
 
 def test_el_desglose_NO_VA_en_una_porcion_de_CAJAS():
@@ -30506,7 +30523,9 @@ def test_el_desglose_NO_VA_en_una_porcion_de_CAJAS():
                                 "?articulo_id=1&fecha=2026-09-13&ficha_id=99")
 
     assert respuesta.status_code == 200
-    assert "De qué formato son" not in respuesta.text.split("</style>")[-1]
+    marcado = respuesta.text.split("</style>")[-1]
+    assert '<div class="total">14 bultos</div>' in marcado, "la tarjeta sale igual: lo que se calla es el desglose"
+    assert 'class="formato"' not in marcado
 
 
 def test_la_PRIMERA_de_una_guia_R_no_entra_en_el_desglose_de_cajones():
@@ -30530,9 +30549,9 @@ def test_la_PRIMERA_de_una_guia_R_no_entra_en_el_desglose_de_cajones():
         entradas=con_una_guia_r, stock=14.0)
 
     marcado = respuesta.text.split("</style>")[-1]
-    assert "Sin formato declarado" not in marcado
-    assert "De qué formato son" in marcado
-    assert "Cajones de 5 k" in marcado
+    assert "sin formato declarado" not in marcado
+    assert "<b>4</b> cajones de 5 k" in marcado
+    assert marcado.count('class="formato"') == 2, "los dos cajones y nada más"
 
 
 def test_el_desglose_se_recorta_A_LA_FECHA_que_se_esta_mirando():
@@ -30557,23 +30576,62 @@ def test_el_desglose_se_recorta_A_LA_FECHA_que_se_esta_mirando():
         entradas=entro_despues, stock=14.0)
 
     marcado = respuesta.text.split("</style>")[-1]
-    assert "De qué formato son" in marcado
-    assert "Cajones de 30 k" not in marcado, "ese cajón llegó al día siguiente"
+    assert marcado.count('class="formato"') == 2, "los dos que ya estaban el 13"
+    assert "de 30 k" not in marcado, "ese cajón llegó al día siguiente"
 
 
-def test_con_UN_SOLO_formato_el_desglose_NO_aparece():
-    """52 de los 57 artículos de las dos bases tienen un formato solo.
+def test_con_UN_SOLO_formato_la_fila_SALE_IGUAL_porque_el_kilaje_es_el_dato():
+    """Este test decía lo CONTRARIO hasta el 19/09, y lo dio vuelta el dueño.
 
-    Es la mitad que el caso bueno no puede ver: un desglose que sale siempre
-    repite el número de arriba. 18,7 contra 16 es 16,9%, el MISMO cajón pesado
-    dos veces — que es lo que pasa con Lima, Pepino y Cabutia.
+    El argumento viejo era que con un formato solo la fila repite el número
+    de arriba. No lo repite: le agrega el KILAJE y el PROVEEDOR, que es
+    exactamente lo que el número no puede decir — "41 bultos pueden ser 200
+    kilos o 600". 52 de los 57 artículos de las dos bases tienen un formato
+    solo, así que la regla vieja apagaba el dato justo en el caso normal.
+
+    Lo que sí se mantiene es el racimo: 18,7 contra 16 es 16,9%, el MISMO
+    cajón pesado dos veces, así que van en UNA fila y no en dos.
     """
     respuesta = _movimiento_con_cajones({
         "guia:601": {"contenido": 16.0, "unidad": "kilo"},
         "guia:602": {"contenido": 18.7, "unidad": "kilo"},
     }, stock=14.0)
 
-    assert "De qué formato son" not in respuesta.text.split("</style>")[-1]
+    marcado = respuesta.text.split("</style>")[-1]
+    assert marcado.count('class="formato"') == 1, "un solo racimo, una sola fila"
+    assert "<b>14</b> cajones de 16 y 18.7 k" in marcado
+
+
+def test_el_MISMO_formato_de_DOS_PROVEEDORES_sale_en_DOS_FILAS():
+    """"40 cajones de 5 k — FRUTAMAX" y "1 cajón de 15 k — LOS CUÑADOS".
+
+    Pedido del dueño del 19/09, y el proveedor no es un adorno: el que mira
+    cuánto hay está decidiendo a quién comprarle y qué despachar, y dos pilas
+    del mismo kilaje que vinieron de dos lados no son la misma pila para eso.
+
+    El RACIMO se sigue calculando sobre todos los contenidos de la magnitud,
+    antes de partir por proveedor: calculado después, dos proveedores del
+    mismo artículo podrían cortar el formato en lugares distintos y las dos
+    filas serían defendibles por separado — que es lo que el umbral único de
+    core/kilajes.py viene a impedir.
+    """
+    de_dos_proveedores = [
+        {"orden": (date(2026, 9, 10), datetime(2026, 9, 10, 10)),
+         "tipo_lote": "guia", "origen_id": 601, "fecha_lote": date(2026, 9, 10),
+         "detalle": "EJEMPLO Uno", "motivo": None, "cantidad": 10.0},
+        {"orden": (date(2026, 9, 12), datetime(2026, 9, 12, 10)),
+         "tipo_lote": "guia", "origen_id": 602, "fecha_lote": date(2026, 9, 12),
+         "detalle": "EJEMPLO Dos", "motivo": None, "cantidad": 4.0},
+    ]
+    respuesta = _movimiento_con_cajones(
+        {"guia:601": {"contenido": 16.0, "unidad": "kilo"},
+         "guia:602": {"contenido": 16.0, "unidad": "kilo"}},
+        entradas=de_dos_proveedores, stock=14.0)
+
+    marcado = respuesta.text.split("</style>")[-1]
+    assert marcado.count('class="formato"') == 2, "mismo kilaje, dos proveedores, dos filas"
+    assert '<b>10</b> cajones de 16 k <span class="prov">— EJEMPLO Uno</span>' in marcado
+    assert '<b>4</b> cajones de 16 k <span class="prov">— EJEMPLO Dos</span>' in marcado
 
 
 def test_el_desglose_NO_SE_DIBUJA_cuando_las_pilas_no_suman_la_porcion():
@@ -30590,7 +30648,8 @@ def test_el_desglose_NO_SE_DIBUJA_cuando_las_pilas_no_suman_la_porcion():
 
     marcado = respuesta.text.split("</style>")[-1]
     assert "Quedó" in marcado, "la pantalla sale igual: lo que se calla es el desglose"
-    assert "De qué formato son" not in marcado
+    assert '<div class="total">20 bultos</div>' in marcado
+    assert 'class="formato"' not in marcado
 
 
 # ── La alerta de sin pesaje ────────────────────────────────────────────────

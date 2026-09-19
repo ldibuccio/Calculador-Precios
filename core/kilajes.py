@@ -68,10 +68,19 @@ def formato_de(contenido, racimos) -> int | None:
     return None
 
 
-def pilas_por_formato(bultos: list[dict]) -> list[dict]:
+def pilas_por_formato(bultos: list[dict], partir_por: str | None = None) -> list[dict]:
     """Los bultos agrupados por formato, DENTRO DE CADA MAGNITUD.
 
     Cada entrada de `bultos` trae `contenido`, `unidad` y `bultos`.
+
+    `partir_por` es el nombre de una clave de cada item —hoy solo
+    "proveedor"— que parte cada pila una vez más y VIAJA al resultado. Es un
+    parámetro y no una segunda función porque el RACIMO se calcula igual en
+    los dos casos: sobre todos los contenidos de esa magnitud, antes de
+    partir. Calculado después, dos proveedores del mismo artículo podrían
+    cortar el formato en lugares distintos y las dos filas serían
+    defendibles por separado, que es exactamente lo que el umbral único de
+    este módulo viene a impedir.
 
     LA MAGNITUD PRIMERO Y EL RACIMO DESPUÉS, y no al revés: el Mango se
     compra por UNIDAD y va de 10 a 54 unidades por caja. Metido en la misma
@@ -98,16 +107,23 @@ def pilas_por_formato(bultos: list[dict]) -> list[dict]:
         acumulado: dict = {}
         for item in items:
             indice = formato_de(item["contenido"], racimos)
-            pila = acumulado.setdefault(indice, {"contenidos": set(), "bultos": 0.0})
+            clave = (indice, item.get(partir_por) if partir_por else None)
+            pila = acumulado.setdefault(clave, {"contenidos": set(), "bultos": 0.0})
             pila["contenidos"].add(float(item["contenido"]))
             pila["bultos"] += float(item["bultos"])
-        for indice in sorted(acumulado):
-            pila = acumulado[indice]
-            pilas.append({
+        # El orden se arma con str() sobre la segunda mitad: sin partir es
+        # None en todas y con partir puede venir un None suelto (un lote sin
+        # proveedor), y comparar None contra str revienta.
+        for clave in sorted(acumulado, key=lambda c: (c[0], str(c[1] or ""))):
+            pila = acumulado[clave]
+            fila = {
                 "unidad": unidad,
                 "contenidos": sorted(pila["contenidos"]),
                 "bultos": round(pila["bultos"], 2),
-            })
+            }
+            if partir_por:
+                fila[partir_por] = clave[1]
+            pilas.append(fila)
     if sin_declarar > 0:
         pilas.append({"unidad": None, "contenidos": [], "bultos": round(sin_declarar, 2)})
     return pilas

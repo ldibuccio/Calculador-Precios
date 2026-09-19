@@ -84,9 +84,8 @@
      artículo ENTERO. Son dos cuentas con distinto alcance y el link es
      justo donde se confunden (corolario 8).
 
-     Y no promete el desglose por formato: las pilas salen de los lotes que
-     TIENEN RESTANTE hoy, y con un formato solo la tarjeta no se dibuja a
-     propósito. Prometerlo siempre sería un callejón. */
+     Y no promete el desglose por formato: eso está ARRIBA desde el 19/09,
+     que es donde se lo busca. Del otro lado quedan los lotes. */
   .ir-al-detalle .alcance {
     display: block;
     font-size: 0.85rem;
@@ -96,9 +95,29 @@
     line-height: 1.35;
   }
 
-  /* El mismo renglón que el movimiento de arriba: es la misma pantalla y
-     la misma lectura, no una tarjeta con vida propia. */
-  .linea.formato .que { color: #334155; }
+  /* LO QUE HAY, arriba de todo. El número grande contesta la pregunta con
+     la que se entra —"¿cuánto hay?"— y las filas de abajo contestan la
+     siguiente, que es la que el número solo no puede: 41 bultos pueden ser
+     200 kilos o 600. Por eso el kilaje va ACÁ y no abajo del movimiento. */
+  .cuanto-hay .total {
+    font-size: 1.8rem;
+    font-weight: 800;
+    color: #1d4ed8;
+    line-height: 1.15;
+    margin-top: 0.35rem;
+  }
+  .cuanto-hay.negativo .total { color: #dc2626; }
+  .formato {
+    padding: 0.5rem 0;
+    border-top: 1px solid #f0f0f0;
+    line-height: 1.35;
+    /* El nombre del proveedor no lo controlamos: sin esto uno largo y sin
+       espacios se sale de la pantalla en 390px. */
+    overflow-wrap: anywhere;
+  }
+  .formato:first-of-type { margin-top: 0.6rem; }
+  .formato b { font-variant-numeric: tabular-nums; }
+  .formato .prov { color: #64748b; }
 
   .volver {
     display: block;
@@ -124,9 +143,29 @@
   <div class="aviso-fecha">{{ aviso }}</div>
   {% endif %}
 
-  <div class="tarjeta">
+  {# LO QUE HAY, y va PRIMERO. Se entra desde el Remanente tocando un
+     renglón, así que la pregunta con la que se llega es "¿cuánto hay y de
+     qué es?" — el movimiento del día contesta otra, y contestarla antes
+     obliga a leer tres renglones para llegar al número.
+
+     La tarjeta se dibuja SIEMPRE, con pilas o sin ellas: acá vive el nombre
+     de la porción, y colgarlo del desglose lo haría desaparecer en las
+     porciones de cajas, que no se parten nunca. #}
+  <div class="tarjeta cuanto-hay{% if extracto.quedo < 0 %} negativo{% endif %}">
     <h2>{{ nombre }}</h2>
     <p class="fecha">{{ fecha_texto }}</p>
+    <div class="total">{{ extracto.quedo|numero }} bultos</div>
+
+    {% for pila in pilas %}
+    {# Una sola línea de Jinja a propósito: partida en varias, el renglón
+       sale con saltos adentro y un assert de "10 cajones de 5 k" no puede
+       matchear lo que la pantalla dice. #}
+    <div class="formato"><b>{{ pila.bultos|numero }}</b> {% if pila.contenidos %}{{ "cajón" if pila.bultos == 1 else "cajones" }} de {{ pila.contenidos|map("numero")|join(" y ") }} {{ pila.unidad|sufijo_unidad }}{% else %}{{ "bulto" if pila.bultos == 1 else "bultos" }} sin formato declarado{% endif %}{% if pila.proveedor %} <span class="prov">— {{ pila.proveedor }}</span>{% endif %}</div>
+    {% endfor %}
+  </div>
+
+  <div class="tarjeta">
+    <h2>Cómo se movió</h2>
 
     <div class="linea saldo arranque">
       <span class="que">Venía de ayer</span>
@@ -162,30 +201,10 @@
     {% endif %}
   </div>
 
-  {# DE QUÉ FORMATO SON LOS CAJONES QUE QUEDAN. Va abajo del movimiento
-     porque contesta la pregunta que deja el número de arriba: "quedó 41, ¿de
-     qué son esos 41?". Solo en la porción SUELTA — una porción de cajas no
-     se parte, porque todas las cajas de una ficha tienen el mismo kilaje.
-
-     Sin explicación: dos líneas y los números. Lo que hay que saber es el
-     reparto, y las pilas suman el total de arriba o no se dibujan. #}
-  {% if pilas %}
-  <div class="tarjeta">
-    <h2>De qué formato son</h2>
-    {% for pila in pilas %}
-    <div class="linea formato">
-      <span class="que">Cajones de {{ pila.contenidos|map("numero")|join(" y ") }}{{ " " ~ pila.unidad|sufijo_unidad }}</span>
-      <span class="cuanto">{{ pila.bultos|numero }}</span>
-    </div>
-    {% endfor %}
-  </div>
-  {% endif %}
-
   <a class="ir-al-detalle" href="/administracion/stock/sistema/{{ articulo_id }}">
     <span class="que">Ver el detalle del artículo</span>
-    <span class="alcance">De qué lote salió cada bulto y, cuando hay más de un
-      formato, de qué tamaño es cada pila. Es el artículo entero, no solo esta
-      porción.</span>
+    <span class="alcance">De qué lote salió cada bulto. Es el artículo entero,
+      no solo esta porción.</span>
   </a>
   <a class="volver" href="{{ volver }}">Volver al Stock del Depósito</a>
 {% include "_pie_version.html" %}

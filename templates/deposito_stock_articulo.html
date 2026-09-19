@@ -146,9 +146,22 @@
     {% endif %}
   </div>
 
+  {# EL CARTEL DICE QUÉ HACER, no cómo funciona el FIFO. Texto del dueño,
+     19/09, contra la versión vieja de tres párrafos que explicaba la
+     trazabilidad y el señalamiento de lotes: "fuera los tres párrafos sobre
+     trazabilidad y lo que alguien puede señalar".
+
+     Y NO ES UN DEFAULT QUE AFIRMA DE MÁS (corolario 5): un bulto cae acá
+     cuando ninguna entrada ANTERIOR lo cubre, y la causa que se ve en el
+     galpón es siempre la misma —la guía R se fecha el día que se carga en
+     vez del día que se armó, así que no puede cubrir la salida que la
+     precede—. Eso es lo que el cartel manda a arreglar. Si alguna vez
+     aparece una segunda causa, la frase se parte; mientras tanto, nombrar
+     dos posibilidades era hacer que el que lo lee elija. #}
   {% if sin_lote %}
   <div class="tarjeta-sin-lote">
-    <strong>{{ sin_lote|numero }} bultos salieron sin lote:</strong> ninguna guía los cubre. Puede ser que falte cargar el reproceso o el ajuste que los explique, o que otra salida se haya llevado ese lote a propósito: el que arma un pedido y el que carga una merma pueden SEÑALAR de qué lote salieron, y lo que señalan gana sobre el orden del FIFO. En los dos casos los bultos quedan acá y no se cuelgan de una guía vacía, para no falsear la trazabilidad.
+    <strong>{{ sin_lote|numero }} bultos salieron antes de que se cargara la guía R que los produce.</strong>
+    Cargala con la fecha en que se armaron.
   </div>
   {% endif %}
 

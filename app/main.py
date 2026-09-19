@@ -11778,13 +11778,20 @@ def _pilas_de_cajones(articulo_id: int, hasta, total) -> list[dict]:
     pilas = pilas_por_formato([
         {"contenido": (contenidos.get(f"{l['tipo_lote']}:{l['origen_id']}") or {}).get("contenido"),
          "unidad": (contenidos.get(f"{l['tipo_lote']}:{l['origen_id']}") or {}).get("unidad"),
+         "proveedor": l.get("detalle") or None,
          "bultos": l["restante"]}
         for l in cajones
-    ])
-    # UNA SOLA PILA NO SE MUESTRA —el número de arriba ya la dice— y las que
-    # NO CIERRAN tampoco: un desglose que no suma el total es peor que no
-    # tenerlo, porque nadie va a sumar tres renglones para verificarlo.
-    return pilas if len(pilas) > 1 and _pilas_cierran(pilas, total) else []
+    ], partir_por="proveedor")
+    # UNA SOLA PILA SÍ SE MUESTRA, y es la corrección del dueño del 19/09:
+    # "sin el kilaje eso no me sirve de nada, 41 bultos pueden ser 200 kilos
+    # o 600". Mientras la fila decía solo el reparto, con una sola pila
+    # repetía el total; ahora dice el FORMATO y el PROVEEDOR, que es el dato
+    # que se vino a buscar y que el número de arriba no tiene.
+    #
+    # Las que NO CIERRAN siguen sin mostrarse: un desglose que no suma el
+    # total es peor que no tenerlo, porque nadie va a sumar tres renglones
+    # para verificarlo.
+    return pilas if _pilas_cierran(pilas, total) else []
 
 
 def _pilas_cierran(pilas: list[dict], stock) -> bool:
