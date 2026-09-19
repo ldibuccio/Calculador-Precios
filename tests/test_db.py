@@ -1,5 +1,6 @@
 import inspect
 import io
+import re
 from datetime import date, datetime, time, timezone
 import pytest
 from unittest.mock import MagicMock, call, patch
@@ -247,7 +248,7 @@ def test_borrar_una_compra_CON_FOTO_DE_BALANZA_devuelve_la_ruta_para_sacarla_del
     )
 
     with patch("app.db.obtener_conexion", return_value=conexion):
-        resultado = eliminar_compra(30)
+        resultado = eliminar_compra(30, origen="compras")
 
     assert resultado == ["2026-09-08/n07p41-999-abcdef12.jpg"], (
         "la ruta de la foto de balanza tiene que volver para que quien llama la saque del Storage"
@@ -347,7 +348,7 @@ def test_eliminar_compra_ultima_de_su_guia_devuelve_las_fotos_sin_otros_usos():
     cursor.fetchall.side_effect = [[], [("2026-08-13/n07p41-123-abcdef12.jpg",)]]
 
     with patch("app.db.obtener_conexion", return_value=conexion):
-        resultado = eliminar_compra(30)
+        resultado = eliminar_compra(30, origen="compras")
 
     assert resultado == ["2026-08-13/n07p41-123-abcdef12.jpg"]
     conexion.commit.assert_called_once()
@@ -364,7 +365,7 @@ def test_eliminar_compra_con_renglones_restantes_no_toca_las_fotos():
     )
 
     with patch("app.db.obtener_conexion", return_value=conexion):
-        resultado = eliminar_compra(30)
+        resultado = eliminar_compra(30, origen="compras")
 
     assert resultado == []
     # DELETE de fotos_recepcion (vacío) + DELETE de la compra + COUNT de la guía.
@@ -386,7 +387,7 @@ def test_eliminar_compra_foto_compartida_por_otra_guia_no_se_borra_del_storage()
     cursor.fetchall.side_effect = [[], [("2026-08-13/listado-abc123.jpg",)]]
 
     with patch("app.db.obtener_conexion", return_value=conexion):
-        resultado = eliminar_compra(30)
+        resultado = eliminar_compra(30, origen="compras")
 
     assert resultado == []
     # El registro de ESTA guía sí se borró.
@@ -403,7 +404,7 @@ def test_eliminar_compra_sin_guia_no_toca_fotos():
     )
 
     with patch("app.db.obtener_conexion", return_value=conexion):
-        resultado = eliminar_compra(30)
+        resultado = eliminar_compra(30, origen="compras")
 
     assert resultado == []
     # El DELETE de fotos_recepcion (vacío) y el de la compra: sin guía no hay
@@ -422,7 +423,7 @@ def test_eliminar_compra_rechazada_se_puede_borrar_igual_que_antes():
     )
 
     with patch("app.db.obtener_conexion", return_value=conexion):
-        resultado = eliminar_compra(30)
+        resultado = eliminar_compra(30, origen="compras")
 
     assert resultado == []
     conexion.commit.assert_called_once()
@@ -438,7 +439,7 @@ def test_eliminar_compra_cancelada_en_retiro_se_puede_borrar_igual_que_antes():
     )
 
     with patch("app.db.obtener_conexion", return_value=conexion):
-        resultado = eliminar_compra(30)
+        resultado = eliminar_compra(30, origen="compras")
 
     assert resultado == []
     conexion.commit.assert_called_once()
@@ -454,7 +455,7 @@ def test_eliminar_compra_recepcionada_no_se_borra():
 
     with patch("app.db.obtener_conexion", return_value=conexion):
         try:
-            eliminar_compra(30)
+            eliminar_compra(30, origen="compras")
             assert False, "tenía que lanzar ValueError"
         except ValueError as error:
             assert str(error) == "Esta compra ya fue recepcionada, no se puede eliminar."
@@ -479,7 +480,7 @@ def test_eliminar_compra_no_ingresada_no_se_borra():
 
     with patch("app.db.obtener_conexion", return_value=conexion):
         try:
-            eliminar_compra(30)
+            eliminar_compra(30, origen="compras")
             assert False, "tenía que lanzar ValueError"
         except ValueError as error:
             assert str(error) == 'Esta compra quedó registrada como "No ingresó" en Depósito, no se puede eliminar.'
@@ -500,7 +501,7 @@ def test_eliminar_compra_retirada_no_se_borra():
 
     with patch("app.db.obtener_conexion", return_value=conexion):
         try:
-            eliminar_compra(30)
+            eliminar_compra(30, origen="compras")
             assert False, "tenía que lanzar ValueError"
         except ValueError as error:
             assert str(error) == "Esta compra ya fue retirada, no se puede eliminar."
@@ -1751,8 +1752,11 @@ def test_obtener_detalle_compra_devuelve_none_si_no_existe():
 
 
 def test_eliminar_compras_del_dia_por_proveedor_devuelve_borradas_y_protegidas():
-    conexion, cursor = _conexion_falsa([(5,)])  # SELECT COUNT(*): 5 compras en total
-    cursor.rowcount = 3  # solo 3 se pudieron borrar (2 protegidas)
+    # DOS fetchone: el COUNT de cuantas hay, y el count(*) del CTE que borra
+    # y archiva. El segundo reemplazo a cursor.rowcount — con el INSERT del
+    # archivo adentro de la misma sentencia, rowcount ya no es el de las
+    # compras borradas.
+    conexion, cursor = _conexion_falsa([(5,), (3,)])  # 5 en total, 3 borradas
 
     with patch("app.db.obtener_conexion", return_value=conexion):
         resultado = eliminar_compras_del_dia_por_proveedor(date(2026, 8, 16), 7)
@@ -7102,7 +7106,11 @@ def test_los_insert_de_compras_ya_no_nombran_la_columna_foto_ruta():
     import app.db as db
 
     fuente = inspect.getsource(db)
-    for fragmento in fuente.split("INSERT INTO compras")[1:]:
+    # \b DESPUES DE compras, y no la subcadena suelta: desde que existe
+    # `INSERT INTO compras_eliminadas`, un split por el texto pelado matchea
+    # al vecino y arrastra hasta el VALUES de OTRO insert (corolario 4).
+    # Entre "s" y "_" no hay frontera de palabra, asi que \b lo descarta solo.
+    for fragmento in re.split(r"INSERT INTO compras\b", fuente)[1:]:
         columnas = fragmento.split("VALUES")[0]
         assert "foto_ruta" not in columnas
     assert "UPDATE compras SET foto_ruta" not in fuente
@@ -7763,10 +7771,10 @@ def test_el_borrado_de_a_uno_y_el_cancelar_del_dia_usan_LA_MISMA_condicion():
     # empezado a decir cosas distintas de la misma compra.
     conexion, cursor = _conexion_falsa([(105,), (0,)], filas_fetchall=[])
     with patch("app.db.obtener_conexion", return_value=conexion):
-        eliminar_compra(30)
+        eliminar_compra(30, origen="compras")
     sql_de_a_uno = _sql_que_contiene(cursor, "DELETE FROM compras")
 
-    conexion, cursor = _conexion_falsa([(7,)])
+    conexion, cursor = _conexion_falsa([(7,), (7,)])
     with patch("app.db.obtener_conexion", return_value=conexion):
         eliminar_compras_del_dia_por_proveedor(date(2026, 9, 4), 3)
     sql_del_dia = _sql_que_contiene(cursor, "DELETE FROM compras")
@@ -7786,7 +7794,7 @@ def test_el_borrado_de_a_uno_decide_en_el_delete_y_no_antes():
     # pregunte "¿se puede?" para después borrar: eso es lo que se separa.
     conexion, cursor = _conexion_falsa([(105,), (0,)], filas_fetchall=[])
     with patch("app.db.obtener_conexion", return_value=conexion):
-        eliminar_compra(30)
+        eliminar_compra(30, origen="compras")
 
     consultas = [ll.args[0] for ll in cursor.execute.call_args_list]
     hasta_el_delete = consultas[: next(i for i, c in enumerate(consultas) if "DELETE FROM compras" in c)]
@@ -10557,7 +10565,7 @@ def test_forzar_SALTEA_el_bloqueo_por_estado_y_borra():
         [[], [], [], [], [], []],     # nada colgando, ni fotos
     )
     with patch("app.db.obtener_conexion", return_value=conexion):
-        db.eliminar_compra(77, forzar=True)
+        db.eliminar_compra(77, forzar=True, origen="gerencia")
 
     borrado = _sql_que_contiene(cursor, "DELETE FROM compras")
     # SIN la condición de _SQL_COMPRA_BORRABLE: eso es lo que forzar saltea.
@@ -10579,7 +10587,7 @@ def test_forzar_NO_saltea_lo_que_CUELGA_y_lo_NOMBRA():
     )
     with patch("app.db.obtener_conexion", return_value=conexion):
         with pytest.raises(ValueError, match="R31"):
-            db.eliminar_compra(77, forzar=True)
+            db.eliminar_compra(77, forzar=True, origen="gerencia")
 
     conexion.commit.assert_not_called()
     assert not any("DELETE FROM compras" in ll.args[0] for ll in cursor.execute.call_args_list)
@@ -10592,7 +10600,7 @@ def test_SIN_forzar_el_bloqueo_por_estado_SIGUE_PUESTO():
         [(5,), (0,)], [[], [], [], [], []],
     )
     with patch("app.db.obtener_conexion", return_value=conexion):
-        db.eliminar_compra(77)
+        db.eliminar_compra(77, origen="compras")
 
     borrado = _sql_que_contiene(cursor, "DELETE FROM compras")
     assert "estado IS DISTINCT FROM" in borrado
@@ -10670,3 +10678,89 @@ def test_las_guias_R_congeladas_traen_el_costo_como_float_o_None():
 
     assert [g["costo_por_bulto"] for g in guias] == [100000.0, None]
     assert [g["bultos"] for g in guias] == [3.0, 2.0]
+
+
+def _origenes_que_el_codigo_PASA():
+    """Los que aparecen en el codigo, encontrados y no escritos a mano."""
+    import ast as _ast
+
+    # ANCLADO A LA LLAMADA y no al `origen=` suelto: `origen` es un keyword
+    # comun en este repo —los movimientos de cajas tienen el suyo— y un
+    # detector que barre todos trae valores de otra tabla, que despues
+    # alguien agrega al CHECK equivocado. Es la posicion gramatical del
+    # corolario 59: la palabra en su llamada, no la palabra.
+    BORRADORAS = {"eliminar_compra", "_eliminar_compra_y_su_foto_si_corresponde"}
+    encontrados = set()
+    for archivo in ("app/main.py", "app/db.py"):
+        arbol = _ast.parse(io.open(archivo, encoding="utf-8").read())
+        for nodo in _ast.walk(arbol):
+            if not isinstance(nodo, _ast.Call):
+                continue
+            if not (isinstance(nodo.func, _ast.Name) and nodo.func.id in BORRADORAS):
+                continue
+            for kw in nodo.keywords:
+                if kw.arg == "origen" and isinstance(kw.value, _ast.Constant):
+                    encontrados.add(kw.value.value)
+    # El del lote va LITERAL adentro del SQL (la funcion ES esa operacion,
+    # asi que no recibe el origen de nadie): se lee del INSERT del archivo.
+    fuente = io.open("app/db.py", encoding="utf-8").read()
+    encontrados |= set(re.findall(
+        r"INSERT INTO compras_eliminadas.*?::bigint,\s*'([a-z_]+)'", fuente, re.S))
+    return encontrados
+
+
+def _origenes_que_el_CHECK_acepta():
+    """Leidos del .sql, NO copiados: una copia envejece en silencio."""
+    sql = io.open("db/eliminadas_1_tabla.sql", encoding="utf-8").read()
+    lista = re.search(r"check \(origen in\s*\((.*?)\)\)", sql, re.S).group(1)
+    return set(re.findall(r"'([a-z_]+)'", lista))
+
+
+def test_los_origenes_del_CODIGO_y_los_del_CHECK_son_LOS_MISMOS():
+    """La lista incompleta no pierde un dato: REVIENTA EL BORRADO.
+
+    El archivo se escribe en la MISMA sentencia que el DELETE, asi que un
+    origen que el CHECK no acepta no deja una fila sin archivar — hace fallar
+    la transaccion entera y la compra no se borra. Es el corolario 75: un
+    CHECK que se vuelve pared en el camino que nadie enumero.
+
+    Y casi pasa: la primera version de esta migracion listaba DOS origenes
+    —gerencia y cancelar_dia— y las superficies que borran son CUATRO. Las
+    dos que faltaban eran el Eliminar de Buscar Compras y el borrado
+    multiple, o sea las que mas se usan.
+
+    Compara el conjunto ENCONTRADO contra el DECIDIDO (corolario 60), y el
+    decidido se LEE del .sql en vez de copiarse: una copia coincide hoy y se
+    separa sin que nada falle.
+    """
+    del_codigo = _origenes_que_el_codigo_PASA()
+    del_check = _origenes_que_el_CHECK_acepta()
+
+    assert del_codigo == del_check, (
+        f"el codigo pasa {sorted(del_codigo)} y el CHECK acepta {sorted(del_check)}"
+    )
+    assert len(del_codigo) == 4, sorted(del_codigo)
+
+
+def test_el_DELETE_y_su_archivo_son_LA_MISMA_sentencia():
+    """Con dos execute habria un camino donde la compra se va y el registro no."""
+    import app.db as db
+
+    fuente = inspect.getsource(db)
+    # las TRES: las dos ramas de eliminar_compra (que comparten plantilla) y
+    # el borrado en lote.
+    assert fuente.count("INSERT INTO compras_eliminadas") == 2, "son dos textos: la plantilla y el lote"
+    for bloque in re.split(r"INSERT INTO compras_eliminadas", fuente)[1:]:
+        # el DELETE tiene que estar ARRIBA, en el mismo WITH
+        anterior = fuente.split(bloque)[0] if bloque in fuente else ""
+        assert "DELETE FROM compras" in anterior[-900:], "el archivo quedo fuera del CTE del DELETE"
+    assert "to_jsonb(compras.*)" in fuente, "se archiva la fila ENTERA, no columnas elegidas"
+
+
+def test_el_ORIGEN_no_tiene_DEFAULT():
+    """Un default es lo que deja que la quinta superficie no lo decida."""
+    import app.db as db
+
+    parametro = inspect.signature(db.eliminar_compra).parameters["origen"]
+    assert parametro.default is inspect.Parameter.empty
+    assert parametro.kind is inspect.Parameter.KEYWORD_ONLY
