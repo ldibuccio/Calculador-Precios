@@ -16682,6 +16682,94 @@ def test_ver_pedido_sin_cliente_muestra_solo_el_selector():
     assert "Elegí un cliente" in respuesta.text
 
 
+def _armar_pedido_el_dia(hoy, fecha_pedido="2026-08-21"):
+    """Armar Pedido con un pedido abierto, con el reloj puesto a mano."""
+    with (
+        patch("app.main._hoy_argentina", return_value=hoy),
+        patch("app.main.listar_clientes", return_value=CLIENTES_PARA_SELECTOR),
+        patch("app.main.listar_pedidos_vigentes_con_armado", return_value=[]),
+        patch("app.main.obtener_pedido_vigente", return_value=PEDIDO_VIGENTE_DE_PRUEBA),
+        patch("app.main.listar_sucursales_pedido",
+              return_value=[dict(s) for s in SUCURSALES_PEDIDO_DE_PRUEBA]),
+        patch("app.main.listar_renglones_pedido", return_value=RENGLONES_ARMADO_DE_PRUEBA),
+        patch("app.main.fichas_con_cajas_armadas", return_value=set()),
+        patch("app.main.listar_fichas_por_cliente", return_value=FICHAS_PEDIDO_DE_PRUEBA),
+        patch("app.main.listar_mails_pedido_sin_procesar_de_cliente", return_value=[]),
+    ):
+        return cliente.get(
+            f"/deposito/pedido/armar?cliente_id=1&fecha={fecha_pedido}&sucursal=VL")
+
+
+def test_ARMAR_avisa_cuando_el_pedido_es_de_OTRO_DIA():
+    """Pedido del dueño, 19/09. Una sucursal del pedido del 17 se tildó el 18
+    a las 22:35 y esos diez bultos el stock los restó el 18.
+
+    El cartel dice QUÉ VA A PASAR —el stock lo resta hoy— y no cómo se llama
+    la columna: el que arma no tiene por qué saber que existe `armado_el`.
+    """
+    respuesta = _armar_pedido_el_dia(date(2026, 8, 22))
+
+    assert respuesta.status_code == 200
+    marcado = respuesta.text.split("</style>")[-1]
+    assert 'class="otro-dia"' in marcado
+    assert "Este pedido es del 21/08 y hoy es 22/08" in marcado
+    # LA JERGA QUE NO PUEDE APARECER: afirmar el texto bueno pasa igual si
+    # el nombre de la columna quedó tres líneas más abajo.
+    assert "armado_el" not in marcado and "fecha_operacion" not in marcado
+
+
+def test_ARMAR_no_avisa_si_el_pedido_es_de_HOY():
+    """El control. Sin él, un cartel que saliera SIEMPRE pasa el test de
+    arriba igual — y sería el que se aprende a ignorar en dos días."""
+    respuesta = _armar_pedido_el_dia(date(2026, 8, 21))
+
+    assert respuesta.status_code == 200
+    assert 'class="otro-dia"' not in respuesta.text.split("</style>")[-1]
+
+
+def test_ARMAR_no_avisa_por_un_pedido_del_FUTURO():
+    """El del sábado se arma el viernes A PROPÓSITO y la pantalla lo ofrece.
+    Avisar ahí sería el cartel que se aprende a ignorar, y el que importa es
+    el del pedido atrasado."""
+    respuesta = _armar_pedido_el_dia(date(2026, 8, 20))
+
+    assert respuesta.status_code == 200
+    assert 'class="otro-dia"' not in respuesta.text.split("</style>")[-1]
+
+
+def test_ARMAR_avisa_pero_NO_TRABA_el_tilde():
+    """Trabar dejaría el pedido SIN TILDAR, que es el problema que el cartel
+    viene a evitar: la mercadería ya salió y lo único que falta es anotarla.
+
+    Se verifica que los botones de tildar SIGAN ESTANDO con el cartel puesto,
+    y contra el mismo pedido sin cartel para que el número tenga con qué
+    compararse: un cambio que sacara los botones en los dos casos pasaría un
+    assert de "hay botones" igual.
+    """
+    con = _armar_pedido_el_dia(date(2026, 8, 22)).text.split("</style>")[-1]
+    sin = _armar_pedido_el_dia(date(2026, 8, 21)).text.split("</style>")[-1]
+
+    tildes_con = con.count("/renglones/")
+    tildes_sin = sin.count("/renglones/")
+    assert 'class="otro-dia"' in con and 'class="otro-dia"' not in sin
+    assert tildes_con > 0 and tildes_con == tildes_sin, (tildes_con, tildes_sin)
+
+
+def test_el_aviso_de_OTRO_DIA_no_sale_en_el_LISTADO():
+    """En el listado se ven varios días a la vez: un cartel por cada uno es
+    ruido. Sale cuando se está por tildar, que es cuando sirve."""
+    with (
+        patch("app.main._hoy_argentina", return_value=date(2026, 8, 22)),
+        patch("app.main.listar_clientes", return_value=CLIENTES_PARA_SELECTOR),
+        patch("app.main.listar_mails_pedido_sin_procesar_de_cliente", return_value=[]),
+        patch("app.main._listado_de_pedidos", return_value=[]),
+    ):
+        respuesta = cliente.get("/deposito/pedido/armar?cliente_id=1")
+
+    assert respuesta.status_code == 200
+    assert 'class="otro-dia"' not in respuesta.text.split("</style>")[-1]
+
+
 def test_ver_pedido_muestra_sucursales_con_oc_declarado_informativo_y_sin_identificar():
     with (
         patch("app.main._hoy_argentina", return_value=date(2026, 8, 21)),

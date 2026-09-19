@@ -18014,6 +18014,38 @@ def _diff_pedido_contra_anterior(renglones_nuevos: list[dict], renglones_viejos:
     return sorted(cambios)
 
 
+def _armado_de_otro_dia(fecha_pedido, hoy):
+    """El cartel de "estás armando un pedido de otro día", o None si es de hoy.
+
+    EL HECHO QUE LO HACE NECESARIO, del 19/09: una sucursal de un pedido del
+    17/09 se tildó el 18 a las 22:35, casi treinta horas después de las otras
+    dos. El stock resta por `armado_el`, así que esos diez bultos salieron el
+    17 en el camión y el sistema los restó el 18. Nadie hizo nada mal — el que
+    tildó no tenía forma de saber que la fecha se estaba corriendo.
+
+    ES UN CARTEL Y NO UNA TRABA, y la razón es del dueño: trabar dejaría el
+    pedido SIN TILDAR, que es exactamente el problema que esto viene a
+    evitar. La mercadería ya salió; lo único que falta es que alguien lo
+    anote, y ponerle una pared a eso empeora el dato en vez de mejorarlo.
+
+    Y NO DICE "fecha_operacion" NI "armado_el": dice qué día es el pedido,
+    qué día es hoy, y qué va a pasar con el stock. El que arma no tiene por
+    qué saber cómo guardamos la fecha (ver "El rótulo hace la PREGUNTA").
+
+    Un pedido del FUTURO no avisa: el del sábado se arma el viernes a
+    propósito, y esa pantalla lo ofrece. Avisar ahí sería un cartel que se
+    aprende a ignorar, y el que importa es éste.
+    """
+    if fecha_pedido is None or hoy is None or fecha_pedido >= hoy:
+        return None
+    dias = (hoy - fecha_pedido).days
+    return {
+        "fecha_pedido": fecha_pedido.strftime("%d/%m"),
+        "hoy": hoy.strftime("%d/%m"),
+        "dias": dias,
+    }
+
+
 @app.get("/deposito/pedido/armar")
 def ver_armar_pedido(request: Request, cliente_id: str | None = None, fecha: str | None = None, sucursal: str | None = None, aviso: str | None = None, recien: str | None = None):
     """Armar Pedido: el del depósito, parado y con una mano — sin clave, es la operación del día a día.
@@ -18046,6 +18078,13 @@ def ver_armar_pedido(request: Request, cliente_id: str | None = None, fecha: str
         "sucursal_elegida": None,
         "modo_lista": modo_lista,
         "aviso": aviso,
+        # EN EL LISTADO NO SALE, y no hace falta una condición para eso:
+        # `modo_lista` es "no vino fecha en la URL", así que ahí `fecha_valor`
+        # ES hoy y la regla de fechas ya devuelve None. Un `if modo_lista`
+        # acá sería un camino que no se puede recorrer, y el próximo que lo
+        # lea va a creer que hace falta. Lo cuida
+        # `test_el_aviso_de_OTRO_DIA_no_sale_en_el_LISTADO`.
+        "otro_dia": _armado_de_otro_dia(fecha_valor, _hoy_argentina()),
     }
     if cliente_id_valor is None:
         return templates.TemplateResponse(request, "deposito_pedido_armar.html", contexto)

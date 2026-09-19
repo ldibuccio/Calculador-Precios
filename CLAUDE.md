@@ -8277,6 +8277,80 @@ nombre sin espacios. Medido de nuevo con el agrupado ya afuera: el canario
 que se lo saca al renglón sigue haciendo caer **1** test, y el caso cómodo
 sigue en verde.
 
+## Corolario 86: una foto POR CANARIO deja una avería puesta cuando dos tocan el mismo archivo
+
+Del 19/09, y es la trampa más cara del día. El script de canarios guardaba
+un `.bak` **por canario**: mutar, correr, restaurar, borrar el `.bak`. Con
+cuatro canarios sobre tres archivos funcionó tres veces y falló la cuarta,
+porque **dos canarios tocaban la MISMA plantilla**: el `.bak` del segundo se
+tomó del archivo que el primero ya había mutado.
+
+Resultado: la tanda terminó, el árbol quedó con una avería puesta, y **la
+suite entera pasó a dar dos rojos que parecían de otra cosa**.
+
+**Por qué es peor que el canario que se mata a la mitad** (que ya está
+escrito): allá uno sabe que lo mató. Acá **la tanda terminó bien**, los
+números de cada canario eran correctos, y no hay ningún evento que invite a
+sospechar. Lo único raro llega después y disfrazado de otro bug.
+
+**Y la señal para reconocerlo**: los tests que caen son los del cambio que
+uno acaba de hacer, y caen **con el código correcto a la vista**. Eso es
+exactamente lo que el corolario 22 describe —el reflejo de arreglar el test—
+con la diferencia de que acá ni el test ni el código están mal: **el archivo
+no dice lo que uno escribió.**
+
+**Lo que lo resolvió es la regla que ya estaba y hay que aplicar ANTES de
+tocar nada**: mirar qué quedó ESCRITO, no el resultado de la suite. Un
+`find . -name '*.bak'` delató el archivo, y un `grep` de la cosa que el
+canario borraba delató cuál mitad faltaba.
+
+**El arreglo, y es de una línea**: **UNA SOLA FOTO antes de la tanda entera**,
+y restaurar desde ahí antes de CADA canario. Así no importa cuántos toquen el
+mismo archivo ni en qué orden. Y el `finally` restaura desde esa misma foto,
+así que matar el script tampoco deja nada.
+
+```python
+FOTO = {a: io.open(a).read() for a in ARCHIVOS}      # una vez, antes de todo
+def restaurar():
+    for a, c in FOTO.items(): io.open(a, "w").write(c)
+```
+
+Engancha con **"el método de restauración es el MISMO para todos los
+archivos de la tanda"**: aquella regla dice no mezclar `.bak` con `git
+checkout`; ésta agrega que **un `.bak` por canario ya es mezclar**, porque
+cada uno fotografía un estado distinto.
+
+## Corolario 87: el dueño también describe de memoria una pantalla que tiene adelante
+
+Del 19/09, y es del dueño: *"yo dije 'un −20 agrupado y sin nombre' y era
+falso — describí de memoria una pantalla que tenía adelante hace dos
+horas"*.
+
+El pedido era que Movimiento mostrara la salida desglosada por sucursal. **Y
+ya lo hacía**: un renglón por sucursal, con nombre —"Armado pedido Día % BZ
+−10"—. Lo que de verdad faltaba era el **número de pedido**, que es con lo
+que se coteja contra la orden de compra.
+
+**La diferencia no es de prolijidad: cambia qué se construye.** Con la
+premisa tal como llegó, lo que había que hacer era partir un total agrupado.
+Con la pantalla a la vista, lo que hay que hacer es agregar un dato y
+reordenar. Son dos trabajos distintos, y el primero no existía.
+
+Es el corolario 84 —una premisa del dueño sobre EL SISTEMA se verifica en el
+código— con el caso que le faltaba: allá la premisa era sobre lo que el
+sistema PUEDE hacer (*"eso lo puedo editar"*), acá sobre **lo que una
+pantalla MUESTRA**. Las dos se verifican del mismo lado y ninguna se discute:
+se miran.
+
+**Lo accionable, y cuesta un minuto**: antes de cambiar una pantalla porque
+"muestra X", **renderizarla y leer qué muestra**. Acá alcanzó con correr
+`armar_extracto` con el caso y mirar la salida — dos líneas de Python antes
+de escribir una sola de producción.
+
+**Y el hallazgo se dice ANTES de construir, no en el commit.** Si la premisa
+se corrige recién al explicar lo que se hizo, el que la dijo ya no puede
+cambiar el pedido — y el pedido con la premisa corregida puede ser otro.
+
 ## Corolario 80: una cuenta DERIVADA convierte "completar el dato" en "arreglarlo", y eso decide si hay que recargar
 
 Del 17/09, y es la propiedad que más veces salvó a este sistema, vista del

@@ -345,6 +345,16 @@
     margin-bottom: 1rem;
     font-size: 0.9rem;
   }
+  .otro-dia {
+    background: #fef3c7;
+    border: 1px solid #f59e0b;
+    border-left: 5px solid #f59e0b;
+    border-radius: 10px;
+    padding: 0.85rem 1rem;
+    margin: 1rem 0;
+    line-height: 1.45;
+    color: #78350f;
+  }
   /* "Buscar pedido": fuerza la revisión de la casilla desde acá, sin ir a Sistema. */
   .boton-buscar-pedido {
     display: block;
@@ -443,6 +453,18 @@
         {% endfor %}
       </select>
     </form>
+  </div>
+  {% endif %}
+
+  {# EL PEDIDO ES DE OTRO DÍA. Cartel y no traba: trabar dejaría el pedido
+     SIN TILDAR, que es el problema que esto viene a evitar (19/09, del
+     dueño). Dice qué pasa con el stock, no cómo se llama la columna. #}
+  {% if otro_dia %}
+  <div class="otro-dia">
+    <strong>Este pedido es del {{ otro_dia.fecha_pedido }} y hoy es {{ otro_dia.hoy }}.</strong>
+    Lo que tildes ahora el stock lo va a restar <strong>hoy</strong>, no el
+    {{ otro_dia.fecha_pedido }}. Si la mercadería salió el {{ otro_dia.fecha_pedido }},
+    ese día va a quedar de más y hoy de menos.
   </div>
   {% endif %}
 
