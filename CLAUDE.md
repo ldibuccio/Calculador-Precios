@@ -9097,6 +9097,95 @@ esa línea el total del pedido guardado no cuadra contra la comanda que se
 acaba de pegar, y eso se lee como un error de lectura de la IA — la primera
 sospecha razonable, y manda a mirar el lugar equivocado.
 
+## `compras.importe` no dice CUÁNDO ni POR DÓNDE — y "quién" no es la deuda (19/09)
+
+Del 19/09, y es del dueño: *"El día que un precio no cierre contra lo que el
+proveedor dice, no hay forma de reconstruir si lo puso Gerencia al cargar,
+Comercial al negociar, o alguien de más. Es el mismo problema que resolvimos
+ayer con `cantidad_original` en el renglón del pedido, y por la misma razón."*
+
+**La falta es real.** `compras` tiene 29 columnas y el importe es un número
+solo. `cargado_el` es de la COMPRA y no del precio: una compra que nació sin
+importe y se completó tres días después lo lleva igual, con la fecha del alta.
+
+**Y son TRES escrituras**, enumeradas con `ast` sobre los llamadores y no
+leídas de memoria:
+
+```
+el ALTA        crear_compra / crear_compras_de_comanda  ->  _insertar_compra_con_guia   INSERT
+la EDICIÓN     POST /compras/{id}/editar                ->  actualizar_precio_compra    UPDATE
+el PENDIENTE   POST /compras/pendientes[/guardar-todos]  ->  actualizar_importe_compra   UPDATE
+```
+
+Las tres dejan **exactamente la misma fila**. Un importe puesto al recibir y
+uno renegociado una semana más tarde son indistinguibles, y eso es lo que hay
+que arreglar.
+
+### Pero "QUIÉN" no se puede, y no es una deuda: es una decisión ESCRITA DOS VECES
+
+**Este sistema no tiene usuarios**, y no es un olvido — está dicho en el
+esquema, en las dos columnas de la familia que el dueño nombró:
+
+> `controlado_el`: *"No guarda quien: el sistema no tiene usuarios."*
+> `agregado_a_mano_el`: *"Guarda CUANDO y nada mas, igual que controlado_el:
+> el sistema no tiene usuarios, asi que un quien seria un campo sin
+> consecuencia."*
+
+Y **no hay tabla de operarios**: existió el 01 y el 02/09 para la salida de
+escape del freno del reproceso, y la borró `db/sacar_excepcion_del_freno.sql`
+con su comentario explicando por qué. Medido sobre el esquema entero: **cero**
+columnas `usuario_id`, `creado_por`, `cargado_por` o `actor`.
+
+Un `escrito_por` sería el campo sin consecuencia de más arriba en su forma más
+pura: **no hay de dónde sacarlo**, así que quedaría en NULL para siempre o
+habría que pedirle a alguien que se nombre a sí mismo.
+
+**Las puertas son de SECTOR, no de persona**, y encima la pregunta tal como
+está formulada tiene un error que conviene tener escrito: **Comercial no
+escribe `compras.importe` por ninguna puerta.** Los tres caminos de arriba
+viven bajo `/compras`, y el retroactivo de Gerencia lo escribe también,
+desde su propio prefijo. O sea que las puertas por las que puede entrar un
+importe son **dos, Compras y Gerencia**, y la renegociación —lo que
+el dueño llama "Comercial"— entra por la de Compras. Comercial pone precios de
+VENTA, que viven en `precios_venta_historial` y sí tienen historial.
+
+### El paralelo con `cantidad_original` es de FAMILIA, y el arreglo NO se copia
+
+*Buscar la otra copia es obligatorio; copiarle el arreglo, no.* Las dos
+columnas son de la misma familia —existen para reconstruir un desvío contra un
+documento de AFUERA— y **contestan preguntas distintas**:
+
+| | qué guarda | qué pregunta contesta |
+|---|---|---|
+| `cantidad_original` | el VALOR viejo | la OC dice 5 y el sistema 8, ¿qué decía la comanda? |
+| lo que falta acá | el CAMINO y el MOMENTO | el proveedor dice $X y el sistema $Y, ¿esto se cargó al recibir o se renegoció? |
+
+Y el comment de `cantidad_original` dice **textual** que guarda el valor *"y no
+un timestamp a proposito"*, porque la pregunta que aparece la contesta el
+número viejo y no la hora. **Acá es al revés**: el importe viejo no contesta
+nada —si se renegoció, el viejo es justamente el que ya no vale— y lo que falta
+es cuándo y por dónde entró el que está puesto.
+
+Copiarle el diseño —un `importe_original`— construiría la respuesta a la
+pregunta que acá no se hace. Es el mismo criterio con que el Cotejo de vacíos
+se quedó midiendo contra la foto cuando el de stock dejó de hacerlo.
+
+### ANOTADO Y NO CONSTRUIDO, y la forma que tendría
+
+Por pedido del dueño: *"es lo que hay que arreglar, aunque no sea hoy"*.
+
+Lo que el sistema ya sabe escribir son dos columnas: **`importe_puesto_el`** y
+**`importe_origen`** (`'alta'` | `'edicion'` | `'pendiente'`), las dos escritas
+por los tres caminos de arriba y **derivadas del camino, no tipeadas por
+nadie** — que es lo único que las vuelve inmunes al campo que se deja de
+llenar. Los tres escritores saben cuál son; ninguna pantalla tiene que
+preguntar nada.
+
+**Y lo que la reabre no es un número: es un precio que no cierre.** Hoy no hay
+ninguno reportado, así que no hay nada que reconstruir hacia atrás — y las
+filas viejas van a quedar sin rastro igual, que es correcto: deducir de dónde
+salió un importe que ya está escrito sería inventarlo (corolario 20).
+
 ## Corolario 85: una consulta de diagnóstico que REESCRIBE una cuenta del sistema en vez de reusarla miente con números plausibles
 
 Del 18/09, y es el corolario 6 con el culpable cambiado: allá una medición
