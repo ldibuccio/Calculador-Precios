@@ -397,7 +397,11 @@ create table compras (
     -- unico que lo sabe. Al recepcionar, el sistema genera solo la guia R tipo
     -- en_origen. Ver db/compra_en_caja_nuestra_3_la_marca_en_la_compra.sql.
     ficha_en_origen_id         bigint references fichas_logistica (id),
+    importe_puesto_el          timestamptz,
+    importe_origen             text,
     constraint compras_tipo_retiro_check check (tipo_retiro in ('Clark', 'Carro', 'Pases', 'Cooperativa')),
+    constraint compras_importe_origen_check check (importe_origen is null
+        or importe_origen in ('alta', 'edicion', 'pendiente')),
     constraint compras_cantidad_cargada_check check (cantidad_kilos is not null or cantidad_fraccion is not null)
 );
 
@@ -418,7 +422,26 @@ create index compras_carga_token_idx on compras (carga_token);
 -- barrer la tabla. Parcial porque la enorme mayoria es NULL.
 create index compras_ficha_en_origen_idx on compras (ficha_en_origen_id)
     where ficha_en_origen_id is not null;
+comment on column compras.importe_puesto_el is 'CUANDO se escribio el importe que la fila tiene HOY. NULL = anterior a esta columna (19/09) o sin precio todavia. No se dedujo nada hacia atras: de donde salio un importe ya escrito no se puede saber, y deducirlo seria inventarlo. Ver db/importe_1_cuando_y_por_donde.sql.';
+comment on column compras.importe_origen is 'POR DONDE entro ese importe: alta, edicion (/compras/{id}/editar) o pendiente (Compras sin precio). Se DERIVA del camino, no lo tipea nadie. cargado_el NO sirve para esto: es de la COMPRA, y una que nacio sin precio y se completo tres dias despues lo lleva con la fecha del alta.';
 comment on column compras.contenido_por_cajon_real is 'Contenido por cajón real. Lo tipea Depósito directo (pesa/cuenta un bulto, no toda la carga).';
+
+create table compras_eliminadas (
+    id           bigint generated always as identity primary key,
+    compra_id    bigint not null,
+    eliminada_el timestamptz not null default now(),
+    origen       text not null,
+    fila         jsonb not null,
+    constraint compras_eliminadas_origen_check check (origen in
+        ('compras', 'compras_varias', 'gerencia', 'cancelar_dia'))
+);
+
+create index compras_eliminadas_fecha_idx on compras_eliminadas (eliminada_el desc);
+
+comment on table compras_eliminadas is 'Que se borro de compras, cuando, y que tenia adentro. El DELETE de compras es REAL: no hay anulado_el, y una recepcionada borrada MUEVE STOCK sin dejar rastro, porque la entrada de stock ES la fila de compras y recepcionar no escribe ningun movimientos_stock. No guarda QUIEN: el sistema no tiene usuarios. Ver db/eliminadas_1_tabla.sql.';
+comment on column compras_eliminadas.compra_id is 'El id que TENIA. Sin FK a proposito: la fila ya no existe y una FK haria fallar el insert.';
+comment on column compras_eliminadas.fila is 'La compra ENTERA, de to_jsonb(compras.*) en el RETURNING del propio DELETE. No columnas elegidas: asi no hay lista que actualizar el dia que compras gane una columna.';
+comment on column compras_eliminadas.origen is 'Por cual de las CUATRO superficies se borro. Se DERIVA del camino. La lista esta completa a proposito: el archivo se escribe en la MISMA sentencia que el DELETE, asi que un valor que falte no pierde un dato — revienta el borrado.';
 
 create table fotos_recepcion (
     id         bigint generated always as identity primary key,
