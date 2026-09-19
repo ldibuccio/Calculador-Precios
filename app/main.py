@@ -9311,10 +9311,23 @@ def _porciones_de_deposito(filas: list[dict] | None = None, hasta=None,
     arma no le importa de qué guía R salió una caja, y la guía R no está
     escrita en la caja, así que tampoco podría verificarlo contando.
 
-    Solo lo que tiene MÁS DE CERO. Una porción en cero no es una pila, y un
-    negativo no se puede contar. Los negativos NO se pierden: van en su
-    propia sección abajo, separados y contados como "bultos que faltan
-    explicar" — ver `_negativos_de_deposito`.
+    Una porción en CERO no es una pila y no sale. Un NEGATIVO sí sale, desde
+    el 19/09, marcado y sin número de cantidad: decía acá que "no se pierde,
+    va en su propia sección abajo" y eso era verdad solo para el negativo del
+    ARTÍCULO. El de la PORCIÓN —los sueltos, que salen por resta— no estaba
+    en ninguna de las dos: `_negativos_de_deposito` mira `fila["stock"]`, que
+    es el artículo entero, así que un artículo con stock 5 y 23 cajas en una
+    ficha tiene los sueltos en −18 y no aparece en ningún lado. Es el
+    corolario 7 al pie de la letra: la diferencia entre dos cuentas no está
+    en ninguna de las dos.
+
+    Y no era solo invisible: `ver_extracto_de_porcion` busca la porción EN
+    ESTA LISTA, así que una porción negativa daba 404 — el camino cerrado,
+    no el dato escondido. Medido el 19/09 antes de tocar nada.
+
+    LA SEGUNDA MANTIENE SU `> 0` y es a propósito: es un pool con su propio
+    piso, no una resta entre dos cuentas, así que no tiene cómo caer en este
+    agujero. El día que se mida uno negativo, este comentario es el lugar.
 
     El orden agrupa por ARTÍCULO y después por tipo de porción, no por el
     texto que se muestra: así "Pomelo" y "Pomelo caja Día" caen juntas
@@ -9336,8 +9349,16 @@ def _porciones_de_deposito(filas: list[dict] | None = None, hasta=None,
         # suman el total del artículo sin que se pueda perder ni duplicar.
         sueltos = round(float(fila["stock"]) - sum(de_este.values()), 2)
         grupo = fila.get("grupo")
-        if sueltos > 0:
+        if sueltos != 0:
             porciones.append({"articulo": articulo, "orden": 0,
+                              # EN POSITIVO Y CON LA PALABRA, igual que el
+                              # bloque de abajo: un suelto en −18 no tiene
+                              # menos dieciocho cajones, tiene 18 bultos que
+                              # salieron y ninguna guía cubre. `bultos` queda
+                              # con el signo para el que sume; lo que se
+                              # DIBUJA es `faltan`, adentro de una frase.
+                              "negativo": sueltos < 0,
+                              "faltan": round(-sueltos, 2) if sueltos < 0 else 0,
                               "nombre": _titulo_de_porcion(articulo, None, clientes, 0, False),
                               "bultos": sueltos, "grupo": grupo, "procesada": False,
                               # La CLAVE DE LA PORCIÓN, igual que en conteos_stock:

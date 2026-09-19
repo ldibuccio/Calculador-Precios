@@ -17532,7 +17532,17 @@ def _leer_excel_remanente(**kwargs):
 
 
 def _porciones_en_pantalla(texto):
-    return re.findall(r'<span class="que">([^<]+)</span>\s*<span class="cuanto">([^<]+)</span>', texto)
+    """Los renglones de la lista, CORTOS INCLUIDOS.
+
+    La versión vieja exigía `class="cuanto"` pegado, y el renglón negativo
+    emite `cuanto-falta`: el día que la lista dejó de filtrarlos (19/09) este
+    helper se volvió ciego a ellos y el test que afirmaba "el negativo NO está
+    en la lista" siguió pasando —por no verlo, no por ser cierto—. Es el
+    corolario 57: un cambio en el producto mudó dónde matcheaba el assert.
+    """
+    return re.findall(
+        r'<span class="que">([^<]+)</span>\s*<span class="cuanto(?:-falta)?">([^<]+)</span>',
+        texto)
 
 
 EXTRACTO_EVENTOS = {
@@ -17664,6 +17674,124 @@ def _extracto(url, eventos=None):
         patch("app.main._hoy_argentina", return_value=date(2026, 9, 6)),
     ):
         return cliente.get(url)
+
+
+REMANENTE_FILAS_EN_ROJO = [
+    # El artículo ENTERO en −18: lo ve `_negativos_de_deposito`.
+    {"articulo_id": 7, "nombre": "EJEMPLO Corto", "stock": -18.0, "segunda": 0.0, "grupo": "fruta"},
+    # El artículo en +5 con 23 cajas en una ficha: los SUELTOS quedan en −18 y
+    # el artículo NO está negativo, así que no lo ve ninguna de las dos cuentas.
+    # Es el corolario 7 y es el caso que hacía desaparecer al artículo entero.
+    {"articulo_id": 8, "nombre": "EJEMPLO Resta", "stock": 5.0, "segunda": 0.0, "grupo": "fruta"},
+    # Control: uno sano, para que un cambio que muestre TODO no pase igual.
+    {"articulo_id": 9, "nombre": "EJEMPLO Sano", "stock": 41.0, "segunda": 0.0, "grupo": "fruta"},
+]
+REMANENTE_CAJAS_EN_ROJO = {(8, 99): 23.0}
+REMANENTE_FICHAS_EN_ROJO = [{"id": 99, "cliente_id": 1, "articulo_id": 8,
+                             "nombre_cliente": "COD-8", "envase_id": None,
+                             "envase_variable": False, "contenido_caja": 5}]
+
+
+def _remanente_en_rojo(url="/administracion/stock/remanente?fecha=2026-09-17"):
+    with (
+        patch("app.main.stock_deposito_por_articulo", return_value=REMANENTE_FILAS_EN_ROJO),
+        patch("app.main.cajas_armadas_por_ficha", return_value=REMANENTE_CAJAS_EN_ROJO),
+        patch("app.main.listar_fichas_de_todos_los_clientes", return_value=REMANENTE_FICHAS_EN_ROJO),
+        patch("app.main.listar_clientes", return_value=REMANENTE_CLIENTES),
+        patch("app.main.total_reingresos_rechazo", return_value=0),
+        patch("app.main.listar_ultimos_conteos_stock", return_value=[]),
+        patch("app.main.eventos_de_stock_del_dia", return_value=EXTRACTO_EVENTOS),
+        patch("app.main.fecha_corte", return_value=date(2026, 9, 5)),
+        patch("app.main._hoy_argentina", return_value=date(2026, 9, 19)),
+    ):
+        return cliente.get(url)
+
+
+def test_el_renglon_CORTO_aparece_en_la_lista_del_dia_y_no_se_filtra():
+    """Hasta el 19/09 la lista salía con `sueltos > 0` y el artículo corto NO ESTABA.
+
+    Ni en −18 ni en cero: no aparecía. Abrir un día pasado para ver qué quedó
+    en rojo devolvía una lista de la que el caso estaba borrado, y el bloque de
+    abajo solo cubre el negativo del ARTÍCULO — no el de la porción.
+
+    Se afirma sobre una fecha PASADA a propósito: es el uso que lo destapó.
+    """
+    marcado = _remanente_en_rojo().text.split("</style>")[-1]
+
+    assert "EJEMPLO Corto" in marcado, "el artículo corto tiene que estar en la lista"
+    assert 'class="porcion negativa"' in marcado
+    assert "Faltan explicar 18" in marcado
+
+
+def test_el_negativo_de_la_PORCION_aparece_aunque_el_ARTICULO_este_en_positivo():
+    """El caso que no estaba en NINGUNA de las dos cuentas (corolario 7).
+
+    `_negativos_de_deposito` mira `fila["stock"]`, que es el artículo entero.
+    Un artículo con stock 5 y 23 cajas en una ficha tiene los sueltos en −18 y
+    el artículo en positivo: el bloque de abajo no lo ve, y la lista lo
+    filtraba. Desaparecía de la pantalla completa.
+
+    Las dos mitades van juntas: que el renglón salga, y que el bloque de abajo
+    siga SIN nombrarlo — si lo nombrara, estaría contando como faltante del
+    artículo algo que el artículo no debe.
+    """
+    marcado = _remanente_en_rojo().text.split("</style>")[-1]
+
+    assert "EJEMPLO Resta" in marcado
+    # La caja sigue siendo una pila real y se lista con su número.
+    assert "23" in marcado
+    # Y el bloque de abajo NO lo nombra: el artículo no está corto.
+    i = marcado.find("Bultos que faltan explicar")
+    assert i == -1 or "EJEMPLO Resta" not in marcado[i:], \
+        "el artículo no está negativo: el bloque de abajo no puede reclamarlo"
+
+
+def test_la_lista_NO_dibuja_el_negativo_como_una_CANTIDAD():
+    """El número va adentro de la frase, nunca en la columna de la derecha.
+
+    Un "−18" en la columna de cantidades se lee como stock y se resta de algo;
+    "Faltan explicar 18" dice qué pasó. Es la misma regla que el bloque de
+    abajo ya aplicaba, y el renglón nuevo la hereda en vez de estrenar otra.
+    """
+    marcado = _remanente_en_rojo().text.split("</style>")[-1]
+
+    assert '<span class="cuanto">-18</span>' not in marcado
+    assert '<span class="cuanto">−18</span>' not in marcado
+    assert "Faltan explicar 18" in marcado
+
+
+def test_una_porcion_en_CERO_sigue_sin_aparecer():
+    """El control, y es el que separa "muestra los negativos" de "muestra todo".
+
+    Una porción en cero no es una pila: no hay nada que contar ni nada que
+    explicar. Sin este caso, un cambio que sacara el filtro entero pasaría los
+    tres tests de arriba sin despeinarse (corolario 53).
+    """
+    filas = [{"articulo_id": 7, "nombre": "EJEMPLO Cero", "stock": 0.0,
+              "segunda": 0.0, "grupo": "fruta"}]
+    with (
+        patch("app.main.cajas_armadas_por_ficha", return_value={}),
+        patch("app.main.listar_fichas_de_todos_los_clientes", return_value=[]),
+        patch("app.main.listar_clientes", return_value=REMANENTE_CLIENTES),
+    ):
+        from app.main import _porciones_de_deposito
+        porciones = _porciones_de_deposito(filas)
+
+    assert porciones == [], "una porción en cero no es una pila"
+
+
+def test_MOVIMIENTO_de_una_porcion_CORTA_ya_no_da_404():
+    """No estaba escondida: el camino estaba CERRADO.
+
+    `ver_extracto_de_porcion` busca la porción en la misma lista que la
+    pantalla, así que mientras el filtro la borraba el extracto contestaba
+    404 — "esta porción no existe" sobre una porción que sí existe y que
+    justamente es la que hay que ir a mirar.
+    """
+    respuesta = _remanente_en_rojo(
+        "/administracion/stock/remanente/porcion?articulo_id=7&fecha=2026-09-17")
+
+    assert respuesta.status_code == 200, "una porción corta tiene que poder abrirse"
 
 
 def test_el_remanente_linkea_cada_porcion_a_su_movimiento_con_la_CLAVE():
@@ -17985,22 +18113,38 @@ def test_una_fecha_FUTURA_o_ROTA_cae_a_hoy_con_aviso():
         assert 'value="2026-09-06"' in cuerpo
 
 
-def test_los_negativos_van_ABAJO_Y_APARTE_de_las_porciones():
-    """La lista de arriba es lo que HAY; los negativos son un problema a
-    resolver. Si se mezclan como un renglón más, vuelve a ser la pantalla
-    que se borró."""
+def test_el_negativo_esta_EN_LA_LISTA_marcado_y_ADEMAS_en_su_bloque_de_abajo():
+    """Este test decía lo contrario hasta el 19/09, y era una decisión del dueño.
+
+    Decía: *"la lista de arriba es lo que HAY; los negativos son un problema a
+    resolver, y mezclarlos vuelve a ser la pantalla que se borró"*. La dio
+    vuelta él mismo, con el caso que la desmiente: abrió el Remanente a una
+    fecha pasada para ver qué había quedado en rojo y **el artículo no estaba**
+    — ni en rojo ni en cero. El bloque de abajo cubre el negativo del ARTÍCULO
+    y no el de la PORCIÓN, así que hay un caso que no estaba en ninguno.
+
+    Lo que NO cambió es igual de importante y por eso sigue afirmado acá: el
+    bloque va DESPUÉS de la lista —arriba está lo que hay, abajo el problema—
+    y linkea al detalle del artículo.
+
+    Y es el corolario 22 del lado incómodo: el assert viejo
+    (`== ["Berenjena"]`) **siguió pasando** con el renglón ya dibujado, porque
+    `_porciones_en_pantalla` exigía `class="cuanto"` y el corto emite
+    `cuanto-falta`. Un test que defiende una ausencia y además deja de poder
+    verla es dos cosas rotas, no una.
+    """
     filas = [
         {"articulo_id": 1, "nombre": "Berenjena", "stock": 46.0, "reproceso_primera": 0.0, "segunda": 0.0},
         {"articulo_id": 2, "nombre": "Palta", "stock": -45.0, "reproceso_primera": 0.0, "segunda": 0.0},
     ]
     cuerpo = _remanente(filas=filas, cajas={}, fichas=[]).text.split("</style>")[-1]
 
-    # Palta NO está entre las porciones: no hay pila que contar.
-    assert [n for n, _ in _porciones_en_pantalla(cuerpo)] == ["Berenjena"]
-    # Está en su propio bloque, y el bloque va DESPUÉS de la lista.
+    # Palta ESTÁ en la lista, y dice qué pasó en vez de cuánto hay.
+    assert [n for n, _ in _porciones_en_pantalla(cuerpo)] == ["Berenjena", "Palta"]
+    assert "Faltan explicar 45" in cuerpo
+    # Y sigue estando abajo, DESPUÉS de la lista, con su link al detalle.
     assert 'class="bloque-negativos"' in cuerpo
     assert cuerpo.index('class="porcion"') < cuerpo.index('class="bloque-negativos"')
-    # Y linkea a Stock por Guía, que es la única puerta que le queda.
     assert 'href="/administracion/stock/sistema/2"' in cuerpo
 
 

@@ -135,6 +135,18 @@
      resolver, y si se mezclan vuelve a ser la pantalla vieja. Por eso no es
      otra sección de la misma tarjeta: es una tarjeta propia, con un corte de
      aire grande antes, fondo distinto y su propio título. */
+  /* EL RENGLÓN CORTO, con el mismo ámbar-rojo del bloque de abajo para que
+     se lean como el mismo problema, y con el número adentro de la frase. */
+  .porcion.negativa { background: #fff7ed; }
+  .porcion.negativa .que { color: #9a3412; font-weight: 700; }
+  .cuanto-falta {
+    color: #9a3412;
+    font-weight: 700;
+    font-size: 0.9rem;
+    text-align: right;
+    line-height: 1.3;
+  }
+
   .bloque-negativos {
     margin-top: 2.5rem;
     background: #fff7ed;
@@ -255,9 +267,22 @@
          fila. Va acá y no desde Movimientos porque la pregunta que contesta
          es "de este número, ¿cómo llegué?", y el número está justo acá. #}
       {% for p in porciones %}
-      <a class="porcion" href="/administracion/stock/remanente/porcion?articulo_id={{ p.articulo_id }}&fecha={{ fecha }}{% if p.ficha_id %}&ficha_id={{ p.ficha_id }}{% endif %}{% if p.es_segunda %}&segunda=1{% endif %}">
+      {# EL NEGATIVO VA EN LA LISTA, marcado, y no filtrado. Hasta el 19/09
+         el renglón salía solo con `sueltos > 0`, así que un artículo corto
+         no aparecía — ni en rojo ni en cero: no estaba. Y no era solo la
+         lista: Movimiento busca la porción acá, así que daba 404.
+
+         EL NÚMERO VA ADENTRO DE LA FRASE y nunca en la columna de la
+         derecha, que es la misma regla del bloque de abajo: "Faltan
+         explicar 18" dice qué pasó; un "−18" en la columna de cantidades
+         se lee como stock y se resta de algo. #}
+      <a class="porcion{% if p.negativo %} negativa{% endif %}" href="/administracion/stock/remanente/porcion?articulo_id={{ p.articulo_id }}&fecha={{ fecha }}{% if p.ficha_id %}&ficha_id={{ p.ficha_id }}{% endif %}{% if p.es_segunda %}&segunda=1{% endif %}">
         <span class="que">{{ p.nombre }}</span>
+        {% if p.negativo %}
+        <span class="cuanto-falta">Faltan explicar {{ p.faltan|numero }}</span>
+        {% else %}
         <span class="cuanto">{{ p.bultos|numero }}</span>
+        {% endif %}
       </a>
       {% endfor %}
     {% else %}
