@@ -66,3 +66,24 @@ SELECT 'vigentes_1_cuanto_descarta' QUE_CONSULTA,
 -- recarga bien hecha de control): devuelve 20 bultos no contados sobre 37, 2
 -- pedidos descartados, peor día 3, y distingue el cliente con tres vivos del
 -- que tiene uno solo. Las dos respuestas, no una sola (corolario 53).
+
+-- ---------------------------------------------------------------------------
+-- CORRIDA Y REFUTADA, 19/09. En las DOS bases:
+--     FRUTAMAX  dias con varios vivos 0 de 25 · descartados 0 · sin contar 0 · peor_dia 1
+--     PALMALA   0 de 26 · descartados 0 · sin contar 0 · peor_dia 1
+-- Nunca hay mas de un pedido vivo por cliente y dia, asi que el DISTINCT ON
+-- no descarta NADA y no es la causa de los 10 bultos que faltaban. El caso
+-- eran tres SUCURSALES de UN pedido, no tres pedidos.
+--
+-- LA CONSULTA SIGUE SIRVIENDO y por eso no se borra: contesta si el
+-- DISTINCT ON esta descartando algo, y hoy contesta que no. Lo que NO hay
+-- que hacer es leer su cero como "aca no hay problema" en general — mide una
+-- sola de las cinco formas de perder un renglon. Las otras cuatro las mira
+-- db/arandano_4_cual_filtro_tira_el_renglon.sql.
+--
+-- Y EL ERROR DE METODO, que es lo que valia el turno: se planto el caso
+-- segun MI lectura de la pantalla (tres OC = tres pedidos) en vez de
+-- preguntar como estaba cargado. El fixture repitio la hipotesis en vez de
+-- probarla, y la medicion sobre el esquema real la confirmo — porque medir
+-- un caso inventado confirma el invento. Lo unico que lo desarmo fue correr
+-- esto contra las bases de verdad.
