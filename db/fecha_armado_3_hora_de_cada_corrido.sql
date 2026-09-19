@@ -14,7 +14,13 @@ SELECT 'fecha_armado_3_hora_de_cada_corrido' QUE_CONSULTA,
   cl.nombre cliente, r.sucursal, a.nombre articulo,
   COALESCE(r.cantidad_armada, r.cantidad) bultos,
   to_char(p.creado_en AT TIME ZONE (SELECT z FROM tz), 'DD/MM HH24:MI') pedido_cargado,
-  to_char(p.armado_cerrado_el AT TIME ZONE (SELECT z FROM tz), 'DD/MM HH24:MI') armado_cerrado
+  to_char(p.armado_cerrado_el AT TIME ZONE (SELECT z FROM tz), 'DD/MM HH24:MI') armado_cerrado,
+  -- IDENTIDAD DE LA BASE (corolario 17). Sin esto, dos bases distintas
+  -- imprimen filas indistinguibles y no hay forma de saber si se corrió dos
+  -- veces la misma: pasó el 19/09 con siete filas idénticas.
+  (SELECT count(*) FROM articulos) arts_en_la_base,
+  (SELECT count(*) FROM clientes) clientes_en_la_base,
+  (SELECT count(*) FROM pedidos WHERE anulado_el IS NULL) pedidos_vivos_en_la_base
 FROM pedidos_renglones r
 JOIN vig v ON v.id = r.pedido_id
 JOIN pedidos p ON p.id = r.pedido_id
