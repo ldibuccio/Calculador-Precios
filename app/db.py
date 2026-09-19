@@ -10787,7 +10787,13 @@ def eventos_de_stock_del_dia(articulo_id: int, fecha) -> dict:
             cursor.execute(
                 """
                 WITH vigentes AS (
-                    SELECT DISTINCT ON (cliente_id, fecha_operacion) id, cliente_id
+                    -- fecha_operacion SE SELECCIONA, no alcanza con que esté en
+                    -- el DISTINCT ON: ahí nombra la columna de `pedidos`, y lo
+                    -- que el alias `v` expone es esta lista. El renglón del
+                    -- extracto la muestra ("Pedido 28 del 17/09"), así que sin
+                    -- ella la consulta no parsea.
+                    SELECT DISTINCT ON (cliente_id, fecha_operacion)
+                           id, cliente_id, fecha_operacion
                     FROM pedidos WHERE anulado_el IS NULL
                     ORDER BY cliente_id, fecha_operacion, creado_en DESC
                 )
