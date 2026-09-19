@@ -96,12 +96,24 @@ jobs:
         # ninguno. Un test salteado es indistinguible de uno verde en el
         # resumen, así que sin esta guarda el CI se degrada solo — cada
         # dependencia que falte en el runner apaga tests sin ponerse rojo.
+        # `shell: bash` A PROPÓSITO, sin el `-e` que Actions pone por defecto.
+        # Con `-e` el paso ABORTA en el `pytest` que falla y nunca llega al
+        # `tail`: la primera corrida de este workflow salió en rojo sin
+        # imprimir UNA SOLA LÍNEA de por qué. Un gate que falla sin decir qué
+        # falló obliga a adivinar, que es justo lo que vino a terminar.
+        shell: bash
         run: |
-          python3 -m pytest tests/ -q > /tmp/suite.txt 2>&1; ESTADO=$?
+          set +e
+          python3 -m pytest tests/ -q -rs > /tmp/suite.txt 2>&1
+          ESTADO=$?
+          echo "--- resumen ---"
           tail -5 /tmp/suite.txt
+          echo "--- los que fallaron ---"
+          grep -E "^(FAILED|ERROR)" /tmp/suite.txt | head -30
+          echo "--- los salteados ---"
+          grep -E "^SKIPPED" /tmp/suite.txt | head -20
           if grep -qE "[0-9]+ skipped" /tmp/suite.txt; then
             echo "::error::HAY TESTS SALTEADOS — esta corrida no los miró"
-            python3 -m pytest tests/ -q -rs 2>&1 | grep -E "^SKIPPED" | head -20
             exit 1
           fi
           exit $ESTADO
