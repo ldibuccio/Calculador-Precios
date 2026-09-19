@@ -5,27 +5,26 @@ select
     (select count(*) from information_schema.columns
        where table_schema = 'public'
          and table_name = 'compras_eliminadas')                      as columnas_de_5,
-    (select count(*) from pg_constraint c
-       join pg_class t on t.oid = c.conrelid
-       where t.relname = 'compras_eliminadas' and c.contype = 'c')   as guarda_del_origen_de_1,
+    (select count(*) from regexp_matches(
+        coalesce((select pg_get_constraintdef(oid) from pg_constraint
+                   where conname = 'compras_eliminadas_origen_check'), ''),
+        '''[a-z_]+''', 'g'))                                         as valores_del_CHECK_de_4,
     (select count(*) from compras_eliminadas)                        as filas_archivadas,
     (select count(*) from compras)                                   as compras_POBLACION,
     (select max(cargado_el)::date from compras)                      as ultima_compra_cargada;
 
--- COMO SE LEE, con el valor esperado de cada numero al lado (corolario 45):
---   tabla_de_1              1
---   columnas_de_5           5
---   guarda_del_origen_de_1  1
---   filas_archivadas        0   <- recien creada; despues de un borrado, 1
---   compras_POBLACION           la poblacion, y ultima_compra_cargada el testigo:
---                               sin ellos una base a medio configurar devuelve
---                               los mismos numeros prolijos que una sana.
+-- COMO SE LEE, con el valor esperado de cada numero al lado:
+--   tabla_de_1               1
+--   columnas_de_5            5
+--   valores_del_CHECK_de_4   4   <- CUENTA LOS VALORES, no que el constraint
+--                                   exista. Existe en los dos estados y lo
+--                                   que cambia es la lista: un "¿hay algun
+--                                   check?" da 1 con la lista vieja adentro.
+--   filas_archivadas         0   recien creada; despues de un borrado, 1
+--   compras_POBLACION            poblacion, y ultima_compra_cargada el
+--                                testigo: sin ellos una base a medio
+--                                configurar da los mismos numeros prolijos.
 --
--- SE CORRE APARTE del bloque `do`, en una segunda corrida. Pegados en la
--- misma, el editor se queda con la ultima y el `do` NO SE EJECUTA: sin error,
--- sin NOTICE, y con "no rows", que es la salida normal de un `do` que si
--- corrio.
---
--- Y si la tabla no existe, esta consulta FALLA en vez de devolver ceros. Eso
--- es lo que se quiere: un cero prolijo no distinguiria "no corrio" de "corrio
--- y no hay filas".
+-- SE CORRE APARTE del bloque `do`. Pegados en la misma corrida el editor se
+-- queda con la ultima y el `do` NO SE EJECUTA: sin error y con "no rows",
+-- que es la salida normal de un `do` que si corrio.

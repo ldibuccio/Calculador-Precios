@@ -7,7 +7,7 @@ begin
             id           bigint generated always as identity primary key,
             compra_id    bigint not null,
             eliminada_el timestamptz not null default now(),
-            origen       text not null check (origen in ('gerencia', 'cancelar_dia')),
+            origen       text not null,
             fila         jsonb not null
         );
 
@@ -15,15 +15,26 @@ begin
             on compras_eliminadas (eliminada_el desc);
 
         comment on table compras_eliminadas is
-            'Que se borro de compras, cuando, y que tenia adentro. El DELETE de compras es REAL: no hay anulado_el, y una compra recepcionada borrada MUEVE STOCK sin dejar rastro, porque la entrada de stock ES la fila de compras (_SQL_SUMAS_STOCK lee FROM compras WHERE estado = recepcionado) y recepcionar no escribe ningun movimientos_stock. No guarda QUIEN: el sistema no tiene usuarios, asi que un quien seria un campo sin consecuencia.';
-
-        comment on column compras_eliminadas.compra_id is
-            'El id que TENIA. Sin FK a proposito: la fila ya no existe y una FK haria fallar el insert.';
+            'Que se borro de compras, cuando, y que tenia adentro. El DELETE de compras es REAL: no hay anulado_el, y una recepcionada borrada MUEVE STOCK sin dejar rastro, porque la entrada de stock ES la fila de compras y recepcionar no escribe ningun movimientos_stock. No guarda QUIEN: el sistema no tiene usuarios.';
 
         comment on column compras_eliminadas.fila is
-            'La compra ENTERA como estaba, de to_jsonb(compras.*) en el RETURNING del propio DELETE. La fila entera y no columnas elegidas: asi no hay una lista que actualizar el dia que compras gane una columna, que es como se pierde un campo sin que nada falle.';
+            'La compra ENTERA, de to_jsonb(compras.*) en el RETURNING del propio DELETE. No columnas elegidas: asi no hay lista que actualizar el dia que compras gane una columna.';
 
         comment on column compras_eliminadas.origen is
-            'Cual de los dos caminos la borro: gerencia (POST /gerencia/compras/{id}/eliminar) o cancelar_dia (el borrado en lote por proveedor). Se DERIVA del camino y no lo tipea nadie, asi que no se puede dejar de llenar.';
+            'Por cual de las CUATRO superficies se borro. Se DERIVA del camino, no lo tipea nadie.';
     end if;
+
+    -- EL CHECK VA AFUERA DEL if, Y SE RECREA SIEMPRE. Es CONTENIDO —una
+    -- lista de valores— y ahi la idempotencia deja de proteger y pasa a
+    -- esconder: si esta tabla ya se creo con una lista vieja, un `if not
+    -- exists` la saltearia y el constraint quedaria con la lista de antes,
+    -- saliendo DO las dos veces y sin una sola diferencia en la pantalla.
+    --
+    -- Y una lista incompleta no pierde un dato: REVIENTA EL BORRADO. El
+    -- archivo se escribe en la misma sentencia que el DELETE.
+    alter table compras_eliminadas
+        drop constraint if exists compras_eliminadas_origen_check;
+    alter table compras_eliminadas
+        add constraint compras_eliminadas_origen_check
+        check (origen in ('compras', 'compras_varias', 'gerencia', 'cancelar_dia'));
 end $$;
