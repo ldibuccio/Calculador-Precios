@@ -17671,7 +17671,12 @@ def _extracto(url, eventos=None):
         patch("app.main.eventos_de_stock_del_dia",
               return_value=EXTRACTO_EVENTOS if eventos is None else eventos),
         # El desglose por kilaje de la porción suelta pide el reparto.
-        patch("app.main.entradas_y_salidas_stock_articulo", return_value=([], 0.0, [])),
+        # LA FORMA ES LA DE PRODUCCIÓN: `entradas_y_salidas_stock_articulo`
+        # devuelve DOS valores, no tres. El fixture decía `([], 0.0, [])` y
+        # por eso la pantalla estuvo en 500 con la suite en verde: el mock
+        # entrega lo que le pidieron, no lo que la función devuelve
+        # (corolario 40), así que el desempaque de más nunca se ejercitó.
+        patch("app.main.entradas_y_salidas_stock_articulo", return_value=([], [])),
         patch("app.main.fecha_corte", return_value=date(2026, 9, 5)),
         patch("app.main._hoy_argentina", return_value=date(2026, 9, 6)),
     ):
@@ -17704,11 +17709,90 @@ def _remanente_en_rojo(url="/administracion/stock/remanente?fecha=2026-09-17"):
         patch("app.main.listar_ultimos_conteos_stock", return_value=[]),
         patch("app.main.eventos_de_stock_del_dia", return_value=EXTRACTO_EVENTOS),
         # El desglose por kilaje de la porción suelta pide el reparto.
-        patch("app.main.entradas_y_salidas_stock_articulo", return_value=([], 0.0, [])),
+        # LA FORMA ES LA DE PRODUCCIÓN: `entradas_y_salidas_stock_articulo`
+        # devuelve DOS valores, no tres. El fixture decía `([], 0.0, [])` y
+        # por eso la pantalla estuvo en 500 con la suite en verde: el mock
+        # entrega lo que le pidieron, no lo que la función devuelve
+        # (corolario 40), así que el desempaque de más nunca se ejercitó.
+        patch("app.main.entradas_y_salidas_stock_articulo", return_value=([], [])),
         patch("app.main.fecha_corte", return_value=date(2026, 9, 5)),
         patch("app.main._hoy_argentina", return_value=date(2026, 9, 19)),
     ):
         return cliente.get(url)
+
+
+def test_los_TRES_lectores_desempaquetan_LO_QUE_LA_FUNCION_DEVUELVE():
+    """La pantalla de Movimiento estuvo en 500 con la suite entera en verde.
+
+    `entradas_y_salidas_stock_articulo` devuelve DOS valores y
+    `_pilas_de_cajones` desempaquetaba TRES. El `except psycopg2.Error` que
+    esa función tiene —angosto a propósito— no atrapa un ValueError, así que
+    cada render reventaba.
+
+    NINGÚN TEST PODÍA VERLO: los dos fixtures del extracto parcheaban la
+    función con `([], 0.0, [])`, o sea con la forma inventada que el
+    desempaque de más necesitaba. El mock entrega lo que le pidieron, no lo
+    que la función devuelve (corolario 40), y acá el andamio no tapaba la
+    línea rota: la hacía pasar.
+
+    Y LA ANOTACIÓN MENTÍA, que es de dónde salió el error: decía
+    `tuple[list[dict], float, list[dict]]` desde el 08/09, contra un `return`
+    de dos. Un tipo escrito a mano también AFIRMA, y no falla nunca.
+
+    Por eso este test no compara contra un número escrito acá: cuenta lo que
+    la función REAL devuelve y exige que los tres lectores desempaqueten eso.
+    El día que gane un tercer valor, caen los tres a la vez y se ve cuáles.
+    """
+    import ast
+    import inspect
+    from app.db import _entradas_y_salidas_stock_varios
+
+    # CUÁNTOS DEVUELVE, leído del código que arma la tupla y no de la
+    # anotación: la anotación es lo que estaba mal.
+    arbol = ast.parse(inspect.getsource(_entradas_y_salidas_stock_varios))
+    asignaciones = [
+        nodo.value for nodo in ast.walk(arbol)
+        if isinstance(nodo, ast.Assign)
+        and any(isinstance(d, ast.Subscript) and getattr(d.value, "id", "") == "resultado"
+                for d in nodo.targets)
+    ]
+    assert len(asignaciones) == 1, "la tupla se arma en más de un lugar"
+    devuelve = len(asignaciones[0].elts)
+    assert devuelve == 2, devuelve
+
+    # Y LOS TRES LECTORES, encontrados y no enumerados a mano (corolario 60):
+    # el cuarto que aparezca entra solo.
+    fuente = io.open("app/main.py", encoding="utf-8").read()
+    lectores = [
+        nodo for nodo in ast.walk(ast.parse(fuente))
+        if isinstance(nodo, ast.Assign)
+        and isinstance(nodo.value, ast.Call)
+        and getattr(nodo.value.func, "id", "") == "entradas_y_salidas_stock_articulo"
+    ]
+    assert len(lectores) == 3, len(lectores)
+    for lector in lectores:
+        destino = lector.targets[0]
+        assert isinstance(destino, ast.Tuple), ast.unparse(lector)
+        assert len(destino.elts) == devuelve, (
+            f"línea {lector.lineno}: desempaqueta {len(destino.elts)} "
+            f"y la función devuelve {devuelve}")
+
+
+def test_MOVIMIENTO_de_una_porcion_suelta_RENDERIZA():
+    """El camino entero, con la forma REAL de la tupla.
+
+    El test de arriba mira el árbol; éste atraviesa la ruta. Hacen falta los
+    dos: el del árbol nombra cuál lector se separó, y éste es el único que
+    dice que la PANTALLA sale — un desempaque correcto no garantiza que lo
+    de abajo ande.
+    """
+    respuesta = _extracto(
+        "/administracion/stock/remanente/porcion?articulo_id=1&fecha=2026-09-06")
+
+    assert respuesta.status_code == 200, respuesta.text[:500]
+    # La identidad pegada al número (corolario 53): un 200 de la pantalla de
+    # una clave se ve igual de prolijo.
+    assert "Mandarina" in respuesta.text
 
 
 def test_el_desglose_por_kilaje_NO_SE_MUESTRA_si_no_suma_el_total():
@@ -30525,9 +30609,11 @@ def _movimiento_con_cajones(contenidos, entradas=None, salidas=None, stock=21.0)
         patch("app.main.total_reingresos_rechazo", return_value=0),
         patch("app.main.listar_ultimos_conteos_stock", return_value=[]),
         patch("app.main.eventos_de_stock_del_dia", return_value=EXTRACTO_EVENTOS),
+        # DOS valores, que es lo que la función devuelve. Escrito con tres
+        # —como estaba— el desempaque de `_pilas_de_cajones` no se ejercita y
+        # la pantalla puede estar en 500 con estos seis tests en verde.
         patch("app.main.entradas_y_salidas_stock_articulo",
               return_value=(entradas if entradas is not None else _entradas_de_dos_formatos(),
-                            0.0,
                             salidas if salidas is not None else [])),
         patch("app.main.contenido_por_bulto_de_lotes", return_value=contenidos),
         patch("app.main.fecha_corte", return_value=date(2026, 9, 5)),
@@ -30587,7 +30673,7 @@ def test_el_desglose_NO_VA_en_una_porcion_de_CAJAS():
         patch("app.main.listar_ultimos_conteos_stock", return_value=[]),
         patch("app.main.eventos_de_stock_del_dia", return_value=EXTRACTO_EVENTOS),
         patch("app.main.entradas_y_salidas_stock_articulo",
-              return_value=(_entradas_de_dos_formatos(), 0.0, [])),
+              return_value=(_entradas_de_dos_formatos(), [])),
         patch("app.main.contenido_por_bulto_de_lotes", return_value={
             "guia:601": {"contenido": 16.0, "unidad": "kilo"},
             "guia:602": {"contenido": 5.0, "unidad": "kilo"},

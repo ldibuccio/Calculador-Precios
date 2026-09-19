@@ -9947,7 +9947,7 @@ def entradas_y_salidas_stock_articulos(articulo_ids: list[int]) -> dict:
         conexion.close()
 
 
-def entradas_y_salidas_stock_articulo(articulo_id: int) -> tuple[list[dict], float, list[dict]]:
+def entradas_y_salidas_stock_articulo(articulo_id: int) -> tuple[list[dict], list[dict]]:
     """Los lotes de entrada de un artículo (orden FIFO) y sus salidas, una por una y fechadas.
 
     Entradas: compras recepcionadas (el lote es la guía: fecha + proveedor),

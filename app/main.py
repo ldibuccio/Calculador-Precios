@@ -11769,7 +11769,7 @@ def _pilas_de_cajones(articulo_id: int, hasta, total) -> list[dict]:
     # NameError explote como lo que es y no se vuelva una degradación muda
     # (corolario 51).
     try:
-        entradas, _reingresos, salidas = entradas_y_salidas_stock_articulo(articulo_id)
+        entradas, salidas = entradas_y_salidas_stock_articulo(articulo_id)
     except psycopg2.Error:
         logger.exception("No se pudo leer el reparto para el desglose por kilaje")
         return []
