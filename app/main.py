@@ -343,6 +343,7 @@ from app.db import (
     obtener_detalle_compra,
     mover_compra_de_fecha,
     lo_que_cuelga_de_la_compra,
+    guias_r_congeladas_de_la_compra,
     obtener_ficha,
     obtener_o_crear_cliente_puesto,
     buscar_proveedor_por_codigo,
@@ -5103,6 +5104,29 @@ def ver_editar_compra(request: Request, compra_id: int, error: str | None = None
     if (cantidad_bloqueada or precio_bloqueado) and not error:
         error = _armar_aviso_bloqueo_edicion(compra["estado"], cantidad_bloqueada, precio_bloqueado)
 
+    # EL PRECIO DE UNA RECEPCIONADA RECOSTEA HACIA ATRÁS, y esta pantalla no
+    # pide clave: la abre cualquiera y hasta hoy no decía nada de eso.
+    #
+    # Medido el 19/09 contra el esquema real, bajando el importe a la mitad con
+    # una guía R ya cargada:
+    #
+    #     lote VIVO en el FIFO   100.000 -> 50.000
+    #     reprocesos.costo_total 700.000 -> 700.000
+    #
+    # Las dos son correctas por su lado —una se rejuega en cada lectura, la
+    # otra es el documento de lo que se decidió ese día— y no hay nadie que
+    # las compare. Nombrarlas es lo único que convierte "nadie las pone
+    # juntas" en "no coinciden".
+    #
+    # Solo con la compra RECEPCIONADA: antes de eso no hay lote, así que el
+    # precio no recostea nada hacia atrás.
+    guias_congeladas = []
+    if compra["estado"] == "recepcionado" and not precio_bloqueado:
+        try:
+            guias_congeladas = guias_r_congeladas_de_la_compra(compra_id)
+        except Exception as error_db:
+            raise HTTPException(status_code=500, detail=f"Error al conectar con la base de datos: {error_db}") from error_db
+
     return templates.TemplateResponse(
         request,
         "compra_form.html",
@@ -5114,6 +5138,8 @@ def ver_editar_compra(request: Request, compra_id: int, error: str | None = None
             "error": error,
             "cantidad_bloqueada": cantidad_bloqueada,
             "precio_bloqueado": precio_bloqueado,
+            "guias_congeladas": guias_congeladas,
+            "precio_recostea": compra["estado"] == "recepcionado" and not precio_bloqueado,
         },
     )
 
@@ -5908,6 +5934,16 @@ def _renderizar_editar_gerencia(
         # QUÉ LE CUELGA, con la MISMA función que usa la escritura: la
         # pantalla no puede ofrecer un botón que el POST después rechace.
         cuelgan = lo_que_cuelga_de_la_compra(compra_id)
+        # LA FOTO DE LA COMANDA CUELGA DE LA GUÍA, no del renglón, así que
+        # mudar la compra de guía la deja atrás. Medido el 19/09: después de
+        # mover, el Detalle muestra CERO fotos y la foto sigue en la guía
+        # vieja.
+        #
+        # NO SE COPIA A LA GUÍA NUEVA, y no es una deuda: la guía nueva es
+        # OTRO PAPEL, y puede tener su propia comanda. Pegarle esta foto sería
+        # afirmar que el renglón aparece en un papel donde no aparece. Lo que
+        # corresponde es decirlo antes de mover.
+        fotos_que_quedan_atras = len(_fotos_de_la_guia_de(compra))
         # Y LA CONSECUENCIA DE BORRAR es el lote yéndose a cero, que es la
         # misma simulación de siempre con otro argumento. Solo se pregunta si
         # el borrado es posible: calcularla para algo que no se puede hacer
@@ -5935,6 +5971,7 @@ def _renderizar_editar_gerencia(
             "corte_minimo": (corte + timedelta(days=1)).isoformat() if corte else None,
             "dependencias": dependencias,
             "cuelgan": cuelgan,
+            "fotos_que_quedan_atras": fotos_que_quedan_atras,
             "borrar": borrar,
             "propuesta": propuesta or {},
             "error": error,

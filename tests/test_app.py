@@ -5754,6 +5754,7 @@ def test_ver_editar_compra_recepcionada_bloquea_cantidad_pero_deja_precio_habili
     with (
         patch("app.main.obtener_compra", return_value=compra_recepcionada),
         patch("app.main.listar_articulos", return_value=ARTICULOS_DEL_CATALOGO),
+        patch("app.main.guias_r_congeladas_de_la_compra", return_value=[]),
     ):
         respuesta = cliente.get("/compras/30/editar")
 
@@ -5834,6 +5835,7 @@ def test_ver_editar_compra_recepcionada_marca_la_bandera_js_para_el_aviso_de_pre
     with (
         patch("app.main.obtener_compra", return_value=compra_recepcionada),
         patch("app.main.listar_articulos", return_value=ARTICULOS_DEL_CATALOGO),
+        patch("app.main.guias_r_congeladas_de_la_compra", return_value=[]),
     ):
         respuesta = cliente.get("/compras/30/editar")
 
@@ -31474,7 +31476,7 @@ _SIN_DEPENDENCIAS = {"entraron": 10.0, "guias_r": [], "renglones": [], "salieron
                      "sin_lote_de_mas": 0.0, "guias_rotas": []}
 
 
-def _pantalla_de_mover(dependencias=None, marca=None, compra=None, cuelgan=None):
+def _pantalla_de_mover(dependencias=None, marca=None, compra=None, cuelgan=None, fotos=None):
     return (
         patch.dict(os.environ, {"CLAVE_GERENCIA": "secreta"}),
         patch("app.main.obtener_detalle_compra", return_value=compra or _COMPRA_A_MOVER),
@@ -31487,6 +31489,7 @@ def _pantalla_de_mover(dependencias=None, marca=None, compra=None, cuelgan=None)
         # NOMBRE: `mock.patch` levanta AttributeError si no está, antes de
         # ejercitar una línea (corolario 51).
         patch("app.main.lo_que_cuelga_de_la_compra", return_value=cuelgan or []),
+        patch("app.main._fotos_de_la_guia_de", return_value=fotos or []),
     )
 
 
@@ -31922,3 +31925,135 @@ def test_la_url_VIEJA_de_mover_fecha_sigue_andando():
     respuesta = cliente.get("/gerencia/compras/77/mover-fecha", follow_redirects=False)
     assert respuesta.status_code == 301
     assert respuesta.headers["location"] == "/gerencia/compras/77/editar"
+
+
+# ---------------------------------------------------------------------------
+# EL AVISO DEL PRECIO en Editar Compra (la pantalla SIN clave)
+# ---------------------------------------------------------------------------
+#
+# Medido el 19/09 contra el esquema real, bajando el importe a la mitad con
+# una guía R ya cargada:
+#
+#     lote VIVO en el FIFO      100.000 -> 50.000
+#     reprocesos.costo_total    700.000 -> 700.000
+#
+# Las dos son correctas por su lado —una se rejuega en cada lectura, la otra
+# es el documento de lo que se decidió ese día— y no hay nadie que las
+# compare. Nombrarlas es lo único que convierte "nadie las pone juntas" en
+# "no coinciden".
+
+_GUIA_CONGELADA = [{"reproceso_id": 12, "fecha": date(2026, 9, 12),
+                    "bultos": 3.0, "costo_por_bulto": 100000.0}]
+
+
+def _editar_compra(estado, guias=None, estado_retiro="retirado"):
+    # El corte va con `_marcado`, no con `split("</style>")[-1]` a secas:
+    # `_confirmar_vino_armada.html` entra al final de esta pantalla y trae su
+    # propio <style>, así que el último </style> del documento es el suyo y el
+    # corte crudo se lleva la pantalla ENTERA (corolario 50).
+    compra = dict(COMPRA_DE_PRUEBA, estado=estado, estado_retiro=estado_retiro)
+    with (
+        patch("app.main.obtener_compra", return_value=compra),
+        patch("app.main.listar_articulos", return_value=ARTICULOS_DEL_CATALOGO),
+        patch("app.main.guias_r_congeladas_de_la_compra", return_value=guias or []),
+    ):
+        return cliente.get("/compras/30/editar")
+
+
+def test_editar_una_RECEPCIONADA_avisa_que_el_precio_RECOSTEA_HACIA_ATRAS():
+    """Esta pantalla NO pide clave: la abre cualquiera. Y el aviso va ARRIBA
+    del campo — debajo sería una comprobación que llega cuando el número ya se
+    tipeó."""
+    respuesta = _editar_compra("recepcionado", _GUIA_CONGELADA)
+
+    marcado = _marcado(respuesta.text)
+    assert "recostea hacia atrás" in marcado
+    assert "R12" in marcado, "la guía congelada va NOMBRADA, no 'algunas'"
+    assert "100.000" in marcado, "y con el costo al que quedó congelada"
+
+
+def test_una_compra_PENDIENTE_no_lo_avisa_porque_todavia_no_hay_lote():
+    """El control, y es el que hace que el de arriba signifique algo: sin él,
+    una pantalla que mostrara el aviso SIEMPRE pasaría igual — y sería el
+    cartel que aparece en todas y se deja de leer (corolario 53)."""
+    respuesta = _editar_compra("pendiente", estado_retiro="pendiente")
+
+    marcado = _marcado(respuesta.text)
+    assert "recostea hacia atrás" not in marcado
+
+
+def test_una_RECHAZADA_tampoco_lo_avisa_porque_el_precio_ni_se_puede_tocar():
+    """Ahí el precio está bloqueado y esa compra no entra en ningún costeo:
+    un aviso sobre lo que pasaría si lo cambiaras es sobre algo que no
+    podés hacer."""
+    respuesta = _editar_compra("rechazado")
+
+    marcado = _marcado(respuesta.text)
+    assert "recostea hacia atrás" not in marcado
+
+
+def test_la_RECEPCIONADA_SIN_guias_R_avisa_igual_pero_sin_lista():
+    """El recosteo hacia atrás pasa haya o no haya guías R —los armados se
+    recostean solos— así que el aviso va igual. Lo que no va es una lista
+    vacía, que se lee como que falta algo."""
+    respuesta = _editar_compra("recepcionado", [])
+
+    marcado = _marcado(respuesta.text)
+    assert "recostea hacia atrás" in marcado
+    assert "no se mueven" not in marcado
+
+
+def test_el_aviso_del_precio_NO_paga_el_rejuego_del_FIFO():
+    """Editar Compra se abre todo el día y el aviso solo necesita los consumos
+    CONGELADOS de esta compra. `dependencias_del_lote_de_compra` además rejuega
+    el FIFO del artículo entero para decir qué renglones armados salieron de
+    acá — y el aviso no los nombra, porque se recostean solos.
+
+    La lectura crece con los consumos de ESTA compra; el rejuego, con la
+    historia entera del artículo.
+    """
+    compra = dict(COMPRA_DE_PRUEBA, estado="recepcionado", estado_retiro="retirado")
+    with (
+        patch("app.main.obtener_compra", return_value=compra),
+        patch("app.main.listar_articulos", return_value=ARTICULOS_DEL_CATALOGO),
+        patch("app.main.guias_r_congeladas_de_la_compra", return_value=[]),
+        patch("app.main.dependencias_del_lote_de_compra") as rejuego,
+    ):
+        cliente.get("/compras/30/editar")
+
+    rejuego.assert_not_called()
+
+
+def test_mover_de_fecha_avisa_que_LA_FOTO_DE_LA_COMANDA_se_queda():
+    """Cuelga de la GUÍA, no del renglón: mudar la compra de guía la deja atrás.
+
+    Medido el 19/09 contra el esquema real: después de mover, el Detalle pasa
+    a mostrar CERO fotos y la foto sigue en la guía vieja.
+
+    NO SE COPIA a la guía nueva, y no es una deuda: ésa es otro papel y puede
+    tener su propia comanda. Pegarle esta foto sería afirmar que el renglón
+    aparece en un papel donde no aparece. Lo que corresponde es decirlo antes.
+    """
+    with ExitStack() as pila:
+        for cm in _pantalla_de_mover(fotos=[{"id": 1, "foto_ruta": "x.jpg"}]):
+            pila.enter_context(cm)
+        _con_clave_de_gerencia()
+        respuesta = cliente.get("/gerencia/compras/77/editar")
+    cliente.cookies.clear()
+
+    marcado = respuesta.text.split("</style>")[-1]
+    assert "La foto de la comanda se queda" in marcado
+
+
+def test_SIN_fotos_de_comanda_no_se_avisa_nada():
+    """El control: un cartel que aparece en todas se deja de leer. Sin él, una
+    pantalla que lo mostrara siempre pasaría el de arriba igual."""
+    with ExitStack() as pila:
+        for cm in _pantalla_de_mover(fotos=[]):
+            pila.enter_context(cm)
+        _con_clave_de_gerencia()
+        respuesta = cliente.get("/gerencia/compras/77/editar")
+    cliente.cookies.clear()
+
+    marcado = respuesta.text.split("</style>")[-1]
+    assert "La foto de la comanda se queda" not in marcado

@@ -159,6 +159,22 @@
     {% endif %}
   {% endif %}
 
+  {# LA FOTO DE LA COMANDA SE QUEDA, y se dice ANTES. Cuelga de la GUÍA, no
+     del renglón, así que mudar la compra de guía la deja atrás — medido: el
+     Detalle pasa a mostrar cero fotos. No se copia a la guía nueva a
+     propósito: ésa es otro papel y puede tener su propia comanda; pegarle
+     esta foto sería afirmar que el renglón aparece donde no aparece. #}
+  {% if fotos_que_quedan_atras %}
+  <div class="manda">
+    <h3>La foto de la comanda se queda</h3>
+    <p>Esta compra tiene {{ fotos_que_quedan_atras }}
+      foto{{ "s" if fotos_que_quedan_atras > 1 }} de comanda, y cuelgan de la guía
+      {{ compra.guia_id }} — no del renglón. Al mudarla de día el Detalle deja de
+      mostrarlas: la foto no se borra, se queda en la guía vieja, que es el papel
+      donde ese renglón aparece de verdad.</p>
+  </div>
+  {% endif %}
+
   <form method="post" action="/gerencia/compras/{{ compra.id }}/mover-fecha" class="tarjeta">
     {# DOS FECHAS Y NO UNA, a propósito: una compra puede ser del 09 y haberse
        recibido el 14, y aplastar ese hueco sería inventar un dato. #}

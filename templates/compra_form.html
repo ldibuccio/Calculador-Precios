@@ -134,6 +134,16 @@
   .tabla-scroll { overflow-x: auto; }
   button[disabled] { opacity: 0.5; }
   .campo-bloqueado { background: #f0f0f0 !important; color: #888; }
+  /* AMARILLO (mira esto), no rojo (esta mal): cambiar el precio de una
+     recepcionada puede ser exactamente lo correcto —se renegocio— y lo que
+     hace falta es saber que se lleva puesto. */
+  .recostea { background: #fef3c7; color: #92400e; border-radius: 8px;
+              padding: 0.8rem 0.9rem; margin: 0.9rem 0; font-size: 0.9rem;
+              line-height: 1.45; overflow-wrap: anywhere; }
+  .recostea p { margin: 0 0 0.5rem; }
+  .recostea p:last-child { margin-bottom: 0; }
+  .recostea ul { margin: 0; padding-left: 1.1rem; }
+  .recostea li { margin-bottom: 0.15rem; }
   /* La segunda magnitud (los kilos, o el conteo) solo existe para los
      artículos que declaran las dos. ESCONDER ES CSS, NO EL ATRIBUTO: un
      `hidden` puesto por JS lo pisa cualquier regla con display, así que
@@ -235,6 +245,33 @@
                value="{% if compra and compra.segunda_por_cajon %}{{ compra.segunda_por_cajon }}{% endif %}">
         <p class="ayuda">Este artículo se carga con las dos magnitudes: sin las dos, la ficha del cliente que compra en la otra unidad se queda sin costo.</p>
       </div>
+
+      {# EL PRECIO DE UNA RECEPCIONADA RECOSTEA HACIA ATRÁS, y esta pantalla
+         no pide clave. Va ARRIBA del campo: debajo sería una comprobación
+         que llega cuando el número ya se tipeó.
+
+         Medido el 19/09: bajando el importe a la mitad con una guía R ya
+         cargada, el lote vivo del FIFO pasa de 100.000 a 50.000 y
+         `reprocesos.costo_total` se queda en 700.000. Las dos son correctas
+         por su lado —una se rejuega en cada lectura, la otra es el documento
+         de lo que se decidió ese día— y no hay nadie que las compare. #}
+      {% if precio_recostea %}
+      <div class="recostea">
+        <p><strong>Ojo con el precio:</strong> esta compra ya está recepcionada, así que
+          es un lote. Cambiarle el importe <strong>recostea hacia atrás</strong> todo lo
+          que el sistema le atribuye hoy a ese lote — no solo lo que venga.</p>
+        {% if guias_congeladas %}
+        <p>Y estas guías R <strong>no se mueven</strong>: quedan con el costo que se les
+          congeló el día que se cargaron.</p>
+        <ul>
+          {% for g in guias_congeladas %}
+          <li>R{{ g.reproceso_id }} · {{ g.fecha|fecha_corta }} · {{ g.bultos|numero }} bultos
+            {%- if g.costo_por_bulto is not none %} · congelada a {{ g.costo_por_bulto|moneda }} por bulto{% endif %}</li>
+          {% endfor %}
+        </ul>
+        {% endif %}
+      </div>
+      {% endif %}
 
       <label for="importe">Importe</label>
       <input type="number" id="importe" name="importe" min="0" step="0.01"

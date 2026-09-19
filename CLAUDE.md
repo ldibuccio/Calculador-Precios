@@ -8332,6 +8332,103 @@ nombre sin espacios. Medido de nuevo con el agrupado ya afuera: el canario
 que se lo saca al renglón sigue haciendo caer **1** test, y el caso cómodo
 sigue en verde.
 
+## Corolario 91: EL ANDAMIO DECIDIENDO EL RESULTADO QUE DESPUÉS SE AFIRMA
+
+Del 19/09, y el nombre es del dueño. No es un corolario nuevo: es **la
+familia** que los corolarios 9, 40, 58 y 65 venían describiendo de a uno, y
+tenerla junta cambia qué se busca.
+
+> **Un test puede pasar porque el código anda, o porque algo del andamio
+> —un mock, un parche, un assert flojo— ya decidió lo que el test iba a
+> afirmar. Los dos se ven igual: verde.**
+
+Las tres formas aparecieron **en un solo día**, sobre el mismo trabajo, y las
+tres las encontró ROMPER EL CÓDIGO A PROPÓSITO. Ninguna se ve leyendo el test.
+
+### 1. La guarda MEDIDA y nunca ENCODEADA
+
+`mover_compra_de_fecha` tenía dos guardas duras —el corte y la guía R en
+origen—. Las dos se midieron contra `db/esquema_completo.sql`, las dos
+salieron bien, y **ninguna quedó en la suite**. Los canarios que se las sacan
+dieron **0**: no había un solo test que las mirara.
+
+**Medir no es cubrir, y las dos se parecen muchísimo desde adentro**: en las
+dos uno corre la función real, ve el resultado correcto y lo da por cerrado.
+La diferencia es que una queda corriendo en cada push y la otra fue un rato
+de una tarde.
+
+Y el agravante: una guarda medida se siente MÁS cubierta que una testeada,
+porque se la vio andar contra el esquema de verdad. **La suite la daba por
+cubierta sin mirarla.**
+
+**Lo accionable**: una medición contra el esquema real es lo que decide si la
+guarda va; el test es lo que la mantiene. Al cerrar una medición, la pregunta
+es *¿qué test cae si mañana saco esto?* — y si la respuesta es ninguno, la
+medición no terminó.
+
+### 2. El assert POR LA NEGATIVA que no distingue el motivo
+
+`assert respuesta.status_code != 303` sobre la ruta de borrar. El canario que
+le saca la puerta de Gerencia dio **0**: sin la puerta, la ruta revienta
+contra la base y **un 500 tampoco es 303**.
+
+**Un assert por la negativa pasa por CUALQUIER motivo que no sea el prohibido**
+—incluido que el código se caiga antes de llegar—, así que no distingue "la
+frenó la guarda" de "explotó en el camino". Y explotar es exactamente lo que
+pasa cuando se saca una guarda, o sea **justo el caso que el canario planta**.
+
+La forma sana afirma lo que SÍ tiene que pasar: que la respuesta pida la
+clave. Es el corolario 30 dado vuelta —allá una batería de negativos no
+distinguía una guarda que frena todo— con el mecanismo corrido al assert.
+
+**La señal**: si el assert es un `!=`, un `not in` o un `assert not`,
+preguntarse **qué OTRA cosa lo satisface**. Casi siempre hay una, y casi
+siempre es un error.
+
+### 3. El MOCK que empezó a contestar DOS preguntas
+
+`_dependencias_con_nombres` tenía un llamador. La pantalla ganó un segundo
+—"¿qué pasa si la borro?" al lado de "¿qué pasa si muevo la fecha?"— y el
+test que leía `call_args` pasó a estar mirando **la otra**. Nadie tocó ese
+test.
+
+Es el corolario 58 con el mecanismo corrido: allá el mismo código le hacía
+dos preguntas EN ORDEN, acá se las hacen dos llamadores distintos. En los dos
+`call_args` devuelve la última y el `return_value` contesta las dos igual.
+
+**La señal, y se hace al AGREGAR el llamador, no al leer el test**: cuando una
+función gana un llamador nuevo en una pantalla que ya tenía tests, grepear los
+mocks de esa función. `call_args` pasa a significar otra cosa el día que hay
+dos llamadas, y no hay nada que se ponga rojo.
+
+### Lo que las une, y por qué esto justifica lo que cuestan los canarios
+
+En las tres **el test estaba escrito, era razonable, y afirmaba algo que su
+propio andamio ya había decidido**. No hay nada mal que señalar leyéndolo: hay
+que romper el código y mirar si cae.
+
+Por eso un canario no es una prolijidad al final del trabajo: **es lo único
+que distingue un test de una decoración**, y las tres veces el que se cobró
+fue el que dio CERO, que es el resultado que uno tiende a explicarse como "el
+test cubre de más".
+
+**Y las tres aparecieron en un día sobre un trabajo cuidado**, no en código
+viejo de nadie. La conclusión operativa es de frecuencia, no de calidad:
+sobre cualquier trabajo con mocks, la tasa base de esto no es cero — así que
+el canario va SIEMPRE, y el cero se investiga en vez de celebrarse.
+
+**Y EL TERCER MIEMBRO APARECIÓ EL MISMO DÍA, una hora después**, lo que
+confirma la tasa base: el aviso del precio en Editar Compra tiene seis tests,
+los seis parchean `guias_r_congeladas_de_la_compra`, y **el texto de esa
+consulta no lo ejercitaba nadie**. Sacarle `rc.costo_por_bulto` y sacarle el
+filtro de las guías R anuladas hacían caer CERO — el corolario 65 otra vez,
+en el mismo turno en que se escribió esta sección.
+
+Los dos modos de falla eran mudos: sin el costo, el aviso nombra la guía y se
+calla el número, que es lo único que hace la comparación posible; sin el
+filtro, una guía R **anulada** aparece reclamando por un lote que ya no
+consume. Se cierran con un test del TEXTO del SQL, calificado por alias.
+
 ## Corolario 86: una foto POR CANARIO deja una avería puesta cuando dos tocan el mismo archivo
 
 Del 19/09, y es la trampa más cara del día. El script de canarios guardaba

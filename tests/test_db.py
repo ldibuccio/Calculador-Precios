@@ -10624,3 +10624,49 @@ def test_lo_que_cuelga_devuelve_VACIO_cuando_no_cuelga_nada():
     conexion, _ = _conexion_falsa_con_varios_fetchall(None, [[], [], [], []])
     with patch("app.db.obtener_conexion", return_value=conexion):
         assert db.lo_que_cuelga_de_la_compra(77) == []
+
+
+def test_las_guias_R_congeladas_PIDEN_el_costo_y_EXCLUYEN_las_anuladas():
+    """Lo que cambia es QUÉ COLUMNA pide la consulta, así que el test lee el SQL.
+
+    El valor lo entrega el mock: los seis tests del aviso parchean
+    `guias_r_congeladas_de_la_compra`, así que el texto de la consulta no lo
+    ejercita NADIE. Medido con canarios: sacarle `rc.costo_por_bulto` al
+    SELECT, y sacarle el filtro de las anuladas, hacían caer CERO.
+
+    Y los dos modos de falla son mudos:
+
+      · sin el costo, el aviso dice "congelada a" y no dice a cuánto — o sea
+        nombra la guía y se calla el número, que es lo único que hace la
+        comparación posible;
+      · sin el filtro, una guía R ANULADA aparece diciendo que se costeó
+        contra este lote. Esa guía ya no consume nada: el reparto se rejuega
+        en cada lectura y ella no está. Sería un reclamo falso sobre algo que
+        ya se arregló.
+
+    Los asserts van CALIFICADOS POR ALIAS: `reprocesos` y `compras` tienen las
+    dos una columna `anulado_el`, y un `in` pelado matchea la que aparezca
+    (corolario 4).
+    """
+    consulta = _sql_de_la_funcion("_guias_r_del_lote")
+
+    assert "rc.costo_por_bulto" in consulta
+    assert "rp.anulado_el IS NULL" in consulta
+    assert "rc.compra_id = %s" in consulta
+    # El ORDEN importa: de él depende `documentos_que_no_entran`, que acumula
+    # desde la más vieja porque es como el lote se fue gastando.
+    assert "ORDER BY rp.fecha_operacion, rp.id" in consulta
+
+
+def test_las_guias_R_congeladas_traen_el_costo_como_float_o_None():
+    """El costo es NULLABLE —una guía R con el costo incompleto lo tiene en
+    NULL— y ahí el aviso tiene que nombrarla igual, sin el número. Un `float(None)`
+    reventaría la pantalla justo en la guía que más se quiere ver."""
+    conexion, _ = _conexion_falsa_con_varios_fetchall(
+        None, [[(12, date(2026, 9, 12), 3, 100000), (13, date(2026, 9, 13), 2, None)]]
+    )
+    with patch("app.db.obtener_conexion", return_value=conexion):
+        guias = db.guias_r_congeladas_de_la_compra(77)
+
+    assert [g["costo_por_bulto"] for g in guias] == [100000.0, None]
+    assert [g["bultos"] for g in guias] == [3.0, 2.0]

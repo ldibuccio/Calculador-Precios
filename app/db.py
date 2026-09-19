@@ -3239,6 +3239,62 @@ def marcar_compra_armada_en_origen(compra_id: int, ficha_en_origen_id: int) -> i
         conexion.close()
 
 
+def _guias_r_del_lote(cursor, compra_id: int) -> list[dict]:
+    """Los consumos CONGELADOS de este lote, de la guía más vieja a la más nueva.
+
+    Ese orden es el que el lote se fue gastando, y de él depende
+    `documentos_que_no_entran`: las que entran en el número nuevo quedan bien
+    y las que se pasan son las que van a quedar diciendo algo que ya no se
+    puede reconstruir.
+
+    TRAE EL COSTO CONGELADO además de los bultos. Sale de
+    `reprocesos_consumos`, que es un documento: si mañana cambia el precio de
+    la compra, ESTE número no se mueve — y eso es justo lo que el aviso de
+    Editar Compra necesita nombrar.
+
+    Vive aparte porque tiene DOS llamadores con costos muy distintos: la
+    pantalla de Corregir Recepción, que además rejuega el FIFO entero, y el
+    aviso del precio, que solo necesita esto. Metido adentro de
+    `dependencias_del_lote_de_compra`, el aviso pagaría un rejuego que no usa.
+    """
+    cursor.execute(
+        """
+        SELECT rp.id, rp.fecha_operacion, rc.bultos, rc.costo_por_bulto
+        FROM reprocesos_consumos rc
+        JOIN reprocesos rp ON rp.id = rc.reproceso_id
+        WHERE rc.compra_id = %s AND rp.anulado_el IS NULL
+        ORDER BY rp.fecha_operacion, rp.id
+        """,
+        (compra_id,),
+    )
+    return [
+        {"reproceso_id": f[0], "fecha": f[1], "bultos": float(f[2]),
+         "costo_por_bulto": float(f[3]) if f[3] is not None else None}
+        for f in cursor.fetchall()
+    ]
+
+
+def guias_r_congeladas_de_la_compra(compra_id: int) -> list[dict]:
+    """`_guias_r_del_lote` con conexión propia, para el aviso del PRECIO.
+
+    Es la lista de guías R que se costearon contra este lote y que NO se van a
+    mover si alguien le cambia el precio a la compra. Medido el 19/09: el lote
+    vivo pasa de 100.000 a 50.000 y `reprocesos.costo_total` se queda en
+    700.000 — las dos son correctas por su lado y nadie las pone juntas.
+
+    No pasa por `dependencias_del_lote_de_compra` a propósito: aquélla rejuega
+    el FIFO del artículo entero para poder decir QUÉ RENGLONES armados salieron
+    de acá, y el aviso no los necesita — los armados se recostean solos, que es
+    exactamente lo que el aviso dice. Editar Compra se abre todo el día.
+    """
+    conexion = obtener_conexion()
+    try:
+        with conexion.cursor() as cursor:
+            return _guias_r_del_lote(cursor, compra_id)
+    finally:
+        conexion.close()
+
+
 def dependencias_del_lote_de_compra(
     compra_id: int, nueva_cantidad: float | None = None, nueva_recepcion=None
 ) -> dict | None:
@@ -3283,22 +3339,7 @@ def dependencias_del_lote_de_compra(
                 return None
             articulo_id, entraron, fecha_del_lote = fila[0], float(fila[1]), fila[3]
 
-            # Los consumos CONGELADOS de este lote, de la guía más vieja a la
-            # más nueva: es el orden en que el lote se fue gastando.
-            cursor.execute(
-                """
-                SELECT rp.id, rp.fecha_operacion, rc.bultos
-                FROM reprocesos_consumos rc
-                JOIN reprocesos rp ON rp.id = rc.reproceso_id
-                WHERE rc.compra_id = %s AND rp.anulado_el IS NULL
-                ORDER BY rp.fecha_operacion, rp.id
-                """,
-                (compra_id,),
-            )
-            guias_r = [
-                {"reproceso_id": f[0], "fecha": f[1], "bultos": float(f[2])}
-                for f in cursor.fetchall()
-            ]
+            guias_r = _guias_r_del_lote(cursor, compra_id)
 
             entradas, salidas = _entradas_y_salidas_stock(cursor, articulo_id)
     finally:
@@ -4952,9 +4993,13 @@ def listar_fotos_para_limpiar(fecha_corte) -> list[str]:
     foto_ruta solo es candidato si NINGUNA compra que lo usa tiene
     fecha_operacion dentro del período a conservar (>= fecha_corte) — así
     nunca se ofrece borrar una foto que todavía necesita un renglón más
-    nuevo. En la práctica todos los renglones de una misma foto comparten
-    la misma fecha_operacion (se cargan juntos y esa fecha no se puede
-    editar después), pero este chequeo se hace igual por las dudas.
+    nuevo. Hasta el 19/09 todos los renglones de una misma foto compartían
+    la misma fecha_operacion —se cargan juntos y esa fecha no se podía editar
+    después— y este chequeo era "por las dudas". Desde que existe
+    `mover_compra_de_fecha` (Gerencia) DEJÓ DE SERLO: mover una compra de día
+    la manda a la guía de ese día, así que dos renglones de la misma foto
+    pueden quedar en fechas distintas. El chequeo pasó de precaución a
+    necesario, y por eso está.
 
     Las fotos de comanda cuelgan de las guías (fotos_guia): un archivo es
     candidato si TODAS las guías que lo usan son de antes de fecha_corte —
