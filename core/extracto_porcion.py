@@ -65,8 +65,30 @@ ETIQUETAS_MOVIMIENTO = {
 }
 
 
-def _renglon(descripcion, bultos):
-    return {"descripcion": descripcion, "bultos": round(bultos, 2)}
+def _renglon(descripcion, bultos, **extra):
+    return {"descripcion": descripcion, "bultos": round(bultos, 2), **extra}
+
+
+def _renglon_de_armado(armado):
+    """La salida de UNA sucursal, con el pedido y la sucursal como DATOS.
+
+    Van como campos y no pegados adentro de `descripcion` porque la pantalla
+    agrupa por pedido y sangra la sucursal: partir después un texto que este
+    módulo acaba de pegar es la misma regla escrita dos veces, y la copia que
+    se separe deja de agrupar sin que nada falle.
+
+    `descripcion` se sigue llenando para el que lea el renglón suelto —el
+    Excel, un test, la evolución— así que ninguna lectura vieja se rompe.
+    """
+    sucursal = armado.get("sucursal")
+    return _renglon(
+        f"Armado pedido {armado['cliente']} {sucursal or ''}".strip(),
+        -armado["bultos"],
+        pedido_id=armado.get("pedido_id"),
+        cliente=armado.get("cliente"),
+        sucursal=sucursal,
+        fecha_pedido=armado.get("fecha_pedido"),
+    )
 
 
 def _ficha_del_movimiento(mov):
@@ -108,10 +130,7 @@ def _eventos_de_sueltos(eventos) -> list[dict]:
             filas.append(_renglon(f"Reproceso R{rp['id']} (sin asignar)", rp["primera"]))
     for armado in eventos["armados"]:
         if armado["ficha_id"] is None:
-            filas.append(_renglon(
-                f"Armado pedido {armado['cliente']} {armado['sucursal'] or ''}".strip(),
-                -armado["bultos"],
-            ))
+            filas.append(_renglon_de_armado(armado))
     for mov in eventos["movimientos"]:
         # El rechazo que NO volvió al stock no mueve esta pila: se fue al
         # pool de segunda, y ahí aparece.
@@ -135,10 +154,7 @@ def _eventos_de_ficha(eventos, ficha_id: int) -> list[dict]:
             filas.append(_renglon(f"Reproceso R{rp['id']}", rp["primera"]))
     for armado in eventos["armados"]:
         if armado["ficha_id"] == ficha_id:
-            filas.append(_renglon(
-                f"Armado pedido {armado['cliente']} {armado['sucursal'] or ''}".strip(),
-                -armado["bultos"],
-            ))
+            filas.append(_renglon_de_armado(armado))
     for mov in eventos["movimientos"]:
         # LO QUE VUELVE YA ARMADO. Vuelven cajas de un cliente, en su caja, y
         # son de la ficha por la que salieron: desde el 09/09 la cuenta las

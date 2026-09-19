@@ -21,6 +21,7 @@ from app.db import (
     RepartoDesactualizado,
     ReprocesoAnteriorAlCorte,
     StockInsuficienteParaReproceso,
+    eventos_de_stock_del_dia,
 )
 from core.vino_armada import (
     ETIQUETAS_CORTAS,
@@ -17926,6 +17927,113 @@ def test_el_remanente_linkea_cada_porcion_a_su_movimiento_con_la_CLAVE():
     assert "articulo_id=2&fecha=2026-09-06&ficha_id=12" in respuesta.text
     # La segunda se pide con su marca: no tiene ficha y no es los sueltos.
     assert "articulo_id=1&fecha=2026-09-06&segunda=1" in respuesta.text
+
+
+ARMADOS_DE_TRES_SUCURSALES = {
+    "compras": [], "reprocesos": [], "remitos": [], "movimientos": [],
+    # EL CASO DEL 17/09: un pedido, tres sucursales. La tercera se tildó al
+    # otro día, así que ese día Movimiento muestra dos.
+    "armados": [
+        {"cliente": "EJEMPLO Super", "sucursal": "BZ", "ficha_id": None,
+         "pedido_id": 28, "fecha_pedido": date(2026, 9, 17), "bultos": 10.0},
+        {"cliente": "EJEMPLO Super", "sucursal": "GR", "ficha_id": None,
+         "pedido_id": 28, "fecha_pedido": date(2026, 9, 17), "bultos": 10.0},
+    ],
+}
+
+
+def _lineas_del_extracto(texto):
+    """Los renglones que la pantalla dibuja: (qué, cuánto), en orden.
+
+    Se ancla en los DOS spans juntos y no en la palabra suelta: `que` y
+    `cuanto` aparecen en el CSS y en los comentarios de esta misma plantilla
+    (corolario 38).
+    """
+    return re.findall(
+        r'<span class="que">([^<]*)</span>\s*<span class="cuanto[^"]*">\s*([^<\s]+)',
+        texto.split("</style>")[-1])
+
+
+def _cabeceras_de_pedido(texto):
+    return re.findall(r'<div class="cabeza-pedido">([^<]+)</div>',
+                      texto.split("</style>")[-1])
+
+
+def test_MOVIMIENTO_agrupa_los_armados_POR_PEDIDO_y_nombra_la_SUCURSAL():
+    """Pedido del dueño, 19/09: "con eso abro cualquier día y veo qué sucursal
+    se llevó qué".
+
+    LA PANTALLA YA DECÍA LA SUCURSAL —el renglón era "Armado pedido Día %
+    BZ"— así que lo que esto agrega es el NÚMERO DE PEDIDO, que es con lo que
+    se cotejan las órdenes de compra, y el agrupado que lo hace legible.
+    """
+    respuesta = _extracto(
+        "/administracion/stock/remanente/porcion?articulo_id=1&fecha=2026-09-06",
+        eventos=ARMADOS_DE_TRES_SUCURSALES)
+
+    assert respuesta.status_code == 200
+    assert _cabeceras_de_pedido(respuesta.text) == ["Pedido 28 — EJEMPLO Super"]
+    lineas = dict(_lineas_del_extracto(respuesta.text))
+    # El renglón dice LA SUCURSAL SOLA: el cliente ya está en la cabecera, y
+    # repetirlo en cada fila es lo que hacía ilegible la lista.
+    assert lineas["BZ"] == "−10"
+    assert lineas["GR"] == "−10"
+    # Y la jerga vieja NO puede quedar: afirmar el texto nuevo pasa igual si
+    # "Armado pedido" quedó tres líneas más abajo.
+    assert "Armado pedido" not in respuesta.text.split("</style>")[-1]
+
+
+def test_la_CABECERA_del_pedido_no_lleva_numero_a_la_derecha():
+    """Es un encabezado, no un movimiento. Con un número al lado se lee como
+    una cifra más y el que suma la columna la cuenta dos veces."""
+    respuesta = _extracto(
+        "/administracion/stock/remanente/porcion?articulo_id=1&fecha=2026-09-06",
+        eventos=ARMADOS_DE_TRES_SUCURSALES)
+
+    marcado = respuesta.text.split("</style>")[-1]
+    cabecera = marcado[marcado.index("cabeza-pedido"):]
+    # Entre la cabecera y el renglón siguiente no hay ningún `cuanto`.
+    assert cabecera.index('<span class="que">') < cabecera.index('class="cuanto')
+
+
+def test_un_evento_SIN_PEDIDO_sigue_diciendo_su_descripcion_entera():
+    """El control, y sin él un cambio que mostrara SIEMPRE la sucursal
+    —vacía para todo lo demás— pasaría el test de arriba igual.
+
+    Una compra, una merma o un reproceso no tienen sucursal: su renglón
+    tiene que seguir diciendo qué fue.
+    """
+    respuesta = _extracto(
+        "/administracion/stock/remanente/porcion?articulo_id=1&fecha=2026-09-06")
+
+    assert _cabeceras_de_pedido(respuesta.text) == []
+    lineas = dict(_lineas_del_extracto(respuesta.text))
+    assert lineas["Compra recibida — La Misión"] == "+10"
+
+
+def test_la_consulta_de_eventos_TRAE_EL_PEDIDO_o_el_agrupado_se_apaga_MUDO():
+    """Si alguien saca `r.pedido_id` del SELECT, `f.pedido_id` viene None, la
+    cabecera no se dibuja y cada renglón vuelve a su `descripcion`.
+
+    O sea: la pantalla sigue andando y sale exactamente como antes del
+    cambio. Ningún test de valor puede ver eso, porque el valor lo entrega el
+    fixture y no la consulta (corolario 65) — por eso esto mira el TEXTO del
+    SQL, y con el alias, que es lo único que no puede matchear otra tabla.
+    """
+    import inspect
+    consulta = inspect.getsource(eventos_de_stock_del_dia)
+    sin_comentarios = "\n".join(
+        l for l in consulta.split("\n") if not l.strip().startswith("--"))
+
+    # ANCLADO EN LA LISTA DEL SELECT, no en el nombre suelto: `r.pedido_id`
+    # aparece TAMBIÉN en el GROUP BY, así que un assert por la subcadena pasa
+    # con la columna sacada del SELECT. Lo dijo el canario, no la lectura:
+    # reemplazarla por `NULL AS pedido_id` hacía caer CERO. Y el segundo
+    # intento —`r.ficha_id, r.pedido_id,`— TAMBIÉN pasaba: esa secuencia
+    # está en el GROUP BY igual. El ancla lleva el SELECT adentro, que es lo
+    # único que no puede estar en otra cláusula (corolario 4).
+    assert "SELECT cl.nombre, r.sucursal, r.ficha_id, r.pedido_id," in sin_comentarios
+    assert "GROUP BY cl.nombre, r.sucursal, r.ficha_id, r.pedido_id" in sin_comentarios
 
 
 def test_el_extracto_cierra_contra_el_numero_del_REMANENTE():

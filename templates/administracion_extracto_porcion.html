@@ -26,7 +26,24 @@
     gap: 0.75rem;
     padding: 0.6rem 0;
   }
-  .linea .que { line-height: 1.35; }
+  .linea .que { line-height: 1.35; overflow-wrap: anywhere; min-width: 0; }
+  /* LA CABECERA DEL PEDIDO. No es un renglón de movimiento: no lleva número
+     a la derecha, así que se lee como encabezado y no como una cifra que
+     falta. El nombre del cliente lo tipea una persona, así que envuelve. */
+  .cabeza-pedido {
+    margin-top: 0.7rem;
+    padding-bottom: 0.15rem;
+    font-size: 0.85rem;
+    font-weight: 800;
+    letter-spacing: 0.03em;
+    text-transform: uppercase;
+    color: #475569;
+    overflow-wrap: anywhere;
+  }
+  /* Y la sucursal va SANGRADA bajo su pedido, sin raya propia: la cabecera
+     ya separó, y una línea por renglón partiría el grupo en cosas sueltas. */
+  .linea.evento.en-pedido { padding-left: 0.9rem; padding-top: 0.35rem; padding-bottom: 0.35rem; }
+  .linea.evento.en-pedido .que { color: #334155; }
   .linea .cuanto {
     font-weight: 700;
     white-space: nowrap;
@@ -173,9 +190,23 @@
     </div>
 
     {% if extracto.filas %}
+    {# LOS ARMADOS VAN AGRUPADOS POR PEDIDO, con una sucursal por renglón.
+       Pedido del dueño, 19/09: "con eso abro cualquier día y veo qué
+       sucursal se llevó qué". El renglón ya decía la sucursal; lo que
+       faltaba era el NÚMERO DE PEDIDO, que es con lo que se va a cotejar
+       contra la orden de compra.
+
+       El agrupado se arma acá y no en el módulo porque es presentación: las
+       filas siguen siendo una por sucursal, con su `descripcion` entera, así
+       que el Excel y la evolución las leen igual que antes. #}
+    {% set ns = namespace(pedido=None) %}
     {% for f in extracto.filas %}
-    <div class="linea evento{% if f.descripcion == 'Sin explicar' %} sin-explicar{% endif %}">
-      <span class="que">{{ f.descripcion }}</span>
+    {% if f.pedido_id and f.pedido_id != ns.pedido %}
+    {% set ns.pedido = f.pedido_id %}
+    <div class="cabeza-pedido">Pedido {{ f.pedido_id }} — {{ f.cliente }}</div>
+    {% elif not f.pedido_id %}{% set ns.pedido = None %}{% endif %}
+    <div class="linea evento{% if f.descripcion == 'Sin explicar' %} sin-explicar{% endif %}{% if f.pedido_id %} en-pedido{% endif %}">
+      <span class="que">{% if f.pedido_id %}{{ f.sucursal or 'sin sucursal' }}{% else %}{{ f.descripcion }}{% endif %}</span>
       <span class="cuanto {{ 'entra' if f.bultos > 0 else 'sale' }}">
         {{ '+' if f.bultos > 0 else '−' }}{{ (f.bultos if f.bultos > 0 else -f.bultos)|numero }}
       </span>

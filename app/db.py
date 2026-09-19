@@ -10791,20 +10791,22 @@ def eventos_de_stock_del_dia(articulo_id: int, fecha) -> dict:
                     FROM pedidos WHERE anulado_el IS NULL
                     ORDER BY cliente_id, fecha_operacion, creado_en DESC
                 )
-                SELECT cl.nombre, r.sucursal, r.ficha_id,
+                SELECT cl.nombre, r.sucursal, r.ficha_id, r.pedido_id,
+                       v.fecha_operacion,
                        SUM(COALESCE(r.cantidad_armada, r.cantidad)) AS bultos
                 FROM pedidos_renglones r
                 JOIN vigentes v ON v.id = r.pedido_id
                 JOIN clientes cl ON cl.id = v.cliente_id
                 WHERE r.articulo_id = %s AND r.armado_el IS NOT NULL AND r.anulado_el IS NULL
                   AND (r.armado_el AT TIME ZONE 'America/Argentina/Buenos_Aires')::date = %s
-                GROUP BY cl.nombre, r.sucursal, r.ficha_id
-                ORDER BY cl.nombre, r.sucursal
+                GROUP BY cl.nombre, r.sucursal, r.ficha_id, r.pedido_id, v.fecha_operacion
+                ORDER BY r.pedido_id, r.sucursal
                 """,
                 (articulo_id, fecha),
             )
             armados = [
-                {"cliente": f[0], "sucursal": f[1], "ficha_id": f[2], "bultos": float(f[3])}
+                {"cliente": f[0], "sucursal": f[1], "ficha_id": f[2],
+                 "pedido_id": f[3], "fecha_pedido": f[4], "bultos": float(f[5])}
                 for f in cursor.fetchall()
             ]
 
