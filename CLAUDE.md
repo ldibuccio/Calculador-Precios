@@ -8488,6 +8488,123 @@ hay que volver a pensarla.
 
 **Y el 89% de Palmala no es este mismo número con otro signo**: es el
 corolario 88, y no describe cómo se trabaja. No se cita para nada.
+
+## Corolario 89: un assert de TEXTO verifica la FORMA de una consulta, nunca su VALIDEZ contra el esquema
+
+Del 19/09, y contesta la pregunta del dueño —*"¿por qué la suite no lo
+agarró, y es la misma causa que hace tres horas?"*— sobre las DOS pantallas
+que se cayeron ese día con 2749 tests en verde.
+
+**Es la misma FAMILIA y no el mismo mecanismo**, y la diferencia decide qué
+se puede arreglar con un test y qué no:
+
+| | qué decidió la respuesta | ¿un test podía verlo? |
+|---|---|---|
+| **11h** · desempacar 3 de una tupla de 2 | el FIXTURE devolvía una forma que producción no devuelve | **sí** — un fixture con la forma real (corolario 9/40) |
+| **14h** · `column v.fecha_operacion does not exist` | **nadie**: el SQL no se le manda nunca a un Postgres | **no. Ninguno.** |
+
+La primera es el andamio inventando un valor. La segunda es más honda: **en
+esta suite la base está mockeada en todos lados, así que ninguna consulta de
+este sistema se parsea nunca durante los tests.** Un SQL inválido no tiene
+forma de fallar ahí.
+
+**Y el test que podía verlo ESTABA PUESTO, era el correcto, y pasó.** El
+corolario 65 dice que cuando lo que cambia es QUÉ COLUMNA pide la consulta
+hay que mirar el TEXTO del SQL, y eso estaba hecho, anclado en la lista del
+SELECT con su alias (corolario 4) y con su canario. Afirmaba `SELECT
+cl.nombre, r.sucursal, r.ficha_id, r.pedido_id,` y era verdad: la columna
+estaba escrita ahí. Lo que no podía saber es que **el CTE de arriba no la
+expone**, que es una propiedad del SQL contra el ESQUEMA y no de su texto.
+
+> **Ninguna cantidad de asserts de texto puede decir si una consulta parsea.**
+> Eso lo contesta un Postgres con el esquema cargado, y nada más.
+
+O sea que el 65 llegó hasta donde podía llegar, y el escalón que falta no es
+un test mejor: es otra clase de evidencia.
+
+### EL HUMO: `scripts/humo.py`, y se corre ANTES de desplegar
+
+Abre **las 128 pantallas** —las 135 rutas GET menos las declaradas— contra
+una base cargada con `db/esquema_completo.sql`, con las cookies de las cuatro
+puertas puestas y **sin un solo mock**. Está también como
+`tests/test_humo.py`, que lo lanza en SUBPROCESO cuando hay Postgres.
+
+    python3 scripts/humo.py        # sin pipe, y se mira el $?
+
+**Sin pipe, y es la regla del corolario 44 mordiendo en el comando con el que
+lo estaba probando**: la primera corrida salió `RuntimeError` y el `| tail`
+imprimió `salió con 0`.
+
+### Y LA PRIMERA VERSIÓN NO AGARRABA EL BUG PARA EL QUE LA ESCRIBÍ
+
+Ésa es la parte que vale. Abría las 113 rutas sin parámetro, daba `ROTAS 0`
+con el bug puesto, y el canario con el bug real dijo **NO MORDIÓ**.
+
+La causa: `/administracion/stock/remanente/porcion` —la pantalla del bug—
+**pide `articulo_id`**, así que contestaba **422**. Routing OK, handler nunca
+corrido, consulta nunca tocada. Y un 422 no es un 500, así que pasaba.
+
+**El dato que lo decía estaba impreso en la misma línea del resumen**:
+`422 4`. Yo mismo lo puse, escribí en el docstring que el 422 no es una
+pantalla probada, y leí la línea sin leer esa columna. Corolario 53 y 19
+juntos, adentro de la herramienta escrita contra ellos.
+
+Las tres cosas que lo cerraron, y las tres hicieron falta:
+
+1. **Los parámetros se rellenan por NOMBRE** (`*_id` → la fila sembrada,
+   `desde`/`hasta` → fechas), leídos del esquema OpenAPI. No una tabla
+   ruta→params escrita a mano: ésa envejece y la pantalla nueva que pida un
+   id vuelve a contestar 422 sin que nadie lo note (corolario 60).
+2. **De menos a más, parando en el primero que abra.** Con TODOS los
+   parámetros puestos de prepo, la misma pantalla daba **404**: rellenar
+   `ficha_id=1` apunta a una ficha que la siembra no tenía. Los dos extremos
+   —ninguno y todos— dejan la consulta sin tocar.
+3. **Las rutas con el id EN LA URL entran.** Eran 21 de 135, y
+   `/administracion/stock/sistema/{articulo_id}` —donde vivía el bug de las
+   11h— era una de ellas.
+
+**Y el umbral es `ABIERTAS == miradas`, no `ROTAS == 0`.** Un `!= 500` deja
+pasar el 422 de una pantalla que nunca corrió su consulta, que es exactamente
+el agujero de la primera versión. Con el umbral estricto, el humo se degrada
+en rojo: la ruta nueva que pida un parámetro que el relleno no sabe inventar
+FALLA en vez de salirse del conjunto en silencio.
+
+### Los dos errores de canario del mismo turno, y los dos ya estaban escritos
+
+**El árbol rojo (corolario 82).** Con el baseline en `NO ABREN 9` —nueve
+pantallas que no abrían por filas que faltaban en la siembra— el canario del
+bug de las 11h salió **MORDIÓ**, y era falso: el humo ya fallaba antes de
+romper nada. Recién con el baseline en **128 de 128** el canario mide una
+diferencia. *Antes de leer un canario, contar* — y el número de partida iba
+al lado.
+
+**El canario mal apuntado (corolario 35).** Con el baseline ya verde, el bug
+de las 11h dio NO MORDIÓ de verdad, y la causa no era el humo: yo estaba
+mutando `_lotes_con_resto` y el bug había estado en `_pilas_de_cajones`, 1200
+líneas más abajo. Apuntado al lugar correcto, muerde. *¿El código quedó roto
+de la forma que me importa, o quedó roto de otra?*
+
+El resultado, contra un baseline de 128 de 128:
+
+```
+BUG REAL 14h · el CTE no expone fecha_operacion   -> MORDIÓ
+BUG REAL 11h · desempacar 3 de una tupla de 2     -> MORDIÓ
+CONTROL · una columna inventada en otra consulta  -> MORDIÓ
+```
+
+### Lo que el humo NO agarra, dicho antes de que alguien le crea de más
+
+- **El caso VACÍO.** La siembra planta UNA fila de cada cosa, así que lo que
+  se ejercita es el camino de "hay una". Un `IndexError` sobre la fila 3 no
+  se ve.
+- **Lo que no es un GET.** Ningún POST se manda: todo el guardado sigue
+  cubierto solo por la suite mockeada.
+- **Las seis rutas declaradas** en `NO_SE_ABREN`, cinco de ellas porque
+  sirven un archivo del Storage y no hay bucket local. Cada una con su razón
+  al lado, comparadas contra el conjunto ENCONTRADO.
+
+Y lo que **sí** cambia: desde hoy, un SQL que no parsea tiene dónde fallar
+antes de que lo encuentre el que está en el galpón.
 ## Corolario 80: una cuenta DERIVADA convierte "completar el dato" en "arreglarlo", y eso decide si hay que recargar
 
 Del 17/09, y es la propiedad que más veces salvó a este sistema, vista del
