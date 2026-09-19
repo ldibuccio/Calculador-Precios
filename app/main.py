@@ -9296,11 +9296,18 @@ def _porciones_de_deposito(filas: list[dict] | None = None, hasta=None,
                            articulo_id=None) -> list[dict]:
     """Cada porción del depósito como un renglón propio, alfabético. La vista del que trabaja.
 
-    En el piso NO hay "un artículo con un total": hay pilas distintas, en
-    lugares distintos y para cosas distintas. Saber que hay 9 limones
-    sumando 4 sueltos más 5 en caja de Día no le sirve a nadie; lo que hace
-    falta saber es cuántas cajas hay de cada cosa. Por eso cada porción es
-    un renglón y NO hay total por artículo.
+    En el piso hay PILAS distintas, en lugares distintos y para cosas
+    distintas, y por eso cada porción es un renglón: para ir a buscar sirve
+    la pila, no el total.
+
+    LO QUE SÍ HAY, DESDE EL 19/09, ES EL TOTAL DEL ARTÍCULO —`total_articulo`
+    en cada porción, y la cabecera que lo dibuja sale de
+    `_agrupar_porciones_por_articulo`—. Hasta ese día este docstring decía
+    "NO hay total por artículo", con el argumento de que sumar 4 sueltos y 5
+    en caja no le sirve a nadie. Es cierto PARA IR A BUSCAR y contesta otra
+    pregunta: *"Cherry aparece como 41 y como 1 en dos renglones separados, y
+    no hay ningún lugar donde lea 42"*. Cuando algo no cierra, lo primero que
+    se mira es el artículo entero.
 
     EL NOMBRE PELADO ES LA MERCADERÍA COMO VIENE DEL PUESTO, que es como el
     depósito la llama. La palabra "suelto" no aparece: las que necesitan
@@ -9349,9 +9356,16 @@ def _porciones_de_deposito(filas: list[dict] | None = None, hasta=None,
         # Los sueltos por RESTA, como en todo el módulo: así las porciones
         # suman el total del artículo sin que se pueda perder ni duplicar.
         sueltos = round(float(fila["stock"]) - sum(de_este.values()), 2)
+        # EL TOTAL DEL ARTÍCULO VIAJA CON CADA PORCIÓN, y es el MISMO número
+        # que muestra Stock por Guía y del que salen los negativos: no se
+        # recalcula sumando las porciones acá (corolario 85), se copia de la
+        # única cuenta que lo produce. Los sueltos salen por resta contra él,
+        # así que las porciones cierran contra este número por construcción.
+        total_articulo = round(float(fila["stock"]), 2)
         grupo = fila.get("grupo")
         if sueltos != 0:
             porciones.append({"articulo": articulo, "orden": 0,
+                              "total_articulo": total_articulo, "en_el_total": True,
                               # EN POSITIVO Y CON LA PALABRA, igual que el
                               # bloque de abajo: un suelto en −18 no tiene
                               # menos dieciocho cajones, tiene 18 bultos que
@@ -9379,6 +9393,8 @@ def _porciones_de_deposito(filas: list[dict] | None = None, hasta=None,
             porciones.append({
                 "articulo": articulo,
                 "orden": 1,
+                "total_articulo": total_articulo,
+                "en_el_total": True,
                 "nombre": (
                     _titulo_de_porcion(articulo, ficha, clientes,
                                        cuantas[ficha["cliente_id"]], False)
@@ -9404,13 +9420,101 @@ def _porciones_de_deposito(filas: list[dict] | None = None, hasta=None,
             # guardarlo, y había 42 bultos de un artículo sin que nadie los
             # verificara contra el piso.
             porciones.append({"articulo": articulo, "orden": 2, "grupo": grupo, "procesada": False,
+                              "total_articulo": total_articulo,
+                              # LA SEGUNDA NO ENTRA EN EL TOTAL, y por eso el
+                              # renglón lo dice: es un POOL APARTE —lo separa
+                              # la propia consulta, en su columna `segunda`—
+                              # y sumarla al stock inventaría un cuarto
+                              # número del mismo artículo que ninguna otra
+                              # pantalla muestra (corolario 8).
+                              "en_el_total": False,
                               "nombre": _titulo_de_porcion(articulo, None, clientes, 0, True),
                               "bultos": round(float(fila["segunda"]), 2),
                               "articulo_id": fila["articulo_id"], "ficha_id": None,
                               "es_segunda": True})
 
     porciones.sort(key=lambda p: (_clave_alfabetica(p["articulo"]), p["orden"], _clave_alfabetica(p["nombre"])))
+    for porcion in porciones:
+        porcion["corto"] = _corto_de_porcion(porcion["nombre"], porcion["articulo"])
     return porciones
+
+
+# Cómo se llama la pila suelta cuando el artículo ya está en la cabecera del
+# grupo. Es una CONSTANTE y no un literal suelto porque la pantalla la escribe
+# y la suite la lee para reconstruir el nombre entero del renglón: escrita dos
+# veces, el día que cambie el test seguiría buscando la palabra vieja y pasaría
+# a leer todos los renglones sueltos como si fueran otra cosa.
+SUELTO_EN_GRUPO = "Suelto"
+
+
+def _corto_de_porcion(nombre: str, articulo: str) -> str:
+    """Cómo se llama la porción cuando el ARTÍCULO ya está escrito arriba.
+
+    SE DERIVA DEL TÍTULO, no se arma en paralelo. Los tres títulos que
+    produce `_titulo_de_porcion` empiezan por el nombre del artículo —"Lima",
+    "Lima Caja Día", "Lima Segunda"— y eso no es casualidad: `_nombre_de_caja`
+    lo pone adelante a propósito para que las tres caigan juntas al ordenar.
+    Escribir el corto por su cuenta sería la misma regla dos veces, y la copia
+    que se separara diría "Caja Día" de una pila que el resto del sistema
+    llama de otra forma.
+
+    Y ACÁ SÍ VA LA PALABRA "SUELTO", que el título pelado evita a propósito.
+    No es una excepción a esa regla: allá el renglón vive en una lista
+    MEZCLADA y el nombre tiene que bastarse solo, así que el artículo pelado
+    es el título correcto. Acá el artículo ya está arriba, en la cabecera del
+    grupo, y lo que el renglón tiene que decir es en qué se diferencia de sus
+    hermanos — que es justamente que es la pila suelta.
+
+    Si algún día un título deja de empezar por el artículo, devuelve el
+    nombre entero en vez de un renglón vacío. Lo cuida un test que compara
+    los TRES contra su artículo.
+    """
+    if not nombre.startswith(articulo):
+        return nombre
+    return nombre[len(articulo):].strip() or SUELTO_EN_GRUPO
+
+
+def _agrupar_porciones_por_articulo(porciones: list[dict]) -> list[dict]:
+    """Las MISMAS porciones, agrupadas por artículo y con el total arriba.
+
+    Pedido del dueño el 19/09: *"Cherry aparece como 41 y como 1 en dos
+    renglones separados, y no hay ningún lugar donde lea 42"*. El argumento
+    viejo —"sumarlas no le sirve a nadie que tenga que ir a buscarlas"—
+    contestaba otra pregunta: es cierto que para IR A BUSCAR sirve la pila,
+    y falso que el total no haga falta nunca. Cuando algo no cierra, lo
+    primero que se mira es el artículo entero.
+
+    NO REORDENA NI FILTRA NADA. La lista ya viene agrupada por artículo desde
+    `_porciones_de_deposito` —ese orden existe desde el principio— así que
+    esto solo corta donde cambia el `articulo_id`. Un `groupby` que ordene por
+    su cuenta rompería el orden alfabético con tildes de `_clave_alfabetica`.
+
+    `sola` es la que decide si se dibuja cabecera: con UNA porción, el total
+    y el renglón son el mismo número y el mismo nombre, así que la cabecera
+    no agregaría nada — repetiría. (No es lo mismo que el desglose por
+    kilaje, donde una fila sola sí agrega el formato y el proveedor.) Y ese
+    es el caso de la mayoría del catálogo, así que la lista no se duplica.
+    """
+    grupos: list[dict] = []
+    for porcion in porciones:
+        if not grupos or grupos[-1]["articulo_id"] != porcion["articulo_id"]:
+            grupos.append({
+                "articulo": porcion["articulo"],
+                "articulo_id": porcion["articulo_id"],
+                # El total sale de la porción y no de una suma: es el número
+                # del artículo tal como lo produce la cuenta de stock.
+                "total": porcion.get("total_articulo", 0.0),
+                "porciones": [],
+            })
+        grupos[-1]["porciones"].append(porcion)
+    for grupo in grupos:
+        total = float(grupo["total"])
+        grupo["sola"] = len(grupo["porciones"]) == 1
+        # EN POSITIVO Y CON LA PALABRA, igual que el renglón corto y el
+        # bloque de abajo: un artículo en −8 no tiene menos ocho cajones.
+        grupo["negativo"] = total < 0
+        grupo["faltan"] = round(-total, 2) if total < 0 else 0
+    return grupos
 
 
 def _negativos_de_deposito(filas: list[dict]) -> list[dict]:
@@ -9918,6 +10022,11 @@ def ver_remanente_deposito(request: Request, fecha: str | None = None):
         "aviso": aviso,
         "esperando_guia_r": esperando,
         "porciones_esperando": porciones_esperando,
+        # LA MISMA LISTA, agrupada. `porciones` sigue viajando entera porque
+        # el Excel y Movimiento la leen plana; lo que se agrega es cómo se
+        # DIBUJA, no otra cuenta. Agrupar en Jinja no sirve: su `groupby`
+        # reordena por el atributo y perdería el alfabético con tildes.
+        "grupos": _agrupar_porciones_por_articulo(contexto["porciones"]),
     })
     return templates.TemplateResponse(request, "administracion_stock_remanente.html", contexto)
 

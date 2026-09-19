@@ -30,7 +30,11 @@ from core.vino_armada import (
 )
 from app.main import (
     SECTORES,
+    SUELTO_EN_GRUPO,
     _ICONO_INICIO,
+    _agrupar_porciones_por_articulo,
+    _corto_de_porcion,
+    _titulo_de_porcion,
     _fecha_de_corte_limpieza_fotos,
     _formatear_bytes,
     _formatear_fecha_corta,
@@ -17532,16 +17536,52 @@ def _leer_excel_remanente(**kwargs):
 
 
 def _porciones_en_pantalla(texto):
-    """Los renglones de la lista, CORTOS INCLUIDOS.
+    """Los renglones de la lista, con el nombre ENTERO como lo lee una persona.
 
     La versión vieja exigía `class="cuanto"` pegado, y el renglón negativo
     emite `cuanto-falta`: el día que la lista dejó de filtrarlos (19/09) este
     helper se volvió ciego a ellos y el test que afirmaba "el negativo NO está
     en la lista" siguió pasando —por no verlo, no por ser cierto—. Es el
     corolario 57: un cambio en el producto mudó dónde matcheaba el assert.
+
+    Y DESDE QUE LA LISTA SE AGRUPA (19/09) el renglón de adentro de un grupo
+    dice solo su parte —"Caja Día", "Suelto"— porque el artículo está en la
+    cabecera. Este helper vuelve a pegar las dos mitades, que es lo que el que
+    mira la pantalla lee: cabecera "Mandarina" + renglón "Caja Día" es la pila
+    "Mandarina Caja Día". Así los asserts de nombre y el del orden del Excel
+    siguen comparando contra lo que se ve, y no contra el marcado.
+
+    Recorre EN ORDEN de documento —cabeceras y renglones mezclados— porque el
+    grupo al que pertenece un renglón es el de la última cabecera que pasó.
     """
+    filas = []
+    articulo = None
+    patron = (r'<(?:div|a) class="((?:cabeza-articulo|porcion)[^"]*)"[^>]*>\s*'
+              r'<span class="que">([^<]+)(?:<span class="aparte">[^<]*</span>)?</span>\s*'
+              r'<span class="cuanto(?:-falta)?">([^<]+)</span>')
+    for clase, nombre, cuanto in re.findall(patron, texto):
+        nombre, cuanto = nombre.strip(), cuanto.strip()
+        if clase.startswith("cabeza-articulo"):
+            articulo = nombre
+        elif "en-grupo" not in clase:
+            # UN RENGLÓN SUELTO CIERRA EL GRUPO ANTERIOR, y olvidarlo no da un
+            # error: da un nombre PLAUSIBLE de otro artículo ("Mandarina Mzn
+            # Gob"). Es el corolario 4 en un scraper — el ancla que sigue
+            # matcheando después de que el sujeto cambió.
+            articulo = None
+            filas.append((nombre, cuanto))
+        elif nombre == SUELTO_EN_GRUPO:
+            filas.append((articulo, cuanto))
+        else:
+            filas.append((f"{articulo} {nombre}", cuanto))
+    return filas
+
+
+def _cabeceras_en_pantalla(texto):
+    """Solo las cabeceras de artículo: (nombre, el número que muestran)."""
     return re.findall(
-        r'<span class="que">([^<]+)</span>\s*<span class="cuanto(?:-falta)?">([^<]+)</span>',
+        r'<div class="cabeza-articulo[^"]*">\s*<span class="que">([^<]+)</span>\s*'
+        r'<span class="cuanto(?:-falta)?">([^<]+)</span>',
         texto)
 
 
@@ -17975,15 +18015,160 @@ def test_el_remanente_es_una_porcion_por_renglon_y_alfabetico():
     ]
 
 
-def test_el_remanente_NO_dice_la_palabra_suelto_ni_totales_por_articulo():
-    """El nombre pelado es la mercadería como viene del puesto, que es como el
-    depósito la llama. "Caja Día" y "Segunda" son las que necesitan
-    aclaración porque son otra cosa."""
+def test_el_remanente_MUESTRA_el_total_del_articulo_arriba_de_sus_porciones():
+    """ESTE TEST AFIRMABA LO CONTRARIO hasta el 19/09, y lo dio vuelta el dueño.
+
+    Se llamaba `..._NO_dice_la_palabra_suelto_ni_totales_por_articulo` y su
+    razón escrita era que "sumarlas no le sirve a nadie que tenga que ir a
+    buscarlas". Eso es cierto PARA IR A BUSCAR y no cubre la otra pregunta:
+    *"Cherry aparece como 41 y como 1 en dos renglones separados, y no hay
+    ningún lugar donde lea 42"*. Cuando algo no cierra, lo primero que se
+    mira es el artículo entero.
+
+    Es el corolario 68 otra vez —un test que defiende una AUSENCIA con su
+    razón al lado no se cuestiona— y por eso el cambio empieza por acá.
+    """
     texto = _remanente().text
 
-    assert "suelto" not in texto.lower()
-    # Mandarina son 20 + 15 + 3: el 38 no aparece en ningún lado.
-    assert "38" not in texto
+    # Mandarina: 20 sueltos + 15 en caja = 35, arriba de sus renglones.
+    assert ("Mandarina", "35") in _cabeceras_en_pantalla(texto)
+    assert ("Pomelo", "31") in _cabeceras_en_pantalla(texto)
+
+
+def test_la_cabecera_CIERRA_contra_los_renglones_que_tiene_abajo():
+    """Un desglose que no suma el total es peor que no tenerlo: nadie va a
+    sumar tres renglones para verificarlo, así que el que los sume una vez y
+    no le dé ya no le cree a ninguno de los dos números.
+
+    Se afirma leyendo LA PANTALLA —cabecera y renglones— y no la función: lo
+    que tiene que cerrar es lo que se ve.
+    """
+    texto = _remanente().text
+    filas = dict(_porciones_en_pantalla(texto))
+
+    for articulo, total in _cabeceras_en_pantalla(texto):
+        # LA SEGUNDA NO ENTRA: es un pool aparte y el renglón lo dice.
+        suman = sum(
+            float(cuanto) for nombre, cuanto in filas.items()
+            if nombre == articulo or (nombre.startswith(articulo + " ")
+                                      and not nombre.endswith(" Segunda"))
+        )
+        assert suman == float(total), f"{articulo}: los renglones dan {suman} y la cabecera {total}"
+
+
+def test_la_SEGUNDA_esta_marcada_APARTE_y_no_entra_en_el_total():
+    """Mandarina tiene 3 de segunda, y 20 + 15 + 3 = 38. La cabecera dice 35.
+
+    No es un error de la suma: el pool de segunda lo separa la propia
+    consulta (su columna `segunda`) y ninguna otra pantalla lo mete adentro
+    del stock. Meterlo acá inventaría un cuarto número del mismo artículo.
+    Lo que no puede pasar es que no se diga: por eso el renglón lleva el
+    chip, y por eso este test pide LAS DOS cosas.
+    """
+    marcado = _remanente().text.split("</style>")[-1]
+
+    assert ("Mandarina", "35") in _cabeceras_en_pantalla(marcado)
+    assert "38" not in marcado, "sumar la segunda al stock sería un cuarto número"
+    # El chip va en el renglón de la segunda y en NINGÚN otro.
+    assert marcado.count('<span class="aparte">aparte</span>') == 1
+    segunda = marcado.split(">Segunda")[1].split("</a>")[0]
+    assert 'class="aparte"' in segunda
+
+
+def test_con_UNA_SOLA_porcion_NO_hay_cabecera_y_el_renglon_YA_dice_el_articulo():
+    """La mayoría del catálogo tiene una sola pila, y ahí la cabecera
+    repetiría el mismo nombre con el mismo número. Es distinto del desglose
+    por kilaje, donde una fila sola SÍ agrega el formato y el proveedor.
+
+    Y de yapa contesta lo que el dueño busca cuando algo no cierra: con una
+    sola porción, el número del renglón ES el del artículo.
+    """
+    texto = _remanente().text
+
+    cabeceras = [a for a, _n in _cabeceras_en_pantalla(texto)]
+    assert "Mzn Gob" not in cabeceras, "tiene una sola pila: no lleva cabecera"
+    assert "Berenjena" not in cabeceras
+    # Y el renglón sale con el nombre ENTERO, no con el corto.
+    marcado = texto.split("</style>")[-1]
+    assert ">Berenjena Caja Día</span>" in marcado
+
+
+def test_agrupar_NO_REORDENA_NI_PIERDE_ninguna_porcion():
+    """El orden alfabético con tildes lo arma `_clave_alfabetica`; agrupar solo
+    corta donde cambia el artículo. Un `groupby` que ordene por su cuenta
+    —el de Jinja lo hace— rompería ese orden sin que nada se ponga rojo,
+    porque las dos listas tienen los mismos elementos."""
+    porciones = [
+        {"articulo": "Ñandú", "articulo_id": 3, "nombre": "Ñandú", "total_articulo": 5.0},
+        {"articulo": "Ají", "articulo_id": 1, "nombre": "Ají", "total_articulo": 9.0},
+        {"articulo": "Ají", "articulo_id": 1, "nombre": "Ají Caja Día", "total_articulo": 9.0},
+    ]
+
+    grupos = _agrupar_porciones_por_articulo(porciones)
+
+    assert [g["articulo"] for g in grupos] == ["Ñandú", "Ají"], "el orden que entra es el que sale"
+    assert [len(g["porciones"]) for g in grupos] == [1, 2]
+    assert [p for g in grupos for p in g["porciones"]] == porciones
+
+
+def test_el_total_de_la_cabecera_SALE_DE_LA_CUENTA_y_no_de_sumar_los_renglones():
+    """`total_articulo` es el número que produce `stock_deposito_por_articulo`,
+    el mismo que muestra Stock por Guía y del que salen los negativos.
+    Recalcularlo sumando las porciones sería la enésima versión de la cuenta
+    de stock (corolario 85) — y con un renglón de más o de menos diría otra
+    cosa que el resto del sistema sin que nada avise.
+
+    Se afirma con un total que NO es la suma: 100 contra 9. La cabecera tiene
+    que decir 100.
+    """
+    grupos = _agrupar_porciones_por_articulo([
+        {"articulo": "Ají", "articulo_id": 1, "nombre": "Ají", "total_articulo": 100.0,
+         "bultos": 4.0},
+        {"articulo": "Ají", "articulo_id": 1, "nombre": "Ají Caja Día", "total_articulo": 100.0,
+         "bultos": 5.0},
+    ])
+
+    assert grupos[0]["total"] == 100.0
+
+
+def test_un_ARTICULO_negativo_dice_FALTAN_EXPLICAR_en_su_cabecera():
+    """El mismo idioma que el renglón corto y que el bloque de abajo: un
+    artículo en −8 no tiene menos ocho cajones, tiene 8 bultos que salieron
+    y ninguna guía cubre. Un "−8" en la columna de cantidades se lee como
+    stock y se resta de algo."""
+    grupos = _agrupar_porciones_por_articulo([
+        {"articulo": "Ají", "articulo_id": 1, "nombre": "Ají", "total_articulo": -8.0},
+        {"articulo": "Ají", "articulo_id": 1, "nombre": "Ají Caja Día", "total_articulo": -8.0},
+    ])
+
+    assert grupos[0]["negativo"] is True
+    assert grupos[0]["faltan"] == 8.0
+
+
+def test_el_nombre_CORTO_sale_del_titulo_y_no_de_una_segunda_regla():
+    """Los TRES títulos empiezan por el artículo —`_nombre_de_caja` lo pone
+    adelante a propósito para que caigan juntos al ordenar— así que el corto
+    se saca recortando, no armando el nombre otra vez.
+
+    El día que un título deje de empezar por el artículo, el corto sería el
+    nombre entero repetido abajo de su propia cabecera: feo, y no roto. Lo
+    que este test impide es lo otro —que alguien escriba el corto por su
+    cuenta y las dos versiones se separen.
+    """
+    ficha = {"id": 11, "cliente_id": 1, "contenido_caja": 10.0, "unidad_venta": "kilo"}
+    clientes = {1: "Día"}
+    for titulo in (
+        _titulo_de_porcion("Lima", None, clientes, 0, False),
+        _titulo_de_porcion("Lima", ficha, clientes, 1, False),
+        _titulo_de_porcion("Lima", None, clientes, 0, True),
+    ):
+        assert titulo.startswith("Lima"), titulo
+
+    assert _corto_de_porcion("Lima", "Lima") == SUELTO_EN_GRUPO
+    assert _corto_de_porcion("Lima Caja Día", "Lima") == "Caja Día"
+    assert _corto_de_porcion("Lima Segunda", "Lima") == "Segunda"
+    # Y si algún día no empieza por el artículo, no devuelve vacío.
+    assert _corto_de_porcion("Otra cosa", "Lima") == "Otra cosa"
 
 
 def test_el_remanente_manda_a_Stock_Fisico_para_contar():
@@ -18381,8 +18566,15 @@ def test_el_excel_del_remanente_sale_en_EL_MISMO_ORDEN_que_la_pantalla():
 
 def test_el_excel_del_remanente_cierra_con_UN_total_al_pie():
     """Cuántos renglones y cuántos bultos, para ver de un vistazo si el archivo
-    impreso está completo. UNO solo al pie, no uno por artículo: el total por
-    artículo es justo la suma que el dueño pidió no mostrar."""
+    impreso está completo.
+
+    UNO SOLO AL PIE, no uno por artículo, y desde el 19/09 la razón cambió:
+    decía que el total por artículo era "la suma que el dueño pidió no
+    mostrar", y la PANTALLA ahora lo muestra. Acá sigue sin ir por otra
+    cosa: este archivo se imprime para CAMINAR el depósito con él, sus
+    subtotales son por GRUPO —fruta, hortaliza— y una tercera fila de
+    subtotal por artículo compite con esa lectura. El que quiere el total
+    del artículo lo tiene en la pantalla."""
     from io import BytesIO
 
     from openpyxl import load_workbook
@@ -31028,3 +31220,73 @@ def test_la_pantalla_de_reproceso_DIBUJA_el_aviso_de_lo_que_salio_sin_lote():
     # Y que el JS lo llame: el bloque solo es un div vacío para siempre.
     assert "dibujarAvisoSinLote(datos, campos);" in marcado
     assert "datos.sin_lote_antes" in marcado
+
+
+# ── El Remanente agrupado a 390px ──────────────────────────────────────────
+#
+# El largo de un nombre de artículo no lo controlamos, y desde el 19/09 ese
+# nombre se dibuja en DOS lugares de la misma lista: la cabecera del grupo y
+# el renglón. Medido antes del arreglo: 213px de desborde, con la tarjeta
+# entera arrastrándose de costado. El defecto es más viejo que el agrupado
+# —el renglón ya no envolvía— y lo que el agrupado agregó fue el segundo
+# lugar donde se ve.
+
+UN_ARTICULO_QUE_NO_SE_PUEDE_PARTIR = "MandarinaComunDeLaBuenaSinUnSoloEspacioParaPartirla"
+OTRO_QUE_NO_SE_PUEDE_PARTIR = "ManzanaGoldenDeLaBuenaSinUnSoloEspacioParaPartirla"
+
+
+def _remanente_medido(nombre, otro):
+    """El Remanente a 390px, con el nombre largo en LOS DOS LUGARES donde cae.
+
+    HACEN FALTA LOS DOS ARTÍCULOS, y lo dijo un canario en CERO: la primera
+    versión renombraba solo a Mandarina —la que tiene tres porciones— y
+    adentro de un grupo el renglón muestra el CORTO ("Suelto", "Caja Día"),
+    así que el nombre largo caía únicamente en la cabecera. Sacarle el
+    `overflow-wrap` al RENGLÓN no hacía caer nada: el fixture no podía
+    ejercitarlo.
+
+    Mzn Gob tiene una sola porción, así que su renglón lleva el nombre
+    entero. Con los dos, las dos reglas de CSS quedan medidas.
+    """
+    from scripts.medir_layout import medir_sync
+
+    largos = {1: nombre, 3: otro}
+    filas = [dict(f, nombre=largos.get(f["articulo_id"], f["nombre"]))
+             for f in REMANENTE_FILAS]
+    respuesta = _remanente(filas=filas)
+    assert respuesta.status_code == 200
+    medicion = medir_sync(respuesta.text, ancho=390, selector_filas=".tarjeta")
+    # LA IDENTIDAD PEGADA AL NÚMERO (corolario 53): un `0 de 0` medido sobre
+    # la pantalla de un error se imprime igual de prolijo que la medición
+    # buena, y las dos veces que pasó en este proyecto lo delató el
+    # denominador y nunca el número.
+    medicion["cabeceras"] = len(_cabeceras_en_pantalla(respuesta.text))
+    medicion["renglones"] = len(_porciones_en_pantalla(respuesta.text))
+    return medicion
+
+
+def test_el_remanente_agrupado_aguanta_un_nombre_QUE_NO_SE_PUEDE_PARTIR():
+    """En una pantalla de TARJETAS la clave `desborde` viene clavada en 0 y el
+    número real viaja en `desborde_pagina` (corolario 47 adentro del
+    resultado): el test que mira la que no es sale en verde sobre una
+    pantalla que se arrastra de costado."""
+    medicion = _remanente_medido(UN_ARTICULO_QUE_NO_SE_PUEDE_PARTIR,
+                                 OTRO_QUE_NO_SE_PUEDE_PARTIR)
+
+    assert medicion["cabeceras"] == 2 and medicion["renglones"] == 7
+    desborde = medicion.get("desborde_pagina", medicion["desborde"])
+    assert desborde == 0, f"desborda {desborde}px"
+    assert medicion["pares"] > 0
+    assert medicion["solapes"] == [], medicion["solapes"]
+
+
+def test_el_remanente_agrupado_con_nombres_NORMALES_tampoco_se_pisa():
+    """La otra mitad del par: sin ella, un arreglo que rompiera el caso normal
+    para aguantar el impartible pasaría el de arriba sin que nada cayera."""
+    medicion = _remanente_medido("Mandarina", "Mzn Gob")
+
+    assert medicion["cabeceras"] == 2 and medicion["renglones"] == 7
+    desborde = medicion.get("desborde_pagina", medicion["desborde"])
+    assert desborde == 0, f"desborda {desborde}px"
+    assert medicion["pares"] > 0
+    assert medicion["solapes"] == [], medicion["solapes"]
