@@ -9674,6 +9674,21 @@ def ver_extracto_de_porcion(request: Request, articulo_id: int, fecha: str | Non
             "fecha_texto": hasta.strftime("%d/%m/%Y"),
             "extracto": extracto,
             "aviso": aviso,
+            # EL CAMINO AL DETALLE DEL ARTÍCULO, y va ACÁ porque es donde
+            # aparece la pregunta: el que mira "quedó 41" es el que se
+            # pregunta de qué formato son esos 41. El detalle existía desde
+            # el 18/09 con su desglose por kilaje y solo lo linkeaba el
+            # Remanente desde sus bloques de ESPERANDO y NEGATIVOS — o sea
+            # que un artículo sano no tenía camino desde ningún lado, y el
+            # barrido del corolario 31 salía en verde porque la pantalla SÍ
+            # estaba linkeada. Una puerta que se abre para un subconjunto se
+            # ve igual que una puerta.
+            #
+            # Y NO SE LINKEA DESDE DEPÓSITO: la puerta de Administración
+            # cubre los GET, así que el renglón de un operario caería contra
+            # una clave que no es suya (corolario 56). Acá ya estamos
+            # adentro del prefijo y no se cruza ninguna.
+            "articulo_id": articulo_id,
             "volver": f"/administracion/stock/remanente?fecha={hasta.isoformat()}",
         },
     )

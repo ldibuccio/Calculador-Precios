@@ -60,6 +60,42 @@
     font-size: 0.9rem;
   }
   /* Mobile-first: el volver es un botón de ancho completo, no un link chico. */
+  /* EL LINK AL DETALLE es de IDA y el de abajo es de VUELTA, así que no se
+     pintan igual: dos botones idénticos uno arriba del otro se leen como
+     dos formas de salir, y el de arriba entra más adentro. Lleno y azul
+     contra hueco y gris.
+
+     Y el alto mínimo va explícito: es lo único que se toca en esta pantalla
+     además del volver, y entra en la regla de los 44px. */
+  .ir-al-detalle {
+    display: block;
+    padding: 0.85rem 1rem;
+    min-height: 44px;
+    box-sizing: border-box;
+    background: #1d4ed8;
+    border-radius: 8px;
+    color: #fff;
+    text-decoration: none;
+    margin-bottom: 0.6rem;
+  }
+  .ir-al-detalle .que { display: block; font-size: 1rem; font-weight: 700; }
+  /* EL ALCANCE VA EN LA AYUDA Y NO EN UN COMENTARIO: arriba se está mirando
+     UNA PORCIÓN —este artículo en esta ficha— y del otro lado está el
+     artículo ENTERO. Son dos cuentas con distinto alcance y el link es
+     justo donde se confunden (corolario 8).
+
+     Y no promete el desglose por formato: las pilas salen de los lotes que
+     TIENEN RESTANTE hoy, y con un formato solo la tarjeta no se dibuja a
+     propósito. Prometerlo siempre sería un callejón. */
+  .ir-al-detalle .alcance {
+    display: block;
+    font-size: 0.85rem;
+    font-weight: 500;
+    opacity: 0.9;
+    margin-top: 0.15rem;
+    line-height: 1.35;
+  }
+
   .volver {
     display: block;
     text-align: center;
@@ -122,6 +158,12 @@
     {% endif %}
   </div>
 
+  <a class="ir-al-detalle" href="/administracion/stock/sistema/{{ articulo_id }}">
+    <span class="que">Ver el detalle del artículo</span>
+    <span class="alcance">De qué lote salió cada bulto y, cuando hay más de un
+      formato, de qué tamaño es cada pila. Es el artículo entero, no solo esta
+      porción.</span>
+  </a>
   <a class="volver" href="{{ volver }}">Volver al Stock del Depósito</a>
 {% include "_pie_version.html" %}
 </body>

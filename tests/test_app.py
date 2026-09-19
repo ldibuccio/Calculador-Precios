@@ -17702,6 +17702,51 @@ def test_el_extracto_muestra_lo_que_los_eventos_no_explican():
     assert "Sin explicar" in respuesta.text
 
 
+def test_el_MOVIMIENTO_lleva_al_DETALLE_del_articulo_que_tiene_el_desglose_por_kilaje():
+    """El detalle por artículo existía desde el 18/09 y no tenía camino para un artículo sano.
+
+    `/administracion/stock/sistema/{id}` trae el desglose por kilaje —de qué
+    formato es lo que queda— y hasta hoy lo linkeaba SOLO el Remanente, desde
+    sus dos bloques de ESPERANDO guía R y NEGATIVOS. Un artículo que está bien
+    no aparece en ninguno de los dos, así que no había forma de llegar.
+
+    Y el barrido del corolario 31 no podía verlo: la pantalla SÍ estaba
+    linkeada, así que salía en verde. Una puerta que se abre para un
+    subconjunto se ve exactamente igual que una puerta.
+
+    El ancla es el `href` entero con el id: `/administracion/stock/sistema`
+    aparece también en el CSS y en el comentario que explica por qué el link
+    está acá (corolario 38/50).
+    """
+    respuesta = _extracto(
+        "/administracion/stock/remanente/porcion?articulo_id=1&fecha=2026-09-06")
+
+    marcado = respuesta.text.split("</style>")[-1]
+    assert respuesta.status_code == 200
+    assert 'href="/administracion/stock/sistema/1"' in marcado
+
+
+def test_el_link_al_detalle_DICE_QUE_ES_EL_ARTICULO_ENTERO_y_no_esta_porcion():
+    """Dos cuentas con distinto ALCANCE, y el link es justo donde se confunden.
+
+    Arriba se está mirando UNA PORCIÓN —este artículo en esta ficha— y del
+    otro lado está el artículo ENTERO, sumando todas sus fichas. Sin decirlo,
+    el que toca lee el total de abajo como el desglose del número de arriba y
+    los dos no tienen por qué coincidir (corolario 8).
+
+    Y NO PROMETE el desglose por formato: las pilas salen de los lotes que
+    tienen restante HOY, y con un formato solo la tarjeta no se dibuja a
+    propósito. Un link que promete siempre lo que a veces no está es un
+    callejón — por eso dice "cuando hay más de un formato".
+    """
+    respuesta = _extracto(
+        "/administracion/stock/remanente/porcion?articulo_id=1&fecha=2026-09-06")
+
+    marcado = respuesta.text.split("</style>")[-1]
+    assert "artículo entero" in marcado, "el alcance tiene que estar escrito"
+    assert "cuando hay más de un" in marcado, "no puede prometer el desglose siempre"
+
+
 def test_el_extracto_de_una_porcion_que_no_existe_da_404():
     respuesta = _extracto(
         "/administracion/stock/remanente/porcion?articulo_id=999&fecha=2026-09-06")
