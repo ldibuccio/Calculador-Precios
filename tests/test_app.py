@@ -17707,6 +17707,41 @@ def _remanente_en_rojo(url="/administracion/stock/remanente?fecha=2026-09-17"):
         return cliente.get(url)
 
 
+def test_el_desglose_por_kilaje_NO_SE_MUESTRA_si_no_suma_el_total():
+    """Cherry decía 41 arriba y 58 en las pilas, y la tarjeta promete que es el mismo número partido.
+
+    LA IDENTIDAD, medida corriendo `repartir_fifo`: las pilas suman
+    `stock + sin_lote`. `stock` es entradas − salidas, y un restante solo baja
+    por las salidas que un lote ABSORBIÓ — las que ningún lote cubre le restan
+    al total y no le restan a ninguna pila. Con la pared del envase eso pasa a
+    propósito: una salida de ficha con envase no puede consumir el cajón.
+
+    No se arregla agregando una pila: esos bultos ya no están en el depósito,
+    así que ponerlos en un formato sería inventar stock. Se calla.
+    """
+    from app.main import _pilas_cierran
+
+    pilas = [{"bultos": 40.0}, {"bultos": 1.0}, {"bultos": 17.0}]
+    assert _pilas_cierran(pilas, 58.0) is True
+    assert _pilas_cierran(pilas, 41.0) is False, "58 contra 41 es el caso de Cherry"
+
+
+def test_la_guarda_del_desglose_tolera_el_REDONDEO_y_no_apaga_lo_que_cierra():
+    """El control, sin el cual la guarda se lee igual apagando todo (corolario 53).
+
+    Cada pila viene redondeada a dos decimales desde `pilas_por_formato`, así
+    que comparar contra el stock crudo haría fallar por 1e-9 y dejaría sin
+    tarjeta a artículos que cierran perfecto. Un detector que marca todo se ve
+    igual de trabajador que uno que funciona.
+    """
+    from app.main import _pilas_cierran
+
+    assert _pilas_cierran([{"bultos": 20.01}, {"bultos": 20.0}], 40.01) is True
+    # Y un bulto de diferencia SÍ lo tiene que ver: la tolerancia es de
+    # redondeo, no un umbral que perdone descuadres.
+    assert _pilas_cierran([{"bultos": 20.0}, {"bultos": 20.0}], 41.0) is False
+
+
 def test_el_renglon_CORTO_aparece_en_la_lista_del_dia_y_no_se_filtra():
     """Hasta el 19/09 la lista salía con `sueltos > 0` y el artículo corto NO ESTABA.
 
@@ -30398,6 +30433,49 @@ def test_el_stock_por_kilaje_PARTE_lo_que_queda_y_las_pilas_SUMAN_el_total():
     assert "Cajones de 16 k" in marcado
     # 10 + 4 = 14, que es el mismo número que el resumen de arriba.
     assert "EJEMPLO Cherry: 14 bultos" in marcado
+
+
+def test_la_tarjeta_NO_SE_DIBUJA_cuando_las_pilas_no_suman_el_total():
+    """EL CABLEADO, y es la mitad que la guarda sola no prueba.
+
+    `_pilas_cierran` tiene sus dos tests, y el canario que la saca del
+    `TemplateResponse` los dejaba a los dos en verde: probaban la REGLA y no
+    que la pantalla la aplicara. Es el corolario 71 —una regla con tests y sin
+    llamador— corrido al cableado.
+
+    El caso es el de Cherry: una salida que ningún lote absorbe (acá dirigida
+    a un lote que no existe, que es lo que hace la pared del envase con el
+    cajón) le resta al total de arriba y no le resta a ninguna pila. 14 en las
+    pilas contra 11 arriba, y la tarjeta promete que son el mismo número.
+    """
+    # ANTERIOR a los dos lotes (que son del 12/09): un lote posterior a la
+    # salida no la puede cubrir, así que estos 3 quedan SIN LOTE. Dirigirla a
+    # un lote inexistente NO sirve —cae al FIFO y se absorbe— y ese fixture
+    # dejaba la tarjeta cerrando perfecto, o sea probando lo contrario.
+    salida_que_ningun_lote_cubre = [{
+        "orden": (date(2026, 9, 1), datetime(2026, 9, 1, 10)),
+        "cantidad": 3.0,
+    }]
+    with (
+        patch("app.main.obtener_articulo", return_value={"id": 1, "nombre": "EJEMPLO Cherry"}),
+        patch("app.main.entradas_y_salidas_stock_articulo",
+              return_value=(_entradas_de_dos_formatos(), salida_que_ningun_lote_cubre)),
+        patch("app.main.stock_deposito_por_articulo", return_value=[]),
+        patch("app.main.contenido_por_bulto_de_lotes", return_value={
+            "guia:601": {"contenido": 16.0, "unidad": "kilo"},
+            "guia:602": {"contenido": 5.0, "unidad": "kilo"},
+        }),
+    ):
+        respuesta = cliente.get("/administracion/stock/sistema/1")
+
+    marcado = respuesta.text.split("</style>")[-1]
+    assert respuesta.status_code == 200
+    # Los dos formatos siguen existiendo: lo que falla es que no cierran.
+    assert "EJEMPLO Cherry: 11 bultos" in marcado
+    assert "De qué formato es lo que queda" not in marcado, \
+        "14 en las pilas contra 11 arriba: la tarjeta no puede salir"
+    # Y el hueco NO se pierde: tiene su propio renglón en esta misma pantalla.
+    assert "sin lote" in marcado.lower()
 
 
 def test_con_UN_SOLO_formato_la_tarjeta_NO_aparece():

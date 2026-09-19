@@ -9997,7 +9997,29 @@ def ver_stock_articulo_deposito(request: Request, articulo_id: int):
             # 52 de los 57 artículos de las dos bases tienen un formato solo.
             # Repetirlo en una tarjeta propia sería ruido en la pantalla que
             # se abre justamente cuando un total no cuadra.
-            "pilas": pilas if len(pilas) > 1 else [],
+            #
+            # Y NO SE MUESTRA SI NO CIERRA, que es la regla del dueño del
+            # 19/09: "un desglose que no cierra es peor que no tenerlo".
+            #
+            # LA IDENTIDAD, medida corriendo repartir_fifo y no leyéndola:
+            #
+            #     suma(restantes) = stock + sin_lote
+            #
+            # `stock` es `entradas − salidas` y los restantes solo bajan por
+            # las salidas que un lote ABSORBIÓ. Las que ningún lote cubre
+            # —`sin_lote`— le restan al total de arriba y no le restan a
+            # ninguna pila, así que la tarjeta suma de más EXACTAMENTE
+            # `sin_lote`. Con Cherry eso dio 58 contra 41: los 17 del hueco
+            # son los bultos que salieron sin que ningún lote los explique,
+            # y la pared del envase los produce a propósito (una salida de
+            # ficha con envase no puede consumir el cajón).
+            #
+            # No se "arregla" sumándole una pila al desglose: esos bultos ya
+            # NO ESTÁN en el depósito, así que ponerlos en una pila de
+            # formato sería inventar stock. Lo correcto es callarse, y el
+            # hueco ya tiene dónde verse — el renglón "salieron sin lote"
+            # de esta misma pantalla.
+            "pilas": pilas if len(pilas) > 1 and _pilas_cierran(pilas, reparto["stock"]) else [],
             "lotes": con_resto,
             "agotados": agotados,
             "sin_lote": reparto["sin_lote"],
@@ -11731,6 +11753,21 @@ def _guias_de_hoy_para_pantalla(tomado_hoy: list[dict]) -> list[dict]:
         {"numero": numero, "bultos": _formatear_numero(round(bultos, 2))}
         for numero, bultos in sorted(por_guia.items())
     ]
+
+
+def _pilas_cierran(pilas: list[dict], stock) -> bool:
+    """True si las pilas suman el total que la pantalla muestra arriba.
+
+    La tarjeta promete, textual, que "el total de arriba suma bultos de
+    tamaños distintos, acá está partido". Si no suman lo mismo, esa frase es
+    falsa y el desglose miente con números plausibles — que es peor que no
+    estar, porque nadie va a sumar tres renglones para verificarlo.
+
+    El redondeo es a dos decimales porque cada pila ya viene redondeada así
+    desde `pilas_por_formato`: comparar floats crudos haría fallar la guarda
+    por 1e-9 y apagaría la tarjeta en artículos que cierran perfecto.
+    """
+    return abs(round(sum(float(p["bultos"]) for p in pilas), 2) - round(float(stock), 2)) < 0.01
 
 
 def _contenidos_de(lotes: list[dict]) -> dict[str, dict]:
