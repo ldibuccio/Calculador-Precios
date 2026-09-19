@@ -1537,6 +1537,40 @@ armados**, porque esos testigos siguen diciendo lo que decían. Las dos cosas
 son ciertas sobre la misma base al mismo tiempo, y eso es exactamente lo que
 un atributo de la base no puede expresar.
 
+
+#### Y EL 19/09 EL DUEÑO LA CERRÓ PARA ESTE PERÍODO: Palmala no vota, y punto
+
+Del 19/09, y es una decisión suya, con fecha: *"Palmala no está funcionando y
+no vota para nada. Dejemos de medir contra esa base."*
+
+**Eso NO contradice lo de arriba: lo aplica.** El mecanismo sigue siendo el
+del 24 —el testigo decide— y lo que el dueño está declarando es un HECHO DEL
+NEGOCIO que ningún testigo nuestro puede ver: **esa base dejó de operar.** Un
+testigo dice cuándo fue la última recepción; **no dice si va a haber otra**.
+Eso es el corolario 84 —lo que el dueño sabe del galpón se le pregunta, no se
+le discute— y la recepción del 17/09 que el 18/09 hizo votar a Palmala era la
+cola de una base que se estaba apagando, no la señal de una que anda.
+
+**Y va escrita con su condición de vencimiento, para no repetir el error que
+esta misma sección describe**: el 09/09 se escribió *"lo que hay que mirar es
+Frutamax"* en imperativo, se leyó como regla, y nadie la volvió a verificar en
+nueve días. Así que acá queda como lo que es —un ESTADO, con dueño y con
+fecha—:
+
+> **Desde el 19/09 y hasta que el dueño diga lo contrario, ninguna medición
+> sobre Palmala vota.** Lo que la reabre es que él avise que esa base volvió a
+> operar; no un testigo que dé una fecha reciente.
+
+**Lo que Palmala sigue sirviendo es lo de siempre, y es real**: confirmar que
+una migración no explota. Un `alter table` corre igual sobre una tabla quieta,
+y si los dos esquemas se separaron, ahí se ve. Eso no es medir: es probar que
+el SQL parsea contra ese esquema.
+
+**Y lo que costó no tenerlo escrito, el mismo 19/09**: el 89% de renglones sin
+tildar de Palmala me llevó a una conclusión sobre CÓMO SE TRABAJA que era un
+artefacto del abandono. El mecanismo está en el corolario 88 —una base parada
+contesta casi todo a una medición de AUSENCIA, y ahí el testigo no salva,
+porque la población está de verdad.
 Corolario 25, del 08/09, y es el hermano exacto del 23: **un argumento
 puede ser CORRECTO y llevar al número equivocado, porque lo que falla no es
 el razonamiento sino la premisa que nadie midió.**
@@ -3981,6 +4015,27 @@ estaba bien y la alerta sirvió. **Si no baja, entonces sí la unidad está mal*
 — sería una causa que un conteo por recepción no puede mover, y ahí el aviso
 tiene que pasar a la unidad de la causa.
 
+#### Y EL 19/09 LA MITAD DE PALMALA DEJÓ DE VALER, por el corolario 88
+
+El dueño cerró ese día que **Palmala no está funcionando y no vota en nada**.
+Eso no borra la medición de arriba —se corrió, dio lo que dio— pero **sí
+invalida la conclusión que se le colgó**, y por el mecanismo más incómodo:
+*"sin ninguna evidencia de pesaje"* es una medición de AUSENCIA, y una base
+parada las contesta casi todas (corolario 88). El 40% y el 50% de Palmala son
+exactamente de la forma que ese corolario describe, y el *"un hábito, no un
+olvido"* del párrafo de arriba está dicho sobre un depósito que dejó de
+trabajar en el medio.
+
+**Lo que se sostiene es Frutamax: 6 de 44 en dos días, 18 de 117 en siete, y
+72 de 117 limpias.** El test escrito arriba —si el número baja, la unidad
+estaba bien— se corre contra ésos. **La razón 2,9×/3,3× entre bases NO SE
+CITA MÁS**: comparaba una base viva contra el residuo de una parada.
+
+**Y es doblemente una lección**, porque el testigo de esa medición estaba
+puesto, trajo `recepciones_7d 70` y `90d 240`, y **hizo votar a la base que
+no tenía que votar**. Ese testigo no mintió: contestó bien la pregunta de si
+había población. La que no contestó —y ningún testigo puede— es si esa
+población seguía viva.
 ### Y lo que queda ANOTADO Y NO HECHO
 
 1. **Volver a correr `kilos_4` el 25/09.** Si el 82% sin tocar era falta de
@@ -8351,6 +8406,88 @@ de escribir una sola de producción.
 se corrige recién al explicar lo que se hizo, el que la dijo ya no puede
 cambiar el pedido — y el pedido con la premisa corregida puede ser otro.
 
+## Corolario 88: una base parada contesta CERO a lo que ESTÁ, y CASI TODO a lo que FALTA
+
+Del 19/09, y es el corolario 24 en espejo. El 24 dice que **una base parada
+contesta cero a todo, y el cero se lee como "acá no hay problema"**. Eso es
+cierto para las mediciones de PRESENCIA —cuántas guías R, cuántos armados,
+cuántas frenan—. Para las de AUSENCIA es al revés, y esa mitad no estaba
+escrita:
+
+| qué se mide | qué contesta una base PARADA | cómo se lee |
+|---|---|---|
+| **presencia** (cuántas hay de esto) | **cero** | "acá no hay problema" |
+| **ausencia** (cuántas NO tienen esto) | **casi todas** | "acá se trabaja mal" |
+
+Y las de ausencia son justo las que este proyecto viene construyendo:
+recepciones **sin** pesaje, renglones **sin** tildar, compras **sin** precio,
+guías R **sin** caja declarada. En una base que se abandonó a mitad de un día,
+todo lo que quedó a medio terminar queda a medio terminar **para siempre**, y
+eso es exactamente lo que una medición de ausencia cuenta.
+
+**Y EL TESTIGO NO SALVA, que es lo nuevo.** Contra el cero del 24 el testigo
+funciona: una población chica al lado explica el cero. Acá la población
+**está de verdad ahí** —los renglones existen, las recepciones existen— así
+que el denominador sale grande, el porcentaje sale grande, y la fila se lee
+como un dato sólido. `161 sin tildar de 181` trae su propio denominador y no
+dice en ninguna parte que esos 181 son de una base que dejó de trabajar en el
+medio. **El denominador certifica que se contó bien; no certifica que el
+conjunto siga vivo.**
+
+**El caso, y es el que costó el día**: Palmala dio **89% de renglones sin
+tildar**, y de ahí salió —mía— una conclusión sobre CÓMO SE TRABAJA ("el
+tilde se usa poco, el aviso va a disparar todos los días") que era un
+artefacto del abandono. Frutamax, que es la que opera, dio **0 de 1709**. Las
+dos filas tienen el mismo formato y dicen cosas opuestas; la que describe el
+negocio es la de la base viva, y la otra no describe nada.
+
+**La señal, y se hace al escribir el `where`**: si la consulta cuenta lo que
+FALTA, una base parada es su **peor caso**, no su caso vacío. Ahí el testigo
+hay que leerlo al revés de lo habitual — no *"¿hay suficiente población?"*
+sino *"¿esta población está VIVA, o es el residuo de lo que quedó sin
+terminar?"*. Y eso no lo contesta el número: lo contesta la última operación
+al lado, y cuando ni eso alcanza, el dueño (corolario 84).
+
+**Con qué engancha, y cierra el círculo**: el 24 dice que un cero de una base
+parada TRANQUILIZA; éste, que un número grande de una base parada ALARMA por
+lo que no es. Los dos son el corolario 6 —la medición falsa decide qué se
+arregla después— y acá estuvo a punto de decidir dos cosas: si la alerta se
+construía, y una conclusión sobre el galpón que nadie del galpón había dicho.
+
+### La alerta de renglones SIN TILDAR: medida, y NO se construye (19/09)
+
+`sin_tildar_1` en **Frutamax**, que es la única que cuenta:
+
+```
+0 sin tildar de 1709 renglones de días pasados
+```
+
+**Decisión del dueño: no se construye.** Y la razón hay que escribirla con
+precisión, porque la que sale sola es la equivocada: **no es que el aviso
+sería ruidoso — es que el caso NO EXISTE en Frutamax.** Hoy dispararía cero, y
+un aviso que dispara cero **no tiene contra qué probarse**: no hay forma de
+saber si el conjunto que cuenta es el correcto, ni si la unidad es la que va,
+ni si el texto manda a hacer lo que hay que hacer.
+
+**Y no es el corolario 64 dado vuelta.** El 64 dice que un aviso se ARREGLA
+cuando dispara cero, porque ahí es gratis, y que *un cero nunca es la razón
+para construir*. Acá no hay nada que arreglar: no hay un aviso puesto que
+proponga algo destructivo ni una puerta abierta que cerrar. Lo único que había
+era una alerta por escribir, y el cero dice que **todavía no tiene trabajo**.
+
+El caso que la motivó —el renglón de VL tildado 30 horas tarde— fue **uno solo
+y ya se resolvió**. Lo que sí quedó construido es lo que ataca ese caso de
+verdad: **el cartel de "estás armando un pedido de otro día"**, que avisa en
+el único momento en que alguien puede hacer algo al respecto.
+
+**Lo que queda listo para el día que aparezcan**:
+`db/sin_tildar_1_cuantos_hay.sql`, con sus cinco columnas de decisión
+—`de_AYER`, `de_MAS_DE_7`, `EN_PEDIDO_YA_TERMINADO`, el total como
+denominador y `PEDIDOS_CON_ALGUNO` para la unidad—. Se retoma corriéndola; no
+hay que volver a pensarla.
+
+**Y el 89% de Palmala no es este mismo número con otro signo**: es el
+corolario 88, y no describe cómo se trabaja. No se cita para nada.
 ## Corolario 80: una cuenta DERIVADA convierte "completar el dato" en "arreglarlo", y eso decide si hay que recargar
 
 Del 17/09, y es la propiedad que más veces salvó a este sistema, vista del

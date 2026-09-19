@@ -66,3 +66,22 @@ FROM sin;
 -- de hoy que NO tiene que contar, y uno tildado— y con el control de todo
 -- tildado: devuelve 2/17/2 con `de_MAS_DE_7 1` y `EN_PEDIDO_YA_TERMINADO 1`,
 -- y 0/0/0 con el control, sin que el denominador se mueva de 3.
+--
+-- CORRIDA Y DECISIÓN — 19/09. FRUTAMAX: `0 sin tildar de 1709 renglones de
+-- días pasados`. Todo tildado. **LA ALERTA NO SE CONSTRUYE**, y la razón es
+-- ésta y no la otra: NO es que el aviso sería ruidoso — es que **el caso no
+-- existe en Frutamax**, así que dispararía cero y no tendría contra qué
+-- probarse. El caso que la motivó (un renglón de VL tildado 30 horas tarde)
+-- fue uno solo y ya se resolvió; lo que quedó construido es el cartel de
+-- "estás armando un pedido de otro día", que avisa cuando todavía se puede
+-- hacer algo. Si algún día aparecen renglones sin tildar, se retoma con esta
+-- consulta: ya está escrita y probada, no hay que volver a pensarla.
+--
+-- PALMALA NO SE CITA. Dio 89% y eso NO describe cómo se trabaja: es una base
+-- parada, y una base parada contesta casi todo a una medición de AUSENCIA
+-- (corolario 88). Su denominador de 181 certifica que se contó bien, no que
+-- el conjunto siga vivo. Desde el 19/09 esa base no vota en nada.
+--
+-- (Este archivo pasa los 2500 caracteres y está bien: es UNA consulta
+-- `select`, no un `do $$`. Un corte le da un error de sintaxis y no escribe
+-- nada a medias, que es de lo que aquel límite protege.)
