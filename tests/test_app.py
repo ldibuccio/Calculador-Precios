@@ -4043,7 +4043,18 @@ def test_ver_detalle_compra_ingreso_directo_muestra_etiqueta_propia():
     assert "Ingreso directo en Depósito" in respuesta.text
 
 
-def test_ver_detalle_compra_recepcionada_muestra_boton_corregir_recepcion():
+def test_el_detalle_tiene_UNA_SOLA_puerta_a_gerencia():
+    """Del 19/09, y es del dueño: "eso es una pantalla partida en tres entradas".
+
+    El Detalle tenía DOS botones —"Corregir recepción", condicionado a la
+    recepcionada, y "Mover de fecha"— y los dos terminaban en la misma zona.
+    El destino ya era un hub y sigue ofreciendo Corregir recepción con la
+    MISMA condición, así que unificar no le cierra la puerta a nadie.
+
+    EL ASSERT ES EL CONTEO y no la presencia: afirmar que el hub está pasa
+    igual con los dos que sobran al lado (corolario 60, el conjunto
+    ENCONTRADO contra el DECIDIDO).
+    """
     with (
         patch("app.main.listar_fotos_de_recepcion", return_value=[]),
         patch("app.main.obtener_detalle_compra", return_value=COMPRA_DETALLE_DE_PRUEBA),
@@ -4053,10 +4064,22 @@ def test_ver_detalle_compra_recepcionada_muestra_boton_corregir_recepcion():
         respuesta = cliente.get("/compras/30/detalle")
 
     assert respuesta.status_code == 200
-    assert 'href="/gerencia/compras/30/corregir-recepcion"' in respuesta.text
+    marcado = respuesta.text.split("</style>")[-1]
+    puertas = re.findall(r'href="(/gerencia/[^"]+)"', marcado)
+    assert puertas == ["/gerencia/compras/30/editar"], puertas
+    assert "Corregir o eliminar compra (Gerencia)" in marcado
+    # Y la URL VIEJA no vuelve: /mover-fecha es un 301 desde que la pantalla
+    # creció, así que un botón que apunte ahí anda y nombra lo que ya no es.
+    assert "/mover-fecha" not in marcado
 
 
-def test_ver_detalle_compra_no_recepcionada_no_muestra_boton_corregir_recepcion():
+def test_la_puerta_a_gerencia_esta_TAMBIEN_en_la_compra_NO_recepcionada():
+    """Corregir o eliminar aplica a CUALQUIERA, y el botón viejo no.
+
+    "Corregir recepción" colgaba de `estado == "recepcionado"`. Si la puerta
+    única heredara esa condición, una compra pendiente se quedaría sin forma
+    de llegar a eliminarse — que es justo lo que el dueño fue a probar.
+    """
     compra = dict(COMPRA_DETALLE_DE_PRUEBA, estado="pendiente")
     with (
         patch("app.main.listar_fotos_de_recepcion", return_value=[]),
@@ -4067,7 +4090,9 @@ def test_ver_detalle_compra_no_recepcionada_no_muestra_boton_corregir_recepcion(
         respuesta = cliente.get("/compras/30/detalle")
 
     assert respuesta.status_code == 200
-    assert 'href="/gerencia/compras/30/corregir-recepcion"' not in respuesta.text
+    marcado = respuesta.text.split("</style>")[-1]
+    assert 'href="/gerencia/compras/30/editar"' in marcado
+    assert "/corregir-recepcion" not in marcado
 
 
 def test_ver_detalle_compra_con_rechazo_parcial_muestra_el_registro():
@@ -27059,8 +27084,15 @@ def test_el_detalle_de_la_compra_sigue_teniendo_el_boton_y_avisa_que_pide_clave(
     ):
         respuesta = cliente.get("/compras/30/detalle")
 
-    assert 'href="/gerencia/compras/30/corregir-recepcion"' in respuesta.text
-    assert "Gerencia" in respuesta.text
+    marcado = respuesta.text.split("</style>")[-1]
+    # El 19/09 las dos puertas se unificaron en el hub. La RAZÓN de este test
+    # no envejeció —que el botón avise de la clave— pero la URL que nombraba
+    # sí: apuntaba a una de las dos que se fueron.
+    assert 'href="/gerencia/compras/30/editar"' in marcado
+    # Y el aviso se mira EN EL BOTÓN: un "Gerencia" suelto en la respuesta lo
+    # cumple la barra, un comentario o la pantalla de al lado (corolario 4).
+    boton = re.search(r'<a[^>]*href="/gerencia/compras/30/editar"[^>]*>(.*?)</a>', marcado, re.S)
+    assert boton is not None and "(Gerencia)" in boton.group(1)
 
 
 # --- Corregir Recepción: la lista de dependencias y el segundo toque ---
@@ -31726,21 +31758,84 @@ def test_mover_de_fecha_con_la_guia_R_EN_ORIGEN_viva_NO_DIBUJA_EL_FORMULARIO():
     assert 'name="fecha_operacion"' not in marcado, "el formulario no va con la guía viva"
 
 
-def test_mover_de_fecha_esta_LINKEADO_desde_el_detalle_de_CUALQUIER_compra():
-    """El link va AFUERA del bloque de la recepción.
+def test_la_puerta_a_gerencia_no_cuelga_de_NINGUN_condicional():
+    """El link va AFUERA de todo `{% if %}`, y no solo del de la recepción.
 
-    Ese bloque solo se dibuja con la compra recepcionada, y mover de día aplica
-    a cualquiera: colgarlo ahí habría sido abrir la puerta para el subconjunto
-    equivocado — el barrido de pantallas linkeadas saldría en verde y no habría
-    forma de llegar desde la mayoría de las filas.
+    Corregir o eliminar aplica a CUALQUIERA: colgarlo de una condición es
+    abrir la puerta para el subconjunto equivocado — el barrido de pantallas
+    linkeadas saldría en verde y no habría forma de llegar desde la mayoría
+    de las filas.
+
+    ESTE TEST SE REESCRIBIÓ EL 19/09 y no se reapuntó, que es la diferencia.
+    La versión vieja partía el marcado por
+    `{% if compra.estado == "recepcionado" %}` para exigir que el link no
+    estuviera adentro. Al unificar las dos puertas ese `if` se fue del
+    archivo, así que el split devolvía UNA sola parte, el link estaba en ella
+    y el assert pasaba SIEMPRE — un test que no puede fallar (corolario 47),
+    con el nombre del que sí podía. Contar el balance de if/endif sí puede.
     """
     marcado = io.open("templates/compra_detalle.html", encoding="utf-8").read()
     marcado = marcado.split("</style>")[-1]
-    assert '/mover-fecha' in marcado
-    # y NO adentro del `{% if compra.estado == "recepcionado" %}` de la recepción
-    bloque = marcado.split('{% if compra.estado == "recepcionado" %}')
-    assert "/mover-fecha" in bloque[0] or "/mover-fecha" in bloque[-1].split("{% endif %}")[-1], (
-        "el link quedó adentro del bloque que solo ven las recepcionadas"
+    corte = marcado.find('href="/gerencia/compras/{{ compra.id }}/editar"')
+    assert corte != -1, "no está la puerta a Gerencia en el Detalle"
+
+    antes = marcado[:corte]
+    abiertos = len(re.findall(r"\{%-?\s*if\b", antes)) - len(re.findall(r"\{%-?\s*endif\b", antes))
+    assert abiertos == 0, f"la puerta quedó adentro de {abiertos} condicional(es)"
+
+
+def test_las_DOS_pantallas_de_compra_no_se_llaman_IGUAL():
+    """Hasta el 19/09 `compra_form.html` y `compra_editar_gerencia.html` se
+    titulaban las DOS "Editar compra".
+
+    Es lo que el dueño reportó como "no me queda claro cuál hace qué": dos
+    pantallas distintas —una edita el renglón, la otra mueve la fecha y
+    elimina— con el mismo nombre en la pestaña y en la barra. Es el nombre
+    repetido del 16/09 con un turno de distancia: no rompe nada, y se cobra
+    en la próxima lectura.
+
+    El assert compara el conjunto ENCONTRADO y no una lista escrita a mano:
+    la tercera pantalla de compras no la va a recordar nadie.
+    """
+    titulos = {}
+    nombres = sorted(n for n in os.listdir("templates")
+                     if n.startswith("compra") and n.endswith(".html"))
+    for nombre in nombres:
+        texto = io.open(os.path.join("templates", nombre), encoding="utf-8").read()
+        # LOS DOS NOMBRES: el de la pestaña y el de la BARRA, que es el que
+        # se lee en el celular y es donde el dueño los vio. Mirar uno solo
+        # deja la mitad sin cubrir — lo dijo el segundo canario.
+        crudos = (re.findall(r"<title>(.*?)</title>", texto, re.S)
+                  + re.findall(r'barra_titulo\s*=\s*"([^"]*)"', texto))
+        for crudo in crudos:
+            # UN TÍTULO CON `{% if %}` SON VARIOS, y hay que abrirlos: la
+            # primera versión de este test los SALTEABA, y el único con el
+            # que se podía chocar era justo ése —compra_form dice "Editar
+            # compra" en su rama `else`—, así que el test no podía encontrar
+            # la colisión que vino a buscar (corolario 47). Lo dijo el
+            # canario, no la lectura.
+            if "{{" in crudo:
+                continue  # interpolado: el título lo pone un dato, no el archivo
+            for rama in re.split(r"\{%.*?%\}", crudo, flags=re.S):
+                rama = " ".join(rama.split())
+                if rama:
+                    titulos.setdefault(rama, set()).add(nombre)
+
+    # DOS ARCHIVOS DISTINTOS, no dos apariciones: cada plantilla dice su
+    # nombre dos veces —la pestaña y la barra— y eso es lo que se quiere.
+    repetidos = {k: v for k, v in titulos.items() if len(v) > 1}
+
+    # Y la deliberada va ADENTRO de la lista, no afuera: el alta es UNA
+    # operación en dos pasos —primero el proveedor, después la compra— así
+    # que la barra dice lo mismo a propósito para que se vea que es el mismo
+    # trámite, y el <title> los separa ("Nueva compra: proveedor"). Dejarla
+    # afuera es cómo alguien le "arregla" el nombre creyendo que se olvidó.
+    COMPARTEN_A_PROPOSITO = {
+        "Nueva compra": {"compra_form.html", "compra_proveedor_form.html"},
+    }
+
+    assert repetidos == COMPARTEN_A_PROPOSITO, (
+        f"dos pantallas de compra con el mismo nombre: {repetidos}"
     )
 
 

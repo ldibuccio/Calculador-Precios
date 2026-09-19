@@ -287,9 +287,6 @@
       {% endif %}
     </div>
     {% endif %}
-    {% if compra.estado == "recepcionado" %}
-    <a class="boton-secundario" href="/gerencia/compras/{{ compra.id }}/corregir-recepcion">Corregir recepción (Gerencia)</a>
-    {% endif %}
   </div>
 
   {# LO QUE VOLVIÓ AL PROVEEDOR, que es el otro extremo del vínculo que
@@ -351,12 +348,24 @@
     </div>
   </div>
 
-  {# MOVER DE FECHA, y va ACÁ y no adentro del bloque de la recepción: ese
-     bloque solo se dibuja cuando la compra está recepcionada, y mover de día
-     aplica a CUALQUIERA. Colgarlo ahí habría sido abrir la puerta para el
-     subconjunto equivocado — el link existe, el barrido lo ve, y no hay forma
-     de llegar desde la mayoría de las filas. #}
-  <a class="boton-secundario" href="/gerencia/compras/{{ compra.id }}/mover-fecha">Mover de fecha (Gerencia)</a>
+  {# UNA SOLA PUERTA A GERENCIA, y es del dueño (19/09): "eso es una pantalla
+     partida en tres entradas". Acá había DOS botones —"Corregir recepción",
+     condicionado a la recepcionada, y "Mover de fecha"— y los dos terminaban
+     en la misma zona. El destino ya era un hub: /gerencia/compras/{id}/editar
+     mueve las dos fechas, elimina, y linkea Corregir recepción con la MISMA
+     condición que tenía este botón (estado == "recepcionado"), así que sacarlo
+     de acá no le cierra la puerta a nadie — le agrega un click.
+
+     Y va al hub por su URL REAL. El botón viejo apuntaba a /mover-fecha, que
+     desde que la pantalla creció es un 301 a /editar: andaba, y el nombre y la
+     URL decían los dos una pantalla que ya no existe.
+
+     SIGUE AFUERA del bloque de la recepción, y por la razón de siempre: ese
+     bloque solo se dibuja con la compra recepcionada y corregir o eliminar
+     aplica a CUALQUIERA. Adentro sería abrir la puerta para el subconjunto
+     equivocado — el barrido saldría en verde y no habría forma de llegar
+     desde la mayoría de las filas. #}
+  <a class="boton-secundario" href="/gerencia/compras/{{ compra.id }}/editar">Corregir o eliminar compra (Gerencia)</a>
 
   <a class="volver" href="/compras/buscar">Volver a Buscar Compras</a>
 {% include "_pie_version.html" %}
