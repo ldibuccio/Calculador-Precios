@@ -82,7 +82,10 @@ jobs:
           pip install playwright
           playwright install --with-deps chromium
 
-      - name: El HUMO — las 128 pantallas contra una base real
+      # Sin el numero de pantallas a proposito: era 128, hoy son 130, y el
+      # que lo escriba a mano lo deja vencido de nuevo en el proximo commit.
+      # El total lo cuenta `humo.py` y lo imprime al lado del resultado.
+      - name: El HUMO — todas las pantallas contra una base real
         # Va PRIMERO porque es el que ataca la clase de bug que llega a
         # producción, y contesta en diez segundos en vez de en dos minutos.
         run: python3 scripts/humo.py

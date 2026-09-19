@@ -8683,9 +8683,13 @@ un test mejor: es otra clase de evidencia.
 
 ### EL HUMO: `scripts/humo.py`, y se corre ANTES de desplegar
 
-Abre **las 128 pantallas** —las 135 rutas GET menos las declaradas— contra
-una base cargada con `db/esquema_completo.sql`, con las cookies de las cuatro
-puertas puestas y **sin un solo mock**. Está también como
+Abre **TODAS las pantallas** —las rutas GET menos las declaradas en
+`NO_SE_ABREN`— contra una base cargada con `db/esquema_completo.sql`, con las
+cookies de las cuatro puertas puestas y **sin un solo mock**. (Eran 128 el
+19/09 y son 130 el mismo día: **el número no se escribe a mano en ningún
+lado**, ni acá ni en el nombre del paso del CI, porque vence en el commit que
+agrega una pantalla y no lo rompe nada. Lo cuenta el humo y lo imprime al lado
+del resultado, que es el denominador del corolario 45.) Está también como
 `tests/test_humo.py`, que lo lanza en SUBPROCESO cuando hay Postgres.
 
     python3 scripts/humo.py        # sin pipe, y se mira el $?
