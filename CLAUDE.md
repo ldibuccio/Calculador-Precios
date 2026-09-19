@@ -6913,6 +6913,40 @@ sigue siendo la del corolario 22 — *¿este test afirma lo que hoy queremos que
 pase, o lo que pasaba?* — con la precisión de que acá la respuesta no está en
 el fixture sino en el comentario, y el comentario es el que convence.
 
+### Y el TERCER disparador: la razón contesta OTRA PREGUNTA que la de ahora (19/09)
+
+Tercera vez, y el disparador no es ninguno de los dos de arriba.
+`test_el_remanente_NO_dice_la_palabra_suelto_ni_totales_por_articulo`
+defendía que el Remanente **no muestre el total del artículo**, con esta
+razón escrita: *"sumar 4 sueltos y 5 en caja no le sirve a nadie que tenga
+que ir a buscarlas"*.
+
+**Sigue siendo cierta, palabra por palabra.** No envejeció la población
+—siempre fue la misma pantalla y la misma gente— ni el contenido de lo que
+se omitía. Lo que pasó es que **la pantalla se usa para dos cosas y la razón
+solo cubre una**: para IR A BUSCAR sirve la pila, y para ver si algo CIERRA
+hace falta el artículo entero. El dueño lo dijo con el caso: *"Cherry
+aparece como 41 y como 1 en dos renglones separados, y no hay ningún lugar
+donde lea 42"*.
+
+Los tres, juntos, porque se buscan distinto:
+
+| | qué cambió | cómo se encuentra |
+|---|---|---|
+| **corolario 68** | la POBLACIÓN (celular → escritorio) | escribir al lado para qué población vale |
+| **el segundo** | el CONTENIDO de lo que se omite | releer la razón el día que la cosa gana un campo |
+| **éste** | la PREGUNTA que se le hace a la pantalla | releerla cuando alguien la usa para algo nuevo |
+
+**Y el tercero es el único que no tiene un disparador en el código**: nadie
+tocó nada. Llega como una queja —"no hay ningún lugar donde lea 42"— y la
+respuesta correcta a esa queja es ir a buscar el test que la prohíbe, porque
+va a estar, con su razón al lado, sonando sensata.
+
+**Lo accionable**: cuando alguien pide un dato que la pantalla no muestra,
+antes de discutir si conviene, **grepear en `tests/` el assert que lo niega**.
+Si existe, la discusión no es "¿lo agregamos?" sino "¿para qué pregunta se
+escribió esa razón, y es la que nos están haciendo?".
+
 ### Por qué ningún test podía agarrarlo
 
 El test que cuida el camino al Detalle **estaba puesto y estaba verde**:
@@ -8166,6 +8200,42 @@ Y la causa de fondo es la de siempre en este archivo, en una herramienta:
 **`str.index` de un fragmento que aparece dos veces contesta por el primero.**
 Es el corolario 4 fuera de un assert — el ancla suelta que matchea al vecino,
 ahora cortando código en vez de verificándolo.
+
+## Y la SÉPTIMA lectura del canario en cero: el fixture dibuja UNA sola de las dos ramas
+
+Del 19/09. El Remanente pasó a agrupar por artículo, y con eso el nombre del
+artículo se dibuja en **dos lugares distintos según el caso**: en la CABECERA
+cuando hay varias porciones, y en el RENGLÓN cuando hay una sola (adentro de
+un grupo el renglón dice solo su parte — "Suelto", "Caja Día").
+
+Las dos necesitan `overflow-wrap`, y las dos lo tienen. El canario que se lo
+saca al RENGLÓN dio **0**.
+
+**Y no es ninguna de las seis causas escritas.** El test estaba bien, el
+canario rompía exactamente lo que decía romper, el pycache estaba limpio, la
+rama era alcanzable en producción y la suite corrió entera. Lo que pasaba es
+que **el fixture renombraba solo al artículo con cabecera**, así que el
+nombre largo no llegaba nunca al renglón: la regla existía, se aplicaba, y
+el caso que la ejercita no se estaba dibujando.
+
+**La señal, y se hace al escribir el fixture**: cuando un cambio crea DOS
+FORMAS de dibujar el mismo dato —agrupado y suelto, con cabecera y sin,
+primera vez y repetido— el fixture tiene que producir las dos. Si produce
+una, el canario de la otra da cero y el cero se lee como "el test cubre de
+más".
+
+Es el corolario 53 corrido al fixture de una PANTALLA en vez de al de una
+herramienta: allá la pregunta era *¿los casos plantados se PARECEN a las
+pantallas donde lo voy a usar?*; acá es **¿el fixture produce todas las
+ramas que este cambio acaba de crear?** — y la respuesta la da el canario,
+no la lectura.
+
+**Y de yapa confirmó una afirmación que yo había escrito sin medir.** El
+comentario del CSS decía que el desborde *"es MÁS VIEJO que el agrupado: el
+renglón ya tenía el problema"*. Con el fixture arreglado, sacarle el wrap al
+renglón hace caer el test — o sea que el renglón sí desborda solo, y la
+frase pasó de ser plausible a estar medida. El canario que no mordía era
+también el que no podía confirmarla.
 
 ## Corolario 80: una cuenta DERIVADA convierte "completar el dato" en "arreglarlo", y eso decide si hay que recargar
 
