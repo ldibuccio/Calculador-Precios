@@ -342,6 +342,7 @@ from app.db import (
     obtener_compra,
     obtener_detalle_compra,
     mover_compra_de_fecha,
+    lo_que_cuelga_de_la_compra,
     obtener_ficha,
     obtener_o_crear_cliente_puesto,
     buscar_proveedor_por_codigo,
@@ -5464,6 +5465,16 @@ def _borrar_fotos_del_storage(rutas, contexto: str) -> None:
             )
 
 
+def _eliminar_compra_y_su_foto_si_corresponde_forzado(compra_id: int) -> None:
+    """El de abajo, FORZANDO el bloqueo por estado. Mismo tratamiento de la foto.
+
+    Aparte y no un parámetro más: el de abajo lo llaman dos caminos sin clave
+    y un default que se pueda pisar por error es cómo una puerta de Gerencia
+    termina abierta en Buscar Compras.
+    """
+    _borrar_fotos_del_storage(eliminar_compra(compra_id, forzar=True), f"la compra {compra_id}")
+
+
 def _eliminar_compra_y_su_foto_si_corresponde(compra_id: int) -> None:
     """Borra una compra y sus fotos del Storage: la de balanza siempre, la de comanda si era la última que la usaba.
 
@@ -5862,7 +5873,7 @@ def _validar_fechas_de_la_compra(fecha_operacion: str, fecha_recepcion: str) -> 
     return None, valores
 
 
-def _renderizar_mover_fecha(
+def _renderizar_editar_gerencia(
     request: Request, compra_id: int, *, error=None, aviso=None,
     propuesta=None, status_code: int = 200
 ):
@@ -5894,6 +5905,18 @@ def _renderizar_mover_fecha(
         dependencias = _dependencias_con_nombres(
             compra_id, nueva_recepcion=recepcion_propuesta
         )
+        # QUÉ LE CUELGA, con la MISMA función que usa la escritura: la
+        # pantalla no puede ofrecer un botón que el POST después rechace.
+        cuelgan = lo_que_cuelga_de_la_compra(compra_id)
+        # Y LA CONSECUENCIA DE BORRAR es el lote yéndose a cero, que es la
+        # misma simulación de siempre con otro argumento. Solo se pregunta si
+        # el borrado es posible: calcularla para algo que no se puede hacer
+        # sería mostrar las consecuencias de un camino que no existe.
+        borrar = (
+            _dependencias_con_nombres(compra_id, nueva_cantidad=0)
+            if not cuelgan and compra.get("estado") == "recepcionado"
+            else None
+        )
     except HTTPException:
         raise
     except Exception as error_db:
@@ -5901,7 +5924,7 @@ def _renderizar_mover_fecha(
 
     return templates.TemplateResponse(
         request,
-        "compra_mover_fecha.html",
+        "compra_editar_gerencia.html",
         {
             "compra": compra,
             "marca": marca,
@@ -5911,6 +5934,8 @@ def _renderizar_mover_fecha(
             # y no en la plantilla, que no puede sumar días sin un filtro.
             "corte_minimo": (corte + timedelta(days=1)).isoformat() if corte else None,
             "dependencias": dependencias,
+            "cuelgan": cuelgan,
+            "borrar": borrar,
             "propuesta": propuesta or {},
             "error": error,
             "aviso": aviso,
@@ -5919,8 +5944,8 @@ def _renderizar_mover_fecha(
     )
 
 
-@app.get("/gerencia/compras/{compra_id}/mover-fecha")
-def ver_mover_fecha_compra(request: Request, compra_id: int, aviso: str = ""):
+@app.get("/gerencia/compras/{compra_id}/editar")
+def ver_editar_compra_gerencia(request: Request, compra_id: int, aviso: str = ""):
     """Mover una compra de día: su fecha, su guía y —si está recepcionada— su recepción.
 
     VIVE EN GERENCIA por dónde está la cookie: se emite con path="/gerencia",
@@ -5935,7 +5960,18 @@ def ver_mover_fecha_compra(request: Request, compra_id: int, aviso: str = ""):
     puerta = _puerta_de_gerencia_para_escribir(request)
     if puerta is not None:
         return puerta
-    return _renderizar_mover_fecha(request, compra_id, aviso=aviso.strip() or None)
+    return _renderizar_editar_gerencia(request, compra_id, aviso=aviso.strip() or None)
+
+
+@app.get("/gerencia/compras/{compra_id}/mover-fecha")
+def ver_mover_fecha_url_vieja(compra_id: int):
+    """La URL vieja: la pantalla se llamaba así cuando solo movía la fecha.
+
+    Redirige en vez de romper, igual que /compras/{id}/corregir-recepcion
+    cuando esa pantalla se mudó a Gerencia: un link guardado en el celular no
+    tiene por qué dejar de andar porque la pantalla creció.
+    """
+    return RedirectResponse(url=f"/gerencia/compras/{compra_id}/editar", status_code=301)
 
 
 @app.post("/gerencia/compras/{compra_id}/mover-fecha")
@@ -5965,12 +6001,12 @@ def mover_fecha_compra_ruta(
 
     error, propuesta = _validar_fechas_de_la_compra(fecha_operacion, fecha_recepcion)
     if error:
-        return _renderizar_mover_fecha(
+        return _renderizar_editar_gerencia(
             request, compra_id, error=error, propuesta=propuesta, status_code=400
         )
 
     if accion != "guardar":
-        return _renderizar_mover_fecha(request, compra_id, propuesta=propuesta)
+        return _renderizar_editar_gerencia(request, compra_id, propuesta=propuesta)
 
     try:
         movida = mover_compra_de_fecha(
@@ -5979,7 +6015,7 @@ def mover_fecha_compra_ruta(
     except ValueError as invalida:
         # Dato mal pedido, no una falla del sistema: se muestra en la pantalla,
         # nunca un 500.
-        return _renderizar_mover_fecha(
+        return _renderizar_editar_gerencia(
             request, compra_id, error=str(invalida), propuesta=propuesta, status_code=400
         )
     except Exception as error_db:
@@ -5989,8 +6025,50 @@ def mover_fecha_compra_ruta(
     if movida["quedo_vacia"]:
         aviso += f" La guía {movida['guia_vieja_id']} quedó sin renglones."
     return RedirectResponse(
-        url=f"/gerencia/compras/{compra_id}/mover-fecha?{urlencode({'aviso': aviso})}",
+        url=f"/gerencia/compras/{compra_id}/editar?{urlencode({'aviso': aviso})}",
         status_code=303,
+    )
+
+
+@app.post("/gerencia/compras/{compra_id}/eliminar")
+def eliminar_compra_gerencia_ruta(request: Request, compra_id: int, confirmado: str = Form("")):
+    """Borra una compra SALTEANDO el bloqueo por estado. La puerta de Gerencia.
+
+    Hasta hoy una compra recepcionada por error solo se arreglaba con SQL a
+    mano, y que la única salida sea ésa es el agujero de siempre: hoy es el
+    dueño, mañana es un operario que no puede.
+
+    LO QUE NO SE SALTEA es lo que le cuelga. `eliminar_compra(forzar=True)`
+    enumera las cuatro cosas que apuntan a una compra y rechaza nombrándolas
+    — medido el 19/09: sin eso, las cuatro llegan como un ForeignKeyViolation
+    crudo, que es el error que no dice qué lo retiene.
+
+    EL TILDE NO ALCANZA ACÁ y por eso no hay uno: lo que frena un dedazo no es
+    confirmar —el que se equivocó también está seguro— sino LEER qué se lleva
+    puesto. Eso está arriba del botón, con los bultos que quedan sin lote.
+    """
+    puerta = _puerta_de_gerencia_para_escribir(request)
+    if puerta is not None:
+        return puerta
+
+    if confirmado != "si":
+        return _renderizar_editar_gerencia(
+            request, compra_id, status_code=400,
+            error="Para borrar la compra hay que confirmar.",
+        )
+
+    try:
+        _eliminar_compra_y_su_foto_si_corresponde_forzado(compra_id)
+    except ValueError as invalida:
+        return _renderizar_editar_gerencia(
+            request, compra_id, error=str(invalida), status_code=400
+        )
+    except Exception as error_db:
+        raise HTTPException(status_code=500, detail=f"Error al conectar con la base de datos: {error_db}") from error_db
+
+    aviso = f"La compra {compra_id} se borró."
+    return RedirectResponse(
+        url=f"/compras/buscar?{urlencode({'aviso': aviso})}", status_code=303
     )
 
 

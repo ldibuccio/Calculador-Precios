@@ -9880,7 +9880,7 @@ PANTALLAS_QUE_MUESTRAN_LAS_DOS_MAGNITUDES = {
     "templates/administracion_ingresos.html": ("buscar_ingresos_deposito",),
     "templates/compra_corregir_recepcion.html": ("obtener_detalle_compra",),
     "templates/compra_detalle.html": ("obtener_detalle_compra",),
-    "templates/compra_mover_fecha.html": ("obtener_detalle_compra",),
+    "templates/compra_editar_gerencia.html": ("obtener_detalle_compra",),
     "templates/compras_buscar.html": ("buscar_compras",),
     "templates/compras_pendientes.html": ("listar_compras_sin_precio",),
     "templates/logistica_retiro.html": (
@@ -10542,3 +10542,85 @@ def test_mover_de_fecha_avisa_cuando_la_guia_VIEJA_queda_sin_renglones():
     # Y NO SE BORRA: ningún DELETE sobre guias_compra.
     assert not any("DELETE" in ll.args[0].upper() and "guias_compra" in ll.args[0]
                    for ll in cursor.execute.call_args_list)
+
+
+# ---------------------------------------------------------------------------
+# BORRAR UNA COMPRA FORZANDO EL BLOQUEO POR ESTADO (Gerencia)
+# ---------------------------------------------------------------------------
+
+
+def test_forzar_SALTEA_el_bloqueo_por_estado_y_borra():
+    """Una compra recepcionada por error hoy solo se arregla con SQL a mano, y
+    que la única salida sea ésa es el agujero de siempre."""
+    conexion, cursor = _conexion_falsa_con_varios_fetchall(
+        [(5,), (0,)],                 # el DELETE devuelve la guía; le quedan 0 renglones
+        [[], [], [], [], [], []],     # nada colgando, ni fotos
+    )
+    with patch("app.db.obtener_conexion", return_value=conexion):
+        db.eliminar_compra(77, forzar=True)
+
+    borrado = _sql_que_contiene(cursor, "DELETE FROM compras")
+    # SIN la condición de _SQL_COMPRA_BORRABLE: eso es lo que forzar saltea.
+    assert "estado IS DISTINCT FROM" not in borrado
+    conexion.commit.assert_called_once()
+
+
+def test_forzar_NO_saltea_lo_que_CUELGA_y_lo_NOMBRA():
+    """No es una política que Gerencia pueda pisar: son filas que apuntan acá,
+    y Postgres las defiende igual.
+
+    Medido el 19/09 contra el esquema real: sin esta guarda, las cuatro llegan
+    como un `ForeignKeyViolation` crudo — el error que no dice qué lo retiene
+    manda a adivinar.
+    """
+    conexion, cursor = _conexion_falsa_con_varios_fetchall(
+        [(5,), (0,)],
+        [[], [(31,)], [], [], []],    # fotos, consumos con R31, y el resto vacío
+    )
+    with patch("app.db.obtener_conexion", return_value=conexion):
+        with pytest.raises(ValueError, match="R31"):
+            db.eliminar_compra(77, forzar=True)
+
+    conexion.commit.assert_not_called()
+    assert not any("DELETE FROM compras" in ll.args[0] for ll in cursor.execute.call_args_list)
+
+
+def test_SIN_forzar_el_bloqueo_por_estado_SIGUE_PUESTO():
+    """El control, y es el que hace que el de arriba signifique algo: sin él,
+    una versión que forzara SIEMPRE los pasaría a los dos."""
+    conexion, cursor = _conexion_falsa_con_varios_fetchall(
+        [(5,), (0,)], [[], [], [], [], []],
+    )
+    with patch("app.db.obtener_conexion", return_value=conexion):
+        db.eliminar_compra(77)
+
+    borrado = _sql_que_contiene(cursor, "DELETE FROM compras")
+    assert "estado IS DISTINCT FROM" in borrado
+
+
+def test_lo_que_cuelga_enumera_LAS_CUATRO_y_dice_de_que_clase_es_cada_una():
+    """Las cuatro FK que no se pueden limpiar solas, medidas contra el esquema
+    real. `fotos_recepcion` NO está: la borra `eliminar_compra` él mismo,
+    porque el archivo es de ESTA compra y de ninguna otra.
+
+    Y cada fila dice de qué CLASE es, no solo el número: el que la lee tiene
+    que saber a qué pantalla ir a arreglarlo.
+    """
+    conexion, cursor = _conexion_falsa_con_varios_fetchall(
+        None, [[(31,)], [(32,)], [(9,)], [(4,)]],
+    )
+    with patch("app.db.obtener_conexion", return_value=conexion):
+        cuelgan = db.lo_que_cuelga_de_la_compra(77)
+
+    assert [c["que"] for c in cuelgan] == [
+        "guia_r_consumo", "guia_r_en_origen", "vale_de_vacios", "devolucion_al_proveedor",
+    ]
+    assert all(c["detalle"] for c in cuelgan), "cada una se NOMBRA, no se cuenta"
+
+
+def test_lo_que_cuelga_devuelve_VACIO_cuando_no_cuelga_nada():
+    """El caso feliz, y sin él una versión que devolviera siempre algo pasaría
+    todos los negativos (corolario 30)."""
+    conexion, _ = _conexion_falsa_con_varios_fetchall(None, [[], [], [], []])
+    with patch("app.db.obtener_conexion", return_value=conexion):
+        assert db.lo_que_cuelga_de_la_compra(77) == []

@@ -4734,8 +4734,100 @@ def _motivo_por_el_que_no_se_puede_eliminar(cursor, compra_id: int) -> str:
     )
 
 
-def eliminar_compra(compra_id: int) -> list[str]:
+def _lo_que_cuelga(cursor, compra_id: int) -> list[dict]:
+    """Qué apunta a esta compra y le impide desaparecer. Vacío = se puede borrar.
+
+    SON LAS CUATRO FK QUE NO SE PUEDEN LIMPIAR SOLAS. `fotos_recepcion` no
+    está acá a propósito: `eliminar_compra` la borra él mismo, porque el
+    archivo es de ESTA compra y de ninguna otra.
+
+    Medido el 19/09 contra el esquema real, sacándole el bloqueo por estado al
+    DELETE: con cualquiera de estas cuatro puesta, Postgres tira un
+    `ForeignKeyViolation` crudo. Un error que no dice qué lo retiene manda a
+    adivinar, así que se enumeran antes y se nombran.
+
+    LA MISMA FUNCIÓN la usan la pantalla (para mostrar por qué no se puede,
+    ANTES del botón) y la escritura (para rechazar). Preguntadas por separado,
+    un día la pantalla ofrece un botón que el POST después rechaza — el
+    callejón.
+
+    Cada fila es {"que", "detalle"}: `que` es la clase de cosa —para que el
+    que lo lee sepa a qué pantalla ir— y `detalle` la nombra.
+    """
+    cuelgan = []
+
+    cursor.execute(
+        """
+        SELECT DISTINCT rp.id FROM reprocesos_consumos rc
+        JOIN reprocesos rp ON rp.id = rc.reproceso_id
+        WHERE rc.compra_id = %s ORDER BY rp.id
+        """,
+        (compra_id,),
+    )
+    for (reproceso_id,) in cursor.fetchall():
+        cuelgan.append({"que": "guia_r_consumo",
+                        "detalle": f"R{reproceso_id} se costeó contra este lote"})
+
+    cursor.execute(
+        "SELECT id FROM reprocesos WHERE compra_origen_id = %s ORDER BY id",
+        (compra_id,),
+    )
+    for (reproceso_id,) in cursor.fetchall():
+        cuelgan.append({"que": "guia_r_en_origen",
+                        "detalle": f"R{reproceso_id} salió de esta compra, que vino armada"})
+
+    cursor.execute(
+        "SELECT id FROM vacios_deposito_devoluciones WHERE compra_id = %s ORDER BY id",
+        (compra_id,),
+    )
+    for (devolucion_id,) in cursor.fetchall():
+        cuelgan.append({"que": "vale_de_vacios",
+                        "detalle": f"el vale de vacíos {devolucion_id} cuelga de esta compra"})
+
+    cursor.execute(
+        "SELECT id FROM movimientos_stock WHERE compra_devolucion_id = %s ORDER BY id",
+        (compra_id,),
+    )
+    for (movimiento_id,) in cursor.fetchall():
+        cuelgan.append({"que": "devolucion_al_proveedor",
+                        "detalle": f"la devolución al proveedor {movimiento_id} dice que salió de acá"})
+
+    return cuelgan
+
+
+def lo_que_cuelga_de_la_compra(compra_id: int) -> list[dict]:
+    """`_lo_que_cuelga` con conexión propia, para la PANTALLA.
+
+    Dos funciones y UNA regla: la de adentro la usa `eliminar_compra` dentro
+    de su transacción, y ésta la pantalla, que no tiene ninguna abierta. Si la
+    pantalla escribiera su propia consulta, un día ofrece un botón que el POST
+    después rechaza.
+    """
+    conexion = obtener_conexion()
+    try:
+        with conexion.cursor() as cursor:
+            return _lo_que_cuelga(cursor, compra_id)
+    finally:
+        conexion.close()
+
+
+def eliminar_compra(compra_id: int, forzar: bool = False) -> list[str]:
     """Borra una compra (borrado real), salvo que ya haya pasado por Depósito o por un retiro de verdad.
+
+    `forzar` SALTEA EL BLOQUEO POR ESTADO y nada más. Es la puerta de
+    Gerencia: una compra recepcionada por error hoy solo se arregla con SQL a
+    mano, y que la única salida sea ésa es el agujero de siempre — hoy es el
+    dueño, mañana es un operario que no puede.
+
+    LO QUE NO SALTEA, Y NO SE PUEDE SALTEAR: lo que le cuelga. Si alguna guía
+    R se costeó contra este lote, o salió de esta compra, o hay un vale de
+    vacíos o una devolución que la nombra, el borrado se rechaza NOMBRANDO
+    cada una. No es una política que Gerencia pueda pisar: son filas que
+    apuntan acá, y Postgres las defiende igual — la diferencia es que así el
+    error dice qué lo retiene en vez de un ForeignKeyViolation crudo.
+
+    La política vive en el LLAMADOR (quién puede forzar) y la guarda de
+    integridad acá, que es donde se escribe.
 
     Quién decide es el SQL, no esta función: el DELETE lleva pegada la
     condición _SQL_COMPRA_BORRABLE —la misma que usa el Cancelar del día,
@@ -4787,10 +4879,24 @@ def eliminar_compra(compra_id: int) -> list[str]:
             )
             rutas_de_balanza = [f[0] for f in cursor.fetchall()]
 
-            cursor.execute(
-                f"DELETE FROM compras WHERE id = %s AND ({_SQL_COMPRA_BORRABLE}) RETURNING guia_id",
-                (compra_id,),
-            )
+            if forzar:
+                # LO QUE CUELGA SE MIRA IGUAL, y ANTES del DELETE: el
+                # ForeignKeyViolation llega sin decir cuál de las cuatro fue.
+                cuelgan = _lo_que_cuelga(cursor, compra_id)
+                if cuelgan:
+                    raise ValueError(
+                        "No se puede borrar esta compra todavía: "
+                        + "; ".join(c["detalle"] for c in cuelgan)
+                        + ". Anulá o corregí eso primero."
+                    )
+                cursor.execute(
+                    "DELETE FROM compras WHERE id = %s RETURNING guia_id", (compra_id,)
+                )
+            else:
+                cursor.execute(
+                    f"DELETE FROM compras WHERE id = %s AND ({_SQL_COMPRA_BORRABLE}) RETURNING guia_id",
+                    (compra_id,),
+                )
             fila = cursor.fetchone()
             if fila is None:
                 raise ValueError(_motivo_por_el_que_no_se_puede_eliminar(cursor, compra_id))

@@ -31474,7 +31474,7 @@ _SIN_DEPENDENCIAS = {"entraron": 10.0, "guias_r": [], "renglones": [], "salieron
                      "sin_lote_de_mas": 0.0, "guias_rotas": []}
 
 
-def _pantalla_de_mover(dependencias=None, marca=None, compra=None):
+def _pantalla_de_mover(dependencias=None, marca=None, compra=None, cuelgan=None):
     return (
         patch.dict(os.environ, {"CLAVE_GERENCIA": "secreta"}),
         patch("app.main.obtener_detalle_compra", return_value=compra or _COMPRA_A_MOVER),
@@ -31483,6 +31483,10 @@ def _pantalla_de_mover(dependencias=None, marca=None, compra=None):
         patch("app.main.dependencias_del_lote_de_compra",
               return_value=dependencias if dependencias is not None else _SIN_DEPENDENCIAS),
         patch("app.main.listar_clientes", return_value=[]),
+        # PARCHEAR ES, ÉL SOLO, UNA ASERCIÓN DE QUE app.main IMPORTA ESE
+        # NOMBRE: `mock.patch` levanta AttributeError si no está, antes de
+        # ejercitar una línea (corolario 51).
+        patch("app.main.lo_que_cuelga_de_la_compra", return_value=cuelgan or []),
     )
 
 
@@ -31491,7 +31495,7 @@ def test_mover_de_fecha_pide_la_clave_de_GERENCIA():
     salió de este lote y para quién, que es información de la plata."""
     cliente.cookies.clear()
     with patch.dict(os.environ, {"CLAVE_GERENCIA": "secreta"}):
-        respuesta = cliente.get("/gerencia/compras/77/mover-fecha", follow_redirects=False)
+        respuesta = cliente.get("/gerencia/compras/77/editar", follow_redirects=False)
     assert respuesta.status_code != 200
     assert "clave" in respuesta.text.lower()
 
@@ -31587,10 +31591,16 @@ def test_mover_de_fecha_SIMULAR_pregunta_por_LA_FECHA_QUE_SE_TIPEO():
         )
         import app.main as main
 
-        llamada = main.dependencias_del_lote_de_compra.call_args
+        llamadas = main.dependencias_del_lote_de_compra.call_args_list
     cliente.cookies.clear()
 
-    assert llamada.kwargs["nueva_recepcion"] == date(2026, 9, 17)
+    # SOBRE LA LISTA Y NO SOBRE call_args, que devuelve la ÚLTIMA. Esta
+    # pantalla le hace DOS preguntas distintas al mismo doble —"¿qué pasa si
+    # muevo la fecha?" y "¿qué pasa si la borro?"— así que mirar la última
+    # contesta la otra pregunta. Es el corolario 58 con el mock atendiendo dos
+    # llamadores en vez de dos momentos.
+    fechas = [ll.kwargs.get("nueva_recepcion") for ll in llamadas]
+    assert date(2026, 9, 17) in fechas, fechas
 
 
 def test_mover_de_fecha_SIMULAR_NO_ESCRIBE_NADA():
@@ -31764,3 +31774,151 @@ def test_mover_de_fecha_NO_SE_ARRASTRA_de_costado_con_un_nombre_que_no_se_puede_
         assert medicion["mirados"] > 30, f"{etiqueta}: se miraron {medicion['mirados']} elementos"
         assert medicion["fuera"] == [], f"{etiqueta}: {medicion['fuera']}"
         assert medicion["pagina"] == 0, f"{etiqueta}: la página desborda {medicion['pagina']}px"
+
+
+def test_la_pantalla_de_gerencia_NO_REPITE_la_cantidad_ni_el_precio_y_dice_donde_van():
+    """Los dos mandan a otra pantalla, y las razones son DISTINTAS — medidas
+    el 19/09 contra el esquema real:
+
+      · la CANTIDAD estimada de una compra recepcionada no mueve nada (todas
+        las cuentas usan COALESCE(real, estimado) y el real gana). Un campo
+        que no mueve nada es peor que no tenerlo: hace creer que se corrigió.
+      · el PRECIO no está bloqueado en ninguno de los dos estados donde SÍ
+        mueve algo, así que ya se edita donde siempre. Repetirlo sería la
+        misma escritura por dos puertas.
+
+    Y el test pregunta por la JERGA QUE NO PUEDE APARECER además del texto
+    bueno: afirmar el link pasa igual si quedó un input de cantidad abajo.
+    """
+    with ExitStack() as pila:
+        for cm in _pantalla_de_mover():
+            pila.enter_context(cm)
+        _con_clave_de_gerencia()
+        respuesta = cliente.get("/gerencia/compras/77/editar")
+    cliente.cookies.clear()
+
+    marcado = respuesta.text.split("</style>")[-1]
+    assert 'name="cantidad_cajones"' not in marcado
+    assert 'name="importe"' not in marcado
+    assert "/gerencia/compras/77/corregir-recepcion" in marcado
+    assert "/compras/77/editar" in marcado
+
+
+def test_la_pantalla_de_gerencia_NO_MANDA_a_corregir_el_precio_de_una_RECHAZADA():
+    """Esa compra no entra en ningún costeo, así que el precio no movería
+    ningún número — mandarla a corregirlo sería el link a un campo inútil.
+
+    Es el mismo criterio que la cantidad, aplicado al otro estado: el
+    mecanismo da dónde poner un destino; no inventa uno que no sirve.
+    """
+    rechazada = {**_COMPRA_A_MOVER, "estado": "rechazado"}
+    with ExitStack() as pila:
+        for cm in _pantalla_de_mover(compra=rechazada):
+            pila.enter_context(cm)
+        _con_clave_de_gerencia()
+        respuesta = cliente.get("/gerencia/compras/77/editar")
+    cliente.cookies.clear()
+
+    marcado = respuesta.text.split("</style>")[-1]
+    assert "no entra en ningún costeo" in marcado
+    assert "/compras/77/editar" not in marcado
+
+
+def test_borrar_NO_OFRECE_EL_BOTON_cuando_algo_cuelga_y_lo_nombra():
+    """Un botón que el POST después rechaza es un callejón, y eso es peor que
+    no ofrecerlo. La pantalla y la escritura preguntan con la MISMA función."""
+    with ExitStack() as pila:
+        for cm in _pantalla_de_mover(
+            cuelgan=[{"que": "guia_r_consumo", "detalle": "R31 se costeó contra este lote"}]
+        ):
+            pila.enter_context(cm)
+        _con_clave_de_gerencia()
+        respuesta = cliente.get("/gerencia/compras/77/editar")
+    cliente.cookies.clear()
+
+    marcado = respuesta.text.split("</style>")[-1]
+    assert "R31 se costeó contra este lote" in marcado
+    assert 'action="/gerencia/compras/77/eliminar"' not in marcado
+
+
+def test_borrar_OFRECE_EL_BOTON_cuando_no_cuelga_nada():
+    """El control del de arriba: sin él, una pantalla que nunca ofreciera el
+    botón pasaría igual (corolario 53 — el detector tiene que poder dar las
+    dos respuestas)."""
+    with ExitStack() as pila:
+        for cm in _pantalla_de_mover():
+            pila.enter_context(cm)
+        _con_clave_de_gerencia()
+        respuesta = cliente.get("/gerencia/compras/77/editar")
+    cliente.cookies.clear()
+
+    marcado = respuesta.text.split("</style>")[-1]
+    assert 'action="/gerencia/compras/77/eliminar"' in marcado
+
+
+def test_borrar_MUESTRA_los_bultos_que_van_a_quedar_SIN_LOTE():
+    """La consecuencia arriba del botón. El tilde no alcanza acá: lo que frena
+    un dedazo no es confirmar —el que se equivocó también está seguro— sino
+    LEER qué se lleva puesto."""
+    con_salidas = {**_SIN_DEPENDENCIAS, "sin_lote_de_mas": 6.0}
+    with ExitStack() as pila:
+        for cm in _pantalla_de_mover(dependencias=con_salidas):
+            pila.enter_context(cm)
+        _con_clave_de_gerencia()
+        respuesta = cliente.get("/gerencia/compras/77/editar")
+    cliente.cookies.clear()
+
+    marcado = respuesta.text.split("</style>")[-1]
+    assert "van a quedar sin lote" in marcado
+
+
+def test_borrar_desde_gerencia_PIDE_LA_CLAVE_y_FUERZA():
+    """La puerta primero, y la escritura recibe `forzar=True`: sin eso la ruta
+    existiría y rebotaría con el mismo bloqueo que vino a saltear."""
+    cliente.cookies.clear()
+    with patch.dict(os.environ, {"CLAVE_GERENCIA": "secreta"}):
+        sin_clave = cliente.post("/gerencia/compras/77/eliminar",
+                                 data={"confirmado": "si"}, follow_redirects=False)
+    # QUE PIDA LA CLAVE, no solo que "no sea 303": con la puerta sacada esta
+    # ruta revienta contra la base y un 500 tampoco es 303, así que el canario
+    # que le saca la puerta daba CERO. Un assert por la negativa no distingue
+    # "la frenó la puerta" de "se cayó antes de llegar".
+    assert "clave" in sin_clave.text.lower(), sin_clave.text[:200]
+
+    with ExitStack() as pila:
+        for cm in _pantalla_de_mover():
+            pila.enter_context(cm)
+        borrado = pila.enter_context(patch("app.main.eliminar_compra", return_value=[]))
+        pila.enter_context(patch("app.main.borrar_foto_comanda"))
+        _con_clave_de_gerencia()
+        respuesta = cliente.post("/gerencia/compras/77/eliminar",
+                                 data={"confirmado": "si"}, follow_redirects=False)
+    cliente.cookies.clear()
+
+    assert respuesta.status_code == 303
+    assert borrado.call_args.args == (77,)
+    assert borrado.call_args.kwargs == {"forzar": True}
+
+
+def test_borrar_desde_gerencia_SIN_confirmar_no_escribe():
+    """Un POST armado a mano sin el campo no borra: la guarda va donde se
+    escribe, no en el HTML."""
+    with ExitStack() as pila:
+        for cm in _pantalla_de_mover():
+            pila.enter_context(cm)
+        borrado = pila.enter_context(patch("app.main.eliminar_compra"))
+        _con_clave_de_gerencia()
+        respuesta = cliente.post("/gerencia/compras/77/eliminar", data={},
+                                 follow_redirects=False)
+    cliente.cookies.clear()
+
+    assert respuesta.status_code == 400
+    borrado.assert_not_called()
+
+
+def test_la_url_VIEJA_de_mover_fecha_sigue_andando():
+    """Un link guardado en el celular no tiene por qué dejar de andar porque
+    la pantalla creció."""
+    respuesta = cliente.get("/gerencia/compras/77/mover-fecha", follow_redirects=False)
+    assert respuesta.status_code == 301
+    assert respuesta.headers["location"] == "/gerencia/compras/77/editar"

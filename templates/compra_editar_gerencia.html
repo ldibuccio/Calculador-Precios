@@ -4,7 +4,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Mover de fecha</title>
+<title>Editar compra</title>
 <style>
   :root { font-family: -apple-system, system-ui, sans-serif; }
   body { margin: 0; padding: 1rem; background: #f5f5f5; color: #222; }
@@ -65,14 +65,37 @@
   .pared { background: #fee2e2; color: #991b1b; padding: 0.9rem 1rem; border-radius: 8px; margin-bottom: 1rem; font-size: 0.95rem; }
   .pared p { margin: 0 0 0.5rem; }
   .pared p:last-child { margin-bottom: 0; }
+  /* MANDA A OTRA PANTALLA. Gris y sin color de accion: no es algo que se
+     hace aca, es donde se hace. */
+  .manda { border: 1px solid #ddd; border-radius: 10px; padding: 0.9rem;
+           margin-bottom: 1rem; background: #fafafa; font-size: 0.95rem; }
+  .manda h3 { margin: 0 0 0.4rem; font-size: 1rem; }
+  .manda p { margin: 0 0 0.6rem; color: #444; line-height: 1.4; }
+  .manda p:last-child { margin-bottom: 0; }
+  .manda a { display: flex; align-items: center; justify-content: center;
+             min-height: 44px; padding: 0.7rem; border-radius: 8px;
+             background: #fff; color: #1d4ed8; border: 1px solid #1d4ed8;
+             font-weight: 700; text-decoration: none; text-align: center; }
+  /* BORRAR es rojo y va ultimo, separado del resto: lo unico de esta
+     pantalla que no se puede deshacer. */
+  .borrar { border: 1px solid #fecaca; border-radius: 10px; padding: 0.9rem;
+            margin-bottom: 1rem; background: #fff; }
+  .borrar h3 { margin: 0 0 0.4rem; font-size: 1rem; color: #991b1b; }
+  .borrar p { margin: 0 0 0.6rem; font-size: 0.95rem; color: #444; line-height: 1.4; }
+  .borrar ul { margin: 0 0 0.6rem; padding-left: 1.1rem; font-size: 0.9rem; color: #991b1b; }
+  .borrar button { width: 100%; min-height: 44px; padding: 0.8rem; border-radius: 8px;
+                   background: #b91c1c; color: #fff; border: none; font-size: 0.95rem;
+                   font-weight: 700; cursor: pointer; }
+  .borrar .no-se-puede { background: #fef2f2; color: #991b1b; border-radius: 8px;
+                         padding: 0.7rem 0.9rem; margin: 0; font-size: 0.9rem; }
   /* Un nombre largo sin espacios no tiene donde envolver: sin esto se sale
      de costado y la pagina se arrastra. */
-  .tarjeta, .dependencias, .consecuencia { overflow-wrap: anywhere; }
+  .tarjeta, .dependencias, .consecuencia, .manda, .borrar { overflow-wrap: anywhere; }
 </style>
 </head>
 <body>
   {% set barra_sector = "gerencia" %}
-  {% set barra_titulo = "Mover de fecha" %}
+  {% set barra_titulo = "Editar compra" %}
   {% set barra_atras = "/compras/" ~ compra.id ~ "/detalle" %}
   {% include "_barra_navegacion.html" %}
 
@@ -220,6 +243,69 @@
     {% endif %}
   </div>
   {% endif %}
+
+  {# LA CANTIDAD Y EL PRECIO MANDAN A OTRA PANTALLA, y no se repiten acá.
+     Medido el 19/09, y las dos razones son distintas:
+
+     · la CANTIDAD estimada de una compra recepcionada NO MUEVE NADA — todas
+       las cuentas usan COALESCE(real, estimado) y el real gana. Un campo que
+       no mueve nada es peor que no tenerlo: hace creer que se corrigió algo.
+     · el PRECIO no está bloqueado en ninguno de los dos estados donde mueve
+       algo (pendiente y recepcionado), así que ya se edita donde siempre.
+       Repetirlo acá sería la misma escritura por dos puertas. #}
+  {% if compra.estado == "recepcionado" %}
+  <div class="manda">
+    <h3>La cantidad</h3>
+    <p>La que cuenta es la <strong>real</strong>, la que Depósito pesó o contó. La
+      estimada ya no mueve ninguna cuenta: el stock, el costo y los vacíos usan la
+      real en cuanto existe.</p>
+    <a href="/gerencia/compras/{{ compra.id }}/corregir-recepcion">Corregir recepción</a>
+  </div>
+  {% endif %}
+
+  <div class="manda">
+    <h3>El precio</h3>
+    {% if compra.estado in ("rechazado", "no_ingresado") %}
+    <p>Esta compra no entra en ningún costeo{% if compra.estado == "rechazado" %} —
+      tuvo un rechazo total{% else %} — nunca ingresó al depósito{% endif %}, así que
+      cambiarle el precio no movería ningún número.</p>
+    {% else %}
+    <p>El precio se corrige en Editar Compra, que no pide clave. Se puede aunque la
+      compra ya esté recepcionada: es habitual renegociarlo después de que la
+      mercadería llegó.</p>
+    <a href="/compras/{{ compra.id }}/editar">Ir a Editar Compra</a>
+    {% endif %}
+  </div>
+
+  {# BORRAR VA ÚLTIMO Y SEPARADO: es lo único de esta pantalla que no se
+     deshace. Y lo que le cuelga se muestra ANTES del botón, con la MISMA
+     función que usa la escritura — un botón que el POST después rechaza es un
+     callejón, y eso es peor que no ofrecerlo. #}
+  <div class="borrar">
+    <h3>Borrar esta compra</h3>
+    {% if cuelgan %}
+    <p>No se puede todavía. Esto apunta a la compra:</p>
+    <ul>
+      {% for c in cuelgan %}
+      <li>{{ c.detalle }}</li>
+      {% endfor %}
+    </ul>
+    <p class="no-se-puede">Anulá o corregí eso primero y volvé.</p>
+    {% else %}
+    <p>Desaparece del sistema: no queda anulada, se borra. La guía
+      {%- if compra.guia_id %} {{ compra.guia_id }}{% endif %} se queda aunque no le
+      quede ningún renglón — el número es el papel del proveedor.</p>
+    {% if borrar and borrar.sin_lote_de_mas %}
+    <p><strong>{{ borrar.sin_lote_de_mas|numero }} bultos</strong> que hoy salen de este
+      lote van a quedar sin lote: ya salieron y esta mercadería deja de existir para
+      el sistema.</p>
+    {% endif %}
+    <form method="post" action="/gerencia/compras/{{ compra.id }}/eliminar">
+      <input type="hidden" name="confirmado" value="si">
+      <button type="submit">Borrar la compra {{ compra.id }}</button>
+    </form>
+    {% endif %}
+  </div>
 
 {% include "_pie_version.html" %}
 </body>
