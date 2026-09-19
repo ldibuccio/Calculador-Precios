@@ -104,12 +104,14 @@ jobs:
         shell: bash
         run: |
           set +e
-          python3 -m pytest tests/ -q -rs > /tmp/suite.txt 2>&1
+          python3 -m pytest tests/ -q -rfs > /tmp/suite.txt 2>&1
           ESTADO=$?
           echo "--- resumen ---"
           tail -5 /tmp/suite.txt
           echo "--- los que fallaron ---"
-          grep -E "^(FAILED|ERROR)" /tmp/suite.txt | head -30
+          grep -E "^FAILED" /tmp/suite.txt | head -35
+          echo "--- el primer traceback, para saber CUANTO se desvia ---"
+          sed -n "/_ test_/,/^_\{10,\}/p" /tmp/suite.txt | head -60
           echo "--- los salteados ---"
           grep -E "^SKIPPED" /tmp/suite.txt | head -20
           if grep -qE "[0-9]+ skipped" /tmp/suite.txt; then
