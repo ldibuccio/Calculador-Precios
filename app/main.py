@@ -401,7 +401,7 @@ from core.extracto_porcion import ETIQUETAS_MOVIMIENTO, SIN_EXPLICAR, armar_extr
 from core.rentabilidad import ETIQUETAS_GRUPO, calcular_rentabilidad_de_pedidos
 from core.costo_real import atribuir_costos_fifo, calcular_rentabilidad_real
 from core.costos_fijos import calcular_costos_fijos
-from core.stock import repartir_fifo, salidas_para_reparto
+from core.stock import reparto_a_la_fecha, repartir_fifo, salidas_para_reparto
 from core.exportar_rentabilidad import generar_excel_rentabilidad, generar_pdf_rentabilidad
 from core.exportar_rentabilidad_real import generar_excel_rentabilidad_real, generar_pdf_rentabilidad_real
 from core.exportar_pedidos import generar_excel_pedidos, generar_pdf_pedidos
@@ -9710,6 +9710,18 @@ def ver_extracto_de_porcion(request: Request, articulo_id: int, fecha: str | Non
             # una clave que no es suya (corolario 56). Acá ya estamos
             # adentro del prefijo y no se cruza ninguna.
             "articulo_id": articulo_id,
+            # EL DESGLOSE POR KILAJE, y SOLO en la porción suelta. Una porción
+            # de CAJAS no se parte: todas las cajas de una ficha tienen el
+            # mismo kilaje —lo dice `fichas_logistica.contenido_caja`, uno por
+            # ficha— así que su desglose sería una línea repitiendo el total.
+            # Si otro cliente recibe el mismo artículo en otro kilaje, eso es
+            # OTRA ficha y sale por su propia porción.
+            #
+            # Y la segunda tampoco: es un pool sin lotes propios.
+            "pilas": (
+                _pilas_de_cajones(articulo_id, hasta, quedo)
+                if ficha_id is None and not es_segunda else []
+            ),
             "volver": f"/administracion/stock/remanente?fecha={hasta.isoformat()}",
         },
     )
@@ -9973,53 +9985,17 @@ def ver_stock_articulo_deposito(request: Request, articulo_id: int):
     reparto = repartir_fifo(entradas, salidas_para_reparto(salidas))
     con_resto = [l for l in reparto["lotes"] if l["restante"] > 0]
     agotados = [l for l in reparto["lotes"] if l["restante"] <= 0]
-    # EL STOCK POR KILAJE. Sale de los MISMOS lotes que la lista de abajo, no
-    # de una cuenta nueva: las pilas suman exactamente el restante de este
-    # artículo porque son ese restante, agrupado. Una segunda consulta "que
-    # sume lo mismo" sería la quinta versión de la cuenta de stock, y las
-    # cuatro que hay ya se separaron entre sí una vez cada una.
-    contenidos = _contenidos_de(con_resto)
-    pilas = pilas_por_formato([
-        {
-            "contenido": (contenidos.get(f"{l['tipo_lote']}:{l['origen_id']}") or {}).get("contenido"),
-            "unidad": (contenidos.get(f"{l['tipo_lote']}:{l['origen_id']}") or {}).get("unidad"),
-            "bultos": l["restante"],
-        }
-        for l in con_resto
-    ])
     return templates.TemplateResponse(
         request,
         "deposito_stock_articulo.html",
         {
             "articulo": articulo,
             "patas": patas,
-            # UNA SOLA PILA NO SE MUESTRA: el número de arriba ya la dice, y
-            # 52 de los 57 artículos de las dos bases tienen un formato solo.
-            # Repetirlo en una tarjeta propia sería ruido en la pantalla que
-            # se abre justamente cuando un total no cuadra.
-            #
-            # Y NO SE MUESTRA SI NO CIERRA, que es la regla del dueño del
-            # 19/09: "un desglose que no cierra es peor que no tenerlo".
-            #
-            # LA IDENTIDAD, medida corriendo repartir_fifo y no leyéndola:
-            #
-            #     suma(restantes) = stock + sin_lote
-            #
-            # `stock` es `entradas − salidas` y los restantes solo bajan por
-            # las salidas que un lote ABSORBIÓ. Las que ningún lote cubre
-            # —`sin_lote`— le restan al total de arriba y no le restan a
-            # ninguna pila, así que la tarjeta suma de más EXACTAMENTE
-            # `sin_lote`. Con Cherry eso dio 58 contra 41: los 17 del hueco
-            # son los bultos que salieron sin que ningún lote los explique,
-            # y la pared del envase los produce a propósito (una salida de
-            # ficha con envase no puede consumir el cajón).
-            #
-            # No se "arregla" sumándole una pila al desglose: esos bultos ya
-            # NO ESTÁN en el depósito, así que ponerlos en una pila de
-            # formato sería inventar stock. Lo correcto es callarse, y el
-            # hueco ya tiene dónde verse — el renglón "salieron sin lote"
-            # de esta misma pantalla.
-            "pilas": pilas if len(pilas) > 1 and _pilas_cierran(pilas, reparto["stock"]) else [],
+            # EL DESGLOSE POR KILAJE NO ESTÁ ACÁ, y se fue el 19/09: vive en
+            # Movimiento, sobre la porción SUELTA, que es donde se mira el
+            # número que parte. Acá partía el total del ARTÍCULO —sueltos más
+            # cajas armadas— y por eso metía la primera de las guías R en una
+            # pila "sin formato declarado" que no son cajones crudos.
             "lotes": con_resto,
             "agotados": agotados,
             "sin_lote": reparto["sin_lote"],
@@ -11753,6 +11729,62 @@ def _guias_de_hoy_para_pantalla(tomado_hoy: list[dict]) -> list[dict]:
         {"numero": numero, "bultos": _formatear_numero(round(bultos, 2))}
         for numero, bultos in sorted(por_guia.items())
     ]
+
+
+def _pilas_de_cajones(articulo_id: int, hasta, total) -> list[dict]:
+    """De qué formato son los CAJONES CRUDOS que quedan de este artículo, a esa fecha.
+
+    SOLO LOS LOTES DE COMPRA, y es la corrección del dueño del 19/09: el
+    desglose por kilaje es sobre el cajón que llega del proveedor —Cherry
+    viene en cajones de 5, de 10 y de 15 mezclados bajo el mismo artículo— y
+    no sobre lo que ya se armó. La primera de una guía R es una CAJA, no un
+    cajón, y además su contenido no se guarda por caja: sale de
+    `fichas_logistica.contenido_caja`, uno por ficha. Por eso una porción de
+    cajas no se parte nunca y no se le dibuja nada.
+
+    Eso además hace desaparecer la pila "sin formato declarado", que era el
+    síntoma de estar mezclando las dos cosas: `contenido_por_bulto_de_lotes`
+    solo contesta por los lotes de compra, así que el reproceso, el reingreso
+    y el ajuste caían todos ahí.
+
+    Y CIERRA CONTRA LOS SUELTOS, medido corriendo `repartir_fifo` sobre tres
+    escenarios y no leyéndolo: con una guía R que toma 20 cajones y produce
+    17 cajas, los lotes de compra con restante suman exactamente
+    `stock − cajas en fichas`, que es el número del Remanente. Sigue cerrando
+    después de despachar esas cajas. **No cierra** cuando un despacho SIN
+    dirigir hace que el FIFO consuma el cajón más viejo en vez de la caja:
+    ahí la cuenta 2 (cajas por ficha) y la cuenta 3 (el FIFO rejugado) se
+    separan, que es el corolario 8 de siempre. Por eso la guarda no sobra.
+
+    El reparto sale de `reparto_a_la_fecha`, que ya existe y la usan el freno
+    del reproceso y los dos desgloses editables: escribir acá el recorte de
+    las dos puntas sería la segunda versión de una cuenta que el sistema ya
+    sabe hacer (corolario 85).
+    """
+    # SI NO SE PUEDE LEER, NO HAY DESGLOSE — pero la pantalla sale igual. Es
+    # la misma regla que el déficit de cajas de esta ruta: Movimiento contesta
+    # "de qué venía, qué le pasó y en qué quedó", y eso no puede depender de
+    # que se pueda rejugar el FIFO. El `except` es ANGOSTO para que un
+    # NameError explote como lo que es y no se vuelva una degradación muda
+    # (corolario 51).
+    try:
+        entradas, _reingresos, salidas = entradas_y_salidas_stock_articulo(articulo_id)
+    except psycopg2.Error:
+        logger.exception("No se pudo leer el reparto para el desglose por kilaje")
+        return []
+    reparto = reparto_a_la_fecha(entradas, salidas_para_reparto(salidas), hasta)
+    cajones = [l for l in reparto["lotes"] if l["restante"] > 0 and l["tipo_lote"] == "guia"]
+    contenidos = _contenidos_de(cajones)
+    pilas = pilas_por_formato([
+        {"contenido": (contenidos.get(f"{l['tipo_lote']}:{l['origen_id']}") or {}).get("contenido"),
+         "unidad": (contenidos.get(f"{l['tipo_lote']}:{l['origen_id']}") or {}).get("unidad"),
+         "bultos": l["restante"]}
+        for l in cajones
+    ])
+    # UNA SOLA PILA NO SE MUESTRA —el número de arriba ya la dice— y las que
+    # NO CIERRAN tampoco: un desglose que no suma el total es peor que no
+    # tenerlo, porque nadie va a sumar tres renglones para verificarlo.
+    return pilas if len(pilas) > 1 and _pilas_cierran(pilas, total) else []
 
 
 def _pilas_cierran(pilas: list[dict], stock) -> bool:

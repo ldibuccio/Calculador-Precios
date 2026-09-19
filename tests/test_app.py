@@ -17670,6 +17670,8 @@ def _extracto(url, eventos=None):
         patch("app.main.listar_ultimos_conteos_stock", return_value=[]),
         patch("app.main.eventos_de_stock_del_dia",
               return_value=EXTRACTO_EVENTOS if eventos is None else eventos),
+        # El desglose por kilaje de la porción suelta pide el reparto.
+        patch("app.main.entradas_y_salidas_stock_articulo", return_value=([], 0.0, [])),
         patch("app.main.fecha_corte", return_value=date(2026, 9, 5)),
         patch("app.main._hoy_argentina", return_value=date(2026, 9, 6)),
     ):
@@ -17701,6 +17703,8 @@ def _remanente_en_rojo(url="/administracion/stock/remanente?fecha=2026-09-17"):
         patch("app.main.total_reingresos_rechazo", return_value=0),
         patch("app.main.listar_ultimos_conteos_stock", return_value=[]),
         patch("app.main.eventos_de_stock_del_dia", return_value=EXTRACTO_EVENTOS),
+        # El desglose por kilaje de la porción suelta pide el reparto.
+        patch("app.main.entradas_y_salidas_stock_articulo", return_value=([], 0.0, [])),
         patch("app.main.fecha_corte", return_value=date(2026, 9, 5)),
         patch("app.main._hoy_argentina", return_value=date(2026, 9, 19)),
     ):
@@ -30414,98 +30418,179 @@ def _stock_de_articulo_con(contenidos, entradas=None):
         return cliente.get("/administracion/stock/sistema/1")
 
 
-def test_el_stock_por_kilaje_PARTE_lo_que_queda_y_las_pilas_SUMAN_el_total():
-    """El total de arriba suma bultos de tamaños distintos: acá está partido.
+def _movimiento_con_cajones(contenidos, entradas=None, salidas=None, stock=21.0):
+    """Movimiento de la porción SUELTA, que es donde vive el desglose desde el 19/09.
 
-    Y las pilas salen de LOS MISMOS LOTES que la lista de abajo, así que
-    suman el restante por construcción. Una consulta propia "que sume lo
-    mismo" sería la quinta versión de la cuenta de stock.
+    Los cuatro tests de la tarjeta vivían sobre `/administracion/stock/sistema`
+    y se mudaron con ella. Dejarlos allá era peor que borrarlos: los dos que
+    afirman una AUSENCIA habrían pasado en verde para siempre sobre una
+    pantalla que ya no dibuja ninguna tarjeta.
     """
-    respuesta = _stock_de_articulo_con({
+    filas = [{"articulo_id": 1, "nombre": "EJEMPLO Cherry", "stock": stock,
+              "segunda": 0.0, "grupo": "fruta"}]
+    with (
+        patch("app.main.stock_deposito_por_articulo", return_value=filas),
+        patch("app.main.cajas_armadas_por_ficha", return_value={}),
+        patch("app.main.listar_fichas_de_todos_los_clientes", return_value=[]),
+        patch("app.main.listar_clientes", return_value=REMANENTE_CLIENTES),
+        patch("app.main.total_reingresos_rechazo", return_value=0),
+        patch("app.main.listar_ultimos_conteos_stock", return_value=[]),
+        patch("app.main.eventos_de_stock_del_dia", return_value=EXTRACTO_EVENTOS),
+        patch("app.main.entradas_y_salidas_stock_articulo",
+              return_value=(entradas if entradas is not None else _entradas_de_dos_formatos(),
+                            0.0,
+                            salidas if salidas is not None else [])),
+        patch("app.main.contenido_por_bulto_de_lotes", return_value=contenidos),
+        patch("app.main.fecha_corte", return_value=date(2026, 9, 5)),
+        patch("app.main._hoy_argentina", return_value=date(2026, 9, 13)),
+    ):
+        return cliente.get("/administracion/stock/remanente/porcion"
+                           "?articulo_id=1&fecha=2026-09-13")
+
+
+def test_el_desglose_PARTE_los_cajones_y_las_pilas_SUMAN_el_total_de_la_porcion():
+    """Cherry llega en cajones de 5, de 10 y de 15 bajo el mismo artículo.
+
+    Las pilas salen de LOS LOTES DE COMPRA con restante —los cajones crudos—
+    y suman el "Quedó" de arriba, que es el número del Remanente para esa
+    porción. Cierra por construcción y no por coincidencia.
+    """
+    respuesta = _movimiento_con_cajones({
         "guia:601": {"contenido": 16.0, "unidad": "kilo"},
         "guia:602": {"contenido": 5.0, "unidad": "kilo"},
-    })
+    }, stock=14.0)
 
     assert respuesta.status_code == 200
     marcado = respuesta.text.split("</style>")[-1]
-    assert "De qué formato es lo que queda" in marcado
+    assert "De qué formato son" in marcado
     assert "Cajones de 5 k" in marcado
     assert "Cajones de 16 k" in marcado
-    # 10 + 4 = 14, que es el mismo número que el resumen de arriba.
-    assert "EJEMPLO Cherry: 14 bultos" in marcado
 
 
-def test_la_tarjeta_NO_SE_DIBUJA_cuando_las_pilas_no_suman_el_total():
-    """EL CABLEADO, y es la mitad que la guarda sola no prueba.
+def test_el_desglose_NO_VA_en_una_porcion_de_CAJAS():
+    """Todas las cajas de una ficha tienen el mismo kilaje: lo dice la ficha.
 
-    `_pilas_cierran` tiene sus dos tests, y el canario que la saca del
-    `TemplateResponse` los dejaba a los dos en verde: probaban la REGLA y no
-    que la pantalla la aplicara. Es el corolario 71 —una regla con tests y sin
-    llamador— corrido al cableado.
-
-    El caso es el de Cherry: una salida que ningún lote absorbe (acá dirigida
-    a un lote que no existe, que es lo que hace la pared del envase con el
-    cajón) le resta al total de arriba y no le resta a ninguna pila. 14 en las
-    pilas contra 11 arriba, y la tarjeta promete que son el mismo número.
+    `fichas_logistica.contenido_caja` es UNO por ficha, así que el desglose de
+    una porción de cajas sería una línea repitiendo el total. Si otro cliente
+    recibe el mismo artículo en otro kilaje, eso es OTRA ficha y sale por su
+    propia porción. Decisión del dueño, 19/09.
     """
-    # ANTERIOR a los dos lotes (que son del 12/09): un lote posterior a la
-    # salida no la puede cubrir, así que estos 3 quedan SIN LOTE. Dirigirla a
-    # un lote inexistente NO sirve —cae al FIFO y se absorbe— y ese fixture
-    # dejaba la tarjeta cerrando perfecto, o sea probando lo contrario.
-    salida_que_ningun_lote_cubre = [{
-        "orden": (date(2026, 9, 1), datetime(2026, 9, 1, 10)),
-        "cantidad": 3.0,
-    }]
+    # LAS CAJAS SUMAN EXACTAMENTE LO QUE SUMAN LOS CAJONES (14), así que la
+    # guarda de que cierre NO alcanza para esconder el desglose: lo único que
+    # puede es el filtro por `ficha_id`. Con un total distinto este test
+    # pasaba por el motivo equivocado —lo tapaba la guarda— y el canario que
+    # saca el filtro no lo hacía caer.
+    filas = [{"articulo_id": 1, "nombre": "EJEMPLO Cherry", "stock": 23.0,
+              "segunda": 0.0, "grupo": "fruta"}]
     with (
-        patch("app.main.obtener_articulo", return_value={"id": 1, "nombre": "EJEMPLO Cherry"}),
+        patch("app.main.stock_deposito_por_articulo", return_value=filas),
+        patch("app.main.cajas_armadas_por_ficha", return_value={(1, 99): 14.0}),
+        patch("app.main.listar_fichas_de_todos_los_clientes",
+              return_value=[{"id": 99, "cliente_id": 1, "articulo_id": 1,
+                             "nombre_cliente": "COD-1", "envase_id": None,
+                             "envase_variable": False, "contenido_caja": 5}]),
+        patch("app.main.listar_clientes", return_value=REMANENTE_CLIENTES),
+        patch("app.main.total_reingresos_rechazo", return_value=0),
+        patch("app.main.listar_ultimos_conteos_stock", return_value=[]),
+        patch("app.main.eventos_de_stock_del_dia", return_value=EXTRACTO_EVENTOS),
         patch("app.main.entradas_y_salidas_stock_articulo",
-              return_value=(_entradas_de_dos_formatos(), salida_que_ningun_lote_cubre)),
-        patch("app.main.stock_deposito_por_articulo", return_value=[]),
+              return_value=(_entradas_de_dos_formatos(), 0.0, [])),
         patch("app.main.contenido_por_bulto_de_lotes", return_value={
             "guia:601": {"contenido": 16.0, "unidad": "kilo"},
             "guia:602": {"contenido": 5.0, "unidad": "kilo"},
         }),
+        patch("app.main.fecha_corte", return_value=date(2026, 9, 5)),
+        patch("app.main._hoy_argentina", return_value=date(2026, 9, 13)),
     ):
-        respuesta = cliente.get("/administracion/stock/sistema/1")
+        respuesta = cliente.get("/administracion/stock/remanente/porcion"
+                                "?articulo_id=1&fecha=2026-09-13&ficha_id=99")
+
+    assert respuesta.status_code == 200
+    assert "De qué formato son" not in respuesta.text.split("</style>")[-1]
+
+
+def test_la_PRIMERA_de_una_guia_R_no_entra_en_el_desglose_de_cajones():
+    """Una caja armada no es un cajón crudo, y no tiene kilaje propio que declarar.
+
+    Este test decía lo contrario hasta el 19/09 —afirmaba una pila "Sin
+    formato declarado"— y esa pila era el síntoma de estar mezclando las dos
+    cosas: `contenido_por_bulto_de_lotes` solo contesta por los lotes de
+    compra, así que el reproceso, el reingreso y el ajuste caían todos ahí.
+
+    Con la primera afuera, las pilas cierran contra los sueltos: las 9 cajas
+    del lote de reproceso son exactamente las que el Remanente cuenta aparte.
+    """
+    con_una_guia_r = _entradas_de_dos_formatos() + [{
+        "orden": (date(2026, 9, 13), datetime(2026, 9, 13, 10)),
+        "tipo_lote": "reproceso", "origen_id": 433, "fecha_lote": date(2026, 9, 13),
+        "detalle": None, "motivo": None, "cantidad": 9.0}]
+    respuesta = _movimiento_con_cajones(
+        {"guia:601": {"contenido": 16.0, "unidad": "kilo"},
+         "guia:602": {"contenido": 5.0, "unidad": "kilo"}},
+        entradas=con_una_guia_r, stock=14.0)
 
     marcado = respuesta.text.split("</style>")[-1]
-    assert respuesta.status_code == 200
-    # Los dos formatos siguen existiendo: lo que falla es que no cierran.
-    assert "EJEMPLO Cherry: 11 bultos" in marcado
-    assert "De qué formato es lo que queda" not in marcado, \
-        "14 en las pilas contra 11 arriba: la tarjeta no puede salir"
-    # Y el hueco NO se pierde: tiene su propio renglón en esta misma pantalla.
-    assert "sin lote" in marcado.lower()
+    assert "Sin formato declarado" not in marcado
+    assert "De qué formato son" in marcado
+    assert "Cajones de 5 k" in marcado
 
 
-def test_con_UN_SOLO_formato_la_tarjeta_NO_aparece():
+def test_el_desglose_se_recorta_A_LA_FECHA_que_se_esta_mirando():
+    """Un cajón que entró DESPUÉS del día que se mira no puede estar en ese día.
+
+    Movimiento se abre a una fecha —es para eso— así que el reparto se recorta
+    con `reparto_a_la_fecha`, la misma que usan el freno del reproceso y los
+    dos desgloses editables. Sin el recorte, mirar el 13/09 mostraría el cajón
+    de 30 k que llegó el 14 y las pilas dejarían de sumar el total de ese día.
+
+    No lo distinguía ningún test: el canario que cambia `reparto_a_la_fecha`
+    por `repartir_fifo` daba CERO.
+    """
+    entro_despues = _entradas_de_dos_formatos() + [{
+        "orden": (date(2026, 9, 14), datetime(2026, 9, 14, 10)),
+        "tipo_lote": "guia", "origen_id": 603, "fecha_lote": date(2026, 9, 14),
+        "detalle": "EJEMPLO Dos", "motivo": None, "cantidad": 7.0}]
+    respuesta = _movimiento_con_cajones(
+        {"guia:601": {"contenido": 16.0, "unidad": "kilo"},
+         "guia:602": {"contenido": 5.0, "unidad": "kilo"},
+         "guia:603": {"contenido": 30.0, "unidad": "kilo"}},
+        entradas=entro_despues, stock=14.0)
+
+    marcado = respuesta.text.split("</style>")[-1]
+    assert "De qué formato son" in marcado
+    assert "Cajones de 30 k" not in marcado, "ese cajón llegó al día siguiente"
+
+
+def test_con_UN_SOLO_formato_el_desglose_NO_aparece():
     """52 de los 57 artículos de las dos bases tienen un formato solo.
 
-    Es la mitad que el caso bueno no puede ver: una tarjeta que sale siempre
-    repite el total de arriba en la pantalla que se abre justamente cuando un
-    total no cuadra.
+    Es la mitad que el caso bueno no puede ver: un desglose que sale siempre
+    repite el número de arriba. 18,7 contra 16 es 16,9%, el MISMO cajón pesado
+    dos veces — que es lo que pasa con Lima, Pepino y Cabutia.
     """
-    respuesta = _stock_de_articulo_con({
+    respuesta = _movimiento_con_cajones({
         "guia:601": {"contenido": 16.0, "unidad": "kilo"},
-        # 18,7 contra 16 es 16,9%: el MISMO cajón pesado dos veces, que es lo
-        # que pasa con Lima, Pepino y Cabutia. No es otro formato.
         "guia:602": {"contenido": 18.7, "unidad": "kilo"},
-    })
+    }, stock=14.0)
 
-    assert "De qué formato es lo que queda" not in respuesta.text.split("</style>")[-1]
+    assert "De qué formato son" not in respuesta.text.split("</style>")[-1]
 
 
-def test_el_lote_SIN_contenido_declarado_va_a_su_propia_pila_y_lo_dice():
-    """Un ajuste o el stock inicial no declaran formato.
+def test_el_desglose_NO_SE_DIBUJA_cuando_las_pilas_no_suman_la_porcion():
+    """EL CABLEADO de la guarda, y es la mitad que `_pilas_cierran` sola no prueba.
 
-    Repartirlos entre las otras pilas sería inventar; dejarlos afuera haría
-    que las pilas no sumen el total. Van con su nombre.
+    Sus dos tests probaban la REGLA, y sacarla del cálculo los dejaba a los
+    dos en verde. Acá el total de la porción dice 20 y los cajones suman 14:
+    la tarjeta promete que es el mismo número partido, así que se calla.
     """
-    respuesta = _stock_de_articulo_con({"guia:601": {"contenido": 16.0, "unidad": "kilo"}})
+    respuesta = _movimiento_con_cajones({
+        "guia:601": {"contenido": 16.0, "unidad": "kilo"},
+        "guia:602": {"contenido": 5.0, "unidad": "kilo"},
+    }, stock=20.0)
 
     marcado = respuesta.text.split("</style>")[-1]
-    assert "Sin formato declarado" in marcado
-    assert "Cajones de 16 k" in marcado
+    assert "Quedó" in marcado, "la pantalla sale igual: lo que se calla es el desglose"
+    assert "De qué formato son" not in marcado
 
 
 # ── La alerta de sin pesaje ────────────────────────────────────────────────

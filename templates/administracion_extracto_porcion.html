@@ -96,6 +96,10 @@
     line-height: 1.35;
   }
 
+  /* El mismo renglón que el movimiento de arriba: es la misma pantalla y
+     la misma lectura, no una tarjeta con vida propia. */
+  .linea.formato .que { color: #334155; }
+
   .volver {
     display: block;
     text-align: center;
@@ -157,6 +161,25 @@
     </p>
     {% endif %}
   </div>
+
+  {# DE QUÉ FORMATO SON LOS CAJONES QUE QUEDAN. Va abajo del movimiento
+     porque contesta la pregunta que deja el número de arriba: "quedó 41, ¿de
+     qué son esos 41?". Solo en la porción SUELTA — una porción de cajas no
+     se parte, porque todas las cajas de una ficha tienen el mismo kilaje.
+
+     Sin explicación: dos líneas y los números. Lo que hay que saber es el
+     reparto, y las pilas suman el total de arriba o no se dibujan. #}
+  {% if pilas %}
+  <div class="tarjeta">
+    <h2>De qué formato son</h2>
+    {% for pila in pilas %}
+    <div class="linea formato">
+      <span class="que">Cajones de {{ pila.contenidos|map("numero")|join(" y ") }}{{ " " ~ pila.unidad|sufijo_unidad }}</span>
+      <span class="cuanto">{{ pila.bultos|numero }}</span>
+    </div>
+    {% endfor %}
+  </div>
+  {% endif %}
 
   <a class="ir-al-detalle" href="/administracion/stock/sistema/{{ articulo_id }}">
     <span class="que">Ver el detalle del artículo</span>

@@ -152,34 +152,6 @@
   </div>
   {% endif %}
 
-  {# EL STOCK POR KILAJE. Sale solo cuando hay MÁS DE UN formato: con uno
-     solo el número de arriba ya se lee, y ése es el caso de 52 de los 57
-     artículos de las dos bases. La pantalla que se abre cuando un total no
-     cuadra no puede ganar una tarjeta que repite el total.
-
-     Y el corte que decide qué es "otro formato" está medido, no elegido:
-     25%, que parte al Cherry, la Batata, la Zanahoria Cubito y el Mango, y
-     deja afuera a Lima, Pepino y Cabutia, que son el mismo cajón pesado dos
-     veces. Ver core/kilajes.py. #}
-  {% if pilas %}
-  <div class="tarjeta">
-    <h2>De qué formato es lo que queda</h2>
-    <p class="ayuda-formato">El total de arriba suma bultos de tamaños
-      distintos. Acá está partido: lo que hay en cada formato.</p>
-    {% for pila in pilas %}
-    <div class="fila-formato">
-      <span class="formato">
-        {%- if pila.contenidos -%}
-          Cajones de {{ pila.contenidos|map("numero")|join(" y ") }}{{ " " ~ pila.unidad|sufijo_unidad }}
-        {%- else -%}
-          Sin formato declarado
-        {%- endif -%}
-      </span>
-      <span class="bultos-formato">{{ pila.bultos|numero }}</span>
-    </div>
-    {% endfor %}
-  </div>
-  {% endif %}
 
   <div class="tarjeta">
     <h2>Lo que queda, por lote (el más viejo primero)</h2>
