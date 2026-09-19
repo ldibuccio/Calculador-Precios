@@ -14,6 +14,7 @@ sin que nada avise.
 """
 
 import asyncio
+import io
 
 import pytest
 
@@ -58,6 +59,72 @@ def test_la_medicion_devuelve_los_TRES_numeros_juntos():
     """
     for clave in ("alto_fila", "quebradas", "desborde"):
         assert clave in _MEDICION, clave
+
+
+def test_TODA_funcion_que_ABRE_UN_NAVEGADOR_lleva_el_importorskip():
+    """Sin playwright, lo que abre un navegador SALTEA — nunca falla.
+
+    El docstring de arriba dice que playwright no es dependencia de este
+    proyecto y que la mitad que abre un navegador se saltea donde no está.
+    Eso estaba escrito y no estaba cuidado: el 19/09, `_medir` de
+    `test_vacios_deposito.py` no tenía la guarda y sus dos tests FALLABAN en
+    vez de saltearse.
+
+    Y LA GUARDA VA EN LA FUNCIÓN QUE ABRE EL NAVEGADOR, no en cada test que
+    la llama. Los otros dos helpers (`_remanente_medido` y `_medir_sobrantes`)
+    andaban solo porque TODOS sus llamadores se acordaron de ponerla — y el
+    que falte, por definición, no la nombra (corolario 3). Escrita una sola
+    vez donde se abre el navegador, no hay de qué acordarse.
+
+    Es estática a propósito: corre SIEMPRE, también donde playwright está
+    instalado, que es justo donde el defecto es invisible.
+    """
+    import ast
+    import glob
+
+    # POR LA POSICIÓN GRAMATICAL Y NO POR LA PALABRA (corolario 59). La
+    # primera versión buscaba "playwright" en el texto de la función y se
+    # marcó A SÍ MISMA: su docstring nombra la cosa que busca, que es la
+    # colisión garantizada del corolario 38. Un import en posición de import
+    # y una llamada en posición de llamada no aparecen en prosa.
+    ABREN = ("async_playwright", "medir_sync", "medir", "medir_sobrantes")
+
+    def abre_navegador(f):
+        for n in ast.walk(f):
+            if isinstance(n, ast.ImportFrom) and (n.module or "").startswith("playwright"):
+                return True
+            if isinstance(n, ast.Import) and any(a.name.startswith("playwright") for a in n.names):
+                return True
+            if isinstance(n, ast.Call) and isinstance(n.func, ast.Name) and n.func.id in ABREN:
+                return True
+            if isinstance(n, ast.Name) and n.id == "CHROMIUM":
+                return True
+        return False
+
+    def tiene_guarda(f):
+        return any(isinstance(n, ast.Call) and "importorskip" in ast.unparse(n.func)
+                   for n in ast.walk(f))
+
+    abren, sin_guarda = [], []
+    for ruta in sorted(glob.glob("tests/test_*.py")):
+        arbol = ast.parse(io.open(ruta, encoding="utf-8").read())
+        for f in arbol.body:
+            if not isinstance(f, (ast.FunctionDef, ast.AsyncFunctionDef)):
+                continue
+            if not abre_navegador(f):
+                continue
+            abren.append("%s::%s" % (ruta, f.name))
+            if not tiene_guarda(f):
+                sin_guarda.append("%s::%s" % (ruta, f.name))
+
+    # EL DENOMINADOR AL LADO: sin él, "ninguna sin guarda" y "no se miró
+    # ninguna" son el mismo cero (corolario 53). Si un renombre deja al
+    # detector sin nada que mirar, esto cae en vez de salir en verde.
+    assert len(abren) >= 10, "el detector no encontró funciones que abran navegador: %s" % abren
+    assert sin_guarda == [], (
+        "%d de %d abren un navegador SIN importorskip, así que sin playwright "
+        "FALLAN en vez de saltearse: %s" % (len(sin_guarda), len(abren), sin_guarda)
+    )
 
 
 # --- La mitad que necesita navegador ---------------------------------------

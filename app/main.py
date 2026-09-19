@@ -13587,6 +13587,20 @@ ALERTAS = [
         texto_link="Ver en Compras sin precio",
         # También en Comercial: el que factura es el que se come el problema.
         modulos=("compras", "comercial"),
+        # Y COMERCIAL VA A SU PROPIA PANTALLA DE ALERTAS, no a Compras sin
+        # precio: cargar el precio es de Compras y esa acción no se mueve,
+        # pero el link la mandaba contra la clave de Compras —que no es la
+        # suya— desde que /compras tiene puerta (12/09).
+        #
+        # No es un destino inventado: es el mismo que ya usan
+        # `kilos_faltantes` y `cajones_faltantes`. Desde el BANNER trae a ver
+        # el detalle —esta alerta tiene `detallar`, así que Comercial ve
+        # CUÁLES son sin cruzar ninguna puerta— y adentro de esa misma
+        # pantalla el link se esconde solo, porque apunta a donde ya estás.
+        #
+        # Lo que Comercial sigue sin poder es ACTUAR, y está bien: la alerta
+        # le dice qué no va a poder costear, no le pide que lo arregle.
+        destinos_por_sector={"comercial": ("/comercial/alertas", "Ver cuáles son")},
         # SIN ventana de tiempo, a propósito: si compré a la mañana y a la
         # tarde no está el precio, el costeo del día siguiente ya sale mal —
         # esperar 48 horas es enterarse tarde. Y tampoco desaparece por vieja:

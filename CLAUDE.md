@@ -5285,40 +5285,57 @@ escrita dos veces, en su versión más chica.
 
 ### Lo que el mecanismo NO hace, y hay que decirlo
 
-**Da dónde poner un destino; no inventa uno.** De los tres casos, dos se
-resolvieron —cada sector tiene una pantalla donde actuar— y el tercero no:
-`compras_sin_precio` se muestra en Comercial, y en Comercial **no hay a
-dónde mandarla**, porque la acción (cargar el precio de compra) vive en
-Compras y punto.
+**Da dónde poner un destino; no inventa uno.** Eso del mecanismo no cambia.
+Lo que sí cambió es el ESTADO que se anotaba al lado: de los tres casos, dos
+se resolvieron el 12/09 —cada sector tiene una pantalla donde actuar— y del
+tercero se escribió, en presente, que *"en Comercial no hay a dónde
+mandarla"*. **Los tres están cerrados desde el 19/09**, y el que faltaba se
+cerró sin inventar ningún destino: ver abajo.
 
-**EL `detallar` SE HIZO el 12/09 y NO cerró el caso**, que es la parte que
-esta sección se equivocaba en predecir: Comercial ve cuáles son desde su
-propia pantalla —dejó de recibir un número que no puede abrir— y **el link
-sigue apuntando a `/compras/pendientes`**, porque ahí es donde se carga el
-precio y esa acción no se mueve. Achicó el daño; no sacó el choque.
+**CERRADO EL 19/09, y la salida era la que este párrafo daba por
+inexistente.** Durante una semana esto dijo —y el comentario de la deuda en
+el test repetía— que *"en Comercial no hay a dónde mandarla"*. El destino
+existía y estaba descrito tres párrafos más abajo de la frase que lo negaba:
+**la pantalla de alertas de Comercial**, que desde el 12/09 muestra cuáles
+son porque la alerta tiene `detallar`.
 
-Cerrarlo del todo sigue siendo decisión de producto y ahora son dos:
-**sacarle el link a Comercial** o **sacarle el sector**. Queda anotado como
-deuda **en el test**, con la lista que falla si aparece una cuarta y también
-si una se arregla y queda en la lista (corolario 22: que la deuda no termine
-protegiendo algo que ya no pasa).
+Y el precedente estaba en el registro desde antes: `kilos_faltantes` y
+`cajones_faltantes` apuntan a la pantalla de alertas de SU propio sector,
+con su razón escrita en `alertas_sector.html` — *"desde el BANNER ese destino
+es el correcto, te trae a ver el detalle; adentro de esta pantalla es un link
+que recarga la misma página"*, y la plantilla lo esconde sola. O sea que no
+hubo que inventar ningún destino ni tocar el mecanismo: una línea de
+`destinos_por_sector`.
 
-Y vale como ejemplo de lo de arriba: *"ése se cierra dando `detallar`"* era
-una predicción escrita en presente, se cumplió a medias el mismo día, y
-quedó acá diciendo que faltaba hacer lo que ya estaba hecho.
+**Por qué la razón vieja convencía, que es lo que hay que llevarse**:
+contestaba *"¿dónde se ARREGLA?"* —y ahí seguía teniendo razón, la acción es
+de Compras y no se mueve— cuando la pregunta era **"¿a dónde puede IR el que
+la ve?"**. Es el corolario 68 en su tercera forma: no envejeció la población
+ni el contenido de lo omitido — la razón contestaba otra pregunta desde el
+principio, y por eso releerla no la delata. Lo que la delata es que alguien
+vuelva a preguntar.
 
-Y la razón por la que ese caso era el peor de los tres: **no tenía
-`detallar`, así que el link era su única forma de ver cuáles son.**
+**Medido en las dos puntas antes de darlo por hecho**, porque el destino se
+lee en dos lugares que hacen cosas opuestas:
 
-**Eso se cerró el mismo 12/09** —Comercial tiene su pantalla de alertas y la
-alerta tiene `detallar`, así que ve cuáles son sin cruzar ninguna puerta— y el
-párrafo quedó afirmando lo contrario hasta el 13/09. Es el corolario 2 con el
-agravante de que el que se olvidó fue ÉSTE archivo: se corrigió la copia que
-estaba en el comentario del test y no la de acá, que es la que alguien va a
-leer en tres meses.
+```
+                        banner                    su propia pantalla
+COMERCIAL   /comercial/alertas (era pendientes)   sin link (se esconde)
+COMPRAS     /compras/pendientes                   /compras/pendientes
+```
 
-Lo que sigue chocando es EL LINK, que apunta a donde se carga el precio y ahí
-se queda. La deuda se achicó; no se fue.
+Y la premisa del choque se verificó igual, aunque fuera la vieja: `GET
+/compras/pendientes` sin la cookie contesta **401**. La puerta de Compras
+cubre los GET, no solo los POST.
+
+**Lo que Comercial sigue sin poder es ACTUAR, y está bien**: la alerta le
+dice qué no va a poder costear, no le pide que lo arregle.
+
+**Y la deuda del test quedó VACÍA**, que es lo que hizo falta para cerrarla:
+el barrido resta en las dos direcciones, así que arreglar el link **rompió el
+test** con *"ya no chocan, sacalas de la deuda"* y obligó a sacar la entrada
+en el mismo commit. Una lista de deuda que no falla al arreglarse se queda
+protegiendo lo que ya no pasa (corolario 22), y ésta no pudo.
 
 ## Corolario 57: si una medición sobre HTML dice que DOS cosas cumplen una condición excluyente, sospechar del RECORTE
 

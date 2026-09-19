@@ -4596,6 +4596,53 @@ def test_las_alertas_de_COMERCIAL_ahora_TRAEN_SU_DETALLE():
     assert por_codigo["unidades_que_difieren"].detallar is not None
 
 
+def test_compras_sin_precio_manda_a_COMERCIAL_A_SU_PROPIA_PANTALLA():
+    """El link de Comercial caía en /compras/pendientes, que pide la clave de
+    Compras desde el 12/09. Medido: ese GET contesta 401 sin la cookie.
+
+    NO SE LE SACÓ EL SECTOR —el que factura es el que se come el problema, y
+    tiene que enterarse— ni se le sacó el link: va a la pantalla de alertas de
+    su propio sector, que es donde esta alerta YA muestra cuáles son (tiene
+    `detallar`). Es el mismo destino que usan `kilos_faltantes` y
+    `cajones_faltantes` desde antes, no uno inventado.
+
+    Y LAS DOS PUNTAS SE AFIRMAN, porque el destino se lee en dos lugares y
+    hacen cosas opuestas: desde el BANNER trae a ver el detalle, y adentro de
+    esa misma pantalla el link se esconde solo (apunta a donde ya estás).
+    Sin la segunda mitad, el arreglo dejaría un link que recarga la página.
+    """
+    from app.main import ALERTAS
+
+    alerta = next(a for a in ALERTAS if a.codigo == "compras_sin_precio")
+    assert alerta.modulos == ("compras", "comercial")
+    assert alerta.destinos_por_sector["comercial"] == ("/comercial/alertas", "Ver cuáles son")
+    # Y COMPRAS NO SE MUEVE: ahí la acción existe y el link tiene que llevar
+    # a donde se carga el precio.
+    assert alerta.url == "/compras/pendientes"
+
+    # La punta que el diccionario no puede afirmar: qué dibuja cada pantalla.
+    bloque_comercial = _bloque_de(_alertas_de("/comercial/alertas", ["compras_sin_precio"]),
+                                  "Compras sin precio de compra cargado")
+    assert "/compras/pendientes" not in bloque_comercial, "Comercial sigue mandando a la puerta ajena"
+    assert '<a class="link"' not in bloque_comercial, "el link a la propia pantalla recarga y no lleva a nada"
+
+    bloque_compras = _bloque_de(_alertas_de("/compras/alertas", ["compras_sin_precio"]),
+                                "Compras sin precio de compra cargado")
+    assert '<a class="link" href="/compras/pendientes">' in bloque_compras
+
+    # LA OTRA PUNTA, que es donde el destino de verdad se usa: el banner de
+    # Comercial. Sin esto el docstring afirmaría dos puntas y el test miraría
+    # una — la pantalla esconde el link igual aunque el destino vuelva a ser
+    # el ajeno, así que el bloque solo no lo puede ver.
+    foto = _foto_alertas({"compras_sin_precio": (4, None)})
+    with patch("app.main.listar_estado_alertas", return_value=foto):
+        comercial = cliente.get("/comercial")
+    cinta = comercial.text.split('class="banner-cinta"')[-1].split("</div>")[0]
+    assert "Compras sin precio de compra cargado (4)" in cinta, "el banner no dibujó la alerta"
+    assert 'href="/comercial/alertas"' in cinta
+    assert "/compras/pendientes" not in cinta
+
+
 # `unidad_conteo` va porque en producción va: es lo que el artículo declara
 # hoy, y es lo que separa "cargale el conteo" de "ya cuenta en otra unidad".
 # En None, como acá, el caso es el primero.
@@ -10756,7 +10803,12 @@ def test_ver_comercial_muestra_en_su_banner_solo_las_alertas_que_le_tocan():
     # UNA sola consulta para todo el banner, tenga el registro 15 alertas o 100.
     mock_foto.assert_called_once_with()
     assert "Compras sin precio de compra cargado (4)" in respuesta.text
-    assert 'href="/compras/pendientes"' in respuesta.text
+    # A SU PROPIA PANTALLA, no a /compras/pendientes: desde el 19/09 el
+    # destino de Comercial es el suyo, porque el viejo le pedía la clave de
+    # Compras (GET 401). El banner de COMPRAS, el test de acá abajo, sigue
+    # apuntando a donde se carga el precio — y que ése no se haya movido es
+    # lo que dice que el arreglo no se pasó de sector.
+    assert 'href="/comercial/alertas"' in respuesta.text
     assert "sin ficha logística o sin precio de venta" in respuesta.text
     assert "Mercadería sin retirar" not in respuesta.text
     # Arriba de los tres botones, no mezclado ni después.
@@ -18652,6 +18704,8 @@ def _remanente_medido(nombre=None):
     rompa el caso cómodo para aguantar el raro pasaría el primero sin que
     nada caiga.
     """
+    pytest.importorskip("playwright", reason="la medición de layout necesita un navegador")
+
     from scripts.medir_layout import medir_sync
 
     filas = REMANENTE_FILAS
@@ -30615,6 +30669,8 @@ async def _medir_sobrantes(html, pintar):
     renglón que se está probando no está — que es el cero del corolario 47 por
     el lado de lo que no se miró.
     """
+    pytest.importorskip("playwright", reason="la medición de layout necesita un navegador")
+
     from playwright.async_api import async_playwright
 
     from scripts.medir_layout import CHROMIUM

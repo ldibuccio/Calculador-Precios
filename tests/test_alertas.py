@@ -313,26 +313,26 @@ def test_en_COMPRAS_la_alerta_de_kilos_va_ANTES_que_la_de_bultos():
 
 # Las que HOY mandan a un sector contra la puerta de otro. NO es una lista de
 # casos aprobados: es deuda conocida, anotada para que una CUARTA no entre en
-# silencio. Cada una tiene que decidirse, y la de compras_sin_precio la
-# produjo la puerta de Compras del 12/09 (antes /compras no pedía nada).
-DEUDA_ALERTAS_CONTRA_PUERTA_AJENA = {
-    # LA ÚNICA QUE QUEDA, y no la arregla `destinos_por_sector`: Comercial la
-    # ve, el link cae en /compras/pendientes, y en Comercial NO HAY a dónde
-    # mandarla — la acción (cargar el precio de compra) vive en Compras y
-    # punto. El mecanismo da dónde poner un destino; no inventa uno.
-    #
-    # LO QUE YA SE HIZO (12/09), y por eso la entrada queda pero el motivo
-    # cambió: Comercial tiene su pantalla de alertas (/comercial/alertas) y
-    # esta alerta tiene `detallar`, así que ahí VE cuáles son las compras sin
-    # precio sin cruzar ninguna puerta. Ya no recibe un número que no puede
-    # abrir.
-    #
-    # Lo que sigue chocando es EL LINK: apunta a /compras/pendientes, que es
-    # donde se carga el precio, y esa acción no se puede mover. Cerrarlo del
-    # todo es decisión de producto —sacarle el link a Comercial, o sacarle el
-    # sector— y por eso la deuda no se borra: se achicó.
-    ("compras_sin_precio", "comercial"),
-}
+# silencio.
+#
+# VACÍA DESDE EL 19/09, y la última en salir fue `compras_sin_precio` en
+# Comercial. La entrada decía, textual, que "no la arregla
+# `destinos_por_sector`: en Comercial NO HAY a dónde mandarla". Esa razón era
+# cierta cuando se escribió y dejó de serlo el mismo 12/09, tres párrafos más
+# abajo de sí misma: ahí quedó anotado que Comercial YA TIENE su pantalla de
+# alertas y que esta alerta tiene `detallar`, o sea que el destino que la
+# entrada daba por inexistente estaba descrito en su propio comentario.
+#
+# Es el corolario 68 en su tercera forma: la razón no envejeció por cambiar
+# la población ni el contenido, sino porque contestaba OTRA pregunta —"¿dónde
+# se ARREGLA?", que sigue siendo Compras— cuando la que importaba era "¿dónde
+# puede IR el que la ve?". Y el precedente estaba a la vista: `kilos_faltantes`
+# y `cajones_faltantes` apuntan a la pantalla de alertas de su propio sector
+# desde antes.
+#
+# SE DEJA LA CONSTANTE, vacía: el test la resta en las dos direcciones, así
+# que sin ella habría que reescribirlo el día que aparezca la próxima.
+DEUDA_ALERTAS_CONTRA_PUERTA_AJENA = set()
 
 
 def test_NINGUNA_ALERTA_manda_a_un_sector_contra_la_puerta_de_otro():

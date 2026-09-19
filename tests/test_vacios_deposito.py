@@ -411,6 +411,11 @@ UN_NOMBRE_QUE_NO_SE_PUEDE_PARTIR = "PUESTODEEJEMPLOSINUNSOLOESPACIOPARAPARTIRLO"
 
 
 def _medir(html, **opciones):
+    # LA GUARDA VA DONDE SE ABRE EL NAVEGADOR, no en cada test: hasta el
+    # 19/09 no estaba y los dos de abajo FALLABAN sin playwright en vez de
+    # saltearse. Sus llamadores no tienen de qué acordarse.
+    pytest.importorskip("playwright", reason="la medición de layout necesita un navegador")
+
     from scripts.medir_layout import medir_sync
 
     return medir_sync(html, ancho=390, selector_filas=".tarjeta", **opciones)
