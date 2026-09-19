@@ -129,6 +129,21 @@
   }
   .aviso-fecha-titulo { margin: 0 0 0.5rem; font-size: 1.05rem; font-weight: 800; }
   .aviso-fecha p { margin: 0.6rem 0 0; font-size: 0.95rem; line-height: 1.35; }
+  /* EL AVISO DE LO QUE YA SALIÓ SIN LOTE. Es un dato, no una traba: no
+     depende de que el stock alcance y no impide guardar. Se pinta más
+     suave que la pared roja y que el aviso de fecha ámbar —los dos piden
+     una decisión— porque éste solo dice "mirá la fecha antes de seguir". */
+  .aviso-sin-lote {
+    background: #eff6ff;
+    border: 1px solid #bfdbfe;
+    border-radius: 10px;
+    padding: 0.9rem 1rem;
+    margin-bottom: 1rem;
+    color: #1e3a8a;
+    font-size: 0.95rem;
+    line-height: 1.4;
+  }
+  .aviso-sin-lote strong { font-weight: 800; }
   .pared-botones { display: flex; flex-wrap: wrap; gap: 0.5rem; margin-top: 0.75rem; }
   .boton-ir {
     flex: 1 1 45%;
@@ -228,6 +243,19 @@
     <p>Fijate también la fecha: si el reproceso fue otro día, cambiala acá abajo.</p>
     <p class="administracion">Si la compra no te aparece para recepcionar, esa la carga Administración: avisales antes de seguir.</p>
   </div>
+
+  {# LO QUE YA SALIÓ SIN LOTE ANTES DE ESTE DÍA. Pedido del dueño el 19/09,
+     y es la mitad PREVENTIVA de poder refechar una guía: si hay bultos de
+     este artículo que salieron sin que ninguna guía los cubra, lo más
+     probable es que estas cajas se hayan armado antes y la fecha de hoy
+     vuelva a dejarlos descubiertos.
+
+     NO ES UNA TRABA y no depende de que el stock alcance: se dibuja igual
+     cuando todo está bien, porque el momento en que sirve es mientras se
+     elige la fecha. Lo llena el JS con el desglose —el mismo `fetch` que ya
+     corre en cada cambio de artículo, fecha o bultos, y también al cargar la
+     pantalla— así que no hace falta una consulta más. #}
+  <div class="aviso-sin-lote" id="aviso-sin-lote" hidden></div>
 
   {# EL AVISO DE LA FECHA HACIA ATRÁS. Segundo toque, no pared: la fecha
      vieja es legítima —recién ahora se carga lo que pasó el lunes— pero
@@ -447,12 +475,27 @@
           TOCADO = false;
           EDITANDO = false;
           dibujarPared(datos, campos);
+          dibujarAvisoSinLote(datos, campos);
           dibujarDesglose(datos.alcanza);
         })
         .catch(function () {
           // Sin desglose se sigue: el freno de verdad está en el server y
           // no depende de que esta llamada haya salido bien.
         });
+    }
+
+    // Se ESCONDE cuando el número es cero: dejarlo con el texto de la
+    // consulta anterior diría que faltan guías de un artículo que ya no es
+    // el que está elegido.
+    function dibujarAvisoSinLote(datos, campos) {
+      const caja = document.getElementById("aviso-sin-lote");
+      const bultos = datos.sin_lote_antes || 0;
+      if (!(bultos > 0)) { caja.hidden = true; return; }
+      const fecha = campos.fecha ? campos.fecha.split("-").reverse().slice(0, 2).join("/") : "";
+      caja.textContent = "Antes del " + fecha + " salieron " + bultos + " bultos de "
+        + nombreArticulo() + " sin que ninguna guía R los cubra. "
+        + "Si estas cajas se armaron antes, poné acá el día en que se armaron.";
+      caja.hidden = false;
     }
 
     function nombreArticulo() {

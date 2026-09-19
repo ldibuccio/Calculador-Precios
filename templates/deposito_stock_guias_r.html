@@ -171,6 +171,29 @@
     line-height: 1.45;
     color: #92400e;
   }
+  /* EL MISMO MOLDE QUE "Corregir la ficha", y a propósito: son dos
+     correcciones de la misma tarjeta y pintarlas distinto haría que una
+     pareciera más grave que la otra. Solo cambia qué se corrige. */
+  .corregir-fecha { margin-top: 0.25rem; }
+  .corregir-fecha > summary {
+    cursor: pointer;
+    padding: 0.7rem 0.2rem;
+    font-size: 0.95rem;
+    font-weight: 700;
+    color: #1d4ed8;
+  }
+  .corregir-fecha .implica { margin: 0.2rem 0 0.5rem; font-size: 0.85rem; color: #555; line-height: 1.45; }
+  .asignar input[type="date"] {
+    flex: 1 1 60%;
+    padding: 0.7rem;
+    border: 1px solid #ccc;
+    border-radius: 8px;
+    font-size: 0.95rem;
+    box-sizing: border-box;
+    background: #fff;
+    /* Sin esto el date de iOS se sale de la tarjeta en 390px. */
+    min-width: 0;
+  }
   .asignar { display: flex; flex-wrap: wrap; gap: 0.5rem; margin-top: 0.5rem; }
   .asignar select {
     flex: 1 1 60%;
@@ -443,6 +466,33 @@
       <button type="submit">Guardar ficha</button>
     </form>
     </details>
+    {# CORREGIR EL DÍA EN QUE SE ARMÓ. Solo en las 'normal': la inicial es la
+       foto del corte y la de origen va con la fecha de su recepción, y la
+       escritura las rechaza a las dos. Ofrecer un botón que el POST después
+       rebota es un callejón — peor que no ofrecer nada.
+
+       Y arranca CERRADO siempre, al revés que el de la ficha: una guía sin
+       ficha está incompleta y completarla es lo que hay que hacer; una guía
+       con fecha nunca está incompleta —siempre tiene una— así que abrirlo
+       de entrada lo convertiría en un default. #}
+    {% if g.tipo == "normal" %}
+    <details class="corregir-fecha">
+      <summary>Corregir el día en que se armó</summary>
+      <p class="implica">La guía se fecha el día que se CARGA, y si las cajas se
+        armaron antes, las salidas de esos días quedan sin lote. <strong>El costo no
+        cambia</strong>: los consumos quedaron congelados. Lo que se mueve es qué
+        salidas puede cubrir esta primera.</p>
+      <form class="asignar" method="post" action="/administracion/stock/guias-r/{{ g.id }}/cambiar-fecha">
+        <input type="hidden" name="fecha_desde" value="{{ fecha_desde }}">
+        <input type="hidden" name="fecha_hasta" value="{{ fecha_hasta }}">
+        <input type="hidden" name="articulo_id" value="{{ articulo_id if articulo_id is not none else '' }}">
+        <input type="hidden" name="guia" value="{{ guia }}">
+        <input type="date" name="fecha" value="{{ g.fecha_operacion }}"
+               max="{{ hoy }}" required aria-label="Día en que se armó la guía R{{ g.id }}">
+        <button type="submit">Guardar fecha</button>
+      </form>
+    </details>
+    {% endif %}
     {% endif %}
     {# En una guía ANULADA no va NADA de esto: ni el cruce, ni el costo, ni
        el detalle de lotes. Lo tomado ya volvió a sus lotes y la primera

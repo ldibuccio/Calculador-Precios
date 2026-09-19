@@ -11243,8 +11243,15 @@ class StockInsuficienteParaReproceso(Exception):
 
 
 
-def _lo_tomado_hoy(cursor, articulo_id: int, fecha_operacion) -> list[dict]:
+def _lo_tomado_hoy(cursor, articulo_id: int, fecha_operacion, excepto: int | None = None) -> list[dict]:
     """Lo que las guías R YA CARGADAS de este artículo y este día se llevaron de cada lote.
+
+    `excepto` deja afuera UNA guía, y lo usa `cambiar_fecha_de_reproceso`:
+    al mover una guía a otro día hay que preguntarse si habría entrado ESE
+    día, y una guía que se descuenta a sí misma se rebota siempre. Es un
+    parámetro y no una segunda consulta porque la pregunta es la misma —qué
+    se llevó el día— y escrita dos veces se separa: el que lee dejaría de
+    encontrar lo que el que escribe guardó.
 
     Sale del documento congelado (`reprocesos_consumos`) y no de un
     rejuego, y es a propósito: lo que hay que restar no es lo que el FIFO
@@ -11266,9 +11273,10 @@ def _lo_tomado_hoy(cursor, articulo_id: int, fecha_operacion) -> list[dict]:
         JOIN reprocesos r ON r.id = rc.reproceso_id
         WHERE r.articulo_id = %s AND r.fecha_operacion = %s
           AND r.anulado_el IS NULL AND rc.origen <> 'sin_lote'
+          AND (%s::bigint IS NULL OR r.id <> %s)
         ORDER BY rc.reproceso_id
         """,
-        (articulo_id, fecha_operacion),
+        (articulo_id, fecha_operacion, excepto, excepto),
     )
     return [
         {"reproceso_id": fila[0], "origen": fila[1], "origen_id": fila[2], "bultos": float(fila[3])}
@@ -11348,6 +11356,19 @@ def lotes_para_reproceso(articulo_id: int, fecha) -> dict:
     freno adelantado: si acá no llegara, la pantalla diría que alcanza y el
     server rebotaría al apretar. La regla está escrita una vez
     (`descontar_lo_tomado_hoy`) y los dos la aplican sobre el mismo dato.
+
+    Y `sin_lote_antes`: cuántos bultos de este artículo ya habían salido SIN
+    QUE NINGÚN LOTE LOS CUBRA al cerrar el día ANTERIOR a la fecha elegida.
+    Pedido del dueño el 19/09, y es la mitad preventiva de poder refechar una
+    guía: ese número es el síntoma de que unas cajas se armaron antes y la
+    guía que las explica todavía no está — o está con la fecha del día que se
+    cargó. Verlo MIENTRAS se elige la fecha es lo que evita fabricar el
+    problema otra vez.
+
+    Sale de `reparto_a_la_fecha` sobre las MISMAS entradas y salidas que ya
+    se leyeron —ni una consulta más— y con el mismo recorte que el resto del
+    módulo: escribir acá una segunda versión de esa cuenta es exactamente lo
+    que el corolario 85 dice que devuelve números plausibles y falsos.
     """
     conexion = obtener_conexion()
     try:
@@ -11356,10 +11377,17 @@ def lotes_para_reproceso(articulo_id: int, fecha) -> dict:
             tomado_hoy = _lo_tomado_hoy(cursor, articulo_id, fecha)
     finally:
         conexion.close()
-    from core.stock import reparto_para_reproceso, salidas_para_reparto
+    from core.stock import reparto_a_la_fecha, reparto_para_reproceso, salidas_para_reparto
 
-    reparto = reparto_para_reproceso(entradas, salidas_para_reparto(salidas), fecha)
+    salidas_fifo = salidas_para_reparto(salidas)
+    reparto = reparto_para_reproceso(entradas, salidas_fifo, fecha)
     reparto["tomado_hoy"] = tomado_hoy
+    # La foto al CERRAR el día anterior: las dos puntas recortadas ahí, que
+    # es lo que hace que el número signifique "antes de este día" y no "antes
+    # o durante". Una guía del mismo día ya la está por cargar.
+    reparto["sin_lote_antes"] = reparto_a_la_fecha(
+        entradas, salidas_fifo, fecha - timedelta(days=1)
+    )["sin_lote"]
     return reparto
 
 
@@ -11467,6 +11495,84 @@ def _envase_de_esta_guia(cursor, ficha_id) -> tuple:
     return lleva, envase_id
 
 
+def _lotes_de_reproceso_a_su_fecha(
+    cursor, articulo_id: int, fecha_operacion, bultos_tomados, excepto: int | None = None
+) -> list[dict]:
+    """Los lotes contra los que se mide una guía R de ESA fecha, con los dos frenos aplicados.
+
+    Devuelve la lista ENTERA de lotes permitidos a esa fecha —la misma que
+    ve el operario en el desglose— y levanta:
+
+    - `ReprocesoAnteriorAlCorte` si la fecha cae antes del corte. Antes del
+      corte los datos están declarados no confiables y fuera del alcance del
+      FIFO nuevo: una guía R fechada ahí metería el FIFO nuevo adentro de lo
+      que el corte cerró. El corte sale de `corte_modelo` y NO de una
+      constante: se mueve cada vez que se hace un corte nuevo, y un 31/08
+      clavado en el código quedaría mintiendo el lunes siguiente.
+    - `StockInsuficienteParaReproceso` si lo declarado no entra.
+
+    EXISTE PORQUE HAY DOS PREGUNTAS IDÉNTICAS EN DOS MOMENTOS: la de
+    `_crear_reproceso` ("¿entra hoy?") y la de `cambiar_fecha_de_reproceso`
+    ("¿habría entrado ese otro día?"). Son la misma y por eso es una sola
+    función — la copia que se separara dejaría que una guía entrara por la
+    puerta de la corrección donde la de la carga la rebota.
+
+    `excepto` deja una guía afuera del descuento del día, y lo usa el que
+    mueve la fecha: una guía que se descuenta a sí misma se rebota siempre.
+
+    EL FRENO CUENTA EL MISMO DÍA; EL REPARTO NO. Son dos preguntas distintas
+    y hasta el 16/09 las contestaba la misma lista. El recorte asimétrico de
+    `reparto_para_reproceso` contesta "¿qué lotes había ese día?", y para eso
+    está bien que no descuente las salidas del día: adentro de un día no hay
+    orden que afirmar. El freno pregunta otra cosa —"¿cuánto se llevó ya el
+    día?"— y ESA no necesita orden: 30 y 26 no entran en 40 se haya cargado
+    primero cualquiera de las dos. Sin esto, cada guía R del día veía el lote
+    entero y de uno de 40 salieron 56 (56 lotes, 472 bultos medidos).
+
+    Se descuenta SOLO para el freno: lo que se devuelve son los lotes
+    ENTEROS, que es lo que usan la propuesta y la validación del reparto, así
+    que el desglose que vio el operario no cambia y el rebote queda donde la
+    suma ya no entra.
+    """
+    from core.stock import (
+        SALIDA_REPROCESO,
+        bultos_en_los_lotes,
+        descontar_lo_tomado_hoy,
+        lotes_permitidos,
+        reparto_para_reproceso,
+        salidas_para_reparto,
+    )
+
+    corte = _fecha_corte(cursor)
+    if fecha_operacion < corte:
+        raise ReprocesoAnteriorAlCorte(fecha_operacion, corte)
+
+    entradas, salidas = _entradas_y_salidas_stock(cursor, articulo_id, corte)
+    # Los lotes A LA FECHA DEL REPROCESO, con el recorte asimétrico de
+    # reparto_para_reproceso. El freno, el desglose que vio el operario y la
+    # escritura miran la MISMA lista: si midieran contra listas distintas, la
+    # pantalla aprobaría un reparto que después no se puede cumplir.
+    a_la_fecha = reparto_para_reproceso(entradas, salidas_para_reparto(salidas), fecha_operacion)
+    # LA PARED (pieza 2 de E5): una guía R no puede costearse contra una caja
+    # ya armada. El reparto de arriba sigue siendo la foto completa —los
+    # armados tienen que poder haberse comido esas cajas— y lo que se recorta
+    # es lo que ESTA salida puede tomar. Filtrar antes del reparto sería otra
+    # cosa: le devolvería a los cajones las salidas que comieron cajas.
+    lotes = lotes_permitidos(a_la_fecha["lotes"], SALIDA_REPROCESO)
+
+    tomado_hoy = _lo_tomado_hoy(cursor, articulo_id, fecha_operacion, excepto=excepto)
+    disponible = bultos_en_los_lotes(descontar_lo_tomado_hoy(lotes, tomado_hoy))
+    if round(float(bultos_tomados) - disponible, 2) > 0:
+        # Los lotes que viajan son los ENTEROS y no los netos: la pared dice
+        # "lo que había ese día", igual que el desglose, y lo que el día ya se
+        # llevó va aparte. Netos, el operario leería un lote en 10 sin nada
+        # que explique de dónde salió ese 10.
+        raise StockInsuficienteParaReproceso(
+            float(bultos_tomados), disponible, lotes, tomado_hoy
+        )
+    return lotes
+
+
 def _crear_reproceso(
     cursor,
     articulo_id: int,
@@ -11496,30 +11602,18 @@ def _crear_reproceso(
     """
     from core.stock import (
         SALIDA_REPROCESO,
-        bultos_en_los_lotes,
-        descontar_lo_tomado_hoy,
-        lotes_permitidos,
         origen_de_consumo,
         propuesta_fifo,
-        reparto_para_reproceso,
-        salidas_para_reparto,
         validar_reparto_declarado,
     )
 
-    # EL PISO DE LA FECHA, y va antes que nada porque es lo más
-    # barato de descartar. Antes del corte los datos están
-    # declarados no confiables y fuera del alcance del FIFO nuevo
-    # (Decisiones confirmadas, punto 7): una guía R fechada ahí
-    # metería el FIFO nuevo adentro de lo que el corte cerró, que
-    # es exactamente lo que el corte vino a evitar.
-    #
-    # Sale de corte_modelo y NO de una constante escrita acá: la
-    # fecha de corte se mueve cada vez que se hace un corte nuevo,
-    # y un 31/08 clavado en el código quedaría mintiendo el lunes
-    # siguiente sin que nada avise.
-    corte = _fecha_corte(cursor)
-    if fecha_operacion < corte:
-        raise ReprocesoAnteriorAlCorte(fecha_operacion, corte)
+    # LOS DOS FRENOS —el de la fecha y el del stock— y la lista de lotes
+    # contra la que se escribe. Viven en `_lotes_de_reproceso_a_su_fecha`
+    # desde el 19/09, porque el que MUEVE la fecha de una guía ya cargada
+    # tiene que preguntar exactamente lo mismo: "¿habría entrado ese día?".
+    # Escrito dos veces, la copia que se separe dejaría pasar por una puerta
+    # lo que la otra rechaza.
+    lotes = _lotes_de_reproceso_a_su_fecha(cursor, articulo_id, fecha_operacion, bultos_tomados)
 
     # EN QUÉ CAJA se armó esta primera. SALE DE LA FICHA y lo resuelve el
     # SERVER: no hay nada que preguntarle a nadie, porque no se puede armar en
@@ -11528,47 +11622,6 @@ def _crear_reproceso(
     # compra que vino armada— salgan con el dato puesto: el que falta, por
     # definición, no nombra la columna.
     lleva_caja, envase_de_la_caja = _envase_de_esta_guia(cursor, ficha_id)
-
-    entradas, salidas = _entradas_y_salidas_stock(cursor, articulo_id, corte)
-    # Los lotes A LA FECHA DEL REPROCESO, con el recorte asimétrico
-    # de reparto_para_reproceso. El freno, el desglose que vio el
-    # operario y esta escritura miran la MISMA lista: si midieran
-    # contra listas distintas, la pantalla aprobaría un reparto que
-    # acá no se puede cumplir.
-    a_la_fecha = reparto_para_reproceso(entradas, salidas_para_reparto(salidas), fecha_operacion)
-    # LA PARED (pieza 2 de E5): una guía R no puede costearse contra
-    # una caja ya armada. El reparto de arriba sigue siendo la foto
-    # completa —los armados tienen que poder haberse comido esas
-    # cajas— y lo que se recorta es lo que ESTA salida puede tomar.
-    # Filtrar antes del reparto sería otra cosa: le devolvería a los
-    # cajones las salidas que en realidad comieron cajas.
-    lotes = lotes_permitidos(a_la_fecha["lotes"], SALIDA_REPROCESO)
-
-    # EL FRENO CUENTA EL MISMO DÍA; EL REPARTO NO. Son dos preguntas
-    # distintas y hasta el 16/09 las contestaba la misma lista. El
-    # recorte asimétrico de `reparto_para_reproceso` contesta "¿qué
-    # lotes había ese día?", y para eso está bien que no descuente las
-    # salidas del día: adentro de un día no hay orden que afirmar. El
-    # freno pregunta otra cosa —"¿cuánto se llevó ya el día?"— y ESA no
-    # necesita orden: 30 y 26 no entran en 40 se haya cargado primero
-    # cualquiera de las dos. Sin esto, cada guía R del día veía el lote
-    # entero y de uno de 40 salieron 56 (56 lotes, 472 bultos medidos).
-    #
-    # Se descuenta SOLO acá: `lotes` sigue entero para la propuesta y
-    # para validar el reparto declarado, así que el desglose que vio el
-    # operario no cambia y el rebote queda donde la suma ya no entra.
-    tomado_hoy = _lo_tomado_hoy(cursor, articulo_id, fecha_operacion)
-    lotes_netos = descontar_lo_tomado_hoy(lotes, tomado_hoy)
-
-    disponible = bultos_en_los_lotes(lotes_netos)
-    if round(float(bultos_tomados) - disponible, 2) > 0:
-        # Los lotes que viajan son los ENTEROS y no los netos: la pared
-        # dice "lo que había ese día", igual que el desglose, y lo que el
-        # día ya se llevó va aparte. Netos, el operario leería un lote en
-        # 10 sin nada que explique de dónde salió ese 10.
-        raise StockInsuficienteParaReproceso(
-            float(bultos_tomados), disponible, lotes, tomado_hoy
-        )
 
     editados = False
     if reparto is None:
@@ -11638,6 +11691,139 @@ def _crear_reproceso(
              c["bultos"], c["costo_por_bulto"]),
         )
     return reproceso_id
+
+
+def cambiar_fecha_de_reproceso(reproceso_id: int, fecha_nueva) -> dict:
+    """Mueve la fecha de una guía R ya cargada. Devuelve {"articulo_id", "fecha_vieja", "fecha_nueva"}.
+
+    EL PROBLEMA QUE RESUELVE, y es del dueño (19/09): la guía se fecha el
+    día que se CARGA y no el día que se ARMÓ, así que no cubre las salidas
+    que la preceden y esos bultos quedan "sin lote" para siempre. Hasta hoy
+    la única salida era anular y recargar — "es la tercera vez esta semana
+    que algo se arregla así".
+
+    NO SE RECALCULA NADA. `reprocesos_consumos` es un documento congelado y
+    sigue diciendo de qué lote salió cada bulto, con su costo. Lo único que
+    se mueve es CUÁNDO ocurrió, que es lo que decide qué salidas puede
+    cubrir esa primera en el FIFO vivo — y como el stock se rejuega en cada
+    lectura, con eso alcanza: no hay una segunda columna que poner al día
+    (corolario 80).
+
+    LAS GUARDAS SON LAS DE LA CARGA, no unas propias. Se ESCRIBE primero y
+    se valida después, adentro de la misma transacción: así lo que se
+    pregunta es literalmente "¿esta guía habría entrado si se hubiera
+    cargado ese día?", con la guía ya puesta ahí y su propia toma fuera del
+    recorte. Si la respuesta es no, la excepción sale y no se commitea nada.
+
+    Lo que puede levantar, y todas son de `_lotes_de_reproceso_a_su_fecha`
+    o de `validar_reparto_declarado`, o sea las mismas que rebotan al
+    cargar:
+
+    - `ValueError`: no existe, está anulada, o no es una guía 'normal'.
+    - `ReprocesoAnteriorAlCorte`: la fecha cae antes del corte.
+    - `StockInsuficienteParaReproceso`: ese día no había con qué.
+    - `RepartoDesactualizado`: alguno de los lotes que la guía declaró
+      HABER CONSUMIDO todavía no existía ese día, o ya no llegaba. Es el
+      caso que el freno del total no puede ver: la suma entra y el lote
+      nombrado es del futuro.
+
+    Las 'inicial' y las 'en_origen' NO se mueven, y no es simetría: la
+    inicial ES la foto del corte y está fechada ahí por definición, y la
+    de origen es uno a uno con la recepción de su compra —moverla sola la
+    despegaría del hecho que la generó—. Corregir esa fecha es corregir la
+    recepción, que tiene su propia pantalla.
+    """
+    from core.stock import SALIDA_REPROCESO, origen_de_consumo, validar_reparto_declarado
+
+    conexion = obtener_conexion()
+    try:
+        with conexion.cursor() as cursor:
+            # SIN AGREGADO, para que `fila is None` signifique "no existe":
+            # un `count(*)` devuelve (0,) y la guarda no dispararía nunca.
+            cursor.execute(
+                """
+                SELECT articulo_id, fecha_operacion, bultos_tomados, tipo, anulado_el
+                FROM reprocesos WHERE id = %s FOR UPDATE
+                """,
+                (reproceso_id,),
+            )
+            fila = cursor.fetchone()
+            if fila is None:
+                raise ValueError("Esa guía R no existe.")
+            articulo_id, fecha_vieja, bultos_tomados, tipo, anulado_el = fila
+            if anulado_el is not None:
+                raise ValueError("Esa guía R está anulada: no se le puede cambiar la fecha.")
+            if tipo != "normal":
+                raise ValueError(
+                    "Esa guía R no se puede refechar: la inicial es la foto del corte y la de "
+                    "origen va con la fecha de su recepción."
+                )
+            if fecha_nueva == fecha_vieja:
+                return {"articulo_id": articulo_id, "fecha_vieja": fecha_vieja,
+                        "fecha_nueva": fecha_nueva}
+
+            cursor.execute(
+                "UPDATE reprocesos SET fecha_operacion = %s WHERE id = %s",
+                (fecha_nueva, reproceso_id),
+            )
+            # Con la guía YA en la fecha nueva: su propia toma queda fuera del
+            # recorte (las salidas se cortan al día anterior) y su propia
+            # primera es un lote 'reproceso', que `lotes_permitidos` le
+            # prohíbe a una guía R. O sea que no puede costearse a sí misma
+            # por ninguno de los dos lados.
+            lotes = _lotes_de_reproceso_a_su_fecha(
+                cursor, articulo_id, fecha_nueva, bultos_tomados, excepto=reproceso_id
+            )
+
+            # Y LOS CONSUMOS CONGELADOS TIENEN QUE SEGUIR SIENDO POSIBLES.
+            # El freno de arriba mira el TOTAL y esto mira los lotes POR
+            # NOMBRE: la suma puede entrar y el lote que la guía declaró
+            # puede ser de un día posterior al nuevo. Sin esto quedaría un
+            # documento apuntando a un lote del futuro, que es la misma
+            # trazabilidad rota que esta pantalla viene a arreglar.
+            cursor.execute(
+                """
+                SELECT origen, origen_id, bultos FROM reprocesos_consumos
+                WHERE reproceso_id = %s AND origen <> 'sin_lote'
+                """,
+                (reproceso_id,),
+            )
+            consumos = cursor.fetchall()
+            # El tipo_lote se busca por el MISMO camino que usa
+            # `descontar_lo_tomado_hoy` —de lote a origen, nunca al revés—
+            # para no estrenar una tabla inversa que se separe de la de ida.
+            tipo_por_origen = {
+                (origen_de_consumo(l["tipo_lote"]), l["origen_id"]): l["tipo_lote"]
+                for l in lotes
+            }
+            declarado = [
+                {"tipo_lote": tipo_por_origen.get((origen, origen_id)),
+                 "origen_id": origen_id, "bultos": float(bultos)}
+                for origen, origen_id, bultos in consumos
+            ]
+            # El TOTAL que se le pasa es la suma de los propios consumos, así
+            # que la rama del "no da los bultos que declaraste" NO PUEDE
+            # fallar acá — y se dice para que nadie la lea como verificada
+            # (corolario 41: una vuelta completa se ve igual que una lectura).
+            # Lo que esta llamada sí compra es la revisión LOTE POR LOTE:
+            # que cada uno exista a la fecha nueva, no esté prohibido y
+            # tenga restante. El total ya lo miró el freno de arriba, que es
+            # de donde tiene que salir.
+            #
+            # Y la suma NO se compara contra `bultos_tomados` a propósito:
+            # las guías viejas pueden tener un consumo 'sin_lote', que queda
+            # afuera de esta lista por diseño, así que exigir la igualdad
+            # rebotaría exactamente a las guías que esto viene a arreglar.
+            if declarado:
+                motivo = validar_reparto_declarado(
+                    lotes, sum(f["bultos"] for f in declarado), declarado, SALIDA_REPROCESO
+                )
+                if motivo is not None:
+                    raise RepartoDesactualizado(motivo)
+        conexion.commit()
+        return {"articulo_id": articulo_id, "fecha_vieja": fecha_vieja, "fecha_nueva": fecha_nueva}
+    finally:
+        conexion.close()
 
 
 def crear_reproceso_inicial(

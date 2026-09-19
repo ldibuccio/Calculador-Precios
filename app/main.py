@@ -264,6 +264,7 @@ from app.db import (
     StockInsuficienteParaReproceso,
     RepartoDesactualizado,
     ReprocesoAnteriorAlCorte,
+    cambiar_fecha_de_reproceso,
     SenaYaCobrada,
     ValeNoCaducable,
     contar_fichas_por_articulo,
@@ -11983,6 +11984,12 @@ def desglose_reproceso(articulo_id: int, fecha: str = "", bultos: float = 0):
             "alcanza": round(float(bultos) - disponible, 2) <= 0,
             "propuesta": propuesta,
             "guias_de_hoy": _guias_de_hoy_para_pantalla(reparto.get("tomado_hoy", [])),
+            # CUÁNTO SALIÓ SIN LOTE ANTES DE ESTE DÍA. No es un freno ni
+            # depende de `alcanza`: es el síntoma de que unas cajas se
+            # armaron antes y la guía que las explica falta —o está fechada
+            # el día que se cargó—, y se muestra MIENTRAS se elige la fecha,
+            # que es el único momento en que sirve.
+            "sin_lote_antes": reparto.get("sin_lote_antes", 0),
         }
     )
 
@@ -12496,6 +12503,11 @@ def ver_guias_r(request: Request, fecha_desde: str | None = None, fecha_hasta: s
             "sin_costo_posible": sin_costo_posible,
             "cruces_por_guia": cruces_por_guia,
             "fichas_por_articulo": fichas_por_articulo,
+            # El tope del selector de fecha. Va del server y no de JS: una
+            # guía R fechada mañana no la puede escribir nadie, y la ruta
+            # además lo revalida — la guarda va donde se ESCRIBE, y el `max`
+            # es la forma de cumplirlo cómodo.
+            "hoy": _hoy_argentina().isoformat(),
             "fecha_desde": desde.isoformat(),
             "fecha_hasta": hasta.isoformat(),
             # El selector se arma con TODOS los artículos y no con los que
@@ -12734,6 +12746,70 @@ def completar_costo_reproceso_ruta(
             f"{urlencode(_filtros_de_guias_r(fecha_desde, fecha_hasta, articulo_id, guia) | {'aviso': aviso})}",
         status_code=303,
     )
+
+
+@app.post("/administracion/stock/guias-r/{reproceso_id}/cambiar-fecha")
+def cambiar_fecha_de_reproceso_ruta(reproceso_id: int, fecha: str = Form(""),
+                                    fecha_desde: str = Form(""), fecha_hasta: str = Form(""),
+                                    articulo_id: str = Form(""), guia: str = Form("")):
+    """Corrige el DÍA en que se armó una guía R ya cargada.
+
+    VIVE ACÁ Y NO DETRÁS DE UNA CLAVE NUEVA, y la razón es la precondición:
+    esta pantalla ya está bajo `/administracion`, que es la misma puerta que
+    cubre ANULAR — que es la operación destructiva y el único camino que
+    había hasta hoy para corregir una fecha. Agregarle una clave propia a la
+    versión suave de algo que ya se puede hacer duro al lado no protege
+    nada: cambia de lugar el dedazo.
+
+    No recalcula nada: los consumos y el costo se congelaron al cargar. Lo
+    que se mueve es qué salidas puede cubrir esa primera en el FIFO, y eso
+    se rejuega en cada lectura.
+    """
+    parametros = _filtros_de_guias_r(fecha_desde, fecha_hasta, articulo_id, guia)
+    try:
+        fecha_valor = date.fromisoformat(fecha.strip())
+    except ValueError:
+        parametros["error"] = "La fecha no se entendió: elegí un día del calendario."
+        return RedirectResponse(url=f"/administracion/stock/guias-r?{urlencode(parametros)}", status_code=303)
+
+    if fecha_valor > _hoy_argentina():
+        parametros["error"] = "Esa guía R no se puede fechar en el futuro."
+        return RedirectResponse(url=f"/administracion/stock/guias-r?{urlencode(parametros)}", status_code=303)
+
+    try:
+        movida = cambiar_fecha_de_reproceso(reproceso_id, fecha_valor)
+    except ReprocesoAnteriorAlCorte as freno:
+        parametros["error"] = (
+            f"Guía R{reproceso_id}: no se puede fechar antes del corte "
+            f"({freno.corte.strftime('%d/%m/%Y')})."
+        )
+    except StockInsuficienteParaReproceso as freno:
+        # EL MISMO FRENO QUE AL CARGAR, dicho con los mismos números: ese
+        # día no había con qué. Se nombra lo declarado contra lo que había
+        # para que el que lee sepa qué ir a cargar, igual que la pared.
+        parametros["error"] = (
+            f"Guía R{reproceso_id}: el {fecha_valor.strftime('%d/%m/%Y')} no había con qué. "
+            f"Tomó {_formatear_numero(freno.declarado)} y ese día había "
+            f"{_formatear_numero(freno.disponible)}."
+        )
+    except RepartoDesactualizado as desfasado:
+        parametros["error"] = (
+            f"Guía R{reproceso_id}: {desfasado} Esa guía dice de qué lotes salió cada bulto, "
+            f"y a esa fecha alguno todavía no existía."
+        )
+    except ValueError as error:
+        parametros["error"] = f"Guía R{reproceso_id}: {error}"
+    except Exception as error_db:
+        parametros["error"] = f"No se pudo cambiar la fecha: {error_db}"
+    else:
+        if movida["fecha_vieja"] == movida["fecha_nueva"]:
+            parametros["aviso"] = f"Guía R{reproceso_id}: ya estaba con esa fecha."
+        else:
+            parametros["aviso"] = (
+                f"Guía R{reproceso_id}: quedó fechada el "
+                f"{movida['fecha_nueva'].strftime('%d/%m/%Y')}."
+            )
+    return RedirectResponse(url=f"/administracion/stock/guias-r?{urlencode(parametros)}", status_code=303)
 
 
 @app.post("/administracion/stock/guias-r/{reproceso_id}/anular")

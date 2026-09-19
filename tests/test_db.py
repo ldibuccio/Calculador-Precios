@@ -10115,3 +10115,251 @@ def test_el_rojo_a_su_fecha_NUNCA_mira_mas_atras_que_el_CORTE():
 
     assert pedidos == [date(2026, 9, 12), date(2026, 9, 6)], (
         f"el piso tiene que ser el MÁS NUEVO entre la ventana y corte+1, y fue {pedidos}")
+
+
+# ── Mover la fecha de una guía R ya cargada ────────────────────────────────
+#
+# Del 19/09, y es del dueño: "el error es fechar la guía el día que se carga
+# en vez del día que se armó, y la única salida hoy es anular y recargar. Es
+# la tercera vez esta semana que algo se arregla así".
+#
+# Las guardas NO son propias: son las mismas que rebotan al cargar, porque la
+# pregunta es la misma —"¿habría entrado ese día?"— y viven en
+# `_lotes_de_reproceso_a_su_fecha`. Lo único que esta función agrega es la
+# revisión LOTE POR LOTE de los consumos congelados, que es el caso que el
+# freno del total no puede ver.
+
+_GUIA_NORMAL = (1, date(2026, 9, 18), 10.0, "normal", None)
+
+
+def _mover_fecha(reproceso_id, fecha_nueva, *, guia=_GUIA_NORMAL, corte=date(2026, 8, 15),
+                 entradas=None, salidas=None, tomado_hoy=None, consumos=None):
+    """Las CUATRO lecturas en orden: entradas, salidas, lo tomado ese día y los consumos.
+
+    Medido corriendo la función, no leído: el orden de los `fetchall` es el
+    de las consultas que emite, y un fixture que los ponga al revés prueba
+    otra cosa con números plausibles.
+    """
+    conexion, cursor = _conexion_falsa(filas_fetchone=[guia, (corte,)])
+    cursor.description = COLUMNAS_LOTES
+    cursor.fetchall.side_effect = [
+        entradas if entradas is not None else [],
+        salidas if salidas is not None else [],
+        tomado_hoy if tomado_hoy is not None else [],
+        consumos if consumos is not None else [],
+    ]
+    with patch("app.db.obtener_conexion", return_value=conexion):
+        from app.db import cambiar_fecha_de_reproceso
+        try:
+            return conexion, cursor, cambiar_fecha_de_reproceso(reproceso_id, fecha_nueva), None
+        except Exception as levantada:
+            return conexion, cursor, None, levantada
+
+
+def test_mover_la_fecha_ESCRIBE_la_fecha_nueva_y_no_toca_nada_mas():
+    """Lo único que se mueve es CUÁNDO ocurrió.
+
+    Los consumos y el costo quedaron congelados al cargar, y el stock se
+    rejuega en cada lectura: completar el dato de origen ES el arreglo, no
+    hay una segunda columna que poner al día (corolario 80). Por eso el test
+    afirma las dos mitades — que el UPDATE escriba la fecha, y que no haya
+    NINGÚN otro UPDATE ni INSERT.
+    """
+    conexion, cursor, movida, error = _mover_fecha(
+        7, date(2026, 9, 15),
+        entradas=[_lote_compra(101, date(2026, 9, 10), 20.0, 1000.0)],
+        consumos=[("compra", 101, 10.0)],
+    )
+
+    assert error is None, error
+    assert movida["fecha_vieja"] == date(2026, 9, 18)
+    assert movida["fecha_nueva"] == date(2026, 9, 15)
+    conexion.commit.assert_called_once()
+
+    sql, parametros = _sql_y_parametros_que_contienen(cursor, "UPDATE reprocesos SET fecha_operacion")
+    assert parametros == (date(2026, 9, 15), 7)
+    escrituras = [ll.args[0] for ll in cursor.execute.call_args_list
+                  if "UPDATE " in ll.args[0] or "INSERT INTO" in ll.args[0]]
+    assert escrituras == [sql], f"no puede tocar nada más, y tocó {escrituras}"
+
+
+def test_mover_la_fecha_REBOTA_si_ese_dia_no_habia_con_que():
+    """El MISMO freno que al cargar, y por eso no está escrito acá.
+
+    Una guía que tomó 10 movida a un día en que solo había 5 no se puede
+    haber armado ese día. Es `StockInsuficienteParaReproceso`, la misma
+    excepción que levanta la carga.
+    """
+    conexion, cursor, movida, error = _mover_fecha(
+        7, date(2026, 9, 15),
+        entradas=[_lote_compra(101, date(2026, 9, 10), 5.0, 1000.0)],
+        consumos=[("compra", 101, 10.0)],
+    )
+
+    assert isinstance(error, StockInsuficienteParaReproceso), error
+    assert error.declarado == 10.0
+    assert error.disponible == 5.0
+    conexion.commit.assert_not_called()
+
+
+def test_mover_la_fecha_REBOTA_si_el_lote_que_la_guia_DECLARO_todavia_no_existia():
+    """EL CASO QUE EL FRENO DEL TOTAL NO PUEDE VER, y es el que hace falta.
+
+    La suma entra —hay un lote viejo de 20 y la guía tomó 10— pero el
+    documento congelado dice que esos 10 salieron del lote 102, que entró el
+    16/09. Movida al 15, esa guía quedaría apuntando a un lote del futuro:
+    la misma trazabilidad rota que esta pantalla viene a arreglar.
+
+    Con el freno del total solo, este caso pasa en verde.
+    """
+    conexion, cursor, movida, error = _mover_fecha(
+        7, date(2026, 9, 15),
+        entradas=[_lote_compra(101, date(2026, 9, 10), 20.0, 1000.0),
+                  _lote_compra(102, date(2026, 9, 16), 20.0, 1000.0)],
+        consumos=[("compra", 102, 10.0)],
+    )
+
+    assert isinstance(error, RepartoDesactualizado), error
+    conexion.commit.assert_not_called()
+
+
+def test_mover_la_fecha_NO_SE_DESCUENTA_A_SI_MISMA():
+    """Una guía que se descuenta a sí misma se rebota siempre.
+
+    `_lo_tomado_hoy` resta lo que las guías R de ese día ya se llevaron. Al
+    mover, la guía YA está fechada ese día —el UPDATE va primero— así que
+    sin el `excepto` se restaría sus propios 10 a los lotes y el freno diría
+    que no alcanza, sobre un lote que le sobra.
+
+    Se afirma por los PARÁMETROS de la consulta y no por el resultado: con
+    el fixture de acá el `fetchall` del tomado_hoy lo decide el test, así
+    que un assert del resultado probaría el fixture y no el filtro.
+    """
+    conexion, cursor, movida, error = _mover_fecha(
+        7, date(2026, 9, 15),
+        entradas=[_lote_compra(101, date(2026, 9, 10), 20.0, 1000.0)],
+        consumos=[("compra", 101, 10.0)],
+    )
+
+    assert error is None, error
+    sql, parametros = _sql_y_parametros_que_contienen(cursor, "FROM reprocesos_consumos rc")
+    assert "r.id <> %s" in sql, "tiene que poder dejarse afuera a sí misma"
+    assert parametros == (1, date(2026, 9, 15), 7, 7)
+
+
+def test_mover_la_fecha_NO_deja_fechar_ANTES_DEL_CORTE():
+    """El mismo piso que la carga, leído de corte_modelo y no de una constante."""
+    conexion, cursor, movida, error = _mover_fecha(7, date(2026, 8, 14))
+
+    assert isinstance(error, ReprocesoAnteriorAlCorte), error
+    assert error.corte == date(2026, 8, 15)
+    conexion.commit.assert_not_called()
+
+
+def test_mover_la_fecha_de_una_guia_ANULADA_o_INICIAL_o_EN_ORIGEN_no_se_puede():
+    """Las tres razones son distintas y las tres son ValueError.
+
+    Una anulada ya devolvió lo tomado a sus lotes. La INICIAL *es* la foto
+    del corte y está fechada ahí por definición. La de ORIGEN es uno a uno
+    con la recepción de su compra: moverla sola la despegaría del hecho que
+    la generó, y eso se corrige corrigiendo la recepción.
+
+    Y ninguna de las tres puede haber escrito: el UPDATE va después de las
+    tres guardas.
+    """
+    for guia, que in [
+        ((1, date(2026, 9, 18), 10.0, "normal", datetime(2026, 9, 18, 9)), "anulada"),
+        ((1, date(2026, 9, 18), 10.0, "inicial", None), "inicial"),
+        ((1, date(2026, 9, 18), 10.0, "en_origen", None), "en origen"),
+    ]:
+        conexion, cursor, movida, error = _mover_fecha(7, date(2026, 9, 15), guia=guia)
+        assert isinstance(error, ValueError), f"{que}: {error!r}"
+        conexion.commit.assert_not_called()
+        assert not [ll for ll in cursor.execute.call_args_list if "UPDATE " in ll.args[0]], que
+
+
+def test_mover_la_fecha_de_una_guia_QUE_NO_EXISTE_da_ValueError():
+    """El SELECT va SIN AGREGADO a propósito: con un `count(*)` la fila vuelve
+    con (0,) y `fila is None` no dispara nunca (corolario 27)."""
+    conexion, cursor = _conexion_falsa(filas_fetchone=[None])
+    with patch("app.db.obtener_conexion", return_value=conexion):
+        from app.db import cambiar_fecha_de_reproceso
+        with pytest.raises(ValueError):
+            cambiar_fecha_de_reproceso(999, date(2026, 9, 15))
+    conexion.commit.assert_not_called()
+
+
+def test_la_guia_se_lee_FOR_UPDATE_antes_de_moverla():
+    """Sin el candado, dos correcciones simultáneas leen la misma fecha vieja
+    y la segunda valida contra un mundo que la primera ya cambió."""
+    conexion, cursor, movida, error = _mover_fecha(
+        7, date(2026, 9, 15),
+        entradas=[_lote_compra(101, date(2026, 9, 10), 20.0, 1000.0)],
+        consumos=[("compra", 101, 10.0)],
+    )
+    assert "FOR UPDATE" in _sql_que_contiene(cursor, "FROM reprocesos WHERE id = %s")
+
+
+# ── Lo que ya salió sin lote ANTES del día que se está por cargar ─────────
+
+
+def _desglose_a_la_fecha(fecha, entradas, salidas):
+    conexion, cursor = _conexion_falsa(filas_fetchone=[(date(2026, 8, 15),)])
+    cursor.description = COLUMNAS_LOTES
+    cursor.fetchall.side_effect = [entradas, salidas, []]
+    with patch("app.db.obtener_conexion", return_value=conexion):
+        from app.db import lotes_para_reproceso
+        return lotes_para_reproceso(1, fecha)
+
+
+def test_el_desglose_DICE_cuantos_bultos_salieron_sin_lote_antes_de_ese_dia():
+    """La mitad PREVENTIVA de poder refechar una guía, pedida por el dueño el 19/09.
+
+    Salieron 10 bultos el 12/09 y el único lote entró el 16: un lote no puede
+    cubrir una salida anterior, así que esos 10 quedaron sin lote. El que
+    está por cargar una guía el 18 tiene que ver ese número MIENTRAS elige la
+    fecha — es el síntoma de que esas cajas se armaron antes.
+    """
+    reparto = _desglose_a_la_fecha(
+        date(2026, 9, 18),
+        [_lote_compra(101, date(2026, 9, 16), 20.0, 1000.0)],
+        [_salida_fifo(date(2026, 9, 12), 10.0)],
+    )
+
+    assert reparto["sin_lote_antes"] == 10.0
+
+
+def test_el_desglose_dice_CERO_cuando_todo_lo_anterior_tenia_lote():
+    """La otra respuesta, y hace falta: un detector que no puede dar las dos
+    se ve igual de trabajador que uno que funciona (corolario 53).
+
+    El mismo caso con el lote entrando ANTES de la salida: lo cubre, y el
+    aviso no tiene nada que decir.
+    """
+    reparto = _desglose_a_la_fecha(
+        date(2026, 9, 18),
+        [_lote_compra(101, date(2026, 9, 10), 20.0, 1000.0)],
+        [_salida_fifo(date(2026, 9, 12), 10.0)],
+    )
+
+    assert reparto["sin_lote_antes"] == 0
+
+
+def test_el_sin_lote_de_ANTES_no_cuenta_las_salidas_DEL_DIA_que_se_esta_cargando():
+    """"Antes de este día" y no "antes o durante".
+
+    Una salida del MISMO día es justamente la que esta guía viene a cubrir:
+    contarla haría que el aviso dispare siempre, en cada carga, sobre el
+    hueco que se está por tapar. Un aviso que aparece igual se deja de leer.
+    """
+    reparto = _desglose_a_la_fecha(
+        date(2026, 9, 18),
+        [],
+        [_salida_fifo(date(2026, 9, 18), 10.0)],
+    )
+
+    assert reparto["sin_lote_antes"] == 0
+    # Y el otro número sigue contando lo suyo: el reparto del reproceso
+    # tampoco mira las salidas del día, así que las dos cuentas coinciden
+    # acá por la misma razón y no por casualidad.
+    assert reparto["sin_lote"] == 0

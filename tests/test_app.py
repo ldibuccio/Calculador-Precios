@@ -27575,11 +27575,14 @@ def test_todos_los_tipos_de_salida_posibles_tienen_prioridad_DECIDIDA():
     assert not sin_decidir, f"tipos de salida sin prioridad decidida: {sin_decidir}"
 
 
-def test_los_TRES_que_miran_los_lotes_de_una_guia_R_aplican_la_pared():
-    """El comentario de `crear_reproceso` promete que el freno, el desglose de
-    la pantalla y la escritura de los consumos miran LA MISMA lista. La pared
-    de la pieza 2 tiene que estar en los tres o la promesa se rompe: la
-    pantalla ofrecería un lote que el freno después rechaza.
+def test_los_CUATRO_que_miran_los_lotes_de_una_guia_R_aplican_la_pared():
+    """El freno, el desglose de la pantalla, la escritura de los consumos y —desde
+    el 19/09— el que MUEVE la fecha de una guía ya cargada miran LA MISMA lista.
+
+    La pared de la pieza 2 tiene que estar en los cuatro o la promesa se
+    rompe: la pantalla ofrecería un lote que el freno después rechaza, o una
+    guía entraría por la puerta de la corrección donde la de la carga la
+    rebota.
 
     Se mira el TEXTO porque es un problema de CABLEADO, no de lógica: el que
     se olvida no nombra la función que le falta (corolario 3 — hay que
@@ -27588,22 +27591,39 @@ def test_los_TRES_que_miran_los_lotes_de_una_guia_R_aplican_la_pared():
     db_py = open("app/db.py", encoding="utf-8").read()
     main_py = open("app/main.py", encoding="utf-8").read()
 
-    # 1 y 3) el freno y la escritura, en `_crear_reproceso` — que es donde
-    # viven desde que la compra que llega ya armada en caja nuestra necesitó
-    # cargar su guía R en la MISMA transacción que la recepción. Los dos
-    # caminos pasan por acá, así que la pared sigue siendo UNA.
-    cuerpo = db_py[db_py.index("def _crear_reproceso("):]
-    cuerpo = cuerpo[: cuerpo.index("\ndef ")]
-    assert "lotes_permitidos(a_la_fecha[\"lotes\"], SALIDA_REPROCESO)" in cuerpo
+    def cuerpo_de(texto, firma):
+        resto = texto[texto.index(firma):]
+        return resto[: resto.index("\ndef ")]
+
+    # 1) LA PARED VIVE EN UN SOLO LUGAR desde el 19/09. Antes estaba escrita
+    # adentro de `_crear_reproceso`, y el que mueve la fecha tiene que hacer
+    # exactamente la misma pregunta: "¿habría entrado ese día?".
+    pared = cuerpo_de(db_py, "def _lotes_de_reproceso_a_su_fecha(")
+    assert "lotes_permitidos(a_la_fecha[\"lotes\"], SALIDA_REPROCESO)" in pared
     # EL FRENO MIDE CONTRA LOS NETOS y todo lo demás contra los enteros, que
     # es la separación del 16/09: el freno cuenta lo que otra guía R del
     # mismo día ya se llevó, el reparto no. Las dos mitades se afirman: si
     # el freno volviera a medir contra `lotes` el agujero vuelve, y si la
     # propuesta pasara a medir contra los netos cambiaría el desglose que ve
     # el operario, que es justo lo que se decidió no tocar.
-    assert "bultos_en_los_lotes(lotes_netos)" in cuerpo
-    assert "descontar_lo_tomado_hoy(lotes, tomado_hoy)" in cuerpo
+    assert "bultos_en_los_lotes(descontar_lo_tomado_hoy(lotes, tomado_hoy))" in pared
+    assert "return lotes" in pared, "lo que devuelve son los ENTEROS"
+
+    # 2 y 3) la escritura, que la LLAMA en vez de repetirla — incluido el
+    # camino de la compra que llega ya armada, que entra por la misma puerta.
+    cuerpo = cuerpo_de(db_py, "def _crear_reproceso(")
+    assert "_lotes_de_reproceso_a_su_fecha(cursor, articulo_id, fecha_operacion, bultos_tomados)" in cuerpo
     assert "validar_reparto_declarado(lotes, bultos_tomados, reparto, SALIDA_REPROCESO)" in cuerpo
+    # Y que no se haya quedado una copia: si vuelve a armar la lista por su
+    # cuenta, las dos versiones se separan sin que nada se ponga rojo.
+    assert "lotes_permitidos(" not in cuerpo
+
+    # 4) el que MUEVE la fecha, con su propia guía afuera del descuento: una
+    # guía que se descuenta a sí misma se rebota siempre.
+    mover = cuerpo_de(db_py, "def cambiar_fecha_de_reproceso(")
+    assert "_lotes_de_reproceso_a_su_fecha(" in mover
+    assert "excepto=reproceso_id" in mover
+    assert "lotes_permitidos(" not in mover
 
     # 2) el desglose que dibuja la pantalla.
     desglose = main_py[main_py.index("def desglose_reproceso("):]
@@ -30847,3 +30867,164 @@ def test_SIN_recien_la_seccion_sigue_PLEGADA_y_nada_queda_marcado():
     marcado = respuesta.text.split("</style>")[-1]
     assert '<details class="seccion-cerrados">' in marcado
     assert "armado recien" not in marcado
+
+
+# ── Corregir el DÍA en que se armó una guía R ──────────────────────────────
+#
+# Del 19/09, y es del dueño: "ninguna pantalla edita la fecha de una guía R.
+# El error es fechar la guía el día que se carga en vez del día que se armó,
+# y la única salida hoy es anular y recargar."
+
+
+def _pantalla_guias_r(guias):
+    with (
+        patch("app.main._hoy_argentina", return_value=date(2026, 8, 26)),
+        patch("app.main.listar_reprocesos_por_rango", return_value=[dict(g) for g in guias]),
+        patch("app.main.listar_articulos", return_value=[{"id": 1, "nombre": "EJEMPLO Uno"}]),
+        patch("app.main.contar_reprocesos_sin_costo_posible", return_value={"casos": 0, "mas_viejo": None}),
+        patch("app.main.listar_fichas_de_todos_los_clientes", return_value=[]),
+        patch("app.main.listar_clientes", return_value=CLIENTES_PARA_SELECTOR),
+    ):
+        return cliente.get("/administracion/stock/guias-r")
+
+
+def test_guias_r_OFRECE_corregir_el_dia_en_que_se_armo():
+    """El formulario, con la fecha de la guía puesta y el tope en hoy.
+
+    El `max` sale del SERVER y no de JS: una guía R fechada mañana no la
+    puede escribir nadie. La ruta además lo revalida —la guarda va donde se
+    escribe— y el `max` es la forma de cumplirlo cómodo.
+    """
+    respuesta = _pantalla_guias_r([GUIAS_R_DE_PRUEBA[0]])
+
+    marcado = respuesta.text.split("</style>")[-1]
+    assert 'action="/administracion/stock/guias-r/12/cambiar-fecha"' in marcado
+    assert 'value="2026-08-25"' in marcado, "arranca con la fecha que tiene"
+    assert 'max="2026-08-26"' in marcado, "no se puede fechar en el futuro"
+    assert "Corregir el día en que se armó" in marcado
+
+
+def test_guias_r_NO_ofrece_corregir_la_fecha_de_una_ANULADA_ni_de_una_INICIAL():
+    """El botón solo aparece donde la escritura ACEPTA.
+
+    `cambiar_fecha_de_reproceso` rechaza las tres —anulada, inicial y en
+    origen— así que ofrecerlo sería un callejón: el que lo aprieta se come
+    un error por algo que la pantalla le propuso.
+    """
+    anulada = GUIAS_R_DE_PRUEBA[1]
+    inicial = dict(GUIAS_R_DE_PRUEBA[0], id=14, tipo="inicial")
+    en_origen = dict(GUIAS_R_DE_PRUEBA[0], id=15, tipo="en_origen")
+
+    respuesta = _pantalla_guias_r([anulada, inicial, en_origen])
+
+    marcado = respuesta.text.split("</style>")[-1]
+    assert "cambiar-fecha" not in marcado, "ninguna de las tres se puede refechar"
+
+
+def _post_cambiar_fecha(fecha, efecto=None):
+    with (
+        patch("app.main._hoy_argentina", return_value=date(2026, 9, 19)),
+        patch("app.main.cambiar_fecha_de_reproceso") as mock,
+    ):
+        if isinstance(efecto, Exception):
+            mock.side_effect = efecto
+        else:
+            mock.return_value = efecto or {"articulo_id": 1, "fecha_vieja": date(2026, 9, 18),
+                                           "fecha_nueva": date(2026, 9, 15)}
+        respuesta = cliente.post(
+            "/administracion/stock/guias-r/7/cambiar-fecha",
+            data={"fecha": fecha, "fecha_desde": "2026-09-01", "fecha_hasta": "2026-09-19",
+                  "articulo_id": "1", "guia": ""},
+            follow_redirects=False,
+        )
+    return respuesta, mock
+
+
+def test_cambiar_la_fecha_GUARDA_y_vuelve_a_la_lista_con_los_filtros_puestos():
+    """Los TRES filtros vuelven: sin el artículo, el que estaba corrigiendo
+    guías de Limón mira las 72 de nuevo, una por cada una que corrige."""
+    respuesta, mock = _post_cambiar_fecha("2026-09-15")
+
+    assert respuesta.status_code == 303
+    mock.assert_called_once_with(7, date(2026, 9, 15))
+    destino = respuesta.headers["location"]
+    assert "articulo_id=1" in destino and "fecha_desde=2026-09-01" in destino
+    assert "15%2F09%2F2026" in destino, f"el aviso tiene que decir la fecha nueva: {destino}"
+
+
+def test_cambiar_la_fecha_AL_FUTURO_no_llega_a_la_base():
+    """La guarda va donde se escribe, y acá se escribe pasando por la ruta:
+    un POST a mano no ve el `max` del selector."""
+    respuesta, mock = _post_cambiar_fecha("2026-09-20")
+
+    assert respuesta.status_code == 303
+    mock.assert_not_called()
+    assert "error=" in respuesta.headers["location"]
+
+
+def test_cambiar_la_fecha_DEVUELVE_EL_MOTIVO_de_cada_freno():
+    """Los tres frenos son los MISMOS que rebotan al cargar, y cada uno vuelve
+    con su motivo a la pantalla: un "no se pudo" a secas no dice qué hacer."""
+    casos = [
+        (ReprocesoAnteriorAlCorte(date(2026, 8, 1), date(2026, 8, 15)), "corte"),
+        (StockInsuficienteParaReproceso(10.0, 5.0, [], []), "no+hab%C3%ADa+con+qu%C3%A9"),
+        (RepartoDesactualizado("Uno de los lotes que elegiste ya no está disponible."), "lotes"),
+        (ValueError("Esa guía R está anulada: no se le puede cambiar la fecha."), "anulada"),
+    ]
+    for error, esperado in casos:
+        respuesta, mock = _post_cambiar_fecha("2026-09-15", efecto=error)
+        assert respuesta.status_code == 303
+        destino = respuesta.headers["location"]
+        assert "error=" in destino and esperado in destino, f"{error!r} -> {destino}"
+
+
+def test_el_desglose_LLEVA_lo_que_ya_salio_sin_lote_antes_de_ese_dia():
+    """El aviso preventivo viaja en el MISMO `fetch` que el desglose.
+
+    La pantalla ya lo pide en cada cambio de artículo, fecha o bultos y
+    también al cargar, así que no hace falta una consulta más — y que el
+    número llegue por acá es lo que lo pone delante del operario mientras
+    elige la fecha, que es el único momento en que sirve.
+    """
+    with (
+        patch("app.main.contenido_por_bulto_de_lotes", return_value={}),
+        patch("app.main.lotes_para_reproceso",
+              return_value={"lotes": [], "sin_lote": 0, "stock": 0, "sin_lote_antes": 16.0}),
+    ):
+        datos = cliente.get("/deposito/stock/reproceso/desglose"
+                            "?articulo_id=1&fecha=2026-09-18&bultos=5").json()
+
+    assert datos["sin_lote_antes"] == 16.0
+
+
+def test_el_desglose_NO_INVENTA_el_aviso_cuando_la_consulta_no_lo_trae():
+    """Una lectura vieja sin la clave tiene que dar CERO y no reventar: el
+    aviso es cortesía, y la pantalla sale igual sin él."""
+    with (
+        patch("app.main.contenido_por_bulto_de_lotes", return_value={}),
+        patch("app.main.lotes_para_reproceso",
+              return_value={"lotes": [], "sin_lote": 0, "stock": 0}),
+    ):
+        datos = cliente.get("/deposito/stock/reproceso/desglose"
+                            "?articulo_id=1&fecha=2026-09-18&bultos=5").json()
+
+    assert datos["sin_lote_antes"] == 0
+
+
+def test_la_pantalla_de_reproceso_DIBUJA_el_aviso_de_lo_que_salio_sin_lote():
+    """EL CABLEADO, que es lo que un test del JSON no puede ver.
+
+    El número llega y hay que ponerlo en algún lado: sin el bloque y sin la
+    llamada del `fetch`, el endpoint contesta perfecto y la pantalla no
+    muestra nada. Se afirma la CLASE y el id —no el texto—, porque el texto
+    lo escribe el JS y un comentario que lo explique matchearía igual
+    (corolario 38).
+    """
+    respuesta = _get_reproceso()
+
+    assert respuesta.status_code == 200
+    marcado = respuesta.text.split("</style>")[-1]
+    assert '<div class="aviso-sin-lote" id="aviso-sin-lote" hidden></div>' in marcado
+    # Y que el JS lo llame: el bloque solo es un div vacío para siempre.
+    assert "dibujarAvisoSinLote(datos, campos);" in marcado
+    assert "datos.sin_lote_antes" in marcado
