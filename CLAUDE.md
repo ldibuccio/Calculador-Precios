@@ -274,6 +274,91 @@ De acá en adelante, después de cualquier push que se dé por desplegado:
    confirma que corrió **no es la pantalla del editor: es la consulta de
    estado que se corre después**.
 
+5. **Y `rev-list 0 0` contesta "¿SUBIÓ?", no "¿SALIÓ?".** Del 20/09, y es
+   del dueño: *"yo estuve tres horas mirando una versión de anoche creyendo
+   que probaba lo nuevo"*.
+
+   Desde que el switch **"Wait for CI"** de Railway está prendido, entre el
+   push y el deploy hay **una tercera cosa**: la corrida del CI. Con esa
+   corrida en rojo, el push sale perfecto, `rev-list` da `0 0`, el commit
+   está en `origin/main` — y **no se despliega nada**. Las cuatro
+   verificaciones que este archivo pide se cumplen todas, y las cuatro
+   contestan la pregunta de antes del gate.
+
+   Pasó así: un test se puso rojo el 19/09 a las 01:31 y **se pushearon
+   CUATRO commits más encima sin mirar el CI una sola vez**, cada uno
+   reportado como desplegado con su `rev-list 0 0` al lado. Lo que el dueño
+   tenía en la pantalla era de la noche anterior, y las dos cosas que fue a
+   buscar —el número del pie y el botón de Pase a segunda— eran justamente
+   de los commits frenados.
+
+   **LA REGLA, y es del dueño**: *en cada commit que se reporta, decir si el
+   CI está VERDE. Si está rojo, va en la PRIMERA LÍNEA y no se sigue
+   construyendo encima.*
+
+   Y el diagnóstico que la hace necesaria: **el gate hizo exactamente lo que
+   tenía que hacer.** No falló ninguna máquina. Falló que nadie lo mirara —
+   que es la misma familia del push silencioso, corrida un paso más adelante:
+   antes lo que no se miraba era el estado de la rama, ahora es el estado de
+   la corrida.
+
+   **Cómo se mira, y cuesta una llamada**: la corrida del `head_sha` que se
+   acaba de pushear, y su `conclusion`. Un `status: completed` con
+   `conclusion: failure` es un deploy que no salió; un `in_progress` es un
+   deploy que todavía no salió, que no es lo mismo que uno que salió.
+
+   **Y una corrida COLGADA y una ROJA se ven igual desde el galpón** —en las
+   dos el deploy no sale— y se arreglan distinto. Por eso lo que se reporta
+   es la `conclusion`, no "el CI no pasó".
+
+## Corolario 92: un test que mide el ENTORNO pasa donde se escribe y falla donde DECIDE
+
+Del 20/09, y es el que produjo lo de arriba. El test del número de versión
+afirmaba:
+
+```python
+assert del_git is not None and del_git.isdigit() and int(del_git) > 100
+```
+
+Se lee razonable —"que el git devuelva un número grande, o sea real"— y
+**no describe la función: describe cuán profundo es el clon.**
+`actions/checkout@v4` clona con `fetch-depth: 1`, así que en el runner
+`git rev-list --count HEAD` devuelve **1**. Medido, no deducido: un
+`git clone --depth 1` del propio repo ve **1 commit** y el clon de trabajo
+ve **660**.
+
+**Y el reparto de dónde pasa y dónde falla es el peor posible**: pasa en la
+máquina del que lo escribe —que tiene el repo entero, el locale, el huso,
+la red, el navegador— y falla en el runner, que es mínimo **y es el único
+lugar donde el test decide si sale el deploy.** O sea que el modo de falla
+no es "un test molesto": es un test que solo se rompe donde se cobra.
+
+**LA SEÑAL, y es la única barata: el UMBRAL MÁGICO.** Un número en un assert
+que no sale de nada del código —`> 100`, `< 5`, `>= 2`— casi siempre es un
+proxy de *"el entorno que yo tengo"*. La pregunta que lo encuentra se hace
+al escribirlo: **¿de dónde sale este número?** Si la respuesta es "porque mi
+repo tiene 660 commits", "porque mi máquina tiene 8 núcleos" o "porque acá
+son las 3 de la tarde", es el entorno y no la función.
+
+**El arreglo es plantar el caso con un valor CONOCIDO** (corolario 36) y
+exigir el número exacto: un repo de tres commits tiene que devolver `"3"`.
+Eso no depende del checkout, y de yapa queda más fuerte que el umbral — un
+`== "3"` falla donde un `> 100` pasaba.
+
+**Y el plantado son TRES commits y no uno, a propósito**: con uno solo, el
+caso shallow y el del repo entero dan lo mismo y el test no puede
+distinguirlos. Es el rival del corolario que pide plantar el candidato que
+NO tiene que ganar, en su versión más chica.
+
+**La verificación que cierra es correr el test en LOS DOS entornos**: con el
+clon shallow y con el entero. Uno solo no prueba nada — el viejo también
+pasaba en uno de los dos.
+
+Y la familia completa, para reconocerla sin el caso: profundidad del clon,
+huso horario, locale, cantidad de núcleos, si el filesystem distingue
+mayúsculas, si hay red, si hay un binario instalado. Todo lo que el que
+escribe tiene y el runner no.
+
 ## Una salida de una ficha con envase solo puede salir de esa ficha
 
 **Cosa fija del sistema, no el arreglo de un día.** Se tuvo que decir tres
