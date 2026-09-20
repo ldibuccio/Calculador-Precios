@@ -28189,6 +28189,7 @@ def test_el_NUMERO_sale_del_ARCHIVO_del_build_y_si_no_del_git():
     tiene que venir horneado del build (nixpacks.toml). El git queda para el
     desarrollo local y para el día que el contenedor sí traiga el repo.
     """
+    import subprocess
     import tempfile
     from app.main import _numero_de_version
 
@@ -28203,19 +28204,52 @@ def test_el_NUMERO_sale_del_ARCHIVO_del_build_y_si_no_del_git():
             ruta_falsa.return_value.resolve.return_value.parent.parent.__truediv__.return_value = archivo
             assert _numero_de_version() == "247"
 
-        # 2. Sin archivo, el git del repo de verdad: un número que crece.
+        # 2. Sin archivo, el número sale del GIT — verificado contra un repo
+        #    PLANTADO con una cantidad conocida de commits, y no contra el repo
+        #    donde corre la suite.
+        #
+        #    ACÁ HABÍA UN `int(del_git) > 100` Y NO DESCRIBÍA LA FUNCIÓN:
+        #    describía cuán profundo es el clon. `actions/checkout@v4` clona con
+        #    `fetch-depth: 1`, así que en el runner `git rev-list --count HEAD`
+        #    devuelve 1 — un número CORRECTO sobre una historia truncada. El
+        #    test pasaba local (660 commits) y fallaba en el CI, que es el único
+        #    lugar donde decide si sale el deploy. Cinco commits estuvieron sin
+        #    desplegar por esto.
+        #
+        #    Y el número plantado es 3 A PROPÓSITO: con un solo commit, el caso
+        #    del clon shallow y el del repo entero darían lo mismo y este test
+        #    no podría distinguirlos.
         archivo.unlink()
-        with patch("app.main.pathlib.Path") as ruta_falsa:
-            ruta_falsa.return_value.resolve.return_value.parent.parent.__truediv__.return_value = archivo
-            del_git = _numero_de_version()
-        assert del_git is not None and del_git.isdigit() and int(del_git) > 100
+        repo = pathlib.Path(carpeta) / "repo_plantado"
+        repo.mkdir()
 
-        # 3. Un archivo con BASURA no se muestra: cae al git. Un correlativo
-        #    inventado es peor que ninguno — el que lo lee actúa.
-        archivo.write_text("no soy un numero", encoding="utf-8")
-        with patch("app.main.pathlib.Path") as ruta_falsa:
-            ruta_falsa.return_value.resolve.return_value.parent.parent.__truediv__.return_value = archivo
-            assert _numero_de_version() == del_git
+        def _git(*orden):
+            subprocess.run(["git", *orden], cwd=repo, capture_output=True, check=True)
+
+        _git("init", "-q")
+        _git("config", "user.email", "ejemplo@ejemplo.invalid")
+        _git("config", "user.name", "EJEMPLO Test")
+        for numero in range(3):
+            _git("commit", "-q", "--allow-empty", "-m", f"commit {numero}")
+
+        donde_estaba = os.getcwd()
+        try:
+            os.chdir(repo)
+            with patch("app.main.pathlib.Path") as ruta_falsa:
+                ruta_falsa.return_value.resolve.return_value.parent.parent.__truediv__.return_value = archivo
+                del_git = _numero_de_version()
+            assert del_git == "3", f"el número no salió del git del repo plantado: {del_git!r}"
+
+            # 3. Un archivo con BASURA no se muestra: cae al git. Un correlativo
+            #    inventado es peor que ninguno — el que lo lee actúa. Va ADENTRO
+            #    del mismo `chdir` que el caso 2: afuera, el git que contesta es
+            #    el del repo de la suite y la comparación no significa nada.
+            archivo.write_text("no soy un numero", encoding="utf-8")
+            with patch("app.main.pathlib.Path") as ruta_falsa:
+                ruta_falsa.return_value.resolve.return_value.parent.parent.__truediv__.return_value = archivo
+                assert _numero_de_version() == "3"
+        finally:
+            os.chdir(donde_estaba)
 
 
 def test_sin_NINGUNA_de_las_dos_fuentes_el_pie_dice_SIN_NUMERO():
