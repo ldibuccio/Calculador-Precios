@@ -10,9 +10,11 @@
    información: dice que esa compra vieja NO va a poder costear en la otra
    unidad. Se apaga solo en cuanto entren compras con las dos.
 
-   `segunda` viene del server (`_agregar_segunda_por_cajon`), nunca derivada
-   acá: la inversa del reparto vive en core/magnitudes.py y ya estuvo escrita
-   dos veces en Jinja. #}
+   `segunda` viene del server, nunca derivada acá. Y desde el 20/09 el server
+   TAMPOCO la deriva: `compras.segunda_por_cajon` es una columna, como
+   `contenido_por_cajon`. La vuelta —multiplicar por los cajones para guardar
+   y dividir para mostrar— se fue entera, y con ella las dos funciones que la
+   hacían. Esto sigue siendo UN solo lugar porque son siete pantallas. #}
 {# `real` mueve LAS DOS mitades a la vez —el contenido y la segunda— para
    que la fila no muestre lo recibido de un lado y lo declarado del otro. #}
 {% macro magnitudes_del_cajon(c, real=false) %}

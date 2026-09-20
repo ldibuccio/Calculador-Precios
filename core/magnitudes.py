@@ -40,56 +40,19 @@ def repartir_magnitudes(
 
 
 
-def magnitudes_por_cajon(
-    cantidad_kilos: float | None,
-    cantidad_fraccion: float | None,
-    cantidad_cajones: float | None,
-) -> tuple[float | None, float | None]:
-    """(kilos_por_cajon, conteo_por_cajon) de una compra ya guardada.
-
-    EXISTE PORQUE LA SEGUNDA MAGNITUD NO TIENE COLUMNA POR CAJÓN: `compras`
-    guarda `contenido_por_cajon` —una sola, en `unidad_compra`— y los dos
-    TOTALES. Así que las de por cajón son un derivado: `total / cajones`.
-
-    Y NO RECIBE `unidad_compra` a propósito, aunque el reparto de la entrada
-    sí lo necesite: las dos columnas ya vienen NOMBRADAS por su magnitud, así
-    que para sacarlas no hay nada que repartir. El `if` hace falta solo para
-    contestar "¿cuál es la SEGUNDA?", que es otra pregunta y está abajo.
-
-    NINGUNO DE LOS DOS SE DEDUCE: con una de las dos en None devuelve None en
-    ese lugar, y eso NO es un cero — es "esta compra no declaró esa
-    magnitud", el estado de todas las anteriores al 15/09. La pantalla lo
-    muestra como hueco y no lo calla: es lo que explica por qué esa compra no
-    va a poder costear en la otra unidad.
-
-    `cantidad_cajones` en cero o None devuelve (None, None): dividir por cero
-    no es un dato que falte, pero el resultado tampoco existe.
-    """
-    if not cantidad_cajones:
-        return None, None
-
-    def por_cajon(total: float | None) -> float | None:
-        return None if total is None else total / cantidad_cajones
-
-    return por_cajon(cantidad_kilos), por_cajon(cantidad_fraccion)
-
-
-def segunda_magnitud_por_cajon(
-    unidad_compra: str | None, kilos_por_cajon: float | None, conteo_por_cajon: float | None
-) -> float | None:
-    """La magnitud que NO viaja en `contenido_por_cajon`, por cajón. La INVERSA del reparto.
-
-    Es lo que pide el formulario de Recepción: `contenido_por_cajon` ya
-    muestra una, y el campo de al lado pide la otra.
-
-    ESTUVO ESCRITA DOS VECES EN JINJA, en dos bloques de
-    `deposito_recepcion.html` separados por 134 líneas, y ninguna de las tres
-    copias nombraba a las otras. Con seis pantallas más por mostrar las dos
-    magnitudes, eso pasaba de dos copias a ocho.
-
-    Que sea la inversa de `repartir_magnitudes` no se afirma acá: lo exige
-    `test_magnitudes_por_cajon_es_la_INVERSA_de_repartir_magnitudes`, que le
-    da la vuelta completa a la matriz. Un comentario que dice "esto es la
-    inversa" envejece; una vuelta que tiene que cerrar, no.
-    """
-    return conteo_por_cajon if unidad_compra == "kilo" else kilos_por_cajon
+# `magnitudes_por_cajon` y `segunda_magnitud_por_cajon` VIVIERON ACA hasta el
+# 20/09, y se fueron porque dejo de haber algo que derivar: `compras` guarda
+# `segunda_por_cajon` tal como la tipeo el comprador, con su columna, igual
+# que `contenido_por_cajon`. Multiplicar por los cajones para guardar el
+# total y dividir de vuelta para mostrarlo era la unica manera de leer una
+# magnitud que no tenia donde guardarse.
+#
+# Se BORRARON en vez de quedarse por si acaso: una funcion sin llamadores es
+# un documento ejecutable, y el proximo que la lea va a creer que la lectura
+# todavia pasa por aca. Su test —el de la vuelta completa— se fue con ellas:
+# la vuelta ya no ocurre en ningun lado.
+#
+# Lo que SI queda es `repartir_magnitudes`, que es de la ESCRITURA y no de la
+# lectura: los dos TOTALES se siguen guardando, y decidir en cual de las dos
+# columnas cae cada uno sigue siendo la misma regla para la carga y para la
+# recepcion.

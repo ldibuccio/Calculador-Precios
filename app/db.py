@@ -1539,6 +1539,7 @@ def buscar_compras(
             cursor.execute(
                 f"""
                 SELECT c.id, c.fecha_operacion, a.nombre AS articulo_nombre, a.unidad_compra, a.unidad_conteo,
+                c.segunda_por_cajon, c.segunda_por_cajon_real,
                        p.nombre AS proveedor_nombre,
                        p.codigo_puesto AS proveedor_codigo_puesto,
                        COALESCE(c.cantidad_cajones_real, c.cantidad_cajones) AS cantidad_cajones,
@@ -2052,6 +2053,7 @@ def obtener_detalle_compra(compra_id: int) -> dict | None:
                 """
                 SELECT c.id, c.fecha_operacion, c.cargado_el,
                        c.articulo_id, a.nombre AS articulo_nombre, a.unidad_compra, a.unidad_conteo,
+                       c.segunda_por_cajon, c.segunda_por_cajon_real,
                        c.proveedor_id, p.nombre AS proveedor_nombre, p.codigo_puesto AS proveedor_codigo_puesto,
                        c.guia_id, c.guia_punto,
                        c.cantidad_cajones, c.contenido_por_cajon, c.importe, c.sena, c.tipo_retiro,
@@ -2159,8 +2161,17 @@ def crear_compra(
     ingreso_directo_deposito: bool = False,
     recepcionada_el=None,
     ficha_en_origen_id: int | None = None,
+    *,
+    segunda_por_cajon: float | None,
 ) -> None:
     """Inserta una compra cargada por el comprador, con su guía asignada.
+
+    `segunda_por_cajon` ES KEYWORD-ONLY Y NO TIENE DEFAULT, a propósito: con
+    un default, un llamador que se lo olvidara guardaría la compra con la
+    columna en NULL — que se ve EXACTAMENTE IGUAL que una compra anterior al
+    modelo de dos magnitudes, o sea un hueco legítimo. Sin default, olvidarlo
+    es un TypeError. Es el agujero de `ficha_en_origen_id` del 12/09, cerrado
+    por construcción en vez de por un grep.
 
     foto_ruta es la ruta (en el bucket "comandas" de Supabase Storage) de
     la foto de la comanda de la que salió este renglón — None si la
@@ -2237,6 +2248,7 @@ def crear_compra(
                 ingreso_directo_deposito=ingreso_directo_deposito,
                 recepcionada_el=recepcionada_el,
                 ficha_en_origen_id=ficha_en_origen_id,
+                segunda_por_cajon=segunda_por_cajon,
             )
         conexion.commit()
     finally:
@@ -2363,6 +2375,8 @@ def _insertar_compra_con_guia(
     carga_token: str | None = None,
     recepcionada_el=None,
     ficha_en_origen_id: int | None = None,
+    *,
+    segunda_por_cajon: float | None,
 ) -> int:
     """Inserta UNA compra (con su guía) usando el cursor que le pasan — sin abrir conexión ni commitear. Devuelve su id.
 
@@ -2421,9 +2435,10 @@ def _insertar_compra_con_guia(
                  cantidad_kilos, cantidad_fraccion, importe, sena, tipo_retiro,
                  guia_id, guia_punto, estado, estado_retiro,
                  cantidad_cajones_real, contenido_por_cajon_real, cantidad_kilos_real, cantidad_fraccion_real,
+                 segunda_por_cajon, segunda_por_cajon_real,
                  procesada_el, retiro_procesado_el, retiro_origen)
             VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s,
-                    'recepcionado', 'retirado', %s, %s, %s, %s,
+                    'recepcionado', 'retirado', %s, %s, %s, %s, %s, %s,
                     COALESCE(%s, now()), COALESCE(%s, now()), 'ingreso_directo')
             RETURNING id
             """,
@@ -2444,6 +2459,13 @@ def _insertar_compra_con_guia(
                 contenido_por_cajon,
                 cantidad_kilos,
                 cantidad_fraccion,
+                # A LAS DOS, igual que cantidad_fraccion: el ingreso directo
+                # entra ya recepcionado y copia el estimado al real. Escribir
+                # solo la estimada dejaria la fila real con un hueco que la
+                # pantalla muestra como "esta compra no declaro la otra
+                # magnitud", que es falso.
+                segunda_por_cajon,
+                segunda_por_cajon,
                 recepcionada_el,
                 recepcionada_el,
             ),
@@ -2454,8 +2476,9 @@ def _insertar_compra_con_guia(
             INSERT INTO compras
                 (fecha_operacion, articulo_id, proveedor_id, cantidad_cajones, contenido_por_cajon,
                  cantidad_kilos, cantidad_fraccion, importe, sena, tipo_retiro,
-                 guia_id, guia_punto, carga_token, estado, estado_retiro, retiro_procesado_el, retiro_origen)
-            VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, 'pendiente', 'retirado', now(), %s)
+                 guia_id, guia_punto, carga_token, segunda_por_cajon,
+                 estado, estado_retiro, retiro_procesado_el, retiro_origen)
+            VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, 'pendiente', 'retirado', now(), %s)
             RETURNING id
             """,
             (
@@ -2472,6 +2495,7 @@ def _insertar_compra_con_guia(
                 guia_id,
                 guia_punto,
                 carga_token,
+                segunda_por_cajon,
                 ORIGEN_RETIRO_AUTOMATICO_POR_TIPO[tipo_retiro],
             ),
         )
@@ -2481,8 +2505,8 @@ def _insertar_compra_con_guia(
             INSERT INTO compras
                 (fecha_operacion, articulo_id, proveedor_id, cantidad_cajones, contenido_por_cajon,
                  cantidad_kilos, cantidad_fraccion, importe, sena, tipo_retiro,
-                 guia_id, guia_punto, carga_token, estado, estado_retiro)
-            VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, 'pendiente', 'pendiente')
+                 guia_id, guia_punto, carga_token, segunda_por_cajon, estado, estado_retiro)
+            VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, 'pendiente', 'pendiente')
             RETURNING id
             """,
             (
@@ -2499,6 +2523,7 @@ def _insertar_compra_con_guia(
                 guia_id,
                 guia_punto,
                 carga_token,
+                segunda_por_cajon,
             ),
         )
 
@@ -2589,6 +2614,12 @@ def crear_compras_de_comanda(
                     # POR RENGLÓN y no por comanda: al mismo puesto se le
                     # pueden comprar dos cosas y que solo una venga armada.
                     ficha_en_origen_id=renglon.get("ficha_en_origen_id"),
+                    # Con [] y NO con .get(): un renglón al que le falte la
+                    # clave tiene que reventar. Un `.get()` guardaría la
+                    # compra con la columna en NULL, que se ve igual que una
+                    # compra anterior al modelo de dos magnitudes — o sea un
+                    # hueco legítimo, y nadie lo iría a buscar.
+                    segunda_por_cajon=renglon["segunda_por_cajon"],
                 )
         conexion.commit()
         return True
@@ -2640,8 +2671,15 @@ def actualizar_cantidad_compra(
     cantidad_fraccion: float | None,
     tipo_retiro: str,
     ficha_en_origen_id: int | None = None,
+    *,
+    segunda_por_cajon: float | None,
 ) -> None:
     """Actualiza artículo/cantidad/marca de "viene armada"/tipo de retiro de una compra existente. No toca importe ni seña.
+
+    `segunda_por_cajon` es keyword-only y sin default por lo mismo que en
+    `crear_compra`: LA EDICIÓN es justo el camino que se olvidó la marca de
+    "viene armada" en el 12/09, y el modo de falla es el mismo — la pantalla
+    relee de la base, así que una escritura muerta se ve igual que una viva.
 
     Bloqueada (ValueError) SOLO si la compra ya pasó por Depósito
     (recepcionada, con rechazo total o nunca ingresada — ver
@@ -2696,12 +2734,14 @@ def actualizar_cantidad_compra(
                     """
                     UPDATE compras
                     SET articulo_id = %s, cantidad_cajones = %s, contenido_por_cajon = %s,
-                        cantidad_kilos = %s, cantidad_fraccion = %s, tipo_retiro = %s,
+                        cantidad_kilos = %s, cantidad_fraccion = %s, segunda_por_cajon = %s,
+                        tipo_retiro = %s,
                         estado_retiro = 'retirado', retiro_procesado_el = now(), retiro_origen = %s
                     WHERE id = %s
                     """,
                     (
                         articulo_id, cantidad_cajones, contenido_por_cajon, cantidad_kilos, cantidad_fraccion,
+                        segunda_por_cajon,
                         tipo_retiro, ORIGEN_RETIRO_AUTOMATICO_POR_TIPO[tipo_retiro], compra_id,
                     ),
                 )
@@ -2713,22 +2753,26 @@ def actualizar_cantidad_compra(
                     """
                     UPDATE compras
                     SET articulo_id = %s, cantidad_cajones = %s, contenido_por_cajon = %s,
-                        cantidad_kilos = %s, cantidad_fraccion = %s, tipo_retiro = %s,
+                        cantidad_kilos = %s, cantidad_fraccion = %s, segunda_por_cajon = %s,
+                        tipo_retiro = %s,
                         estado_retiro = 'pendiente', retiro_procesado_el = NULL,
                         retiro_origen = NULL, cantidad_cajones_retirada = NULL
                     WHERE id = %s
                     """,
-                    (articulo_id, cantidad_cajones, contenido_por_cajon, cantidad_kilos, cantidad_fraccion, tipo_retiro, compra_id),
+                    (articulo_id, cantidad_cajones, contenido_por_cajon, cantidad_kilos, cantidad_fraccion,
+                     segunda_por_cajon, tipo_retiro, compra_id),
                 )
             else:
                 cursor.execute(
                     """
                     UPDATE compras
                     SET articulo_id = %s, cantidad_cajones = %s, contenido_por_cajon = %s,
-                        cantidad_kilos = %s, cantidad_fraccion = %s, tipo_retiro = %s
+                        cantidad_kilos = %s, cantidad_fraccion = %s, segunda_por_cajon = %s,
+                        tipo_retiro = %s
                     WHERE id = %s
                     """,
-                    (articulo_id, cantidad_cajones, contenido_por_cajon, cantidad_kilos, cantidad_fraccion, tipo_retiro, compra_id),
+                    (articulo_id, cantidad_cajones, contenido_por_cajon, cantidad_kilos, cantidad_fraccion,
+                     segunda_por_cajon, tipo_retiro, compra_id),
                 )
 
             if ficha_en_origen_id is not None:
@@ -2798,6 +2842,7 @@ def listar_compras_pendientes_recepcion() -> list[dict]:
                        -- el comprador, que es el único que lo sabe.
                        c.ficha_en_origen_id,
                        a.nombre AS articulo_nombre, a.unidad_compra, a.unidad_conteo,
+                       c.segunda_por_cajon,
                        p.nombre AS proveedor_nombre, p.codigo_puesto AS proveedor_codigo_puesto,
                        c.cantidad_cajones, c.contenido_por_cajon, c.cantidad_kilos, c.cantidad_fraccion,
                        (SELECT COUNT(*) FROM fotos_recepcion f WHERE f.compra_id = c.id) AS fotos_balanza
@@ -2877,8 +2922,15 @@ def _derivar_valores_reales(
     cantidad_cajones_real: float,
     valor_real: float,
     segunda_real: float | None = None,
-) -> tuple[float | None, float | None, float | None]:
-    """A partir de lo que Depósito mira en UN cajón/bulto, arma (contenido_por_cajon_real, cantidad_kilos_real, cantidad_fraccion_real).
+) -> tuple[float | None, float | None, float | None, float | None]:
+    """De lo que Depósito mira en UN cajón, arma (contenido_por_cajon_real, kilos_real, fraccion_real, segunda_por_cajon_real).
+
+    DEVUELVE CUATRO Y EL CUARTO ES `segunda_real` SIN TOCAR, por lo mismo
+    que `magnitudes_de_la_compra` devuelve tres: desde el 20/09 la segunda
+    magnitud tiene columna propia y tiene que llegar al UPDATE. Viajando en
+    la MISMA tupla que los totales no se puede perder — un llamador que
+    tomara tres de cuatro revienta al desempacar, en vez de dejar la columna
+    en NULL, que se ve igual que una compra que no declaró la segunda.
 
     valor_real es SIEMPRE por cajón/bulto — nunca el total de toda la
     carga junta — sea kilos, unidades o cubetas: Depósito mira un bulto
@@ -2905,7 +2957,7 @@ def _derivar_valores_reales(
     principal = cantidad_cajones_real * valor_real
     segunda = cantidad_cajones_real * segunda_real if segunda_real is not None else None
     kilos, fraccion = repartir_magnitudes(unidad_compra, principal, segunda)
-    return valor_real, kilos, fraccion
+    return valor_real, kilos, fraccion, segunda_real
 
 
 def recepcionar_compra(
@@ -3000,7 +3052,8 @@ def _recepcionar_compra(
     unidad_compra, cantidad_kilos, cantidad_fraccion = fila if fila else (None, None, None)
 
     _exigir_la_segunda_si_la_compra_la_declaro(cantidad_kilos, cantidad_fraccion, segunda_real)
-    contenido_por_cajon_real, cantidad_kilos_real, cantidad_fraccion_real = _derivar_valores_reales(
+    (contenido_por_cajon_real, cantidad_kilos_real, cantidad_fraccion_real,
+     segunda_por_cajon_real) = _derivar_valores_reales(
         unidad_compra, cantidad_cajones_real, valor_real, segunda_real
     )
 
@@ -3012,6 +3065,7 @@ def _recepcionar_compra(
             contenido_por_cajon_real = %s,
             cantidad_kilos_real = %s,
             cantidad_fraccion_real = %s,
+            segunda_por_cajon_real = %s,
             cantidad_cajones_rechazada = %s,
             motivo_rechazo = %s,
             procesada_el = now()
@@ -3022,6 +3076,7 @@ def _recepcionar_compra(
             contenido_por_cajon_real,
             cantidad_kilos_real,
             cantidad_fraccion_real,
+            segunda_por_cajon_real,
             cantidad_cajones_rechazada,
             motivo_rechazo,
             compra_id,
@@ -3765,7 +3820,8 @@ def corregir_recepcion_compra(
                 )
 
             _exigir_la_segunda_si_la_compra_la_declaro(cantidad_kilos, cantidad_fraccion, segunda_real)
-            contenido_por_cajon_real, cantidad_kilos_real, cantidad_fraccion_real = _derivar_valores_reales(
+            (contenido_por_cajon_real, cantidad_kilos_real, cantidad_fraccion_real,
+             segunda_por_cajon_real) = _derivar_valores_reales(
                 unidad_compra, cantidad_cajones_real, valor_real, segunda_real
             )
 
@@ -3776,6 +3832,7 @@ def corregir_recepcion_compra(
                     contenido_por_cajon_real = %s,
                     cantidad_kilos_real = %s,
                     cantidad_fraccion_real = %s,
+                    segunda_por_cajon_real = %s,
                     cantidad_cajones_rechazada = %s,
                     motivo_rechazo = %s
                 WHERE id = %s
@@ -3785,6 +3842,7 @@ def corregir_recepcion_compra(
                     contenido_por_cajon_real,
                     cantidad_kilos_real,
                     cantidad_fraccion_real,
+                    segunda_por_cajon_real,
                     cantidad_cajones_rechazada,
                     motivo_rechazo,
                     compra_id,
@@ -4140,6 +4198,7 @@ def buscar_ingresos_deposito(
                        c.cantidad_kilos_real, c.cantidad_fraccion_real,
                        c.cantidad_cajones_rechazada, c.motivo_rechazo, c.importe, c.sena,
                        a.nombre AS articulo_nombre, a.unidad_compra, a.unidad_conteo,
+                       c.segunda_por_cajon,
                        p.nombre AS proveedor_nombre, p.codigo_puesto AS proveedor_codigo_puesto
                 FROM compras c
                 JOIN articulos a ON a.id = c.articulo_id
@@ -4523,6 +4582,7 @@ def listar_compras_pendientes_retiro(tipo_retiro: str) -> list[dict]:
                 """
                 SELECT c.id, c.guia_id, c.guia_punto, c.fecha_operacion,
                        a.nombre AS articulo_nombre, a.unidad_compra, a.unidad_conteo,
+                       c.segunda_por_cajon,
                        p.nombre AS proveedor_nombre, p.codigo_puesto AS proveedor_codigo_puesto,
                        c.cantidad_cajones, c.contenido_por_cajon, c.cantidad_kilos, c.cantidad_fraccion
                 FROM compras c
@@ -4650,6 +4710,7 @@ def listar_compras_procesadas_hoy_retiro(tipo_retiro: str, fecha) -> list[dict]:
             cursor.execute(
                 """
                 SELECT c.id, a.nombre AS articulo_nombre, a.unidad_compra, a.unidad_conteo,
+                c.segunda_por_cajon,
                        p.nombre AS proveedor_nombre, p.codigo_puesto AS proveedor_codigo_puesto,
                        c.cantidad_cajones, c.contenido_por_cajon, c.cantidad_cajones_retirada,
                        c.cantidad_kilos, c.cantidad_fraccion,
@@ -4697,6 +4758,7 @@ def listar_compras_sin_precio() -> list[dict]:
             cursor.execute(
                 """
                 SELECT c.id, c.fecha_operacion, a.nombre AS articulo_nombre, a.unidad_compra, a.unidad_conteo,
+                c.segunda_por_cajon, c.segunda_por_cajon_real,
                        p.nombre AS proveedor_nombre,
                        p.codigo_puesto AS proveedor_codigo_puesto,
                        COALESCE(c.cantidad_cajones_real, c.cantidad_cajones) AS cantidad_cajones,

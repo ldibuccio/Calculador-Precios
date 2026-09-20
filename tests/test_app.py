@@ -1,3 +1,4 @@
+import ast
 import asyncio
 import base64
 import inspect
@@ -1827,7 +1828,7 @@ COMPRAS_DE_PRUEBA = [
         "contenido_por_cajon": 18,
         "unidad_compra": "kilo",
         "cantidad_kilos": 180,
-        "cantidad_fraccion": None,
+        "cantidad_fraccion": None, "segunda_por_cajon": None,
         "importe": 50000,
         "sena": None,
         "tipo_retiro": "Clark",
@@ -1845,7 +1846,7 @@ COMPRAS_DE_PRUEBA = [
         "contenido_por_cajon": 10,
         "unidad_compra": "unidad",
         "cantidad_kilos": None,
-        "cantidad_fraccion": 50,
+        "cantidad_fraccion": 50, "segunda_por_cajon": None,
         "importe": 15000,
         "sena": 2000,
         "tipo_retiro": "Carro",
@@ -2249,7 +2250,7 @@ COMPRAS_BUSQUEDA_DE_PRUEBA = [
         "cantidad_cajones": 40,
         "contenido_por_cajon": 20,
         "cantidad_kilos": 800,
-        "cantidad_fraccion": None,
+        "cantidad_fraccion": None, "segunda_por_cajon": None,
         "importe": 45000.0,
         "sena": None,
         "tipo_retiro": "Clark",
@@ -2278,7 +2279,7 @@ COMPRAS_BUSQUEDA_DE_PRUEBA = [
         "cantidad_cajones": 10,
         "contenido_por_cajon": 12,
         "cantidad_kilos": None,
-        "cantidad_fraccion": 120,
+        "cantidad_fraccion": 120, "segunda_por_cajon": None,
         "importe": None,
         "sena": None,
         "tipo_retiro": "Carro",
@@ -3083,7 +3084,7 @@ def test_agregar_compra_manual_guarda_proveedor_y_articulo_en_un_paso():
     # siguientes artículos no lo repiten.
     assert respuesta.headers["location"] == "/compras/nueva?proveedor_id=200"
     mock_proveedor.assert_called_once_with("N07P41", "Saturno")
-    mock_crear.assert_called_once_with(hoy, 5, 200, 8.0, 18.0, 144.0, None, 3000.0, None, "Clark", None, ficha_en_origen_id=None)
+    mock_crear.assert_called_once_with(hoy, 5, 200, 8.0, 18.0, 144.0, None, 3000.0, None, "Clark", None, ficha_en_origen_id=None, segunda_por_cajon=None)
 
 
 def test_agregar_compra_manual_con_guardar_termina_en_buscar():
@@ -3298,7 +3299,7 @@ def test_agregar_compra_exitosa_redirige_al_mismo_proveedor_calcula_kilos():
     assert respuesta.status_code == 303
     assert respuesta.headers["location"] == "/compras/nueva?proveedor_id=200"
     # 10 cajones × 18 kg = 180 kg (unidad_compra del artículo = kilo)
-    mock_crear.assert_called_once_with(HOY_DE_PRUEBA, 5, 200, 10.0, 18.0, 180.0, None, 50000.0, None, "Clark", None, ficha_en_origen_id=None)
+    mock_crear.assert_called_once_with(HOY_DE_PRUEBA, 5, 200, 10.0, 18.0, 180.0, None, 50000.0, None, "Clark", None, ficha_en_origen_id=None, segunda_por_cajon=None)
 
 
 def test_agregar_compra_calcula_fraccion_para_articulo_por_unidad():
@@ -3327,7 +3328,12 @@ def test_agregar_compra_calcula_fraccion_para_articulo_por_unidad():
     # LAS DOS MAGNITUDES de una sola carga: 5 cajones de 10 unidades y 16
     # kilos cada uno -> 50 unidades y 80 kilos. El contenido por cajón está
     # en unidad_compra (unidad) y el campo nuevo trae la otra.
-    mock_crear.assert_called_once_with(HOY_DE_PRUEBA, 6, 200, 5.0, 10.0, 80.0, 50.0, 30000.0, None, "Carro", None, ficha_en_origen_id=None)
+    # La segunda POR CAJÓN llega tal como se tipeó, sin pasar por el total:
+    # 10 kilos y 16 unidades por cajón, y la columna guarda el 16.
+    mock_crear.assert_called_once_with(
+        HOY_DE_PRUEBA, 6, 200, 5.0, 10.0, 80.0, 50.0, 30000.0, None, "Carro", None,
+        ficha_en_origen_id=None, segunda_por_cajon=16.0,
+    )
 
 
 def test_agregar_compra_SIN_la_segunda_magnitud_no_guarda_y_lo_dice():
@@ -3434,7 +3440,7 @@ def test_agregar_compra_terminar_con_renglon_cargado_lo_guarda_y_va_a_compras():
 
     assert respuesta.status_code == 303
     assert respuesta.headers["location"] == "/compras/buscar"
-    mock_crear.assert_called_once_with(HOY_DE_PRUEBA, 5, 200, 10.0, 18.0, 180.0, None, 50000.0, None, "Clark", None, ficha_en_origen_id=None)
+    mock_crear.assert_called_once_with(HOY_DE_PRUEBA, 5, 200, 10.0, 18.0, 180.0, None, 50000.0, None, "Clark", None, ficha_en_origen_id=None, segunda_por_cajon=None)
 
 
 def test_agregar_compra_terminar_con_renglon_invalido_muestra_error_y_no_pierde_datos():
@@ -3560,7 +3566,7 @@ def test_agregar_compra_sin_importe_queda_pendiente():
         )
 
     assert respuesta.status_code == 303
-    mock_crear.assert_called_once_with(HOY_DE_PRUEBA, 5, 200, 10.0, 18.0, 180.0, None, None, None, "Clark", None, ficha_en_origen_id=None)
+    mock_crear.assert_called_once_with(HOY_DE_PRUEBA, 5, 200, 10.0, 18.0, 180.0, None, None, None, "Clark", None, ficha_en_origen_id=None, segunda_por_cajon=None)
 
 
 def test_agregar_compra_importe_negativo_muestra_error():
@@ -3637,7 +3643,7 @@ def test_agregar_compra_tipo_retiro_pases_se_acepta():
         )
 
     assert respuesta.status_code == 303
-    mock_crear.assert_called_once_with(HOY_DE_PRUEBA, 5, 200, 10.0, 18.0, 180.0, None, 50000.0, None, "Pases", None, ficha_en_origen_id=None)
+    mock_crear.assert_called_once_with(HOY_DE_PRUEBA, 5, 200, 10.0, 18.0, 180.0, None, 50000.0, None, "Pases", None, ficha_en_origen_id=None, segunda_por_cajon=None)
 
 
 def test_ver_nueva_compra_con_proveedor_muestra_las_tres_opciones_de_retiro():
@@ -3827,7 +3833,7 @@ COMPRA_DE_PRUEBA = {
     "cantidad_cajones": 10,
     "contenido_por_cajon": 18,
     "cantidad_kilos": 180,
-    "cantidad_fraccion": None,
+    "cantidad_fraccion": None, "segunda_por_cajon": None,
     "importe": 50000,
     "sena": None,
     "tipo_retiro": "Clark",
@@ -5520,7 +5526,7 @@ def test_editar_compra_exitosa_redirige_a_compras():
     # están bloqueados, se actualizan los dos.
     # La estructura ENTERA, el None de la marca incluido: sin la marca en
     # la comparación, el día que la edición vuelva a tirarla el test pasa.
-    mock_actualizar_cantidad.assert_called_once_with(30, 5, 8.0, 15.0, 120.0, None, "Carro", None)
+    mock_actualizar_cantidad.assert_called_once_with(30, 5, 8.0, 15.0, 120.0, None, "Carro", None, segunda_por_cajon=None)
     mock_actualizar_precio.assert_called_once_with(30, 55000.0, 1000.0)
 
 
@@ -5670,7 +5676,7 @@ def test_editar_compra_agregar_articulo_crea_compra_nueva_en_la_misma_guia():
     mock_actualizar_precio.assert_not_called()
     mock_crear.assert_called_once_with(
         COMPRA_DE_PRUEBA["fecha_operacion"], 6, COMPRA_DE_PRUEBA["proveedor_id"], 5.0, 10.0, 50.0,
-        None, 20000.0, None, "Pases", ficha_en_origen_id=None,
+        None, 20000.0, None, "Pases", ficha_en_origen_id=None, segunda_por_cajon=None,
     )
 
 
@@ -7699,7 +7705,7 @@ RENGLON_KIWI_ESPERADO = {
     "cantidad_cajones": 10.0,
     "contenido_por_cajon": 18.0,
     "cantidad_kilos": 180.0,
-    "cantidad_fraccion": None,
+    "cantidad_fraccion": None, "segunda_por_cajon": None,
     "importe": 5000.0,
     "sena": None,
     "tipo_retiro": "Clark",
@@ -11890,6 +11896,7 @@ def test_ingresar_mercaderia_exitoso_agregar_redirige_con_aviso():
         HOY_DE_PRUEBA, 5, 200, 10.0, 18.0, 180.0, None, None, None, "Clark",
         ingreso_directo_deposito=True,
         ficha_en_origen_id=None,
+        segunda_por_cajon=None,
     )
 
 
@@ -14764,7 +14771,7 @@ def test_editar_compra_etiqueta_el_contenido_con_la_unidad_del_articulo():
     compra = {
         "id": 30, "fecha_operacion": HOY_DE_PRUEBA, "articulo_id": 5, "articulo_nombre": "Kiwi",
         "proveedor_id": 200, "proveedor_nombre": "Saturno", "proveedor_codigo_puesto": "N07P41",
-        "cantidad_cajones": 10, "contenido_por_cajon": 18, "cantidad_kilos": 180, "cantidad_fraccion": None,
+        "cantidad_cajones": 10, "contenido_por_cajon": 18, "cantidad_kilos": 180, "cantidad_fraccion": None, "segunda_por_cajon": None,
         "importe": 5000, "sena": None, "tipo_retiro": "Clark", "foto_ruta": None,
         "estado": None, "estado_retiro": "pendiente",
     }
@@ -14785,7 +14792,7 @@ def test_editar_compra_muestra_las_fotos_de_la_guia_con_subir_y_borrar():
         "id": 30, "fecha_operacion": HOY_DE_PRUEBA, "articulo_id": 5, "articulo_nombre": "Kiwi",
         "proveedor_id": 200, "proveedor_nombre": "Saturno", "proveedor_codigo_puesto": "N07P41",
         "guia_id": 105,
-        "cantidad_cajones": 10, "contenido_por_cajon": 18, "cantidad_kilos": 180, "cantidad_fraccion": None,
+        "cantidad_cajones": 10, "contenido_por_cajon": 18, "cantidad_kilos": 180, "cantidad_fraccion": None, "segunda_por_cajon": None,
         "importe": 5000, "sena": None, "tipo_retiro": "Clark",
         "estado": None, "estado_retiro": "pendiente",
     }
@@ -14812,7 +14819,7 @@ def test_editar_compra_sin_foto_no_muestra_el_boton():
     compra = {
         "id": 30, "fecha_operacion": HOY_DE_PRUEBA, "articulo_id": 5, "articulo_nombre": "Kiwi",
         "proveedor_id": 200, "proveedor_nombre": "Saturno", "proveedor_codigo_puesto": "N07P41",
-        "cantidad_cajones": 10, "contenido_por_cajon": 18, "cantidad_kilos": 180, "cantidad_fraccion": None,
+        "cantidad_cajones": 10, "contenido_por_cajon": 18, "cantidad_kilos": 180, "cantidad_fraccion": None, "segunda_por_cajon": None,
         "importe": 5000, "sena": None, "tipo_retiro": "Clark", "foto_ruta": None,
         "estado": None, "estado_retiro": "pendiente",
     }
@@ -29091,7 +29098,7 @@ def test_la_edicion_GUARDA_la_marca_y_no_solo_la_muestra():
         )
 
     assert respuesta.status_code == 303
-    mock_actualizar_cantidad.assert_called_once_with(30, 5, 8.0, 15.0, 120.0, None, "Carro", 3)
+    mock_actualizar_cantidad.assert_called_once_with(30, 5, 8.0, 15.0, 120.0, None, "Carro", 3, segunda_por_cajon=None)
 
 
 def test_el_retroactivo_devuelve_la_caja_elegida_cuando_el_guardado_FALLA():
@@ -29965,6 +29972,17 @@ def test_TODOS_los_que_GUARDAN_una_compra_sacan_sus_cantidades_de_UNA_funcion():
     assert fuente_core.count("def repartir_magnitudes") == 1
 
 
+# `test_magnitudes_por_cajon_es_la_INVERSA_de_repartir_magnitudes` y
+# `test_la_INVERSA_del_reparto_esta_escrita_UNA_sola_vez` VIVIERON ACA hasta
+# el 20/09, y se fueron con las funciones que verificaban: desde que
+# `compras.segunda_por_cajon` tiene columna, no hay ninguna vuelta que cerrar
+# — la magnitud se guarda como se tipeo y se lee de ahi.
+#
+# Se borraron en vez de aflojarse. Un test que verifica una propiedad que ya
+# no existe pasa siempre, y el proximo que lo lea va a creer que la derivacion
+# sigue viva en algun lado.
+
+
 def test_el_HUECO_de_la_segunda_magnitud_SE_MUESTRA_y_no_se_calla():
     """Una pantalla que se calla no distingue "no hay dato" de "no lo mostré".
 
@@ -29980,14 +29998,18 @@ def test_el_HUECO_de_la_segunda_magnitud_SE_MUESTRA_y_no_se_calla():
     from app.main import templates
 
     macro = templates.env.get_template("_magnitudes_del_cajon.html").module.magnitudes_del_cajon
+    # LA COLUMNA y no los totales: desde el 20/09 `compras` guarda la segunda
+    # magnitud por cajón, así que un fixture con los totales ya no se parece a
+    # producción — y un fixture que no se parece convierte al test en el
+    # guardián del bug.
     base = {"contenido_por_cajon": 40, "unidad_compra": "unidad",
-            "unidad_conteo": "unidad", "cantidad_cajones": 10, "cantidad_fraccion": 400}
+            "unidad_conteo": "unidad", "cantidad_cajones": 10}
 
-    sin_kilos = str(macro(dict(base, cantidad_kilos=None)))
+    sin_kilos = str(macro(dict(base, segunda_por_cajon=None)))
     assert "sin kilos declarados" in sin_kilos
     assert "magnitud-hueco" in sin_kilos
 
-    con_kilos = str(macro(dict(base, cantidad_kilos=160)))
+    con_kilos = str(macro(dict(base, segunda_por_cajon=16)))
     assert "16k" in con_kilos, "declaradas las dos, la segunda se muestra"
     assert "sin kilos" not in con_kilos, "con el dato NO puede quedar el hueco"
 
@@ -29995,14 +30017,14 @@ def test_el_HUECO_de_la_segunda_magnitud_SE_MUESTRA_y_no_se_calla():
     # que no hay nada que declarar y el hueco sería un reclamo falso.
     solo_kilo = str(macro({"contenido_por_cajon": 16, "unidad_compra": "kilo",
                            "unidad_conteo": None, "cantidad_cajones": 10,
-                           "cantidad_kilos": 160, "cantidad_fraccion": None}))
+                           "segunda_por_cajon": None}))
     assert "sin" not in solo_kilo, "sin conteo declarado no falta nada"
 
     # LA CONCORDANCIA VIAJA CON EL SUSTANTIVO: armar la frase pegando el
     # plural a un "declarados" fijo da "sin unidades declarados".
     falta_conteo = str(macro({"contenido_por_cajon": 16, "unidad_compra": "kilo",
                               "unidad_conteo": "unidad", "cantidad_cajones": 10,
-                              "cantidad_kilos": 160, "cantidad_fraccion": None}))
+                              "segunda_por_cajon": None}))
     assert "sin unidades declaradas" in falta_conteo
     assert "declarados" not in falta_conteo
 
@@ -30020,78 +30042,18 @@ def test_la_fila_REAL_mueve_LAS_DOS_mitades_juntas():
     c = {"contenido_por_cajon": 16, "contenido_por_cajon_real": 18,
          "unidad_compra": "kilo", "unidad_conteo": "unidad",
          "cantidad_cajones": 10, "cantidad_kilos": 160, "cantidad_fraccion": 400,
-         "cantidad_cajones_real": 10, "cantidad_kilos_real": 180, "cantidad_fraccion_real": 350}
+         "cantidad_cajones_real": 10, "cantidad_kilos_real": 180, "cantidad_fraccion_real": 350,
+         # LA COLUMNA, que es de donde sale desde el 20/09. Los totales quedan
+         # en el fixture a propósito: si el macro volviera a derivar, 400/10
+         # daría 40 y el test pasaría igual — con la columna en 40 y 35 el
+         # derivado da lo mismo, así que los números se eligieron DISTINTOS
+         # (42 y 37) para que una derivación caiga.
+         "segunda_por_cajon": 42, "segunda_por_cajon_real": 37}
 
     declarado, real = str(macro(c)), str(macro(c, real=True))
-    assert "16k" in declarado and "40u" in declarado
-    assert "18k" in real and "35u" in real
-    assert "40u" not in real, "la fila real se quedó con la segunda magnitud DECLARADA"
-
-
-def test_magnitudes_por_cajon_es_la_INVERSA_de_repartir_magnitudes():
-    """La vuelta completa tiene que cerrar, sobre la matriz entera.
-
-    Un comentario que dice "esto es la inversa" envejece en silencio; una
-    vuelta que tiene que cerrar, no. Se entra por `repartir_magnitudes`
-    —(principal, segunda) a (kilos, fraccion)— y se sale por las dos de
-    salida, que tienen que devolver exactamente lo que entró.
-
-    Y NO ES LA VUELTA COMPLETA DEL CORQOLARIO 41: ahí el círculo estaba
-    adentro de una pantalla que se preguntaba a sí misma y el número no
-    contestaba nada. Acá las dos mitades son código distinto —una decide en
-    qué columna cae cada total, la otra lee esas columnas— y lo que se afirma
-    es justamente que no se separaron.
-    """
-    from core.magnitudes import (
-        magnitudes_por_cajon, repartir_magnitudes, segunda_magnitud_por_cajon,
-    )
-
-    CAJONES = 10
-    casos = [
-        (unidad, principal, segunda)
-        for unidad in ("kilo", "unidad", "cubeta", None)
-        for principal in (16.0, 40.0)
-        for segunda in (160.0, None)
-    ]
-    for unidad, principal, segunda in casos:
-        kilos, fraccion = repartir_magnitudes(unidad, principal * CAJONES,
-                                              None if segunda is None else segunda * CAJONES)
-        k_cajon, c_cajon = magnitudes_por_cajon(kilos, fraccion, CAJONES)
-        vuelta = segunda_magnitud_por_cajon(unidad, k_cajon, c_cajon)
-        assert vuelta == segunda, f"no cerró para {unidad}, principal={principal}, segunda={segunda}"
-
-    # Y que la matriz ejercite las dos ramas del reparto: con todos los casos
-    # en 'kilo' cualquier inversa que devuelva el conteo pasaría (corolario 53).
-    assert {u for u, _, _ in casos} == {"kilo", "unidad", "cubeta", None}
-
-
-def test_la_INVERSA_del_reparto_esta_escrita_UNA_sola_vez():
-    """Estuvo dos veces en Jinja, en el mismo archivo, a 134 líneas.
-
-    Ninguna de las tres copias nombraba a las otras, así que el día que el
-    reparto cambiara una plantilla no se enteraba. Y con seis pantallas más
-    por mostrar las dos magnitudes, eso iba de dos copias a ocho.
-
-    El barrido pregunta por la FORMA del derivado —un total dividido los
-    cajones— en las plantillas, que es lo único que una copia nueva no puede
-    evitar escribir.
-    """
-    import glob
-
-    ofensores = []
-    for ruta in glob.glob("templates/*.html"):
-        marcado = io.open(ruta, encoding="utf-8").read()
-        sin_comentarios = re.sub(r"\{#.*?#\}", "", marcado, flags=re.S)
-        for patron in (r"cantidad_kilos\s*/\s*\w*\.?cantidad_cajones",
-                       r"cantidad_fraccion\s*/\s*\w*\.?cantidad_cajones"):
-            if re.search(patron, sin_comentarios):
-                ofensores.append(ruta)
-                break
-    assert not ofensores, f"el derivado volvió a las plantillas: {sorted(set(ofensores))}"
-
-    fuente = io.open("core/magnitudes.py", encoding="utf-8").read()
-    assert fuente.count("def magnitudes_por_cajon") == 1
-    assert fuente.count("def segunda_magnitud_por_cajon") == 1
+    assert "16k" in declarado and "42u" in declarado
+    assert "18k" in real and "37u" in real
+    assert "42u" not in real, "la fila real se quedó con la segunda magnitud DECLARADA"
 
 
 def test_TODAS_las_pantallas_de_carga_PIDEN_la_segunda_magnitud():
@@ -30121,14 +30083,32 @@ def test_TODA_rama_que_REARMA_el_formulario_conserva_la_segunda_magnitud():
     Se cuenta contra el campo que YA se sabe que está en todas esas ramas
     —`contenido_por_cajon`, del mismo formulario— en vez de contra un número
     escrito a mano: un número envejece el día que se agrega una pantalla.
+
+    Y SE PREGUNTA AL ÁRBOL, no al texto. La primera versión contaba las dos
+    cadenas y las comparaba, y el 20/09 se rompió por la razón equivocada: el
+    renglón de la comanda ganó un `"segunda_por_cajon":` que NO es una rama
+    de re-render, así que el conteo dio 13 contra 12 sobre un código
+    correcto. Un dict que tiene la clave del contenido es una rama; uno que
+    no la tiene, no — y eso el texto no lo puede distinguir (corolario 59).
     """
-    fuente = io.open("app/main.py", encoding="utf-8").read()
-    contenido = fuente.count('"contenido_por_cajon": contenido_por_cajon,')
-    segunda = fuente.count('"segunda_por_cajon": segunda_por_cajon,')
-    assert contenido > 0, "cambió la forma de los dicts: este test dejó de mirar algo"
-    assert segunda == contenido, (
-        f"{contenido} ramas rearman el formulario con el contenido por cajón "
-        f"y solo {segunda} conservan la segunda magnitud"
+    arbol = ast.parse(io.open("app/main.py", encoding="utf-8").read())
+    ramas = [
+        nodo for nodo in ast.walk(arbol)
+        if isinstance(nodo, ast.Dict)
+        and any(isinstance(k, ast.Constant) and k.value == "contenido_por_cajon"
+                for k in nodo.keys)
+    ]
+    assert ramas, "cambió la forma de los dicts: este test dejó de mirar algo"
+
+    sin_la_segunda = [
+        nodo.lineno for nodo in ramas
+        if not any(isinstance(k, ast.Constant) and k.value == "segunda_por_cajon"
+                   for k in nodo.keys)
+    ]
+    assert not sin_la_segunda, (
+        f"{len(ramas)} ramas rearman el formulario con el contenido por cajón "
+        f"y {len(sin_la_segunda)} pierden la segunda magnitud, en las líneas "
+        f"{sin_la_segunda} de app/main.py"
     )
 
 
@@ -32332,3 +32312,56 @@ def test_SIN_fotos_de_comanda_no_se_avisa_nada():
 
     marcado = respuesta.text.split("</style>")[-1]
     assert "La foto de la comanda se queda" not in marcado
+
+
+def test_la_SEGUNDA_se_LEE_DE_LA_COLUMNA_y_no_se_deriva_del_total():
+    """El test que decide todo el cambio del 20/09, y hay que leer sus números.
+
+    La compra del fixture tiene la columna en 37 y los totales diciendo otra
+    cosa: 400 sobre 10 cajones, que derivado da 40. **Son distintos a
+    propósito.** Con la columna y el derivado coincidiendo —que es lo normal
+    en producción— este test pasaría igual con la división puesta de vuelta, y
+    no estaría mirando nada (corolario 16: un test de "esto no se deriva" hay
+    que correrlo con la derivación puesta o no se sabe si ve algo).
+
+    Y vale para las DOS mitades: la real dice 33 en la columna contra 350/10 =
+    35 derivado, así que la fila real cae por su cuenta si alguien la deriva.
+    """
+    from app.main import segunda_por_cajon_de
+
+    compra = {
+        "unidad_compra": "kilo", "unidad_conteo": "unidad",
+        "cantidad_cajones": 10, "cantidad_kilos": 160, "cantidad_fraccion": 400,
+        "cantidad_cajones_real": 10, "cantidad_kilos_real": 180, "cantidad_fraccion_real": 350,
+        "segunda_por_cajon": 37, "segunda_por_cajon_real": 33,
+    }
+    assert segunda_por_cajon_de(compra) == 37, "derivó 400/10 en vez de leer la columna"
+    assert segunda_por_cajon_de(compra, real=True) == 33, "derivó 350/10 en vez de leer la columna"
+
+    # Y el hueco sigue siendo un hueco: sin la columna no se inventa un número
+    # con los totales, que es justo lo que este cambio vino a sacar.
+    sin_declarar = dict(compra, segunda_por_cajon=None, segunda_por_cajon_real=None)
+    assert segunda_por_cajon_de(sin_declarar) is None
+    assert segunda_por_cajon_de(sin_declarar, real=True) is None
+
+
+def test_NADIE_vuelve_a_dividir_el_total_por_los_cajones():
+    """La derivación se fue del repo, no quedó escondida en una pantalla.
+
+    Se pregunta por la FORMA del derivado —un total dividido los cajones— y no
+    por el nombre de las funciones borradas: una copia nueva no puede evitar
+    escribir la división, y sí puede evitar llamarse igual.
+    """
+    for archivo in ("app/main.py", "app/db.py", "core/magnitudes.py"):
+        fuente = io.open(archivo, encoding="utf-8").read()
+        sin_comentarios = "\n".join(l.split("#")[0] for l in fuente.splitlines())
+        for forma in ("/ cantidad_cajones", "/ c.cantidad_cajones", "/cantidad_cajones"):
+            assert forma not in sin_comentarios, (
+                f"{archivo} volvió a derivar la segunda magnitud: {forma}"
+            )
+
+    # Y las dos funciones que la hacían no están: si alguien las revive, que
+    # sea con un nombre nuevo y una razón escrita, no copiando las viejas.
+    import core.magnitudes as magnitudes
+    assert not hasattr(magnitudes, "magnitudes_por_cajon")
+    assert not hasattr(magnitudes, "segunda_magnitud_por_cajon")

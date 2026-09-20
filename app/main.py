@@ -370,9 +370,7 @@ from app.db import (
 )
 from core.conceptos_cliente import calcular_cambio_de_utilidad, calcular_cambios_de_tasas
 from core.magnitudes import (
-    magnitudes_por_cajon,
     repartir_magnitudes,
-    segunda_magnitud_por_cajon,
 )
 from core.exportar_compras import generar_excel_listado_compras, generar_pdf_listado_compras
 from core.exportar_disponibles import generar_excel_disponibles
@@ -1187,18 +1185,17 @@ def segunda_por_cajon_de(compra, real: bool = False) -> float | None:
     olvidar. El que se olvide no ve nada roto — ve una sola magnitud, que es
     exactamente lo que había antes.
 
-    Y la cuenta NO se hace acá ni en la plantilla: se le pide a
-    core/magnitudes.py, que es donde vive la inversa del reparto. Esto es el
-    cable, no la regla — ya estuvo escrita dos veces en Jinja y con esto iba a
-    ocho.
+    Y DESDE EL 20/09 NO SE CALCULA NADA: se lee la columna. `compras` guarda
+    `segunda_por_cajon` tal como la tipeó el comprador, igual que
+    `contenido_por_cajon` — multiplicar por los cajones para guardar el total
+    y dividir de vuelta para mostrarlo solo podía perder precisión, y era la
+    única de las dos magnitudes que no tenía columna propia.
+
+    Sigue siendo UN SOLO LUGAR, que es lo que importaba desde el principio:
+    la lectura estuvo escrita dos veces en Jinja y con las seis pantallas
+    nuevas iba a ocho.
     """
-    sufijo = "_real" if real else ""
-    kilos, conteo = magnitudes_por_cajon(
-        compra.get(f"cantidad_kilos{sufijo}"),
-        compra.get(f"cantidad_fraccion{sufijo}"),
-        compra.get(f"cantidad_cajones{sufijo}"),
-    )
-    return segunda_magnitud_por_cajon(compra.get("unidad_compra"), kilos, conteo)
+    return compra.get("segunda_por_cajon_real" if real else "segunda_por_cajon")
 
 
 templates.env.globals["segunda_por_cajon_de"] = segunda_por_cajon_de
@@ -1929,8 +1926,18 @@ def _validar_segunda_magnitud(texto: str, segunda: str | None) -> tuple[str | No
 
 def magnitudes_de_la_compra(
     articulo: dict, cantidad_cajones: float, contenido_por_cajon: float, segunda_por_cajon: float | None
-) -> tuple[float | None, float | None]:
-    """(cantidad_kilos, cantidad_fraccion) de una compra, a partir de sus dos contenidos por cajón.
+) -> tuple[float | None, float | None, float | None]:
+    """(cantidad_kilos, cantidad_fraccion, segunda_por_cajon) de una compra, desde sus dos contenidos por cajón.
+
+    DEVUELVE TRES Y NO DOS, y el tercero es el que entró sin tocar. No es
+    una comodidad: `segunda_por_cajon` tiene columna propia desde el 20/09 y
+    tiene que llegar al INSERT, y **viajando en la MISMA tupla que los dos
+    totales no se puede perder** — un llamador que tomara dos de tres
+    revienta al desempacar, en vez de guardar una compra con la columna en
+    NULL, que se ve exactamente igual que una compra vieja.
+
+    Es el corolario 3 al revés: en vez de grepear quién construye para
+    encontrar al que se olvidó, se hace que olvidarse sea imposible.
 
     UNA SOLA FUNCIÓN PARA LOS SEIS CAMINOS DE CARGA, y ése es el punto: el
     reparto entre las dos columnas es la clase de cosa que escrita seis
@@ -1954,7 +1961,8 @@ def magnitudes_de_la_compra(
     # tratarlo como kilo de acá en adelante no re-etiqueta nada. Sin esto,
     # esos artículos quedaban sin forma de arreglarse el día que el campo
     # dejó de existir en el formulario.
-    return repartir_magnitudes(articulo.get("unidad_compra") or "kilo", principal, segunda)
+    kilos, fraccion = repartir_magnitudes(articulo.get("unidad_compra") or "kilo", principal, segunda)
+    return kilos, fraccion, segunda_por_cajon
 
 
 def _validar_codigo_puesto(texto: str) -> tuple[str | None, str | None]:
@@ -3528,7 +3536,7 @@ async def agregar_compra_manual(
 
     foto_ruta = _subir_comanda_adjunta(comprimida, codigo_valor) if comprimida is not None else None
 
-    cantidad_kilos, cantidad_fraccion = magnitudes_de_la_compra(
+    cantidad_kilos, cantidad_fraccion, segunda_por_cajon = magnitudes_de_la_compra(
         articulo, valores["cantidad_cajones"], valores["contenido_por_cajon"], valores["segunda_por_cajon"]
     )
 
@@ -3546,6 +3554,7 @@ async def agregar_compra_manual(
             valores["tipo_retiro"],
             foto_ruta,
             ficha_en_origen_id=valores["ficha_en_origen_id"],
+            segunda_por_cajon=segunda_por_cajon,
         )
     except Exception as error_db:
         return _reintentar(f"No se pudo guardar la compra: {error_db}", 500)
@@ -3705,7 +3714,7 @@ async def agregar_compra(
             status_code=400,
         )
 
-    cantidad_kilos, cantidad_fraccion = magnitudes_de_la_compra(
+    cantidad_kilos, cantidad_fraccion, segunda_por_cajon = magnitudes_de_la_compra(
         articulo, valores["cantidad_cajones"], valores["contenido_por_cajon"], valores["segunda_por_cajon"]
     )
 
@@ -3725,6 +3734,7 @@ async def agregar_compra(
             valores["tipo_retiro"],
             foto_ruta,
             ficha_en_origen_id=valores["ficha_en_origen_id"],
+            segunda_por_cajon=segunda_por_cajon,
         )
     except Exception as error_db:
         articulos = listar_articulos()
@@ -4329,7 +4339,7 @@ async def confirmar_compra_foto(request: Request):
             hoy = _hoy_argentina()
             renglones_comanda = []
             for texto_leido, valores, articulo in renglones_a_guardar:
-                cantidad_kilos, cantidad_fraccion = magnitudes_de_la_compra(
+                cantidad_kilos, cantidad_fraccion, segunda_por_cajon = magnitudes_de_la_compra(
                     articulo,
                     valores["cantidad_cajones"],
                     valores["contenido_por_cajon"],
@@ -4342,6 +4352,7 @@ async def confirmar_compra_foto(request: Request):
                         "contenido_por_cajon": valores["contenido_por_cajon"],
                         "cantidad_kilos": cantidad_kilos,
                         "cantidad_fraccion": cantidad_fraccion,
+                        "segunda_por_cajon": segunda_por_cajon,
                         "importe": valores["importe"],
                         "sena": valores["sena"],
                         "tipo_retiro": valores["tipo_retiro"],
@@ -5303,7 +5314,7 @@ def editar_compra(
             status_code=400,
         )
 
-    cantidad_kilos, cantidad_fraccion = magnitudes_de_la_compra(
+    cantidad_kilos, cantidad_fraccion, segunda_por_cajon = magnitudes_de_la_compra(
         articulo, valores["cantidad_cajones"], valores["contenido_por_cajon"], valores["segunda_por_cajon"]
     )
 
@@ -5321,6 +5332,7 @@ def editar_compra(
                 valores["sena"],
                 valores["tipo_retiro"],
                 ficha_en_origen_id=valores["ficha_en_origen_id"],
+                segunda_por_cajon=segunda_por_cajon,
             )
         except Exception as error_db:
             articulos = listar_articulos()
@@ -5377,6 +5389,7 @@ def editar_compra(
                 # para eso está "Vino armada" de Buscar Compras) y comparten
                 # el artículo, que es contra lo que la caja se valida.
                 valores["ficha_en_origen_id"],
+                segunda_por_cajon=segunda_por_cajon,
             )
         if not precio_bloqueado:
             actualizar_precio_compra(compra_id, valores["importe"], valores["sena"])
@@ -6329,7 +6342,7 @@ def cargar_ingreso_retroactivo(
     if error:
         return _renderizar_ingreso_retroactivo(request, precarga=precarga, error=error, status_code=400)
 
-    cantidad_kilos, cantidad_fraccion = magnitudes_de_la_compra(articulo, cajones, contenido, segunda)
+    cantidad_kilos, cantidad_fraccion, segunda_por_cajon = magnitudes_de_la_compra(articulo, cajones, contenido, segunda)
     # Mediodía y no medianoche: la fecha que importa es el DÍA, y las dos
     # cuentas la pasan a hora argentina antes de mirarla. A las 00:00 de
     # Buenos Aires, un corrimiento de zona la tira al día anterior.
@@ -6342,6 +6355,7 @@ def cargar_ingreso_retroactivo(
             ingreso_directo_deposito=True,
             recepcionada_el=momento,
             ficha_en_origen_id=ficha_marcada,
+            segunda_por_cajon=segunda_por_cajon,
         )
     except ValueError as rechazo:
         return _renderizar_ingreso_retroactivo(request, precarga=precarga, error=str(rechazo), status_code=400)
@@ -8955,7 +8969,7 @@ def ingresar_mercaderia(
             status_code=400,
         )
 
-    cantidad_kilos, cantidad_fraccion = magnitudes_de_la_compra(
+    cantidad_kilos, cantidad_fraccion, segunda_por_cajon = magnitudes_de_la_compra(
         articulo, valores["cantidad_cajones"], valores["contenido_por_cajon"], valores["segunda_por_cajon"]
     )
 
@@ -8977,6 +8991,7 @@ def ingresar_mercaderia(
             # camino para registrar una entrada que ya viene armada sería la
             # guía R a mano.
             ficha_en_origen_id=valores["ficha_en_origen_id"],
+            segunda_por_cajon=segunda_por_cajon,
         )
     except Exception as error_db:
         articulos = listar_articulos()
@@ -9144,12 +9159,7 @@ def _agregar_segunda_por_cajon(compra: dict) -> None:
     todas las anteriores al 15/09— y la pantalla lo muestra como hueco. No es
     un cero y no se deduce.
     """
-    kilos, conteo = magnitudes_por_cajon(
-        compra.get("cantidad_kilos"), compra.get("cantidad_fraccion"), compra.get("cantidad_cajones")
-    )
-    compra["segunda_por_cajon_estimada"] = segunda_magnitud_por_cajon(
-        compra.get("unidad_compra"), kilos, conteo
-    )
+    compra["segunda_por_cajon_estimada"] = compra.get("segunda_por_cajon")
 
 
 def _renderizar_pantalla_recepcion(

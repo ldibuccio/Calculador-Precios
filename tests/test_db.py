@@ -523,7 +523,8 @@ def test_crear_compra_asigna_el_primer_punto_de_una_guia_nueva():
 
     with patch("app.db.obtener_conexion", return_value=conexion):
         crear_compra(
-            date(2026, 8, 16), 5, 200, 40, 20, 800, None, 45000.0, None, "Clark"
+            date(2026, 8, 16), 5, 200, 40, 20, 800, None, 45000.0, None, "Clark",
+            segunda_por_cajon=None,
         )
 
     consultas = [llamada.args[0] for llamada in cursor.execute.call_args_list]
@@ -537,8 +538,9 @@ def test_crear_compra_asigna_el_primer_punto_de_una_guia_nueva():
     assert "guia_id" in consulta_insert
     assert "guia_punto" in consulta_insert
     assert "'pendiente'" in consulta_insert
-    # guia_id, guia_punto, carga_token (None: carga manual, sin token)
-    assert parametros_insert[-3:] == (105, 1, None)
+    # guia_id, guia_punto, carga_token (None: carga manual, sin token) y la
+    # SEGUNDA MAGNITUD POR CAJÓN, que desde el 20/09 tiene columna propia.
+    assert parametros_insert[-4:] == (105, 1, None, None)
     conexion.commit.assert_called_once()
 
 
@@ -555,11 +557,12 @@ def test_crear_compra_suma_puntos_si_la_guia_ya_tiene_renglones():
 
     with patch("app.db.obtener_conexion", return_value=conexion):
         crear_compra(
-            date(2026, 8, 16), 6, 200, 10, 12, None, 120, None, None, "Clark"
+            date(2026, 8, 16), 6, 200, 10, 12, None, 120, None, None, "Clark",
+            segunda_por_cajon=None,
         )
 
     _, parametros_insert = cursor.execute.call_args_list[3].args
-    assert parametros_insert[-3:] == (105, 3, None)  # guia_id, guia_punto, carga_token
+    assert parametros_insert[-4:] == (105, 3, None, None)  # guia_id, guia_punto, carga_token
 
 
 def test_crear_compras_de_comanda_guarda_todos_los_renglones_en_un_solo_commit():
@@ -576,12 +579,12 @@ def test_crear_compras_de_comanda_guarda_todos_los_renglones_en_un_solo_commit()
     renglones = [
         {
             "articulo_id": 5, "cantidad_cajones": 10, "contenido_por_cajon": 18,
-            "cantidad_kilos": 180, "cantidad_fraccion": None,
+            "cantidad_kilos": 180, "cantidad_fraccion": None, "segunda_por_cajon": None,
             "importe": 5000.0, "sena": None, "tipo_retiro": "Clark",
         },
         {
             "articulo_id": 6, "cantidad_cajones": 3, "contenido_por_cajon": 12,
-            "cantidad_kilos": None, "cantidad_fraccion": 36,
+            "cantidad_kilos": None, "cantidad_fraccion": 36, "segunda_por_cajon": None,
             "importe": None, "sena": None, "tipo_retiro": "Clark",
         },
     ]
@@ -601,7 +604,10 @@ def test_crear_compras_de_comanda_guarda_todos_los_renglones_en_un_solo_commit()
     # los renglones (compras.foto_ruta muerta): cuelga de la guía, una vez
     # (el ON CONFLICT absorbe el segundo renglón).
     for llamada in inserts_compras:
-        assert llamada.args[1][-1] == "token123"
+        # EN la tupla y no en la punta: el 20/09 `segunda_por_cajon`
+        # entró después del token y el ancla en [-1] se corrió. Es la
+        # misma trampa que ya había mordido con las dos fechas.
+        assert "token123" in llamada.args[1]
         assert "2026-08-19/n07p41-1.jpg" not in llamada.args[1]
     inserts_fotos = [
         llamada for llamada in cursor.execute.call_args_list if "INSERT INTO fotos_guia" in llamada.args[0]
@@ -620,7 +626,7 @@ def test_crear_compras_de_comanda_con_token_ya_usado_no_inserta_nada():
         guardo = crear_compras_de_comanda(
             date(2026, 8, 19), 200,
             [{"articulo_id": 5, "cantidad_cajones": 10, "contenido_por_cajon": 18,
-              "cantidad_kilos": 180, "cantidad_fraccion": None,
+              "cantidad_kilos": 180, "cantidad_fraccion": None, "segunda_por_cajon": None,
               "importe": 5000.0, "sena": None, "tipo_retiro": "Clark"}],
             None, "token123",
         )
@@ -639,7 +645,7 @@ def test_crear_compras_de_comanda_sin_token_guarda_sin_chequear():
         guardo = crear_compras_de_comanda(
             date(2026, 8, 19), 200,
             [{"articulo_id": 5, "cantidad_cajones": 10, "contenido_por_cajon": 18,
-              "cantidad_kilos": 180, "cantidad_fraccion": None,
+              "cantidad_kilos": 180, "cantidad_fraccion": None, "segunda_por_cajon": None,
               "importe": 5000.0, "sena": None, "tipo_retiro": "Clark"}],
             None, None,
         )
@@ -684,6 +690,7 @@ def test_crear_compra_ingreso_directo_deposito_nace_recepcionada_y_retirada():
         crear_compra(
             date(2026, 8, 16), 5, 200, 40, 20, 800, None, None, None, "Clark",
             ingreso_directo_deposito=True,
+            segunda_por_cajon=None,
         )
 
     consulta_insert, parametros_insert = cursor.execute.call_args_list[3].args
@@ -706,6 +713,9 @@ def test_crear_compra_ingreso_directo_deposito_nace_recepcionada_y_retirada():
         date(2026, 8, 16), 5, 200, 40, 20, 800, None, None, None, "Clark", 105, 1,
         # Las reales, iguales a las cargadas: no hay estimado previo.
         40, 20, 800, None,
+        # La segunda magnitud por cajón, A LAS DOS: el ingreso directo entra
+        # ya recepcionado y copia el estimado al real.
+        None, None,
         # procesada_el y retiro_procesado_el: None = now(), que es el caso
         # de /deposito/ingresar. La fecha elegible es solo de Gerencia.
         None, None,
@@ -734,6 +744,7 @@ def test_el_ingreso_retroactivo_fecha_las_DOS_columnas_por_las_que_entra_al_stoc
         crear_compra(
             date(2026, 9, 7), 5, 200, 10, 16, 160, None, 0, None, "Clark",
             ingreso_directo_deposito=True, recepcionada_el=momento,
+            segunda_por_cajon=None,
         )
 
     consulta, parametros = _sql_y_parametros_que_contienen(cursor, "INSERT INTO compras")
@@ -766,12 +777,14 @@ def test_el_ingreso_retroactivo_RECHAZA_una_fecha_del_dia_del_corte_o_anterior()
             if tiene_que_entrar:
                 crear_compra(dia, 5, 200, 10, 16, 160, None, 0, None, "Clark",
                              ingreso_directo_deposito=True,
-                             recepcionada_el=datetime(dia.year, dia.month, dia.day, 12, 0))
+                             recepcionada_el=datetime(dia.year, dia.month, dia.day, 12, 0),
+                             segunda_por_cajon=None)
             else:
                 with pytest.raises(ValueError) as rechazo:
                     crear_compra(dia, 5, 200, 10, 16, 160, None, 0, None, "Clark",
                                  ingreso_directo_deposito=True,
-                                 recepcionada_el=datetime(dia.year, dia.month, dia.day, 12, 0))
+                                 recepcionada_el=datetime(dia.year, dia.month, dia.day, 12, 0),
+                             segunda_por_cajon=None)
                 assert "POSTERIOR al corte" in str(rechazo.value)
                 assert "05/09/2026" in str(rechazo.value)
 
@@ -786,7 +799,8 @@ def test_la_fecha_de_recepcion_NO_se_puede_elegir_en_una_carga_normal():
     with patch("app.db.obtener_conexion", return_value=conexion):
         with pytest.raises(ValueError) as rechazo:
             crear_compra(date(2026, 9, 7), 5, 200, 10, 16, 160, None, None, None, "Clark",
-                         recepcionada_el=datetime(2026, 9, 7, 12, 0))
+                         recepcionada_el=datetime(2026, 9, 7, 12, 0),
+                         segunda_por_cajon=None)
     assert "solo se puede elegir en un ingreso directo" in str(rechazo.value)
 
 
@@ -803,7 +817,7 @@ def test_crear_compra_sin_ingreso_directo_sigue_igual_que_antes():
     )
 
     with patch("app.db.obtener_conexion", return_value=conexion):
-        crear_compra(date(2026, 8, 16), 5, 200, 40, 20, 800, None, 45000.0, None, "Clark")
+        crear_compra(date(2026, 8, 16), 5, 200, 40, 20, 800, None, 45000.0, None, "Clark", segunda_por_cajon=None)
 
     consulta_insert, _ = cursor.execute.call_args_list[3].args
     assert "'pendiente', 'pendiente'" in consulta_insert
@@ -835,7 +849,7 @@ def test_actualizar_cantidad_compra_pisa_los_valores():
     conexion, cursor = _conexion_falsa([(None, None, None)])  # SELECT estado, estado_retiro, retiro_origen
 
     with patch("app.db.obtener_conexion", return_value=conexion):
-        actualizar_cantidad_compra(30, 5, 10, 20, 200, None, "Clark")
+        actualizar_cantidad_compra(30, 5, 10, 20, 200, None, "Clark", segunda_por_cajon=None)
 
     consulta_update, parametros_update = _sql_y_parametros_que_contienen(cursor, "UPDATE compras")
     assert "UPDATE compras" in consulta_update
@@ -850,7 +864,7 @@ def test_actualizar_cantidad_compra_recepcionada_no_se_edita():
 
     with patch("app.db.obtener_conexion", return_value=conexion):
         try:
-            actualizar_cantidad_compra(30, 5, 10, 20, 200, None, "Clark")
+            actualizar_cantidad_compra(30, 5, 10, 20, 200, None, "Clark", segunda_por_cajon=None)
             assert False, "tenía que lanzar ValueError"
         except ValueError as error:
             assert str(error) == "Esta compra ya fue recepcionada, no se puede editar la cantidad."
@@ -866,7 +880,7 @@ def test_actualizar_cantidad_compra_retirada_por_logistica_SI_se_edita():
     conexion, cursor = _conexion_falsa([("pendiente", "retirado", "logistica")])
 
     with patch("app.db.obtener_conexion", return_value=conexion):
-        actualizar_cantidad_compra(30, 5, 10, 20, 200, None, "Clark")
+        actualizar_cantidad_compra(30, 5, 10, 20, 200, None, "Clark", segunda_por_cajon=None)
 
     consulta_update = cursor.execute.call_args_list[1].args[0]
     assert "UPDATE compras" in consulta_update
@@ -883,7 +897,7 @@ def test_actualizar_cantidad_compra_rechazada_no_se_edita_aunque_nunca_se_haya_r
 
     with patch("app.db.obtener_conexion", return_value=conexion):
         try:
-            actualizar_cantidad_compra(30, 5, 10, 20, 200, None, "Clark")
+            actualizar_cantidad_compra(30, 5, 10, 20, 200, None, "Clark", segunda_por_cajon=None)
             assert False, "tenía que lanzar ValueError"
         except ValueError as error:
             assert str(error) == "Esta compra tuvo un rechazo total, no se puede editar la cantidad."
@@ -896,7 +910,7 @@ def test_actualizar_cantidad_compra_no_ingresada_no_se_edita():
 
     with patch("app.db.obtener_conexion", return_value=conexion):
         try:
-            actualizar_cantidad_compra(30, 5, 10, 20, 200, None, "Clark")
+            actualizar_cantidad_compra(30, 5, 10, 20, 200, None, "Clark", segunda_por_cajon=None)
             assert False, "tenía que lanzar ValueError"
         except ValueError as error:
             assert str(error) == "Esta compra nunca ingresó al depósito, no se puede editar la cantidad."
@@ -1079,7 +1093,8 @@ def test_recepcionar_compra_articulo_por_kilo_toma_kilos_por_bulto_y_deriva_el_t
     consulta_update, parametros_update = _sql_y_parametros_que_contienen(cursor, "UPDATE compras")
     assert "estado = 'recepcionado'" in consulta_update
     assert "procesada_el = now()" in consulta_update
-    cajones, contenido, kilos, fraccion, rechazada, motivo, compra_id = parametros_update
+    (cajones, contenido, kilos, fraccion, segunda_cajon,
+         rechazada, motivo, compra_id) = parametros_update
     assert cajones == 38
     assert contenido == 20  # tomado directo, sin dividir
     assert kilos == 760  # 38 × 20, derivado
@@ -1109,7 +1124,8 @@ def test_recepcionar_compra_articulo_por_unidad_toma_unidades_por_cajon_y_deriva
         recepcionar_compra(31, cantidad_cajones_real=10, valor_real=118)
 
     _, parametros_update = _sql_y_parametros_que_contienen(cursor, "UPDATE compras")
-    cajones, contenido, kilos, fraccion, rechazada, motivo, compra_id = parametros_update
+    (cajones, contenido, kilos, fraccion, segunda_cajon,
+         rechazada, motivo, compra_id) = parametros_update
     assert contenido == 118  # tomado directo, sin dividir
     assert kilos is None
     assert fraccion == 1180  # 10 × 118, derivado
@@ -1159,7 +1175,8 @@ def test_corregir_recepcion_compra_articulo_por_kilo_deriva_el_total():
     # A diferencia de recepcionar_compra, NO toca estado ni procesada_el.
     assert "estado" not in consulta_update
     assert "procesada_el" not in consulta_update
-    cajones, contenido, kilos, fraccion, rechazada, motivo, compra_id = parametros_update
+    (cajones, contenido, kilos, fraccion, segunda_cajon,
+         rechazada, motivo, compra_id) = parametros_update
     assert cajones == 30
     assert contenido == 25
     assert kilos == 750  # 30 × 25
@@ -1180,7 +1197,8 @@ def test_corregir_recepcion_compra_articulo_por_unidad_toma_unidades_por_cajon_y
         corregir_recepcion_compra(30, cantidad_cajones_real=30, valor_real=80)
 
     _, parametros_update = _sql_y_parametros_que_contienen(cursor, "UPDATE compras")
-    cajones, contenido, kilos, fraccion, rechazada, motivo, compra_id = parametros_update
+    (cajones, contenido, kilos, fraccion, segunda_cajon,
+         rechazada, motivo, compra_id) = parametros_update
     assert contenido == 80  # tomado directo, sin dividir
     assert kilos is None
     assert fraccion == 2400  # 30 × 80, derivado
@@ -1218,7 +1236,8 @@ def test_recepcionar_compra_con_rechazo_parcial_guarda_el_registro():
     consulta_update, parametros_update = _sql_y_parametros_que_contienen(cursor, "UPDATE compras")
     assert "cantidad_cajones_rechazada = %s" in consulta_update
     assert "motivo_rechazo = %s" in consulta_update
-    cajones, contenido, kilos, fraccion, rechazada, motivo, compra_id = parametros_update
+    (cajones, contenido, kilos, fraccion, segunda_cajon,
+         rechazada, motivo, compra_id) = parametros_update
     assert cajones == 8  # los aceptados, no los llegados
     assert kilos == 160  # 8 × 20: el total real sale de los aceptados
     assert rechazada == 2
@@ -1239,7 +1258,8 @@ def test_corregir_recepcion_compra_corrige_el_rechazo_parcial():
     consulta_update, parametros_update = _sql_y_parametros_que_contienen(cursor, "UPDATE compras")
     assert "cantidad_cajones_rechazada = %s" in consulta_update
     assert "motivo_rechazo = %s" in consulta_update
-    cajones, contenido, kilos, fraccion, rechazada, motivo, compra_id = parametros_update
+    (cajones, contenido, kilos, fraccion, segunda_cajon,
+         rechazada, motivo, compra_id) = parametros_update
     assert cajones == 7
     assert rechazada == 3
     assert motivo == "golpeado"
@@ -2455,7 +2475,7 @@ def test_crear_compra_cooperativa_nace_retirada_con_origen_cooperativa():
     conexion, cursor = _conexion_falsa(filas_fetchone=[(105,), (0,), (900,)])  # guia_id, punto
 
     with patch("app.db.obtener_conexion", return_value=conexion):
-        crear_compra(date(2026, 8, 19), 5, 200, 10, 18, 180, None, 50000.0, None, "Cooperativa")
+        crear_compra(date(2026, 8, 19), 5, 200, 10, 18, 180, None, 50000.0, None, "Cooperativa", segunda_por_cajon=None)
 
     consulta_insert, parametros_insert = cursor.execute.call_args_list[-1].args
     assert "'pendiente', 'retirado', now(), %s" in consulta_insert
@@ -2470,7 +2490,7 @@ def test_actualizar_cantidad_a_cooperativa_marca_el_retiro_en_el_mismo_update():
     conexion, cursor = _conexion_falsa(filas_fetchone=[("pendiente", "pendiente", None)])
 
     with patch("app.db.obtener_conexion", return_value=conexion):
-        actualizar_cantidad_compra(30, 5, 10, 18, 180, None, "Cooperativa")
+        actualizar_cantidad_compra(30, 5, 10, 18, 180, None, "Cooperativa", segunda_por_cajon=None)
 
     # EL UPDATE DEL RETIRO, buscado por lo que dice y no por ser el último:
     # la marca de "viene armada" se escribe con un UPDATE propio después, así
@@ -2487,7 +2507,7 @@ def test_actualizar_cantidad_con_tipo_comun_no_toca_el_retiro():
     conexion, cursor = _conexion_falsa(filas_fetchone=[("pendiente", "pendiente", None)])
 
     with patch("app.db.obtener_conexion", return_value=conexion):
-        actualizar_cantidad_compra(30, 5, 10, 18, 180, None, "Clark")
+        actualizar_cantidad_compra(30, 5, 10, 18, 180, None, "Clark", segunda_por_cajon=None)
 
     consulta_update = cursor.execute.call_args_list[-1].args[0]
     assert "estado_retiro" not in consulta_update
@@ -2501,7 +2521,7 @@ def test_actualizar_cantidad_de_cooperativa_a_tipo_real_vuelve_el_retiro_a_pendi
     conexion, cursor = _conexion_falsa(filas_fetchone=[("pendiente", "retirado", "automatico_cooperativa")])
 
     with patch("app.db.obtener_conexion", return_value=conexion):
-        actualizar_cantidad_compra(30, 5, 10, 18, 180, None, "Clark")
+        actualizar_cantidad_compra(30, 5, 10, 18, 180, None, "Clark", segunda_por_cajon=None)
 
     consulta_update = cursor.execute.call_args_list[1].args[0]
     assert "estado_retiro = 'pendiente'" in consulta_update
@@ -2515,7 +2535,7 @@ def test_crear_compra_carro_nace_retirada_con_origen_automatico():
     conexion, cursor = _conexion_falsa(filas_fetchone=[(105,), (0,), (900,)])
 
     with patch("app.db.obtener_conexion", return_value=conexion):
-        crear_compra(date(2026, 8, 19), 5, 200, 10, 18, 180, None, 50000.0, None, "Carro")
+        crear_compra(date(2026, 8, 19), 5, 200, 10, 18, 180, None, 50000.0, None, "Carro", segunda_por_cajon=None)
 
     consulta_insert, parametros_insert = cursor.execute.call_args_list[-1].args
     assert "'pendiente', 'retirado', now(), %s" in consulta_insert
@@ -2527,7 +2547,7 @@ def test_crear_compra_clark_sigue_naciendo_pendiente_de_retiro():
     conexion, cursor = _conexion_falsa(filas_fetchone=[(105,), (0,), (900,)])
 
     with patch("app.db.obtener_conexion", return_value=conexion):
-        crear_compra(date(2026, 8, 19), 5, 200, 10, 18, 180, None, 50000.0, None, "Clark")
+        crear_compra(date(2026, 8, 19), 5, 200, 10, 18, 180, None, 50000.0, None, "Clark", segunda_por_cajon=None)
 
     consulta_insert = cursor.execute.call_args_list[-1].args[0]
     assert "'pendiente', 'pendiente'" in consulta_insert
@@ -8782,6 +8802,7 @@ def test_marcar_una_compra_con_una_caja_de_OTRO_ARTICULO_no_la_guarda():
             crear_compra(
                 date(2026, 9, 11), 1, 200, 10, 16, 160, None, 5000.0, None, "Clark",
                 ficha_en_origen_id=3,
+                segunda_por_cajon=None,
             )
 
     assert not [c for c in cursor.execute.call_args_list
@@ -8797,6 +8818,7 @@ def test_una_compra_marcada_con_la_caja_de_SU_articulo_se_guarda():
         crear_compra(
             date(2026, 9, 11), 1, 200, 10, 16, 160, None, 5000.0, None, "Clark",
             ficha_en_origen_id=3,
+            segunda_por_cajon=None,
         )
 
     consulta, parametros = _sql_y_parametros_que_contienen(cursor, "SET ficha_en_origen_id")
@@ -8816,6 +8838,7 @@ def test_una_compra_PENDIENTE_marcada_NO_carga_la_guia_R_todavia():
         crear_compra(
             date(2026, 9, 11), 1, 200, 10, 16, 160, None, 5000.0, None, "Clark",
             ficha_en_origen_id=3,
+            segunda_por_cajon=None,
         )
 
     assert not [c for c in cursor.execute.call_args_list if "INSERT INTO reprocesos" in c.args[0]]
@@ -8852,6 +8875,7 @@ def test_el_ingreso_directo_MARCADO_carga_su_guia_R_en_el_MISMO_insert():
             date(2026, 8, 25), 1, 200, 10, 16, 160, None, 5000.0, None, "Clark",
             ingreso_directo_deposito=True,
             ficha_en_origen_id=3,
+            segunda_por_cajon=None,
         )
 
     cabecera = next(c for c in cursor.execute.call_args_list if "INSERT INTO reprocesos\n" in c.args[0])
@@ -9067,7 +9091,7 @@ def test_actualizar_cantidad_ESCRIBE_la_marca_y_la_valida_contra_el_articulo_NUE
 
     with patch("app.db.obtener_conexion", return_value=conexion):
         with pytest.raises(ValueError, match="de otro artículo"):
-            actualizar_cantidad_compra(30, 5, 10, 18, 180, None, "Clark", 3)
+            actualizar_cantidad_compra(30, 5, 10, 18, 180, None, "Clark", 3, segunda_por_cajon=None)
 
 
 def test_actualizar_cantidad_DESMARCA_cuando_la_marca_viene_vacia():
@@ -9079,7 +9103,7 @@ def test_actualizar_cantidad_DESMARCA_cuando_la_marca_viene_vacia():
     conexion, cursor = _conexion_falsa(filas_fetchone=[("pendiente", "pendiente", None)])
 
     with patch("app.db.obtener_conexion", return_value=conexion):
-        actualizar_cantidad_compra(30, 5, 10, 18, 180, None, "Clark", None)
+        actualizar_cantidad_compra(30, 5, 10, 18, 180, None, "Clark", None, segunda_por_cajon=None)
 
     consulta, parametros = next(
         llamada.args for llamada in cursor.execute.call_args_list
@@ -9737,7 +9761,7 @@ def test_recepcionar_con_las_DOS_magnitudes_deriva_los_DOS_totales():
         recepcionar_compra(30, cantidad_cajones_real=10, valor_real=9, segunda_real=15)
 
     _, parametros = _sql_y_parametros_que_contienen(cursor, "UPDATE compras")
-    cajones, contenido, kilos, fraccion, _, _, _ = parametros
+    cajones, contenido, kilos, fraccion, segunda_cajon, _, _, _ = parametros
     assert cajones == 10
     assert contenido == 9, "contenido_por_cajon_real es el de unidad_compra, directo"
     assert fraccion == 90, "10 × 9 unidades"
@@ -9780,7 +9804,7 @@ def test_la_recepcion_NO_pide_la_segunda_si_la_compra_trajo_UNA():
         recepcionar_compra(30, cantidad_cajones_real=38, valor_real=20)
 
     _, parametros = _sql_y_parametros_que_contienen(cursor, "UPDATE compras")
-    _, _, kilos, fraccion, _, _, _ = parametros
+    _, _, kilos, fraccion, segunda_cajon, _, _, _ = parametros
     assert kilos == 760
     assert fraccion is None, "la que la compra no declaró queda en None, no en cero"
 
@@ -10858,3 +10882,113 @@ def test_el_ORIGEN_no_tiene_DEFAULT():
     parametro = inspect.signature(db.eliminar_compra).parameters["origen"]
     assert parametro.default is inspect.Parameter.empty
     assert parametro.kind is inspect.Parameter.KEYWORD_ONLY
+
+
+def test_la_SEGUNDA_POR_CAJON_llega_al_INSERT_con_un_VALOR_y_no_solo_con_None():
+    """El caso con dato, que es el único que distingue guardar de listar.
+
+    Una batería donde el campo va vacío no separa "el parámetro se guarda" de
+    "la columna está en la lista del INSERT": con None en los dos lados, un
+    INSERT que escribiera NULL a la fuerza pasa igual (corolario 30). Por eso
+    el valor es 16 y no None, y el control de al lado es la compra que NO
+    declaró la segunda.
+    """
+    from app.db import crear_compra
+
+    for valor in (16.0, None):
+        conexion, cursor = _conexion_falsa([(105,), (0,), (900,)])
+        with patch("app.db.obtener_conexion", return_value=conexion):
+            crear_compra(date(2026, 9, 20), 5, 200, 10, 18, 180, None, 50000.0, None, "Clark",
+                         segunda_por_cajon=valor)
+
+        consulta, parametros = cursor.execute.call_args_list[3].args
+        assert "segunda_por_cajon" in consulta, "la columna no está en el INSERT"
+        assert valor in parametros, f"la segunda por cajón {valor} no llegó al INSERT"
+
+
+def test_el_INGRESO_DIRECTO_copia_la_segunda_a_LAS_DOS_columnas():
+    """Entra ya recepcionado, así que el estimado ES el real — igual que la fracción.
+
+    Escribir solo la estimada dejaría la fila real con un hueco, y la pantalla
+    muestra ese hueco como "esta compra no declaró la otra magnitud", que es
+    falso: la declaró y además se recibió en el acto.
+    """
+    from app.db import crear_compra
+
+    conexion, cursor = _conexion_falsa([(105,), (0,), (900,)])
+    with patch("app.db.obtener_conexion", return_value=conexion):
+        crear_compra(date(2026, 9, 20), 5, 200, 10, 18, 180, None, 50000.0, None, "Clark",
+                     ingreso_directo_deposito=True, segunda_por_cajon=16.0)
+
+    consulta, parametros = cursor.execute.call_args_list[3].args
+    assert "segunda_por_cajon, segunda_por_cajon_real" in consulta
+    assert parametros.count(16.0) == 2, "la segunda tiene que ir a la estimada Y a la real"
+
+
+def test_la_EDICION_reescribe_la_segunda_por_cajon():
+    """La edición es justo el camino que se olvidó `ficha_en_origen_id` el 12/09.
+
+    Y el modo de falla es el mismo: la pantalla relee de la base, así que una
+    escritura muerta se ve igual que una viva — el valor que vuelve es el que
+    puso OTRO camino.
+    """
+    from app.db import actualizar_cantidad_compra
+
+    conexion, cursor = _conexion_falsa([("pendiente", "pendiente", None)])
+    with patch("app.db.obtener_conexion", return_value=conexion):
+        actualizar_cantidad_compra(30, 5, 10, 18, 180, None, "Clark", segunda_por_cajon=16.0)
+
+    consulta, parametros = _sql_y_parametros_que_contienen(cursor, "UPDATE compras")
+    assert "segunda_por_cajon = %s" in consulta
+    assert 16.0 in parametros
+
+
+def test_la_RECEPCION_escribe_la_segunda_REAL_tal_como_la_conto_deposito():
+    """Por bulto y sin pasar por el total: lo que Depósito contó es lo que se guarda."""
+    from app.db import recepcionar_compra
+
+    conexion, cursor = _conexion_falsa(
+        [("kilo", 180.0, 400.0), ("pendiente",), (1, None, 10.0, date(2026, 8, 25), None, None)]
+    )
+    with patch("app.db.obtener_conexion", return_value=conexion):
+        recepcionar_compra(30, cantidad_cajones_real=10, valor_real=18, segunda_real=37)
+
+    consulta, parametros = _sql_y_parametros_que_contienen(cursor, "UPDATE compras")
+    assert "segunda_por_cajon_real = %s" in consulta
+
+    (cajones, contenido, kilos, fraccion, segunda_cajon,
+     _, _, _) = parametros
+    # POR POSICIÓN y no con un `in`: el total (370) TAMBIÉN está en la tupla
+    # —`cantidad_fraccion_real` se sigue guardando— así que preguntar si 37
+    # está adentro pasa igual con las dos columnas al revés.
+    assert segunda_cajon == 37, "la columna por cajón se quedó con el total"
+    assert fraccion == 370, "el total dejó de guardarse"
+
+
+def test_las_SIETE_consultas_que_muestran_las_DOS_magnitudes_TRAEN_la_columna():
+    """Sin la columna en el SELECT, la pantalla dibuja un hueco donde hay dato.
+
+    Y es mudo: un hueco es exactamente lo que se muestra para una compra
+    anterior al modelo de dos magnitudes, así que nadie lo iría a buscar
+    (corolario 65 — el mock entrega lo que le pidieron, no lo que la consulta
+    pidió, y ningún test de valor puede ver esto).
+
+    El conjunto se ENCUENTRA y no se escribe a mano: son las consultas de
+    compra que traen `a.unidad_conteo`, que es la columna que dice si hay una
+    segunda magnitud que mostrar. La octava no la va a recordar nadie.
+    """
+    fuente = io.open("app/db.py", encoding="utf-8").read()
+    sin_comentarios = "\n".join(l.split("--")[0] for l in fuente.splitlines())
+
+    # EL FILTRO ES `c.contenido_por_cajon` Y NO `a.unidad_conteo`: la primera
+    # versión usaba el conteo y se llevaba puesta la consulta del DETALLE DE
+    # LA ALERTA de unidades, que lo trae para otra cosa y no dibuja ningún
+    # cajón. La que necesita la segunda magnitud es la que trae la primera.
+    consultas = [
+        sql for sql in re.findall(r'"""(.*?)"""', sin_comentarios, re.S)
+        if "c.contenido_por_cajon" in sql and "a.unidad_conteo" in sql
+    ]
+    assert len(consultas) >= 6, f"solo {len(consultas)} consultas: el test dejó de mirar"
+
+    sin_la_columna = [s.strip()[:70] for s in consultas if "c.segunda_por_cajon" not in s]
+    assert not sin_la_columna, f"consultas sin la columna nueva: {sin_la_columna}"
