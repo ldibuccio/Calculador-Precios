@@ -3,6 +3,7 @@ import base64
 import inspect
 import io
 import os
+import pathlib
 import re
 import urllib.parse
 from contextlib import ExitStack
@@ -130,7 +131,10 @@ def test_salud_db_devuelve_la_cantidad_de_articulos():
     assert cuerpo["articulos"] == 29
     # El marcador de versión viaja acá además de en el pie: es lo que se
     # puede mirar sin abrir una pantalla.
-    assert set(cuerpo["version"]) == {"commit", "fecha", "fecha_es"}
+    # El conjunto ENTERO y no tres de cuatro: que caiga el día que alguien
+    # agrega un campo es su función, no una molestia. Cayó el 20/09 con
+    # `numero`, que es exactamente lo que tenía que pasar.
+    assert set(cuerpo["version"]) == {"numero", "commit", "fecha", "fecha_es"}
 
 
 def test_salud_db_sin_database_url_devuelve_error_claro():
@@ -28168,6 +28172,95 @@ def test_la_fecha_DICE_si_es_del_commit_o_del_arranque():
         version = _version_app()
         assert version["fecha_es"] == "commiteado"
         assert version["fecha"] == "08/09 11:20"  # convertido a hora argentina
+
+
+def test_el_NUMERO_sale_del_ARCHIVO_del_build_y_si_no_del_git():
+    """Dos fuentes y en ese orden, porque en producción solo sirve la primera.
+
+    El pie dice "levantado" y no "commiteado", o sea que el contenedor NO
+    trae el `.git`: ahí el conteo al arrancar no puede funcionar y el número
+    tiene que venir horneado del build (nixpacks.toml). El git queda para el
+    desarrollo local y para el día que el contenedor sí traiga el repo.
+    """
+    import tempfile
+    from app.main import _numero_de_version
+
+    with tempfile.TemporaryDirectory() as carpeta:
+        archivo = pathlib.Path(carpeta) / "VERSION_NUMERO"
+
+        # 1. El ARCHIVO gana, y tiene que ganar contra un git que SÍ contesta:
+        #    si el fixture no tuviera repo, este test pasaría igual con el
+        #    orden dado vuelta.
+        archivo.write_text("247\n", encoding="utf-8")
+        with patch("app.main.pathlib.Path") as ruta_falsa:
+            ruta_falsa.return_value.resolve.return_value.parent.parent.__truediv__.return_value = archivo
+            assert _numero_de_version() == "247"
+
+        # 2. Sin archivo, el git del repo de verdad: un número que crece.
+        archivo.unlink()
+        with patch("app.main.pathlib.Path") as ruta_falsa:
+            ruta_falsa.return_value.resolve.return_value.parent.parent.__truediv__.return_value = archivo
+            del_git = _numero_de_version()
+        assert del_git is not None and del_git.isdigit() and int(del_git) > 100
+
+        # 3. Un archivo con BASURA no se muestra: cae al git. Un correlativo
+        #    inventado es peor que ninguno — el que lo lee actúa.
+        archivo.write_text("no soy un numero", encoding="utf-8")
+        with patch("app.main.pathlib.Path") as ruta_falsa:
+            ruta_falsa.return_value.resolve.return_value.parent.parent.__truediv__.return_value = archivo
+            assert _numero_de_version() == del_git
+
+
+def test_sin_NINGUNA_de_las_dos_fuentes_el_pie_dice_SIN_NUMERO():
+    """Nada de rellenar con algo plausible, igual que con el commit.
+
+    Es la misma regla que ya está escrita arriba de `_commit_del_deploy`: un
+    marcador que rellena el hueco reproduce el problema que viene a resolver.
+    """
+    from app.main import _version_app
+
+    with patch("app.main.VERSION_NUMERO", None):
+        assert _version_app()["numero"] is None
+    pie = open("templates/_pie_version.html", encoding="utf-8").read()
+    marcado = re.sub(r"\{#.*?#\}", "", pie, flags=re.S)
+    assert "sin n\u00famero" in marcado
+
+
+def test_el_pie_pone_el_NUMERO_ADELANTE_y_el_commit_ATRAS():
+    """El orden es todo el cambio: el hash no contesta "¿es más nuevo?".
+
+    Y sin prefijo `v1.`: un "1" que nunca se va a mover promete una versión
+    mayor que no existe.
+    """
+    pie = open("templates/_pie_version.html", encoding="utf-8").read()
+    marcado = re.sub(r"\{#.*?#\}", "", pie, flags=re.S)
+
+    assert marcado.index("version_app.numero") < marcado.index("version_app.commit"), (
+        "el commit quedó adelante del número"
+    )
+    assert "v{{ version_app.numero }}" in marcado
+    assert "v1." not in marcado
+
+
+def test_el_BUILD_escribe_el_numero_y_el_deploy_NO_SE_CAE_si_no_puede():
+    """La otra mitad vive en nixpacks.toml, y sin ella el número no existe.
+
+    El `|| :` no es prolijidad: si algún día el build tampoco trae el repo,
+    el archivo queda vacío, el pie dice "sin número" y el deploy sale igual.
+    Un marcador que falta se ve; un deploy que no sale por un marcador, no.
+    """
+    nixpacks = open("nixpacks.toml", encoding="utf-8").read()
+    sin_comentarios = "\n".join(
+        l for l in nixpacks.splitlines() if not l.strip().startswith("#")
+    )
+
+    assert "[phases.build]" in sin_comentarios
+    assert "git rev-list --count HEAD" in sin_comentarios
+    assert "VERSION_NUMERO" in sin_comentarios
+    assert "|| :" in sin_comentarios, "sin el fallback, un build sin repo tumba el deploy"
+    # Y el archivo NO se commitea: lo escribe el build, y uno versionado
+    # quedaría viejo en cada deploy diciendo un número que no es.
+    assert "VERSION_NUMERO" in open(".gitignore", encoding="utf-8").read()
 
 
 def test_el_pie_no_mete_un_bloque_style_al_final():

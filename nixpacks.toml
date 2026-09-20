@@ -1,0 +1,12 @@
+# El NÚMERO DE VERSIÓN se hornea acá, y no se lee al arrancar.
+#
+# El pie de la app dice "levantado" y no "commiteado", que es la señal de que
+# el contenedor NO trae el `.git` (ver `_fecha_del_commit`). Así que
+# `git rev-list --count` en el arranque devolvería nada. En el BUILD el repo
+# sí está, porque de ahí sale la imagen, y por eso el conteo va acá.
+#
+# `|| :` a propósito: si algún día el build tampoco trae el repo, el archivo
+# queda vacío, el pie dice "sin número" y el deploy sale igual. Un marcador
+# que falta se ve; un deploy que no sale por un marcador, no se perdona.
+[phases.build]
+cmds = ["git rev-list --count HEAD > VERSION_NUMERO 2>/dev/null || :"]

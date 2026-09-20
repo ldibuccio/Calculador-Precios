@@ -1237,6 +1237,47 @@ def _commit_del_deploy() -> str | None:
     return None
 
 
+def _numero_de_version() -> str | None:
+    """El correlativo que sube con cada deploy, o None si no se pudo saber.
+
+    ES LA CANTIDAD DE COMMITS DE `main`, que es un número que ya crece solo y
+    nunca baja: no hay que acordarse de subirlo y no se puede desincronizar de
+    lo que está corriendo. Dos servicios del mismo commit muestran el mismo
+    número, y uno que quedó atrás muestra uno más chico — que es exactamente
+    la pregunta que este marcador contesta: "¿esto es más nuevo que lo que
+    tenía?".
+
+    DOS FUENTES, Y EN ESTE ORDEN:
+
+    1. `VERSION_NUMERO`, el archivo que escribe el build (ver nixpacks.toml).
+       Es el único que sirve en producción: el pie dice "levantado" y no
+       "commiteado", o sea que el contenedor NO trae el `.git`.
+    2. `git rev-list --count HEAD`, que cubre el desarrollo local y cubriría
+       también al contenedor el día que sí traiga el repo.
+
+    Y NINGUNA TERCERA: sin las dos, devuelve None y el pie dice "sin número",
+    igual que dice "sin commit". Un correlativo inventado es peor que no
+    tenerlo — el que lo lee actúa, y lo que este marcador existe para impedir
+    es justamente creer que se está mirando algo que no es.
+    """
+    archivo = pathlib.Path(__file__).resolve().parent.parent / "VERSION_NUMERO"
+    try:
+        texto = archivo.read_text(encoding="utf-8").strip()
+        if texto.isdigit():
+            return texto
+    except Exception:
+        pass
+    try:
+        salida = subprocess.run(
+            ["git", "rev-list", "--count", "HEAD"],
+            capture_output=True, text=True, timeout=3, check=True,
+        )
+        texto = salida.stdout.strip()
+        return texto if texto.isdigit() else None
+    except Exception:
+        return None
+
+
 def _fecha_del_commit():
     """Cuándo se hizo el commit que está corriendo, o None si no se puede saber.
 
@@ -1261,6 +1302,7 @@ def _fecha_del_commit():
 VERSION_COMMIT = _commit_del_deploy()
 VERSION_ARRANQUE = datetime.now(ARGENTINA)
 VERSION_FECHA_COMMIT = _fecha_del_commit()
+VERSION_NUMERO = _numero_de_version()
 
 
 def _version_app() -> dict:
@@ -1285,6 +1327,7 @@ def _version_app() -> dict:
     # se acuerden, y el día que alguien agregue un tercero se muestra UTC
     # sin que nada avise. Sobre un valor ya argentino no hace nada.
     return {
+        "numero": VERSION_NUMERO,
         "commit": VERSION_COMMIT,
         "fecha": fecha.astimezone(ARGENTINA).strftime("%d/%m %H:%M"),
         "fecha_es": fecha_es,

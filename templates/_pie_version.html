@@ -2,6 +2,15 @@
    exige: un marcador que aparece en algunas miente por omisión en las otras
    — justo en la pantalla donde uno duda es donde no estaría.
 
+   EL NÚMERO VA PRIMERO y el commit último, y ése es todo el cambio del
+   20/09: el hash identifica sin ambigüedad y no contesta "¿esto es más
+   nuevo que lo de antes?", que es la única pregunta que el que mira la
+   pantalla se hace. El correlativo sí, y el hash queda para buscar.
+
+   SIN PREFIJO `v1.`: un "1" que nunca se va a mover promete una versión
+   mayor que no existe, y el que lo lea así va a estar leyendo algo que no
+   está.
+
    `fecha_es` dice de qué es la fecha y NO es decorativo: "commit" es cuándo
    se escribió el código que corre; "levantado" es cuándo arrancó este
    proceso, que puede ser mucho más nuevo si el contenedor reinició sin
@@ -16,6 +25,7 @@
    </style> para quedarse con el contenido. Un <style> acá los rompería a
    todos y por una razón que no tiene nada que ver con lo que prueban. #}
 <footer style="margin:24px 12px 16px;text-align:center;font-size:0.75rem;color:#999;line-height:1.4">
-  {% if version_app.commit %}{{ version_app.commit }}{% else %}sin commit{% endif %}
+  {% if version_app.numero %}v{{ version_app.numero }}{% else %}sin número{% endif %}
   · {{ version_app.fecha_es }} {{ version_app.fecha }}
+  · {% if version_app.commit %}{{ version_app.commit }}{% else %}sin commit{% endif %}
 </footer>
