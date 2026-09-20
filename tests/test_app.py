@@ -11599,9 +11599,9 @@ def test_ver_deposito_muestra_el_acceso_a_recepcion():
 
     assert respuesta.status_code == 200
     assert 'href="/deposito/recepcion"' in respuesta.text
-    # "Recibir mercadería" y no "Recepción Compras": el rótulo dice qué hace
+    # "Recibir Mercadería" y no "Recepción Compras": el rótulo dice qué hace
     # el que entra, no de qué módulo es la pantalla.
-    assert "Recibir mercadería" in respuesta.text
+    assert "Recibir Mercadería" in respuesta.text
     assert "En construcción" not in respuesta.text
 
 
@@ -11615,7 +11615,7 @@ def test_ver_deposito_muestra_el_acceso_a_retirar_mercaderia():
     # Con ?origen=deposito, para que la barrita y el "Volver" de esa
     # pantalla sean de Depósito (de donde realmente se entró), no Logística.
     assert 'href="/logistica/retiro/Pases?origen=deposito"' in respuesta.text
-    assert "Retirar mercadería" in respuesta.text
+    assert "Retirar Mercadería" in respuesta.text
 
 
 def test_ver_deposito_muestra_el_acceso_a_ingresar_mercaderia():
@@ -11623,9 +11623,10 @@ def test_ver_deposito_muestra_el_acceso_a_ingresar_mercaderia():
 
     assert respuesta.status_code == 200
     assert 'href="/deposito/ingresar"' in respuesta.text
-    # EL DEPÓSITO NO COMPRA, y "Ingresar Mercadería" sonaba a que sí. El
-    # rótulo hace la pregunta del galpón: ¿llegó algo sin guía?
-    assert "Cargar lo que llegó sin guía" in respuesta.text
+    # "Compras Mercadería", puesto por el dueño el 20/09: lo que entra por acá
+    # ES una compra, y el depósito la registra cuando llegó sin papel. Antes
+    # decía "Cargar lo que llegó sin guía", y antes "Ingresar Mercadería".
+    assert "Compras Mercadería" in respuesta.text
     assert "Ingresar Mercadería" not in respuesta.text
 
 
@@ -21732,7 +21733,7 @@ FILAS_STOCK_DE_PRUEBA = [
 ]
 
 
-def test_LAS_SEIS_de_stock_estan_EN_EL_MENU_y_el_hub_intermedio_ya_NO_EXISTE():
+def test_LAS_SEIS_operaciones_de_stock_estan_EN_EL_MENU_y_el_hub_ya_NO_EXISTE():
     """Un toque menos en las operaciones que más se tocan.
 
     Eran seis botones detrás de una pantalla que solo servía para
@@ -21753,11 +21754,20 @@ def test_LAS_SEIS_de_stock_estan_EN_EL_MENU_y_el_hub_intermedio_ya_NO_EXISTE():
     for destino in ("fisico", "merma", "pase-a-segunda", "reingreso", "reproceso", "remito-segunda"):
         assert f'href="/deposito/stock/{destino}"' in cuerpo, destino
 
+    # Y EL REINGRESO CAE EN "Ingresos Mercadería", no en Stock: lo que vuelve
+    # del súper entra al galpón igual que una compra. Se mira en qué recuadro
+    # está y no solo que el link exista, porque mudarlo de bloque no rompe
+    # ningún `in` sobre la pantalla entera.
+    ingresos = cuerpo.split("<h2>Ingresos Mercadería</h2>", 1)[1].split("<h2>", 1)[0]
+    assert 'href="/deposito/stock/reingreso"' in ingresos
+    stock = cuerpo.split("<h2>Stock</h2>", 1)[1].split("</div>", 1)[0]
+    assert 'href="/deposito/stock/reingreso"' not in stock
+
     assert cliente.get("/deposito/stock").status_code == 404
     assert 'href="/deposito/stock"' not in cuerpo
 
     # Los tres recuadros, que son lo que reemplazó al hub.
-    for titulo in ("Mercadería", "Pedidos", "Stock"):
+    for titulo in ("Ingresos Mercadería", "Pedidos", "Stock"):
         assert f"<h2>{titulo}</h2>" in cuerpo, titulo
 
     # Y NO quedan botones apuntando a otro módulo: el depósito hace,
@@ -26917,9 +26927,12 @@ def test_deposito_ordena_los_botones_como_pasan_las_cosas():
     # test rompe por algo que no es el orden. Pasó el 11/09 con un comentario
     # de `_barra_navegacion.html` que decía "Movimientos de Stock".
     orden = [
-        ('/logistica/retiro/Pases?origen=deposito', "Retirar mercadería"),
-        ('/deposito/recepcion', "Recibir mercadería"),
-        ('/deposito/ingresar', "Cargar lo que llegó sin guía"),
+        ('/logistica/retiro/Pases?origen=deposito', "Retirar Mercadería"),
+        ('/deposito/recepcion', "Recibir Mercadería"),
+        ('/deposito/ingresar', "Compras Mercadería"),
+        # El reingreso cierra Ingresos Mercadería: lo que vuelve del súper
+        # entra al galpón igual que una compra.
+        ('/deposito/stock/reingreso', "Reingresos Rechazos"),
         ('/deposito/pedido', "Revisar el pedido"),
         ('/deposito/pedido/armar', "Armar el pedido"),
         ('/deposito/stock/fisico', "Contar el stock"),

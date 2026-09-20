@@ -91,15 +91,26 @@
      se arma lo que pidieron, y lo que queda se cuenta. Dentro de cada uno
      también manda el orden real y no el alfabético. #}
   <div class="tarjeta">
-    <h2>Mercadería</h2>
-    <a class="boton" href="/logistica/retiro/Pases?origen=deposito">{{ ICONOS_DEPOSITO['retirar']|safe }}<span>Retirar mercadería</span></a>
-    <a class="boton" href="/deposito/recepcion">{{ ICONOS_DEPOSITO['recibir']|safe }}<span>Recibir mercadería</span></a>
-    {# "Cargar lo que llegó sin guía" y no "Ingresar Mercadería": el depósito
-       no compra, así que un rótulo que suena a comprar manda a la pantalla
-       equivocada al que llega con un cajón en la mano y sin papel. El rótulo
-       hace la PREGUNTA del galpón —¿llegó algo sin guía?— en vez de nombrar
-       el mecanismo del sistema. #}
-    <a class="boton" href="/deposito/ingresar">{{ ICONOS_DEPOSITO['sin_guia']|safe }}<span>Cargar lo que llegó sin guía</span></a>
+    <h2>Ingresos Mercadería</h2>
+    <a class="boton" href="/logistica/retiro/Pases?origen=deposito">{{ ICONOS_DEPOSITO['retirar']|safe }}<span>Retirar Mercadería</span></a>
+    <a class="boton" href="/deposito/recepcion">{{ ICONOS_DEPOSITO['recibir']|safe }}<span>Recibir Mercadería</span></a>
+    {# "Compras Mercadería", puesto por el dueño el 20/09. Reemplaza a "Cargar
+       lo que llegó sin guía", que venía de un argumento mío —el depósito no
+       compra— que él dio vuelta: lo que entra por acá ES una compra, y lo que
+       el depósito hace es registrarla cuando llegó sin papel.
+
+       QUEDA ANOTADO QUE ESTE ROTULO Y EL DE ARRIBA SE PARECEN: "Recibir
+       Mercadería" es una compra que SI tiene guía y "Compras Mercadería" una
+       que no, y desde el botón esa diferencia no se ve. Es la misma forma que
+       tenían "Pedido" y "Armar Pedido". Si algún día se entra a la
+       equivocada, la salida no es reordenar: es que uno de los dos diga la
+       condición que los separa. #}
+    <a class="boton" href="/deposito/ingresar">{{ ICONOS_DEPOSITO['sin_guia']|safe }}<span>Compras Mercadería</span></a>
+    {# "Reingresos Rechazos" vive ACÁ y no en Stock, por decisión del dueño:
+       lo que vuelve del súper entra al galpón igual que una compra, así que
+       la pregunta que contesta es la de este bloque —¿qué está entrando?— y
+       no la de Stock, que es qué hacer con lo que ya está adentro. #}
+    <a class="boton" href="/deposito/stock/reingreso">{{ ICONOS_DEPOSITO['reingreso']|safe }}<span>Reingresos Rechazos</span></a>
   </div>
 
   {# "Pedido" y "Armar Pedido" sonaban al mismo sustantivo con un verbo
@@ -119,8 +130,13 @@
 
      El orden es el de la mano: primero contar, después lo que ya no sirve
      como estaba (tirarlo o pasarlo a segunda, que es la misma decisión
-     parado frente a los cajones feos), después lo que vuelve, y al final lo
-     que sale.
+     parado frente a los cajones feos), y al final lo que sale — reprocesado
+     o remitido al puesto.
+
+     DECÍA "después lo que vuelve" y eso era el reingreso por rechazo, que el
+     20/09 se mudó a Ingresos Mercadería. La frase quedó falsa en el mismo
+     cambio que la volvió falsa, que es cómo envejece un comentario sin que
+     nadie lo note.
 
      LOS SEIS ROTULOS EN LA MISMA FORMA que los cinco de arriba —verbo
      adelante y mayúscula solo al principio—, pero con las palabras del
@@ -134,7 +150,6 @@
     <a class="boton" href="/deposito/stock/fisico">{{ ICONOS_DEPOSITO['contar']|safe }}<span>Contar el stock</span></a>
     <a class="boton" href="/deposito/stock/merma">{{ ICONOS_DEPOSITO['merma']|safe }}<span>Cargar una merma</span></a>
     <a class="boton" href="/deposito/stock/pase-a-segunda">{{ ICONOS_DEPOSITO['pase']|safe }}<span>Pasar a segunda</span></a>
-    <a class="boton" href="/deposito/stock/reingreso">{{ ICONOS_DEPOSITO['reingreso']|safe }}<span>Cargar un rechazo</span></a>
     <a class="boton" href="/deposito/stock/reproceso">{{ ICONOS_DEPOSITO['reproceso']|safe }}<span>Cargar un reproceso</span></a>
     <a class="boton" href="/deposito/stock/remito-segunda">{{ ICONOS_DEPOSITO['remitir']|safe }}<span>Remitir la segunda</span></a>
   </div>
