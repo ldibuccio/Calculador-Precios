@@ -598,22 +598,30 @@ def test_en_CELULAR_el_conteo_del_catalogo_se_explica_y_el_vacio_no_dice_nada():
 def _pantallas_de_la_cuenta_con_colegas(nombre):
     """Las dos pantallas de la cuenta, con el nombre que se le pase.
 
-    RECIBE EL NOMBRE porque es lo único que en estas pantallas lo escribe una
+    RECIBE EL NOMBRE porque es lo que en estas pantallas lo escribe una
     persona, y por lo tanto lo único cuyo largo no controlamos.
+
+    Y SE LO PONE A LOS DOS: al COLEGA y a la CAJA. Hasta el 20/09 el fixture
+    le pasaba el nombre largo solo al colega y dejaba la caja en "Caja EJEMPLO
+    Grande", así que la guarda salía en verde con `.nombre` desbordando 198px
+    — un nombre de caja sin espacios rompía la pantalla y este test no podía
+    verlo. Es el corolario 53: un par de casos plantados que no se parecen a
+    dónde la herramienta se usa prueba esa forma y nada más. El nombre de la
+    caja lo tipea el que da de alta la ficha de un cliente.
     """
     from datetime import date
     from unittest.mock import patch
 
     from tests.test_app import cliente
 
-    envases = [{"id": 1, "nombre": "Caja EJEMPLO Grande", "umbral_reposicion": 100,
+    envases = [{"id": 1, "nombre": nombre, "umbral_reposicion": 100,
                 "desde": date(2026, 9, 10), "contadas": 500, "declaradas": -420,
                 "por_guias": 0, "stock": 80}]
     cuentas = [{"colega_id": 3, "colega": nombre, "movimientos": 2,
-                "por_envase": [{"envase": nombre, "neto": 220,
+                "por_envase": [{"envase_id": 1, "envase": nombre, "neto": 220,
                                 "lado": "me debe", "cuantas": 220},
-                               {"envase": "Caja EJEMPLO Chica", "neto": -40,
-                                "lado": "le debo", "cuantas": 40}]}]
+                               {"envase_id": 2, "envase": "Caja EJEMPLO Chica",
+                                "neto": -40, "lado": "le debo", "cuantas": 40}]}]
     movimientos = [{"id": 1, "colega_id": 3, "colega": nombre, "envase_id": 1,
                     "envase": nombre, "origen": "colega_le_presto",
                     "cantidad": -220, "fecha": date(2026, 9, 12), "motivo": nombre}]

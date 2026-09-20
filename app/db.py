@@ -13742,17 +13742,21 @@ def cuentas_de_colegas() -> list[dict]:
 
     netos = {}
     for movimiento in movimientos_de_colegas():
-        clave = (movimiento["colega_id"], movimiento["envase"])
+        # POR ID Y NO POR NOMBRE: dos cajas con el mismo nombre no existen hoy,
+        # pero renombrar una partiría su cuenta en dos sin que nada avise. El
+        # nombre viaja al lado para mostrarlo.
+        clave = (movimiento["colega_id"], movimiento["envase_id"], movimiento["envase"])
         netos[clave] = netos.get(clave, 0) + efecto_en_la_cuenta(movimiento["cantidad"])
         if movimiento["colega_id"] in cuentas:
             cuentas[movimiento["colega_id"]]["movimientos"] += 1
 
-    for (colega_id, envase), neto in sorted(netos.items(), key=lambda p: p[0][1]):
+    for (colega_id, envase_id, envase), neto in sorted(netos.items(), key=lambda p: p[0][2]):
         if colega_id not in cuentas:
             continue
         lado, cuantas = como_queda_la_cuenta(neto)
         cuentas[colega_id]["por_envase"].append(
-            {"envase": envase, "neto": neto, "lado": lado, "cuantas": cuantas})
+            {"envase_id": envase_id, "envase": envase, "neto": neto,
+             "lado": lado, "cuantas": cuantas})
 
     return sorted(cuentas.values(), key=lambda c: c["colega"])
 

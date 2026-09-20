@@ -299,3 +299,37 @@ def envases_por_unidad_de_venta(
         return 0.0
 
     return 1.0 / contenido_ficha
+
+
+def cuenta_por_tipo_de_caja(cuentas: list[dict]) -> dict:
+    """Por TIPO de caja: cuántas me deben y cuántas debo, sumadas entre colegas.
+
+    Devuelve {envase_id: {"me_deben": n, "debo": m}}, las dos sin signo, que es
+    como se leen en el galpón.
+
+    NO SE NETEA ENTRE COLEGAS, y es la misma razón por la que
+    `cuentas_de_colegas` no netea entre tipos: si Juan me debe 20 Chicas y yo
+    le debo 15 a Pedro, "me deben 5" es falso — no puedo pagarle a Pedro con
+    las cajas que tiene Juan hasta que Juan las traiga. Son dos pendientes
+    distintos y los dos tienen que verse, porque los dos hay que ir a buscarlos
+    a lugares distintos.
+
+    LEE EL `lado` QUE YA CALCULÓ `como_queda_la_cuenta` en vez de mirar el
+    signo del neto. El signo está escrito en UN solo lugar (`efecto_en_la_
+    cuenta`, que es `-cantidad` y no un mapa por origen); preguntar acá por
+    `neto > 0` sería la segunda copia de esa convención, y la que se separe no
+    va a fallar: va a mostrar "me deben" donde dice "le debo".
+
+    Y EL CERO NO SUMA A NINGUNO DE LOS DOS: "en cero" es su propio caso, así
+    que una cuenta saldada no infla ni la columna de lo que me deben ni la de
+    lo que debo.
+    """
+    por_tipo: dict = {}
+    for cuenta in cuentas:
+        for renglon in cuenta.get("por_envase", ()):
+            destino = por_tipo.setdefault(renglon["envase_id"], {"me_deben": 0, "debo": 0})
+            if renglon["lado"] == "me debe":
+                destino["me_deben"] += renglon["cuantas"]
+            elif renglon["lado"] == "le debo":
+                destino["debo"] += renglon["cuantas"]
+    return por_tipo

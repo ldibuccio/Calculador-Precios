@@ -53,6 +53,7 @@ from app.costeo import (
 from core.envases import (
     ORIGENES_DE_COLEGA,
     envase_derivado_de_la_ficha,
+    cuenta_por_tipo_de_caja,
     hay_que_reponer,
 )
 from core.vino_armada import etiqueta_del_boton, se_muestra_el_boton
@@ -4709,12 +4710,21 @@ def _renderizar_pantalla_cajas(request: Request, *, error: str | None = None,
     except Exception as error_db:
         raise HTTPException(status_code=500, detail=f"Error al conectar con la base de datos: {error_db}") from error_db
 
+    # ME DEBEN / DEBO POR TIPO, para la tarjeta de arriba. Sale de las mismas
+    # cuentas que el desglose de abajo y no de una segunda consulta: los dos
+    # bloques de la pantalla tienen que decir lo mismo, y con dos lecturas
+    # distintas el día que una cambie no habría forma de saber cuál manda.
+    por_tipo = cuenta_por_tipo_de_caja(cuentas)
+
     for envase in envases:
         # LA MISMA función que la alerta, no una condición escrita acá: el
         # rojo de la tarjeta y el número del banner tienen que contestar la
         # misma pregunta o el día que una cambie no va a haber forma de saber
         # cuál tiene razón. La regla vive en core/envases.py.
         envase["bajo"] = hay_que_reponer(envase)
+        cuenta = por_tipo.get(envase["id"], {"me_deben": 0, "debo": 0})
+        envase["me_deben"] = cuenta["me_deben"]
+        envase["debo"] = cuenta["debo"]
 
     return templates.TemplateResponse(
         request,
@@ -4722,6 +4732,8 @@ def _renderizar_pantalla_cajas(request: Request, *, error: str | None = None,
         {"envases": envases, "error": error,
          "aviso": aviso, "hoy": _hoy_argentina().isoformat(),
          "cuentas": cuentas, "colegas": colegas,
+         "arrancadas": [e for e in envases if e["stock"] is not None],
+         "sin_arrancar": [e for e in envases if e["stock"] is None],
          "origenes_colega": ORIGENES_DE_COLEGA},
         status_code=status_code,
     )

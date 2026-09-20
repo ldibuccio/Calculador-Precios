@@ -120,15 +120,23 @@
      El orden es el de la mano: primero contar, después lo que ya no sirve
      como estaba (tirarlo o pasarlo a segunda, que es la misma decisión
      parado frente a los cajones feos), después lo que vuelve, y al final lo
-     que sale. #}
+     que sale.
+
+     LOS SEIS ROTULOS EN LA MISMA FORMA que los cinco de arriba —verbo
+     adelante y mayúscula solo al principio—, pero con las palabras del
+     negocio intactas: merma, segunda, reproceso y rechazo son las que se
+     usan en el galpón. Emparejar la FORMA no es estrenar vocabulario, y un
+     botón que nombra algo que nadie dice en voz alta manda a la pantalla
+     equivocada. Los títulos de cada pantalla quedan como están: el botón
+     dice qué se va a hacer, el título dónde estás parado. #}
   <div class="tarjeta">
     <h2>Stock</h2>
-    <a class="boton" href="/deposito/stock/fisico">{{ ICONOS_DEPOSITO['contar']|safe }}<span>Stock Físico</span></a>
-    <a class="boton" href="/deposito/stock/merma">{{ ICONOS_DEPOSITO['merma']|safe }}<span>Merma</span></a>
-    <a class="boton" href="/deposito/stock/pase-a-segunda">{{ ICONOS_DEPOSITO['pase']|safe }}<span>Pasar a Segunda</span></a>
-    <a class="boton" href="/deposito/stock/reingreso">{{ ICONOS_DEPOSITO['reingreso']|safe }}<span>Reingreso por Rechazo</span></a>
-    <a class="boton" href="/deposito/stock/reproceso">{{ ICONOS_DEPOSITO['reproceso']|safe }}<span>Reproceso</span></a>
-    <a class="boton" href="/deposito/stock/remito-segunda">{{ ICONOS_DEPOSITO['remitir']|safe }}<span>Remitir Segunda</span></a>
+    <a class="boton" href="/deposito/stock/fisico">{{ ICONOS_DEPOSITO['contar']|safe }}<span>Contar el stock</span></a>
+    <a class="boton" href="/deposito/stock/merma">{{ ICONOS_DEPOSITO['merma']|safe }}<span>Cargar una merma</span></a>
+    <a class="boton" href="/deposito/stock/pase-a-segunda">{{ ICONOS_DEPOSITO['pase']|safe }}<span>Pasar a segunda</span></a>
+    <a class="boton" href="/deposito/stock/reingreso">{{ ICONOS_DEPOSITO['reingreso']|safe }}<span>Cargar un rechazo</span></a>
+    <a class="boton" href="/deposito/stock/reproceso">{{ ICONOS_DEPOSITO['reproceso']|safe }}<span>Cargar un reproceso</span></a>
+    <a class="boton" href="/deposito/stock/remito-segunda">{{ ICONOS_DEPOSITO['remitir']|safe }}<span>Remitir la segunda</span></a>
   </div>
 
   {# El Remanente NO va acá, y la razón es vieja y sigue valiendo: mostrarle

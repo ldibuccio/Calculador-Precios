@@ -453,8 +453,8 @@ def test_sin_conteo_inicial_la_pantalla_NO_dice_cero():
         respuesta = cliente.get("/compras/cajas")
     assert respuesta.status_code == 200
     marcado = respuesta.text.split("</style>")[-1]
-    assert "todavía sin conteo inicial" in marcado
-    assert 'class="stock bajo"' not in marcado
+    assert "sin arrancar" in marcado
+    assert 'class="n bajo"' not in marcado
     # Y ofrece arrancarla, que es lo único que se puede hacer con ese envase.
     assert 'action="/compras/cajas/conteo-inicial"' in marcado
     # SIN NADA ESPERANDO, EL AVISO NO SALE. Es la otra mitad del par: un aviso
@@ -634,7 +634,7 @@ def test_debajo_del_umbral_la_pantalla_lo_MARCA():
          patch("app.main.listar_colegas", return_value=[]):
         respuesta = cliente.get("/compras/cajas")
     marcado = respuesta.text.split("</style>")[-1]
-    assert 'class="stock bajo"' in marcado
+    assert 'class="n bajo"' in marcado
     assert "hay que reponer" in marcado
     # Las TRES patas al lado del total: un número solo no se puede leer.
     assert "contadas el" in marcado and "declarado:" in marcado and "guías R" in marcado
@@ -1034,7 +1034,7 @@ UN_ENVASE_BAJO_CON_DEUDA = [
 ]
 CUENTA_CON_DOSCIENTAS = [
     {"colega_id": 3, "colega": "Colega EJEMPLO Uno", "movimientos": 2,
-     "por_envase": [{"envase": "Caja EJEMPLO Grande", "neto": 200,
+     "por_envase": [{"envase_id": 1, "envase": "Caja EJEMPLO Grande", "neto": 200,
                      "lado": "me debe", "cuantas": 200}]},
 ]
 
@@ -1060,7 +1060,7 @@ def test_la_alerta_de_reposicion_MIRA_SOLO_EL_PISO_aunque_le_deban_doscientas():
          patch("app.main.listar_colegas", return_value=[{"id": 3, "nombre": "Colega EJEMPLO Uno", "activo": True}]):
         respuesta = cliente.get("/compras/cajas")
     marcado = respuesta.text.split("</style>")[-1]
-    assert 'class="stock bajo"' in marcado, (
+    assert 'class="n bajo"' in marcado, (
         "con 200 en la cuenta a favor, el piso sigue estando bajo y tiene que marcarse"
     )
     # Y las 200 SE VEN, porque son información: lo que no hacen es apagar el rojo.
@@ -2244,3 +2244,117 @@ def test_los_FIXTURES_de_esta_pantalla_tienen_LA_FORMA_QUE_LA_BASE_DEVUELVE(
             f"un renglón del fixture de {nombre_funcion} no tiene la forma de la base: "
             f"le sobra {set(renglon) - de_renglon} y le falta {de_renglon - set(renglon)}"
         )
+
+
+# --- ME DEBEN / DEBO por tipo de caja (la tarjeta de arriba) ---
+
+
+def _cuenta(colega_id, nombre, *renglones):
+    return {"colega_id": colega_id, "colega": nombre, "movimientos": len(renglones),
+            "por_envase": [{"envase_id": i, "envase": n, "neto": neto,
+                            "lado": lado, "cuantas": cuantas}
+                           for i, n, neto, lado, cuantas in renglones]}
+
+
+def test_la_cuenta_por_tipo_NO_NETEA_ENTRE_COLEGAS():
+    """EL CASO QUE DECIDE LA FUNCIÓN. Si Juan me debe 20 Chicas y yo le debo 15
+    a Pedro, "me deben 5" es falso: no puedo pagarle a Pedro con las cajas que
+    tiene Juan hasta que Juan las traiga. Son dos pendientes distintos, que se
+    van a buscar a dos lugares distintos, y los dos tienen que verse.
+
+    Es la misma razón por la que `cuentas_de_colegas` no netea entre tipos, un
+    eje más allá.
+    """
+    from core.envases import cuenta_por_tipo_de_caja
+
+    por_tipo = cuenta_por_tipo_de_caja([
+        _cuenta(1, "EJEMPLO Juan",  (7, "Caja EJEMPLO Chica",  20, "me debe", 20)),
+        _cuenta(2, "EJEMPLO Pedro", (7, "Caja EJEMPLO Chica", -15, "le debo", 15)),
+    ])
+
+    assert por_tipo[7] == {"me_deben": 20, "debo": 15}
+
+
+def test_la_cuenta_por_tipo_NO_SUMA_ENTRE_TIPOS():
+    """Un renglón por tipo de caja, sin total entre ellos: deber Grandes y que
+    te deban Chicas no es estar a mano."""
+    from core.envases import cuenta_por_tipo_de_caja
+
+    por_tipo = cuenta_por_tipo_de_caja([
+        _cuenta(1, "EJEMPLO Juan",
+                (7, "Caja EJEMPLO Chica",   30, "me debe", 30),
+                (9, "Caja EJEMPLO Grande", -30, "le debo", 30)),
+    ])
+
+    assert por_tipo == {7: {"me_deben": 30, "debo": 0},
+                        9: {"me_deben": 0, "debo": 30}}
+
+
+def test_una_cuenta_SALDADA_no_infla_ninguna_de_las_dos_columnas():
+    """"en cero" es su propio caso: no es ni "me deben 0" ni "le debo 0", y
+    sumarlo a cualquiera de los dos lados diría que hay algo pendiente."""
+    from core.envases import cuenta_por_tipo_de_caja
+
+    por_tipo = cuenta_por_tipo_de_caja([
+        _cuenta(1, "EJEMPLO Juan", (7, "Caja EJEMPLO Chica", 0, "en cero", 0)),
+    ])
+
+    assert por_tipo[7] == {"me_deben": 0, "debo": 0}
+
+
+def test_la_cuenta_por_tipo_LEE_EL_LADO_y_no_el_signo_del_neto():
+    """El signo vive en UN solo lugar —`efecto_en_la_cuenta`, que es
+    `-cantidad`— y `como_queda_la_cuenta` ya lo tradujo a un lado. Preguntar
+    acá por `neto > 0` sería la segunda copia de esa convención, y la que se
+    separe no falla: muestra "me deben" donde dice "le debo".
+
+    El fixture tiene el neto y el lado CONTRADICHOS a propósito: si la función
+    mirara el signo, daría lo contrario. Con los dos coincidiendo —que es lo
+    normal— este test pasaría igual con la copia puesta.
+    """
+    from core.envases import cuenta_por_tipo_de_caja
+
+    por_tipo = cuenta_por_tipo_de_caja([
+        _cuenta(1, "EJEMPLO Juan", (7, "Caja EJEMPLO Chica", -99, "me debe", 20)),
+    ])
+
+    assert por_tipo[7] == {"me_deben": 20, "debo": 0}
+
+
+def test_los_dos_numeros_LLEGAN_A_LA_TARJETA_y_no_solo_a_la_funcion():
+    """EL CABLEADO, que es lo que el canario encontró sin cubrir.
+
+    Con `cuenta_por_tipo_de_caja` testeada y la tarjeta sin test, clavar los
+    dos números en cero no hacía caer nada: la función pura estaba cuidada y
+    el camino de la función a la pantalla no. Es el corolario 71 —una regla
+    correcta en un lugar sin llamador probado— corrido al render.
+
+    Los números son DISTINTOS entre sí y distintos del stock a propósito (60,
+    40, 15): con los tres iguales, un cableado cruzado —mostrar el stock donde
+    va "me deben"— pasaría igual.
+    """
+    envases = [{"id": 1, "nombre": "Caja EJEMPLO Chica", "umbral_reposicion": None,
+                "desde": date(2026, 9, 10), "contadas": 500, "declaradas": -440,
+                "por_guias": 0, "stock": 60,
+                "esperando_mov": 0, "esperando_guias": 0, "esperando_desde": None}]
+    cuentas = [
+        {"colega_id": 3, "colega": "EJEMPLO Juan", "movimientos": 1,
+         "por_envase": [{"envase_id": 1, "envase": "Caja EJEMPLO Chica",
+                         "neto": 40, "lado": "me debe", "cuantas": 40}]},
+        {"colega_id": 4, "colega": "EJEMPLO Pedro", "movimientos": 1,
+         "por_envase": [{"envase_id": 1, "envase": "Caja EJEMPLO Chica",
+                         "neto": -15, "lado": "le debo", "cuantas": 15}]},
+    ]
+    with (
+        patch("app.main.stock_de_envases", return_value=envases),
+        patch("app.main.cuentas_de_colegas", return_value=cuentas),
+        patch("app.main.listar_colegas", return_value=[]),
+    ):
+        marcado = cliente.get("/compras/cajas").text.split("</style>")[-1]
+
+    # Cada número ADENTRO de su propio recuadro, no suelto en la pantalla: el
+    # 40 también aparece en el desglose de colegas de más abajo, así que un
+    # `"40" in marcado` pasaría con las tres cifras cruzadas.
+    for clase, numero in (("piso", 60), ("deben", 40), ("debo", 15)):
+        bloque = marcado.split(f'<div class="{clase}">', 1)[1].split("</div>", 1)[0]
+        assert f">{numero}<" in bloque, f"{clase}: {bloque!r}"

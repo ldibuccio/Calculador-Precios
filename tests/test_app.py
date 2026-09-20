@@ -26922,8 +26922,8 @@ def test_deposito_ordena_los_botones_como_pasan_las_cosas():
         ('/deposito/ingresar', "Cargar lo que llegó sin guía"),
         ('/deposito/pedido', "Revisar el pedido"),
         ('/deposito/pedido/armar', "Armar el pedido"),
-        ('/deposito/stock/fisico', "Stock Físico"),
-        ('/deposito/stock/remito-segunda', "Remitir Segunda"),
+        ('/deposito/stock/fisico', "Contar el stock"),
+        ('/deposito/stock/remito-segunda', "Remitir la segunda"),
     ]
     # El ícono va ENTRE el href y el rótulo, así que el rótulo ya no es lo
     # que sigue a `">`. Lo que dice "este rótulo es el de ESTE botón" es que
