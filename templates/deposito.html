@@ -31,7 +31,6 @@
     margin-top: 0.6rem;
     width: 100%;
     padding: 0.8rem;
-    background: #2563eb;
     color: #fff;
     border: none;
     border-radius: 8px;
@@ -48,6 +47,25 @@
     gap: 0.7rem;
   }
   .boton:first-of-type { margin-top: 0; }
+  /* UN COLOR POR BLOQUE, y los tres los eligió el dueño por lo mismo: que
+     hoy no signifiquen nada en el sistema. Un color que ya quiere decir
+     algo pasa a decir dos cosas según la pantalla.
+
+     EL VIOLETA QUE SE PIDIÓ NO ENTRÓ: ya lo usan seis reglas —el botón de
+     guardar los lotes, "Elegir el lote", "Cambiar", el número de guía R,
+     el vale y "vino armada"—, o sea que hoy significa EL LOTE. Y el choque
+     caía justo acá: el botón de Stock lleva a Reproceso, donde el violeta
+     es el botón de guardar. Va PIZARRA (#334155), que es el que quedaba
+     libre: su vecino más cercano en el repo está a 19 de distancia (el
+     violeta estaba a 6 de su propia familia) y está a 58 de los grises de
+     lo apagado, así que no se lee como un botón deshabilitado.
+
+     Las tres cifras son ΔE en CIELAB, medidas contra los 59 colores de
+     fondo del repo. El día que alguien quiera mover uno, se mide de nuevo
+     antes de elegir: el mapa no se tiene en la cabeza. */
+  .boton.ingresos { background: #2563eb; }
+  .boton.pedidos  { background: #0d9488; }
+  .boton.stock    { background: #334155; }
   /* El SVG no se achica cuando el rótulo es largo: sin esto, "Cargar lo que
      llegó sin guía" le come el ícono en un celular angosto. */
   .boton svg {
@@ -92,8 +110,8 @@
      también manda el orden real y no el alfabético. #}
   <div class="tarjeta">
     <h2>Ingresos Mercadería</h2>
-    <a class="boton" href="/logistica/retiro/Pases?origen=deposito">{{ ICONOS_DEPOSITO['retirar']|safe }}<span>Retirar Mercadería</span></a>
-    <a class="boton" href="/deposito/recepcion">{{ ICONOS_DEPOSITO['recibir']|safe }}<span>Recepción Mercadería</span></a>
+    <a class="boton ingresos" href="/logistica/retiro/Pases?origen=deposito">{{ ICONOS_DEPOSITO['retirar']|safe }}<span>Retirar Mercadería</span></a>
+    <a class="boton ingresos" href="/deposito/recepcion">{{ ICONOS_DEPOSITO['recibir']|safe }}<span>Recepción Mercadería</span></a>
     {# "Compras Mercadería", puesto por el dueño el 20/09. Reemplaza a "Cargar
        lo que llegó sin guía", que venía de un argumento mío —el depósito no
        compra— que él dio vuelta: lo que entra por acá ES una compra, y lo que
@@ -107,22 +125,34 @@
        Queda escrito para que no se vuelva a proponer: la observación era
        mía, la decisión es suya, y una nota que deja la propuesta viva es
        como alguien la reabre en tres meses sin saber que ya se discutió. #}
-    <a class="boton" href="/deposito/ingresar">{{ ICONOS_DEPOSITO['sin_guia']|safe }}<span>Compras Mercadería</span></a>
+    <a class="boton ingresos" href="/deposito/ingresar">{{ ICONOS_DEPOSITO['sin_guia']|safe }}<span>Compras Mercadería</span></a>
     {# "Reingresos Rechazos" vive ACÁ y no en Stock, por decisión del dueño:
        lo que vuelve del súper entra al galpón igual que una compra, así que
        la pregunta que contesta es la de este bloque —¿qué está entrando?— y
        no la de Stock, que es qué hacer con lo que ya está adentro. #}
-    <a class="boton" href="/deposito/stock/reingreso">{{ ICONOS_DEPOSITO['reingreso']|safe }}<span>Reingresos Rechazos</span></a>
+    <a class="boton ingresos" href="/deposito/stock/reingreso">{{ ICONOS_DEPOSITO['reingreso']|safe }}<span>Reingresos Rechazos</span></a>
   </div>
 
-  {# "Pedido" y "Armar Pedido" sonaban al mismo sustantivo con un verbo
-     adelante, así que desde el botón no se podía saber a cuál entrar. Los dos
-     nombres dicen ahora QUÉ SE HACE y no sobre qué: uno se lee y se corrige,
-     el otro se junta con las manos. #}
+  {# UN SOLO BOTÓN, decidido por el dueño el 20/09. "Pedido" y "Armar Pedido"
+     sonaban al mismo sustantivo con un verbo adelante y desde el menú no se
+     podía saber a cuál entrar — y la respuesta no era rebautizarlos sino que
+     no hubiera que elegir: SON UN SOLO TRABAJO partido en dos pantallas, y
+     el orden entre ellas no lo decide el que mira el menú.
+
+     ENTRA A "CORREGIR LO QUE PIDIERON", que es lo que se mira antes de
+     empezar —el control cruzado contra la OC, las sucursales, las fotos— y
+     desde ahí está el botón a Armar. La vuelta también existe: Armar lleva
+     de nuevo acá, así que entrar por la que no era cuesta un toque.
+
+     LAS PANTALLAS NO SE FUSIONAN, y la razón es medible: sobre el MARCADO
+     —sin CSS, sin comentarios y sin el JS, que es donde la primera cuenta
+     dio 76 de mentira porque los comentarios nombran justo lo que se
+     busca— Armar dice lote/stock/quedan 14 veces y Corregir CERO. Una
+     pantalla de operario que muestre números del sistema hace que se arme
+     contra el sistema en vez de contra el piso, y por eso las dos existen. #}
   <div class="tarjeta">
     <h2>Pedidos</h2>
-    <a class="boton" href="/deposito/pedido">{{ ICONOS_DEPOSITO['revisar']|safe }}<span>Revisar el pedido</span></a>
-    <a class="boton" href="/deposito/pedido/armar">{{ ICONOS_DEPOSITO['armar']|safe }}<span>Armar el pedido</span></a>
+    <a class="boton pedidos" href="/deposito/pedido">{{ ICONOS_DEPOSITO['revisar']|safe }}<span>Abrir el pedido</span></a>
   </div>
 
   {# LAS SEIS DE STOCK SUBIDAS ACÁ, sin el hub intermedio: son las
@@ -149,11 +179,11 @@
      dice qué se va a hacer, el título dónde estás parado. #}
   <div class="tarjeta">
     <h2>Stock</h2>
-    <a class="boton" href="/deposito/stock/fisico">{{ ICONOS_DEPOSITO['contar']|safe }}<span>Contar el stock</span></a>
-    <a class="boton" href="/deposito/stock/merma">{{ ICONOS_DEPOSITO['merma']|safe }}<span>Cargar una merma</span></a>
-    <a class="boton" href="/deposito/stock/pase-a-segunda">{{ ICONOS_DEPOSITO['pase']|safe }}<span>Pasar a segunda</span></a>
-    <a class="boton" href="/deposito/stock/reproceso">{{ ICONOS_DEPOSITO['reproceso']|safe }}<span>Cargar un reproceso</span></a>
-    <a class="boton" href="/deposito/stock/remito-segunda">{{ ICONOS_DEPOSITO['remitir']|safe }}<span>Remitir la segunda</span></a>
+    <a class="boton stock" href="/deposito/stock/fisico">{{ ICONOS_DEPOSITO['contar']|safe }}<span>Contar el stock</span></a>
+    <a class="boton stock" href="/deposito/stock/merma">{{ ICONOS_DEPOSITO['merma']|safe }}<span>Cargar una merma</span></a>
+    <a class="boton stock" href="/deposito/stock/pase-a-segunda">{{ ICONOS_DEPOSITO['pase']|safe }}<span>Pasar a segunda</span></a>
+    <a class="boton stock" href="/deposito/stock/reproceso">{{ ICONOS_DEPOSITO['reproceso']|safe }}<span>Cargar un reproceso</span></a>
+    <a class="boton stock" href="/deposito/stock/remito-segunda">{{ ICONOS_DEPOSITO['remitir']|safe }}<span>Remitir la segunda</span></a>
   </div>
 
   {# El Remanente NO va acá, y la razón es vieja y sigue valiendo: mostrarle

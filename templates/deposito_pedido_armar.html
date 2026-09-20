@@ -4,6 +4,8 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Armar Pedido</title>
+{% import "_cambio_el_pedido.html" as cambio %}
+{{ cambio.estilos() }}
 <style>
   :root { font-family: -apple-system, system-ui, sans-serif; }
   body {
@@ -685,6 +687,19 @@
     {% endif %}
   </div>
 
+  {# LA IDA Y LA VUELTA, las dos acá: el que arma es el que atiende el
+     teléfono. Corregir un bulto sin salir de la pantalla es el panel; ir a
+     LEER el pedido entero —el control cruzado contra la OC, las fotos, las
+     otras sucursales— es la otra pantalla, y el link la nombra igual que
+     su título para que se sepa a dónde lleva antes de tocarlo.
+
+     LOS ANULADOS NO ENTRAN: `corregir_cantidad_renglon` los rechaza, así
+     que ofrecerlos sería un callejón —el botón que el POST después
+     rebota es peor que no tener botón. #}
+  {{ cambio.panel(pedido.id, cliente_id, fecha, sucursal_elegida.sucursal,
+                  pendientes + armados, fichas_cliente, "tocar-armar", "armar") }}
+  <a class="volver-boton" href="/deposito/pedido?cliente_id={{ cliente_id }}&fecha={{ fecha }}">Corregir lo que pidieron</a>
+
   {% if armados %}
   {# Los terminados SE VAN de la lista de arriba: quedan acá abajo,
      plegados — como en Vacíos y Retiros. Deshacer desde acá.
@@ -942,6 +957,7 @@
 
   <a class="volver-boton" href="/deposito/pedido/armar?cliente_id={{ cliente_id }}&fecha={{ fecha }}">Volver a las sucursales</a>
   {% endif %}
+{{ cambio.cableado() }}
 {% include "_pie_version.html" %}
 </body>
 </html>

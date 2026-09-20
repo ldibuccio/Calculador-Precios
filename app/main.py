@@ -1457,9 +1457,6 @@ _ICONOS_DEPOSITO = {
     "revisar": (
         '<svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor" aria-hidden="true"><path stroke-linecap="round" stroke-linejoin="round" d="M11.35 3.836c-.065.21-.1.433-.1.664 0 .414.336.75.75.75h4.5a.75.75 0 0 0 .75-.75 2.25 2.25 0 0 0-.1-.664m-5.8 0A2.251 2.251 0 0 1 13.5 2.25H15c1.012 0 1.867.668 2.15 1.586m-5.8 0c-.376.023-.75.05-1.124.08C9.095 4.01 8.25 4.973 8.25 6.108V8.25m8.9-4.414c.376.023.75.05 1.124.08 1.131.094 1.976 1.057 1.976 2.192V16.5A2.25 2.25 0 0 1 18 18.75h-2.25m-7.5-10.5H4.875c-.621 0-1.125.504-1.125 1.125v11.25c0 .621.504 1.125 1.125 1.125h9.75c.621 0 1.125-.504 1.125-1.125V18.75m-7.5-10.5h6.375c.621 0 1.125.504 1.125 1.125v9.375m-8.25-3 1.5 1.5 3-3.75"/></svg>'
     ),
-    "armar": (
-        '<svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor" aria-hidden="true"><path stroke-linecap="round" stroke-linejoin="round" d="m21 7.5-9-5.25L3 7.5m18 0-9 5.25m9-5.25v9l-9 5.25M3 7.5l9 5.25M3 7.5v9l9 5.25m0-9v9"/></svg>'
-    ),
     "contar": (
         '<svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor" aria-hidden="true"><path stroke-linecap="round" stroke-linejoin="round" d="M9 12h3.75M9 15h3.75M9 18h3.75m3 .75H18a2.25 2.25 0 0 0 2.25-2.25V6.108c0-1.135-.845-2.098-1.976-2.192a48.424 48.424 0 0 0-1.123-.08m-5.801 0c-.065.21-.1.433-.1.664 0 .414.336.75.75.75h4.5a.75.75 0 0 0 .75-.75 2.25 2.25 0 0 0-.1-.664m-5.8 0A2.251 2.251 0 0 1 13.5 2.25H15c1.012 0 1.867.668 2.15 1.586m-5.8 0c-.376.023-.75.05-1.124.08C9.095 4.01 8.25 4.973 8.25 6.108V8.25m0 0H4.875c-.621 0-1.125.504-1.125 1.125v11.25c0 .621.504 1.125 1.125 1.125h9.75c.621 0 1.125-.504 1.125-1.125V9.375c0-.621-.504-1.125-1.125-1.125H8.25Z"/></svg>'
     ),
@@ -18555,6 +18552,28 @@ def asignar_renglon_pedido_ruta(
     )
 
 
+# A DÓNDE VUELVE el que corrige o agrega un renglón. El panel vive en las
+# DOS pantallas de pedidos —Corregir lo que pidieron y Armar— y el que lo usa
+# tiene que quedar donde estaba: mandarlo siempre a Corregir le cuesta el
+# viaje de vuelta justo cuando está armando con el teléfono en la mano.
+#
+# EL DESTINO LO ARMA EL SERVER y el formulario solo manda cuál de los dos
+# —un valor CERRADO—. Con la url adentro del `<input hidden>`, cualquier
+# formulario armado a mano elige a dónde mandar al operario después de
+# escribir en la base, y eso es una decisión del sistema y no del que postea.
+VUELTAS_DEL_CAMBIO_DE_PEDIDO = ("", "armar")
+
+
+def _vuelta_del_cambio_de_pedido(volver_a: str, cliente_id: int, fecha: str, sucursal: str, aviso: str) -> str:
+    """La url a la que vuelve el POST del panel, según de qué pantalla salió."""
+    if volver_a == "armar":
+        parametros = {"cliente_id": cliente_id, "fecha": fecha, "aviso": aviso}
+        if sucursal:
+            parametros["sucursal"] = sucursal
+        return "/deposito/pedido/armar?" + urlencode(parametros)
+    return "/deposito/pedido?" + urlencode({"cliente_id": cliente_id, "fecha": fecha, "aviso": aviso})
+
+
 @app.post("/deposito/pedido/{pedido_id}/renglones/agregar")
 def agregar_renglon_pedido_ruta(
     pedido_id: int,
@@ -18563,6 +18582,7 @@ def agregar_renglon_pedido_ruta(
     ficha_id: str = Form(""),
     sucursal: str = Form(""),
     cantidad: str = Form(""),
+    volver_a: str = Form(""),
 ):
     """Agrega a mano un artículo que el súper pidió y la comanda no traía.
 
@@ -18591,7 +18611,7 @@ def agregar_renglon_pedido_ruta(
         raise HTTPException(status_code=500, detail=f"No se pudo agregar el renglón: {error_db}") from error_db
 
     return RedirectResponse(
-        url=f"/deposito/pedido?{urlencode({'cliente_id': cliente_id, 'fecha': fecha, 'aviso': 'Renglón agregado a mano.'})}",
+        url=_vuelta_del_cambio_de_pedido(volver_a, cliente_id, fecha, sucursal, "Renglón agregado a mano."),
         status_code=303,
     )
 
@@ -18603,6 +18623,8 @@ def corregir_cantidad_renglon_ruta(
     cliente_id: int = Form(...),
     fecha: str = Form(""),
     cantidad: str = Form(""),
+    sucursal: str = Form(""),
+    volver_a: str = Form(""),
 ):
     """Corrige lo que el súper PIDIÓ en un renglón que ya está cargado.
 
@@ -18623,7 +18645,7 @@ def corregir_cantidad_renglon_ruta(
 
     aviso = "Cantidad corregida." if cambio else "La cantidad ya era ésa: no se cambió nada."
     return RedirectResponse(
-        url=f"/deposito/pedido?{urlencode({'cliente_id': cliente_id, 'fecha': fecha, 'aviso': aviso})}",
+        url=_vuelta_del_cambio_de_pedido(volver_a, cliente_id, fecha, sucursal, aviso),
         status_code=303,
     )
 
@@ -19021,6 +19043,12 @@ def ver_armar_pedido(request: Request, cliente_id: str | None = None, fecha: str
             # marcado (abre el acordeón y marca un renglón), así que lo que
             # no sea un id se convierte en None acá y no llega a la plantilla.
             "recien_armado": _id_opcional_desde_query(recien),
+            # LAS FICHAS DEL CLIENTE las pide el panel de "el súper cambió
+            # el pedido" para el alta, y son el límite pedido: solo lo que
+            # este cliente tiene ficha para recibir. Sale de `fichas`, que
+            # esta ruta YA leyó para el kilaje: una segunda consulta por la
+            # misma lista es la forma cara de escribir lo mismo.
+            "fichas_cliente": [{"id": f["id"], "nombre": _nombre_de_ficha(f)} for f in fichas],
         }
     )
     return templates.TemplateResponse(request, "deposito_pedido_armar.html", contexto)

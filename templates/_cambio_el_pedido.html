@@ -1,0 +1,98 @@
+{# EL SÚPER LLAMA Y CAMBIA EL PEDIDO: corregir una cantidad y agregar un
+   artículo, en UN solo panel.
+
+   ESTÁ EN LAS DOS PANTALLAS DE PEDIDOS —Corregir lo que pidieron y Armar—
+   y por eso vive acá y no copiado en cada una. El que arma es el que
+   atiende el teléfono con el pedido en la mano: mandarlo a la otra
+   pantalla para subir un bulto es el viaje que este panel viene a
+   ahorrar. Escrito dos veces, la copia que se separe deja una pantalla
+   ofreciendo algo que la otra ya no hace.
+
+   LAS DOS MITADES VAN JUNTAS a propósito: es la misma conversación por
+   teléfono —"subime esto, agregame esto otro"— y partirla en dos paneles
+   la partiría en dos viajes.
+
+   `volver_a` decide a dónde vuelve el POST, y es un valor CERRADO que el
+   server traduce: la url la arma él y no viaja en el formulario.
+
+   EL `<style>` SE EMITE ANTES del `<style>` de la pantalla, a propósito:
+   así el ÚLTIMO `</style>` del documento sigue siendo el de la pantalla y
+   los asserts anclados en `split("</style>")[-1]` no se mueven (corolario
+   50). Lo cuida un test que compara las dos posiciones. #}
+
+{% macro estilos() %}
+<style>
+  /* ARRANCA CERRADO y lo abre un botón: la pantalla que se mira todos los
+     días —leer el pedido, armarlo— no se llena de inputs. */
+  .boton-tocar {
+    display: block; width: 100%; min-height: 44px; margin-top: 0.75rem;
+    border: 1px solid #d4d4d8; border-radius: 0.5rem; background: #fff;
+    font-size: 0.95rem; font-weight: 700; color: #333; cursor: pointer;
+  }
+  .panel-tocar { display: none; margin-top: 0.6rem; }
+  .panel-tocar.abierto { display: block; }
+  .fila-tocar { display: flex; align-items: center; gap: 0.5rem; margin-top: 0.5rem; }
+  .fila-tocar span { flex: 1; min-width: 0; font-size: 0.9rem; overflow-wrap: anywhere; }
+  .fila-tocar input[type="number"] { width: 5rem; min-height: 44px; margin: 0; text-align: right; }
+  .fila-tocar button { min-height: 44px; padding: 0 0.7rem; }
+  .alta-renglon { margin-top: 0.75rem; padding-top: 0.6rem; border-top: 1px dashed #d4d4d8; }
+  .alta-renglon select, .alta-renglon input { min-height: 44px; }
+  .alta-renglon .fila-tocar select { flex: 1; min-width: 0; }
+</style>
+{% endmacro %}
+
+{% macro panel(pedido_id, cliente_id, fecha, sucursal, renglones, fichas_cliente, panel_id, volver_a="") %}
+<button type="button" class="boton-tocar" data-abre="{{ panel_id }}">
+  El súper cambió el pedido
+</button>
+<div class="panel-tocar" id="{{ panel_id }}">
+  {% for r in renglones %}
+  <form method="post" action="/deposito/pedido/{{ pedido_id }}/renglones/{{ r.id }}/cantidad" class="fila-tocar">
+    <input type="hidden" name="cliente_id" value="{{ cliente_id }}">
+    <input type="hidden" name="fecha" value="{{ fecha }}">
+    <input type="hidden" name="sucursal" value="{{ sucursal }}">
+    <input type="hidden" name="volver_a" value="{{ volver_a }}">
+    <span>{{ r.nombre_venta }}</span>
+    <input type="number" name="cantidad" step="0.01" min="0.01" value="{{ r.cantidad|numero }}" required
+           aria-label="Bultos pedidos de {{ r.nombre_venta }}">
+    <button type="submit">Corregir</button>
+  </form>
+  {% endfor %}
+
+  <form method="post" action="/deposito/pedido/{{ pedido_id }}/renglones/agregar" class="alta-renglon">
+    <input type="hidden" name="cliente_id" value="{{ cliente_id }}">
+    <input type="hidden" name="fecha" value="{{ fecha }}">
+    <input type="hidden" name="sucursal" value="{{ sucursal }}">
+    <input type="hidden" name="volver_a" value="{{ volver_a }}">
+    <div class="fila-tocar">
+      {# SOLO LAS FICHAS DE ESTE CLIENTE, que es el límite pedido. Y se
+         elige la ficha, no el artículo: el artículo lo deriva el server. #}
+      <select name="ficha_id" required aria-label="Artículo a agregar a {{ sucursal }}">
+        <option value="" selected disabled>Agregar un artículo...</option>
+        {% for f in fichas_cliente %}
+        <option value="{{ f.id }}">{{ f.nombre }}</option>
+        {% endfor %}
+      </select>
+      <input type="number" name="cantidad" step="0.01" min="0.01" required
+             aria-label="Bultos a agregar" placeholder="bultos">
+      <button type="submit">Agregar</button>
+    </div>
+  </form>
+</div>
+{% endmacro %}
+
+{% macro cableado() %}
+<script>
+  // UN listener en el documento y no uno por botón: las tarjetas las dibuja
+  // el server, pero un listener delegado no se rompe el día que alguna
+  // llegue por innerHTML (corolario 83).
+  document.addEventListener("click", function (evento) {
+    const boton = evento.target.closest("[data-abre]");
+    if (!boton) return;
+    const panel = document.getElementById(boton.dataset.abre);
+    if (!panel) return;
+    const abierto = panel.classList.toggle("abierto");
+    boton.textContent = abierto ? "Listo" : "El súper cambió el pedido";
+  });
+</script>
+{% endmacro %}

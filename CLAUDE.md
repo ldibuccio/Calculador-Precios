@@ -5651,6 +5651,29 @@ mención —la agregue un arreglo o la agregue el mismo commit— le cambia el
 sujeto sin que nada se ponga rojo. El ancla tiene que ser algo que **solo**
 pueda estar en el lugar que se quiere probar.
 
+**Y LA TERCERA CAUSA NO ES UNA SEGUNDA MENCIÓN: SON N HERMANOS (20/09).** El
+panel de "el súper cambió el pedido" tiene **un formulario por renglón MÁS el
+del alta**, y todos llevan el mismo `<input name="volver_a">`. El assert era
+`'name="volver_a" value="armar"' in marcado` y **pasa con el hidden puesto en
+UNO SOLO** — el canario que se lo saca al formulario de la cantidad hizo caer
+CERO sobre 2903 tests.
+
+Lo que se perdía es el que se usa todos los días: sin `volver_a`, corregir un
+bulto desde Armar devuelve al operario a la otra pantalla en el medio del
+armado, que es exactamente el viaje que el panel vino a ahorrar.
+
+**Acá el ancla no alcanza**, y por eso es una causa aparte: no hay ningún
+fragmento que esté en un formulario y no en sus hermanos — son el mismo
+marcado repetido. **Lo único que lo separa es el DENOMINADOR**: partir el
+panel en sus `<form>` y exigir `conteo == len(formularios)`, con un
+`len >= 2` al lado para que el conjunto vacío no pase solo.
+
+**La señal, y se hace al escribir el assert**: si lo que se afirma vive en
+algo que la pantalla REPITE —un renglón, una tarjeta, una fila, un
+formulario por ítem— un `in` contesta por el más suertudo. La pregunta es
+*¿cuántos tendrían que tenerlo?*, y si la respuesta es "todos", el assert
+es un conteo.
+
 **Y la misma frase estaba escrita en otros DOS lugares afirmando lo contrario**
 — el mensaje del commit que agregó el kilaje (*"la pared de Reproceso lo trae
 también: ahí se está decidiendo qué hacer"*) y el comentario del fixture de esos
@@ -8822,6 +8845,41 @@ Engancha con **"el método de restauración es el MISMO para todos los
 archivos de la tanda"**: aquella regla dice no mezclar `.bak` con `git
 checkout`; ésta agrega que **un `.bak` por canario ya es mezclar**, porque
 cada uno fotografía un estado distinto.
+
+### Y LA FOTO VA A DISCO: un reinicio del contenedor no corre el `finally` (20/09)
+
+La regla de arriba dice UNA foto antes de la tanda. El 20/09 el contenedor se
+reinició con la tanda corriendo, y ahí la foto —que vivía en un `dict` en
+memoria— **se fue con el proceso**. El `finally` no corrió: ni un `SIGTERM`
+atrapable, el proceso simplemente dejó de existir.
+
+**Quedó puesta la mutación del canario 6**, que borraba un link de una
+plantilla. Y el daño es el del corolario 86 con una vuelta peor: ahí la tanda
+terminaba bien y el rastro estaba en un `.bak` suelto. **Acá no hay ningún
+rastro**: sin `.bak`, sin diff sospechoso —el archivo figura `M` igual, porque
+tiene trabajo sin commitear— y sin nada en `git status` que se vea raro.
+
+**Lo que lo encontró NO fue la suite**: la suite habría caído, sí, pero el
+rojo se lee como "rompí algo al escribir" y manda a arreglar el test. Lo
+encontró **grepear las diez mutaciones una por una** —para cada canario, que
+lo que TIENE que estar esté y lo que NO puede estar no esté— que es la regla
+de siempre (*se mira qué quedó ESCRITO, no si el comando se quejó*) convertida
+en un control con su denominador: `10 de 10 controladas · 1 avería puesta`.
+
+Las dos cosas que quedan, y las dos cuestan una línea:
+
+1. **La foto se copia a DISCO antes de la tanda**, fuera del repo, con un
+   script de una línea que la devuelve. Una foto en memoria protege del
+   canario que falla; no del proceso que desaparece.
+2. **Después de cualquier interrupción, el control de las mutaciones se corre
+   ANTES de tocar nada** — incluso antes de correr la suite. Un canario
+   interrumpido es indistinguible de uno que terminó, y la única diferencia
+   está en los archivos.
+
+**Y vale para cualquier interrupción, no solo el reinicio**: matar el
+proceso, cerrar la sesión, un timeout de la herramienta. La pregunta es
+siempre la misma —*¿el archivo que el test leyó es el que yo escribí?*— y la
+contesta el grep, no el verde.
 
 ## Corolario 87: el dueño también describe de memoria una pantalla que tiene adelante
 

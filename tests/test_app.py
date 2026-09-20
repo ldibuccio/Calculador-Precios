@@ -16785,7 +16785,12 @@ def test_ver_deposito_muestra_los_accesos_a_pedido():
 
     assert respuesta.status_code == 200
     assert 'href="/deposito/pedido"' in respuesta.text
-    assert 'href="/deposito/pedido/armar"' in respuesta.text
+    # UN SOLO BOTÓN desde el 20/09, decisión del dueño: las dos pantallas son
+    # un solo trabajo y el orden entre ellas no lo elige el que mira el menú.
+    # Armar SIGUE EXISTIENDO y sigue linkeada —desde Corregir lo que pidieron,
+    # y la vuelta desde Armar— así que lo que este assert niega es la puerta
+    # del MENÚ, no la pantalla. Vale para el menú de Depósito y para nada más.
+    assert 'href="/deposito/pedido/armar"' not in respuesta.text
     # Armar Remito se mudó a Administración: es consulta, no operación.
     assert "/administracion/pedidos/buscar" not in respuesta.text
     assert "Armar Remito" not in respuesta.text
@@ -26932,7 +26937,7 @@ def test_tolerancia_avisa_tambien_cuando_mando_de_MENOS():
 
 
 def test_deposito_ordena_los_botones_como_pasan_las_cosas():
-    """Mercadería → Pedidos → Stock, y adentro de cada recuadro el orden del día.
+    """Ingresos Mercadería → Pedidos → Stock, y adentro de cada recuadro el orden del día.
 
     El orden es el del día y no el de los módulos: lo primero que hace el
     depósito es traer la mercadería del puesto, no abrir Recepción.
@@ -26955,8 +26960,9 @@ def test_deposito_ordena_los_botones_como_pasan_las_cosas():
         # El reingreso cierra Ingresos Mercadería: lo que vuelve del súper
         # entra al galpón igual que una compra.
         ('/deposito/stock/reingreso', "Reingresos Rechazos"),
-        ('/deposito/pedido', "Revisar el pedido"),
-        ('/deposito/pedido/armar', "Armar el pedido"),
+        # UN solo botón de Pedidos: entra a Corregir lo que pidieron, que es
+        # lo que se mira antes de empezar, y desde ahí está el botón a Armar.
+        ('/deposito/pedido', "Abrir el pedido"),
         ('/deposito/stock/fisico', "Contar el stock"),
         ('/deposito/stock/remito-segunda', "Remitir la segunda"),
     ]

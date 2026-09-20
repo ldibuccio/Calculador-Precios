@@ -3,7 +3,9 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Pedido</title>
+<title>Corregir lo que pidieron</title>
+{% import "_cambio_el_pedido.html" as cambio %}
+{{ cambio.estilos() }}
 <style>
   :root { font-family: -apple-system, system-ui, sans-serif; }
   body {
@@ -105,23 +107,6 @@
     font-size: 0.7rem; font-weight: 800; vertical-align: middle;
   }
   .marca-pedia { display: block; font-size: 0.7rem; font-weight: 600; color: #92400e; }
-  /* EL PANEL ARRANCA CERRADO y lo abre un botón, así la pantalla que se mira
-     todos los días —leer el pedido— no se llena de inputs. Lo de adentro es
-     un formulario por renglón: son pocos y cambia uno por vez. */
-  .boton-tocar {
-    display: block; width: 100%; min-height: 44px; margin-top: 0.75rem;
-    border: 1px solid #d4d4d8; border-radius: 0.5rem; background: #fff;
-    font-size: 0.95rem; font-weight: 700; color: #333; cursor: pointer;
-  }
-  .panel-tocar { display: none; margin-top: 0.6rem; }
-  .panel-tocar.abierto { display: block; }
-  .fila-tocar { display: flex; align-items: center; gap: 0.5rem; margin-top: 0.5rem; }
-  .fila-tocar span { flex: 1; min-width: 0; font-size: 0.9rem; overflow-wrap: anywhere; }
-  .fila-tocar input[type="number"] { width: 5rem; min-height: 44px; margin: 0; text-align: right; }
-  .fila-tocar button { min-height: 44px; padding: 0 0.7rem; }
-  .alta-renglon { margin-top: 0.75rem; padding-top: 0.6rem; border-top: 1px dashed #d4d4d8; }
-  .alta-renglon select, .alta-renglon input { min-height: 44px; }
-  .alta-renglon .fila-tocar select { flex: 1; min-width: 0; }
   .fila-total {
     display: flex;
     justify-content: space-between;
@@ -334,7 +319,7 @@
 </head>
 <body>
   {% set barra_sector = "deposito" %}
-  {% set barra_titulo = "Pedido" %}
+  {% set barra_titulo = "Corregir lo que pidieron" %}
   {% set barra_atras = "/deposito" %}
   {% include "_barra_navegacion.html" %}
 
@@ -501,47 +486,10 @@
     </div>
     {% endif %}
 
-    {# EL SÚPER LLAMA Y CAMBIA EL PEDIDO. Hasta acá la única salida era
-       recargar la comanda entera, que le cuesta el armado a todo renglón
-       cuya cantidad se haya movido. Arranca cerrado: leer el pedido es lo
-       que se hace todos los días y no tiene por qué verse lleno de inputs. #}
-    <button type="button" class="boton-tocar" data-abre="tocar-{{ loop.index0 }}">
-      El súper cambió el pedido
-    </button>
-    <div class="panel-tocar" id="tocar-{{ loop.index0 }}">
-      {% for r in filas %}
-      <form method="post" action="/deposito/pedido/{{ pedido.id }}/renglones/{{ r.id }}/cantidad" class="fila-tocar">
-        <input type="hidden" name="cliente_id" value="{{ cliente_id }}">
-        <input type="hidden" name="fecha" value="{{ fecha }}">
-        <span>{{ r.nombre_venta }}</span>
-        <input type="number" name="cantidad" step="0.01" min="0.01" value="{{ r.cantidad|numero }}" required
-               aria-label="Bultos pedidos de {{ r.nombre_venta }}">
-        <button type="submit">Corregir</button>
-      </form>
-      {% endfor %}
-
-      {# Y el alta, al pie del mismo panel: es la misma conversación por
-         teléfono —"subime esto, agregame esto otro"— y separarla en dos
-         pantallas la partiría en dos viajes. #}
-      <form method="post" action="/deposito/pedido/{{ pedido.id }}/renglones/agregar" class="alta-renglon">
-        <input type="hidden" name="cliente_id" value="{{ cliente_id }}">
-        <input type="hidden" name="fecha" value="{{ fecha }}">
-        <input type="hidden" name="sucursal" value="{{ s.sucursal }}">
-        <div class="fila-tocar">
-          {# SOLO LAS FICHAS DE ESTE CLIENTE, que es el límite pedido. Y se
-             elige la ficha, no el artículo: el artículo lo deriva el server. #}
-          <select name="ficha_id" required aria-label="Artículo a agregar a {{ s.sucursal }}">
-            <option value="" selected disabled>Agregar un artículo...</option>
-            {% for f in fichas_cliente %}
-            <option value="{{ f.id }}">{{ f.nombre }}</option>
-            {% endfor %}
-          </select>
-          <input type="number" name="cantidad" step="0.01" min="0.01" required
-                 aria-label="Bultos a agregar" placeholder="bultos">
-          <button type="submit">Agregar</button>
-        </div>
-      </form>
-    </div>
+    {# El panel vive en `_cambio_el_pedido.html`, compartido con Armar:
+       el que atiende el teléfono puede estar en cualquiera de las dos. #}
+    {{ cambio.panel(pedido.id, cliente_id, fecha, s.sucursal, filas,
+                    fichas_cliente, "tocar-" ~ loop.index0) }}
   </div>
   {% endfor %}
 
@@ -582,19 +530,6 @@
   {% endif %}
 
   <script>
-    // EL PANEL DE "EL SÚPER CAMBIÓ EL PEDIDO". Un listener en el documento y
-    // no uno por botón: las tarjetas se dibujan en el server, pero un
-    // listener delegado no se rompe el día que alguna llegue por innerHTML
-    // (corolario 83).
-    document.addEventListener("click", function (evento) {
-      const boton = evento.target.closest("[data-abre]");
-      if (!boton) return;
-      const panel = document.getElementById(boton.dataset.abre);
-      if (!panel) return;
-      const abierto = panel.classList.toggle("abierto");
-      boton.textContent = abierto ? "Listo" : "El súper cambió el pedido";
-    });
-
     function marcarSinPedido(formulario, fechaMostrar) {
       if (!confirm("¿Marcar que el " + fechaMostrar + " no hubo pedido? La alerta lo deja de contar. Se puede deshacer.")) {
         return false;
@@ -607,6 +542,7 @@
       return true;
     }
   </script>
+{{ cambio.cableado() }}
 {% include "_pie_version.html" %}
 </body>
 </html>
