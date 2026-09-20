@@ -4904,10 +4904,30 @@ inexistente adentro del mismo `except`— pyflakes lo nombra con archivo y
 línea, y sacándolo vuelve a 0. O sea que **hoy no hay ninguna otra**, y eso
 es un hecho medido y no una impresión.
 
-**Queda ANOTADO Y NO CONSTRUIDO**: convertirlo en un test de la suite es la
-forma de que no vuelva —es la única guarda que ve esto antes de que lo vea
-un operario— pero **agrega `pyflakes` como dependencia**, y eso se decide,
-no se mete de prepo en un commit de otra cosa.
+**CONSTRUIDO el 18/09** (`f18fd1f`, `tests/test_nombres_indefinidos.py`):
+`pyflakes` entró a `requirements.txt` y el barrido es un test de la suite, con
+su par plantado al lado para que el cero se pueda leer. Mira SOLO los nombres
+indefinidos: los imports sin usar y las variables sin leer quedan afuera a
+propósito, porque un guardia que marca doce cosas inofensivas se aprende a
+ignorar.
+
+**Y el 20/09 escribí una SEGUNDA copia del mismo test** (`84f28ad`,
+`tests/test_pyflakes.py`), sin ver que la primera existía. Las dos corren
+`pyflakes`, las dos tienen su canario, y la de 20/09 cubre además `scripts/`.
+Ninguna falla: **la suite hace el trabajo dos veces y nadie se entera** — que
+es el modo de falla de una copia que no se separó todavía.
+
+Lo que lo dejó pasar es exactamente lo que este archivo pide y yo no hice:
+**el `grep` del concepto antes de bautizar**. `grep -l pyflakes tests/` cuesta
+un segundo y habría devuelto el archivo del 18/09. Queda anotado acá y no
+arreglado en el mismo commit porque borrar un test es código, y esto es una
+corrección de texto.
+
+**Y la oración que estaba acá —"queda anotado y no construido"— sobrevivió
+DOS DÍAS a su propia construcción**, y es la copia de este archivo que
+siempre se olvida: al arreglar algo el `grep` sale sobre `app/`, `core/` y
+`tests/`, y CLAUDE.md no se rompe nunca. Con el agravante de que acá el que
+la leyera iba a construir por tercera vez lo que ya estaba dos veces.
 
 ## Corolario 52: una simulación de layout tiene que usar los TAMAÑOS MÍNIMOS REALES de lo que se toca
 

@@ -39,3 +39,45 @@ diseño — ése es el resultado bueno, no una razón para pegar una sola fila.
 (`'<nombre>' as QUE_MIGRACION`, en las 24 verificaciones del repo). Sin eso,
 dos filas de la misma base y de dos migraciones distintas se leen como las dos
 bases de una — que es lo que causó el corte de esa mañana.
+
+---
+
+## 19/09
+
+| migración | FRUTAMAX | PALMALA |
+|---|---|---|
+| `eliminadas_1_tabla` (verifica `eliminadas_1_verificacion`) | `1 · 5 · 4 · 0 · 625 compras` | `1 · 5 · 4 · 0 · 514 compras` |
+| `importe_1_cuando_y_por_donde` | `2 · 3 · 625 sin origen · 0 · 625` | `2 · 3 · 506 sin origen · 0 · 514` |
+
+**La tercera columna de `eliminadas_1` es `valores_del_CHECK_de_4`, y los 4 son
+lo que decidía el merge**: con la lista vieja —dos superficies en vez de
+cuatro— el código de `e8075af` ROMPE el borrado por las dos puertas que más se
+usan, porque el archivo se escribe en la MISMA sentencia que el DELETE y un
+origen fuera del CHECK revienta las dos. La fila es la que autorizó ese push.
+
+**Y `625 sin origen` / `506 sin origen` NO es una deuda: es el número
+esperado.** Las compras viejas quedan sin rastro a propósito — deducir de
+dónde salió un importe ya escrito sería inventarlo. Ese número no baja; lo
+único que cambia es que las nuevas nacen con origen.
+
+## 20/09
+
+| migración | FRUTAMAX | PALMALA |
+|---|---|---|
+| `segunda_por_cajon_1` | `columnas 2 · NO_VUELVEN 0 · con_segunda 11 · 625 compras` | `columnas 2 · NO_VUELVEN 0 · con_segunda 0 · 514 compras` |
+| `segunda_por_cajon_2` (backfill de la ventana) | `HUECOS 0 · NO_VUELVEN 0 · con_segunda_real 11 · 557 recepcionadas` | `HUECOS 0 · NO_VUELVEN 0 · con_segunda_real 0 · 262 recepcionadas` |
+| `pase_a_segunda_1` + `_2` (verifica `pase_a_segunda_verificacion`) | `5 · 1 · 0 ofensores · 0 pases · 124 movimientos · último 19/09` | `5 · 1 · 0 ofensores · 0 pases · 1 movimiento · último 25/08` |
+
+**`NO_VUELVEN` en 0 es lo que dice que el backfill fue exacto**: devolvió lo
+mismo que había, no un número parecido. Y las 11 de Frutamax son las compras
+con las dos magnitudes declaradas — el `con_segunda 0` de Palmala es correcto
+y no un backfill que no corrió.
+
+**El testigo de `pase_a_segunda` dice que Palmala NO VOTA, y se ve en la misma
+fila**: `1 movimiento · último 25/08`. Esa fila confirma lo único que Palmala
+puede confirmar —que la migración no explota contra ese esquema— y nada sobre
+si los pases funcionan. Eso lo decide Frutamax, con sus 124.
+
+**Los `0 pases` de las dos son el estado del día que se corrió**, no un
+resultado: la pantalla del pase se cableó después (`b3f5837`). Un cero de
+población recién migrada no es el cero de una función que nadie usa.
