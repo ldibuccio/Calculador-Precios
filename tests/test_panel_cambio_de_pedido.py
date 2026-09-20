@@ -264,3 +264,57 @@ def test_cada_boton_del_menu_LLEVA_la_clase_de_su_bloque():
     assert botones.count("ingresos") == 4
     assert botones.count("pedidos") == 1
     assert botones.count("stock") == 5
+
+
+# ------------------------------------------- el pie, que cambia en cada commit
+
+def test_ningun_assert_NUMERICO_por_la_negativa_mira_la_pagina_CON_EL_PIE():
+    """El pie dice `v938` hoy y `v939` mañana, en TODAS las pantallas.
+
+    Un `assert "38" not in texto` sobre la página entera no pregunta por el
+    38 del artículo: matchea el número de versión, que es el vecino
+    (corolario 4). Y el modo de falla es el peor — **pasa donde se escribe y
+    se cae donde decide**: el sello corre después de la suite local, así que
+    acá la página dice v937 y en el runner v938. Costó una corrida roja el
+    20/09.
+
+    Se compara el conjunto ENCONTRADO contra el DECIDIDO (corolario 60), así
+    que falla en las dos direcciones: cuando aparece un assert nuevo sin
+    `sin_pie`, y cuando uno de la lista deja de necesitarlo.
+    """
+    import ast as _ast
+
+    fuente = io.open("tests/test_app.py", encoding="utf-8").read()
+    encontrados = set()
+    for nodo in _ast.walk(_ast.parse(fuente)):
+        if not isinstance(nodo, _ast.FunctionDef):
+            continue
+        cuerpo = _ast.unparse(nodo)
+        for m in re.finditer(r"assert\s+'(\d{1,4})'\s+not in\s+(\w+)(\.lower\(\))?\b", cuerpo):
+            variable = m.group(2)
+            # La variable sale DERECHO de la respuesta (sin filtrar por regex
+            # ni recortar): ahí adentro viaja el pie.
+            if re.search(rf"\b{variable}\s*=\s*[\w.()\[\]]*\.text\b", cuerpo):
+                encontrados.add((nodo.name, m.group(1)))
+
+    # NINGUNO: el del remanente pasó a `sin_pie(texto)`, que es la forma. Si
+    # mañana hace falta uno, entra acá CON SU RAZÓN — no se afloja el test.
+    DECIDIDOS = set()
+    assert encontrados == DECIDIDOS, (
+        f"asserts numéricos por la negativa sobre la página CON el pie: {encontrados}. "
+        f"Van con `sin_pie(...)`, o el día que la versión contenga ese número "
+        f"el CI se cae y acá sale verde."
+    )
+
+
+def test_sin_pie_SACA_el_pie_y_DEJA_la_pantalla():
+    """El par completo (corolario 53): lo que tiene que sacar y lo que no.
+
+    Con solo lo primero, un helper que devuelva la cadena vacía pasa igual.
+    """
+    from tests.test_app import sin_pie
+
+    pagina = '<body><p>EL-CONTENIDO 38</p><footer ...>v938 · sin commit</footer></body>'
+    recortado = sin_pie(pagina)
+    assert "v938" not in recortado
+    assert "EL-CONTENIDO 38" in recortado

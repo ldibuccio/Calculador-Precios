@@ -18409,6 +18409,21 @@ def test_el_remanente_es_una_porcion_por_renglon_y_alfabetico():
     ]
 
 
+def sin_pie(texto):
+    """La pantalla SIN el pie de versión, para los asserts por la negativa.
+
+    EL PIE ESTÁ EN TODAS LAS PANTALLAS Y SU CONTENIDO CAMBIA EN CADA COMMIT:
+    dice `v938`, y mañana `v939`. Un `assert "38" not in texto` sobre la
+    página entera no está preguntando por el 38 del artículo — matchea el
+    número de versión, que es el vecino (corolario 4).
+
+    Y FALLA SOLO EN EL CI, que es lo caro: el sello corre DESPUÉS de la
+    suite, así que acá la página dice v937 y en el runner v938. El test pasa
+    donde se escribe y se cae donde decide (corolario 92).
+    """
+    return texto.split("<footer")[0]
+
+
 def test_el_remanente_NO_dice_la_palabra_suelto_ni_totales_por_articulo():
     """El nombre pelado es la mercadería como viene del puesto, que es como el
     depósito la llama. "Caja Día" y "Segunda" son las que necesitan
@@ -18416,8 +18431,9 @@ def test_el_remanente_NO_dice_la_palabra_suelto_ni_totales_por_articulo():
     texto = _remanente().text
 
     assert "suelto" not in texto.lower()
-    # Mandarina son 20 + 15 + 3: el 38 no aparece en ningún lado.
-    assert "38" not in texto
+    # Mandarina son 20 + 15 + 3: el 38 no aparece en ningún lado. SIN EL PIE:
+    # ahí vive el número de versión, que un día va a ser v38x y matchear.
+    assert "38" not in sin_pie(texto)
 
 
 def test_el_remanente_manda_a_Stock_Fisico_para_contar():

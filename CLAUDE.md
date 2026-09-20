@@ -311,6 +311,31 @@ De acá en adelante, después de cualquier push que se dé por desplegado:
    dos el deploy no sale— y se arreglan distinto. Por eso lo que se reporta
    es la `conclusion`, no "el CI no pasó".
 
+   **Y EL SELLO VA ANTES DE LA SUITE, no después (20/09).** El número de
+   versión se sella con `commit → sellar_version.py → commit --amend`, así
+   que hasta el 20/09 el orden era *suite, commit, sello, push* — y con ése
+   **la suite NUNCA corre contra el número que se despliega**: acá la
+   pantalla decía `v937` y el runner veía `v938`.
+
+   No es un detalle de prolijidad. **El pie está en las 131 pantallas y su
+   contenido cambia en cada commit**, así que cualquier assert por la
+   negativa sobre una página entera tiene un vecino que se mueve solo.
+   Costó una corrida roja: `assert "38" not in texto` —el total de un
+   artículo que no tiene que aparecer— matcheó el `v938` del pie.
+
+   **Y el modo de falla es exactamente el corolario 92**: pasa donde se
+   escribe y se cae donde decide. Con el sello después, no hay forma de
+   verlo acá; con el sello antes, la suite local mide el artefacto que sale.
+
+   El orden, entonces: **commit → sellar → amend → SUITE Y HUMO → push**.
+   Cuesta una corrida de dos minutos y es la única que mide lo que se
+   despliega.
+
+   Y del lado del test, la otra mitad: **un assert numérico por la negativa
+   sobre una página va con `sin_pie(...)`**. Lo cuida un barrido que compara
+   el conjunto ENCONTRADO contra el DECIDIDO, así que el próximo no depende
+   de que alguien se acuerde.
+
 6. **Y ANTES DE REPORTAR, SE ABRE UNA DE LAS PANTALLAS QUE SE TOCARON.** Del
    20/09, y es del dueño: *"hoy dos veces me dijiste 'hecho' sobre cosas que
    yo no podía ver"*.
