@@ -9325,21 +9325,89 @@ Copiarle el diseño —un `importe_original`— construiría la respuesta a la
 pregunta que acá no se hace. Es el mismo criterio con que el Cotejo de vacíos
 se quedó midiendo contra la foto cuando el de stock dejó de hacerlo.
 
-### ANOTADO Y NO CONSTRUIDO, y la forma que tendría
+### CONSTRUIDO el 20/09: `importe_puesto_el` + `importe_origen`
 
-Por pedido del dueño: *"es lo que hay que arreglar, aunque no sea hoy"*.
+Las dos columnas se migraron el 19/09 (`db/importe_1_cuando_y_por_donde.sql`,
+verificada `2 · 3` en las dos bases) y el 20/09 quedaron cableadas en los tres
+escritores. Son **derivadas del camino, no tipeadas por nadie** — que es lo
+único que las vuelve inmunes al campo que se deja de llenar: los tres
+escritores saben cuál son y ninguna pantalla pregunta nada.
 
-Lo que el sistema ya sabe escribir son dos columnas: **`importe_puesto_el`** y
-**`importe_origen`** (`'alta'` | `'edicion'` | `'pendiente'`), las dos escritas
-por los tres caminos de arriba y **derivadas del camino, no tipeadas por
-nadie** — que es lo único que las vuelve inmunes al campo que se deja de
-llenar. Los tres escritores saben cuál son; ninguna pantalla tiene que
-preguntar nada.
+**LO QUE DECIDIÓ EL DISEÑO, y no estaba previsto: el sello solo va SI EL
+NÚMERO CAMBIÓ.** La pantalla de Editar Compra llama a
+`actualizar_precio_compra` **en cada guardado, toque el precio o no** — está a
+la vista en el POST, `if not precio_bloqueado:` sin mirar si el importe se
+movió—. Sin esa guarda, corregir los cajones de una compra le fecharía el
+precio como renegociado hoy: la columna mentiría **justo en el caso para el
+que existe**, y sin que nada se vea raro en ninguna pantalla.
 
-**Y lo que la reabre no es un número: es un precio que no cierre.** Hoy no hay
-ninguno reportado, así que no hay nada que reconstruir hacia atrás — y las
-filas viejas van a quedar sin rastro igual, que es correcto: deducir de dónde
-salió un importe que ya está escrito sería inventarlo (corolario 20).
+No es un requisito inventado (corolario 81): es lo que el comment de la
+columna ya promete —*"CUANDO se escribio el importe que la fila tiene HOY"*—.
+Si el número no cambió, la respuesta honesta es la fecha vieja.
+
+Se resuelve **adentro del mismo UPDATE**, sin leer la fila antes: en Postgres
+una columna nombrada a la derecha de un `SET` vale lo VIEJO, así que
+`importe IS NOT DISTINCT FROM %s` compara lo que hay contra lo que llega en
+una sola sentencia y sin ventana entre el SELECT y el UPDATE.
+
+**Y si el importe se BORRA, el par vuelve a NULL.** Un *"puesto el 19/09 por
+edición"* sobre una fila sin precio afirma algo que no pasó — es el `{% else %}`
+que dice de más, en una columna.
+
+**El ALTA se escribe distinto A PROPÓSITO**, y conviene saberlo antes de
+"unificarlo": es una fila recién insertada, así que no tiene un valor viejo
+contra el cual comparar. Va en un `UPDATE` propio **después** del `if/elif/else`
+de las tres ramas del INSERT y no adentro de las tres listas, por el mismo
+argumento que `ficha_en_origen_id`: una columna repetida en tres ramas son tres
+lugares de los que una CUARTA se puede olvidar, y olvidarla no falla —deja el
+par en NULL, que se ve igual que una compra nacida sin precio—. Afuera del
+`if`, corre para todas por construcción.
+
+**Las seis formas, corridas contra `db/esquema_completo.sql`** (no leídas):
+
+```
+1. ALTA con precio                       SELLADO   alta        50000
+2. ALTA sin precio                       NULL      None        None
+3. PENDIENTE completa esa misma          SELLADO   pendiente   33000
+4. EDICION con el MISMO numero           quieto    alta        50000   <- el que decide
+5. EDICION con OTRO numero               SE MOVIO  edicion     61000
+6. EDICION que BORRA el precio           NULL      None        None
+```
+
+**Lo que lo cuida**, en `tests/test_sello_del_importe.py`, y son dos clases de
+evidencia que no se reemplazan: los seis casos de arriba corren contra Postgres
+de verdad —lo único que puede ver que el SQL PARSEA y que el CHECK acepta lo
+que el código escribe (corolario 89)—, y tres estructurales miran lo que
+ninguna corrida puede ver: que un CUARTO escritor que aparezca mañana también
+selle. Ése enumera con `ast` quién escribe `compras.importe` y lo compara
+contra el conjunto DECIDIDO, así que falla en las dos direcciones.
+
+**Y la lista de orígenes se LEE del `.sql`, no se copia**: una copiada envejece
+en silencio, y cada dirección falla distinto — un origen que el CHECK no acepta
+revienta el día que alguien use ese camino, y uno que el CHECK acepta y el
+código no escribe manda a buscar filas que no existen.
+
+**Lo que NO hace, y es correcto**: las filas viejas quedan sin rastro. Deducir
+de dónde salió un importe ya escrito sería inventarlo (corolario 20), así que
+`CON_precio_SIN_origen` va a seguir contando las 625 para siempre — y **ése es
+el número esperado, no una deuda**. Baja solo en el sentido de que las nuevas
+nacen con origen.
+
+#### Y el corolario que salió de cablearlo: `call_args_list[-1]` ancla en una POSICIÓN
+
+Tres tests de `crear_compra` afirmaban sobre el INSERT leyendo
+`cursor.execute.call_args_list[-1]`. Desde que el alta sella con un UPDATE
+posterior, `[-1]` es ese UPDATE: los tres pasaron a mirar otra cosa y cayeron
+diciendo que el INSERT no tenía `'pendiente', 'pendiente'`.
+
+**Y el archivo ya tenía el helper que lo evita, con la razón escrita adentro**:
+`_sql_y_parametros_que_contienen` dice textual que buscar por posición *"hace
+que cualquier sentencia nueva rompa tests que no tienen nada que ver"*. O sea
+que la costumbre correcta estaba dicha, en el mismo archivo, y **quedan 16 tests
+más apoyados en `[-1]`** — ninguno de ellos sobre `crear_compra`, verificado con
+`ast`, así que este cambio no los tocó. Es el corolario 38 otra vez: una
+costumbre no se hereda por estar escrita en un lugar; se hereda cuando algo la
+exige.
 
 ## Corolario 85: una consulta de diagnóstico que REESCRIBE una cuenta del sistema en vez de reusarla miente con números plausibles
 

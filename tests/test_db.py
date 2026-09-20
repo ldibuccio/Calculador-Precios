@@ -927,7 +927,9 @@ def test_actualizar_precio_compra_pisa_importe_y_sena():
 
     consulta_update, parametros_update = _sql_y_parametros_que_contienen(cursor, "UPDATE compras")
     assert "UPDATE compras SET importe = %s, sena = %s" in consulta_update
-    assert parametros_update == (55000.0, 1000.0, 30)
+    # Los cuatro del medio son el sello del importe (ver _sello_del_importe):
+    # el mismo valor cuatro veces, que son los dos CASE con sus dos ramas.
+    assert parametros_update == (55000.0, 1000.0, 55000.0, 55000.0, 55000.0, 55000.0, 30)
     conexion.commit.assert_called_once()
 
 
@@ -2478,7 +2480,11 @@ def test_crear_compra_cooperativa_nace_retirada_con_origen_cooperativa():
     with patch("app.db.obtener_conexion", return_value=conexion):
         crear_compra(date(2026, 8, 19), 5, 200, 10, 18, 180, None, 50000.0, None, "Cooperativa", segunda_por_cajon=None)
 
-    consulta_insert, parametros_insert = cursor.execute.call_args_list[-1].args
+    # POR LA SENTENCIA y no por la posición: desde que el alta sella el
+    # importe con un UPDATE posterior, `[-1]` es ese UPDATE y el assert
+    # pasaba a mirar otra cosa. Es lo que el docstring de
+    # _sql_y_parametros_que_contienen viene diciendo.
+    consulta_insert, parametros_insert = _sql_y_parametros_que_contienen(cursor, "INSERT INTO compras")
     assert "'pendiente', 'retirado', now(), %s" in consulta_insert
     assert parametros_insert[-1] == "automatico_cooperativa"
     assert "cantidad_cajones_real" not in consulta_insert  # sin valores reales: los pone Depósito
@@ -2538,7 +2544,11 @@ def test_crear_compra_carro_nace_retirada_con_origen_automatico():
     with patch("app.db.obtener_conexion", return_value=conexion):
         crear_compra(date(2026, 8, 19), 5, 200, 10, 18, 180, None, 50000.0, None, "Carro", segunda_por_cajon=None)
 
-    consulta_insert, parametros_insert = cursor.execute.call_args_list[-1].args
+    # POR LA SENTENCIA y no por la posición: desde que el alta sella el
+    # importe con un UPDATE posterior, `[-1]` es ese UPDATE y el assert
+    # pasaba a mirar otra cosa. Es lo que el docstring de
+    # _sql_y_parametros_que_contienen viene diciendo.
+    consulta_insert, parametros_insert = _sql_y_parametros_que_contienen(cursor, "INSERT INTO compras")
     assert "'pendiente', 'retirado', now(), %s" in consulta_insert
     assert parametros_insert[-1] == "automatico_carro"
     conexion.commit.assert_called_once()
@@ -2550,7 +2560,11 @@ def test_crear_compra_clark_sigue_naciendo_pendiente_de_retiro():
     with patch("app.db.obtener_conexion", return_value=conexion):
         crear_compra(date(2026, 8, 19), 5, 200, 10, 18, 180, None, 50000.0, None, "Clark", segunda_por_cajon=None)
 
-    consulta_insert = cursor.execute.call_args_list[-1].args[0]
+    # POR LA SENTENCIA y no por la posición: desde que el alta sella el
+    # importe con un UPDATE posterior, `[-1]` es ese UPDATE y el assert
+    # pasaba a mirar otra cosa. Es lo que el docstring de
+    # _sql_y_parametros_que_contienen viene diciendo.
+    consulta_insert, _ = _sql_y_parametros_que_contienen(cursor, "INSERT INTO compras")
     assert "'pendiente', 'pendiente'" in consulta_insert
     assert "retiro_origen" not in consulta_insert
 

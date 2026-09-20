@@ -2108,6 +2108,56 @@ _ORIGENES_RETIRO_AUTOMATICO_SQL = ", ".join(
     f"'{origen}'" for origen in sorted(ORIGEN_RETIRO_AUTOMATICO_POR_TIPO.values())
 )
 
+
+# POR DÓNDE entró el importe que la compra tiene hoy. Los tres valores son los
+# tres caminos que escriben `compras.importe`, enumerados con `ast` y no de
+# memoria: el alta (_insertar_compra_con_guia), la edición
+# (actualizar_precio_compra) y Compras sin precio (actualizar_importe_compra).
+#
+# LA LISTA ES LA MISMA QUE LA DEL CHECK de db/importe_1_cuando_y_por_donde.sql,
+# y eso lo cuida un test que LEE el `.sql` en vez de copiarlo: una lista copiada
+# envejece en silencio, y la que se separe no falla —deja entrar un origen que
+# la base rechaza, o al revés, y recién se ve cuando alguien carga.
+ORIGENES_DEL_IMPORTE = ("alta", "edicion", "pendiente")
+
+
+def _sello_del_importe(origen: str, importe) -> tuple[str, tuple]:
+    """Las dos columnas que dicen CUÁNDO y POR DÓNDE entró el importe que la fila tiene HOY, para pegar en un UPDATE.
+
+    Devuelve el fragmento de `SET` y sus parámetros, en ese orden. Lo usan
+    los DOS caminos que actualizan un importe ya existente; el alta lo
+    escribe distinto y a propósito (ver _insertar_compra_con_guia).
+
+    SOLO SELLA SI EL NÚMERO CAMBIÓ, y no es una prolijidad: la pantalla de
+    Editar Compra llama a actualizar_precio_compra en CADA guardado, aunque
+    lo único que se haya tocado sea la cantidad. Sin el `IS DISTINCT FROM`,
+    corregir los cajones de una compra le fecharía el precio como
+    renegociado hoy — o sea que la columna mentiría justo en el caso para el
+    que existe, y sin que nada se vea raro en ninguna pantalla.
+
+    Y SI EL IMPORTE SE BORRA, el par vuelve a NULL: un "puesto el 19/09 por
+    edición" sobre una fila sin precio afirma algo que no pasó. Es la misma
+    regla que el comment de la columna ya promete —NULL = sin precio
+    todavía— escrita donde se cumple.
+
+    En un UPDATE de Postgres, una columna nombrada a la derecha de un SET
+    vale lo VIEJO, así que `importe IS NOT DISTINCT FROM %s` compara lo que
+    hay contra lo que llega sin tener que leer la fila antes: una sola
+    sentencia, sin ventana entre el SELECT y el UPDATE.
+
+    El `::numeric` no es decorativo: `%s IS NULL` suelto no tiene de dónde
+    sacar el tipo y Postgres lo rechaza con "could not determine data type".
+    """
+    if origen not in ORIGENES_DEL_IMPORTE:
+        raise ValueError(f"Origen de importe desconocido: {origen}")
+    fragmento = (
+        "importe_puesto_el = CASE WHEN importe IS NOT DISTINCT FROM %s THEN importe_puesto_el "
+        "WHEN %s::numeric IS NULL THEN NULL ELSE now() END, "
+        "importe_origen = CASE WHEN importe IS NOT DISTINCT FROM %s THEN importe_origen "
+        f"WHEN %s::numeric IS NULL THEN NULL ELSE '{origen}' END"
+    )
+    return fragmento, (importe, importe, importe, importe)
+
 # La condición de "esta compra todavía se puede borrar", escrita UNA sola vez
 # y en SQL. La usan el borrado de a uno (eliminar_compra) y el Cancelar del
 # día (eliminar_compras_del_dia_por_proveedor). Antes vivía dos veces —tres
@@ -2529,6 +2579,22 @@ def _insertar_compra_con_guia(
 
     (compra_id,) = cursor.fetchone()
 
+    # EL SELLO DEL IMPORTE VA ACÁ AFUERA y no adentro de las tres listas del
+    # INSERT, por el mismo argumento que ficha_en_origen_id: una columna
+    # repetida en las tres ramas son tres lugares de los que una CUARTA rama
+    # se puede olvidar, y olvidarla no falla —deja el par en NULL, que se ve
+    # exactamente igual que una compra que nació sin precio—. Después del
+    # if/elif/else corre para todas por construcción.
+    #
+    # Y solo cuando hay importe: una compra que nace sin precio no tiene nada
+    # que fechar. Ese par en NULL es justo el que Compras sin precio va a
+    # completar después, y va a escribir 'pendiente', que es la verdad.
+    if importe is not None:
+        cursor.execute(
+            "UPDATE compras SET importe_puesto_el = now(), importe_origen = 'alta' WHERE id = %s",
+            (compra_id,),
+        )
+
     if ficha_en_origen_id is not None:
         _validar_caja_en_origen(cursor, ficha_en_origen_id, articulo_id)
         cursor.execute(
@@ -2795,6 +2861,12 @@ def actualizar_precio_compra(compra_id: int, importe: float | None, sena: float 
     después de recepcionada o retirada — es habitual que el comprador
     renegocie el precio con el proveedor una vez que la mercadería ya
     llegó.
+
+    Y por eso SELLA el par del importe (ver _sello_del_importe): la
+    renegociación es justamente lo que después no se puede distinguir de un
+    precio cargado al recibir. Sella SOLO si el número cambió, porque la
+    pantalla de Editar Compra llama acá en cada guardado aunque lo único
+    tocado sea la cantidad.
     """
     conexion = obtener_conexion()
     try:
@@ -2808,7 +2880,11 @@ def actualizar_precio_compra(compra_id: int, importe: float | None, sena: float 
                     raise ValueError("Esta compra tuvo un rechazo total, no se puede editar el precio.")
                 raise ValueError("Esta compra nunca ingresó al depósito, no se puede editar el precio.")
 
-            cursor.execute("UPDATE compras SET importe = %s, sena = %s WHERE id = %s", (importe, sena, compra_id))
+            sello, sello_params = _sello_del_importe("edicion", importe)
+            cursor.execute(
+                f"UPDATE compras SET importe = %s, sena = %s, {sello} WHERE id = %s",
+                (importe, sena) + sello_params + (compra_id,),
+            )
         conexion.commit()
     finally:
         conexion.close()
@@ -4796,11 +4872,20 @@ def listar_compras_sin_precio() -> list[dict]:
 
 
 def actualizar_importe_compra(compra_id: int, importe: float) -> None:
-    """Completa el importe de una compra que había quedado sin precio."""
+    """Completa el importe de una compra que había quedado sin precio.
+
+    Sella el par del importe como 'pendiente' (ver _sello_del_importe), que
+    es la verdad de este camino: el precio no se cargó con la compra ni se
+    renegoció — se completó después, desde Compras sin precio.
+    """
     conexion = obtener_conexion()
     try:
         with conexion.cursor() as cursor:
-            cursor.execute("UPDATE compras SET importe = %s WHERE id = %s", (importe, compra_id))
+            sello, sello_params = _sello_del_importe("pendiente", importe)
+            cursor.execute(
+                f"UPDATE compras SET importe = %s, {sello} WHERE id = %s",
+                (importe,) + sello_params + (compra_id,),
+            )
         conexion.commit()
     finally:
         conexion.close()
