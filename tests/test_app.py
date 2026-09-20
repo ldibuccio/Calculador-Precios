@@ -6349,7 +6349,7 @@ def test_el_boton_de_recibir_CAMBIA_DE_TEXTO_cuando_falta_la_foto():
     # Y el que no tiene foto NO va a la confirmación en el lugar: va al
     # modal. La línea vieja ("Sin foto de la balanza. Se recibe igual.")
     # vivía en esa confirmación y dejó de alcanzarse en el mismo cambio.
-    assert 'onclick="abrirModalSinFoto(\'2\')"' in respuesta.text
+    assert 'onclick="abrirModalSinFoto(\'2\', \'recibir\')"' in respuesta.text
     assert 'onclick="mostrarConfirmacion(\'1\', \'recibir\')"' in respuesta.text
     assert "Sin foto de la balanza. Se recibe igual." not in respuesta.text
 
@@ -6382,7 +6382,11 @@ def test_el_modal_sin_foto_tiene_LAS_TRES_salidas_y_TODAS_son_explicitas():
     pegado = _pegado(respuesta.text)
     assert '<dialog class="modal-sin-foto" id="modal-sin-foto-2"' in respuesta.text
     assert ">Sacar la foto<" in pegado
-    assert ">Recibir sin foto<" in pegado
+    # El rótulo lo pone el JS según por dónde se entró —"Recibir sin foto" o
+    # "Seguir sin foto"— así que lo que el marcado tiene es el <span> vacío
+    # que ese JS rellena, y el handler que decide.
+    assert 'class="texto-seguir"' in pegado
+    assert "seguirSinFoto('2')" in pegado
     assert ">Cancelar<" in pegado
 
     modal = _html_del_modal(respuesta.text, 2)
@@ -6391,7 +6395,11 @@ def test_el_modal_sin_foto_tiene_LAS_TRES_salidas_y_TODAS_son_explicitas():
     # contrario de lo que hoy queremos.
     assert modal.count("<button") == 3, "el modal tiene una salida de más o de menos"
     # Recibir manda el form de recepción real, no una ruta aparte.
-    assert 'form="form-recepcionar-2"' in modal
+    # SEGUIR ya no está atado a un form fijo: el mismo modal cubre las DOS
+    # puertas —Recibir y Rechazo parcial— así que lee de cuál se abrió. Lo que
+    # se exige es que la salida EXISTA y que sea explícita, no por cuál de los
+    # dos caminos sigue (eso lo cuida el test del cableado de las dos).
+    assert "seguirSinFoto('2')" in modal
     # Cancelar NO manda nada: sin type=submit y sin form=.
     cancelar = modal[modal.index("boton-modal-cancelar") :]
     assert "cerrarModalSinFoto('2')" in cancelar
@@ -6509,9 +6517,13 @@ def test_procesados_hoy_marca_SIN_FOTO_solo_en_las_recepcionadas():
     ):
         respuesta = cliente.get("/deposito/recepcion")
 
-    assert respuesta.text.count("sin foto") == 1, "solo la recepcionada sin foto"
+    # POR LA CLASE y no por el texto: "sin foto" aparece también en el
+    # <script> (dos cadenas del botón del modal y un comentario), y el corte
+    # por </style> no saca el JS. Una clase no puede estar en ninguno de los
+    # dos.
+    assert respuesta.text.count('class="sin-foto-balanza"') == 1, "solo la recepcionada sin foto"
     # Y es la 11, no la 12: el orden del HTML lo confirma.
-    posicion_sin_foto = respuesta.text.index("sin foto")
+    posicion_sin_foto = respuesta.text.index('class="sin-foto-balanza"')
     assert respuesta.text.index("EJEMPLO Sin") < posicion_sin_foto < respuesta.text.index("EJEMPLO Rechazada")
     # No dice nada sobre la que SÍ tiene: el que audita busca lo que falta.
     assert "con foto" not in respuesta.text
@@ -32518,3 +32530,83 @@ def test_el_numero_NO_se_hornea_en_el_build_de_railway():
     assert not (raiz / "nixpacks.toml").exists(), (
         "volvió nixpacks.toml: si es a propósito, que NO escriba VERSION_NUMERO"
     )
+
+
+def test_el_modal_de_la_foto_esta_en_LAS_DOS_puertas_que_recepcionan():
+    """Recibir y Rechazo parcial, y con UN SOLO modal.
+
+    UN RECHAZO PARCIAL ES UNA RECEPCIÓN por los bultos aceptados: los pesa,
+    los cuenta y los mete al stock. Así que la foto de la balanza vale lo
+    mismo por los dos caminos, y con el modal en uno solo el dedazo entra por
+    el otro — que es lo que pasó con la marca de "vino armada" hasta que se
+    puso en las siete superficies.
+
+    Y SE EXIGE QUE SEA EL MISMO MODAL, no dos: dos serían la misma regla
+    escrita dos veces, y la copia que se separe deja una de las dos puertas
+    sin aviso.
+
+    EL FIXTURE TRAE LAS DOS COMPRAS —la 1 con foto y la 2 sin— así que el
+    control viene adentro: un cableado que mandara SIEMPRE al modal, o nunca,
+    cae en la misma corrida.
+    """
+    with (
+        patch("app.main.listar_compras_pendientes_recepcion", return_value=COMPRAS_PENDIENTES_RECEPCION_DE_PRUEBA),
+        patch("app.main.listar_compras_procesadas_hoy_recepcion", return_value=[]),
+        patch("app.main._hoy_argentina", return_value=HOY_DE_PRUEBA),
+    ):
+        marcado = cliente.get("/deposito/recepcion").text
+    # SE SACAN LOS <script> ENTEROS, no se corta en el primero: el primero
+    # está en el <head> (el que ajusta el título de la barra), así que
+    # `split("<script")[0]` deja puro CSS y todos los asserts de abajo
+    # fallarían por una razón que no es la suya. Y cortar por el ÚLTIMO
+    # dejaría el JS del medio adentro, que es donde viven los nombres de
+    # estas mismas funciones.
+    sin_js = re.sub(r"<script.*?</script>", "", marcado, flags=re.S)
+
+    # La 2 (SIN foto): las dos entradas pasan por el modal, cada una diciendo
+    # por dónde entró.
+    assert "abrirModalSinFoto('2', 'recibir')" in sin_js
+    assert "abrirModalSinFoto('2', 'rechazo-parcial')" in sin_js
+    # Y no puede saltearlo yendo derecho a su confirmación.
+    assert "mostrarConfirmacion('2', 'rechazo-parcial')" not in sin_js
+
+    # LA 1 (CON foto): ninguna de las dos abre el modal. Éste es el control.
+    assert "abrirModalSinFoto('1'" not in sin_js
+    assert "mostrarConfirmacion('1', 'recibir')" in sin_js
+    assert "mostrarConfirmacion('1', 'rechazo-parcial')" in sin_js
+
+    # UN SOLO <dialog> PARA LA COMPRA 2, no uno por puerta: es la mitad que
+    # dice que no son dos modales. Se cuenta POR ID y no los dialogs de la
+    # pantalla —el fixture tiene más de una compra sin foto, y cada una tiene
+    # el suyo, que es correcto—.
+    assert marcado.count('id="modal-sin-foto-2"') == 1
+
+
+def test_los_campos_de_KILAJE_aceptan_decimales_Y_PIDEN_EL_TECLADO_QUE_CORRESPONDE():
+    """`step="0.01"` solo, sin `inputmode`, no alcanza en un celular.
+
+    El step lo verifica el navegador al enviar; el INPUTMODE decide qué
+    teclado aparece. Sin él, varios teclados de Android muestran un pad de
+    dígitos SIN separador decimal, así que el que tiene que cargar 16,5 no
+    puede — y eso no falla en ningún lado: carga 16 y sigue.
+
+    LO QUE ESTE TEST NO PUEDE DECIR, y hay que tenerlo escrito: en un
+    `type=number` el navegador acepta el punto y DESCARTA la coma, dejando el
+    campo VACÍO sin avisar. Medido en Chromium: tipear "16,5" deja "". El
+    `inputmode="decimal"` hace que el teclado ofrezca el separador de la
+    configuración del teléfono, pero cuál manda depende del teclado real, y
+    eso desde acá no se puede probar.
+    """
+    with (
+        patch("app.main.listar_compras_pendientes_recepcion", return_value=COMPRAS_PENDIENTES_RECEPCION_DE_PRUEBA),
+        patch("app.main.listar_compras_procesadas_hoy_recepcion", return_value=[]),
+        patch("app.main._hoy_argentina", return_value=HOY_DE_PRUEBA),
+    ):
+        marcado = cliente.get("/deposito/recepcion").text
+
+    # EL CONJUNTO ENCONTRADO, no una lista escrita a mano: el campo que se
+    # agregue mañana entra solo.
+    con_step = re.findall(r'<input[^>]*step="0\.01"[^>]*>', marcado)
+    assert con_step, "no hay un solo campo de kilaje: el fixture no dibujó el formulario"
+    sin_teclado = [i for i in con_step if 'inputmode="decimal"' not in i]
+    assert not sin_teclado, f"campos de kilaje sin inputmode decimal: {sin_teclado}"

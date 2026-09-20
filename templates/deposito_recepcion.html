@@ -380,7 +380,7 @@
 
         <form method="post" action="/deposito/recepcion/{{ c.id }}/recepcionar" class="campo-real" id="form-recepcionar-{{ c.id }}">
           <label for="cajones-real-{{ c.id }}">Cajones reales</label>
-          <input type="number" id="cajones-real-{{ c.id }}" name="cantidad_cajones_real" min="0" step="0.01"
+          <input type="number" id="cajones-real-{{ c.id }}" name="cantidad_cajones_real" min="0" step="0.01" inputmode="decimal"
                  value="{{ c.cantidad_cajones }}">
 
           {% if c.unidad_compra == "kilo" %}
@@ -390,7 +390,7 @@
           {% else %}
           <label for="total-real-{{ c.id }}">Unidades por cajón/bulto (real)</label>
           {% endif %}
-          <input type="number" id="total-real-{{ c.id }}" name="cantidad_total_real" min="0" step="0.01"
+          <input type="number" id="total-real-{{ c.id }}" name="cantidad_total_real" min="0" step="0.01" inputmode="decimal"
                  value="{{ c.contenido_por_cajon }}">
           {% set id_segunda = "segunda-real-" ~ c.id %}
           {# LA SEGUNDA MAGNITUD, y solo cuando la compra la DECLARÓ: si el
@@ -407,7 +407,7 @@
           {% else %}
           <label for="{{ id_segunda }}">Kilos por cajón/bulto (real)</label>
           {% endif %}
-          <input type="number" id="{{ id_segunda }}" name="segunda_real" min="0" step="0.01"
+          <input type="number" id="{{ id_segunda }}" name="segunda_real" min="0" step="0.01" inputmode="decimal"
                  value="{{ c.segunda_por_cajon_estimada }}">
           {% endif %}
         </form>
@@ -444,12 +444,18 @@
                   onclick="mostrarConfirmacion('{{ c.id }}', 'recibir')">Recibir</button>
           {% else %}
           <button type="button" class="boton-exito boton-recibir boton-sin-foto"
-                  onclick="abrirModalSinFoto('{{ c.id }}')">Recibir sin foto de balanza</button>
+                  onclick="abrirModalSinFoto('{{ c.id }}', 'recibir')">Recibir sin foto de balanza</button>
           {% endif %}
           <p class="titulo-problemas">Si algo salió mal:</p>
           <div class="acciones-renglon">
             <button type="button" class="boton-peligro" onclick="mostrarConfirmacion('{{ c.id }}', 'rechazar')">Rechazo total</button>
-            <button type="button" class="boton-advertencia" onclick="mostrarConfirmacion('{{ c.id }}', 'rechazo-parcial')">Rechazo parcial</button>
+            {# POR EL MODAL TAMBIÉN, y no solo Recibir: un rechazo parcial ES
+               una recepción por los bultos aceptados —los pesa, los cuenta y
+               los mete al stock— así que la foto de la balanza vale lo mismo.
+               Con el modal en una sola de las dos superficies, el dedazo
+               entra por la otra y no queda rastro de que faltó la foto. #}
+            <button type="button" class="boton-advertencia"
+                    onclick="{% if c.fotos_balanza %}mostrarConfirmacion('{{ c.id }}', 'rechazo-parcial'){% else %}abrirModalSinFoto('{{ c.id }}', 'rechazo-parcial'){% endif %}">Rechazo parcial</button>
             <button type="button" class="boton-neutro boton-ancho" onclick="mostrarConfirmacion('{{ c.id }}', 'no-ingreso')">No ingresó</button>
           </div>
         </div>
@@ -467,10 +473,17 @@
           <button type="button" class="boton-modal-primario" onclick="sacarLaFotoDesdeElModal('{{ c.id }}')">
             Sacar la foto
           </button>
-          {# Sigue SIN trabar: este botón manda el mismo form de siempre. La
-             diferencia con el cartel de antes no es que frene, es que lo leyó. #}
-          <button type="submit" form="form-recepcionar-{{ c.id }}" class="boton-modal-secundario">
-            Recibir sin foto
+          {# Sigue SIN trabar. La diferencia con el cartel de antes no es que
+             frene, es que lo leyó.
+
+             UN SOLO MODAL PARA LAS DOS PUERTAS, y por eso este botón no
+             manda un form fijo: lee de qué acción se abrió y sigue por ahí.
+             Dos modales serían la misma regla escrita dos veces, y la copia
+             que se separe deja una de las dos superficies sin aviso — que es
+             exactamente el agujero que esto viene a tapar. #}
+          <button type="button" class="boton-modal-secundario"
+                  onclick="seguirSinFoto('{{ c.id }}')">
+            <span class="texto-seguir">Recibir sin foto</span>
           </button>
           {# LA TERCERA SALIDA, y es la única que no hace nada: apretó Recibir
              sin querer, o se dio cuenta de que tiene mal el kilaje. Va
@@ -511,11 +524,11 @@
           <p class="texto-confirmacion">Rechazo parcial de {{ c.articulo_nombre }}: los bultos rechazados se devuelven al proveedor, y se recibe el resto. No se puede deshacer.</p>
           <form method="post" action="/deposito/recepcion/{{ c.id }}/rechazo-parcial" class="campo-real">
             <label for="llegados-{{ c.id }}">Bultos llegados</label>
-            <input type="number" id="llegados-{{ c.id }}" name="cantidad_cajones_llegados" min="0" step="0.01"
+            <input type="number" id="llegados-{{ c.id }}" name="cantidad_cajones_llegados" min="0" step="0.01" inputmode="decimal"
                    value="{{ c.cantidad_cajones }}" oninput="actualizarAceptados('{{ c.id }}')">
 
             <label for="rechazados-{{ c.id }}">Bultos rechazados</label>
-            <input type="number" id="rechazados-{{ c.id }}" name="cantidad_cajones_rechazada" min="0" step="0.01"
+            <input type="number" id="rechazados-{{ c.id }}" name="cantidad_cajones_rechazada" min="0" step="0.01" inputmode="decimal"
                    oninput="actualizarAceptados('{{ c.id }}')">
 
             <p class="quedan-aceptados" id="quedan-{{ c.id }}">Completá los bultos rechazados.</p>
@@ -527,7 +540,7 @@
             {% else %}
             <label for="total-parcial-{{ c.id }}">Unidades por cajón/bulto (real)</label>
             {% endif %}
-            <input type="number" id="total-parcial-{{ c.id }}" name="cantidad_total_real" min="0" step="0.01"
+            <input type="number" id="total-parcial-{{ c.id }}" name="cantidad_total_real" min="0" step="0.01" inputmode="decimal"
                    value="{{ c.contenido_por_cajon }}">
 
             {# La misma segunda magnitud del recuadro de arriba: el rechazo
@@ -539,7 +552,7 @@
             {% else %}
             <label for="segunda-parcial-{{ c.id }}">Kilos por cajón/bulto (real)</label>
             {% endif %}
-            <input type="number" id="segunda-parcial-{{ c.id }}" name="segunda_real" min="0" step="0.01"
+            <input type="number" id="segunda-parcial-{{ c.id }}" name="segunda_real" min="0" step="0.01" inputmode="decimal"
                    value="{{ c.segunda_por_cajon_estimada }}">
             {% endif %}
 
@@ -583,8 +596,15 @@
     // EL MODAL DE "SIN FOTO". No traba: de sus dos botones, uno recibe.
     // Lo que hace es que no se pueda seguir sin haber leído — un cartel
     // atrás de la pantalla ya se probó que nadie lo mira.
-    function abrirModalSinFoto(compraId) {
-      document.getElementById('modal-sin-foto-' + compraId).showModal();
+    function abrirModalSinFoto(compraId, accion) {
+      var modal = document.getElementById('modal-sin-foto-' + compraId);
+      // LA ACCIÓN VIAJA EN EL MODAL, no en una variable de arriba: con dos
+      // renglones abiertos a la vez, una variable global se pisa y el
+      // segundo modal seguiría por el camino del primero.
+      modal.dataset.accion = accion || 'recibir';
+      modal.querySelector('.texto-seguir').textContent =
+        accion === 'rechazo-parcial' ? 'Seguir sin foto' : 'Recibir sin foto';
+      modal.showModal();
       // El botón de atrás de Android: en los navegadores nuevos cierra un
       // <dialog> abierto (y lo frena el preventDefault del 'cancel' de
       // abajo), pero no en todos. Una entrada de historial propia, que se
@@ -607,6 +627,20 @@
 
     // Abre la cámara DESDE EL MODAL: el que no sacó la foto no tiene que
     // ir a buscar el botón de atrás, que es donde se pierde.
+    // Seguir sin foto, por donde se haya entrado. Recibir manda el form de
+    // siempre; el rechazo parcial abre SU confirmación, que es el paso que
+    // ese camino ya tenía — el modal se mete antes, no en lugar de.
+    function seguirSinFoto(compraId) {
+      var modal = document.getElementById('modal-sin-foto-' + compraId);
+      var accion = modal.dataset.accion || 'recibir';
+      cerrarModalSinFoto(compraId);
+      if (accion === 'rechazo-parcial') {
+        mostrarConfirmacion(compraId, 'rechazo-parcial');
+      } else {
+        document.getElementById('form-recepcionar-' + compraId).requestSubmit();
+      }
+    }
+
     function sacarLaFotoDesdeElModal(compraId) {
       cerrarModalSinFoto(compraId);
       document.getElementById('foto-balanza-' + compraId).click();

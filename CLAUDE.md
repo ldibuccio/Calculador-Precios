@@ -807,6 +807,16 @@ La regla de arriba dice correr en las dos; ésta dice **mostrar las dos**.
 
 #### Y LA FILA SE ANOTA EN `db/corridas_confirmadas.md`, no citada en un corolario
 
+**LO VIEJO NO SE RECONSTRUYE, y es decisión del dueño (20/09).** El archivo
+tiene 5 filas y hay 321 `.sql`: reconstruir cuáles corrieron es imposible de
+memoria, y una lista inventada sería peor que una corta — el que la lea le va
+a creer. Queda como está.
+
+**Lo que cambia es de acá en adelante: cada migración se anota APENAS llega su
+fila de verificación**, en el mismo turno, no al final del día. Es la misma
+regla que la corrección de una oración de este archivo: en el momento, o no se
+hace. Y el que anota es el que recibe la fila, no el que la corrió.
+
 Del 18/09, y salió de una auditoría que no pudo contestar una pregunta que
 tenía la respuesta en el repo: *"¿las tres migraciones de Vacíos corrieron en
 Frutamax?"*. Habían corrido. Lo que faltaba era el registro — **la única fila
@@ -2511,6 +2521,16 @@ no midiendo de nuevo.**
 no por el excepcional — así que es mucho más grande que el ingreso directo
 que sí se midió.
 
+**Y DESDE EL 20/09 LA RAZÓN ES MÁS FUERTE, no más débil**, decisión del
+dueño: con el modal de la foto puesto en las DOS puertas que recepcionan
+—Recibir y Rechazo parcial— el que recibe ya no aprieta derecho sin darse
+cuenta. Tiene que leer y elegir. Eso no borra la contaminación (apretar
+"Recibir sin foto" sigue grabando `real = estimado`) pero sí le saca lo que la
+hacía peligrosa: que pasara sin que nadie la mirara.
+
+Sigue anotada y sin construir, con la consulta escrita para el día que haga
+falta.
+
 **No se construyó nada, por pedido, y la razón es buena**: con lo que se
 sabe hoy no cambia ninguna decisión. La referencia ya se dio por buena por
 otro camino, y las dos que estaban mal ya están identificadas.
@@ -2769,7 +2789,19 @@ primera semana la de galpón se carga y la del reproceso sigue en cero, eso
 **no** dice que el operario sea prolijo en una y no en la otra: dice que una
 pantalla le pide algo que necesita hacer y la otra un dato que no hace nada.
 
-### Lo que queda ANOTADO Y NO CONSTRUIDO
+### RETIRADO por el dueño el 20/09: no es un problema de plata
+
+**No se construye ninguna de las dos.** La decisión es suya y la razón es
+corta: el descarte del reproceso **no se pierde de las cuentas** —está adentro
+de `tomados − primera`, los cajones se fueron y volvieron menos cajas— y lo
+único que falta es el MOTIVO, que no mueve un peso.
+
+Queda escrito como decisión y no como pendiente, porque un "anotado y no
+construido" se relee dentro de seis meses como algo que todavía hay que hacer.
+Lo de abajo es lo que se haría SI alguna vez el motivo hiciera falta, y hoy no
+hace falta.
+
+---
 
 Si algún día se quiere el motivo del descarte del reproceso, **la salida no
 es insistir con el campo ni pedir que lo llenen mejor: es darle
