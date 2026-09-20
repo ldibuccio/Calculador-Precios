@@ -82,6 +82,10 @@
   .pill-reingreso_rechazo { background: #fed7aa; color: #9a3412; }
   .pill-remito_segunda { background: #ffedd5; color: #c2410c; border: 1px solid #fdba74; }
   .pill-merma_segunda { background: #fecaca; color: #991b1b; border: 1px solid #fca5a5; }
+  /* Ámbar y no rojo: la merma es roja porque la mercadería se fue, y el pase
+     NO se fue — cambió de pila. Pintarlos igual haría leer un pase como una
+     pérdida en un listado que se mira de corrido. */
+  .pill-pase_a_segunda { background: #fef3c7; color: #92400e; border: 1px solid #fcd34d; }
   .boton-anular {
     padding: 0.6rem 0.9rem;
     background: #fff;
@@ -135,6 +139,14 @@
           {% if m.anulado_el %}<span class="marca-anulado">ANULADO</span>{% endif %}
           <span class="extra">
             {% if m.cliente_nombre %}Devolvió {{ m.cliente_nombre }} · {% endif %}<span class="motivo">{{ m.motivo }}</span>
+            {#- EL PASE DICE ADÓNDE FUE. Sin esto el renglón se lee como una
+                salida a secas —el mismo aspecto que una merma— y lo que pasó
+                es lo contrario: la mercadería sigue en el galpón, en la otra
+                pila. Es la misma razón por la que el cuarto destino del
+                rechazo se nombra abajo. -#}
+            {%- if m.tipo == "pase_a_segunda" %} · <strong>ya no da para primera</strong>
+              ({{ m.bultos_segunda|numero }} bultos al pool de segunda)
+            {%- endif %}
             {%- if m.tipo == "reingreso_rechazo" %}
               {%- if m.pedido_renglon_id %} · del pedido del {{ m.fecha_pedido|fecha_corta }}{% if m.sucursal_pedido %} ({{ m.sucursal_pedido }}){% endif %}
               {%- else %} · <strong>sin vínculo a pedido</strong> (viejo — corregir es anular y recargar){% endif %}

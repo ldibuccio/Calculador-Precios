@@ -60,6 +60,10 @@ ETIQUETAS_MOVIMIENTO = {
     "ajuste": "Ajuste",
     "merma": "Merma",
     "reingreso_rechazo": "Reingreso",
+    # "Pasó a 2ª" y no "Pase a segunda": el renglón ya dice de qué artículo
+    # es, así que lo que falta es el VERBO. Y corto porque comparte fila con
+    # la fecha y el motivo en una pantalla de 390px.
+    "pase_a_segunda": "Pasó a 2ª",
     "stock_inicial": "Stock inicial",
     "cierre_modelo_viejo": "Cierre del modelo viejo",
 }

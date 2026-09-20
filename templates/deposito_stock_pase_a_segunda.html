@@ -1,0 +1,143 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Pasar a segunda</title>
+<style>
+  :root { font-family: -apple-system, system-ui, sans-serif; }
+  body { margin: 0; padding: 1rem; background: #f5f5f5; color: #222; }
+  .tarjeta {
+    background: #fff; border-radius: 10px; padding: 1rem;
+    margin-bottom: 1rem; box-shadow: 0 1px 3px rgba(0, 0, 0, 0.1);
+  }
+  /* EL LARGO DE UN NOMBRE NO LO CONTROLAMOS: sale del catálogo, lo escribe
+     una persona, y una palabra sin espacios no tiene dónde envolver. Los
+     tres bloques de abajo llevan el nombre del artículo adentro, así que sin
+     esto la página se arrastra de costado. MEDIDO: 396px de desborde a 390
+     con un nombre impartible, y 0 con esto puesto. */
+  .aviso, .error, .que-pasa { overflow-wrap: anywhere; }
+  .aviso {
+    background: #dcfce7; color: #166534; padding: 0.75rem 1rem;
+    border-radius: 8px; margin-bottom: 1rem; font-size: 0.95rem;
+  }
+  .error {
+    background: #fee2e2; color: #991b1b; padding: 0.75rem 1rem;
+    border-radius: 8px; margin-bottom: 1rem; font-size: 0.95rem;
+  }
+  label { display: block; margin-top: 0.7rem; font-size: 0.95rem; color: #444; }
+  select, input {
+    width: 100%; padding: 0.8rem; margin-top: 0.25rem;
+    border: 1px solid #ccc; border-radius: 8px; font-size: 1.05rem;
+    box-sizing: border-box; background: #fff;
+  }
+  button.boton-guardar {
+    display: block; width: 100%; margin-top: 1.1rem; padding: 1rem;
+    background: #d97706; color: #fff; border: none; border-radius: 10px;
+    font-size: 1.1rem; font-weight: 800; cursor: pointer;
+  }
+  /* Deshabilitado tiene que VERSE deshabilitado: sin esto el botón queda
+     grande y de color mientras el JS lo tiene apagado, el operario lo
+     aprieta, no pasa nada, y la pantalla no le dice por qué. */
+  button.boton-guardar[disabled] { background: #cbd5e1; color: #64748b; cursor: default; }
+  /* EL AVISO VA ARRIBA DEL CAMPO y no es un `confirm()`. Pasar a segunda es
+     una acción LEGÍTIMA —es para lo que existe esta pantalla— así que un
+     "¿estás seguro?" se lo cobra a todos y no ataja a nadie: es el escalón
+     que se aprende a esquivar. Lo que falta no es una decisión, falta
+     información, y va antes de que se tipee el número. */
+  .que-pasa {
+    background: #fffbeb; color: #78350f; border-left: 4px solid #d97706;
+    padding: 0.75rem 0.9rem; border-radius: 6px; margin: 0.9rem 0 0;
+    font-size: 0.9rem; line-height: 1.45;
+  }
+  .volver {
+    display: block; text-align: center; padding: 0.9rem;
+    color: #2563eb; text-decoration: none; font-weight: 600;
+  }
+</style>
+</head>
+<body>
+  {% set barra_sector = "deposito" %}
+  {% set barra_titulo = "Pasar a segunda" %}
+  {% set barra_atras = "/deposito/stock" %}
+  {% include "_barra_navegacion.html" %}
+
+  {% if aviso %}
+  <div class="aviso">{{ aviso }}</div>
+  {% endif %}
+  {% if error %}
+  <div class="error">{{ error }}</div>
+  {% endif %}
+
+  <div class="tarjeta">
+    {# El artículo se elige aparte y recarga, igual que en Merma: con el
+       artículo el server sabe qué lotes tiene y recién ahí puede ofrecerlos. #}
+    <form method="get" action="/deposito/stock/pase-a-segunda">
+      <label for="articulo_id">Artículo</label>
+      <select id="articulo_id" name="articulo_id" required onchange="this.form.submit()">
+        <option value="" {% if not articulo_elegido %}selected{% endif %} disabled>Elegí un artículo...</option>
+        {% for a in articulos %}
+        <option value="{{ a.id }}" {% if articulo_elegido and articulo_elegido.id == a.id %}selected{% endif %}>{{ a.nombre }}</option>
+        {% endfor %}
+      </select>
+    </form>
+
+    {% if articulo_elegido %}
+    <form method="post" action="/deposito/stock/pase-a-segunda" id="formulario">
+      <input type="hidden" name="articulo_id" value="{{ articulo_elegido.id }}">
+
+      {# LO QUE PASA, antes del número. Lo segundo es lo operativo —dónde los
+         va a encontrar mañana— y lo primero es lo que no se puede deshacer
+         desde acá. #}
+      <p class="que-pasa">
+        Estos bultos <strong>salen del stock de {{ articulo_elegido.nombre }}</strong> y quedan
+        disponibles como <strong>segunda</strong>, para remitir al Puesto.
+        No se deshace desde acá: si te equivocaste, avisá a Administración.
+      </p>
+
+      <label for="cantidad">Bultos que pasan a segunda</label>
+      <input type="number" id="cantidad" name="cantidad" min="1" step="1" inputmode="numeric" required
+             value="{{ precarga.cantidad or '' }}">
+
+      <label for="motivo">Motivo (obligatorio)</label>
+      <select id="motivo" name="motivo" required>
+        <option value="" {% if not precarga.motivo %}selected{% endif %} disabled>Elegí el motivo...</option>
+        {% for m in motivos %}
+        <option value="{{ m }}" {% if precarga.motivo == m %}selected{% endif %}>{{ m }}</option>
+        {% endfor %}
+      </select>
+
+      <label for="fecha">Día en que pasaron</label>
+      <input type="date" id="fecha" name="fecha" max="{{ hoy }}"
+             value="{{ precarga.fecha or hoy }}">
+
+      {# EL LOTE, igual que en Merma y por la misma razón: es opcional y
+         arranca en el más viejo. El operario no tiene que pensar salvo que
+         sepa exactamente cuál se puso feo. #}
+      <div class="bloque-lote">
+        <label for="lote">¿De qué lote?</label>
+        <select id="lote" name="lote">
+          <option value="" {% if not precarga.lote %}selected{% endif %}>El más viejo (como siempre)</option>
+          {% for l in lotes %}
+          {% set valor = l.tipo ~ ":" ~ l.origen_id %}
+          <option value="{{ valor }}" {% if precarga.lote == valor %}selected{% endif %}>
+            {{ l.etiqueta }} — {{ l.fecha.strftime("%d/%m") }} · quedan {{ l.restante|numero }}
+          </option>
+          {% endfor %}
+        </select>
+      </div>
+
+      {# SIN FOTO, y es una decisión. En la Merma la foto existe para cerrar
+         la perilla de tapar un faltante: lo que se tiró ya no se puede
+         contar. Acá los bultos siguen en el galpón y siguen siendo
+         contables —cambiaron de pila, no desaparecieron— así que no hay
+         faltante que tapar y pedirla sería un trámite sin consecuencia. #}
+      <button type="submit" class="boton-guardar">Pasar a segunda</button>
+    </form>
+    {% endif %}
+  </div>
+
+  <a class="volver" href="/deposito/stock">Stock</a>
+{% include "_pie_version.html" %}
+</body>
+</html>

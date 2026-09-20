@@ -9641,6 +9641,23 @@ _SQL_POOL_SEGUNDA = """
                       AND fecha_operacion <= tope.fecha
                       {filtro_articulo}
                     GROUP BY articulo_id
+                ), segunda_pase AS (
+                    -- LO QUE EL DEPOSITO PASO DE PRIMERA A SEGUNDA. Pata
+                    -- PROPIA y no metida adentro de `segunda_rechazo`: esa
+                    -- se llama asi porque cuenta rechazos, y un pase no lo
+                    -- es. El nombre lleva el alcance (corolario 8).
+                    --
+                    -- Y con el MISMO recorte del corte que las otras dos: la
+                    -- foto del stock inicial se toma a la tarde, asi que ya
+                    -- viene neta del trabajo de ese dia. Con `>=` el dia del
+                    -- corte se contaria dos veces (corolario 12).
+                    SELECT articulo_id, SUM(bultos_segunda) AS total
+                    FROM movimientos_stock, corte_seg, tope
+                    WHERE anulado_el IS NULL AND tipo = 'pase_a_segunda'
+                      AND fecha_operacion > corte_seg.fecha
+                      AND fecha_operacion <= tope.fecha
+                      {filtro_articulo}
+                    GROUP BY articulo_id
                 ), remitida AS (
                     SELECT articulo_id, SUM(bultos) AS total
                     FROM remitos_segunda, corte_seg, tope
@@ -9652,14 +9669,22 @@ _SQL_POOL_SEGUNDA = """
 """
 
 
-def _pool_segunda(producida, de_rechazos, remitida) -> float:
-    """Lo que HAY en el pool de segunda: lo producido más lo que volvió
-    rechazado y no fue al stock, menos lo remitido al Puesto.
+def _pool_segunda(producida, de_rechazos, de_pases, remitida) -> float:
+    """Lo que HAY en el pool de segunda, sumando las TRES entradas y restando la salida.
+
+    Entra lo PRODUCIDO en un reproceso, lo que volvió RECHAZADO y no fue al
+    stock, y lo que el depósito PASÓ de primera a segunda porque ya no daba
+    para primera. Sale lo remitido al Puesto.
 
     La resta va acá y no en cada llamador por lo mismo que el SQL: es una
     sola cuenta, y dos copias se separan.
+
+    `de_pases` ES UN PARÁMETRO POSICIONAL SIN DEFAULT, y no está al final por
+    comodidad: con un default, un llamador que se lo olvidara devolvería un
+    pool CHICO —le faltaría lo que el depósito pasó— y eso no se descuadra
+    contra nada, solo hace que no se pueda remitir mercadería que está.
     """
-    return round(float(producida) + float(de_rechazos) - float(remitida), 2)
+    return round(float(producida) + float(de_rechazos) + float(de_pases) - float(remitida), 2)
 
 
 def _segunda_de_articulo(cursor, articulo_id: int, hasta=None) -> float:
@@ -9678,9 +9703,10 @@ def _segunda_de_articulo(cursor, articulo_id: int, hasta=None) -> float:
         + """
         SELECT COALESCE((SELECT total FROM segunda), 0),
                COALESCE((SELECT total FROM segunda_rechazo), 0),
+               COALESCE((SELECT total FROM segunda_pase), 0),
                COALESCE((SELECT total FROM remitida), 0)
         """,
-        (hasta, articulo_id, articulo_id, articulo_id),
+        (hasta, articulo_id, articulo_id, articulo_id, articulo_id),
     )
     return _pool_segunda(*cursor.fetchone())
 
@@ -9764,6 +9790,7 @@ def stock_deposito_por_articulo(hasta, articulo_id=None) -> list[dict]:
                        COALESCE(rp.salidas, 0) AS reproceso_tomados,
                        COALESCE(sg.total, 0) AS segunda_producida,
                        COALESCE(sr.total, 0) AS segunda_de_rechazos,
+                       COALESCE(sp.total, 0) AS segunda_de_pases,
                        COALESCE(rm.total, 0) AS segunda_remitida
                 FROM articulos a
                 LEFT JOIN entradas e ON e.articulo_id = a.id
@@ -9773,10 +9800,20 @@ def stock_deposito_por_articulo(hasta, articulo_id=None) -> list[dict]:
                 LEFT JOIN reproc rp ON rp.articulo_id = a.id
                 LEFT JOIN segunda sg ON sg.articulo_id = a.id
                 LEFT JOIN segunda_rechazo sr ON sr.articulo_id = a.id
+                LEFT JOIN segunda_pase sp ON sp.articulo_id = a.id
                 LEFT JOIN remitida rm ON rm.articulo_id = a.id
+                -- `sp` VA EN EL FILTRO aunque hoy sea redundante: un pase
+                -- resta del stock por la pata de `ajustes` (que es
+                -- `tipo <> 'reingreso_rechazo'`), así que el artículo ya
+                -- aparecería por ahí. Pero eso es un acuerdo tácito entre
+                -- dos patas, y el día que alguien filtre `ajustes` por tipo,
+                -- un artículo cuyo único movimiento sea un pase desaparece
+                -- de la consulta ENTERA — la resta quedaría bien escrita y
+                -- no se haría nunca (corolario 35).
                 WHERE (e.total IS NOT NULL OR s.total IS NOT NULL
                    OR r.total IS NOT NULL OR aj.total IS NOT NULL
-                   OR rp.articulo_id IS NOT NULL OR sr.articulo_id IS NOT NULL)
+                   OR rp.articulo_id IS NOT NULL OR sr.articulo_id IS NOT NULL
+                   OR sp.articulo_id IS NOT NULL)
                   {filtro_articulo_final}
                 ORDER BY a.nombre
                 """.format(
@@ -9795,7 +9832,8 @@ def stock_deposito_por_articulo(hasta, articulo_id=None) -> list[dict]:
             # infla el stock normal — lo que se produjo (en reprocesos y en
             # rechazos que no volvieron al stock) menos lo remitido.
             fila["segunda"] = _pool_segunda(
-                fila["segunda_producida"], fila["segunda_de_rechazos"], fila["segunda_remitida"]
+                fila["segunda_producida"], fila["segunda_de_rechazos"],
+                fila["segunda_de_pases"], fila["segunda_remitida"],
             )
         return filas
     finally:

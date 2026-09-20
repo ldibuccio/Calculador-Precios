@@ -1,3 +1,4 @@
+import ast
 import inspect
 import io
 import re
@@ -5154,8 +5155,11 @@ def test_stock_deposito_se_calcula_de_las_tablas_reales_y_nunca_se_guarda():
     conexion, cursor = _conexion_falsa()
     cursor.description = [("articulo_id",), ("nombre",), ("entradas",), ("salidas",), ("reingresos",),
                           ("ajustes",), ("reproceso_primera",), ("reproceso_tomados",),
-                          ("segunda_producida",), ("segunda_de_rechazos",), ("segunda_remitida",)]
-    cursor.fetchall.return_value = [(1, "Banana", 40, 15, 2, -3, 6, 10, 5, 4, 2)]
+                          ("segunda_producida",), ("segunda_de_rechazos",),
+                          ("segunda_de_pases",), ("segunda_remitida",)]
+    # Los cuatro números del pool son DISTINTOS entre sí a propósito: con
+    # dos iguales, una pata leída del lugar equivocado da el mismo total.
+    cursor.fetchall.return_value = [(1, "Banana", 40, 15, 2, -3, 6, 10, 5, 4, 7, 2)]
 
     with patch("app.db.obtener_conexion", return_value=conexion):
         filas = stock_deposito_por_articulo(date(2026, 9, 6))
@@ -5177,9 +5181,10 @@ def test_stock_deposito_se_calcula_de_las_tablas_reales_y_nunca_se_guarda():
     assert "SUM(bultos_tomados)" in consulta
     # El stock es la cuenta, hecha acá: nada de columnas cacheadas.
     assert filas[0]["stock"] == 40 + 2 + (-3) + 6 - 10 - 15
-    # La segunda es un pool APARTE: lo producido en reprocesos + lo que
-    # entró por rechazos que no volvieron al stock, − lo remitido.
-    assert filas[0]["segunda"] == 5 + 4 - 2
+    # La segunda es un pool APARTE, con TRES entradas y una salida: lo
+    # producido en reprocesos, lo que entró por rechazos que no volvieron al
+    # stock, y lo que el depósito pasó de primera a segunda − lo remitido.
+    assert filas[0]["segunda"] == 5 + 4 + 7 - 2
     # Un rechazo mandado a segunda no suma al stock normal.
     assert "destino_rechazo IS NULL OR destino_rechazo = 'stock'" in consulta
     assert "destino_rechazo IN ('segunda', 'reproceso')" in consulta
@@ -5203,7 +5208,8 @@ def test_el_pool_de_segunda_arranca_en_el_CORTE_y_por_las_TRES_patas():
     conexion, cursor = _conexion_falsa()
     cursor.description = [("articulo_id",), ("nombre",), ("entradas",), ("salidas",), ("reingresos",),
                           ("ajustes",), ("reproceso_primera",), ("reproceso_tomados",),
-                          ("segunda_producida",), ("segunda_de_rechazos",), ("segunda_remitida",)]
+                          ("segunda_producida",), ("segunda_de_rechazos",),
+                          ("segunda_de_pases",), ("segunda_remitida",)]
     cursor.fetchall.return_value = []
 
     with patch("app.db.obtener_conexion", return_value=conexion):
@@ -11031,3 +11037,43 @@ def test_un_RENGLON_DE_COMANDA_sin_la_segunda_REVIENTA_y_no_guarda_NULL():
         )
     _, parametros = _sql_y_parametros_que_contienen(cursor, "INSERT INTO compras")
     assert 16.0 in parametros
+
+
+def test_los_escritores_de_SEGUNDA_POR_CAJON_no_pueden_tener_DEFAULT():
+    """Lo pidió un canario en CERO: ponerle `= None` a los tres no rompía nada.
+
+    Y es correcto que no rompiera: con un default, los llamadores de HOY
+    siguen pasándolo explícitamente, así que en runtime no cambia nada. El
+    default solo se cobra con el llamador de MAÑANA — el que se lo olvide
+    guarda la columna en NULL, que se ve EXACTAMENTE IGUAL que una compra
+    anterior al modelo de dos magnitudes, o sea un hueco legítimo que nadie
+    va a ir a buscar.
+
+    O sea que la protección no es una llamada: es la FORMA DE LA FIRMA, y por
+    eso se verifica ahí. Sin este test, la única guarda contra ese agujero
+    era que alguien se acordara.
+
+    Se pregunta al ÁRBOL y el conjunto se ENCUENTRA (corolario 60): toda
+    función de app/db.py que reciba `segunda_por_cajon`, no una lista de tres
+    escrita a mano. La cuarta no la va a recordar nadie.
+    """
+    arbol = ast.parse(io.open("app/db.py", encoding="utf-8").read())
+
+    escritores = [
+        nodo for nodo in ast.walk(arbol)
+        if isinstance(nodo, ast.FunctionDef)
+        and any(a.arg == "segunda_por_cajon"
+                for a in nodo.args.args + nodo.args.kwonlyargs)
+    ]
+    assert len(escritores) >= 3, f"solo {len(escritores)} escritores: el test dejó de mirar"
+
+    flojos = []
+    for f in escritores:
+        kwonly = [a.arg for a in f.args.kwonlyargs]
+        if "segunda_por_cajon" not in kwonly:
+            flojos.append(f"{f.name}: no es keyword-only, así que un positional puede correrse")
+            continue
+        i = kwonly.index("segunda_por_cajon")
+        if f.args.kw_defaults[i] is not None:
+            flojos.append(f"{f.name}: tiene default, así que olvidarlo guarda NULL en silencio")
+    assert not flojos, "\n".join(flojos)

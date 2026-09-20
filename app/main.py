@@ -10985,6 +10985,164 @@ def ver_merma_stock(request: Request, aviso: str | None = None, articulo_id: str
     return _renderizar_pantalla_merma(request, aviso=aviso, articulo_id=articulo_id)
 
 
+def _renderizar_pase_a_segunda(
+    request: Request, *, precarga=None, aviso=None, error=None, articulo_id=None, status_code: int = 200
+):
+    """La pantalla de pasar mercadería de primera a segunda.
+
+    PANTALLA PROPIA Y NO UN DESTINO MÁS EN LA MERMA, y la razón no es la
+    forma del código: el selector de la merma pregunta DE QUÉ PILA SALE
+    —sueltos, segunda, cajas de una ficha— y esto es otra pregunta, QUÉ LE
+    PASÓ. Meterlo ahí sería un segundo `<select>` en el mismo formulario y
+    dos preguntas que se parecen; y además la merma solo RESTA, mientras que
+    esto resta de una pila y suma a la otra.
+
+    SALE DE LOS SUELTOS, siempre, y por eso acá no hay selector de porción.
+    No es un recorte de alcance nuestro: lo dice la base
+    (`movimientos_stock_ficha_solo_merma`), y está bien que lo diga — una
+    caja ya armada para un cliente que se pone fea no es un pase, hay que
+    desarmarla primero.
+
+    Lo que sí se comparte con la merma es todo lo demás: el selector de
+    artículo, la lista de motivos (que sale del CHECK de `remitos_segunda`,
+    no de una copia) y el lote opcional.
+    """
+    articulo_elegido = None
+    lotes: list[dict] = []
+    try:
+        articulos = listar_articulos()
+        if articulo_id is not None and str(articulo_id).strip().isdigit():
+            articulo_elegido = obtener_articulo(int(articulo_id))
+            if articulo_elegido is not None:
+                lotes = _lotes_con_resto(articulo_elegido["id"])
+    except Exception as error_db:
+        raise HTTPException(status_code=500, detail=f"Error al conectar con la base de datos: {error_db}") from error_db
+
+    return templates.TemplateResponse(
+        request,
+        "deposito_stock_pase_a_segunda.html",
+        {
+            "articulos": articulos,
+            "articulo_elegido": articulo_elegido,
+            "lotes": lotes,
+            "motivos": MOTIVOS_MERMA,
+            "hoy": _hoy_argentina().isoformat(),
+            "precarga": precarga or {},
+            "aviso": aviso,
+            "error": error,
+        },
+        status_code=status_code,
+    )
+
+
+@app.get("/deposito/stock/pase-a-segunda")
+def ver_pase_a_segunda(request: Request, aviso: str | None = None, articulo_id: str | None = None):
+    """Pasar de primera a segunda. Con un artículo elegido muestra sus lotes."""
+    return _renderizar_pase_a_segunda(request, aviso=aviso, articulo_id=articulo_id)
+
+
+@app.post("/deposito/stock/pase-a-segunda")
+def cargar_pase_a_segunda(
+    request: Request,
+    articulo_id: str = Form(""),
+    cantidad: str = Form(""),
+    motivo: str = Form(""),
+    fecha: str = Form(""),
+    lote: str = Form(""),
+):
+    """La mercadería que ya no da para primera: sale del stock y entra al pool de segunda.
+
+    ES UN SOLO MOVIMIENTO y no dos, y es lo que hace que no se puedan
+    separar: la misma fila lleva `cantidad` negativa (lo que sale de
+    primera) y `bultos_segunda` (lo que entra al pool). Con dos filas, una
+    podría anularse sin la otra y quedaría mercadería en las dos pilas o en
+    ninguna.
+
+    EL UNO A UNO lo exige la base (`movimientos_stock_pase_uno_a_uno`): el
+    cajón pasa ENTERO, no se reenvasa. En el reproceso no es así —un cajón
+    de 16 da tres cajas de 6— así que acá no se dedujo de allá: se preguntó
+    en el galpón y quedó escrito donde se escribe.
+
+    SIN FOTO, a diferencia de la merma. Allá la foto cierra la perilla de
+    tapar un faltante: lo que se tiró ya no se puede contar. Acá los bultos
+    siguen en el galpón y siguen siendo contables —cambiaron de pila— así
+    que no hay faltante que tapar y la foto sería un trámite sin
+    consecuencia, que es exactamente cómo se consigue que no se cargue.
+
+    Pantalla de OPERARIO: el aviso repite solo lo que cargó, nunca el stock
+    resultante (mismo criterio que la Merma y el Stock Físico).
+    """
+    motivo_limpio = motivo.strip()
+    error, cantidad_valor = _validar_bultos_positivos(cantidad, "que pasan a segunda")
+    if not error and not motivo_limpio:
+        error = "Elegí el motivo: sin motivo no se guarda el pase."
+    elif not error and motivo_limpio not in MOTIVOS_MERMA:
+        error = "Ese motivo no está en la lista."
+
+    fecha_valor = _hoy_argentina()
+    if not error and fecha.strip():
+        try:
+            fecha_valor = date.fromisoformat(fecha.strip())
+        except ValueError:
+            error = "La fecha del pase no es válida."
+        else:
+            if fecha_valor > _hoy_argentina():
+                error = "La fecha del pase no puede ser futura."
+
+    articulo = None
+    if not error:
+        try:
+            articulo = obtener_articulo(int(articulo_id)) if articulo_id.strip().isdigit() else None
+        except Exception as error_db:
+            raise HTTPException(status_code=500, detail=f"Error al conectar con la base de datos: {error_db}") from error_db
+        if articulo is None:
+            error = "Elegí un artículo válido."
+
+    lote_tipo, lote_origen_id, lote_etiqueta = None, None, None
+    if not error and lote.strip():
+        tipo, _, origen = lote.partition(":")
+        if tipo not in TIPOS_LOTE_STOCK or not origen.isdigit():
+            error = "Ese lote no es válido: elegí uno de la lista o dejá el más viejo."
+        else:
+            lote_tipo, lote_origen_id = tipo, int(origen)
+            elegido = next(
+                (l for l in _lotes_con_resto(articulo["id"])
+                 if l["tipo"] == lote_tipo and l["origen_id"] == lote_origen_id),
+                None,
+            )
+            if elegido is None:
+                error = "Ese lote ya no tiene bultos: volvé a elegir."
+            else:
+                lote_etiqueta = elegido["etiqueta"]
+
+    if error:
+        precarga = {"articulo_id": articulo_id, "cantidad": cantidad,
+                    "motivo": motivo_limpio, "fecha": fecha, "lote": lote}
+        return _renderizar_pase_a_segunda(
+            request, precarga=precarga, articulo_id=articulo_id, error=error, status_code=400
+        )
+
+    try:
+        crear_movimiento_stock(
+            articulo["id"], "pase_a_segunda", -cantidad_valor, motivo_limpio, fecha_valor,
+            bultos_segunda=cantidad_valor,
+            lote_tipo=lote_tipo, lote_origen_id=lote_origen_id,
+        )
+    except Exception as error_db:
+        return _renderizar_pase_a_segunda(
+            request, articulo_id=articulo_id,
+            error=f"No se pudo guardar el pase: {error_db}", status_code=500,
+        )
+
+    aviso = (f"Pasados a segunda: {_formatear_numero(cantidad_valor)} bultos de "
+             f"{articulo['nombre']} ({motivo_limpio}).")
+    if lote_etiqueta:
+        aviso += f" Salieron de: {lote_etiqueta}."
+    return RedirectResponse(
+        url=f"/deposito/stock/pase-a-segunda?{urlencode({'aviso': aviso})}", status_code=303
+    )
+
+
 def _viene_una_foto(archivo) -> bool:
     """¿El formulario trajo un archivo? Una sola copia: la usan la subida y la guarda del tilde.
 
