@@ -90,6 +90,7 @@ from app.db import (
     contar_pedidos_con_renglones_sin_identificar,
     contar_pedidos_incompletos,
     cajas_perdidas_por_rechazo,
+    gasto_en_cajas,
     contar_recepciones_sin_pesaje,
     contenido_por_bulto_de_lotes,
     desmarcar_renglon_armado,
@@ -14768,7 +14769,13 @@ def ver_cajas_perdidas(
     fecha_desde: str | None = None,
     fecha_hasta: str | None = None,
 ):
-    """Cuántas cajas NUESTRAS se llevaron los rechazos en un período, y cuánta plata.
+    """La plata de las cajas en un período: lo que se GASTÓ comprándolas y lo que se PERDIÓ.
+
+    LAS DOS JUNTAS PORQUE SE LEEN JUNTAS, que es el único criterio que separa
+    una pantalla de un cajón de sastre: las dos son plata de envase, las dos
+    las mira Gerencia al cerrar el mes, y ninguna se opera desde acá. Y por
+    eso comparten el MISMO filtro de fechas: con dos recortes distintos, la
+    resta entre ellas no significaría nada.
 
     ES UNA PANTALLA DE MIRAR, no de trabajar: no escribe nada y no propone
     ninguna acción. Va a ser una línea del estado de resultados cuando ese se
@@ -14796,12 +14803,14 @@ def ver_cajas_perdidas(
         "fecha_hasta": hasta.isoformat(),
         "error_fecha": error_fecha,
         "resultado": None,
+        "gasto": None,
     }
     if error_fecha:
         return templates.TemplateResponse(request, "gerencia_cajas_perdidas.html", contexto)
 
     try:
         contexto["resultado"] = cajas_perdidas_por_rechazo(desde, hasta)
+        contexto["gasto"] = gasto_en_cajas(desde, hasta)
     except Exception as error_db:
         raise HTTPException(status_code=500, detail=f"Error al conectar con la base de datos: {error_db}") from error_db
 

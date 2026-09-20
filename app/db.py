@@ -13689,13 +13689,20 @@ _SQL_GASTO_EN_CAJAS = """
      WHERE m.anulado_el IS NULL
        AND m.origen = 'compra'
        AND m.fecha_operacion >= %s
+       AND m.fecha_operacion <= %s
      GROUP BY e.nombre
      ORDER BY e.nombre
 """
 
 
-def gasto_en_cajas(desde) -> dict:
-    """Cuánta plata se gastó en cajas desde una fecha, por envase y en total.
+def gasto_en_cajas(desde, hasta) -> dict:
+    """Cuánta plata se gastó en cajas en un período, por envase y en total.
+
+    `hasta` NO TIENE DEFAULT, por lo mismo que en `cajas_perdidas_por_rechazo`:
+    un llamador que se lo olvidara recibiría todo hasta hoy, que es un número
+    plausible contestando otra pregunta. Las dos cuentas de esta pantalla se
+    leen juntas, así que tienen que recortar por el mismo período o la resta
+    entre ellas no significa nada.
 
     ES LA ÚNICA CUENTA DE ESTE SISTEMA QUE MIRA LA PLATA DE LAS CAJAS. El
     envase se cobra adentro del precio sugerido (una caja por cada
@@ -13731,7 +13738,7 @@ def gasto_en_cajas(desde) -> dict:
     conexion = obtener_conexion()
     try:
         with conexion.cursor() as cursor:
-            cursor.execute(_SQL_GASTO_EN_CAJAS, (desde,))
+            cursor.execute(_SQL_GASTO_EN_CAJAS, (desde, hasta))
             filas = cursor.fetchall()
     finally:
         conexion.close()
@@ -13748,6 +13755,7 @@ def gasto_en_cajas(desde) -> dict:
     ]
     return {
         "desde": desde,
+        "hasta": hasta,
         "por_envase": por_envase,
         "cajas": sum(e["cajas"] for e in por_envase),
         "gasto": sum(e["gasto"] for e in por_envase),

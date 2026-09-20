@@ -1883,6 +1883,23 @@ CAJAS_PERDIDAS = {
 }
 
 
+# La clave del renglón es `nombre` y NO `envase`, que es lo que la base
+# devuelve. La primera versión decía `envase` y la plantilla también, así que
+# los dos coincidían ENTRE SÍ y el nombre de la caja salía EN BLANCO en la
+# pantalla de verdad. Lo cuida el test de la forma, abajo.
+GASTO_EN_CAJAS = {
+    "desde": date(2026, 9, 12), "hasta": date(2026, 9, 19),
+    "cajas": 500, "gasto": 900000.0, "sin_costo": 0,
+    "ultima": date(2026, 9, 18),
+    "por_envase": [
+        {"nombre": "EJEMPLO Caja Liviana", "cajas": 300, "gasto": 360000.0,
+         "sin_costo": 0, "ultima": date(2026, 9, 15)},
+        {"nombre": "EJEMPLO Caja Pesada", "cajas": 200, "gasto": 540000.0,
+         "sin_costo": 0, "ultima": date(2026, 9, 18)},
+    ],
+}
+
+
 @contextlib.contextmanager
 def _con_clave_de_gerencia(con_cookie=True):
     """La clave PUESTA en el entorno, y la cookie según lo que se quiera probar.
@@ -1894,7 +1911,8 @@ def _con_clave_de_gerencia(con_cookie=True):
     """
     from app.main import _firma_acceso_gerencia
 
-    with patch.dict(os.environ, {"CLAVE_GERENCIA": "secreta"}):
+    with patch.dict(os.environ, {"CLAVE_GERENCIA": "secreta"}), \
+         patch("app.main.gasto_en_cajas", return_value=GASTO_EN_CAJAS):
         c = TestClient(app, base_url="https://testserver")
         if con_cookie:
             c.cookies.set("acceso_gerencia", _firma_acceso_gerencia("secreta"))
@@ -2061,7 +2079,13 @@ def test_cajas_perdidas_aguanta_un_nombre_QUE_NO_SE_PUEDE_PARTIR(cliente_nombre,
     # LA IDENTIDAD PEGADA AL NÚMERO (corolario 53): un `0` medido sobre la
     # pantalla de la clave se imprime igual de prolijo que la medición buena.
     assert respuesta.status_code == 200
-    assert respuesta.text.count('class="renglon"') == 1, "no se dibujó el renglón: la medición no vale"
+    # LA IDENTIDAD ES EL NOMBRE PLANTADO, no un conteo de renglones: la
+    # pantalla dibuja también los del gasto, así que contar renglones acopla
+    # este test al fixture de la otra cuenta y se rompe sin que nada esté mal.
+    # Lo que la medición necesita saber es que el nombre largo ESTÁ en la
+    # pantalla que se está midiendo.
+    assert cliente_nombre in respuesta.text, "no se dibujó el nombre plantado: la medición no vale"
+    assert respuesta.text.count('class="renglon"') >= 1
 
     medicion = medir_sync(respuesta.text, ancho=390, selector_filas=".tarjeta")
     assert medicion["filas"] > 0, "no se midió ninguna tarjeta: la medición no vale"
@@ -2071,3 +2095,152 @@ def test_cajas_perdidas_aguanta_un_nombre_QUE_NO_SE_PUEDE_PARTIR(cliente_nombre,
     # un cero clavado en la mitad de los casos (el quinto límite del módulo).
     desborde = medicion.get("desborde_pagina", medicion.get("desborde", 0))
     assert desborde == 0, f"{caso}: la pantalla desborda {desborde}px a 390"
+
+
+# ---------------------------------------------------------------------------
+# El GASTO en cajas, cableado al lado de las perdidas (20/09)
+# ---------------------------------------------------------------------------
+
+
+def test_la_pantalla_de_plata_pide_LAS_DOS_CUENTAS_con_el_MISMO_periodo():
+    """Con dos recortes distintos, la resta entre las dos no significa nada.
+
+    Se afirma sobre las LLAMADAS y no sobre los números dibujados: los dos
+    números los deciden los mocks, así que un `hasta` que no viajara se vería
+    idéntico en la pantalla (corolario 91).
+    """
+    with _con_clave_de_gerencia() as c, \
+         patch("app.main.gasto_en_cajas", return_value=GASTO_EN_CAJAS) as gasto, \
+         patch("app.main.cajas_perdidas_por_rechazo", return_value=CAJAS_PERDIDAS) as perdidas:
+        respuesta = c.get(
+            "/gerencia/cajas-perdidas?fecha_desde=2026-09-01&fecha_hasta=2026-09-10")
+    assert respuesta.status_code == 200
+    esperado = (date(2026, 9, 1), date(2026, 9, 10))
+    assert gasto.call_args.args == esperado
+    assert perdidas.call_args.args == esperado
+
+
+def test_la_pantalla_muestra_EL_GASTO_y_su_desglose_por_tipo_de_caja():
+    with _con_clave_de_gerencia() as c, \
+         patch("app.main.cajas_perdidas_por_rechazo", return_value=CAJAS_PERDIDAS):
+        marcado = c.get("/gerencia/cajas-perdidas").text.split("</style>")[-1]
+    assert "gastó en comprar cajas" in marcado
+    assert "900.000" in marcado and "500" in marcado
+    # El desglose, que es lo que dice contra qué caja reclamar el aumento.
+    # LOS NOMBRES SON PROPIOS DE ESTE FIXTURE a propósito: con "Caja Chica"
+    # —que es lo que decía— el assert matcheaba el renglón de LAS PERDIDAS,
+    # que está en la misma pantalla, así que pasaba con el desglose dibujando
+    # el nombre en blanco. Es el corolario 4 adentro de una pantalla con dos
+    # tarjetas: el ancla tiene que poder matchear solo lo que se quiso probar.
+    assert "EJEMPLO Caja Liviana" in marcado and "360.000" in marcado
+    assert "EJEMPLO Caja Pesada" in marcado and "540.000" in marcado
+    # Y el recorte pegado al número, con la regla de valuación al lado: sin
+    # eso, el que lo cite no sabe si una compra vieja se revaluó sola.
+    assert "costo vigente el día de cada compra" in marcado
+
+
+def test_las_compras_SIN_COSTO_CARGADO_se_dicen_o_el_total_se_lee_de_mas():
+    """`cajas` y `gasto` no tienen la misma población cuando esto no es cero.
+
+    Una compra anterior al primer costo de su envase suma cajas y NO suma
+    pesos. Sin el renglón, el total se lee como si cubriera todo.
+    """
+    con_hueco = dict(GASTO_EN_CAJAS, sin_costo=2)
+    with _con_clave_de_gerencia() as c, \
+         patch("app.main.gasto_en_cajas", return_value=con_hueco), \
+         patch("app.main.cajas_perdidas_por_rechazo", return_value=CAJAS_PERDIDAS):
+        marcado = c.get("/gerencia/cajas-perdidas").text.split("</style>")[-1]
+    assert "2 compras sin costo cargado" in marcado
+    assert "no suman pesos" in marcado
+
+    # Y el CONTROL: en cero el renglón NO sale. Sin esta mitad, una plantilla
+    # que lo dibujara siempre pasa el assert de arriba (corolario 53).
+    with _con_clave_de_gerencia() as c, \
+         patch("app.main.cajas_perdidas_por_rechazo", return_value=CAJAS_PERDIDAS):
+        limpio = c.get("/gerencia/cajas-perdidas").text.split("</style>")[-1]
+    assert "sin costo cargado" not in limpio
+
+
+def test_el_HASTA_del_gasto_en_cajas_NO_TIENE_DEFAULT():
+    import inspect
+
+    from app.db import gasto_en_cajas
+
+    firma = inspect.signature(gasto_en_cajas)
+    assert firma.parameters["hasta"].default is inspect.Parameter.empty
+
+
+def test_el_SQL_del_gasto_RECORTA_POR_LAS_DOS_PUNTAS():
+    """El valor lo entrega el fixture: solo el TEXTO del SQL dice qué pidió."""
+    from app.db import _SQL_GASTO_EN_CAJAS as sql
+
+    assert "m.fecha_operacion >= %s" in sql
+    assert "m.fecha_operacion <= %s" in sql
+
+
+def test_el_boton_del_hub_dice_PLATA_DE_CAJAS_y_no_solo_las_perdidas():
+    """El nombre nombra lo que hay adentro: si dice "Cajas perdidas", el que
+    busca cuánto gastó no entra."""
+    marcado = io.open("templates/gerencia.html", encoding="utf-8").read().split("</style>")[-1]
+    assert 'href="/gerencia/cajas-perdidas">Plata de cajas</a>' in marcado
+
+
+def _forma_que_devuelve(nombre_funcion: str) -> tuple[set, set]:
+    """Las claves del dict que devuelve una función de `app/db.py`, y las de sus renglones.
+
+    LEÍDAS DEL ÁRBOL Y NO COPIADAS ACÁ, que es lo único que no envejece: una
+    lista escrita a mano coincide el día que se escribe y deja de coincidir el
+    día que alguien renombra una clave, sin que nada se ponga rojo — la
+    plantilla que la lee no falla, dibuja un hueco.
+    """
+    arbol = ast.parse(io.open("app/db.py", encoding="utf-8").read())
+    funcion = next(
+        (n for n in ast.walk(arbol)
+         if isinstance(n, ast.FunctionDef) and n.name == nombre_funcion), None)
+    assert funcion is not None, f"no está {nombre_funcion} en app/db.py"
+
+    de_arriba, de_renglon = set(), set()
+    for nodo in ast.walk(funcion):
+        if isinstance(nodo, ast.Return) and isinstance(nodo.value, ast.Dict):
+            de_arriba = {k.value for k in nodo.value.keys if isinstance(k, ast.Constant)}
+        if isinstance(nodo, ast.ListComp) and isinstance(nodo.elt, ast.Dict):
+            de_renglon = {k.value for k in nodo.elt.keys if isinstance(k, ast.Constant)}
+    assert de_arriba and de_renglon, f"no se pudo leer la forma de {nombre_funcion}"
+    return de_arriba, de_renglon
+
+
+@pytest.mark.parametrize(
+    "nombre_funcion, fixture, lista",
+    [
+        ("gasto_en_cajas", GASTO_EN_CAJAS, "por_envase"),
+        ("cajas_perdidas_por_rechazo", CAJAS_PERDIDAS, "renglones"),
+    ],
+)
+def test_los_FIXTURES_de_esta_pantalla_tienen_LA_FORMA_QUE_LA_BASE_DEVUELVE(
+    nombre_funcion, fixture, lista
+):
+    """Un fixture con una clave que producción no usa hace del test el guardián del bug.
+
+    PASÓ EL 20/09 Y NO LO VIO NINGÚN CANARIO: el desglose del gasto se escribió
+    con `e.envase` en la plantilla y `{"envase": ...}` en el fixture. Los dos
+    coincidían ENTRE SÍ y los dos estaban mal —la base devuelve `nombre`—, así
+    que el test pasaba dibujando el nombre de la caja y en la pantalla de
+    verdad ese renglón salía EN BLANCO. Ningún canario podía verlo: el que
+    borra el desglose hace caer el test igual, porque lo que ese test verifica
+    es que el bloque ESTÉ, no que diga algo.
+
+    Por eso esto no compara contra una lista escrita acá: compara contra las
+    claves que `app/db.py` ESCRIBE, y falla en las dos direcciones — cuando al
+    fixture le sobra una clave y cuando le falta una que la base agregó.
+    """
+    de_arriba, de_renglon = _forma_que_devuelve(nombre_funcion)
+
+    assert set(fixture) == de_arriba, (
+        f"el fixture de {nombre_funcion} no tiene la forma de la base: "
+        f"le sobra {set(fixture) - de_arriba} y le falta {de_arriba - set(fixture)}"
+    )
+    for renglon in fixture[lista]:
+        assert set(renglon) == de_renglon, (
+            f"un renglón del fixture de {nombre_funcion} no tiene la forma de la base: "
+            f"le sobra {set(renglon) - de_renglon} y le falta {de_renglon - set(renglon)}"
+        )

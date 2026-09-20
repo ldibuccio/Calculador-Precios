@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Cajas perdidas</title>
+<title>Plata de cajas</title>
 <style>
   :root { font-family: -apple-system, system-ui, sans-serif; }
   body { margin: 0; padding: 1rem; background: #f5f5f5; color: #222; }
@@ -49,7 +49,7 @@
 </head>
 <body>
   {% set barra_sector = "gerencia" %}
-  {% set barra_titulo = "Cajas perdidas" %}
+  {% set barra_titulo = "Plata de cajas" %}
   {% set barra_atras = "/gerencia" %}
   {% include "_barra_navegacion.html" %}
 
@@ -68,6 +68,39 @@
       <button type="submit">Ver</button>
     </form>
   </div>
+
+  {% if gasto %}
+  <div class="tarjeta">
+    <h2>Lo que se gastó en comprar cajas</h2>
+    <div class="totales">
+      <span><span class="grande">{{ gasto.cajas|sin_decimales }}</span> <span class="unidad">cajas</span></span>
+      <span><span class="grande">{{ gasto.gasto|moneda }}</span></span>
+    </div>
+    <p class="periodo">Del {{ fecha_desde }} al {{ fecha_hasta }} · al costo vigente el día de cada compra</p>
+    {# `cajas` Y `gasto` NO TIENEN LA MISMA POBLACIÓN cuando esto no es cero:
+       una compra anterior al primer costo cargado de su envase suma cajas y
+       no suma pesos. Sin este renglón el total se lee como si cubriera todo. #}
+    {% if gasto.sin_costo %}
+    <p class="nota">{{ gasto.sin_costo }} compra{{ "s" if gasto.sin_costo != 1 }} sin costo cargado
+      para su caja: suman cajas y <strong>no suman pesos</strong>. El total de arriba no las cubre.</p>
+    {% endif %}
+    {% if gasto.por_envase %}
+    <h2 style="margin-top:1rem">Por tipo de caja</h2>
+    {% for e in gasto.por_envase %}
+    <div class="renglon">
+      <div class="quien">{{ e.nombre }}</div>
+      <div class="patas">
+        <span>{{ e.cajas|sin_decimales }} cajas</span>
+        <span class="plata">{{ e.gasto|moneda }}</span>
+      </div>
+    </div>
+    {% endfor %}
+    {% else %}
+    <p class="vacio">No se compró ninguna caja entre el {{ fecha_desde }} y el {{ fecha_hasta }}.
+      Si esperabas ver algo, revisá el rango de fechas.</p>
+    {% endif %}
+  </div>
+  {% endif %}
 
   {% if resultado %}
   <div class="tarjeta">

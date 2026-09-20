@@ -399,6 +399,8 @@ create table compras (
     ficha_en_origen_id         bigint references fichas_logistica (id),
     importe_puesto_el          timestamptz,
     importe_origen             text,
+    segunda_por_cajon          numeric,
+    segunda_por_cajon_real     numeric,
     constraint compras_tipo_retiro_check check (tipo_retiro in ('Clark', 'Carro', 'Pases', 'Cooperativa')),
     constraint compras_importe_origen_check check (importe_origen is null
         or importe_origen in ('alta', 'edicion', 'pendiente')),
@@ -422,6 +424,8 @@ create index compras_carga_token_idx on compras (carga_token);
 -- barrer la tabla. Parcial porque la enorme mayoria es NULL.
 create index compras_ficha_en_origen_idx on compras (ficha_en_origen_id)
     where ficha_en_origen_id is not null;
+comment on column compras.segunda_por_cajon is 'La SEGUNDA magnitud POR CAJON, como la declaro el comprador. Hasta el 20/09 no tenia columna: se guardaba solo el total y la pantalla la dividia de vuelta. Cual magnitud es la dice articulos.unidad_conteo. NULL = esta compra no declaro la segunda. Ver db/segunda_por_cajon_1.sql.';
+comment on column compras.segunda_por_cajon_real is 'Lo mismo, de lo que Deposito conto al recepcionar. NULL = no se declaro o no se recepciono.';
 comment on column compras.importe_puesto_el is 'CUANDO se escribio el importe que la fila tiene HOY. NULL = anterior a esta columna (19/09) o sin precio todavia. No se dedujo nada hacia atras: de donde salio un importe ya escrito no se puede saber, y deducirlo seria inventarlo. Ver db/importe_1_cuando_y_por_donde.sql.';
 comment on column compras.importe_origen is 'POR DONDE entro ese importe: alta, edicion (/compras/{id}/editar) o pendiente (Compras sin precio). Se DERIVA del camino, no lo tipea nadie. cargado_el NO sirve para esto: es de la COMPRA, y una que nacio sin precio y se completo tres dias despues lo lleva con la fecha del alta.';
 comment on column compras.contenido_por_cajon_real is 'Contenido por cajón real. Lo tipea Depósito directo (pesa/cuenta un bulto, no toda la carga).';
