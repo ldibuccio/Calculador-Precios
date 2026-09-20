@@ -19,8 +19,16 @@
     margin-bottom: 1rem;
     box-shadow: 0 1px 3px rgba(0, 0, 0, 0.1);
   }
+  /* SIN TINTE DE COLOR, decidido por el dueño: tarjeta blanca y <h2>, igual
+     que Compras. Un color por grupo obliga a aprender qué significa cada
+     uno, y acá los títulos ya lo dicen. */
+  .tarjeta h2 {
+    margin: 0 0 0.8rem;
+    font-size: 1.05rem;
+    color: #444;
+  }
   .boton {
-    margin-top: 1.1rem;
+    margin-top: 0.6rem;
     width: 100%;
     padding: 0.8rem;
     background: #2563eb;
@@ -29,12 +37,27 @@
     border-radius: 8px;
     font-size: 1rem;
     font-weight: 600;
-    text-align: center;
     text-decoration: none;
-    display: block;
     box-sizing: border-box;
+    /* EL ÍCONO AL LADO DEL RÓTULO Y NO CENTRADO CON ÉL: con flex-start los
+       once rótulos arrancan en la misma columna, así la lista se lee de
+       arriba abajo por el texto. Centrado, cada uno arranca en un lugar
+       distinto según lo largo que sea. */
+    display: flex;
+    align-items: center;
+    gap: 0.7rem;
   }
-  .boton:first-child { margin-top: 0; }
+  .boton:first-of-type { margin-top: 0; }
+  /* El SVG no se achica cuando el rótulo es largo: sin esto, "Cargar lo que
+     llegó sin guía" le come el ícono en un celular angosto. */
+  .boton svg {
+    width: 1.35rem;
+    height: 1.35rem;
+    flex: none;
+  }
+  /* El largo de un rótulo no lo controla esta pantalla: que envuelva en dos
+     líneas antes que salirse de costado. */
+  .boton span { overflow-wrap: anywhere; }
   .aviso {
     background: #fef9c3;
     color: #713f12;
@@ -57,18 +80,62 @@
 
   {% include "_banner_alertas.html" %}
 
-  {# En el orden en que pasan las cosas, no por módulo: se retira la
-     mercadería del puesto, se la recepciona en el depósito, y si algo
-     falló se la ingresa a mano. Recién ahí se arma el pedido, y al final
-     está el stock, que es donde se cuenta. #}
+  {# LOS `href` VAN ESCRITOS, no armados por un macro: el barrido que busca
+     pantallas que nadie linkea (test_TODA_pantalla_de_un_sector_esta_LINKEADA)
+     lee el TEXTO de las plantillas, y un argumento de macro no lo puede
+     resolver. Con el macro puesto, tres de las seis de Stock salieron como
+     "sin link y sin decidir" — o sea que la comodidad de escribir once líneas
+     menos dejaba ciego al guardia que avisa cuando una pantalla queda
+     inalcanzable. #}
+  {# TRES RECUADROS, en el orden en que pasan las cosas: entra la mercadería,
+     se arma lo que pidieron, y lo que queda se cuenta. Dentro de cada uno
+     también manda el orden real y no el alfabético. #}
   <div class="tarjeta">
-    <a class="boton" href="/logistica/retiro/Pases?origen=deposito">Retirar Mercadería</a>
-    <a class="boton" href="/deposito/recepcion">Recepción Compras</a>
-    <a class="boton" href="/deposito/ingresar">Ingresar Mercadería</a>
-    <a class="boton" href="/deposito/pedido">Pedido</a>
-    <a class="boton" href="/deposito/pedido/armar">Armar Pedido</a>
-    <a class="boton" href="/deposito/stock">Stock</a>
+    <h2>Mercadería</h2>
+    <a class="boton" href="/logistica/retiro/Pases?origen=deposito">{{ ICONOS_DEPOSITO['retirar']|safe }}<span>Retirar mercadería</span></a>
+    <a class="boton" href="/deposito/recepcion">{{ ICONOS_DEPOSITO['recibir']|safe }}<span>Recibir mercadería</span></a>
+    {# "Cargar lo que llegó sin guía" y no "Ingresar Mercadería": el depósito
+       no compra, así que un rótulo que suena a comprar manda a la pantalla
+       equivocada al que llega con un cajón en la mano y sin papel. El rótulo
+       hace la PREGUNTA del galpón —¿llegó algo sin guía?— en vez de nombrar
+       el mecanismo del sistema. #}
+    <a class="boton" href="/deposito/ingresar">{{ ICONOS_DEPOSITO['sin_guia']|safe }}<span>Cargar lo que llegó sin guía</span></a>
   </div>
+
+  {# "Pedido" y "Armar Pedido" sonaban al mismo sustantivo con un verbo
+     adelante, así que desde el botón no se podía saber a cuál entrar. Los dos
+     nombres dicen ahora QUÉ SE HACE y no sobre qué: uno se lee y se corrige,
+     el otro se junta con las manos. #}
+  <div class="tarjeta">
+    <h2>Pedidos</h2>
+    <a class="boton" href="/deposito/pedido">{{ ICONOS_DEPOSITO['revisar']|safe }}<span>Revisar el pedido</span></a>
+    <a class="boton" href="/deposito/pedido/armar">{{ ICONOS_DEPOSITO['armar']|safe }}<span>Armar el pedido</span></a>
+  </div>
+
+  {# LAS SEIS DE STOCK SUBIDAS ACÁ, sin el hub intermedio: son las
+     operaciones que más se tocan y cada una costaba un toque de más. El
+     recuadro hace el trabajo que hacía la pantalla del medio —agruparlas y
+     ponerles título— sin cobrar la navegación.
+
+     El orden es el de la mano: primero contar, después lo que ya no sirve
+     como estaba (tirarlo o pasarlo a segunda, que es la misma decisión
+     parado frente a los cajones feos), después lo que vuelve, y al final lo
+     que sale. #}
+  <div class="tarjeta">
+    <h2>Stock</h2>
+    <a class="boton" href="/deposito/stock/fisico">{{ ICONOS_DEPOSITO['contar']|safe }}<span>Stock Físico</span></a>
+    <a class="boton" href="/deposito/stock/merma">{{ ICONOS_DEPOSITO['merma']|safe }}<span>Merma</span></a>
+    <a class="boton" href="/deposito/stock/pase-a-segunda">{{ ICONOS_DEPOSITO['pase']|safe }}<span>Pasar a Segunda</span></a>
+    <a class="boton" href="/deposito/stock/reingreso">{{ ICONOS_DEPOSITO['reingreso']|safe }}<span>Reingreso por Rechazo</span></a>
+    <a class="boton" href="/deposito/stock/reproceso">{{ ICONOS_DEPOSITO['reproceso']|safe }}<span>Reproceso</span></a>
+    <a class="boton" href="/deposito/stock/remito-segunda">{{ ICONOS_DEPOSITO['remitir']|safe }}<span>Remitir Segunda</span></a>
+  </div>
+
+  {# El Remanente NO va acá, y la razón es vieja y sigue valiendo: mostrarle
+     al operario el número del sistema de lo que después tiene que contar
+     convierte el conteo en una transcripción. Vive en Administración desde
+     el 06/09. Y el control también: el depósito hace, administración mira y
+     corrige. #}
 {% include "_pie_version.html" %}
 </body>
 </html>

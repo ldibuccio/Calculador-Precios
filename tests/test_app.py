@@ -5016,7 +5016,7 @@ def test_la_ayuda_habla_de_LAS_TRES_porciones_y_no_solo_del_stock():
 def test_el_boton_de_mermar_segunda_YA_NO_ESTA():
     """Una sola puerta: dos botones obligan a elegir cuál según qué se está
     tirando, que es justo lo que la pantalla unificada saca del medio."""
-    cuerpo = cliente.get("/deposito/stock").text
+    cuerpo = cliente.get("/deposito").text
     assert "Mermar Segunda" not in cuerpo
     assert 'href="/deposito/stock/merma"' in cuerpo
     assert cliente.get("/deposito/stock/merma-segunda").status_code == 404
@@ -5070,7 +5070,7 @@ def test_LAS_DOS_mermas_tienen_salida_sin_cargar_nada():
     """
     cuerpo = _ver_merma().text
     for cuerpo, cual in ((cuerpo, "merma"),):
-        assert 'class="boton-cancelar" href="/deposito/stock"' in cuerpo, cual
+        assert 'class="boton-cancelar" href="/deposito"' in cuerpo, cual
         assert ">Cancelar<" in cuerpo, cual
         # Y que se VEA como salida y no como un segundo Guardar: sin fondo.
         # El atributo es la intención y el CSS es el efecto (corolario 32),
@@ -11599,7 +11599,9 @@ def test_ver_deposito_muestra_el_acceso_a_recepcion():
 
     assert respuesta.status_code == 200
     assert 'href="/deposito/recepcion"' in respuesta.text
-    assert "Recepción" in respuesta.text
+    # "Recibir mercadería" y no "Recepción Compras": el rótulo dice qué hace
+    # el que entra, no de qué módulo es la pantalla.
+    assert "Recibir mercadería" in respuesta.text
     assert "En construcción" not in respuesta.text
 
 
@@ -11613,7 +11615,7 @@ def test_ver_deposito_muestra_el_acceso_a_retirar_mercaderia():
     # Con ?origen=deposito, para que la barrita y el "Volver" de esa
     # pantalla sean de Depósito (de donde realmente se entró), no Logística.
     assert 'href="/logistica/retiro/Pases?origen=deposito"' in respuesta.text
-    assert "Retirar Mercadería" in respuesta.text
+    assert "Retirar mercadería" in respuesta.text
 
 
 def test_ver_deposito_muestra_el_acceso_a_ingresar_mercaderia():
@@ -11621,7 +11623,10 @@ def test_ver_deposito_muestra_el_acceso_a_ingresar_mercaderia():
 
     assert respuesta.status_code == 200
     assert 'href="/deposito/ingresar"' in respuesta.text
-    assert "Ingresar Mercadería" in respuesta.text
+    # EL DEPÓSITO NO COMPRA, y "Ingresar Mercadería" sonaba a que sí. El
+    # rótulo hace la pregunta del galpón: ¿llegó algo sin guía?
+    assert "Cargar lo que llegó sin guía" in respuesta.text
+    assert "Ingresar Mercadería" not in respuesta.text
 
 
 def test_ver_deposito_muestra_el_aviso_cuando_viene_en_la_url():
@@ -21727,29 +21732,40 @@ FILAS_STOCK_DE_PRUEBA = [
 ]
 
 
-def test_ver_deposito_muestra_el_acceso_a_stock():
+def test_LAS_SEIS_de_stock_estan_EN_EL_MENU_y_el_hub_intermedio_ya_NO_EXISTE():
+    """Un toque menos en las operaciones que más se tocan.
+
+    Eran seis botones detrás de una pantalla que solo servía para
+    agruparlos. El recuadro con título hace ese trabajo sin cobrar la
+    navegación, así que el hub se borró — y que se haya BORRADO importa
+    tanto como que los seis estén: una ruta que responde 200 y que nadie
+    linkea es peor que ninguna, porque el próximo que la lea va a creer que
+    todavía es el camino (corolario 68).
+
+    Se piden LAS SEIS y no una muestra: la que falte queda inalcanzable, y
+    eso no se ve en ninguna pantalla — el operario simplemente no la
+    encuentra y carga la operación por donde puede.
+    """
     respuesta = cliente.get("/deposito")
-
     assert respuesta.status_code == 200
-    assert 'href="/deposito/stock"' in respuesta.text
+    cuerpo = respuesta.text.split("</style>")[-1]
 
+    for destino in ("fisico", "merma", "pase-a-segunda", "reingreso", "reproceso", "remito-segunda"):
+        assert f'href="/deposito/stock/{destino}"' in cuerpo, destino
 
-def test_el_hub_de_stock_queda_solo_con_la_carga_del_operario():
-    respuesta = cliente.get("/deposito/stock")
+    assert cliente.get("/deposito/stock").status_code == 404
+    assert 'href="/deposito/stock"' not in cuerpo
 
-    assert respuesta.status_code == 200
-    # Solo la CARGA del operario: el control se mudó a Administración.
-    assert 'href="/deposito/stock/fisico"' in respuesta.text
-    assert 'href="/deposito/stock/merma"' in respuesta.text
-    assert 'href="/deposito/stock/reingreso"' in respuesta.text
-    assert 'href="/deposito/stock/reproceso"' in respuesta.text
-    assert 'href="/deposito/stock/remito-segunda"' in respuesta.text
-    assert "Carga del depósito" in respuesta.text
-    # Y NO quedan botones apuntando a otro módulo: mudar la pantalla y
-    # dejar el botón sería mudar a medias.
-    assert "/administracion/" not in respuesta.text
+    # Los tres recuadros, que son lo que reemplazó al hub.
+    for titulo in ("Mercadería", "Pedidos", "Stock"):
+        assert f"<h2>{titulo}</h2>" in cuerpo, titulo
+
+    # Y NO quedan botones apuntando a otro módulo: el depósito hace,
+    # administración mira y corrige. Mudar la pantalla y dejar el botón
+    # sería mudar a medias.
+    assert "/administracion/" not in cuerpo
     # Módulo completo: no queda nada "Próximamente".
-    assert "(Próximamente)" not in respuesta.text
+    assert "(Próximamente)" not in cuerpo
 
 
 # Stock del Sistema (el listado) se BORRÓ el 06/09: lo miraron tres veces y
@@ -24534,8 +24550,8 @@ def test_guias_r_muestra_el_boton_completar_solo_en_incompletas():
     assert 'action="/administracion/stock/guias-r/13/completar-costo"' in respuesta.text
 
 
-def test_hub_stock_tiene_remitir_segunda():
-    respuesta = cliente.get("/deposito/stock")
+def test_el_menu_de_deposito_tiene_remitir_segunda():
+    respuesta = cliente.get("/deposito")
 
     assert respuesta.status_code == 200
     assert 'href="/deposito/stock/remito-segunda"' in respuesta.text
@@ -25782,7 +25798,8 @@ def test_el_atras_jerarquico_esta_declarado_en_todo_el_sistema():
         ("/puesto", "/inicio"),
         ("/logistica", "/inicio"),
         ("/puesto/envases", "/puesto"),
-        ("/deposito/stock", "/deposito"),
+        # /deposito/stock se borró el 20/09: sus seis operaciones subieron al
+        # menú de Depósito y el atrás de cada una apunta ahora a /deposito.
     ]
     for url, padre in directas:
         respuesta = cliente.get(url)
@@ -26883,11 +26900,14 @@ def test_tolerancia_avisa_tambien_cuando_mando_de_MENOS():
 
 
 def test_deposito_ordena_los_botones_como_pasan_las_cosas():
-    """Retirar → recepcionar → ingresar (si algo falló) → armar → stock.
+    """Mercadería → Pedidos → Stock, y adentro de cada recuadro el orden del día.
 
-    El orden es el del día, no el de los módulos: Recepción estaba primera
-    de cuando la pantalla se armó por dónde vivía cada ruta, pero lo
-    primero que hace el depósito es traer la mercadería del puesto.
+    El orden es el del día y no el de los módulos: lo primero que hace el
+    depósito es traer la mercadería del puesto, no abrir Recepción.
+
+    Se miran los DOS extremos del recuadro de Stock —la primera y la última—
+    y no todas: alcanza para fijar que el bloque entero va al final, que es
+    lo que este test cuida. Cuáles son las seis lo cuida el test de al lado.
     """
     respuesta = cliente.get("/deposito")
     cuerpo = respuesta.text.split("</style>")[-1]
@@ -26897,13 +26917,27 @@ def test_deposito_ordena_los_botones_como_pasan_las_cosas():
     # test rompe por algo que no es el orden. Pasó el 11/09 con un comentario
     # de `_barra_navegacion.html` que decía "Movimientos de Stock".
     orden = [
-        ('/logistica/retiro/Pases?origen=deposito', "Retirar Mercadería"),
-        ('/deposito/recepcion', "Recepción Compras"),
-        ('/deposito/ingresar', "Ingresar Mercadería"),
-        ('/deposito/pedido/armar', "Armar Pedido"),
-        ('/deposito/stock', "Stock"),
+        ('/logistica/retiro/Pases?origen=deposito', "Retirar mercadería"),
+        ('/deposito/recepcion', "Recibir mercadería"),
+        ('/deposito/ingresar', "Cargar lo que llegó sin guía"),
+        ('/deposito/pedido', "Revisar el pedido"),
+        ('/deposito/pedido/armar', "Armar el pedido"),
+        ('/deposito/stock/fisico', "Stock Físico"),
+        ('/deposito/stock/remito-segunda', "Remitir Segunda"),
     ]
-    posiciones = [cuerpo.index(f'href="{url}">{texto}</a>') for url, texto in orden]
+    # El ícono va ENTRE el href y el rótulo, así que el rótulo ya no es lo
+    # que sigue a `">`. Lo que dice "este rótulo es el de ESTE botón" es que
+    # caiga entre su href y el CIERRE de ese mismo <a> — no una distancia en
+    # caracteres: un ícono con un `path` más largo movería ese número sin que
+    # nada estuviera mal, que es el umbral mágico del corolario 92.
+    posiciones = []
+    for url, texto in orden:
+        i = cuerpo.index(f'href="{url}"')
+        cierre = cuerpo.index("</a>", i)
+        assert f"<span>{texto}</span>" in cuerpo[i:cierre], (
+            f"el rótulo {texto!r} no está adentro de su propio botón"
+        )
+        posiciones.append(i)
     orden = [texto for _url, texto in orden]
     assert posiciones == sorted(posiciones), dict(zip(orden, posiciones))
 
@@ -27526,7 +27560,7 @@ def test_reproceso_tiene_CANCELAR_que_solo_sale_al_hub_de_stock():
         respuesta = cliente.get("/deposito/stock/reproceso")
 
     texto = respuesta.text
-    assert '<a class="boton-cancelar" href="/deposito/stock">Cancelar</a>' in texto
+    assert '<a class="boton-cancelar" href="/deposito">Cancelar</a>' in texto
     # Sin confirmación: el que aprieta Cancelar quiere salir, no discutir.
     assert "confirm(" not in texto.split("boton-cancelar")[1][:400]
     # Y Guardar se lleva el ancho: los dos juntos, pero no del mismo peso.
@@ -28283,25 +28317,22 @@ def test_el_pie_pone_el_NUMERO_ADELANTE_y_el_commit_ATRAS():
     assert "v1." not in marcado
 
 
-def test_el_BUILD_escribe_el_numero_y_el_deploy_NO_SE_CAE_si_no_puede():
-    """La otra mitad vive en nixpacks.toml, y sin ella el número no existe.
+def test_el_archivo_del_NUMERO_viaja_EN_el_repo_y_no_esta_ignorado():
+    """Este test decía lo CONTRARIO hasta el 20/09, y tenía razón hasta ese día.
 
-    El `|| :` no es prolijidad: si algún día el build tampoco trae el repo,
-    el archivo queda vacío, el pie dice "sin número" y el deploy sale igual.
-    Un marcador que falta se ve; un deploy que no sale por un marcador, no.
+    Exigía que `VERSION_NUMERO` estuviera en el .gitignore, porque lo escribía
+    el build y uno versionado habría quedado viejo en cada deploy. La premisa
+    se cayó: en el build de Railway git no funciona, así que ese camino no
+    escribe nada —el pie mostró "sin número"— y la única forma de que el dato
+    llegue al contenedor es que viaje adentro de lo que se despliega.
+
+    Queda anotado que este test cambió de bando, porque un test que afirma una
+    ausencia se lee como una decisión tomada y nadie lo vuelve a discutir
+    (corolario 68).
     """
-    nixpacks = open("nixpacks.toml", encoding="utf-8").read()
-    sin_comentarios = "\n".join(
-        l for l in nixpacks.splitlines() if not l.strip().startswith("#")
-    )
-
-    assert "[phases.build]" in sin_comentarios
-    assert "git rev-list --count HEAD" in sin_comentarios
-    assert "VERSION_NUMERO" in sin_comentarios
-    assert "|| :" in sin_comentarios, "sin el fallback, un build sin repo tumba el deploy"
-    # Y el archivo NO se commitea: lo escribe el build, y uno versionado
-    # quedaría viejo en cada deploy diciendo un número que no es.
-    assert "VERSION_NUMERO" in open(".gitignore", encoding="utf-8").read()
+    assert "VERSION_NUMERO" not in open(".gitignore", encoding="utf-8").read()
+    raiz = pathlib.Path(__file__).resolve().parent.parent
+    assert (raiz / "VERSION_NUMERO").exists()
 
 
 def test_el_pie_no_mete_un_bloque_style_al_final():
@@ -32399,3 +32430,63 @@ def test_NADIE_vuelve_a_dividir_el_total_por_los_cajones():
     import core.magnitudes as magnitudes
     assert not hasattr(magnitudes, "magnitudes_por_cajon")
     assert not hasattr(magnitudes, "segunda_magnitud_por_cajon")
+
+
+def test_VERSION_NUMERO_esta_al_dia_con_la_historia():
+    """El número del pie viaja EN el repo, así que puede quedarse viejo.
+
+    POR QUÉ NO SE CALCULA EN EL BUILD. Hasta el 20/09 lo horneaba
+    `nixpacks.toml`. En Railway devolvió NADA y el pie mostró "sin número" —
+    y esa salida es la que distingue el diagnóstico, porque un clon SHALLOW
+    habría dado "1". En ese build git no funciona en absoluto, así que no hay
+    comando que sirva: la única forma de que el dato llegue al contenedor es
+    que esté adentro de lo que se despliega.
+
+    LO QUE ESTE TEST IMPIDE es que se olvide de sellarse. Sin él, el archivo
+    se queda quieto, el pie muestra un número viejo, y eso es peor que "sin
+    número": el que lo lee cree que está mirando algo que no es, que es
+    exactamente lo que este marcador existe para evitar.
+
+    SE SALTEA SOBRE UN CLON TRUNCADO, y no es una comodidad. Acá mismo
+    apareció el caso: este repo de trabajo tenía un `.git/shallow` viejo y
+    contaba 662 commits cuando la historia real son 929 — o sea que sellar
+    desde un clon así escribe un número chico y PLAUSIBLE. Por eso el
+    workflow clona con `fetch-depth: 0` y el sellado se niega cuando no puede
+    ver la historia entera.
+    """
+    import subprocess
+
+    raiz = pathlib.Path(__file__).resolve().parent.parent
+    shallow = subprocess.run(
+        ["git", "rev-parse", "--is-shallow-repository"],
+        cwd=raiz, capture_output=True, text=True,
+    )
+    if shallow.returncode != 0:
+        pytest.skip("sin git: no hay contra qué comparar")
+    if shallow.stdout.strip() == "true":
+        pytest.skip("clon truncado: el conteo de acá no significa nada")
+
+    contados = subprocess.run(
+        ["git", "rev-list", "--count", "HEAD"],
+        cwd=raiz, capture_output=True, text=True, check=True,
+    ).stdout.strip()
+    archivo = (raiz / "VERSION_NUMERO")
+    assert archivo.exists(), "falta VERSION_NUMERO: corré scripts/sellar_version.py"
+    assert archivo.read_text(encoding="utf-8").strip() == contados, (
+        f"VERSION_NUMERO dice {archivo.read_text(encoding='utf-8').strip()!r} y la historia "
+        f"tiene {contados}. Sellá con `python3 scripts/sellar_version.py` y `git commit --amend`."
+    )
+
+
+def test_el_numero_NO_se_hornea_en_el_build_de_railway():
+    """`nixpacks.toml` se borró el 20/09 y no puede volver sin una razón nueva.
+
+    Si volviera, su `git rev-list` correría en un build donde git no anda y
+    PISARÍA el archivo bueno del repo con uno vacío —o con "1" si algún día
+    ese clon es shallow—. O sea que el camino viejo no es solo inútil: es el
+    único que puede romper el que funciona.
+    """
+    raiz = pathlib.Path(__file__).resolve().parent.parent
+    assert not (raiz / "nixpacks.toml").exists(), (
+        "volvió nixpacks.toml: si es a propósito, que NO escriba VERSION_NUMERO"
+    )

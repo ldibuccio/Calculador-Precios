@@ -186,14 +186,17 @@ def test_el_REBOTE_conserva_lo_que_ya_estaba_cargado():
     assert re.search(r'value="guia:1"[^>]*selected', marcado), "perdió el lote"
 
 
-def test_la_pantalla_esta_LINKEADA_desde_el_hub_de_stock():
+def test_la_pantalla_esta_LINKEADA_desde_el_MENU_de_deposito():
     """Una ruta que responde 200 y que nadie linkea es una ruta que no existe.
 
     Todos los tests entran por la URL, así que la ausencia de puerta es
     invisible para la suite entera por construcción (corolario 31).
+
+    Miraba `deposito_stock.html`, que era el hub intermedio; ese hub se borró
+    el 20/09 y las seis operaciones subieron al menú de Depósito.
     """
-    hub = io.open("templates/deposito_stock.html", encoding="utf-8").read()
-    assert 'href="/deposito/stock/pase-a-segunda"' in hub.split("</style>")[-1]
+    menu = io.open("templates/deposito.html", encoding="utf-8").read()
+    assert 'href="/deposito/stock/pase-a-segunda"' in menu.split("</style>")[-1]
 
 
 def test_la_CUARTA_pata_del_pool_suma_lo_que_paso_a_segunda():

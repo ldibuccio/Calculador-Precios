@@ -50,6 +50,14 @@ jobs:
 
     steps:
       - uses: actions/checkout@v4
+        with:
+          # LA HISTORIA ENTERA, y no es un capricho: por defecto este
+          # action clona con `fetch-depth: 1` y `git rev-list --count
+          # HEAD` devuelve 1. Con eso, el test que compara VERSION_NUMERO
+          # contra el conteo no puede distinguir un archivo al día de uno
+          # viejo — y un clon shallow ya costó cinco commits sin desplegar
+          # (corolario 92).
+          fetch-depth: 0
 
       - uses: actions/setup-python@v5
         with:

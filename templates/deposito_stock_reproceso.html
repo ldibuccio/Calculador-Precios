@@ -187,7 +187,7 @@
 <body>
   {% set barra_sector = "deposito" %}
   {% set barra_titulo = "Reproceso" %}
-  {% set barra_atras = "/deposito/stock" %}
+  {% set barra_atras = "/deposito" %}
   {% include "_barra_navegacion.html" %}
 
   {% if aviso %}
@@ -359,7 +359,7 @@
         <button type="submit" class="boton-guardar">
           {% if advertencia %}Guardar igual{% else %}Guardar reproceso{% endif %}
         </button>
-        <a class="boton-cancelar" href="/deposito/stock">Cancelar</a>
+        <a class="boton-cancelar" href="/deposito">Cancelar</a>
       </div>
     </form>
     <p class="ayuda">No hace falta que las cantidades cierren entre sí: un cajón grande puede dar varias cajas chicas. De dónde sale lo propone el sistema, del lote más viejo primero, y lo podés cambiar antes de guardar. Si te equivocaste, se anula desde Guías R y se carga de nuevo.</p>
