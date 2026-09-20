@@ -175,6 +175,44 @@
      muestra cual anular y NO hay boton. Ofrecer algo que el POST despues
      rechaza es un callejon — el que lo aprieta se come un error por algo que
      la pantalla le propuso. #}
+  {# DESHACER LA RECEPCION, que es OTRA COSA que corregirla. El formulario de
+     arriba arregla el NUMERO de una recepcion que paso; esto deshace una que
+     no tenia que pasar —el docstring de corregir_recepcion_compra lo dice
+     desde siempre: "NO cambia el estado (sigue 'recepcionado')"—. Hasta el
+     20/09 no habia ninguna pantalla que pudiera, y una recepcion apretada por
+     error se arreglaba en el editor de la base.
+
+     EN SU PROPIO FORMULARIO y no como un campo del de arriba: ahi habria que
+     re-tipear los valores reales para poder borrarlos, que es aceptar de
+     nuevo unos numeros que justamente no se quieren.
+
+     Y EL BOTON SOLO APARECE DONDE LA ESCRITURA ACEPTA, igual que desmarcar:
+     si del lote ya se tomo algo, se dice QUE lo tomo y no hay boton. Las dos
+     mitades preguntan por `uso_del_lote_de_la_compra`. #}
+  {% if compra.estado == "recepcionado" %}
+  <div class="marca-armada">
+    <h3>Deshacer la recepción</h3>
+    {% if uso_lote and (uso_lote.guias or uso_lote.armados) %}
+    <p><strong>De esta compra ya se tomó mercadería</strong>
+      {%- if uso_lote.guias %}: {{ uso_lote.guias }} guía{{ "" if uso_lote.guias == 1 else "s" }} R
+        la consumió{% endif %}
+      {%- if uso_lote.guias and uso_lote.armados %} y{% endif %}
+      {%- if uso_lote.armados %}{% if not uso_lote.guias %}:{% endif %}
+        {{ uso_lote.armados }} armado{{ "" if uso_lote.armados == 1 else "s" }} la eligió{% endif %}.
+      Para deshacer la recepción hay que anular eso primero.</p>
+    {% else %}
+    <p>Si esta recepción no tenía que existir —se apretó por error, o la
+      mercadería nunca llegó— la compra vuelve a <strong>pendiente</strong> y
+      sus bultos salen del stock. Los valores reales se borran, así que hay que
+      recepcionarla de nuevo cuando llegue.</p>
+    <form method="post" action="/gerencia/compras/{{ compra.id }}/des-recepcionar"
+          onsubmit="return confirm('Esta compra vuelve a pendiente y sus bultos salen del stock. ¿Deshacer la recepción?');">
+      <button type="submit">Deshacer la recepción</button>
+    </form>
+    {% endif %}
+  </div>
+  {% endif %}
+
   {% if marca and marca.ficha_id %}
   <div class="marca-armada">
     <h3>Esta compra dice que vino armada en caja nuestra</h3>

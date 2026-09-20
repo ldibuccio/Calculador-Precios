@@ -5313,6 +5313,7 @@ def test_ver_corregir_recepcion_compra_muestra_formulario_precargado():
     compra = dict(COMPRA_DETALLE_DE_PRUEBA, unidad_compra="kilo")
     with (
         patch("app.main.obtener_detalle_compra", return_value=compra),
+        patch("app.main.uso_del_lote_de_la_compra", return_value={"guias": 0, "armados": 0}),
         patch("app.main.listar_fotos_de_guia", return_value=[]),
         patch("app.main.listar_fotos_de_recepcion", return_value=[]),
     ):
@@ -5339,6 +5340,7 @@ def test_ver_corregir_recepcion_compra_por_unidad_precarga_por_cajon_no_el_total
     )
     with (
         patch("app.main.obtener_detalle_compra", return_value=compra),
+        patch("app.main.uso_del_lote_de_la_compra", return_value={"guias": 0, "armados": 0}),
         patch("app.main.listar_fotos_de_guia", return_value=[]),
         patch("app.main.listar_fotos_de_recepcion", return_value=[]),
     ):
@@ -5356,6 +5358,7 @@ def test_ver_corregir_recepcion_compra_no_recepcionada_muestra_aviso_sin_formula
     compra = dict(COMPRA_DETALLE_DE_PRUEBA, estado="pendiente")
     with (
         patch("app.main.obtener_detalle_compra", return_value=compra),
+        patch("app.main.uso_del_lote_de_la_compra", return_value={"guias": 0, "armados": 0}),
         patch("app.main.listar_fotos_de_guia", return_value=[]),
         patch("app.main.listar_fotos_de_recepcion", return_value=[]),
     ):
@@ -5406,6 +5409,7 @@ def test_ver_corregir_recepcion_muestra_los_campos_de_rechazo_parcial_precargado
     compra = dict(COMPRA_DETALLE_DE_PRUEBA, cantidad_cajones_real=8, cantidad_cajones_rechazada=2, motivo_rechazo="podrido")
     with (
         patch("app.main.obtener_detalle_compra", return_value=compra),
+        patch("app.main.uso_del_lote_de_la_compra", return_value={"guias": 0, "armados": 0}),
         patch("app.main.listar_fotos_de_guia", return_value=[]),
         patch("app.main.listar_fotos_de_recepcion", return_value=[]),
     ):
@@ -5439,6 +5443,7 @@ def test_corregir_recepcion_compra_ruta_con_rechazo_invalido_da_400():
     with (
         patch("app.main.corregir_recepcion_compra") as mock_corregir,
         patch("app.main.obtener_detalle_compra", return_value=COMPRA_DETALLE_DE_PRUEBA),
+        patch("app.main.uso_del_lote_de_la_compra", return_value={"guias": 0, "armados": 0}),
     ):
         respuesta = cliente.post(
             "/gerencia/compras/30/corregir-recepcion",
@@ -5458,6 +5463,7 @@ def test_corregir_recepcion_compra_ruta_sin_datos_muestra_error_sin_guardar():
     with (
         patch("app.main.corregir_recepcion_compra") as mock_corregir,
         patch("app.main.obtener_detalle_compra", return_value=COMPRA_DETALLE_DE_PRUEBA),
+        patch("app.main.uso_del_lote_de_la_compra", return_value={"guias": 0, "armados": 0}),
     ):
         respuesta = cliente.post(
             "/gerencia/compras/30/corregir-recepcion",
@@ -5476,6 +5482,7 @@ def test_corregir_recepcion_compra_ruta_bloqueada_da_400():
             side_effect=ValueError("Esta compra no está recepcionada, no hay valores reales para corregir."),
         ),
         patch("app.main.obtener_detalle_compra", return_value=COMPRA_DETALLE_DE_PRUEBA),
+        patch("app.main.uso_del_lote_de_la_compra", return_value={"guias": 0, "armados": 0}),
     ):
         respuesta = cliente.post(
             "/gerencia/compras/30/corregir-recepcion",
@@ -5490,6 +5497,7 @@ def test_corregir_recepcion_compra_ruta_error_de_base_da_500():
     with (
         patch("app.main.corregir_recepcion_compra", side_effect=Exception("no se pudo conectar")),
         patch("app.main.obtener_detalle_compra", return_value=COMPRA_DETALLE_DE_PRUEBA),
+        patch("app.main.uso_del_lote_de_la_compra", return_value={"guias": 0, "armados": 0}),
     ):
         respuesta = cliente.post(
             "/gerencia/compras/30/corregir-recepcion",
@@ -27238,6 +27246,7 @@ def test_corregir_recepcion_con_el_lote_SIN_USAR_lo_dice_en_una_linea_y_sin_cart
     compra = dict(COMPRA_DETALLE_DE_PRUEBA, unidad_compra="kilo")
     with (
         patch("app.main.obtener_detalle_compra", return_value=compra),
+        patch("app.main.uso_del_lote_de_la_compra", return_value={"guias": 0, "armados": 0}),
         patch("app.main.dependencias_del_lote_de_compra", return_value=SIN_USAR),
         patch("app.main.listar_fotos_de_guia", return_value=[]),
         patch("app.main.listar_fotos_de_recepcion", return_value=[]),
@@ -27263,6 +27272,7 @@ def test_corregir_recepcion_muestra_LAS_DOS_FOTOS_y_dice_cual_falta():
     def pantalla(guia, balanza):
         with (
             patch("app.main.obtener_detalle_compra", return_value=compra),
+            patch("app.main.uso_del_lote_de_la_compra", return_value={"guias": 0, "armados": 0}),
             patch("app.main.listar_fotos_de_guia", return_value=guia),
             patch("app.main.listar_fotos_de_recepcion", return_value=balanza),
         ):
@@ -27310,6 +27320,7 @@ def test_corregir_recepcion_lista_las_guias_R_y_los_renglones_por_separado():
     compra = dict(COMPRA_DETALLE_DE_PRUEBA, unidad_compra="kilo")
     with (
         patch("app.main.obtener_detalle_compra", return_value=compra),
+        patch("app.main.uso_del_lote_de_la_compra", return_value={"guias": 0, "armados": 0}),
         patch("app.main.dependencias_del_lote_de_compra", return_value=_dependencias_usadas()),
         patch("app.main.listar_fotos_de_guia", return_value=[]),
         patch("app.main.listar_fotos_de_recepcion", return_value=[]),
@@ -27351,6 +27362,7 @@ def test_corregir_recepcion_bajando_de_mas_pide_el_SEGUNDO_TOQUE():
     impacto = _dependencias_usadas(sin_lote_de_mas=5.0)
     with (
         patch("app.main.obtener_detalle_compra", return_value=COMPRA_DETALLE_DE_PRUEBA),
+        patch("app.main.uso_del_lote_de_la_compra", return_value={"guias": 0, "armados": 0}),
         patch("app.main.dependencias_del_lote_de_compra", return_value=impacto),
         patch("app.main.listar_fotos_de_guia", return_value=[]),
         patch("app.main.listar_fotos_de_recepcion", return_value=[]),
@@ -27379,6 +27391,7 @@ def test_corregir_recepcion_el_aviso_NOMBRA_la_guia_R_rota():
     )
     with (
         patch("app.main.obtener_detalle_compra", return_value=COMPRA_DETALLE_DE_PRUEBA),
+        patch("app.main.uso_del_lote_de_la_compra", return_value={"guias": 0, "armados": 0}),
         patch("app.main.dependencias_del_lote_de_compra", return_value=impacto),
         patch("app.main.listar_fotos_de_guia", return_value=[]),
         patch("app.main.listar_fotos_de_recepcion", return_value=[]),

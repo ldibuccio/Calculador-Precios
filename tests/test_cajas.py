@@ -1503,7 +1503,7 @@ def test_la_consulta_del_CATALOGO_trae_las_dos_columnas_del_filtro():
 # porque desmarcar exige que la guia R este anulada, y anular vive detras de
 # la clave de Administracion.
 
-def _pantalla_corregir(marca, estado="recepcionado"):
+def _pantalla_corregir(marca, estado="recepcionado", uso_lote=None):
     compra = {"id": 663, "proveedor_nombre": "Proveedor EJEMPLO",
               "proveedor_codigo_puesto": "N01P01", "articulo_nombre": "Pera EJEMPLO",
               "guia_id": 105, "guia_punto": 2, "estado": estado,
@@ -1518,6 +1518,11 @@ def _pantalla_corregir(marca, estado="recepcionado"):
     with (
         patch.dict(os.environ, {"CLAVE_GERENCIA": "secreta"}),
         patch("app.main.obtener_detalle_compra", return_value=compra),
+        # La colaboradora que decide si se ofrece deshacer la recepción. Se
+        # parchea acá, en el helper, y no en cada test: es del ANDAMIO de
+        # esta pantalla, igual que las dos de arriba.
+        patch("app.main.uso_del_lote_de_la_compra",
+              return_value=uso_lote or {"guias": 0, "armados": 0}),
         patch("app.main._dependencias_con_nombres", return_value=None),
         patch("app.main._fotos_de_la_guia_de", return_value=[]),
         patch("app.main.listar_fotos_de_recepcion", return_value=[]),

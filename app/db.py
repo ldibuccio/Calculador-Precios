@@ -3567,6 +3567,145 @@ def _guias_en_origen_vivas(cursor, compra_id: int) -> list[int]:
     return [f[0] for f in cursor.fetchall()]
 
 
+def _lote_de_la_compra_YA_SE_USO(cursor, compra_id: int) -> tuple[int, int]:
+    """(guías R que la consumieron, armados que la eligieron). Las dos vivas.
+
+    Una compra recepcionada NO es una fila de movimientos_stock: es la
+    ENTRADA misma, y el FIFO la reparte como un lote. Si alguien ya se llevó
+    de ese lote, sacarla deja consumos apuntando a mercadería que el sistema
+    dice que nunca entró.
+
+    `lote_tipo = 'guia'` no es decorativo: `lote_origen_id` es POLIMÓRFICO, y
+    sin el tipo un reproceso con el mismo id contaría como esta compra.
+
+    Devuelve los DOS conteos por separado y no un booleano, porque el mensaje
+    tiene que decir cuál de los dos frena — "la consumió una guía R" y "un
+    armado la eligió" se arreglan en pantallas distintas.
+    """
+    cursor.execute(
+        """
+        SELECT (SELECT count(*) FROM reprocesos_consumos rc
+                  JOIN reprocesos rp ON rp.id = rc.reproceso_id
+                 WHERE rc.compra_id = %s AND rp.anulado_el IS NULL),
+               (SELECT count(*) FROM pedidos_renglones_lotes_elegidos le
+                  JOIN pedidos_renglones r ON r.id = le.renglon_id
+                 WHERE le.lote_tipo = 'guia' AND le.lote_origen_id = %s
+                   AND r.anulado_el IS NULL)
+        """,
+        (compra_id, compra_id),
+    )
+    consumida, elegida = cursor.fetchone()
+    return int(consumida), int(elegida)
+
+
+def uso_del_lote_de_la_compra(compra_id: int) -> dict:
+    """{"guias": n, "armados": n}: si alguno es > 0, la recepción no se puede deshacer.
+
+    La usa LA PANTALLA para decidir si ofrece el botón, y la escritura la usa
+    para rechazar. LA MISMA función en las dos puntas, no dos SELECT: un botón
+    que el POST después rechaza es un callejón —el que lo aprieta se come un
+    error por algo que la pantalla le propuso— y con dos copias el día que una
+    cambie el callejón aparece sin que nada avise.
+    """
+    conexion = obtener_conexion()
+    try:
+        with conexion.cursor() as cursor:
+            guias, armados = _lote_de_la_compra_YA_SE_USO(cursor, compra_id)
+        return {"guias": guias, "armados": armados}
+    finally:
+        conexion.close()
+
+
+def revertir_recepcion_de_compra(compra_id: int) -> None:
+    """Devuelve una compra recepcionada a 'pendiente' y le saca los valores reales.
+
+    LA OPERACIÓN QUE FALTABA. Hasta el 20/09 ninguna pantalla podía hacerlo:
+    el Deshacer de Depósito está bloqueado para las recepcionadas ("para
+    corregirla hace falta Gerencia") y lo que Gerencia tiene es Corregir
+    Recepción, que es OTRA COSA —su docstring lo dice: corrige el número de
+    una recepción que pasó, no deshace una que no tenía que pasar—. Una
+    recepción apretada por error terminaba en el editor de la base, con
+    `db/revertir_una_recepcion.sql`.
+
+    POR QUÉ NO VA UN MOVIMIENTO COMPENSATORIO, y es el argumento de ese
+    `.sql`: la entrada de stock no es una fila en `movimientos_stock`, es LA
+    COMPRA MISMA —`_SQL_SUMAS_STOCK` suma `cantidad_cajones_real` de las
+    recepcionadas—. Un ajuste en menos dejaría DOS registros falsos que se
+    cancelan (un ingreso que no pasó y un ajuste que tampoco), y cualquier
+    pantalla que los muestre por separado va a mentir. Volver a 'pendiente'
+    borra la entrada y no deja rastro que después haya que explicar.
+
+    LAS TRES GUARDAS, todas adentro de la misma transacción:
+
+      1. que la compra exista — con un SELECT SIN agregado, porque con
+         `count(*)` el "no encontrado" no salta nunca;
+      2. que esté recepcionada;
+      3. que su lote NO se haya usado todavía.
+
+    EL RETIRO SE DESHACE SOLO SI LO PUSO LA RECEPCIÓN. `_auto_retirar_si_
+    corresponde` deja `retiro_origen = 'deposito'`; si lo marcó Logística, es
+    un hecho aparte que esta compra no puede pisar.
+
+    Y NULEA `segunda_por_cajon_real`, que el `.sql` del 08/09 no nulea porque
+    esa columna es del 20/09. Sin eso, la compra vuelve a 'pendiente'
+    llevándose un valor "real" de una recepción que ya no existe, y las siete
+    consultas que hacen `COALESCE(real, estimado)` lo muestran como si se
+    hubiera recibido.
+    """
+    conexion = obtener_conexion()
+    try:
+        with conexion.cursor() as cursor:
+            # SIN AGREGADO: con count(*) la fila vuelve con 0 y `is None` no
+            # se cumple nunca, así que la guarda no podría distinguir "no
+            # existe" de "existe" (corolario 27).
+            cursor.execute("SELECT estado FROM compras WHERE id = %s", (compra_id,))
+            fila = cursor.fetchone()
+            if fila is None:
+                raise ValueError("Esa compra ya no existe.")
+            if fila[0] != "recepcionado":
+                raise ValueError(
+                    "Esta compra no está recepcionada, no hay recepción que deshacer."
+                )
+
+            consumida, elegida = _lote_de_la_compra_YA_SE_USO(cursor, compra_id)
+            if consumida or elegida:
+                partes = []
+                if consumida:
+                    partes.append(f"{consumida} guía{'' if consumida == 1 else 's'} R la consumió")
+                if elegida:
+                    partes.append(f"{elegida} armado{'' if elegida == 1 else 's'} la eligió")
+                raise ValueError(
+                    "De esta compra ya se tomó mercadería (" + " y ".join(partes) + "). "
+                    "Para deshacer la recepción hay que anular eso primero."
+                )
+
+            cursor.execute(
+                """
+                UPDATE compras
+                SET estado = 'pendiente',
+                    cantidad_cajones_real = NULL,
+                    contenido_por_cajon_real = NULL,
+                    cantidad_kilos_real = NULL,
+                    cantidad_fraccion_real = NULL,
+                    segunda_por_cajon_real = NULL,
+                    cantidad_cajones_rechazada = NULL,
+                    motivo_rechazo = NULL,
+                    procesada_el = NULL,
+                    estado_retiro = CASE WHEN retiro_origen = 'deposito'
+                                         THEN 'pendiente' ELSE estado_retiro END,
+                    retiro_procesado_el = CASE WHEN retiro_origen = 'deposito'
+                                               THEN NULL ELSE retiro_procesado_el END,
+                    retiro_origen = CASE WHEN retiro_origen = 'deposito'
+                                         THEN NULL ELSE retiro_origen END
+                WHERE id = %s
+                """,
+                (compra_id,),
+            )
+        conexion.commit()
+    finally:
+        conexion.close()
+
+
 def marca_en_origen_de_la_compra(compra_id: int) -> dict:
     """¿Esta compra dice que vino armada en caja nuestra, y su guía R sigue viva?
 

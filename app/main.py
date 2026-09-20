@@ -119,6 +119,8 @@ from app.db import (
     contar_senas_pendientes_viejas,
     contar_stock_vacios_negativos,
     corregir_recepcion_compra,
+    revertir_recepcion_de_compra,
+    uso_del_lote_de_la_compra,
     desmarcar_compra_armada_en_origen,
     activar_casilla_pedidos,
     actualizar_casilla_pedidos,
@@ -5978,6 +5980,10 @@ def _renderizar_pantalla_corregir_recepcion(
         # anular. Ofrecer un botón que el POST después rechaza es un
         # callejón, y eso es peor que no ofrecer nada.
         marca = marca_en_origen_de_la_compra(compra_id) if compra else None
+        # LA MISMA función que usa la escritura para rechazar: el botón de
+        # deshacer la recepción solo se dibuja donde el POST acepta, o sería
+        # un callejón.
+        uso_lote = uso_del_lote_de_la_compra(compra_id) if compra else None
     except Exception as error_db:
         raise HTTPException(status_code=500, detail=f"Error al conectar con la base de datos: {error_db}") from error_db
 
@@ -5989,7 +5995,7 @@ def _renderizar_pantalla_corregir_recepcion(
         "compra_corregir_recepcion.html",
         {"compra": compra, "error": error, "dependencias": dependencias,
          "fotos_guia": fotos_guia, "fotos_balanza": fotos_balanza,
-         "marca": marca, "desmarcada": desmarcada,
+         "marca": marca, "desmarcada": desmarcada, "uso_lote": uso_lote,
          "aviso": aviso, "precarga": precarga or {}},
         status_code=status_code,
     )
@@ -6494,6 +6500,53 @@ def desmarcar_armada_ruta(request: Request, compra_id: int):
 
     return RedirectResponse(
         url=f"/gerencia/compras/{compra_id}/corregir-recepcion?desmarcada=1",
+        status_code=303,
+    )
+
+
+@app.post("/gerencia/compras/{compra_id}/des-recepcionar")
+def des_recepcionar_compra_ruta(request: Request, compra_id: int):
+    """Deshace la recepción: la compra vuelve a 'pendiente' y sale del stock.
+
+    LA OPERACIÓN QUE FALTABA, y no es la de al lado. Corregir Recepción
+    arregla el NÚMERO de una recepción que pasó; ésta deshace una que no
+    tenía que pasar. Su propio docstring lo dice desde siempre: "NO cambia el
+    estado (sigue 'recepcionado')". Hasta hoy una recepción apretada por
+    error se arreglaba en el editor de la base con
+    `db/revertir_una_recepcion.sql` — que es el corolario 31 al pie de la
+    letra: la segunda vez que se escribe un `.sql` a mano para la misma forma
+    de operación, eso ya no es un incidente, es una función que falta.
+
+    VA EN GERENCIA Y NO EN DEPÓSITO por la PRECONDICIÓN y no por comodidad:
+    el cartel de Depósito ya manda acá ("para corregirla hace falta
+    Gerencia"), y esto mueve stock. Y va en ESTA pantalla porque es donde
+    llega el que descubrió que la recepción está mal.
+
+    EN SU PROPIO FORMULARIO, igual que desmarcar: como campo del de arriba
+    habría que re-tipear los valores reales para poder borrarlos, que es
+    aceptar de nuevo unos números que justamente no se quieren.
+    """
+    puerta = _puerta_de_gerencia_para_escribir(request)
+    if puerta is not None:
+        return puerta
+
+    try:
+        revertir_recepcion_de_compra(compra_id)
+    except ValueError as invalida:
+        # Dato mal pedido, no una falla del sistema: se muestra en la
+        # pantalla, nunca un 500.
+        return _renderizar_pantalla_corregir_recepcion(
+            request, compra_id, error=str(invalida), status_code=400
+        )
+    except Exception as error_db:
+        raise HTTPException(status_code=500, detail=f"Error al conectar con la base de datos: {error_db}") from error_db
+
+    # A BUSCAR COMPRAS y no de vuelta a esta pantalla: la compra ya no está
+    # recepcionada, así que "Corregir Recepción" no tiene nada que corregir y
+    # el que vuelva se encuentra con un formulario que rebota.
+    return RedirectResponse(
+        url="/compras/buscar?" + urlencode(
+            {"aviso": "Recepción deshecha: la compra volvió a pendiente."}),
         status_code=303,
     )
 

@@ -1,10 +1,15 @@
 -- Deshacer UNA recepción: devuelve la compra a 'pendiente' y le saca los
 -- valores reales, así los bultos salen del stock.
 --
--- No es un script de un solo uso. Depósito NO tiene botón de "deshacer
--- recepción" —el Deshacer de la pantalla está bloqueado para las
--- recepcionadas ("para corregirla hace falta Gerencia")— así que una
--- recepción apretada por error se arregla acá hasta que ese botón exista.
+-- DESDE EL 20/09 HAY BOTÓN Y ESTO YA NO ES EL CAMINO NORMAL:
+-- Gerencia -> Corregir Recepción -> "Deshacer la recepción"
+-- (POST /gerencia/compras/{id}/des-recepcionar, revertir_recepcion_de_compra
+-- en app/db.py). Esto queda para el caso que la pantalla no cubre: la compra
+-- cuyo lote YA SE USÓ, donde el botón no se ofrece a propósito.
+--
+-- Y SI SE CORRE ESTO EN ESE CASO, se está pisando una guarda: los consumos
+-- congelados van a quedar apuntando a mercadería que el sistema dice que
+-- nunca entró. El paso A los muestra justamente para que se vea antes.
 -- Estrenado el 08/09 revirtiendo la que dejó la prueba de la foto de
 -- balanza en Palmala: compra 181, 60 cajones de Cebolla.
 --
@@ -35,6 +40,12 @@ join articulos a on a.id = c.articulo_id
 where c.estado = 'recepcionado'
   and c.procesada_el >= ((date '2026-09-08')::timestamp AT TIME ZONE 'America/Argentina/Buenos_Aires')
 order by c.procesada_el;
+
+-- `segunda_por_cajon_real` es del 20/09 y este script del 08/09: sin
+-- nulearla, la compra vuelve a 'pendiente' llevandose un valor "real" de una
+-- recepcion que ya no existe. La explicacion va ACA AFUERA y no adentro del
+-- bloque: con el comentario adentro el `do` pasaba los 2500 caracteres, y un
+-- bloque que se trunca no falla — le concatena SQL ajeno.
 
 -- ===== PASO B — revertirla. UN solo do $$: o pasa todo o no pasa nada =====
 -- El id se copia del paso A. Las guardas van todas ADENTRO del bloque:
@@ -75,6 +86,7 @@ begin
      set estado = 'pendiente',
          cantidad_cajones_real = null, contenido_por_cajon_real = null,
          cantidad_kilos_real = null, cantidad_fraccion_real = null,
+         segunda_por_cajon_real = null,
          cantidad_cajones_rechazada = null, motivo_rechazo = null,
          procesada_el = null,
          -- El retiro se deshace SOLO si lo puso la recepcion
