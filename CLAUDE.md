@@ -2529,6 +2529,86 @@ y no en la del síntoma —la compra—.
 cuántas causas distintas hay detrás. Si los disparos son muchos y las
 causas pocas, la alerta está en la unidad equivocada.
 
+## Una guía R con `primera = 0` es un PASE A SEGUNDA por la puerta equivocada
+
+Del 20/09. El depósito tiene diez cajones de berenjena que se pusieron feos:
+no están para tirar, pero ya no son primera. **No había ninguna pantalla para
+eso**, así que lo cargaban con una guía R de reproceso con `primera = 0` —
+la única puerta que encontraron.
+
+**Y los números que produce esa puerta están BIEN**, que es lo que hay que
+entender antes de tocar nada. Una guía con tomados 10 / primera 0 / segunda
+10 deja:
+
+```
+stock      −tomados + primera = −10   (la pata del reproceso no filtra por tipo)
+pool       + bultos_segunda   = +10
+costo      costo_por_bulto_primera en NULL: la plata se pierde
+cajas      bultos_primera = 0, o sea ninguna caja nuestra consumida
+```
+
+Lo que está mal no es la cuenta: es **el nombre, y que ocupe una guía R**.
+
+**Medido antes de construir** (`db/primera_cero_1_cuantas_son.sql`, Frutamax,
+90 días): `población 395 · PRIMERA_EN_CERO 2 · cajones 18 · plata que no se
+pega $670.000 · todo_a_SEGUNDA 2 · todo_a_MERMA 0 · mixto 0 · NI_UNA_NI_OTRA
+0 · última guía 19/09`.
+
+**Y la consulta no solo midió el tamaño: probó el diagnóstico.** Partida por
+a dónde fue la fruta, las dos cayeron en `todo_a_SEGUNDA` y ninguna en
+`todo_a_MERMA` ni en `NI_UNA_NI_OTRA`. Con mermas ahí, lo que faltaría sería
+otra cosa —gente esquivando la pantalla de merma, que existe— y con casos sin
+destino serían cajones que salieron sin que nadie diga adónde. **Un conteo
+solo habría dicho "son 2" y mandado a construir sobre una hipótesis.**
+
+### Las dos que YA ESTÁN se dejan, y por eso hay que anotarlas acá
+
+Decisión del dueño, con fecha: **los `reprocesos` con `tipo = 'normal'` y
+`bultos_primera = 0` anteriores al 20/09 son pases a segunda hechos por la
+puerta equivocada.** No se corrigen — corregirlas sería anular y recargar por
+la puerta nueva para mover los mismos números a otra tabla, perdiendo las
+guías R que ya existen y sin que ninguna cuenta cambie.
+
+**Y por eso la nota vale más que el arreglo**: dentro de seis meses, un
+`primera = 0` en esa tabla es un misterio, y el que lo encuentre va a buscar
+un bug en el costeo que no existe. Es la frase que este archivo pide cada vez
+que algo se deja como está: lo que no se corrige se explica, o se paga en la
+próxima lectura.
+
+### Dónde va la puerta nueva, y lo decidió un NÚMERO y no el gusto
+
+`movimientos_stock`, con un `tipo = 'pase_a_segunda'`. La alternativa era un
+`tipo` nuevo en `reprocesos`, que **no costaba ni un cambio de cuenta** —la
+pata del stock y la del pool no filtran por tipo, así que habría andado
+solo—. La descartó el conteo: **36 consultas leen `reprocesos`**, y cada una
+que se olvidara el filtro mostraría el pase como una guía R. Es un filtro del
+que hay que acordarse en 36 lugares para siempre, contra una cirugía de
+CHECKs que se hace una vez.
+
+A favor de `movimientos_stock`, además: su pata del stock ya es
+`tipo <> 'reingreso_rechazo'`, así que un tipo nuevo se resta solo; y la
+pantalla de Movimientos **no tiene un `else` que afirme** —lo dice su propio
+comentario— así que un tipo que no conoce no se dibuja como otra cosa.
+
+### El UNO A UNO se preguntó, no se dedujo
+
+Diez cajones que salen de primera son diez bultos que entran al pool: el
+cajón pasa entero, no se reenvasa. **En el reproceso NO es así** —un cajón de
+16 da tres cajas de 6, y el sistema acepta producir más bultos de los que
+tomó— así que copiar la relación de allá habría sido exactamente el corolario
+81: derivar un caso de la forma de una regla vecina en vez de preguntar si el
+caso es así. Se preguntó, y va escrito donde se escribe:
+`movimientos_stock_pase_uno_a_uno`.
+
+### Y el pase sale de los SUELTOS, porque la base ya lo decía
+
+`movimientos_stock_ficha_solo_merma` dice `tipo = 'merma' or ficha_id is
+null`, así que un pase con ficha lo rechaza **sin que haya que escribir
+ninguna guarda nueva**. Y está bien que sea así: una caja ya armada para un
+cliente que se pone fea no es un pase, es desarmarla primero. Lo que se hizo
+fue no tocar ese CHECK, que es una decisión y no un olvido — queda dicho acá
+porque un CHECK que no se toca no deja rastro en el diff.
+
 ## Un campo sin consecuencia se llena vacío, y eso no es indisciplina
 
 Del 09/09, y va como regla y no como corolario porque **no es de la familia
