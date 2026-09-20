@@ -82,3 +82,37 @@ def test_TODAS_las_pantallas_ABREN_contra_una_base_REAL():
         f"se tocó:\n{linea}\n{r.stdout[-3000:]}")
 
     assert r.returncode == 0, f"el humo falló:\n{linea}\n{r.stdout[-3000:]}"
+
+
+def test_el_texto_visible_NO_trae_ni_el_CSS_ni_el_JS_ni_los_COMENTARIOS():
+    """`mirar_pantalla` es lo que se lee antes de reportar un commit, así que
+    lo que imprime tiene que ser lo que el operario ve y NADA MÁS.
+
+    Un comentario explica por qué algo es así, así que NOMBRA la cosa
+    (corolario 38): sin sacarlos, la pantalla "dice" todo lo que sus
+    comentarios discuten —incluido lo que se decidió NO mostrar— y el que la
+    lee da por visible algo que no está.
+
+    EL PAR COMPLETO (corolario 53): las cuatro que NO pueden salir y una que
+    SÍ. Con solo las primeras, un extractor que devuelva la cadena vacía pasa
+    todos los asserts.
+    """
+    sys.path.insert(0, os.path.join(RAIZ, "scripts"))
+    from mirar_pantalla import texto_visible
+
+    html = """
+    <style>.boton { content: "EL-CSS"; }</style>
+    <script>var x = "EL-JS";</script>
+    <!-- EL-COMENTARIO: acá se explica por qué el botón no va -->
+    <template><span>EL-TEMPLATE</span></template>
+    <div><h2>LO-QUE-SE-VE</h2><a class="boton">Y-EL-BOTON</a></div>
+    """
+    lineas = texto_visible(html)
+    junto = " ".join(lineas)
+
+    for escondido in ("EL-CSS", "EL-JS", "EL-COMENTARIO", "EL-TEMPLATE"):
+        assert escondido not in junto, f"{escondido} salió como texto de la pantalla"
+    assert "LO-QUE-SE-VE" in junto and "Y-EL-BOTON" in junto
+    # Y en LÍNEAS distintas: pegados, dos rótulos de botones vecinos se leen
+    # como uno solo y el que mira no puede contarlos.
+    assert lineas.index("LO-QUE-SE-VE") != lineas.index("Y-EL-BOTON")

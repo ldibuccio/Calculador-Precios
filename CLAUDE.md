@@ -311,6 +311,42 @@ De acá en adelante, después de cualquier push que se dé por desplegado:
    dos el deploy no sale— y se arreglan distinto. Por eso lo que se reporta
    es la `conclusion`, no "el CI no pasó".
 
+6. **Y ANTES DE REPORTAR, SE ABRE UNA DE LAS PANTALLAS QUE SE TOCARON.** Del
+   20/09, y es del dueño: *"hoy dos veces me dijiste 'hecho' sobre cosas que
+   yo no podía ver"*.
+
+   Se corre `python3 scripts/mirar_pantalla.py <ruta>`, que la renderiza
+   contra el esquema REAL —reusando la siembra del humo, no una copia— y
+   devuelve **el texto visible**, para leerlo.
+
+   **Y NO ES EL HUMO OTRA VEZ**, que es lo que hay que entender o el paso se
+   saltea por redundante: el humo afirma el CÓDIGO DE ESTADO de las 131
+   pantallas —que abren, que su SQL parsea, que el handler corre— y **no
+   afirma una palabra de lo que muestran**. Una pantalla a la que le borré su
+   único botón contesta 200 igual y el humo la cuenta como ABIERTA. Son dos
+   preguntas y la segunda no se deduce de la primera.
+
+   **Lo que este paso NO cubre, y hay que decirlo porque es justo lo que pasó
+   las dos veces**: el gate. Los dos "hecho" del 20/09 no fueron pantallas
+   rotas —la suite estaba verde, el humo habría estado verde, la pantalla
+   andaba— fue que **el CI estaba en rojo y el deploy no salió**. Eso lo
+   contesta el punto 5 y nada más: un humo impecable sobre un commit frenado
+   describe perfectamente una pantalla que nadie puede abrir.
+
+   Los tres son preguntas distintas y ninguno reemplaza a otro:
+
+   | | qué contesta |
+   |---|---|
+   | la **suite** | ¿la lógica hace lo que digo? (con la base mockeada) |
+   | el **humo** | ¿las 131 abren contra el esquema real? |
+   | **mirar la pantalla** | ¿la que toqué DICE lo que dije? |
+   | la **`conclusion` del CI** | ¿esto va a salir al galpón? |
+
+   **Y la identidad va pegada al texto** (corolario 53): el script imprime el
+   status y el conteo de botones y formularios. Sin eso, la pantalla de
+   "Falta la clave" se imprime igual de prolija que la buena — ya pasó dos
+   veces en este proyecto, y las dos lo delató el denominador.
+
 ## Corolario 92: un test que mide el ENTORNO pasa donde se escribe y falla donde DECIDE
 
 Del 20/09, y es el que produjo lo de arriba. El test del número de versión

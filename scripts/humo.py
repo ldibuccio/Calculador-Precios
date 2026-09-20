@@ -253,8 +253,14 @@ def _parametros_de(esquema, ruta, solo_requeridos=False):
     return query
 
 
-def abrir_todas(verbose=True):
-    """Devuelve (filas, resumen). Cada fila es (ruta, status, detalle)."""
+def levantar():
+    """La base de humo cargada y sembrada, y un cliente con las cuatro puertas.
+
+    SALE DE `abrir_todas` PARA QUE `mirar_pantalla` LA USE, y no copiada: las
+    cuatro cookies y la siembra escritas dos veces se separan el día que
+    aparezca una quinta puerta, y la copia que quede vieja mide una pantalla
+    de clave creyendo que mide la pantalla (corolario 53).
+    """
     url = preparar_base()
     os.environ["DATABASE_URL"] = url
     for clave in ("CLAVE_GERENCIA", "CLAVE_ADMINISTRACION",
@@ -287,7 +293,12 @@ def abrir_todas(verbose=True):
     for puerta in (PUERTA_GERENCIA, PUERTA_ADMINISTRACION, PUERTA_COMPRAS, PUERTA_CONTROL):
         cliente.cookies.set(puerta.cookie, puerta.firma("humo-secreta"))
 
-    esquema = app.openapi()
+    return cliente, app.openapi()
+
+
+def abrir_todas(verbose=True):
+    """Devuelve (filas, resumen). Cada fila es (ruta, status, detalle)."""
+    cliente, esquema = levantar()
     filas = []
     for ruta in rutas_get():
         if ruta in NO_SE_ABREN:
