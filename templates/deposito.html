@@ -93,18 +93,20 @@
   <div class="tarjeta">
     <h2>Ingresos Mercadería</h2>
     <a class="boton" href="/logistica/retiro/Pases?origen=deposito">{{ ICONOS_DEPOSITO['retirar']|safe }}<span>Retirar Mercadería</span></a>
-    <a class="boton" href="/deposito/recepcion">{{ ICONOS_DEPOSITO['recibir']|safe }}<span>Recibir Mercadería</span></a>
+    <a class="boton" href="/deposito/recepcion">{{ ICONOS_DEPOSITO['recibir']|safe }}<span>Recepción Mercadería</span></a>
     {# "Compras Mercadería", puesto por el dueño el 20/09. Reemplaza a "Cargar
        lo que llegó sin guía", que venía de un argumento mío —el depósito no
        compra— que él dio vuelta: lo que entra por acá ES una compra, y lo que
        el depósito hace es registrarla cuando llegó sin papel.
 
-       QUEDA ANOTADO QUE ESTE ROTULO Y EL DE ARRIBA SE PARECEN: "Recibir
+       LEVANTÉ QUE ESTE ROTULO Y EL DE ARRIBA SE PARECEN —"Recepción
        Mercadería" es una compra que SI tiene guía y "Compras Mercadería" una
-       que no, y desde el botón esa diferencia no se ve. Es la misma forma que
-       tenían "Pedido" y "Armar Pedido". Si algún día se entra a la
-       equivocada, la salida no es reordenar: es que uno de los dos diga la
-       condición que los separa. #}
+       que no, y desde el botón esa diferencia no se ve— y propuse agregarle
+       "sin guía". EL DUEÑO LO RECHAZÓ el 20/09: el rótulo queda así.
+
+       Queda escrito para que no se vuelva a proponer: la observación era
+       mía, la decisión es suya, y una nota que deja la propuesta viva es
+       como alguien la reabre en tres meses sin saber que ya se discutió. #}
     <a class="boton" href="/deposito/ingresar">{{ ICONOS_DEPOSITO['sin_guia']|safe }}<span>Compras Mercadería</span></a>
     {# "Reingresos Rechazos" vive ACÁ y no en Stock, por decisión del dueño:
        lo que vuelve del súper entra al galpón igual que una compra, así que

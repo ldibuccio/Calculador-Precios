@@ -11599,9 +11599,11 @@ def test_ver_deposito_muestra_el_acceso_a_recepcion():
 
     assert respuesta.status_code == 200
     assert 'href="/deposito/recepcion"' in respuesta.text
-    # "Recibir Mercadería" y no "Recepción Compras": el rótulo dice qué hace
-    # el que entra, no de qué módulo es la pantalla.
-    assert "Recibir Mercadería" in respuesta.text
+    # "Recepción Mercadería", puesto por el dueño el 20/09. Antes decía
+    # "Recepción Compras" y en el medio pasó por "Recibir Mercadería": los
+    # cuatro botones de Ingresos terminan los cuatro en "Mercadería" o
+    # "Rechazos", que es lo que los hace leer como un bloque.
+    assert "Recepción Mercadería" in respuesta.text
     assert "En construcción" not in respuesta.text
 
 
@@ -26928,7 +26930,7 @@ def test_deposito_ordena_los_botones_como_pasan_las_cosas():
     # de `_barra_navegacion.html` que decía "Movimientos de Stock".
     orden = [
         ('/logistica/retiro/Pases?origen=deposito', "Retirar Mercadería"),
-        ('/deposito/recepcion', "Recibir Mercadería"),
+        ('/deposito/recepcion', "Recepción Mercadería"),
         ('/deposito/ingresar', "Compras Mercadería"),
         # El reingreso cierra Ingresos Mercadería: lo que vuelve del súper
         # entra al galpón igual que una compra.
