@@ -26960,9 +26960,11 @@ def test_deposito_ordena_los_botones_como_pasan_las_cosas():
         # El reingreso cierra Ingresos Mercadería: lo que vuelve del súper
         # entra al galpón igual que una compra.
         ('/deposito/stock/reingreso', "Reingresos Rechazos"),
-        # UN solo botón de Pedidos: entra a Corregir lo que pidieron, que es
-        # lo que se mira antes de empezar, y desde ahí está el botón a Armar.
-        ('/deposito/pedido', "Abrir el pedido"),
+        # UN solo botón de Pedidos, y NOMBRA EL TRABAJO y no el paso: entra a
+        # Corregir lo que pidieron, que es lo que se mira antes de empezar, y
+        # desde ahí está el botón a armar. El rótulo lo puso el dueño el
+        # 20/09 sabiendo que se parece al link de adentro.
+        ('/deposito/pedido', "Armar el Pedido"),
         ('/deposito/stock/fisico', "Contar el stock"),
         ('/deposito/stock/remito-segunda', "Remitir la segunda"),
     ]
