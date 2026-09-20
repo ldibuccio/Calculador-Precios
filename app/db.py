@@ -13780,13 +13780,19 @@ _SQL_CAJAS_PERDIDAS_POR_RECHAZO = """
        AND m.tipo = 'reingreso_rechazo'
        AND m.destino_rechazo IN ('segunda', 'devolucion_proveedor', 'reproceso')
        AND m.fecha_operacion >= %s
+       AND m.fecha_operacion <= %s
      GROUP BY cl.nombre, a.nombre, e.nombre
      ORDER BY SUM(m.cantidad * c.costo) DESC NULLS LAST, SUM(m.cantidad) DESC
 """
 
 
-def cajas_perdidas_por_rechazo(desde) -> dict:
+def cajas_perdidas_por_rechazo(desde, hasta) -> dict:
     """Las cajas nuestras que se llevaron los rechazos, por cliente y artículo.
+
+    `hasta` NO TIENE DEFAULT, y es a propósito. Un llamador que se lo
+    olvidara no recibiría un error: recibiría todo desde `desde` hasta hoy,
+    que es un número plausible contestando otra pregunta — justo el modo de
+    falla que un informe por período no puede tener.
 
     ORDENADA POR PLATA, y eso es lo que la vuelve una lista de trabajo: en
     Frutamax cuatro artículos se llevan el 80%, así que ordenada por cajas o
@@ -13830,7 +13836,7 @@ def cajas_perdidas_por_rechazo(desde) -> dict:
     conexion = obtener_conexion()
     try:
         with conexion.cursor() as cursor:
-            cursor.execute(_SQL_CAJAS_PERDIDAS_POR_RECHAZO, (desde,))
+            cursor.execute(_SQL_CAJAS_PERDIDAS_POR_RECHAZO, (desde, hasta))
             filas = cursor.fetchall()
     finally:
         conexion.close()
@@ -13847,6 +13853,7 @@ def cajas_perdidas_por_rechazo(desde) -> dict:
     ]
     return {
         "desde": desde,
+        "hasta": hasta,
         "renglones": renglones,
         "cajas": sum(r["cajas"] for r in renglones),
         "pesos": sum(r["pesos"] for r in renglones),

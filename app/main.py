@@ -89,6 +89,7 @@ from app.db import (
     contar_mails_pedido_sin_procesar,
     contar_pedidos_con_renglones_sin_identificar,
     contar_pedidos_incompletos,
+    cajas_perdidas_por_rechazo,
     contar_recepciones_sin_pesaje,
     contenido_por_bulto_de_lotes,
     desmarcar_renglon_armado,
@@ -14531,14 +14532,20 @@ def _datos_rentabilidad(cliente_id: int, fecha_desde, fecha_hasta, articulo_id, 
     return calcular_rentabilidad_de_pedidos(renglones, fichas, margenes_por_fecha, articulo_id, grupo)
 
 
-def _leer_filtros_rentabilidad(
-    cliente_id_texto, fecha_desde_texto, fecha_hasta_texto, articulo_id_texto, grupo_texto
-):
-    """Valida los filtros de Rentabilidad (pantalla y exports usan lo mismo). Devuelve también el error de fechas."""
-    cliente_id = _id_opcional_desde_query(cliente_id_texto)
-    articulo_id = _id_opcional_desde_query(articulo_id_texto)
-    grupo = grupo_texto if grupo_texto in GRUPOS_ARTICULO_VALIDOS else None
+def _leer_rango_de_fechas(fecha_desde_texto, fecha_hasta_texto):
+    """Desde/hasta de una pantalla de período, con su error. UNA sola vez.
 
+    Salió de adentro de `_leer_filtros_rentabilidad` el 19/09, cuando Cajas
+    Perdidas necesitó el mismo rango sin cliente ni artículo. Copiarlo habría
+    sido la regla escrita dos veces en su forma más barata de evitar: el día
+    que una valide el orden de las fechas y la otra no, una pantalla acepta
+    un rango que la otra rechaza y ninguna se pone roja.
+
+    Los 7 días de default son el RECORTE REAL de la pantalla, no un detalle:
+    un total leído sin mirar la ventana contesta otra pregunta (corolario
+    69). Por eso las dos fechas viajan al contexto y se dibujan arriba del
+    número.
+    """
     hoy = _hoy_argentina()
     fecha_desde = hoy - timedelta(days=7)
     fecha_hasta = hoy
@@ -14555,6 +14562,18 @@ def _leer_filtros_rentabilidad(
             error_fecha = "La fecha hasta no es válida."
     if error_fecha is None and fecha_desde > fecha_hasta:
         error_fecha = "La fecha desde no puede ser posterior a la fecha hasta."
+    return fecha_desde, fecha_hasta, error_fecha
+
+
+def _leer_filtros_rentabilidad(
+    cliente_id_texto, fecha_desde_texto, fecha_hasta_texto, articulo_id_texto, grupo_texto
+):
+    """Valida los filtros de Rentabilidad (pantalla y exports usan lo mismo). Devuelve también el error de fechas."""
+    cliente_id = _id_opcional_desde_query(cliente_id_texto)
+    articulo_id = _id_opcional_desde_query(articulo_id_texto)
+    grupo = grupo_texto if grupo_texto in GRUPOS_ARTICULO_VALIDOS else None
+
+    fecha_desde, fecha_hasta, error_fecha = _leer_rango_de_fechas(fecha_desde_texto, fecha_hasta_texto)
     return cliente_id, fecha_desde, fecha_hasta, articulo_id, grupo, error_fecha
 
 
@@ -14741,6 +14760,52 @@ def _datos_rentabilidad_real(cliente_id: int, fecha_desde, fecha_hasta, articulo
         articulos_datos, margenes_por_fecha, cliente_id, fecha_desde, fecha_hasta,
         devoluciones=devoluciones,
     )
+
+
+@app.get("/gerencia/cajas-perdidas")
+def ver_cajas_perdidas(
+    request: Request,
+    fecha_desde: str | None = None,
+    fecha_hasta: str | None = None,
+):
+    """Cuántas cajas NUESTRAS se llevaron los rechazos en un período, y cuánta plata.
+
+    ES UNA PANTALLA DE MIRAR, no de trabajar: no escribe nada y no propone
+    ninguna acción. Va a ser una línea del estado de resultados cuando ese se
+    arme; mientras tanto sirve para saber el tamaño.
+
+    LAS TRES PUERTAS donde la caja se pierde —`segunda`,
+    `devolucion_proveedor` y `reproceso`— salen de
+    `core.costo_real.DESTINOS_QUE_SE_LLEVAN_LA_CAJA`, no de una lista escrita
+    acá. `stock` no está, y es la única donde la caja se reúsa.
+
+    NO ES UN COSTO NUEVO: ese envase YA se cobra por unidad de primera
+    vendida. Esta pantalla lo NOMBRA —qué cliente, qué artículo, en cuántos
+    rechazos distintos—, que es lo que un total no puede hacer. Por eso no se
+    resta de ningún lado ni se suma a ninguna otra cuenta de plata.
+
+    EL FILTRO ES EL MISMO `_leer_rango_de_fechas` que Rentabilidad, así que
+    las dos pantallas aceptan y rechazan exactamente los mismos rangos.
+    """
+    if not _acceso_gerencia_valido(request):
+        return _pantalla_clave_gerencia(request)
+
+    desde, hasta, error_fecha = _leer_rango_de_fechas(fecha_desde, fecha_hasta)
+    contexto = {
+        "fecha_desde": desde.isoformat(),
+        "fecha_hasta": hasta.isoformat(),
+        "error_fecha": error_fecha,
+        "resultado": None,
+    }
+    if error_fecha:
+        return templates.TemplateResponse(request, "gerencia_cajas_perdidas.html", contexto)
+
+    try:
+        contexto["resultado"] = cajas_perdidas_por_rechazo(desde, hasta)
+    except Exception as error_db:
+        raise HTTPException(status_code=500, detail=f"Error al conectar con la base de datos: {error_db}") from error_db
+
+    return templates.TemplateResponse(request, "gerencia_cajas_perdidas.html", contexto)
 
 
 @app.get("/gerencia/rentabilidad-real")

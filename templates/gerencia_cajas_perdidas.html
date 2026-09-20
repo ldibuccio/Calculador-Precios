@@ -1,0 +1,118 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Cajas perdidas</title>
+<style>
+  :root { font-family: -apple-system, system-ui, sans-serif; }
+  body { margin: 0; padding: 1rem; background: #f5f5f5; color: #222; }
+  h2 { font-size: 1.05rem; margin: 0 0 0.75rem; }
+  .tarjeta { background: #fff; border-radius: 10px; padding: 1rem;
+             margin-bottom: 1rem; box-shadow: 0 1px 3px rgba(0,0,0,.1); }
+  .error { background: #fee2e2; color: #991b1b; padding: .75rem 1rem;
+           border-radius: 8px; margin-bottom: 1rem; font-size: .95rem; }
+  /* EL FILTRO EN FILA QUE ENVUELVE: dos fechas y un boton no entran en 390px
+     en una sola linea, y `flex-wrap` las baja en vez de desbordar. */
+  .filtro { display: flex; flex-wrap: wrap; gap: .5rem; align-items: flex-end; }
+  .campo { display: flex; flex-direction: column; flex: 1 1 9rem; min-width: 0; }
+  label { font-size: .85rem; margin-bottom: .2rem; }
+  input { font-size: 1rem; padding: .6rem; min-height: 44px;
+          border: 1px solid #cbd5e1; border-radius: 8px; min-width: 0; }
+  button { font-size: 1rem; padding: .7rem 1.1rem; min-height: 44px;
+           border: 0; border-radius: 8px; background: #2563eb; color: #fff;
+           font-weight: 600; flex: 1 1 8rem; }
+  /* EL RECORTE VIAJA PEGADO AL NUMERO, no en un parrafo aparte que se lee una
+     vez: un total sin su ventana al lado contesta otra pregunta, y el que lo
+     cite despues no va a volver a buscar de que dias era (corolario 19). */
+  .periodo { font-size: .85rem; color: #6b7280; margin: .6rem 0 0; }
+  .totales { display: flex; flex-wrap: wrap; gap: .5rem 1.5rem; align-items: baseline; }
+  .grande { font-size: 1.8rem; font-weight: 700; }
+  .unidad { font-size: .9rem; color: #6b7280; font-weight: 500; }
+  .renglon { border-top: 1px solid #e5e7eb; padding: .7rem 0; }
+  .renglon:first-of-type { border-top: 0; padding-top: 0; }
+  .quien { font-size: 1rem; font-weight: 600; }
+  /* `overflow-wrap` porque el largo de un nombre de cliente o de articulo no
+     lo controlamos: uno sin espacios no tiene donde envolver y se sale de
+     costado sin que el desborde de PAGINA lo muestre. */
+  .quien, .patas { overflow-wrap: anywhere; }
+  .patas { display: flex; flex-wrap: wrap; gap: .3rem .9rem;
+           font-size: .85rem; color: #555; margin-top: .25rem; }
+  .patas span { white-space: nowrap; }
+  .plata { font-weight: 600; color: #b45309; }
+  .vacio { color: #6b7280; font-size: .95rem; }
+  .nota { background: #eff6ff; color: #1e3a8a; border-radius: 8px;
+          padding: .75rem .9rem; margin-top: .75rem; font-size: .88rem; }
+  .volver { display: inline-block; margin-top: .5rem; color: #2563eb;
+            text-decoration: none; min-height: 44px; line-height: 44px; }
+</style>
+</head>
+<body>
+  {% set barra_sector = "gerencia" %}
+  {% set barra_titulo = "Cajas perdidas" %}
+  {% set barra_atras = "/gerencia" %}
+  {% include "_barra_navegacion.html" %}
+
+  {% if error_fecha %}<div class="error">{{ error_fecha }}</div>{% endif %}
+
+  <div class="tarjeta">
+    <form class="filtro" method="get" action="/gerencia/cajas-perdidas">
+      <div class="campo">
+        <label for="fecha_desde">Desde</label>
+        <input type="date" id="fecha_desde" name="fecha_desde" value="{{ fecha_desde }}">
+      </div>
+      <div class="campo">
+        <label for="fecha_hasta">Hasta</label>
+        <input type="date" id="fecha_hasta" name="fecha_hasta" value="{{ fecha_hasta }}">
+      </div>
+      <button type="submit">Ver</button>
+    </form>
+  </div>
+
+  {% if resultado %}
+  <div class="tarjeta">
+    <h2>Cajas nuestras que no volvieron</h2>
+    <div class="totales">
+      <span><span class="grande">{{ resultado.cajas|sin_decimales }}</span> <span class="unidad">cajas</span></span>
+      <span><span class="grande">{{ resultado.pesos|moneda }}</span></span>
+    </div>
+    <p class="periodo">Del {{ fecha_desde }} al {{ fecha_hasta }}{% if resultado.ultimo %} · la última, el {{ resultado.ultimo|fecha_corta }}{% endif %}</p>
+    {# NO ES UN COSTO NUEVO, y eso va en la pantalla y no solo en el docstring:
+       el que lea "$X perdidos" sin esto al lado lo va a querer restar de algun
+       lado, y estaria contando el envase dos veces. #}
+    <p class="nota">Ese envase <strong>ya se cobra</strong> por cada unidad de primera vendida.
+      Esto no es plata que falte sumar: es la plata de las cajas que salieron y no volvieron,
+      con nombre y apellido, para saber contra quién reclamarla.</p>
+  </div>
+
+  <div class="tarjeta">
+    <h2>De dónde salen</h2>
+    {% if resultado.renglones %}
+    {% for r in resultado.renglones %}
+    <div class="renglon">
+      <div class="quien">{{ r.cliente }} · {{ r.articulo }}</div>
+      <div class="patas">
+        <span>{{ r.cajas|sin_decimales }} cajas</span>
+        <span class="plata">{{ r.pesos|moneda }}</span>
+        {# CUANTOS RECHAZOS DISTINTOS, que es lo que vuelve legible al resto:
+           5 cajas en UN rechazo es un camion que volvio; las mismas 5 en CINCO
+           es algo que pasa siempre, y son dos conversaciones distintas. #}
+        <span>en {{ r.rechazos }} rechazo{{ "s" if r.rechazos != 1 }}</span>
+        <span>{{ r.envase }}</span>
+      </div>
+    </div>
+    {% endfor %}
+    {% else %}
+    {# EL VACIO DICE CUAL VACIO ES: "no hubo" y "no se miro" se dibujan igual
+       si la pantalla se calla, y con un rango elegido a mano el segundo caso
+       es el mas probable de los dos. #}
+    <p class="vacio">No se perdió ninguna caja entre el {{ fecha_desde }} y el {{ fecha_hasta }}.
+      Si esperabas ver algo, revisá el rango de fechas.</p>
+    {% endif %}
+  </div>
+  {% endif %}
+
+  <a class="volver" href="/gerencia">Volver a Gerencia</a>
+{% include "_pie_version.html" %}
+</body>
+</html>

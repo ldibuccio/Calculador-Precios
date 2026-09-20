@@ -1,6 +1,7 @@
 """El stock de CAJAS NUESTRAS: las reglas puras, la cuenta derivada y la pantalla."""
 
 import ast
+import contextlib
 import io
 import os
 import re
@@ -1864,3 +1865,209 @@ def test_el_RENGLON_del_PDF_dice_su_unidad_y_no_kg_para_todos():
     assert _texto_kilos({"kilos": 12.0, "sufijo_unidad": None}) == "12 sin unidad"
     # Y el caso sin kilaje no gana una unidad de la nada.
     assert _texto_kilos({"kilos": None, "sufijo_unidad": "kg"}) == "SIN KILAJE"
+
+
+# ---------------------------------------------------------------------------
+# Cajas perdidas, la pantalla de Gerencia (19/09)
+# ---------------------------------------------------------------------------
+
+CAJAS_PERDIDAS = {
+    "desde": date(2026, 9, 12), "hasta": date(2026, 9, 19),
+    "cajas": 47.0, "pesos": 128400.0, "ultimo": date(2026, 9, 18),
+    "renglones": [
+        {"cliente": "EJEMPLO Uno", "articulo": "EJEMPLO Fruta", "envase": "Caja Chica",
+         "cajas": 30.0, "pesos": 82000.0, "rechazos": 1, "ultimo": date(2026, 9, 18)},
+        {"cliente": "EJEMPLO Dos", "articulo": "EJEMPLO Verdura", "envase": "Caja Grande",
+         "cajas": 17.0, "pesos": 46400.0, "rechazos": 5, "ultimo": date(2026, 9, 15)},
+    ],
+}
+
+
+@contextlib.contextmanager
+def _con_clave_de_gerencia(con_cookie=True):
+    """La clave PUESTA en el entorno, y la cookie según lo que se quiera probar.
+
+    Sin la primera mitad el test no prueba nada: `PUERTA_GERENCIA.abierta()`
+    devuelve True cuando no hay clave configurada, así que en la suite —donde
+    `CLAVE_GERENCIA` no está— la puerta está abierta y cualquier request
+    entra. Un test de la puerta escrito sin esto pasa con la puerta sacada.
+    """
+    from app.main import _firma_acceso_gerencia
+
+    with patch.dict(os.environ, {"CLAVE_GERENCIA": "secreta"}):
+        c = TestClient(app, base_url="https://testserver")
+        if con_cookie:
+            c.cookies.set("acceso_gerencia", _firma_acceso_gerencia("secreta"))
+        yield c
+
+
+def test_cajas_perdidas_PIDE_LA_CLAVE_de_gerencia():
+    """Sin la cookie no se ve: es plata, y vive detrás de la misma puerta que Rentabilidad."""
+    with _con_clave_de_gerencia(con_cookie=False) as c:
+        respuesta = c.get("/gerencia/cajas-perdidas")
+    # Lo que SÍ tiene que pasar, no un `!= 200`: un 500 tampoco es 200, así
+    # que un assert por la negativa pasa igual con la puerta sacada y el
+    # código reventando contra la base (corolario 91).
+    assert "clave" in respuesta.text.lower()
+    assert "EJEMPLO" not in respuesta.text
+
+
+def test_cajas_perdidas_le_pasa_a_la_cuenta_LAS_DOS_FECHAS_del_filtro():
+    """El `hasta` es la mitad que un total histórico no tiene.
+
+    Se afirma sobre la LLAMADA y no sobre el número dibujado: el número lo
+    decide el mock, así que un `hasta` que no viajara se vería exactamente
+    igual en la pantalla (corolario 91).
+    """
+    with _con_clave_de_gerencia() as c, \
+         patch("app.main.cajas_perdidas_por_rechazo", return_value=CAJAS_PERDIDAS) as cuenta:
+        respuesta = c.get("/gerencia/cajas-perdidas?fecha_desde=2026-09-01&fecha_hasta=2026-09-10")
+    assert respuesta.status_code == 200
+    assert cuenta.call_args.args == (date(2026, 9, 1), date(2026, 9, 10))
+
+
+def test_cajas_perdidas_muestra_EL_TOTAL_Y_SU_VENTANA_pegados():
+    """Un total sin el recorte al lado contesta otra pregunta (corolario 69)."""
+    with _con_clave_de_gerencia() as c, \
+         patch("app.main.cajas_perdidas_por_rechazo", return_value=CAJAS_PERDIDAS):
+        respuesta = c.get("/gerencia/cajas-perdidas?fecha_desde=2026-09-12&fecha_hasta=2026-09-19")
+    marcado = respuesta.text.split("</style>")[-1]
+    assert "47" in marcado and "128.400" in marcado
+    assert "2026-09-12" in marcado and "2026-09-19" in marcado
+
+
+def test_cajas_perdidas_dice_que_ese_envase_YA_SE_COBRA():
+    """Sin esa frase, el que lee "$128.400 perdidos" lo resta de algún lado.
+
+    Es el mismo argumento por el que el renglón del reproceso entró a la
+    lista: esta pantalla ENUMERA, no cobra. El envase ya viaja adentro de la
+    tasa por unidad de primera vendida, así que sumarlo otra vez lo cuenta
+    dos veces.
+    """
+    with _con_clave_de_gerencia() as c, \
+         patch("app.main.cajas_perdidas_por_rechazo", return_value=CAJAS_PERDIDAS):
+        marcado = c.get("/gerencia/cajas-perdidas").text.split("</style>")[-1]
+    assert "ya se cobra" in marcado
+
+
+def test_cajas_perdidas_dice_EN_CUANTOS_RECHAZOS_y_eso_hace_legible_el_resto():
+    """5 cajas en UN rechazo es un camión; las mismas 5 en CINCO es una costumbre.
+
+    Y el singular va aparte: "en 1 rechazos" es el mismo descuido que
+    "¿Cuántos unidades?" — lo agarra el test, no la lectura.
+    """
+    with _con_clave_de_gerencia() as c, \
+         patch("app.main.cajas_perdidas_por_rechazo", return_value=CAJAS_PERDIDAS):
+        marcado = c.get("/gerencia/cajas-perdidas").text.split("</style>")[-1]
+    assert "en 1 rechazo<" in marcado
+    assert "en 5 rechazos<" in marcado
+
+
+def test_cajas_perdidas_VACIO_dice_CUAL_vacio_es():
+    """"No hubo" y "no se miró" se dibujan igual si la pantalla se calla."""
+    vacio = dict(CAJAS_PERDIDAS, renglones=[], cajas=0.0, pesos=0.0, ultimo=None)
+    with _con_clave_de_gerencia() as c, \
+         patch("app.main.cajas_perdidas_por_rechazo", return_value=vacio):
+        marcado = c.get(
+            "/gerencia/cajas-perdidas?fecha_desde=2026-09-01&fecha_hasta=2026-09-02"
+        ).text.split("</style>")[-1]
+    assert "No se perdió ninguna caja" in marcado
+    assert "revisá el rango de fechas" in marcado
+
+
+def test_cajas_perdidas_con_FECHA_INVALIDA_no_le_pregunta_nada_a_la_base():
+    """El error se muestra y la cuenta NO se corre con un rango que no se validó."""
+    with _con_clave_de_gerencia() as c, \
+         patch("app.main.cajas_perdidas_por_rechazo") as cuenta:
+        marcado = c.get("/gerencia/cajas-perdidas?fecha_desde=2026-13-99").text.split("</style>")[-1]
+    assert "no es válida" in marcado
+    assert cuenta.call_count == 0
+
+
+def test_el_RANGO_de_Cajas_Perdidas_y_el_de_Rentabilidad_son_LA_MISMA_funcion():
+    """Escrito dos veces se separa, y la copia que se quede vieja acepta un
+    rango que la otra rechaza sin que nada se ponga rojo.
+
+    Se pregunta por la LLAMADA en el árbol y no por el nombre suelto: el
+    docstring de `_leer_rango_de_fechas` nombra a las dos pantallas, así que
+    un `in` sobre el texto matchearía la prosa que lo explica (corolario 59).
+    """
+    arbol = ast.parse(io.open("app/main.py", encoding="utf-8").read())
+    llamadores = {
+        n.name
+        for n in ast.walk(arbol)
+        if isinstance(n, ast.FunctionDef)
+        and any(isinstance(c, ast.Call) and isinstance(c.func, ast.Name)
+                and c.func.id == "_leer_rango_de_fechas" for c in ast.walk(n))
+    }
+    assert {"ver_cajas_perdidas", "_leer_filtros_rentabilidad"} <= llamadores, llamadores
+
+
+def test_el_HASTA_de_cajas_perdidas_NO_TIENE_DEFAULT():
+    """Un llamador que se lo olvide no recibiría un error: recibiría todo
+    hasta hoy, que es un número plausible contestando otra pregunta."""
+    import inspect
+
+    from app.db import cajas_perdidas_por_rechazo
+
+    firma = inspect.signature(cajas_perdidas_por_rechazo)
+    assert firma.parameters["hasta"].default is inspect.Parameter.empty
+
+
+def test_el_SQL_de_cajas_perdidas_RECORTA_POR_LAS_DOS_PUNTAS():
+    """El valor lo entrega el fixture, así que solo el TEXTO del SQL dice qué
+    pidió la consulta (corolario 65). Sin el `<=`, el filtro de `hasta` no
+    hace nada y la pantalla muestra todo lo posterior sin avisar."""
+    from app.db import _SQL_CAJAS_PERDIDAS_POR_RECHAZO as sql
+
+    assert "m.fecha_operacion >= %s" in sql
+    assert "m.fecha_operacion <= %s" in sql
+
+
+def test_Cajas_Perdidas_esta_LINKEADA_desde_el_hub_de_Gerencia():
+    """Una ruta sin puerta responde 200, tiene sus tests, y no llega nadie."""
+    marcado = io.open("templates/gerencia.html", encoding="utf-8").read().split("</style>")[-1]
+    assert 'href="/gerencia/cajas-perdidas"' in marcado
+
+
+@pytest.mark.parametrize("cliente_nombre, caso", [
+    ("EJEMPLO Uno", "normal"),
+    ("EJEMPLOclienteconunnombrelarguisimosinespacios", "impartible"),
+])
+def test_cajas_perdidas_aguanta_un_nombre_QUE_NO_SE_PUEDE_PARTIR(cliente_nombre, caso):
+    """A 390px, con un nombre de cliente sin un solo espacio donde envolver.
+
+    EL PAR VA COMPLETO —el impartible y el normal— porque un arreglo que
+    rompa el caso cómodo para aguantar el raro pasaría el primero sin que
+    nada caiga. El largo de un nombre no lo controlamos.
+
+    SE LEE `desborde_pagina` Y NO `desborde`: en una pantalla de tarjetas la
+    clave `desborde` viene clavada en 0, así que el test que mira la que no
+    es sale en verde sobre una pantalla que se arrastra de costado.
+
+    Y el cero vale porque el canario lo mueve: sacándole el `overflow-wrap`
+    a la plantilla, este mismo caso mide 105px (medido el 19/09).
+    """
+    pytest.importorskip("playwright", reason="la medición de layout necesita un navegador")
+
+    from scripts.medir_layout import medir_sync
+
+    filas = [dict(CAJAS_PERDIDAS["renglones"][0], cliente=cliente_nombre)]
+    datos = dict(CAJAS_PERDIDAS, renglones=filas)
+    with _con_clave_de_gerencia() as c, \
+         patch("app.main.cajas_perdidas_por_rechazo", return_value=datos):
+        respuesta = c.get("/gerencia/cajas-perdidas")
+
+    # LA IDENTIDAD PEGADA AL NÚMERO (corolario 53): un `0` medido sobre la
+    # pantalla de la clave se imprime igual de prolijo que la medición buena.
+    assert respuesta.status_code == 200
+    assert respuesta.text.count('class="renglon"') == 1, "no se dibujó el renglón: la medición no vale"
+
+    medicion = medir_sync(respuesta.text, ancho=390, selector_filas=".tarjeta")
+    assert medicion["filas"] > 0, "no se midió ninguna tarjeta: la medición no vale"
+    # LA MISMA EXPRESIÓN QUE `imprimir`, y no la clave a mano: `medir`
+    # devuelve el desborde en `desborde_pagina` cuando no encontró filas y en
+    # `desborde` cuando sí, así que un test anclado a una sola de las dos lee
+    # un cero clavado en la mitad de los casos (el quinto límite del módulo).
+    desborde = medicion.get("desborde_pagina", medicion.get("desborde", 0))
+    assert desborde == 0, f"{caso}: la pantalla desborda {desborde}px a 390"
