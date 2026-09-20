@@ -10992,3 +10992,42 @@ def test_las_SIETE_consultas_que_muestran_las_DOS_magnitudes_TRAEN_la_columna():
 
     sin_la_columna = [s.strip()[:70] for s in consultas if "c.segunda_por_cajon" not in s]
     assert not sin_la_columna, f"consultas sin la columna nueva: {sin_la_columna}"
+
+
+def test_un_RENGLON_DE_COMANDA_sin_la_segunda_REVIENTA_y_no_guarda_NULL():
+    """El `[]` contra el `.get()`, que es la diferencia entre reventar y mentir.
+
+    LO ENCONTRÓ UN CANARIO EN CERO: cambiar `renglon["segunda_por_cajon"]` por
+    `renglon.get(...)` no hacía caer ni un test, porque las dos formas dan lo
+    mismo mientras la clave ESTÉ — y ningún fixture la tenía ausente. Es el
+    corolario 30: una batería donde el campo siempre viene no distingue "si
+    falta, revienta" de "si falta, escribe NULL".
+
+    Y la diferencia importa porque el NULL es mudo: una compra guardada sin la
+    segunda magnitud se ve EXACTAMENTE IGUAL que una anterior al modelo de dos
+    magnitudes, o sea un hueco legítimo. Nadie la iría a buscar, y la ficha
+    del cliente que compra en la otra unidad se queda sin costo días después y
+    en otra pantalla.
+    """
+    from app.db import crear_compras_de_comanda
+
+    sin_la_clave = {
+        "articulo_id": 5, "cantidad_cajones": 10, "contenido_por_cajon": 18,
+        "cantidad_kilos": 180, "cantidad_fraccion": None,
+        "importe": 5000.0, "sena": None, "tipo_retiro": "Clark",
+    }
+    conexion, _ = _conexion_falsa([(105,), (0,), (900,)])
+    with patch("app.db.obtener_conexion", return_value=conexion):
+        with pytest.raises(KeyError) as falla:
+            crear_compras_de_comanda(date(2026, 9, 20), 200, [sin_la_clave], None, None)
+    assert "segunda_por_cajon" in str(falla.value)
+
+    # Y el control: CON la clave entra, para que el test no pase por estar
+    # rebotando por cualquier otra cosa.
+    conexion, cursor = _conexion_falsa([(105,), (0,), (900,)])
+    with patch("app.db.obtener_conexion", return_value=conexion):
+        crear_compras_de_comanda(
+            date(2026, 9, 20), 200, [dict(sin_la_clave, segunda_por_cajon=16.0)], None, None
+        )
+    _, parametros = _sql_y_parametros_que_contienen(cursor, "INSERT INTO compras")
+    assert 16.0 in parametros
