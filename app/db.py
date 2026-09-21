@@ -9559,6 +9559,171 @@ def renglones_de_los_ultimos_pedidos(cliente_ids: list[int], pedidos: int = 6) -
         conexion.close()
 
 
+def borrador_de_compra(fecha) -> dict | None:
+    """El borrador de "Qué comprar hoy" de esa fecha, con todo lo que se le editó.
+
+    Devuelve `None` cuando no hay ninguno, que es distinto de un borrador
+    vacío: uno recién abierto tiene su margen y sus clientes; el `None`
+    dice que hoy todavía no se armó ninguno y hay que proponer el margen
+    sugerido.
+
+    VIENE ENTERO EN UNA LECTURA —cabecera, clientes, kilajes y lo cargado a
+    mano— porque las cuatro se usan juntas en el mismo render y separarlas
+    son cuatro viajes para armar una sola pantalla.
+    """
+    conexion = obtener_conexion()
+    try:
+        with conexion.cursor() as cursor:
+            cursor.execute(
+                """
+                SELECT id, fecha, estado, margen_porcentaje
+                FROM listados_compra
+                WHERE fecha = %s AND estado = 'borrador'
+                """,
+                (fecha,),
+            )
+            cabecera = cursor.fetchone()
+            if cabecera is None:
+                return None
+            listado_id = cabecera[0]
+
+            cursor.execute(
+                "SELECT cliente_id, modo FROM listados_compra_clientes WHERE listado_id = %s",
+                (listado_id,),
+            )
+            clientes = {int(f[0]): f[1] for f in cursor.fetchall()}
+
+            cursor.execute(
+                "SELECT articulo_id, kilaje FROM listados_compra_kilaje WHERE listado_id = %s",
+                (listado_id,),
+            )
+            kilajes = {int(f[0]): float(f[1]) for f in cursor.fetchall()}
+
+            cursor.execute(
+                """
+                SELECT cliente_id, articulo_id, total
+                FROM listados_compra_manual WHERE listado_id = %s
+                """,
+                (listado_id,),
+            )
+            manual = {(int(f[0]), int(f[1])): float(f[2]) for f in cursor.fetchall()}
+
+            return {
+                "id": listado_id,
+                "fecha": cabecera[1],
+                "estado": cabecera[2],
+                "margen": float(cabecera[3]),
+                "clientes": clientes,
+                "kilajes": kilajes,
+                "manual": manual,
+            }
+    finally:
+        conexion.close()
+
+
+def guardar_borrador_de_compra(fecha, margen, clientes: dict, kilajes: dict, manual: dict) -> int:
+    """Guarda el borrador de esa fecha entero, y devuelve su id.
+
+    TODO EN UNA TRANSACCIÓN Y BORRANDO ANTES DE ESCRIBIR. Las tres tablas
+    hijas se reemplazan, no se mezclan: destildar un cliente, borrar un
+    kilaje o sacar una línea a mano son operaciones que un `upsert` no puede
+    expresar —lo que ya no está tiene que irse— y un borrado parcial dejaría
+    la pantalla mostrando algo que el comprador sacó.
+
+    Y EL ORDEN LO DECIDE LA FK: las líneas a mano cuelgan de
+    listados_compra_clientes, así que los clientes se borran DESPUÉS de lo
+    manual y se escriben ANTES. Escribir lo manual primero rebota contra la
+    foreign key, que es exactamente lo que esa guarda existe para impedir.
+
+    `clientes` es {cliente_id: modo}, `kilajes` {articulo_id: kilaje} y
+    `manual` {(cliente_id, articulo_id): total}. Los tres son lo que quedó,
+    no lo que cambió.
+    """
+    conexion = obtener_conexion()
+    try:
+        with conexion.cursor() as cursor:
+            cursor.execute(
+                """
+                SELECT id FROM listados_compra
+                WHERE fecha = %s AND estado = 'borrador'
+                """,
+                (fecha,),
+            )
+            fila = cursor.fetchone()
+            if fila is None:
+                cursor.execute(
+                    """
+                    INSERT INTO listados_compra (fecha, estado, margen_porcentaje)
+                    VALUES (%s, 'borrador', %s) RETURNING id
+                    """,
+                    (fecha, margen),
+                )
+                listado_id = cursor.fetchone()[0]
+            else:
+                listado_id = fila[0]
+                cursor.execute(
+                    """
+                    UPDATE listados_compra
+                       SET margen_porcentaje = %s, actualizado_en = now()
+                     WHERE id = %s
+                    """,
+                    (margen, listado_id),
+                )
+
+            cursor.execute("DELETE FROM listados_compra_manual WHERE listado_id = %s", (listado_id,))
+            cursor.execute("DELETE FROM listados_compra_kilaje WHERE listado_id = %s", (listado_id,))
+            cursor.execute("DELETE FROM listados_compra_clientes WHERE listado_id = %s", (listado_id,))
+
+            for cliente_id, modo in clientes.items():
+                cursor.execute(
+                    "INSERT INTO listados_compra_clientes VALUES (%s, %s, %s)",
+                    (listado_id, cliente_id, modo),
+                )
+            for articulo_id, kilaje in kilajes.items():
+                cursor.execute(
+                    "INSERT INTO listados_compra_kilaje VALUES (%s, %s, %s)",
+                    (listado_id, articulo_id, kilaje),
+                )
+            for (cliente_id, articulo_id), total in manual.items():
+                cursor.execute(
+                    "INSERT INTO listados_compra_manual VALUES (%s, %s, %s, %s)",
+                    (listado_id, cliente_id, articulo_id, total),
+                )
+            conexion.commit()
+            return listado_id
+    except Exception:
+        conexion.rollback()
+        raise
+    finally:
+        conexion.close()
+
+
+def cerrar_borrador_de_compra(fecha) -> bool:
+    """Pasa el borrador de esa fecha a 'cerrado'. Devuelve si había uno.
+
+    Cerrar NO borra nada: el listado queda como historial de lo que se salió
+    a comprar ese día, y el índice parcial deja abrir uno nuevo.
+    """
+    conexion = obtener_conexion()
+    try:
+        with conexion.cursor() as cursor:
+            cursor.execute(
+                """
+                UPDATE listados_compra SET estado = 'cerrado', actualizado_en = now()
+                 WHERE fecha = %s AND estado = 'borrador'
+                """,
+                (fecha,),
+            )
+            cambiadas = cursor.rowcount
+            conexion.commit()
+            return cambiadas > 0
+    except Exception:
+        conexion.rollback()
+        raise
+    finally:
+        conexion.close()
+
+
 def listar_pedidos_vigentes_con_armado(cliente_id: int, fecha_desde) -> list[dict]:
     """Los pedidos VIVOS de un cliente desde una fecha (pasados recientes y TODOS los futuros), con su estado de armado.
 

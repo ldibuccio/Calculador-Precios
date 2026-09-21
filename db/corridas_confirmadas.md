@@ -81,3 +81,29 @@ si los pases funcionan. Eso lo decide Frutamax, con sus 124.
 **Los `0 pases` de las dos son el estado del día que se corrió**, no un
 resultado: la pantalla del pase se cableó después (`b3f5837`). Un cero de
 población recién migrada no es el cero de una función que nadie usa.
+
+## 21/09 — `listados_compra` (los cuatro bloques de "Qué comprar hoy")
+
+`db/listados_compra_1_cabecera.sql`, `_2_clientes.sql`, `_3_kilaje.sql` y
+`_4_manual.sql`, con su verificación corrida aparte.
+
+```
+PALMALA   4 tablas · 5 guardas · 1 índice · 0 listados · 5 clientes · último pedido 19/09
+FRUTAMAX  4 tablas · 5 guardas · 1 índice · 0 listados · 3 clientes · último pedido 19/09
+```
+
+**Las dos filas son idénticas en todo lo que la migración afirma, y eso es
+exactamente lo esperado**: las cuatro columnas de la izquierda dicen que las
+tablas y las guardas están, y eso no puede depender de la base. Lo único que
+las distingue es la población —5 clientes contra 3— que es para lo que esa
+columna está puesta. Sin ella, pegar una creyendo que son las dos se imprime
+igual de prolijo.
+
+**El `0 listados` de las dos es el estado del día que se corrió**, no un
+resultado: la pantalla que los escribe se cableó después, en el mismo día. Un
+cero de población recién migrada no es el cero de una función que nadie usa.
+
+**Y el testigo dice que las dos tienen pedidos al 19/09**, que es lo que hace
+falta para que `renglones_de_los_ultimos_pedidos` tenga de dónde sacar el
+promedio. No dice que Palmala vote en nada más: eso sigue cerrado por decisión
+del dueño desde el 19/09.

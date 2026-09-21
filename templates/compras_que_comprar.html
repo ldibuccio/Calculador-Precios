@@ -33,6 +33,18 @@
   .boton-ver { min-height: 44px; font-size: 1rem; font-weight: 700; color: #fff;
                background: #2563eb; border: 0; border-radius: 8px; padding: 0 1.25rem; }
   .vacio { color: #666; font-size: 0.95rem; }
+  .modo { display: flex; gap: 0.4rem; align-items: center; font-size: 0.8rem; color: #555; }
+  .modo select { min-height: 44px; font-size: 0.95rem; border-radius: 8px; padding: 0 0.4rem; }
+  .mano-fila { display: flex; align-items: center; gap: 0.5rem; padding: 0.35rem 0;
+               border-bottom: 1px solid #eee; }
+  .mano-fila span { flex: 1 1 auto; min-width: 0; overflow-wrap: anywhere; font-size: 0.95rem; }
+  .mano-fila input { width: 5.5rem; min-height: 44px; font-size: 1.05rem; padding: 0.4rem;
+                     border: 2px solid #2563eb; border-radius: 8px; text-align: center; }
+  .guardar { min-height: 52px; width: 100%; font-size: 1.1rem; font-weight: 800; color: #fff;
+             background: #16a34a; border: 0; border-radius: 10px; margin-bottom: 0.75rem; }
+  .cerrar { min-height: 44px; width: 100%; font-size: 0.95rem; font-weight: 700; color: #444;
+            background: #fff; border: 2px solid #ccc; border-radius: 8px; }
+  .a-mano { font-size: 0.8rem; color: #2563eb; font-weight: 700; }
 </style>
 </head>
 <body>
@@ -42,23 +54,45 @@
 
   {% if aviso %}<div class="tarjeta"><p class="hueco">{{ aviso }}</p></div>{% endif %}
 
-  <form class="tarjeta" method="get" action="/compras/que-comprar">
+  <form method="post" action="/compras/que-comprar">
+  <div class="tarjeta">
     <div class="art">Para qué clientes</div>
     <div class="elegir">
       {% for c in clientes %}
         <label><input type="checkbox" name="cliente" value="{{ c.id }}"
-                      {% if c.id in elegidos %}checked{% endif %}>{{ c.nombre }}</label>
+                      {% if c.id in elegidos %}checked{% endif %}>{{ c.nombre }}
+          <span class="modo">
+            <select name="modo_{{ c.id }}" aria-label="Cómo se calcula lo de {{ c.nombre }}">
+              <option value="automatico" {% if modos.get(c.id) != 'manual' %}selected{% endif %}>de sus pedidos</option>
+              <option value="manual" {% if modos.get(c.id) == 'manual' %}selected{% endif %}>a mano</option>
+            </select>
+          </span>
+        </label>
       {% endfor %}
     </div>
-    <input type="hidden" name="clientes" id="clientes-elegidos" value="{{ elegidos|join(',') }}">
     <div class="margen">
       <label for="margen">Comprar un</label>
       <input id="margen" name="margen" type="number" inputmode="decimal" step="1" min="0"
              value="{{ margen|sin_decimales }}" aria-label="Margen en por ciento">
       <label for="margen">% más de lo que piden</label>
     </div>
-    <button class="boton-ver" type="submit">Ver qué comprar</button>
-  </form>
+  </div>
+
+  {% for bloque in a_mano %}
+  <div class="tarjeta">
+    <div class="art">Lo que pide {{ bloque.nombre }}, a mano</div>
+    <p class="vacio">Poné el total del día de lo que te pidan. Lo que dejes vacío no se pide.</p>
+    {% for a in bloque.articulos %}
+      <label class="mano-fila">
+        <span>{{ a.nombre }}{% if a.sufijo %} <b>({{ a.sufijo }})</b>{% endif %}</span>
+        <input name="manual_{{ bloque.cliente_id }}_{{ a.articulo_id }}" type="number"
+               inputmode="decimal" step="0.1" min="0"
+               value="{{ a.total|sin_decimales if a.total is not none else '' }}"
+               aria-label="Total de {{ a.nombre }} para {{ bloque.nombre }}">
+      </label>
+    {% endfor %}
+  </div>
+  {% endfor %}
 
   {% if elegidos and not filas %}
     <div class="tarjeta"><p class="vacio">Esos clientes no pidieron nada en sus últimos pedidos.</p></div>
@@ -71,13 +105,16 @@
     <div class="art">{{ f.nombre }}</div>
     <div class="renglon">
       <span class="dato">Piden por día
-        <b>{% if f.pide is not none %}{{ f.pide|sin_decimales }} {{ f.sufijo }}{% else %}<span class="hueco">sin ficha</span>{% endif %}</b></span>
+        <b>{% if f.pide is not none %}{{ f.pide|sin_decimales }} {{ f.sufijo }}{% if f.a_mano %}
+             <span class="a-mano">({{ f.a_mano|sin_decimales }} a mano)</span>{% endif %}
+           {%- else %}<span class="hueco">sin ficha</span>{% endif %}</b></span>
       <span class="dato">En el piso
         <b>{% if f.en_piso is not none %}{{ f.en_piso|sin_decimales }} {{ f.sufijo }}{% else %}<span class="hueco">no se puede saber</span>{% endif %}</b></span>
       <span class="dato">Compré hoy
         <b>{{ f.comprado_cajones|sin_decimales }} cj</b></span>
       <span class="dato">Kilaje del cajón
-        <b><input class="kilaje" type="number" inputmode="decimal" step="0.1" min="0"
+        <b><input class="kilaje" name="kilaje_{{ f.articulo_id }}" type="number"
+                  inputmode="decimal" step="0.1" min="0"
                   value="{{ f.kilaje|sin_decimales if f.kilaje is not none else '' }}"
                   aria-label="Kilaje del cajón de {{ f.nombre }}"></b></span>
       <span class="dato">Falta comprar
@@ -88,6 +125,13 @@
     </div>
   </div>
   {% endfor %}
+
+  <button class="guardar" type="submit" name="accion" value="guardar">Guardar</button>
+  {% if hay_borrador %}
+    <button class="cerrar" type="submit" name="accion" value="cerrar"
+            onclick="return confirm('Cerrar el listado de hoy. Queda como historial y se empieza uno nuevo.')">Ya compré: cerrar el listado</button>
+  {% endif %}
+  </form>
 
 <script>
 // RECALCULA AL TOQUE, sin ir al server: parado en el Mercado no se espera una
@@ -139,16 +183,6 @@ document.addEventListener("input", function (evento) {
   if (!campo.classList.contains("kilaje")) { return; }
   var tarjeta = campo.closest("[data-articulo]");
   if (tarjeta) { recalcular(tarjeta); }
-});
-// Los tildes viajan en UN parametro separado por comas, no en seis `cliente=`:
-// asi la URL se puede compartir y volver a abrir igual.
-document.addEventListener("submit", function (evento) {
-  var form = evento.target;
-  var oculto = form.querySelector("#clientes-elegidos");
-  if (!oculto) { return; }
-  var tildados = form.querySelectorAll('input[name="cliente"]:checked');
-  oculto.value = Array.from(tildados).map(function (c) { return c.value; }).join(",");
-  Array.from(tildados).forEach(function (c) { c.removeAttribute("name"); });
 });
 </script>
 {% include "_pie_version.html" %}

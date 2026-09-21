@@ -2720,37 +2720,48 @@ def test_exportar_listado_compras_excel_fecha_invalida_da_400():
     assert respuesta.status_code == 400
 
 
-def test_que_comprar_hoy_sin_clientes_elegidos_muestra_el_selector():
+def test_que_comprar_hoy_SIN_BORRADOR_muestra_el_selector_y_el_margen_sugerido():
     """Era el placeholder "Armar listado de compras" hasta el 21/09.
 
-    Sin clientes tildados la pantalla no lee nada más: es el caso que entra
-    primero y no puede depender de que el stock se pueda rejugar.
+    UN BORRADOR QUE NO EXISTE NO ES UN BORRADOR VACIO: sin ninguno, el
+    margen que se propone es el sugerido y no hay boton de cerrar. Con uno
+    vacio de clientes, el margen seria el que el comprador dejo.
     """
-    with patch("app.main.listar_clientes", return_value=[{"id": 7, "nombre": "Dia"}]):
+    with patch("app.main.listar_clientes", return_value=[{"id": 7, "nombre": "Dia"}]), \
+         patch("app.main.borrador_de_compra", return_value=None):
         respuesta = cliente.get("/compras/que-comprar")
 
     marcado = respuesta.text.split("</style>")[-1]
     assert respuesta.status_code == 200
     assert "Qué comprar hoy" in respuesta.text
     assert 'value="7"' in marcado and "Dia" in marcado
+    # Sin borrador no hay nada que cerrar: el boton ofreceria una accion que
+    # no existe, que es peor que no ofrecer nada.
+    assert 'value="cerrar"' not in marcado
     # La jerga del placeholder no puede haber quedado tres lineas mas abajo.
     assert "En construcción" not in respuesta.text
 
 
-def test_el_campo_del_MARGEN_arranca_en_el_sugerido_y_un_CERO_tipeado_se_respeta():
-    """El rival es un `or MARGEN_SUGERIDO` en la ruta: con 0 mostraria 10.
+def test_el_campo_del_MARGEN_sale_del_BORRADOR_y_un_CERO_guardado_se_respeta():
+    """El rival es un `or MARGEN_SUGERIDO`: con 0 guardado mostraria 10.
 
     El campo se dibuja con el valor que el server resolvio —y el JS lee ESE
     `defaultValue` cuando no puede leer lo tipeado— asi que si la ruta
     reemplaza el 0, el navegador tambien vuelve al 10.
     """
-    with patch("app.main.listar_clientes", return_value=[{"id": 7, "nombre": "Dia"}]):
-        por_defecto = cliente.get("/compras/que-comprar")
-        en_cero = cliente.get("/compras/que-comprar?margen=0")
+    def con(margen):
+        borrador = {"id": 1, "fecha": None, "estado": "borrador", "margen": margen,
+                    "clientes": {}, "kilajes": {}, "manual": {}}
+        with patch("app.main.listar_clientes", return_value=[{"id": 7, "nombre": "Dia"}]), \
+             patch("app.main.borrador_de_compra", return_value=borrador):
+            return cliente.get("/compras/que-comprar").text
 
-    assert 'id="margen"' in por_defecto.text.split("</style>")[-1]
-    assert 'id="margen" name="margen" type="number" inputmode="decimal" step="1" min="0"\n             value="10"' in por_defecto.text
-    assert 'value="0"' in en_cero.text.split("</style>")[-1]
+    sugerido = 'id="margen" name="margen" type="number" inputmode="decimal" step="1" min="0"\n             value="%s"'
+    with patch("app.main.listar_clientes", return_value=[{"id": 7, "nombre": "Dia"}]), \
+         patch("app.main.borrador_de_compra", return_value=None):
+        assert sugerido % 10 in cliente.get("/compras/que-comprar").text
+    assert sugerido % 0 in con(0.0)
+    assert sugerido % 35 in con(35.0)
 
 
 def test_el_navegador_redondea_PARA_ARRIBA_y_aplica_el_margen_igual_que_el_server():
@@ -2759,7 +2770,8 @@ def test_el_navegador_redondea_PARA_ARRIBA_y_aplica_el_margen_igual_que_el_serve
     version vieja: `Math.round` y una resta sin margen dan otro numero con la
     misma pantalla.
     """
-    with patch("app.main.listar_clientes", return_value=[]):
+    with patch("app.main.listar_clientes", return_value=[]), \
+         patch("app.main.borrador_de_compra", return_value=None):
         script = cliente.get("/compras/que-comprar").text.split("<script>")[-1]
 
     assert "Math.ceil(falta / kilaje)" in script
