@@ -97,7 +97,7 @@ from app.db import (
     contar_mails_pedido_sin_procesar,
     contar_pedidos_con_renglones_sin_identificar,
     contar_pedidos_incompletos,
-    cajas_perdidas_por_rechazo,
+    cajas_perdidas,
     gasto_en_cajas,
     contar_recepciones_sin_pesaje,
     contenido_por_bulto_de_lotes,
@@ -5106,7 +5106,7 @@ def _renderizar_pantalla_cajas(request: Request, *, error: str | None = None,
       - lo que se llevaron los rechazos, con sus pesos.
 
     LOS DOS ÚLTIMOS SON PLATA Y VAN EN GERENCIA. No se borraron: sus
-    funciones (`gasto_en_cajas`, `cajas_perdidas_por_rechazo`) siguen enteras
+    funciones (`gasto_en_cajas`, `cajas_perdidas`) siguen enteras
     con sus tests, así que mudarlas es cablear una pantalla y no reescribir
     una cuenta.
 
@@ -11528,11 +11528,18 @@ def _renderizar_pase_a_segunda(
     dos preguntas que se parecen; y además la merma solo RESTA, mientras que
     esto resta de una pila y suma a la otra.
 
-    SALE DE LOS SUELTOS, siempre, y por eso acá no hay selector de porción.
-    No es un recorte de alcance nuestro: lo dice la base
-    (`movimientos_stock_ficha_solo_merma`), y está bien que lo diga — una
-    caja ya armada para un cliente que se pone fea no es un pase, hay que
-    desarmarla primero.
+    SALE DE LOS SUELTOS O DE LAS CAJAS DE UNA FICHA, y el selector de
+    porción es el MISMO que el de la merma —`_porcion_elegida`, que también
+    usa Stock Físico—. Hasta el 21/09 acá no había selector y este docstring
+    decía que el pase salía siempre de los sueltos, *"porque una caja ya
+    armada que se pone fea no es un pase, hay que desarmarla primero"*. Era
+    una deducción nuestra sobre cómo se trabaja y el dueño la dio vuelta: se
+    armó una caja para Día, no salió, se puso fea, y pasa a segunda directo.
+
+    LA SEGUNDA NO ES UNA OPCIÓN ACÁ, y es la única diferencia con la merma:
+    pasar segunda a segunda no es nada. La pantalla no la ofrece y el POST la
+    rechaza — que la pantalla no la dibuje no alcanza, porque un formulario
+    armado a mano entra sin ver el cartel.
 
     Lo que sí se comparte con la merma es todo lo demás: el selector de
     artículo, la lista de motivos (que sale del CHECK de `remitos_segunda`,
@@ -11555,6 +11562,7 @@ def _renderizar_pase_a_segunda(
         {
             "articulos": articulos,
             "articulo_elegido": articulo_elegido,
+            "fichas_por_articulo": _fichas_por_articulo(),
             "lotes": lotes,
             "motivos": MOTIVOS_MERMA,
             "hoy": _hoy_argentina().isoformat(),
@@ -11580,6 +11588,7 @@ def cargar_pase_a_segunda(
     motivo: str = Form(""),
     fecha: str = Form(""),
     lote: str = Form(""),
+    que_pasa: str = Form(""),
 ):
     """La mercadería que ya no da para primera: sale del stock y entra al pool de segunda.
 
@@ -11629,6 +11638,21 @@ def cargar_pase_a_segunda(
         if articulo is None:
             error = "Elegí un artículo válido."
 
+    # DE QUÉ PILA SALE, con la MISMA función que la Merma y el Stock Físico:
+    # es la misma pregunta, y escrita dos veces un día una acepta una ficha
+    # de otro artículo y la otra no.
+    ficha = None
+    if not error:
+        try:
+            ficha, es_segunda, error = _porcion_elegida(articulo_id, que_pasa)
+        except Exception as error_db:
+            raise HTTPException(status_code=500, detail=f"Error al conectar con la base de datos: {error_db}") from error_db
+        # LA GUARDA VA DONDE SE ESCRIBE: la pantalla no ofrece "segunda", y
+        # eso no alcanza — un formulario armado a mano entra sin ver el
+        # cartel. Pasar segunda a segunda no es ninguna operación.
+        if not error and es_segunda:
+            error = "La segunda ya es segunda: elegí los bultos sueltos o las cajas de una ficha."
+
     lote_tipo, lote_origen_id, lote_etiqueta = None, None, None
     if not error and lote.strip():
         tipo, _, origen = lote.partition(":")
@@ -11647,8 +11671,12 @@ def cargar_pase_a_segunda(
                 lote_etiqueta = elegido["etiqueta"]
 
     if error:
+        # `que_pasa` va en la precarga como todo lo demás: el que reintenta
+        # corrige el campo que la pantalla le señaló y no revisa los que ya
+        # había llenado.
         precarga = {"articulo_id": articulo_id, "cantidad": cantidad,
-                    "motivo": motivo_limpio, "fecha": fecha, "lote": lote}
+                    "motivo": motivo_limpio, "fecha": fecha, "lote": lote,
+                    "que_pasa": que_pasa.strip()}
         return _renderizar_pase_a_segunda(
             request, precarga=precarga, articulo_id=articulo_id, error=error, status_code=400
         )
@@ -11658,6 +11686,7 @@ def cargar_pase_a_segunda(
             articulo["id"], "pase_a_segunda", -cantidad_valor, motivo_limpio, fecha_valor,
             bultos_segunda=cantidad_valor,
             lote_tipo=lote_tipo, lote_origen_id=lote_origen_id,
+            ficha_id=ficha["id"] if ficha else None,
         )
     except Exception as error_db:
         return _renderizar_pase_a_segunda(
@@ -11665,8 +11694,9 @@ def cargar_pase_a_segunda(
             error=f"No se pudo guardar el pase: {error_db}", status_code=500,
         )
 
+    de_donde = f" de las cajas de {ficha['nombre']}" if ficha else ""
     aviso = (f"Pasados a segunda: {_formatear_numero(cantidad_valor)} bultos de "
-             f"{articulo['nombre']} ({motivo_limpio}).")
+             f"{articulo['nombre']}{de_donde} ({motivo_limpio}).")
     if lote_etiqueta:
         aviso += f" Salieron de: {lote_etiqueta}."
     return RedirectResponse(
@@ -15560,7 +15590,7 @@ def ver_cajas_perdidas(
         return templates.TemplateResponse(request, "gerencia_cajas_perdidas.html", contexto)
 
     try:
-        contexto["resultado"] = cajas_perdidas_por_rechazo(desde, hasta)
+        contexto["resultado"] = cajas_perdidas(desde, hasta)
         contexto["gasto"] = gasto_en_cajas(desde, hasta)
     except Exception as error_db:
         raise HTTPException(status_code=500, detail=f"Error al conectar con la base de datos: {error_db}") from error_db

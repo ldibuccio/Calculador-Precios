@@ -20,6 +20,10 @@ from app.main import app
 cliente = TestClient(app)
 
 ARTICULO = {"id": 7, "nombre": "EJEMPLO Berenjena"}
+# La ficha como la devuelve `_fichas_por_articulo`: clave TEXTO, que es como la
+# indexa la plantilla. CON envase y con kilaje, que es el caso de producción —
+# un fixture sin envase defendería lo contrario de lo que pasa en el galpón.
+FICHAS = {"7": [{"id": 9, "nombre": "Caja de ejemplo", "kilaje": "16 kg"}]}
 LOTES = [
     {"tipo": "guia", "origen_id": 1, "restante": 40.0,
      "fecha": date(2026, 9, 17), "etiqueta": "Compra de EJEMPLO Prov"},
@@ -31,6 +35,10 @@ def _pantalla(**extra):
         "app.main.listar_articulos": [ARTICULO],
         "app.main.obtener_articulo": ARTICULO,
         "app.main._lotes_con_resto": LOTES,
+        # PARCHEARLO ES, ÉL SOLO, UNA ASERCIÓN DE QUE `app.main` LO IMPORTA:
+        # `mock.patch` no crea el atributo. El selector de porción entró el
+        # 21/09 y sin esto la pantalla se iba a la base de verdad.
+        "app.main._fichas_por_articulo": FICHAS,
     }
     de_base.update(extra)
     from contextlib import ExitStack
@@ -56,11 +64,30 @@ def test_la_pantalla_pide_lo_que_hace_falta_y_NADA_MAS():
     assert 'name="foto"' not in marcado
     assert 'name="sin_foto_confirmado"' not in marcado
 
-    # Y SIN SELECTOR DE PORCIÓN: el pase sale de los sueltos y punto. Lo dice
-    # la base (`movimientos_stock_ficha_solo_merma`) y ofrecer una ficha acá
-    # sería un callejón — el POST lo rechazaría.
+    # CON SELECTOR DE PORCIÓN desde el 21/09. Hasta ese día este test exigía
+    # lo CONTRARIO —"el pase sale de los sueltos y punto"— con su razón al
+    # lado, que es lo que lo volvía difícil de cuestionar: un assert con
+    # razón escrita se lee como una decisión ya tomada. Era una deducción
+    # nuestra sobre cómo se trabaja y el dueño la dio vuelta: una caja armada
+    # para Día que no salió y se puso fea pasa a segunda directo.
+    # TODOS LOS RADIOS LLEVAN EL NAME, y es un CONTEO y no un `in`: lo
+    # encontró un canario en CERO. Sacándole el `name` SOLO al de los sueltos,
+    # el `in` lo satisfacían los de las fichas —que lo conservan— y la
+    # pantalla quedaba con la opción más usada rota: no manda nada y el POST
+    # rebota con "Elegí de qué se trata". Si lo que se afirma vive en algo que
+    # la pantalla REPITE, un `in` contesta por el más suertudo.
+    radios = re.findall(r'<input type="radio" id="qp-[^>]*>', marcado)
+    assert len(radios) >= 2, f"se dibujaron {len(radios)} opciones: no hay qué contar"
+    assert all('name="que_pasa"' in r for r in radios), radios
+    assert any('value="sueltos"' in r for r in radios)
+    assert "Cajas de Caja de ejemplo" in marcado
+
+    # Y LA SEGUNDA NO SE OFRECE, que es la única diferencia con la Merma:
+    # pasar segunda a segunda no es ninguna operación. No se lista "avisando
+    # al guardar" — eso deja a la vista algo que no se puede elegir.
+    assert 'value="segunda"' not in marcado
+    # El selector de la Merma se llama distinto y no puede haberse colado.
     assert 'name="que_merma"' not in marcado
-    assert "Cajas de" not in marcado
 
 
 def test_el_aviso_de_QUE_PASA_va_ARRIBA_del_campo_y_no_es_un_confirm():
@@ -94,7 +121,7 @@ def test_el_pase_es_UN_SOLO_MOVIMIENTO_con_las_dos_mitades():
     """
     with _pantalla(), patch("app.main.crear_movimiento_stock") as mock_mov:
         respuesta = cliente.post("/deposito/stock/pase-a-segunda", data={
-            "articulo_id": "7", "cantidad": "10", "motivo": "sobremadurado",
+            "articulo_id": "7", "que_pasa": "sueltos", "cantidad": "10", "motivo": "sobremadurado",
             "fecha": "", "lote": "",
         }, follow_redirects=False)
 
@@ -111,21 +138,77 @@ def test_el_pase_es_UN_SOLO_MOVIMIENTO_con_las_dos_mitades():
     assert args[3] == "sobremadurado"
 
 
-def test_el_pase_NO_manda_ficha_ni_foto_ni_destino_de_rechazo():
-    """Los tres campos que la base prohíbe para este tipo, no se mandan.
+def test_el_pase_NO_manda_foto_ni_destino_de_rechazo_y_la_FICHA_va_en_None_si_son_sueltos():
+    """Los campos que la base prohíbe para este tipo, no se mandan.
 
-    Y se afirma por la NEGATIVA sobre el kwargs entero y no campo por campo:
-    el día que alguien agregue un cuarto, el test lo va a ver.
+    Se afirma por la NEGATIVA sobre el kwargs entero y no campo por campo: el
+    día que alguien agregue uno más, el test lo va a ver. `ficha_id` entró el
+    21/09 y por eso está en la lista — de los SUELTOS va en None, que es
+    distinto de no mandarlo: la columna existe y el caso es "no salió de
+    ninguna ficha".
     """
     with _pantalla(), patch("app.main.crear_movimiento_stock") as mock_mov:
         cliente.post("/deposito/stock/pase-a-segunda", data={
-            "articulo_id": "7", "cantidad": "3", "motivo": "golpeado", "fecha": "", "lote": "",
+            "articulo_id": "7", "que_pasa": "sueltos", "cantidad": "3", "motivo": "golpeado", "fecha": "", "lote": "",
         }, follow_redirects=False)
 
     _, kwargs = mock_mov.call_args
-    assert set(kwargs) == {"bultos_segunda", "lote_tipo", "lote_origen_id"}, (
+    assert set(kwargs) == {"bultos_segunda", "lote_tipo", "lote_origen_id", "ficha_id"}, (
         f"el pase manda campos que no le corresponden: {set(kwargs)}"
     )
+    assert kwargs["ficha_id"] is None
+
+
+def test_el_pase_de_CAJAS_ARMADAS_manda_la_ficha_y_el_aviso_dice_de_cual():
+    """El caso del dueño: se armó una caja para Día, no salió, se puso fea.
+
+    El rival es guardar el pase SIN ficha aunque el operario haya elegido una
+    —que es lo que pasaba hasta el 21/09, porque el campo no existía—: el
+    total baja igual y no se ve nada raro, pero la baja cae entera sobre los
+    sueltos, y no hay ninguno.
+    """
+    with _pantalla(), patch("app.main.crear_movimiento_stock") as mock_mov:
+        respuesta = cliente.post("/deposito/stock/pase-a-segunda", data={
+            "articulo_id": "7", "que_pasa": "9", "cantidad": "3", "motivo": "golpeado",
+            "fecha": "", "lote": "",
+        }, follow_redirects=False)
+
+    _, kwargs = mock_mov.call_args
+    assert kwargs["ficha_id"] == 9
+    # Y EL AVISO DICE DE QUÉ PILA SALIÓ: es lo que el operario relee para
+    # saber si le pegó al renglón que quería.
+    assert "Caja de ejemplo" in respuesta.headers["location"] or "Caja+de+ejemplo" in respuesta.headers["location"]
+
+
+def test_la_SEGUNDA_la_rechaza_el_POST_aunque_la_pantalla_no_la_ofrezca():
+    """La guarda va donde se ESCRIBE: un formulario armado a mano entra sin
+    ver el cartel, y pasar segunda a segunda no es ninguna operación.
+    """
+    with _pantalla(), patch("app.main.crear_movimiento_stock") as mock_mov:
+        respuesta = cliente.post("/deposito/stock/pase-a-segunda", data={
+            "articulo_id": "7", "que_pasa": "segunda", "cantidad": "3", "motivo": "golpeado",
+            "fecha": "", "lote": "",
+        }, follow_redirects=False)
+
+    assert respuesta.status_code == 400
+    assert "La segunda ya es segunda" in respuesta.text
+    assert not mock_mov.called
+
+
+def test_una_ficha_de_OTRO_articulo_no_entra():
+    """No es un dato raro: es un dato roto. Lo rechaza también la FK compuesta
+    de la base (`movimientos_stock_ficha_del_articulo`); acá el cartel existe
+    para que se entienda, no para sostener la regla.
+    """
+    with _pantalla(), patch("app.main.crear_movimiento_stock") as mock_mov:
+        respuesta = cliente.post("/deposito/stock/pase-a-segunda", data={
+            "articulo_id": "7", "que_pasa": "404", "cantidad": "3", "motivo": "golpeado",
+            "fecha": "", "lote": "",
+        }, follow_redirects=False)
+
+    assert respuesta.status_code == 400
+    assert "no es de este artículo" in respuesta.text
+    assert not mock_mov.called
 
 
 def test_el_LOTE_se_puede_dirigir_igual_que_en_la_merma():
@@ -134,7 +217,7 @@ def test_el_LOTE_se_puede_dirigir_igual_que_en_la_merma():
     misma decisión."""
     with _pantalla(), patch("app.main.crear_movimiento_stock") as mock_mov:
         respuesta = cliente.post("/deposito/stock/pase-a-segunda", data={
-            "articulo_id": "7", "cantidad": "5", "motivo": "podrido",
+            "articulo_id": "7", "que_pasa": "sueltos", "cantidad": "5", "motivo": "podrido",
             "fecha": "", "lote": "guia:1",
         }, follow_redirects=False)
 
@@ -160,7 +243,7 @@ def test_el_LOTE_se_puede_dirigir_igual_que_en_la_merma():
 def test_lo_que_REBOTA_y_no_llega_a_escribir(datos, esperado):
     """Cada rebote, y que NO haya escrito nada: un rebote que igual guarda es
     peor que no rebotar, porque el operario se va creyendo que no pasó."""
-    base = {"articulo_id": "7", "cantidad": "10", "motivo": "podrido", "fecha": "", "lote": ""}
+    base = {"articulo_id": "7", "que_pasa": "sueltos", "cantidad": "10", "motivo": "podrido", "fecha": "", "lote": ""}
     base.update(datos)
     with _pantalla(), patch("app.main.crear_movimiento_stock") as mock_mov:
         respuesta = cliente.post("/deposito/stock/pase-a-segunda", data=base)
@@ -176,7 +259,7 @@ def test_el_REBOTE_conserva_lo_que_ya_estaba_cargado():
     Un campo que el re-render pierde se va sin que nadie lo mire."""
     with _pantalla(), patch("app.main.crear_movimiento_stock"):
         respuesta = cliente.post("/deposito/stock/pase-a-segunda", data={
-            "articulo_id": "7", "cantidad": "0", "motivo": "golpeado",
+            "articulo_id": "7", "que_pasa": "sueltos", "cantidad": "0", "motivo": "golpeado",
             "fecha": "2026-09-18", "lote": "guia:1",
         })
     marcado = respuesta.text.split("</style>")[-1]
@@ -297,3 +380,173 @@ def test_lo_que_se_toca_entra_COMODO_con_el_pulgar():
     altos = medir_sync(html, ancho=390, selector_filas="select, input, button")
     mirados = altos.get("celdas", 0)
     assert mirados >= 5, f"solo se miraron {mirados} controles: la medición no llegó"
+
+
+# --- LA CUENTA Y EL EXTRACTO REPARTEN CON EL MISMO CRITERIO -------------------
+
+
+def test_la_CUENTA_y_el_EXTRACTO_leen_la_ficha_de_la_MISMA_constante():
+    """El bug del 09/09 servido de nuevo, y estuvo vivo del 10 al 21/09.
+
+    La cuenta (`_SQL_STOCK_PARTIDO`) leía `m.ficha_id` desde que la merma
+    ganó su porción; el extracto NO LO LEÍA —derivaba la ficha solo por el
+    camino del reingreso—. Medido antes de arreglarlo, con 10 cajas armadas y
+    3 tiradas: la cuenta decía ficha 7 y el extracto decía `ficha_id` None.
+
+    El síntoma es inconfundible y está escrito en el código: los dos "Sin
+    explicar" del mismo día salen IGUALES Y DE SIGNO OPUESTO, porque el
+    evento está de un lado y el saldo del otro.
+
+    Es un test de TEXTO porque con la base mockeada las dos versiones
+    "andan": lo que las separa no es el valor, es de dónde sale.
+    """
+    from app.db import _SQL_STOCK_PARTIDO, _SQL_TIPO_TIENE_FICHA_PROPIA
+    import inspect
+    from app.db import eventos_de_stock_del_dia
+
+    assert _SQL_TIPO_TIENE_FICHA_PROPIA in _SQL_STOCK_PARTIDO
+    # El extracto lo INTERPOLA, así que lo que queda en su cuerpo es el nombre
+    # de la constante: preguntar por el SQL ya resuelto no lo encontraría.
+    assert "_SQL_TIPO_TIENE_FICHA_PROPIA" in inspect.getsource(eventos_de_stock_del_dia)
+
+
+def test_los_DOS_tipos_que_llevan_ficha_salen_de_UNA_lista():
+    """Merma y pase. Escrita dos veces, el día que aparezca un tercero la
+    cuenta lo va a restar de la ficha y el extracto lo va a dibujar en
+    sueltos — que es exactamente lo que acaba de pasar con el pase.
+    """
+    from app.db import TIPOS_CON_FICHA_PROPIA, _SQL_TIPO_TIENE_FICHA_PROPIA
+
+    assert TIPOS_CON_FICHA_PROPIA == ("merma", "pase_a_segunda")
+    for tipo in TIPOS_CON_FICHA_PROPIA:
+        assert f"'{tipo}'" in _SQL_TIPO_TIENE_FICHA_PROPIA
+
+
+def test_el_CTE_de_la_cuenta_se_llama_BAJAS_y_no_MERMAS():
+    """El nombre se movió con la condición a propósito: un CTE que se llama
+    "mermas" y suma dos tipos es la clase de nombre que se lee y no se
+    verifica, y el que venga a agregar el tercero va a buscar ahí.
+    """
+    from app.db import _SQL_STOCK_PARTIDO
+
+    sql = "\n".join(
+        l for l in _SQL_STOCK_PARTIDO.splitlines() if not l.strip().startswith("--")
+    )
+    assert "bajas_ficha AS (" in sql
+    assert "mermas_ficha" not in sql
+    # Y LA PATA DEL UNION, que es la fácil de olvidar: sin ella una ficha cuyo
+    # ÚNICO movimiento sea una baja no existe para la consulta. La resta la
+    # haría bien y no la haría nunca.
+    assert "SELECT articulo_id, ficha_id FROM bajas_ficha" in sql
+
+
+def test_el_CHECK_del_ESQUEMA_y_la_lista_de_PYTHON_son_LA_MISMA_regla():
+    """Los dos dicen qué tipos pueden llevar ficha, en dos lenguajes.
+
+    Lo encontró un canario en CERO: devolver el CHECK del esquema a su
+    versión vieja —la que RECHAZA el pase con ficha— no hacía caer nada. La
+    migración corrió en las dos bases, así que las de hoy están bien; lo que
+    quedaba roto es la base que TODAVÍA NO EXISTE, que nace de
+    `db/esquema_completo.sql` y rechazaría todo pase de caja armada. Ni la
+    suite ni el humo lo pueden ver: el humo ABRE pantallas, no escribe un
+    pase.
+
+    Se compara contra el CHECK y no contra una lista copiada: copiada
+    envejece en silencio, que es justo lo que pasó del 20 al 21/09.
+    """
+    import re
+
+    from app.db import TIPOS_CON_FICHA_PROPIA
+
+    esquema = open("db/esquema_completo.sql", encoding="utf-8").read()
+    bloque = re.search(r"create table movimientos_stock.*?\n\);", esquema, re.S).group(0)
+    check = re.search(
+        r"constraint movimientos_stock_ficha_solo_\w+\s*\n\s*check \((.*?)\),\n", bloque, re.S
+    )
+    assert check is not None, "el esquema dejó de tener el CHECK de la ficha"
+    del_esquema = tuple(sorted(re.findall(r"'([a-z_]+)'", check.group(1))))
+
+    assert del_esquema == tuple(sorted(TIPOS_CON_FICHA_PROPIA)), (
+        f"el esquema permite {del_esquema} y Python reparte {TIPOS_CON_FICHA_PROPIA}: "
+        "una base nueva se comportaría distinto de las dos que están corriendo"
+    )
+
+
+# --- DE QUÉ LOTE SALE LA PÉRDIDA (21/09) -------------------------------------
+
+
+def test_un_pase_de_CAJAS_ARMADAS_prefiere_el_lote_de_CAJA_y_no_el_cajon_mas_viejo():
+    """Es del dueño: "armé una caja de Día con tomate; si pasa a segunda es
+    lo mismo que tirarla, y la pérdida es al costo de ESA caja —el tomate que
+    lleva adentro más la caja—, no al del cajón más viejo".
+
+    El rival está plantado y es plausible: un cajón MÁS VIEJO y más barato
+    del mismo artículo. Sin la preferencia el FIFO lo toma primero, la
+    pérdida sale a $100 en vez de $300, y no hay nada en ninguna pantalla que
+    se vea raro.
+    """
+    from core.stock import pasadas_de_lotes
+
+    lotes = [
+        {"tipo_lote": "guia", "origen_id": 1, "restante": 10.0, "costo": 100.0},
+        {"tipo_lote": "reproceso", "origen_id": 2, "restante": 10.0, "costo": 300.0},
+    ]
+    de_cajas = [l["tipo_lote"] for p in pasadas_de_lotes(
+        lotes, {"tipo": "pase_a_segunda", "ficha_id": 9}) for l in p]
+    assert de_cajas[0] == "reproceso"
+
+    # EL RIVAL, escrito para que se vea que NO es el que va:
+    de_sueltos = [l["tipo_lote"] for p in pasadas_de_lotes(
+        lotes, {"tipo": "pase_a_segunda", "ficha_id": None}) for l in p]
+    assert de_sueltos[0] == "guia"
+
+
+def test_la_preferencia_del_pase_es_PREFERENCIA_y_no_PARED():
+    """Si por un agujero viejo no hubiera lote de caja armada, una pared
+    trabaría al operario por algo que ya estaba ahí antes de que tocara nada.
+    Es el mismo criterio que el armado, que tampoco es pared.
+    """
+    from core.stock import pasadas_de_lotes, prioridad_de_lote
+
+    salida = {"tipo": "pase_a_segunda", "ficha_id": 9}
+    assert prioridad_de_lote(salida).prohibe == ()
+
+    solo_cajon = [{"tipo_lote": "guia", "origen_id": 1, "restante": 10.0, "costo": 100.0}]
+    cae = [l["tipo_lote"] for p in pasadas_de_lotes(solo_cajon, salida) for l in p]
+    assert cae == ["guia"], "sin caja armada tiene que caer al cajón igual"
+
+
+def test_la_MERMA_con_ficha_NO_cambia_y_eso_es_una_decision():
+    """Queda en FIFO puro, como desde el 08/09.
+
+    No es un olvido y no es simetría: el comentario de `_PRIORIDAD_POR_SALIDA`
+    dice que una merma puede ser de un cajón podrido o de una caja golpeada y
+    que el tipo no lo distingue. Desde el 10/09 la merma TIENE ficha, así que
+    hoy sí podría distinguirlo — y moverla cambiaría el costeo de las mermas
+    ya cargadas. Es una decisión del dueño, no nuestra, y hasta que la tome
+    este test la fija.
+    """
+    from core.stock import SIN_PREFERENCIA, prioridad_de_lote
+
+    assert prioridad_de_lote({"tipo": "merma", "ficha_id": 9}) is SIN_PREFERENCIA
+
+
+def test_la_SALIDA_trae_la_ficha_desde_la_consulta_y_no_un_NULL():
+    """La rama de movimientos mandaba `NULL` donde la del armado manda la
+    ficha: cuando se escribió, un movimiento no podía tener una.
+
+    Es un test de TEXTO porque con la base mockeada el valor lo entrega el
+    fixture (corolario 65): sacar la columna del SELECT llega igual, y la
+    preferencia se queda sin con qué decidir — en silencio.
+    """
+    from app.db import _SQL_SALIDAS_STOCK
+
+    sql = "\n".join(
+        l for l in _SQL_SALIDAS_STOCK.splitlines() if not l.strip().startswith("--")
+    )
+    rama = sql[sql.index("FROM movimientos_stock m") - 400:sql.index("FROM movimientos_stock m")]
+    assert "m.lote_tipo, m.lote_origen_id, m.ficha_id, FALSE" in rama, rama[-200:]
+    # Y `ficha_con_envase` SIGUE EN FALSE: esa columna es la pared del ARMADO
+    # —con envase, un armado no puede salir de un cajón— y un movimiento no es
+    # un armado. Cambiarla acá movería una regla que no es de esta salida.
+    assert "m.ficha_id, TRUE" not in rama

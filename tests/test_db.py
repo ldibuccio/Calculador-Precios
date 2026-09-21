@@ -5388,11 +5388,16 @@ def test_crear_movimiento_stock_devolucion_ESCRIBE_la_compra_elegida():
     assert "envase_id" not in insert.args[0]
 
 
-def test_la_ficha_que_SOLO_TIENE_MERMA_no_se_cae_de_la_cuenta():
-    """LA PATA FÁCIL DE OLVIDAR. La merma nueva resta en el SELECT final,
-    pero si `mermas_ficha` no está también en el UNION de `fichas_con_algo`,
-    una ficha cuyo ÚNICO movimiento sea una merma no existe para la consulta:
-    la resta estaría bien escrita y no se haría nunca.
+def test_la_ficha_que_SOLO_TIENE_UNA_BAJA_no_se_cae_de_la_cuenta():
+    """LA PATA FÁCIL DE OLVIDAR. La baja resta en el SELECT final, pero si
+    `bajas_ficha` no está también en el UNION de `fichas_con_algo`, una ficha
+    cuyo ÚNICO movimiento sea una baja —una merma o un pase a segunda— no
+    existe para la consulta: la resta estaría bien escrita y no se haría
+    nunca.
+
+    El CTE se llamaba `mermas_ficha` hasta el 21/09, cuando el pase entró a
+    la misma cuenta. El nombre se movió con la condición: un CTE que se llama
+    "mermas" y suma dos tipos se lee y no se verifica.
 
     Se mira el UNION y no el resultado porque los otros tres términos ya
     están: un fixture con armados encima taparía el agujero sin querer.
@@ -5400,7 +5405,7 @@ def test_la_ficha_que_SOLO_TIENE_MERMA_no_se_cae_de_la_cuenta():
     from app.db import _SQL_STOCK_PARTIDO
 
     union = _SQL_STOCK_PARTIDO.split("fichas_con_algo AS (")[1].split(")")[0]
-    for pata in ("armadas", "salidas_ficha", "reingresos_ficha", "mermas_ficha"):
+    for pata in ("armadas", "salidas_ficha", "reingresos_ficha", "bajas_ficha"):
         assert f"FROM {pata}" in union, pata
     # Y LAS PATAS ENTERAS, no solo el nombre a la vista: cuatro SELECT unidos
     # por tres UNION. Sin esto el test pasa con el `UNION` borrado —el nombre
@@ -5410,7 +5415,7 @@ def test_la_ficha_que_SOLO_TIENE_MERMA_no_se_cae_de_la_cuenta():
     assert union.count("UNION") == 3
 
 
-def test_la_merma_por_ficha_usa_LA_MISMA_VENTANA_que_los_otros_terminos():
+def test_las_BAJAS_por_ficha_usan_LA_MISMA_VENTANA_que_los_otros_terminos():
     """Si ésta mirara toda la historia y las otras solo lo posterior al corte,
     la resta mezclaría dos eras. Medido con el canario: corrida con `>=` el
     número se mueve (7 cajas contra 3), así que el recorte hace trabajo real.
@@ -5420,8 +5425,10 @@ def test_la_merma_por_ficha_usa_LA_MISMA_VENTANA_que_los_otros_terminos():
     """
     from app.db import _SQL_STOCK_PARTIDO
 
-    trozo = _SQL_STOCK_PARTIDO.split("mermas_ficha AS (")[1].split("), fichas_con_algo")[0]
-    assert "m.tipo = 'merma'" in trozo
+    trozo = _SQL_STOCK_PARTIDO.split("bajas_ficha AS (")[1].split("), fichas_con_algo")[0]
+    # LOS DOS TIPOS, y desde el 21/09 el pase también: una caja armada que se
+    # pone fea pasa a segunda directo, y eso baja la ficha igual que tirarla.
+    assert "m.tipo IN ('merma', 'pase_a_segunda')" in trozo
     assert "m.ficha_id IS NOT NULL" in trozo
     assert "m.fecha_operacion > corte.fecha" in trozo
     assert "m.fecha_operacion >= corte.fecha" not in trozo, (

@@ -8703,6 +8703,51 @@ Y la causa de fondo es la de siempre en este archivo, en una herramienta:
 Es el corolario 4 fuera de un assert — el ancla suelta que matchea al vecino,
 ahora cortando código en vez de verificándolo.
 
+### Y volvió el 21/09 con OTRO regex, que es lo que lo vuelve una familia
+
+El contador se había arreglado a `^_{5,} (\S+) _{5,}$` —los encabezados de
+falla de pytest, que son `____ test_x ____`—. **Pytest rellena esos guiones
+hasta el ancho de la terminal**, así que un nombre LARGO deja **uno solo** de
+cada lado, y en este repo todos los nombres son largos. Medido plantando dos
+fallas, una de nombre largo y otra corto:
+
+```
+'_ test_un_nombre_bien_largo_como_los_de_este_repo_que_no_deja_lugar_a_guiones '
+'__________________________________ test_corto ________________________________'
+
+regex viejo  ^_{5,} (\S+) _{5,}$  ->  1 de 2
+regex nuevo  ^_+ (\S+) _+$        ->  2 de 2
+```
+
+**El contador undercuenta exactamente los tests con nombre largo**, o sea
+justo los que este proyecto escribe. Tres canarios de dieciséis salieron `[0]`
+mintiendo el mismo día.
+
+**Y lo único que lo delató fue la COLA**, que es la guarda que este archivo ya
+pedía tres párrafos más arriba: `1 failed, 2953 passed` al lado de un `[0]`.
+La regla estaba escrita, la cola estaba impresa, y yo leí el número. Es el
+corolario 19 una vez más — una salvaguarda que existe y no se lee no sirve.
+
+**Cómo se leen los dos juntos, que es lo que queda**: un `[0]` cuya cola diga
+`N passed` a secas es un cero de verdad; uno cuya cola diga `1 failed` es el
+contador mintiendo. **Si hay que elegir uno solo, la cola le gana al
+contador**: el contador es código propio y la cola la escribe pytest.
+
+Y el arreglo se verificó **plantando el caso**, no leyendo el regex: un regex
+se lee bien siempre, y el ancho de la terminal no está en el regex.
+
+### Y a esta altura el patrón es del CONTADOR, no de cada regex
+
+Tres versiones del mismo contador fallaron por tres causas distintas —`-q` que
+no imprime `FAILED`, un corte que parte el archivo, y ahora el relleno de
+guiones—. **Lo que se repite no es el bug: es que el canario mide su propio
+resultado con código propio**, y ese código no tiene quien lo verifique
+(corolario 35: la herramienta de verificar también es código).
+
+Lo barato, y es lo que hay que hacer siempre: **imprimir la cola SIEMPRE, no
+solo cuando el conteo da cero.** Con la cola al lado, cualquier versión rota
+del contador se ve en el acto y ninguna decide nada.
+
 ## Y la SÉPTIMA lectura del canario en cero: el fixture dibuja UNA sola de las dos ramas
 
 Del 19/09. (El agrupado que produjo el caso se revirtió ese mismo día —ver el

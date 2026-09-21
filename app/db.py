@@ -11156,6 +11156,25 @@ def anular_movimiento_stock(movimiento_id: int) -> None:
 # salió (pr.id = m.pedido_renglon_id). La VENTANA del corte no está acá a
 # propósito: no es parte de "de quién es este reingreso", y cada consulta
 # recorta con la suya.
+# LOS TIPOS QUE DICEN DE QUÉ FICHA SALIERON, escrito UNA vez y usado por la
+# CUENTA (`_SQL_STOCK_PARTIDO`) y por el EXTRACTO (`eventos_de_stock_del_dia`).
+#
+# La merma lo tiene desde el 10/09 y el pase desde el 21/09, y los dos por el
+# mismo motivo: son bultos que se van de una pila concreta. Si sale de cajas
+# ya armadas hay que restárselo a esa ficha — sin eso baja el TOTAL y no baja
+# la ficha, y como los sueltos se derivan por resta la baja cae ENTERA sobre
+# ellos, que es el bug que este CTE vino a arreglar.
+#
+# ESTABAN SEPARADOS Y SE HABÍAN SEPARADO DE VERDAD: hasta el 21/09 la cuenta
+# leía `m.ficha_id` y el extracto NO LO LEÍA EN ABSOLUTO —derivaba la ficha
+# solo por el camino del reingreso— así que una merma de cajas armadas salía
+# restada de la ficha en el saldo y dibujada en sueltos en el extracto.
+# Medido antes de arreglarlo: 10 cajas armadas, se tiran 3, la cuenta dice
+# ficha 7 y el extracto dice `ficha_id` None.
+TIPOS_CON_FICHA_PROPIA = ("merma", "pase_a_segunda")
+
+_SQL_TIPO_TIENE_FICHA_PROPIA = "m.tipo IN ('merma', 'pase_a_segunda') AND m.ficha_id IS NOT NULL"
+
 _SQL_REINGRESO_ES_DE_LA_FICHA = """
     m.tipo = 'reingreso_rechazo'
     AND (m.destino_rechazo IS NULL OR m.destino_rechazo = 'stock')
@@ -11216,14 +11235,20 @@ _SQL_STOCK_PARTIDO = """
           AND m.fecha_operacion > corte.fecha
           AND m.fecha_operacion <= tope.fecha
         GROUP BY pr.articulo_id, pr.ficha_id
-    ), mermas_ficha AS (
-        -- LO QUE SE TIRÓ DE ESA FICHA. Resta igual que una salida, porque es
-        -- una: son cajas que se fueron. Hasta el 10/09 la merma no podía
-        -- decir de qué ficha salía, así que bajaba el TOTAL del artículo y
-        -- no bajaba la ficha — y como los sueltos se derivan por resta, la
-        -- baja caía ENTERA sobre los sueltos. Medido antes de arreglarlo:
-        -- tirando las 10 cajas de una ficha, el sistema quedaba diciendo 10
-        -- cajas y 0 sueltos, con el galpón exactamente al revés.
+    ), bajas_ficha AS (
+        -- LO QUE SE FUE DE ESA FICHA: lo que se TIRÓ y lo que PASÓ A SEGUNDA.
+        -- Resta igual que una salida, porque es una: son cajas que ya no
+        -- están. Hasta el 10/09 la merma no podía decir de qué ficha salía,
+        -- así que bajaba el TOTAL del artículo y no bajaba la ficha — y como
+        -- los sueltos se derivan por resta, la baja caía ENTERA sobre los
+        -- sueltos. Medido antes de arreglarlo: tirando las 10 cajas de una
+        -- ficha, el sistema quedaba diciendo 10 cajas y 0 sueltos, con el
+        -- galpón exactamente al revés.
+        --
+        -- EL PASE ENTRÓ EL 21/09 Y SE LLAMABA `mermas_ficha`. El nombre se
+        -- movió con la condición a propósito: un CTE que se llama "mermas" y
+        -- suma dos tipos es la clase de nombre que se lee y no se verifica, y
+        -- el que venga a agregar el tercero va a buscar acá.
         --
         -- LA MISMA VENTANA que los otros tres términos (> corte, <= tope), y
         -- por la misma razón que dice `reingresos_ficha`: si éste mirara toda
@@ -11232,7 +11257,7 @@ _SQL_STOCK_PARTIDO = """
         -- número SE MUEVE (7 cajas contra 3), así que el piso está puesto.
         SELECT m.articulo_id, m.ficha_id, SUM(-m.cantidad) AS total
         FROM movimientos_stock m, corte, tope
-        WHERE m.anulado_el IS NULL AND m.tipo = 'merma' AND m.ficha_id IS NOT NULL
+        WHERE m.anulado_el IS NULL AND {_SQL_TIPO_TIENE_FICHA_PROPIA}
           AND m.fecha_operacion > corte.fecha
           AND m.fecha_operacion <= tope.fecha
         GROUP BY m.articulo_id, m.ficha_id
@@ -11244,10 +11269,10 @@ _SQL_STOCK_PARTIDO = """
         SELECT articulo_id, ficha_id FROM reingresos_ficha
         UNION
         -- Y ACÁ TAMBIÉN, que es lo fácil de olvidar: sin esta pata, una
-        -- ficha cuyo ÚNICO movimiento sea una merma no existe para la
-        -- consulta y no aparece en ningún lado. La resta la haría bien y no
-        -- la haría nunca.
-        SELECT articulo_id, ficha_id FROM mermas_ficha
+        -- ficha cuyo ÚNICO movimiento sea una baja —una merma o un pase a
+        -- segunda— no existe para la consulta y no aparece en ningún lado.
+        -- La resta la haría bien y no la haría nunca.
+        SELECT articulo_id, ficha_id FROM bajas_ficha
     )
     SELECT f.articulo_id, f.ficha_id,
            COALESCE(a.total, 0) + COALESCE(re.total, 0)
@@ -11261,7 +11286,7 @@ _SQL_STOCK_PARTIDO = """
     LEFT JOIN armadas a ON a.articulo_id = f.articulo_id AND a.ficha_id = f.ficha_id
     LEFT JOIN salidas_ficha s ON s.articulo_id = f.articulo_id AND s.ficha_id = f.ficha_id
     LEFT JOIN reingresos_ficha re ON re.articulo_id = f.articulo_id AND re.ficha_id = f.ficha_id
-    LEFT JOIN mermas_ficha me ON me.articulo_id = f.articulo_id AND me.ficha_id = f.ficha_id
+    LEFT JOIN bajas_ficha me ON me.articulo_id = f.articulo_id AND me.ficha_id = f.ficha_id
     LEFT JOIN fichas_logistica fl ON fl.id = f.ficha_id
 """
 
@@ -11821,18 +11846,34 @@ def eventos_de_stock_del_dia(articulo_id: int, fecha) -> dict:
             ]
 
             # DE QUÉ PORCIÓN ES ESTE MOVIMIENTO. `ficha_id` viene NO NULO solo
-            # cuando la CUENTA lo atribuye a esa ficha, y se decide con
-            # `_SQL_REINGRESO_ES_DE_LA_FICHA` —la misma constante que usa
-            # `_SQL_STOCK_PARTIDO`—, no con una condición escrita acá. El
-            # extracto no puede repartir un evento con un criterio distinto
-            # del que reparte el saldo: eso es exactamente lo que rompió el
-            # 09/09, con los dos "Sin explicar" saliendo ±15.
+            # cuando la CUENTA lo atribuye a esa ficha, y se decide con las
+            # MISMAS DOS CONSTANTES que usa `_SQL_STOCK_PARTIDO`, no con una
+            # condición escrita acá. El extracto no puede repartir un evento
+            # con un criterio distinto del que reparte el saldo: eso es
+            # exactamente lo que rompió el 09/09, con los dos "Sin explicar"
+            # saliendo ±15.
+            #
+            # Y SE HABÍA VUELTO A ROMPER, por la mitad que faltaba: la cuenta
+            # leía `m.ficha_id` desde el 10/09 y esto NO LO LEÍA. Una merma de
+            # cajas armadas salía restada de la ficha en el saldo y dibujada
+            # en sueltos acá. Medido: 10 armadas, se tiran 3, la cuenta dice
+            # ficha 7 y el extracto decía `ficha_id` None. Las dos formas de
+            # llegar a la ficha van juntas ahora, y ninguna es una condición
+            # propia de este archivo.
+            #
+            # `m.ficha_id` GANA y el reingreso queda de respaldo: son
+            # excluyentes por construcción —el CHECK solo deja escribir
+            # `ficha_id` en merma y pase, y `pedido_renglon_id` solo en el
+            # reingreso— así que el COALESCE no puede elegir mal.
             #
             # El LEFT JOIN no puede duplicar: `pr.id` es la clave primaria.
             cursor.execute(
                 f"""
                 SELECT m.tipo, m.cantidad, m.motivo, m.destino_rechazo, m.bultos_segunda,
-                       CASE WHEN {_SQL_REINGRESO_ES_DE_LA_FICHA} THEN pr.ficha_id END AS ficha_id
+                       COALESCE(
+                           CASE WHEN {_SQL_TIPO_TIENE_FICHA_PROPIA} THEN m.ficha_id END,
+                           CASE WHEN {_SQL_REINGRESO_ES_DE_LA_FICHA} THEN pr.ficha_id END
+                       ) AS ficha_id
                 FROM movimientos_stock m
                 LEFT JOIN pedidos_renglones pr ON pr.id = m.pedido_renglon_id
                 WHERE m.articulo_id = %s AND m.anulado_el IS NULL AND m.fecha_operacion = %s
@@ -13443,9 +13484,24 @@ _SQL_SALIDAS_STOCK = """
         WHERE r.armado_el IS NOT NULL AND r.anulado_el IS NULL AND r.articulo_id = ANY(%s)
           AND (r.armado_el AT TIME ZONE 'America/Argentina/Buenos_Aires')::date > %s
         UNION ALL
+        -- LA FICHA VIAJA, y desde el 21/09 no es siempre NULL. Iba en NULL
+        -- porque cuando esto se escribió un movimiento no podía tener ficha;
+        -- la merma puede desde el 10/09 y el pase desde el 21/09, y esta
+        -- rama nunca se enteró. Es el corolario 3: el que falta no nombra el
+        -- campo, así que grepear `ficha_id` no lo encuentra — lo encuentra
+        -- mirar quién CONSTRUYE la salida.
+        --
+        -- La usa `prioridad_de_lote`: un pase de CAJAS ARMADAS prefiere
+        -- lotes trabajados, porque lo que se está perdiendo es una caja y no
+        -- un cajón. Sin esta columna la preferencia no tiene con qué
+        -- decidir y el pase se costea contra el cajón más viejo.
+        --
+        -- `ficha_con_envase` SIGUE EN FALSE a propósito: esa columna es la
+        -- pared del ARMADO (con envase, el armado no puede salir de un
+        -- cajón) y un movimiento no es un armado.
         SELECT m.fecha_operacion, m.creado_en, m.tipo, m.fecha_operacion,
                -m.cantidad, NULL, NULL, m.motivo, NULL,
-               m.lote_tipo, m.lote_origen_id, NULL, FALSE, NULL::bigint, m.articulo_id
+               m.lote_tipo, m.lote_origen_id, m.ficha_id, FALSE, NULL::bigint, m.articulo_id
         FROM movimientos_stock m
         WHERE m.anulado_el IS NULL AND m.cantidad < 0 AND m.articulo_id = ANY(%s)
           AND m.fecha_operacion > %s
@@ -14321,7 +14377,7 @@ _SQL_GASTO_EN_CAJAS = """
 def gasto_en_cajas(desde, hasta) -> dict:
     """Cuánta plata se gastó en cajas en un período, por envase y en total.
 
-    `hasta` NO TIENE DEFAULT, por lo mismo que en `cajas_perdidas_por_rechazo`:
+    `hasta` NO TIENE DEFAULT, por lo mismo que en `cajas_perdidas`:
     un llamador que se lo olvidara recibiría todo hasta hoy, que es un número
     plausible contestando otra pregunta. Las dos cuentas de esta pantalla se
     leen juntas, así que tienen que recortar por el mismo período o la resta
@@ -14387,38 +14443,69 @@ def gasto_en_cajas(desde, hasta) -> dict:
     }
 
 
-_SQL_CAJAS_PERDIDAS_POR_RECHAZO = """
+_SQL_CAJAS_PERDIDAS = """
+    WITH eventos AS (
+        -- LOS RECHAZOS. La caja se va con la mercadería que vuelve del súper
+        -- y no se reusa. `cantidad` es POSITIVA acá: es un reingreso.
+        SELECT pr.ficha_id, m.fecha_operacion, m.cantidad AS cajas, 'rechazo' AS origen
+          FROM movimientos_stock m
+          JOIN pedidos_renglones pr ON pr.id = m.pedido_renglon_id
+         WHERE m.anulado_el IS NULL
+           AND m.tipo = 'reingreso_rechazo'
+           AND m.destino_rechazo IN ('segunda', 'devolucion_proveedor', 'reproceso')
+           AND m.fecha_operacion >= %s AND m.fecha_operacion <= %s
+        UNION ALL
+        -- EL PASE DE CAJAS ARMADAS, desde el 21/09. Una caja armada para un
+        -- cliente que se pone fea se va a segunda con la fruta adentro, así
+        -- que su costo tampoco se recuperó — exactamente igual que las de
+        -- arriba, y por eso están en la misma lista.
+        --
+        -- SOLO CON FICHA: un pase de bultos SUELTOS no lleva caja nuestra
+        -- (la fruta está en el cajón del proveedor), así que sumarlo contaría
+        -- una caja que nunca existió.
+        --
+        -- `-m.cantidad` PORQUE EL PASE ES NEGATIVO, y no `bultos_segunda`
+        -- aunque valga lo mismo: el CHECK del uno a uno los ata, pero la
+        -- columna que mide cuántas cajas se fueron es la del stock. El día
+        -- que el uno a uno deje de valer, ésta sigue contestando.
+        SELECT m.ficha_id, m.fecha_operacion, -m.cantidad AS cajas, 'pase' AS origen
+          FROM movimientos_stock m
+         WHERE m.anulado_el IS NULL
+           AND m.tipo = 'pase_a_segunda'
+           AND m.ficha_id IS NOT NULL
+           AND m.fecha_operacion >= %s AND m.fecha_operacion <= %s
+    )
     SELECT cl.nombre, a.nombre, e.nombre,
-           SUM(m.cantidad)                       AS cajas,
-           SUM(m.cantidad * c.costo)             AS pesos,
-           COUNT(*)                              AS rechazos,
-           MAX(m.fecha_operacion)                AS ultimo
-      FROM movimientos_stock m
-      JOIN pedidos_renglones pr ON pr.id = m.pedido_renglon_id
-      JOIN fichas_logistica f   ON f.id = pr.ficha_id
-      JOIN envases e            ON e.id = f.envase_id
-      JOIN clientes cl          ON cl.id = f.cliente_id
-      JOIN articulos a          ON a.id = f.articulo_id
+           SUM(ev.cajas)                                             AS cajas,
+           SUM(ev.cajas * c.costo)                                   AS pesos,
+           COUNT(*)                                                  AS veces,
+           COALESCE(SUM(ev.cajas) FILTER (WHERE ev.origen = 'pase'), 0) AS cajas_por_pase,
+           MAX(ev.fecha_operacion)                                   AS ultimo
+      FROM eventos ev
+      JOIN fichas_logistica f ON f.id = ev.ficha_id
+      JOIN envases e          ON e.id = f.envase_id
+      JOIN clientes cl        ON cl.id = f.cliente_id
+      JOIN articulos a        ON a.id = f.articulo_id
       LEFT JOIN LATERAL (
           SELECT h.costo
             FROM envases_costo_historial h
            WHERE h.envase_id = f.envase_id
-             AND h.vigente_desde <= m.fecha_operacion
+             AND h.vigente_desde <= ev.fecha_operacion
            ORDER BY h.vigente_desde DESC
            LIMIT 1
       ) c ON true
-     WHERE m.anulado_el IS NULL
-       AND m.tipo = 'reingreso_rechazo'
-       AND m.destino_rechazo IN ('segunda', 'devolucion_proveedor', 'reproceso')
-       AND m.fecha_operacion >= %s
-       AND m.fecha_operacion <= %s
      GROUP BY cl.nombre, a.nombre, e.nombre
-     ORDER BY SUM(m.cantidad * c.costo) DESC NULLS LAST, SUM(m.cantidad) DESC
+     ORDER BY SUM(ev.cajas * c.costo) DESC NULLS LAST, SUM(ev.cajas) DESC
 """
 
 
-def cajas_perdidas_por_rechazo(desde, hasta) -> dict:
-    """Las cajas nuestras que se llevaron los rechazos, por cliente y artículo.
+def cajas_perdidas(desde, hasta) -> dict:
+    """Las cajas nuestras que salieron sin venderse como primera, por cliente y artículo.
+
+    SE LLAMABA `cajas_perdidas` HASTA EL 21/09, y el nombre dejó
+    de ser cierto ese día: el pase a segunda de una caja ya armada pierde la
+    caja igual y no es un rechazo. Un nombre con un alcance que la función ya
+    no tiene es de los que se leen y no se verifican.
 
     `hasta` NO TIENE DEFAULT, y es a propósito. Un llamador que se lo
     olvidara no recibiría un error: recibiría todo desde `desde` hasta hoy,
@@ -14429,9 +14516,19 @@ def cajas_perdidas_por_rechazo(desde, hasta) -> dict:
     Frutamax cuatro artículos se llevan el 80%, así que ordenada por cajas o
     por nombre haría falta leerla entera para encontrar los dos que importan.
 
-    LAS TRES PUERTAS DONDE LA CAJA SE PIERDE: `segunda` (se remite al Puesto
-    en la caja en la que volvió), `devolucion_proveedor` (se va con la
-    mercadería) y `reproceso` (se tira al pasar la fruta al cajón grande).
+    DOS ORÍGENES Y NO UNO. Los RECHAZOS, con sus tres puertas: `segunda` (se
+    remite al Puesto en la caja en la que volvió), `devolucion_proveedor` (se
+    va con la mercadería) y `reproceso` (se tira al pasar la fruta al cajón
+    grande). Y el PASE A SEGUNDA de cajas ya armadas, desde el 21/09: la caja
+    se va con la fruta y no se reusa (dicho por el dueño; con eso el modelo
+    de `core/envases.py` cierra —la caja se descontó al armarla y no vuelve—
+    y no hay nada que tocar en la pantalla de Cajas).
+
+    `cajas_por_pase` SEPARA LOS DOS, y no es un adorno: cinco cajas perdidas
+    en rechazos son una conversación con el CLIENTE —le volvió mercadería— y
+    cinco por pase son una conversación con el DEPÓSITO, porque la fruta se
+    puso fea acá adentro. Sumadas en una sola columna, una fila del segundo
+    tipo se lee como del primero y manda a reclamarle a quien no fue.
 
     `reproceso` ENTRÓ EL 17/09, dos días después que las otras dos. Estuvo
     afuera porque su caja ya está cobrada adentro de `rechazos_perdidos` —lo
@@ -14442,8 +14539,9 @@ def cajas_perdidas_por_rechazo(desde, hasta) -> dict:
     `core.costo_real.DESTINOS_QUE_SE_LLEVAN_LA_CAJA`, que es la misma lista
     que `db/cajas_7_*.sql` — y hay un test que ata las tres.
 
-    `rechazos` ES LA COLUMNA QUE HACE LEGIBLE EL RESTO, y no estaba en el
-    pedido: dice de cuántos rechazos DISTINTOS salen esas cajas. Un artículo
+    `veces` ES LA COLUMNA QUE HACE LEGIBLE EL RESTO, y no estaba en el
+    pedido: dice de cuántos eventos DISTINTOS salen esas cajas. Se llamaba
+    `rechazos` hasta el 21/09, por lo mismo que la función. Un artículo
     que perdió 5 cajas en UN rechazo es un camión que volvió; el mismo número
     en CINCO es algo que pasa siempre, y son dos conversaciones distintas con
     el cliente. Sin ella, un porcentaje alto sobre números chicos no se puede
@@ -14459,15 +14557,15 @@ def cajas_perdidas_por_rechazo(desde, hasta) -> dict:
     un LEFT JOIN esas devoluciones entrarían con `cajas` en positivo y `pesos`
     en NULL, que se lee como una fuga sin precio en vez de como lo que es.
 
-    EL ENVASE SALE DE LA FICHA DE HOY, que es lo único que hay: las dos
-    puertas no lo declaran (el CHECK solo deja escribir `envase_id` con
-    destino `reproceso`). Cambiarle el envase a una ficha re-etiqueta esta
-    historia en silencio. Ver docs/el_costo_de_las_cajas_que_salen_sin_venta.md
+    EL ENVASE SALE DE LA FICHA DE HOY, que es lo único que hay: ninguno de
+    los dos orígenes lo declara. Cambiarle el envase a una ficha re-etiqueta
+    esta historia en silencio. Ver
+    docs/el_costo_de_las_cajas_que_salen_sin_venta.md
     """
     conexion = obtener_conexion()
     try:
         with conexion.cursor() as cursor:
-            cursor.execute(_SQL_CAJAS_PERDIDAS_POR_RECHAZO, (desde, hasta))
+            cursor.execute(_SQL_CAJAS_PERDIDAS, (desde, hasta, desde, hasta))
             filas = cursor.fetchall()
     finally:
         conexion.close()
@@ -14477,8 +14575,9 @@ def cajas_perdidas_por_rechazo(desde, hasta) -> dict:
             "cliente": f[0], "articulo": f[1], "envase": f[2],
             "cajas": float(f[3] or 0),
             "pesos": float(f[4]) if f[4] is not None else 0.0,
-            "rechazos": int(f[5] or 0),
-            "ultimo": f[6],
+            "veces": int(f[5] or 0),
+            "cajas_por_pase": float(f[6] or 0),
+            "ultimo": f[7],
         }
         for f in filas
     ]

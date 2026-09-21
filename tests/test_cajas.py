@@ -427,9 +427,9 @@ CON_PERDIDAS = {
     "desde": date(2026, 6, 18),
     "renglones": [
         {"cliente": "EJEMPLO Super", "articulo": "Fruta Uno", "envase": "Caja Grande",
-         "cajas": 35.0, "pesos": 56000.0, "rechazos": 4, "ultimo": date(2026, 9, 12)},
+         "cajas": 35.0, "pesos": 56000.0, "veces": 4, "cajas_por_pase": 0.0, "ultimo": date(2026, 9, 12)},
         {"cliente": "EJEMPLO Super", "articulo": "Fruta Dos", "envase": "Caja Chica",
-         "cajas": 5.0, "pesos": 3250.0, "rechazos": 1, "ultimo": date(2026, 9, 3)},
+         "cajas": 5.0, "pesos": 3250.0, "veces": 1, "cajas_por_pase": 0.0, "ultimo": date(2026, 9, 3)},
     ],
     "cajas": 40.0, "pesos": 59250.0, "ultimo": date(2026, 9, 12),
 }
@@ -602,7 +602,7 @@ def test_la_RUTA_dejo_de_PEDIR_las_tres_cuentas_que_ya_no_muestra():
     llamadas = {n.func.id for n in _ast.walk(ruta)
                 if isinstance(n, _ast.Call) and isinstance(n.func, _ast.Name)}
 
-    for nombre in ("gasto_en_cajas", "cajas_perdidas_por_rechazo",
+    for nombre in ("gasto_en_cajas", "cajas_perdidas",
                    "contar_guias_sin_declarar_el_envase"):
         assert nombre not in llamadas, f"la ruta sigue pidiendo {nombre}"
     # El control: las que SI tiene que pedir. Sin esto, un parseo que devuelva
@@ -619,13 +619,13 @@ def test_las_FUNCIONES_de_la_plata_siguen_ENTERAS_para_Gerencia():
     Así es cablear una pantalla.
 
     Y ESTE TEST ES LA UNICA SEÑAL QUE QUEDA de que existen: sin ningún
-    llamador, `gasto_en_cajas` y `cajas_perdidas_por_rechazo` son exactamente
+    llamador, `gasto_en_cajas` y `cajas_perdidas` son exactamente
     lo que el corolario 33 dice que se lee como "no se usa" y se borra.
     """
-    from app.db import cajas_perdidas_por_rechazo, gasto_en_cajas
+    from app.db import cajas_perdidas, gasto_en_cajas
 
     assert callable(gasto_en_cajas)
-    assert callable(cajas_perdidas_por_rechazo)
+    assert callable(cajas_perdidas)
 
 
 def test_debajo_del_umbral_la_pantalla_lo_MARCA():
@@ -870,7 +870,7 @@ def test_las_TRES_listas_de_destinos_que_se_llevan_la_caja_dicen_lo_MISMO():
     import io
     import re
 
-    from app.db import _SQL_CAJAS_PERDIDAS_POR_RECHAZO
+    from app.db import _SQL_CAJAS_PERDIDAS
     from core.costo_real import DESTINOS_QUE_SE_LLEVAN_LA_CAJA
 
     def destinos(texto):
@@ -886,7 +886,7 @@ def test_las_TRES_listas_de_destinos_que_se_llevan_la_caja_dicen_lo_MISMO():
     ).read()
     esperado = tuple(sorted(DESTINOS_QUE_SE_LLEVAN_LA_CAJA))
 
-    assert destinos(_SQL_CAJAS_PERDIDAS_POR_RECHAZO) == esperado
+    assert destinos(_SQL_CAJAS_PERDIDAS) == esperado
     assert destinos(sql_del_repo) == esperado
 
 
@@ -901,22 +901,22 @@ def test_lo_que_la_CONSULTA_de_las_perdidas_pide_solo_se_ve_en_su_TEXTO():
     tres cosas para explicarlas, así que un `in` sobre el texto entero
     matchea la prosa (corolario 59).
     """
-    from app.db import _SQL_CAJAS_PERDIDAS_POR_RECHAZO
+    from app.db import _SQL_CAJAS_PERDIDAS
 
     sql = "\n".join(
-        l for l in _SQL_CAJAS_PERDIDAS_POR_RECHAZO.splitlines()
+        l for l in _SQL_CAJAS_PERDIDAS.splitlines()
         if not l.strip().startswith("--")
     )
 
     # 1. ORDENADA POR PLATA: es lo que la vuelve una lista de trabajo. Con
     #    cuatro artículos llevándose el 80%, por nombre habría que leerla
     #    entera para encontrar los dos que importan.
-    assert "ORDER BY SUM(m.cantidad * c.costo) DESC" in sql
+    assert "ORDER BY SUM(ev.cajas * c.costo) DESC" in sql
 
     # 2. EL COSTO VIGENTE A LA FECHA DEL RECHAZO, no el de hoy: una caja
     #    perdida en julio no se revalúa sola. Es el mismo reloj que
     #    `gasto_en_cajas`, y las dos se leen juntas en la misma pantalla.
-    assert "h.vigente_desde <= m.fecha_operacion" in sql
+    assert "h.vigente_desde <= ev.fecha_operacion" in sql
     assert "current_date" not in sql.lower()
 
     # 3. `JOIN envases` Y NO `LEFT JOIN`: una ficha sin envase es envase
@@ -1881,9 +1881,9 @@ CAJAS_PERDIDAS = {
     "cajas": 47.0, "pesos": 128400.0, "ultimo": date(2026, 9, 18),
     "renglones": [
         {"cliente": "EJEMPLO Uno", "articulo": "EJEMPLO Fruta", "envase": "Caja Chica",
-         "cajas": 30.0, "pesos": 82000.0, "rechazos": 1, "ultimo": date(2026, 9, 18)},
+         "cajas": 30.0, "pesos": 82000.0, "veces": 1, "cajas_por_pase": 0.0, "ultimo": date(2026, 9, 18)},
         {"cliente": "EJEMPLO Dos", "articulo": "EJEMPLO Verdura", "envase": "Caja Grande",
-         "cajas": 17.0, "pesos": 46400.0, "rechazos": 5, "ultimo": date(2026, 9, 15)},
+         "cajas": 17.0, "pesos": 46400.0, "veces": 5, "cajas_por_pase": 0.0, "ultimo": date(2026, 9, 15)},
     ],
 }
 
@@ -1943,7 +1943,7 @@ def test_cajas_perdidas_le_pasa_a_la_cuenta_LAS_DOS_FECHAS_del_filtro():
     igual en la pantalla (corolario 91).
     """
     with _con_clave_de_gerencia() as c, \
-         patch("app.main.cajas_perdidas_por_rechazo", return_value=CAJAS_PERDIDAS) as cuenta:
+         patch("app.main.cajas_perdidas", return_value=CAJAS_PERDIDAS) as cuenta:
         respuesta = c.get("/gerencia/cajas-perdidas?fecha_desde=2026-09-01&fecha_hasta=2026-09-10")
     assert respuesta.status_code == 200
     assert cuenta.call_args.args == (date(2026, 9, 1), date(2026, 9, 10))
@@ -1952,7 +1952,7 @@ def test_cajas_perdidas_le_pasa_a_la_cuenta_LAS_DOS_FECHAS_del_filtro():
 def test_cajas_perdidas_muestra_EL_TOTAL_Y_SU_VENTANA_pegados():
     """Un total sin el recorte al lado contesta otra pregunta (corolario 69)."""
     with _con_clave_de_gerencia() as c, \
-         patch("app.main.cajas_perdidas_por_rechazo", return_value=CAJAS_PERDIDAS):
+         patch("app.main.cajas_perdidas", return_value=CAJAS_PERDIDAS):
         respuesta = c.get("/gerencia/cajas-perdidas?fecha_desde=2026-09-12&fecha_hasta=2026-09-19")
     marcado = respuesta.text.split("</style>")[-1]
     assert "47" in marcado and "128.400" in marcado
@@ -1968,7 +1968,7 @@ def test_cajas_perdidas_dice_que_ese_envase_YA_SE_COBRA():
     dos veces.
     """
     with _con_clave_de_gerencia() as c, \
-         patch("app.main.cajas_perdidas_por_rechazo", return_value=CAJAS_PERDIDAS):
+         patch("app.main.cajas_perdidas", return_value=CAJAS_PERDIDAS):
         marcado = c.get("/gerencia/cajas-perdidas").text.split("</style>")[-1]
     assert "ya se cobra" in marcado
 
@@ -1980,17 +1980,17 @@ def test_cajas_perdidas_dice_EN_CUANTOS_RECHAZOS_y_eso_hace_legible_el_resto():
     "¿Cuántos unidades?" — lo agarra el test, no la lectura.
     """
     with _con_clave_de_gerencia() as c, \
-         patch("app.main.cajas_perdidas_por_rechazo", return_value=CAJAS_PERDIDAS):
+         patch("app.main.cajas_perdidas", return_value=CAJAS_PERDIDAS):
         marcado = c.get("/gerencia/cajas-perdidas").text.split("</style>")[-1]
-    assert "en 1 rechazo<" in marcado
-    assert "en 5 rechazos<" in marcado
+    assert "en 1 vez<" in marcado
+    assert "en 5 veces<" in marcado
 
 
 def test_cajas_perdidas_VACIO_dice_CUAL_vacio_es():
     """"No hubo" y "no se miró" se dibujan igual si la pantalla se calla."""
     vacio = dict(CAJAS_PERDIDAS, renglones=[], cajas=0.0, pesos=0.0, ultimo=None)
     with _con_clave_de_gerencia() as c, \
-         patch("app.main.cajas_perdidas_por_rechazo", return_value=vacio):
+         patch("app.main.cajas_perdidas", return_value=vacio):
         marcado = c.get(
             "/gerencia/cajas-perdidas?fecha_desde=2026-09-01&fecha_hasta=2026-09-02"
         ).text.split("</style>")[-1]
@@ -2001,7 +2001,7 @@ def test_cajas_perdidas_VACIO_dice_CUAL_vacio_es():
 def test_cajas_perdidas_con_FECHA_INVALIDA_no_le_pregunta_nada_a_la_base():
     """El error se muestra y la cuenta NO se corre con un rango que no se validó."""
     with _con_clave_de_gerencia() as c, \
-         patch("app.main.cajas_perdidas_por_rechazo") as cuenta:
+         patch("app.main.cajas_perdidas") as cuenta:
         marcado = c.get("/gerencia/cajas-perdidas?fecha_desde=2026-13-99").text.split("</style>")[-1]
     assert "no es válida" in marcado
     assert cuenta.call_count == 0
@@ -2031,9 +2031,9 @@ def test_el_HASTA_de_cajas_perdidas_NO_TIENE_DEFAULT():
     hasta hoy, que es un número plausible contestando otra pregunta."""
     import inspect
 
-    from app.db import cajas_perdidas_por_rechazo
+    from app.db import cajas_perdidas
 
-    firma = inspect.signature(cajas_perdidas_por_rechazo)
+    firma = inspect.signature(cajas_perdidas)
     assert firma.parameters["hasta"].default is inspect.Parameter.empty
 
 
@@ -2041,7 +2041,7 @@ def test_el_SQL_de_cajas_perdidas_RECORTA_POR_LAS_DOS_PUNTAS():
     """El valor lo entrega el fixture, así que solo el TEXTO del SQL dice qué
     pidió la consulta (corolario 65). Sin el `<=`, el filtro de `hasta` no
     hace nada y la pantalla muestra todo lo posterior sin avisar."""
-    from app.db import _SQL_CAJAS_PERDIDAS_POR_RECHAZO as sql
+    from app.db import _SQL_CAJAS_PERDIDAS as sql
 
     assert "m.fecha_operacion >= %s" in sql
     assert "m.fecha_operacion <= %s" in sql
@@ -2078,7 +2078,7 @@ def test_cajas_perdidas_aguanta_un_nombre_QUE_NO_SE_PUEDE_PARTIR(cliente_nombre,
     filas = [dict(CAJAS_PERDIDAS["renglones"][0], cliente=cliente_nombre)]
     datos = dict(CAJAS_PERDIDAS, renglones=filas)
     with _con_clave_de_gerencia() as c, \
-         patch("app.main.cajas_perdidas_por_rechazo", return_value=datos):
+         patch("app.main.cajas_perdidas", return_value=datos):
         respuesta = c.get("/gerencia/cajas-perdidas")
 
     # LA IDENTIDAD PEGADA AL NÚMERO (corolario 53): un `0` medido sobre la
@@ -2116,7 +2116,7 @@ def test_la_pantalla_de_plata_pide_LAS_DOS_CUENTAS_con_el_MISMO_periodo():
     """
     with _con_clave_de_gerencia() as c, \
          patch("app.main.gasto_en_cajas", return_value=GASTO_EN_CAJAS) as gasto, \
-         patch("app.main.cajas_perdidas_por_rechazo", return_value=CAJAS_PERDIDAS) as perdidas:
+         patch("app.main.cajas_perdidas", return_value=CAJAS_PERDIDAS) as perdidas:
         respuesta = c.get(
             "/gerencia/cajas-perdidas?fecha_desde=2026-09-01&fecha_hasta=2026-09-10")
     assert respuesta.status_code == 200
@@ -2127,7 +2127,7 @@ def test_la_pantalla_de_plata_pide_LAS_DOS_CUENTAS_con_el_MISMO_periodo():
 
 def test_la_pantalla_muestra_EL_GASTO_y_su_desglose_por_tipo_de_caja():
     with _con_clave_de_gerencia() as c, \
-         patch("app.main.cajas_perdidas_por_rechazo", return_value=CAJAS_PERDIDAS):
+         patch("app.main.cajas_perdidas", return_value=CAJAS_PERDIDAS):
         marcado = c.get("/gerencia/cajas-perdidas").text.split("</style>")[-1]
     assert "gastó en comprar cajas" in marcado
     assert "900.000" in marcado and "500" in marcado
@@ -2153,7 +2153,7 @@ def test_las_compras_SIN_COSTO_CARGADO_se_dicen_o_el_total_se_lee_de_mas():
     con_hueco = dict(GASTO_EN_CAJAS, sin_costo=2)
     with _con_clave_de_gerencia() as c, \
          patch("app.main.gasto_en_cajas", return_value=con_hueco), \
-         patch("app.main.cajas_perdidas_por_rechazo", return_value=CAJAS_PERDIDAS):
+         patch("app.main.cajas_perdidas", return_value=CAJAS_PERDIDAS):
         marcado = c.get("/gerencia/cajas-perdidas").text.split("</style>")[-1]
     assert "2 compras sin costo cargado" in marcado
     assert "no suman pesos" in marcado
@@ -2161,7 +2161,7 @@ def test_las_compras_SIN_COSTO_CARGADO_se_dicen_o_el_total_se_lee_de_mas():
     # Y el CONTROL: en cero el renglón NO sale. Sin esta mitad, una plantilla
     # que lo dibujara siempre pasa el assert de arriba (corolario 53).
     with _con_clave_de_gerencia() as c, \
-         patch("app.main.cajas_perdidas_por_rechazo", return_value=CAJAS_PERDIDAS):
+         patch("app.main.cajas_perdidas", return_value=CAJAS_PERDIDAS):
         limpio = c.get("/gerencia/cajas-perdidas").text.split("</style>")[-1]
     assert "sin costo cargado" not in limpio
 
@@ -2218,7 +2218,7 @@ def _forma_que_devuelve(nombre_funcion: str) -> tuple[set, set]:
     "nombre_funcion, fixture, lista",
     [
         ("gasto_en_cajas", GASTO_EN_CAJAS, "por_envase"),
-        ("cajas_perdidas_por_rechazo", CAJAS_PERDIDAS, "renglones"),
+        ("cajas_perdidas", CAJAS_PERDIDAS, "renglones"),
     ],
 )
 def test_los_FIXTURES_de_esta_pantalla_tienen_LA_FORMA_QUE_LA_BASE_DEVUELVE(
@@ -2363,3 +2363,80 @@ def test_los_dos_numeros_LLEGAN_A_LA_TARJETA_y_no_solo_a_la_funcion():
     for clase, numero in (("piso", 60), ("deben", 40), ("debo", 15)):
         bloque = marcado.split(f'<div class="{clase}">', 1)[1].split("</div>", 1)[0]
         assert f">{numero}<" in bloque, f"{clase}: {bloque!r}"
+
+
+# --- EL PASE DE CAJAS ARMADAS (21/09) ----------------------------------------
+
+
+def test_la_caja_de_un_PASE_de_cajas_armadas_entra_en_las_perdidas():
+    """La caja se va con la fruta y no se reusa, igual que en un rechazo, así
+    que su costo tampoco se recuperó. Dicho por el dueño el 21/09.
+
+    El rival es leer solo los reingresos, que es lo que esta consulta hacía
+    hasta ese día: la fila saldría con las cajas del rechazo y sin las del
+    pase, o no saldría en absoluto si el artículo solo tuvo pases.
+    """
+    from app.db import _SQL_CAJAS_PERDIDAS
+
+    sql = "\n".join(
+        l for l in _SQL_CAJAS_PERDIDAS.splitlines() if not l.strip().startswith("--")
+    )
+    assert "m.tipo = 'pase_a_segunda'" in sql
+    assert "m.tipo = 'reingreso_rechazo'" in sql
+    # UNION ALL y no OR: son dos formas distintas de llegar a la ficha —una
+    # por el renglón que volvió y otra por la columna— y un solo WHERE no
+    # puede expresar las dos.
+    assert "UNION ALL" in sql
+
+
+def test_un_pase_de_SUELTOS_no_cuenta_como_caja_perdida():
+    """No lleva caja nuestra: la fruta está en el cajón del proveedor.
+
+    Sin este filtro, cada pase de sueltos inventaría una caja perdida —y los
+    sueltos son el caso normal del pase, así que el número sería casi todo
+    invento.
+    """
+    from app.db import _SQL_CAJAS_PERDIDAS
+
+    sql = "\n".join(
+        l for l in _SQL_CAJAS_PERDIDAS.splitlines() if not l.strip().startswith("--")
+    )
+    pase = sql[sql.index("m.tipo = 'pase_a_segunda'"):]
+    assert "m.ficha_id IS NOT NULL" in pase
+
+
+def test_el_pase_suma_con_el_signo_dado_vuelta_porque_su_cantidad_es_NEGATIVA():
+    """El reingreso entra positivo y el pase negativo: sumarlos crudos los
+    RESTA entre sí, y una fila con un rechazo de 4 y un pase de 3 diría 1.
+    """
+    from app.db import _SQL_CAJAS_PERDIDAS
+
+    sql = "\n".join(
+        l for l in _SQL_CAJAS_PERDIDAS.splitlines() if not l.strip().startswith("--")
+    )
+    assert "-m.cantidad AS cajas" in sql
+
+
+def test_la_columna_que_SEPARA_los_dos_origenes_existe_y_la_pantalla_la_dibuja():
+    """Cinco cajas perdidas en rechazos son una conversación con el CLIENTE y
+    cinco por pase una con el DEPÓSITO. Sumadas en una sola columna, una fila
+    del segundo tipo se lee como del primero y manda a reclamarle a quien no
+    fue.
+    """
+    from app.db import _SQL_CAJAS_PERDIDAS
+
+    assert "cajas_por_pase" in _SQL_CAJAS_PERDIDAS
+
+    con_pase = dict(CAJAS_PERDIDAS)
+    con_pase["renglones"] = [
+        dict(CAJAS_PERDIDAS["renglones"][0], cajas_por_pase=3.0),
+        dict(CAJAS_PERDIDAS["renglones"][1], cajas_por_pase=0.0),
+    ]
+    with _con_clave_de_gerencia() as c, \
+         patch("app.main.cajas_perdidas", return_value=con_pase):
+        marcado = c.get("/gerencia/cajas-perdidas").text.split("</style>")[-1]
+
+    assert "3 de pase a segunda" in marcado
+    # Y CUANDO NO HAY, NO SE DIBUJA: un "0 de pase" en cada fila sería ruido
+    # en la mayoría, y el total está al lado para leer el cero.
+    assert marcado.count("de pase a segunda") == 1

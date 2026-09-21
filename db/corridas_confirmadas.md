@@ -107,3 +107,34 @@ cero de población recién migrada no es el cero de una función que nadie usa.
 falta para que `renglones_de_los_ultimos_pedidos` tenga de dónde sacar el
 promedio. No dice que Palmala vote en nada más: eso sigue cerrado por decisión
 del dueño desde el 19/09.
+
+## 21/09 — `pase_a_segunda_3_con_ficha` (el pase de cajas ya armadas)
+
+`db/pase_a_segunda_3_con_ficha.sql`, con su verificación corrida aparte.
+
+```
+FRUTAMAX  guarda nueva 1 · vieja 0 · 0 pases con ficha · 123 movimientos · última guía R 21/09
+PALMALA   guarda nueva 1 · vieja 0 · 0 pases con ficha ·   1 movimiento  · sin guías R
+```
+
+**Las DOS columnas de guarda van separadas porque el constraint CAMBIA DE
+NOMBRE** (`..._ficha_solo_merma` → `..._ficha_solo_merma_o_pase`). Un "¿existe
+alguno?" habría dado 1 en los dos estados y la fila se leería igual antes y
+después. Antes de correr da `0 · 1`; después `1 · 0`.
+
+**El `0 pases con ficha` de las dos es el estado del día que se corrió**, no un
+resultado: la pantalla que los escribe se cableó después, en el mismo commit.
+Un cero de población recién migrada no es el cero de una función que nadie usa.
+
+**El testigo dice que Palmala NO VOTA, y se ve en la misma fila**: `1
+movimiento · sin guías R`. Esa fila confirma lo único que Palmala puede
+confirmar —que la migración no explota contra ese esquema— y nada sobre si el
+pase funciona. Eso lo decide Frutamax, con sus 123.
+
+**Y el esquema del repo estaba atrasado LA FUNCIÓN ENTERA**, no solo este
+bloque: `db/esquema_completo.sql` no nombraba `pase_a_segunda` en ninguno de
+los cuatro CHECKs que los bloques 1 y 2 cambiaron el 20/09, así que una base
+nueva creada desde ahí habría rechazado todo pase. Corregido en el mismo
+commit, y verificado comparando las 25 guardas de `movimientos_stock` entre
+una base creada desde el esquema y otra creada desde las migraciones:
+idénticas.

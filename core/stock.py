@@ -158,6 +158,23 @@ _PRIORIDAD_POR_SALIDA = {
     # como salida se comporta como un ajuste. Nombrado a propósito: es la
     # diferencia entre "decidido" y "se nos pasó".
     "stock_inicial": SIN_PREFERENCIA,
+    # EL PASE A SEGUNDA, igual que la merma y por la MISMA razón: puede salir
+    # de un cajón que se puso feo o de una caja ya armada, y el tipo del
+    # movimiento no lo dice. Lo que sí tiene —también igual que la merma— es
+    # el lote DIRIGIDO, que gana antes que cualquier FIFO.
+    #
+    # Y NO SE LE COPIA LA PREFERENCIA DEL ARMADO aunque desde el 21/09 el
+    # pase pueda declarar su ficha: preferir caja armada afirmaría que TODO
+    # pase sale de una, y el caso normal es el contrario (los sueltos). La
+    # merma tiene la ficha desde el 10/09 y tampoco la usa para esto, que es
+    # la misma decisión tomada dos veces sobre la misma pregunta.
+    #
+    # Nombrado a propósito, como los otros: un tipo que cae al default por
+    # olvido y otro que cae por decisión se ven igual desde afuera. Este
+    # renglón faltaba desde el 20/09 y el test que lee el CHECK de la base no
+    # lo agarró porque db/esquema_completo.sql estaba atrasado — la guarda
+    # estaba puesta y miraba una lista vieja.
+    "pase_a_segunda": SIN_PREFERENCIA,
 }
 
 
@@ -170,7 +187,30 @@ def prioridad_de_lote(salida) -> Prioridad:
     avisa de un tipo nuevo es el test contra el CHECK, no una excepción en
     producción con el galpón trabajando.
     """
-    return _PRIORIDAD_POR_SALIDA.get(salida.get("tipo"), SIN_PREFERENCIA)
+    prioridad = _PRIORIDAD_POR_SALIDA.get(salida.get("tipo"), SIN_PREFERENCIA)
+    # UN PASE DE CAJAS ARMADAS PREFIERE CAJA ARMADA, y es del dueño (21/09):
+    # "armé una caja de Día con tomate; si pasa a segunda es lo mismo que
+    # tirarla, y la pérdida es al costo de ESA caja —el tomate que lleva
+    # adentro más la caja—, no al del cajón más viejo".
+    #
+    # LA FICHA ES LO QUE LO DISTINGUE, y por eso no puede estar en la tabla
+    # de arriba: el MISMO tipo sale de dos pilas. Con ficha son cajas
+    # armadas; sin ficha son bultos sueltos y ahí no se sabe de qué cajón
+    # salieron, así que queda el FIFO puro.
+    #
+    # PREFERENCIA Y NO PARED, igual que el armado: si por un agujero viejo no
+    # hubiera lote trabajado, una pared trabaría al operario por algo que ya
+    # estaba ahí antes de que tocara nada.
+    #
+    # Y NO MIRA CUÁL FICHA, también como el armado: un armado para Día puede
+    # consumir una caja armada para Coto y eso es lo que el sistema hace hoy.
+    # Si el pase fuera más preciso que el armado habría dos reglas para la
+    # misma pregunta —de qué caja salió esto— y ganaría la del camino que se
+    # haya usado. Cuando importa la caja exacta está el lote dirigido, que
+    # gana antes que cualquier FIFO.
+    if salida.get("tipo") == "pase_a_segunda" and salida.get("ficha_id") is not None:
+        return Prioridad(prefiere=TIPOS_LOTE_TRABAJADO, prohibe=())
+    return prioridad
 
 
 # Cuando el freno del reproceso corre, la guía R TODAVÍA NO EXISTE: es la

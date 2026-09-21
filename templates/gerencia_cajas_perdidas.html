@@ -29,6 +29,8 @@
   .totales { display: flex; flex-wrap: wrap; gap: .5rem 1.5rem; align-items: baseline; }
   .grande { font-size: 1.8rem; font-weight: 700; }
   .unidad { font-size: .9rem; color: #6b7280; font-weight: 500; }
+  .de-pase { background: #fffbeb; color: #92400e; border: 1px solid #fcd34d;
+             border-radius: 999px; padding: 0 .5rem; font-weight: 700; }
   .renglon { border-top: 1px solid #e5e7eb; padding: .7rem 0; }
   .renglon:first-of-type { border-top: 0; padding-top: 0; }
   .quien { font-size: 1rem; font-weight: 600; }
@@ -127,10 +129,21 @@
       <div class="patas">
         <span>{{ r.cajas|sin_decimales }} cajas</span>
         <span class="plata">{{ r.pesos|moneda }}</span>
-        {# CUANTOS RECHAZOS DISTINTOS, que es lo que vuelve legible al resto:
-           5 cajas en UN rechazo es un camion que volvio; las mismas 5 en CINCO
-           es algo que pasa siempre, y son dos conversaciones distintas. #}
-        <span>en {{ r.rechazos }} rechazo{{ "s" if r.rechazos != 1 }}</span>
+        {# CUANTAS VECES DISTINTAS, que es lo que vuelve legible al resto:
+           5 cajas en UNA es un camion que volvio; las mismas 5 en CINCO es
+           algo que pasa siempre, y son dos conversaciones distintas. #}
+        {# "vez" NO pluraliza con una `s` pegada: da "vezes". Es el mismo
+           descuido que "¿Cuántos unidades?", y lo agarró el test y no la
+           lectura — las dos palabras van enteras. #}
+        <span>en {% if r.veces == 1 %}1 vez{% else %}{{ r.veces }} veces{% endif %}</span>
+        {# DE PASE SOLO CUANDO LAS HAY, y el total esta al lado: un "0 de
+           pase" en cada fila seria ruido en la mayoria. Lo que este chip
+           distingue es a quien reclamarle — una caja perdida en un rechazo es
+           una conversacion con el CLIENTE, y una perdida en un pase es con el
+           DEPOSITO, porque la fruta se puso fea aca adentro. #}
+        {% if r.cajas_por_pase %}
+        <span class="de-pase">{{ r.cajas_por_pase|sin_decimales }} de pase a segunda</span>
+        {% endif %}
         <span>{{ r.envase }}</span>
       </div>
     </div>

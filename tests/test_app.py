@@ -28178,6 +28178,12 @@ def test_todos_los_tipos_de_salida_posibles_tienen_prioridad_DECIDIDA():
         "reingreso_rechazo",
         "stock_inicial",
         "cierre_modelo_viejo",
+        # Entró el 20/09 y este test recién lo vio el 21: el CHECK de la base
+        # lo tenía y `db/esquema_completo.sql` no, así que la guarda estaba
+        # puesta y leía una lista vieja. Es el corolario 60 —una migración que
+        # cambia un COMPORTAMIENTO no agrega ninguna columna— mordiendo al
+        # test que existe justo para esto.
+        "pase_a_segunda",
     }, del_check
 
     # Los otros dos tipos de salida son literales de la consulta.

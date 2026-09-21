@@ -45,6 +45,40 @@
      "¿estás seguro?" se lo cobra a todos y no ataja a nadie: es el escalón
      que se aprende a esquivar. Lo que falta no es una decisión, falta
      información, y va antes de que se tipee el número. */
+  .grupo-porcion { border: 0; padding: 0; margin: 0.9rem 0 0; }
+  .grupo-porcion legend { padding: 0; font-size: 0.95rem; color: #444; }
+  .opciones { display: flex; flex-wrap: wrap; gap: 0.5rem; margin-top: 0.35rem; }
+  .opciones input[type="radio"] { position: absolute; opacity: 0; width: 0; height: 0; }
+  .opciones label {
+    /* Que entre comodo en 390px: dos por fila cuando son cortos, y una fila
+       entera cuando el nombre de la ficha es largo. Nunca desborda. */
+    flex: 1 1 45%;
+    min-width: 8rem;
+    margin: 0;
+    padding: 0.9rem 0.7rem;
+    border: 2px solid #d4d4d8;
+    border-radius: 10px;
+    background: #fff;
+    color: #333;
+    font-size: 0.95rem;
+    font-weight: 600;
+    line-height: 1.25;
+    text-align: center;
+    overflow-wrap: anywhere;
+  }
+  /* EL AMBAR DE ESTA PANTALLA y no el rojo de la Merma: son dos operaciones
+     distintas y el color es lo primero que se ve. Tirar es rojo; pasar a
+     segunda no tira nada. */
+  .opciones input[type="radio"]:checked + label {
+    border-color: #d97706;
+    background: #fffbeb;
+    color: #92400e;
+  }
+  .opciones input[type="radio"]:focus-visible + label {
+    outline: 3px solid #fcd34d;
+    outline-offset: 2px;
+  }
+  .opciones .detalle { display: block; font-size: 0.8rem; font-weight: 400; color: #666; margin-top: 0.15rem; }
   .que-pasa {
     background: #fffbeb; color: #78350f; border-left: 4px solid #d97706;
     padding: 0.75rem 0.9rem; border-radius: 6px; margin: 0.9rem 0 0;
@@ -94,6 +128,30 @@
         disponibles como <strong>segunda</strong>, para remitir al Puesto.
         No se deshace desde acá: si te equivocaste, avisá a Administración.
       </p>
+
+      {# DE QUÉ PILA SALEN, antes del número: el número significa una cosa
+         distinta en cada pila, así que preguntarlo después invita a tipearlo
+         mirando el stock equivocado.
+
+         LA SEGUNDA NO ESTÁ, y es la única diferencia con el selector de la
+         Merma: pasar segunda a segunda no es ninguna operación. No se lista
+         "y se avisa al guardar" —eso deja a la vista algo que no se puede
+         elegir, e invita a preguntarse por qué está—; el POST igual la
+         rechaza, porque la guarda va donde se escribe. #}
+      <fieldset class="grupo-porcion">
+        <legend>Qué pasa a segunda</legend>
+        <div class="opciones">
+          <input type="radio" id="qp-sueltos" name="que_pasa" value="sueltos" required
+                 {% if precarga.que_pasa == "sueltos" or not precarga.que_pasa %}checked{% endif %}>
+          <label for="qp-sueltos">Bultos sueltos<span class="detalle">sin procesar</span></label>
+
+          {% for ficha in fichas_por_articulo.get(articulo_elegido.id|string, []) %}
+          <input type="radio" id="qp-{{ ficha.id }}" name="que_pasa" value="{{ ficha.id }}"
+                 {% if precarga.que_pasa == ficha.id|string %}checked{% endif %}>
+          <label for="qp-{{ ficha.id }}">Cajas de {{ ficha.nombre }}{% if ficha.kilaje %}<span class="detalle">{{ ficha.kilaje }}</span>{% endif %}</label>
+          {% endfor %}
+        </div>
+      </fieldset>
 
       <label for="cantidad">Bultos que pasan a segunda</label>
       <input type="number" id="cantidad" name="cantidad" min="1" step="1" inputmode="numeric" required

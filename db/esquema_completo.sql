@@ -1059,7 +1059,7 @@ create table movimientos_stock (
     id bigint generated always as identity primary key,
     articulo_id bigint not null references articulos (id),
     tipo text not null check (tipo in ('ajuste', 'merma', 'reingreso_rechazo', 'stock_inicial',
-                                       'cierre_modelo_viejo')),
+                                       'cierre_modelo_viejo', 'pase_a_segunda')),
     cantidad numeric not null check (cantidad <> 0),
     motivo text not null check (btrim(motivo) <> ''),
     cliente_id bigint references clientes (id),
@@ -1129,8 +1129,15 @@ create table movimientos_stock (
     -- renglón que volvió, y dos caminos al mismo dato es la regla escrita
     -- dos veces. De una sola dirección a propósito: una merma PUEDE no
     -- tener ficha.
-    constraint movimientos_stock_ficha_solo_merma
-        check (tipo = 'merma' or ficha_id is null),
+    -- El PASE entró el 21/09 (db/pase_a_segunda_3_con_ficha.sql): una caja
+    -- ya armada para un cliente que se pone fea pasa a segunda directo. La
+    -- decisión del 20/09 decía lo contrario —"es desarmarla primero"— y era
+    -- una deducción nuestra sobre cómo se trabaja, no un hecho del galpón.
+    -- Abre DOS tipos y no todos: un ajuste o un reingreso con ficha siguen
+    -- frenados, y el reingreso porque YA llega a su ficha por el renglón que
+    -- volvió.
+    constraint movimientos_stock_ficha_solo_merma_o_pase
+        check (tipo in ('merma', 'pase_a_segunda') or ficha_id is null),
     constraint movimientos_stock_merma_negativa
         check (tipo <> 'merma' or cantidad < 0),
     constraint movimientos_stock_reingreso_positivo
@@ -1147,17 +1154,30 @@ create table movimientos_stock (
             and (tipo in ('reingreso_rechazo', 'stock_inicial') or costo_por_bulto is null)
         ),
     constraint movimientos_stock_destino_solo_reingreso
-        check (tipo = 'reingreso_rechazo' or (destino_rechazo is null and bultos_segunda is null)),
+        check (tipo in ('reingreso_rechazo', 'pase_a_segunda')
+               or (destino_rechazo is null and bultos_segunda is null)),
     constraint movimientos_stock_segunda_segun_destino
         check (
             case
+                when tipo = 'pase_a_segunda' then bultos_segunda is not null
                 when destino_rechazo in ('segunda', 'reproceso')
                     then bultos_segunda is not null
                 else bultos_segunda is null
             end
         ),
+    -- DIEZ CAJONES QUE SALEN DE PRIMERA SON DIEZ BULTOS QUE ENTRAN AL POOL: el
+    -- cajón pasa ENTERO, no se reenvasa. En el reproceso NO es así (un cajón
+    -- de 16 da tres cajas de 6), así que esto no se deduce de allá — se
+    -- preguntó. Y de acá sale que la cantidad del pase es negativa, sin un
+    -- tercer CHECK: `bultos_segunda > 0` ya existe.
+    constraint movimientos_stock_pase_uno_a_uno
+        check (tipo <> 'pase_a_segunda' or bultos_segunda = -cantidad),
+    -- EL PASE SE COSTEA EXACTAMENTE COMO LA MERMA: la plata se pierde, y
+    -- cuál lote la perdió se elige igual que ahí. Sin esto, el pase no
+    -- podría dirigirse y la merma sí — dos reglas para la misma decisión.
     constraint movimientos_stock_lote_dirigido_solo_merma
-        check (tipo = 'merma' or (lote_tipo is null and lote_origen_id is null)),
+        check (tipo in ('merma', 'pase_a_segunda')
+               or (lote_tipo is null and lote_origen_id is null)),
     constraint movimientos_stock_lote_dirigido_completo
         check ((lote_tipo is null) = (lote_origen_id is null))
 );
