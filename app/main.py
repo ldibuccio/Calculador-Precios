@@ -38,12 +38,14 @@ from app.alertas import (
     recalcular,
 )
 from app.costeo import (
+    MAGNITUD_KILOS,
     VENTANA_INCIDENCIA_DIAS,
     agregar_incidencia,
     agrupar_para_negociar,
     calcular_listado_para_negociar_precios,
     calcular_listados_para_negociar_precios,
     calcular_objetivos_de_compra,
+    magnitud_de_la_ficha,
 )
 # LAS TRES FUNCIONES DEL MOTOR, importadas directo y sin envolver. El
 # Análisis de Artículo no calcula ninguna rentabilidad propia: elige a cuál
@@ -66,6 +68,8 @@ from core.motor_costeo import (
 import psycopg2
 
 from app.db import (
+    compras_de_hoy_por_articulo,
+    renglones_de_los_ultimos_pedidos,
     actualizar_articulo,
     actualizar_cantidad_compra,
     actualizar_cliente,
@@ -372,6 +376,12 @@ from app.db import (
     total_reingresos_rechazo,
 )
 from core.conceptos_cliente import calcular_cambio_de_utilidad, calcular_cambios_de_tasas
+from core.que_comprar import (
+    PEDIDOS_DEL_PROMEDIO,
+    cajones_que_faltan,
+    falta_por_comprar,
+    promedio_de_un_dia,
+)
 from core.magnitudes import (
     repartir_magnitudes,
 )
@@ -3127,9 +3137,206 @@ def exportar_listado_compras_excel(fecha_desde: str = "", fecha_hasta: str = "",
     )
 
 
-@app.get("/compras/armar-listado")
-def ver_armar_listado_compras(request: Request):
-    return _renderizar_en_construccion(request, "Armar listado de compras")
+def _filas_de_que_comprar(renglones: list[dict], piso: dict, comprado: dict) -> list[dict]:
+    """Una fila por artículo: lo que piden todos los clientes juntos, el piso y lo comprado.
+
+    LA MAGNITUD DE LA FILA SALE DE LA FICHA, con `magnitud_de_la_ficha` —la
+    misma función que elige la unidad en todo el costeo—, y no de una
+    segunda lectura escrita acá. Como ningún artículo tiene fichas en
+    magnitudes distintas (medido, `listado_1b`), alcanza con la primera.
+
+    EL PROMEDIO SE DIVIDE POR CLIENTE, no al final: cada uno tiene su propio
+    `pedidos_del_cliente` —uno con tres pedidos en su historia no se divide
+    por seis— así que sumar primero y dividir después daría otro número.
+
+    UN SOLO HUECO DEJA LA FILA SIN NÚMERO. Si a un cliente no se le puede
+    pasar lo pedido a la magnitud —renglón sin ficha, o ficha sin
+    `contenido_caja`— la fila entera queda sin pedido: mostrar la suma de
+    los demás sería decir que ese cliente no pide nada.
+    """
+    por_articulo = {}
+    for renglon in renglones:
+        por_articulo.setdefault(renglon["articulo_id"], []).append(renglon)
+
+    filas = []
+    for articulo_id, del_articulo in por_articulo.items():
+        magnitud = magnitud_de_la_ficha(del_articulo[0])
+        pide = 0.0
+        for renglon in del_articulo:
+            contenido = renglon.get("contenido_caja")
+            if contenido is None or magnitud is None:
+                pide = None
+                break
+            pide += promedio_de_un_dia(
+                float(renglon["bultos"]) * float(contenido),
+                pedidos=int(renglon["pedidos_del_cliente"]),
+            )
+
+        del_piso = piso.get(articulo_id) or {}
+        lo_comprado = comprado.get(articulo_id) or {}
+        comprado_magnitud = (
+            lo_comprado.get("kilos") if magnitud == MAGNITUD_KILOS else lo_comprado.get("conteo")
+        )
+        # Sin compras de hoy el aporte es CERO y no un hueco: que no haya
+        # comprado nada es un hecho, no un dato que falte.
+        if not lo_comprado:
+            comprado_magnitud = 0.0
+
+        kilaje = del_articulo[0].get("contenido_referencia")
+        falta = falta_por_comprar(pide, del_piso.get("magnitud"), comprado_magnitud)
+        filas.append(
+            {
+                "articulo_id": articulo_id,
+                "nombre": del_articulo[0]["articulo_nombre"],
+                "sufijo": SUFIJOS_FICHA_REPROCESO.get(del_articulo[0].get("unidad_venta"), ""),
+                "pide": pide,
+                "en_piso": del_piso.get("magnitud"),
+                "sueltos": del_piso.get("sueltos"),
+                "cajas": del_piso.get("cajas"),
+                "comprado_cajones": lo_comprado.get("cajones", 0.0),
+                "comprado": comprado_magnitud,
+                "kilaje": float(kilaje) if kilaje is not None else None,
+                "falta": falta,
+                "cajones": cajones_que_faltan(falta, float(kilaje) if kilaje is not None else None),
+            }
+        )
+    return sorted(filas, key=lambda f: f["nombre"])
+
+
+def _piso_en_magnitud(articulo_ids: list[int], fichas_tildadas: list[dict], hoy):
+    """Cuánto hay en el piso de cada artículo, EN LA MAGNITUD de su fila.
+
+    Dos pilas y dos conversiones distintas, que es lo que obliga a hacerlo
+    acá y no en una consulta:
+
+      - los SUELTOS son cajones crudos y su contenido es POR LOTE. Cherry
+        viene en cajones de 5, de 10 y de 15 mezclados bajo el mismo
+        artículo, así que un contenido por artículo sería una invención.
+      - las CAJAS ya armadas tienen UN contenido por ficha
+        (`fichas_logistica.contenido_caja`), y solo cuentan las de los
+        clientes TILDADOS: una caja de Día no le sirve al pedido de Coto.
+
+    LA SEGUNDA NO JUEGA y no hay que excluirla: es un pool aparte y ninguna
+    de estas dos cuentas lo toca.
+
+    DEVUELVE None CUANDO NO SE PUEDE SABER, y eso es lo importante. Si algún
+    lote suelto no declara su contenido —un ajuste, el stock inicial— la
+    suma de las pilas no cierra contra los bultos que hay, y ahí la fila
+    queda sin número. Un cero diría "no hay nada en el piso" y haría comprar
+    de más, que es el peor final posible para esta pantalla.
+    """
+    # UNA consulta para todos los artículos, no una por artículo: es la
+    # misma que usan Stock del Depósito, Guías R y Rentabilidad Real.
+    movimientos = entradas_y_salidas_stock_articulos(articulo_ids)
+    cajas = cajas_armadas_por_ficha(hoy)
+    stock = {f["articulo_id"]: float(f["stock"] or 0) for f in stock_deposito_por_articulo(hoy)}
+
+    fichas_por_articulo = {}
+    for ficha in fichas_tildadas:
+        fichas_por_articulo.setdefault(ficha["articulo_id"], []).append(ficha)
+
+    piso = {}
+    for articulo_id in articulo_ids:
+        # Las cajas de las fichas tildadas, cada una por SU contenido.
+        en_cajas_magnitud, en_cajas_bultos, falta_contenido = 0.0, 0.0, False
+        for ficha in fichas_por_articulo.get(articulo_id, []):
+            bultos = float(cajas.get((articulo_id, ficha["id"]), 0) or 0)
+            en_cajas_bultos += bultos
+            if ficha.get("contenido_caja") is None:
+                falta_contenido = falta_contenido or bultos > 0
+            else:
+                en_cajas_magnitud += bultos * float(ficha["contenido_caja"])
+
+        # Los sueltos salen por RESTA, igual que en el Cotejo: el total del
+        # artículo menos TODAS las cajas en fichas (no solo las tildadas).
+        todas_las_cajas = sum(
+            float(v or 0) for (a, _f), v in cajas.items() if a == articulo_id
+        )
+        sueltos = max(stock.get(articulo_id, 0.0) - todas_las_cajas, 0.0)
+
+        sueltos_magnitud = _sueltos_en_magnitud(articulo_id, movimientos, sueltos, hoy)
+        if sueltos_magnitud is None or falta_contenido:
+            piso[articulo_id] = {"magnitud": None, "sueltos": sueltos, "cajas": en_cajas_bultos}
+            continue
+        piso[articulo_id] = {
+            "magnitud": sueltos_magnitud + en_cajas_magnitud,
+            "sueltos": sueltos,
+            "cajas": en_cajas_bultos,
+        }
+    return piso
+
+
+def _sueltos_en_magnitud(articulo_id: int, movimientos: dict, sueltos: float, hoy):
+    """Los cajones crudos que quedan, pasados a la magnitud de la fila. None si no cierra.
+
+    Rejuega el reparto a la fecha y se queda con los lotes de COMPRA con
+    restante —los únicos que declaran contenido— igual que
+    `_pilas_de_cajones`. Si las pilas no suman los bultos que la resta dice
+    que hay, o si alguna pila no declara su contenido, no hay número: es la
+    misma guarda que `_pilas_cierran`, y sin ella un desglose incompleto se
+    leería como un piso más chico del que hay.
+    """
+    if sueltos <= 0:
+        return 0.0
+    entradas, salidas = movimientos.get(articulo_id, ([], []))
+    reparto = reparto_a_la_fecha(entradas, salidas_para_reparto(salidas), hoy)
+    lotes = [l for l in reparto["lotes"] if l["restante"] > 0 and l["tipo_lote"] == "guia"]
+    contenidos = _contenidos_de(lotes)
+    total_bultos, total_magnitud = 0.0, 0.0
+    for lote in lotes:
+        dato = contenidos.get(f"{lote['tipo_lote']}:{lote['origen_id']}") or {}
+        if dato.get("contenido") is None:
+            return None
+        total_bultos += float(lote["restante"])
+        total_magnitud += float(lote["restante"]) * float(dato["contenido"])
+    if abs(total_bultos - sueltos) > 0.01:
+        return None
+    return total_magnitud
+
+
+@app.get("/compras/que-comprar")
+def ver_que_comprar(request: Request, clientes: str = ""):
+    """Qué comprar hoy: cuántos cajones de cada artículo, sumando los clientes elegidos.
+
+    UNA FILA POR ARTÍCULO Y EN SU MAGNITUD. Lo único que se suma es el mismo
+    artículo entre clientes distintos; nadie suma Mango con Cherry. Medido
+    antes de construir (`listado_1b`, las dos bases, 21/09):
+    `ARTICULOS_MIXTOS_TODOS 0` — ningún artículo tiene fichas en magnitudes
+    distintas, así que ninguna fila mezcla dos.
+
+    NO GUARDA NADA TODAVÍA: los clientes elegidos viajan en la URL y el
+    kilaje se edita en el navegador. Es el primer paso a propósito —ya sirve
+    parado en el Mercado— y lo que se pierde al cerrar es el borrador, que
+    viene después con su migración.
+    """
+    elegidos = [int(c) for c in clientes.split(",") if c.strip().isdigit()]
+    contexto = {"barra_sector": "compras", "barra_titulo": "Qué comprar hoy",
+                "elegidos": elegidos, "filas": [], "aviso": None}
+    try:
+        contexto["clientes"] = listar_clientes()
+    except Exception:
+        logger.exception("No se pudieron listar los clientes para Qué comprar hoy")
+        contexto["clientes"] = []
+        contexto["aviso"] = "No se pudo leer la lista de clientes."
+        return templates.TemplateResponse(request, "compras_que_comprar.html", contexto)
+
+    if not elegidos:
+        return templates.TemplateResponse(request, "compras_que_comprar.html", contexto)
+
+    try:
+        renglones = renglones_de_los_ultimos_pedidos(elegidos, PEDIDOS_DEL_PROMEDIO)
+        fichas = [f for c in elegidos for f in listar_fichas_por_cliente(c)]
+        hoy = datetime.now(ARGENTINA).date()
+        ids = sorted({r["articulo_id"] for r in renglones})
+        piso = _piso_en_magnitud(ids, fichas, hoy) if ids else {}
+        comprado = compras_de_hoy_por_articulo()
+    except Exception:
+        logger.exception("No se pudo armar Qué comprar hoy")
+        contexto["aviso"] = "No se pudo leer lo que hace falta comprar. Probá de nuevo."
+        return templates.TemplateResponse(request, "compras_que_comprar.html", contexto)
+
+    contexto["filas"] = _filas_de_que_comprar(renglones, piso, comprado)
+    return templates.TemplateResponse(request, "compras_que_comprar.html", contexto)
 
 
 def _orden_grupo_disponible(grupo: str | None) -> int:

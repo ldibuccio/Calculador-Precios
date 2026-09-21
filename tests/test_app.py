@@ -2720,12 +2720,21 @@ def test_exportar_listado_compras_excel_fecha_invalida_da_400():
     assert respuesta.status_code == 400
 
 
-def test_armar_listado_de_compras_muestra_en_construccion():
-    respuesta = cliente.get("/compras/armar-listado")
+def test_que_comprar_hoy_sin_clientes_elegidos_muestra_el_selector():
+    """Era el placeholder "Armar listado de compras" hasta el 21/09.
 
+    Sin clientes tildados la pantalla no lee nada más: es el caso que entra
+    primero y no puede depender de que el stock se pueda rejugar.
+    """
+    with patch("app.main.listar_clientes", return_value=[{"id": 7, "nombre": "Dia"}]):
+        respuesta = cliente.get("/compras/que-comprar")
+
+    marcado = respuesta.text.split("</style>")[-1]
     assert respuesta.status_code == 200
-    assert "Armar listado de compras" in respuesta.text
-    assert "En construcción" in respuesta.text
+    assert "Qué comprar hoy" in respuesta.text
+    assert 'value="7"' in marcado and "Dia" in marcado
+    # La jerga del placeholder no puede haber quedado tres lineas mas abajo.
+    assert "En construcción" not in respuesta.text
 
 
 def test_ver_compras_muestra_la_botonera_de_cargar_y_operaciones():
@@ -2747,7 +2756,10 @@ def test_ver_compras_muestra_la_botonera_de_cargar_y_operaciones():
     assert 'href="/compras/ultimas"' not in respuesta.text
     assert "Últimas Compras" not in respuesta.text
     assert 'href="/compras/buscar"' in respuesta.text
-    assert 'href="/compras/armar-listado"' in respuesta.text
+    assert 'href="/compras/que-comprar"' in respuesta.text
+    assert "Qué comprar hoy" in respuesta.text
+    # El placeholder se fue entero: ni la ruta vieja ni el "(Próximamente)".
+    assert 'href="/compras/armar-listado"' not in respuesta.text
     assert 'href="/compras/pendientes"' in respuesta.text
     assert "Compras sin precio" in respuesta.text
     assert 'href="/compras/disponibles"' in respuesta.text

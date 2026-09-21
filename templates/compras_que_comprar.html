@@ -1,0 +1,114 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Qué comprar hoy</title>
+<style>
+  :root { font-family: -apple-system, system-ui, sans-serif; }
+  body { margin: 0; padding: 1rem; background: #f5f5f5; color: #222; }
+  .tarjeta { background: #fff; border-radius: 10px; padding: 1rem; margin-bottom: 0.75rem;
+             box-shadow: 0 1px 3px rgba(0,0,0,0.08); }
+  /* EL NOMBRE NO LO CONTROLAMOS: un artículo sin espacios tiene que partir
+     en vez de arrastrar la pantalla de costado. */
+  .art { font-weight: 800; font-size: 1.05rem; overflow-wrap: anywhere; }
+  .renglon { display: flex; flex-wrap: wrap; gap: 0.5rem 1.25rem; margin-top: 0.6rem; }
+  .dato { font-size: 0.9rem; color: #555; }
+  .dato b { display: block; font-size: 1.05rem; color: #222; font-weight: 700; }
+  .hueco { color: #92400e; font-weight: 700; }
+  .falta { font-size: 1.35rem; font-weight: 800; }
+  .ok { color: #16a34a; }
+  /* 44px es el mínimo tocable con el pulgar, y este input se toca parado
+     en el Mercado con el celular en una mano. */
+  .kilaje { width: 5.5rem; min-height: 44px; font-size: 1.05rem; padding: 0.4rem;
+            border: 2px solid #2563eb; border-radius: 8px; text-align: center; }
+  .elegir { display: flex; flex-wrap: wrap; gap: 0.5rem; margin: 0.75rem 0; }
+  .elegir label { display: flex; align-items: center; gap: 0.4rem; min-height: 44px;
+                  background: #fff; border-radius: 8px; padding: 0 0.75rem; font-size: 0.95rem; }
+  .elegir input { width: 22px; height: 22px; }
+  .boton-ver { min-height: 44px; font-size: 1rem; font-weight: 700; color: #fff;
+               background: #2563eb; border: 0; border-radius: 8px; padding: 0 1.25rem; }
+  .vacio { color: #666; font-size: 0.95rem; }
+</style>
+</head>
+<body>
+  {% set barra_titulo = "Qué comprar hoy" %}
+  {% set barra_sector = "compras" %}
+  {% include "_barra_navegacion.html" %}
+
+  {% if aviso %}<div class="tarjeta"><p class="hueco">{{ aviso }}</p></div>{% endif %}
+
+  <form class="tarjeta" method="get" action="/compras/que-comprar">
+    <div class="art">Para qué clientes</div>
+    <div class="elegir">
+      {% for c in clientes %}
+        <label><input type="checkbox" name="cliente" value="{{ c.id }}"
+                      {% if c.id in elegidos %}checked{% endif %}>{{ c.nombre }}</label>
+      {% endfor %}
+    </div>
+    <input type="hidden" name="clientes" id="clientes-elegidos" value="{{ elegidos|join(',') }}">
+    <button class="boton-ver" type="submit">Ver qué comprar</button>
+  </form>
+
+  {% if elegidos and not filas %}
+    <div class="tarjeta"><p class="vacio">Esos clientes no pidieron nada en sus últimos pedidos.</p></div>
+  {% endif %}
+
+  {% for f in filas %}
+  <div class="tarjeta" data-articulo="{{ f.articulo_id }}">
+    <div class="art">{{ f.nombre }}</div>
+    <div class="renglon">
+      <span class="dato">Piden por día
+        <b>{% if f.pide is not none %}{{ f.pide|sin_decimales }} {{ f.sufijo }}{% else %}<span class="hueco">sin ficha</span>{% endif %}</b></span>
+      <span class="dato">En el piso
+        <b>{% if f.en_piso is not none %}{{ f.en_piso|sin_decimales }} {{ f.sufijo }}{% else %}<span class="hueco">no se puede saber</span>{% endif %}</b></span>
+      <span class="dato">Compré hoy
+        <b>{{ f.comprado_cajones|sin_decimales }} cj</b></span>
+      <span class="dato">Kilaje del cajón
+        <b><input class="kilaje" type="number" inputmode="decimal" step="0.1" min="0"
+                  value="{{ f.kilaje|sin_decimales if f.kilaje is not none else '' }}"
+                  data-falta="{{ f.falta if f.falta is not none else '' }}"
+                  aria-label="Kilaje del cajón de {{ f.nombre }}"></b></span>
+      <span class="dato">Falta comprar
+        <b class="falta">{% if f.falta is not none and f.falta == 0 %}<span class="ok">OK</span>
+           {%- elif f.cajones is not none %}<span class="cajones">{{ f.cajones|sin_decimales }}</span> cj
+           {%- elif f.falta is not none %}<span class="hueco">poné el kilaje</span>
+           {%- else %}<span class="hueco">—</span>{% endif %}</b></span>
+    </div>
+  </div>
+  {% endfor %}
+
+<script>
+// EL KILAJE RECALCULA AL TOQUE, sin ir al server: parado en el Mercado no se
+// espera una recarga. La resta ya viene hecha EN MAGNITUD desde el server
+// (data-falta) y acá solo se divide, que es la única division de la cuenta.
+document.addEventListener("input", function (evento) {
+  var campo = evento.target;
+  if (!campo.classList || !campo.classList.contains("kilaje")) { return; }
+  var tarjeta = campo.closest("[data-articulo]");
+  var destino = tarjeta ? tarjeta.querySelector(".falta") : null;
+  if (!destino) { return; }
+  var falta = parseFloat(campo.dataset.falta);
+  var kilaje = parseFloat(campo.value);
+  if (isNaN(falta)) { return; }
+  if (falta === 0) { destino.innerHTML = '<span class="ok">OK</span>'; return; }
+  if (isNaN(kilaje) || kilaje <= 0) {
+    destino.innerHTML = '<span class="hueco">poné el kilaje</span>';
+    return;
+  }
+  destino.textContent = Math.round(falta / kilaje) + " cj";
+});
+// Los tildes viajan en UN parametro separado por comas, no en seis `cliente=`:
+// asi la URL se puede compartir y volver a abrir igual.
+document.addEventListener("submit", function (evento) {
+  var form = evento.target;
+  var oculto = form.querySelector("#clientes-elegidos");
+  if (!oculto) { return; }
+  var tildados = form.querySelectorAll('input[name="cliente"]:checked');
+  oculto.value = Array.from(tildados).map(function (c) { return c.value; }).join(",");
+  Array.from(tildados).forEach(function (c) { c.removeAttribute("name"); });
+});
+</script>
+{% include "_pie_version.html" %}
+</body>
+</html>

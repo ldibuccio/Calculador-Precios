@@ -84,7 +84,7 @@ def magnitud_de_la_ficha(ficha: dict) -> str | None:
     return None
 
 
-def _total_de_la_compra(compra: dict, magnitud: str) -> float | None:
+def total_de_la_compra(compra: dict, magnitud: str) -> float | None:
     """Cuánto trajo ESTA compra en la magnitud pedida, o None si no la declaró.
 
     None no es cero: es "esta compra no se puede costear en esa unidad".
@@ -168,7 +168,7 @@ def _costear_compras(compras: list[dict], magnitud: str) -> tuple[float | None, 
             sin_precio += 1
             continue
 
-        total = _total_de_la_compra(compra, magnitud)
+        total = total_de_la_compra(compra, magnitud)
         if total is None:
             sin_la_magnitud += 1
             continue
@@ -200,7 +200,7 @@ def _contenido_por_cajon_de(compra: dict, magnitud: str) -> float | None:
 
     None si la compra no declaró esa magnitud, o si no tiene cajones.
     """
-    total = _total_de_la_compra(compra, magnitud)
+    total = total_de_la_compra(compra, magnitud)
     if total is None:
         return None
     cajones = float(compra["cantidad_cajones"])
@@ -246,7 +246,7 @@ def _promedios_por_cajon(compras: list[dict], magnitud: str) -> tuple[float | No
     utiles = [
         (c, _contenido_por_cajon_de(c, magnitud))
         for c in compras
-        if c["importe"] is not None and _total_de_la_compra(c, magnitud) is not None
+        if c["importe"] is not None and total_de_la_compra(c, magnitud) is not None
     ]
     utiles = [(c, contenido) for c, contenido in utiles if contenido is not None]
     if not utiles:
@@ -303,7 +303,7 @@ def _envases_por_unidad_ponderado(
         if compra["importe"] is None:
             continue
 
-        cantidad_real = _total_de_la_compra(compra, magnitud)
+        cantidad_real = total_de_la_compra(compra, magnitud)
         contenido_compra = _contenido_por_cajon_de(compra, magnitud)
         if cantidad_real is None or contenido_compra is None:
             continue

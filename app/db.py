@@ -9429,6 +9429,136 @@ def contar_mails_pedido_leidos_con_ia(fecha_desde) -> dict:
         conexion.close()
 
 
+def compras_de_hoy_por_articulo() -> dict:
+    """Lo comprado HOY por artículo: {articulo_id: {cajones, kilos, conteo}}.
+
+    Para la columna "Compré hoy" de "Qué comprar hoy", que tiene que bajar
+    el saldo MIENTRAS SE COMPRA y no cuando llega.
+
+    ENTRAN 'pendiente' Y 'recepcionado', y es decisión del dueño (21/09):
+    "parado en el Mercado el saldo tiene que bajar cuando compro, no cuando
+    llega". Una compra recién cargada está en 'pendiente' — contando solo lo
+    recepcionado, la columna no se movería justo en el momento en que se la
+    mira. Quedan afuera 'rechazado' y 'no_ingresado', que no entraron.
+
+    LAS DOS MAGNITUDES VIAJAN SEPARADAS y ninguna se deduce de la otra:
+    quien llama elige con `magnitud_de_la_ficha` cuál corresponde a la fila.
+    Sumarlas o convertirlas sería el factor que este sistema rechazó.
+
+    LO REAL PRIMERO Y EL ESTIMADO DE RESPALDO, que es la misma regla que usa
+    la cuenta de stock: lo pesado es lo que hay, y el estimado entra solo
+    donde nadie pesó todavía — que es el caso normal de una compra de hoy,
+    porque el camión no llegó.
+
+    HOY es el día ARGENTINO, no el del servidor: un offset fijo no se entera
+    el día que el país mueva el reloj, y lo haría en silencio.
+    """
+    conexion = obtener_conexion()
+    try:
+        with conexion.cursor() as cursor:
+            cursor.execute(
+                f"""
+                SELECT c.articulo_id,
+                       SUM(COALESCE(c.cantidad_cajones_real, c.cantidad_cajones)) AS cajones,
+                       SUM(COALESCE(c.cantidad_kilos_real, c.cantidad_kilos))     AS kilos,
+                       SUM(COALESCE(c.cantidad_fraccion_real, c.cantidad_fraccion)) AS conteo
+                FROM compras c
+                WHERE c.fecha_operacion = {_SQL_HOY_ARGENTINA}
+                  AND c.estado IN ('pendiente', 'recepcionado')
+                GROUP BY c.articulo_id
+                """
+            )
+            return {
+                fila[0]: {
+                    "cajones": float(fila[1]) if fila[1] is not None else 0.0,
+                    "kilos": float(fila[2]) if fila[2] is not None else None,
+                    "conteo": float(fila[3]) if fila[3] is not None else None,
+                }
+                for fila in cursor.fetchall()
+            }
+    finally:
+        conexion.close()
+
+
+def renglones_de_los_ultimos_pedidos(cliente_ids: list[int], pedidos: int = 6) -> list[dict]:
+    """Lo que pidieron estos clientes en sus últimos `pedidos` pedidos VIGENTES.
+
+    Para "Qué comprar hoy": una fila por (cliente, artículo, ficha) con los
+    BULTOS sumados y con qué dividirlos para llegar a la magnitud de la fila.
+
+    VIGENTES, NO "NO ANULADOS", y es la diferencia que más caro sale: un
+    pedido RECARGADO no se anula — deja de ser el vigente, y su reemplazo
+    queda con la misma `fecha_operacion`. Contando los dos, la demanda de
+    ese día entra DOS VECES y el promedio sale inflado sin que nada se vea
+    raro. Es el bug exacto que tuvo `arandano_1` el 18/09. El `DISTINCT ON
+    (cliente_id, fecha_operacion) ORDER BY ... creado_en DESC` se queda con
+    el último cargado de cada día, que es la misma regla que usa el resto
+    del sistema.
+
+    LOS RENGLONES SON LOS ARMABLES, con el filtro de la casa:
+    `articulo_id IS NOT NULL AND anulado_el IS NULL AND sucursal IS NOT NULL`.
+    El tercero es el que no es obvio: un renglón identificado SIN sucursal
+    "vino sin cantidades en el mail y no se arma jamás" — el confirmar los
+    guarda igual, en cero, porque nada del mail se pierde. Sin ese filtro
+    entran al promedio como ceros y lo hunden.
+
+    `pedidos_del_cliente` ES EL DIVISOR, y viene por fila porque puede ser
+    MENOR que `pedidos`: un cliente con tres pedidos en su historia tiene
+    "los últimos 6" = 3, y dividir igual por 6 lo parte al medio. Eso es
+    distinto de dividir por los días en que el ARTÍCULO apareció, que es lo
+    que el dueño rechazó el 21/09: ahí el divisor es fijo justamente porque
+    se compra para un día cualquiera.
+
+    `contenido_caja` puede venir en NULL (renglón sin ficha, o ficha sin
+    contenido): quien llama deja esa fila SIN NÚMERO en vez de en cero. Un
+    cero diría que ese cliente no pide nada.
+    """
+    if not cliente_ids:
+        return []
+    conexion = obtener_conexion()
+    try:
+        with conexion.cursor() as cursor:
+            cursor.execute(
+                """
+                WITH vigentes AS (
+                    SELECT DISTINCT ON (p.cliente_id, p.fecha_operacion)
+                           p.id, p.cliente_id, p.fecha_operacion
+                    FROM pedidos p
+                    WHERE p.cliente_id = ANY(%s) AND p.anulado_el IS NULL
+                    ORDER BY p.cliente_id, p.fecha_operacion DESC, p.creado_en DESC
+                ), elegidos AS (
+                    SELECT v.id, v.cliente_id, v.fecha_operacion
+                    FROM (SELECT v.*, row_number() OVER (PARTITION BY v.cliente_id
+                                                         ORDER BY v.fecha_operacion DESC) AS n
+                          FROM vigentes v) v
+                    WHERE v.n <= %s
+                )
+                SELECT e.cliente_id, r.articulo_id, a.nombre AS articulo_nombre,
+                       a.unidad_conteo, a.contenido_referencia,
+                       r.ficha_id, f.contenido_caja, f.unidad_venta,
+                       SUM(r.cantidad) AS bultos,
+                       (SELECT count(*) FROM elegidos e2
+                         WHERE e2.cliente_id = e.cliente_id) AS pedidos_del_cliente,
+                       MIN(e.fecha_operacion) AS desde,
+                       MAX(e.fecha_operacion) AS hasta
+                FROM elegidos e
+                JOIN pedidos_renglones r ON r.pedido_id = e.id
+                JOIN articulos a ON a.id = r.articulo_id
+                LEFT JOIN fichas_logistica f ON f.id = r.ficha_id
+                WHERE r.articulo_id IS NOT NULL
+                  AND r.anulado_el IS NULL
+                  AND r.sucursal IS NOT NULL
+                GROUP BY e.cliente_id, r.articulo_id, a.nombre, a.unidad_conteo,
+                         a.contenido_referencia, r.ficha_id, f.contenido_caja, f.unidad_venta
+                """,
+                (list(cliente_ids), pedidos),
+            )
+            columnas = [c[0] for c in cursor.description]
+            return [dict(zip(columnas, fila)) for fila in cursor.fetchall()]
+    finally:
+        conexion.close()
+
+
 def listar_pedidos_vigentes_con_armado(cliente_id: int, fecha_desde) -> list[dict]:
     """Los pedidos VIVOS de un cliente desde una fecha (pasados recientes y TODOS los futuros), con su estado de armado.
 
