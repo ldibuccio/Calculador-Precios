@@ -19,6 +19,15 @@ enmienda. Un `--amend` no agrega un commit, así que el número no se mueve:
     python3 scripts/sellar_version.py
     git commit --amend --no-edit
 
+Y EL `git add` LO HACE ESTE SCRIPT, no el que lo corre. Es lo que faltaba
+el 21/09: `git commit --amend --no-edit` SIN `-a` y sin rutas enmienda con
+el índice tal como está, y el archivo se acaba de escribir DESPUÉS del `git
+add`, así que queda afuera. El commit sale con el número viejo adentro, el
+conteo ya se movió, y el test lo agarra — en el CI, o sea donde frena el
+deploy y no donde se escribe. La receta de arriba, escrita así, no
+funcionaba: le faltaba un paso que nadie iba a recordar. Ponerlo acá adentro
+es el chequeo mecánico en vez de la regla escrita.
+
 Y LO QUE IMPIDE QUE SE OLVIDE NO ES ACORDARSE: es
 `test_VERSION_NUMERO_esta_al_dia`, que compara el archivo contra el conteo y
 pone el CI en rojo. Sobre un clon shallow ese test se saltea —ahí el conteo
@@ -54,7 +63,11 @@ def main() -> int:
         return 1
     numero = contar_commits()
     (RAIZ / "VERSION_NUMERO").write_text(numero + "\n", encoding="utf-8")
-    print(f"VERSION_NUMERO = {numero}")
+    # STAGEADO ACÁ: un `--amend` sin `-a` enmienda con el índice como está, y
+    # este archivo se escribió recién. Sin esto el commit sale con el número
+    # viejo adentro y el CI lo agarra después de pushear.
+    subprocess.run(["git", "add", "VERSION_NUMERO"], cwd=RAIZ, check=True)
+    print(f"VERSION_NUMERO = {numero} (stageado)")
     return 0
 
 
