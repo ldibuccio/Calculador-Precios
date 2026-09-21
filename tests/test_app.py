@@ -2737,6 +2737,39 @@ def test_que_comprar_hoy_sin_clientes_elegidos_muestra_el_selector():
     assert "En construcción" not in respuesta.text
 
 
+def test_el_campo_del_MARGEN_arranca_en_el_sugerido_y_un_CERO_tipeado_se_respeta():
+    """El rival es un `or MARGEN_SUGERIDO` en la ruta: con 0 mostraria 10.
+
+    El campo se dibuja con el valor que el server resolvio —y el JS lee ESE
+    `defaultValue` cuando no puede leer lo tipeado— asi que si la ruta
+    reemplaza el 0, el navegador tambien vuelve al 10.
+    """
+    with patch("app.main.listar_clientes", return_value=[{"id": 7, "nombre": "Dia"}]):
+        por_defecto = cliente.get("/compras/que-comprar")
+        en_cero = cliente.get("/compras/que-comprar?margen=0")
+
+    assert 'id="margen"' in por_defecto.text.split("</style>")[-1]
+    assert 'id="margen" name="margen" type="number" inputmode="decimal" step="1" min="0"\n             value="10"' in por_defecto.text
+    assert 'value="0"' in en_cero.text.split("</style>")[-1]
+
+
+def test_el_navegador_redondea_PARA_ARRIBA_y_aplica_el_margen_igual_que_el_server():
+    """La cuenta esta escrita dos veces —acá y en core— y es el precio de que
+    sea instantanea. Lo que no puede pasar es que el JS se quede con la
+    version vieja: `Math.round` y una resta sin margen dan otro numero con la
+    misma pantalla.
+    """
+    with patch("app.main.listar_clientes", return_value=[]):
+        script = cliente.get("/compras/que-comprar").text.split("<script>")[-1]
+
+    assert "Math.ceil(falta / kilaje)" in script
+    assert "Math.round(falta / kilaje)" not in script
+    assert "pide * (1 + margenActual() / 100) - yaTengo" in script
+    # El `data-falta` de antes traia la resta hecha CON el margen de la carga:
+    # con el margen editable ese numero envejece al primer tecleo.
+    assert "dataset.falta" not in script
+
+
 def test_ver_compras_muestra_la_botonera_de_cargar_y_operaciones():
     respuesta = cliente.get("/compras")
 

@@ -379,7 +379,9 @@ from core.conceptos_cliente import calcular_cambio_de_utilidad, calcular_cambios
 from core.que_comprar import (
     PEDIDOS_DEL_PROMEDIO,
     cajones_que_faltan,
+    con_margen,
     falta_por_comprar,
+    margen_valido,
     promedio_de_un_dia,
 )
 from core.magnitudes import (
@@ -3137,8 +3139,14 @@ def exportar_listado_compras_excel(fecha_desde: str = "", fecha_hasta: str = "",
     )
 
 
-def _filas_de_que_comprar(renglones: list[dict], piso: dict, comprado: dict) -> list[dict]:
+def _filas_de_que_comprar(
+    renglones: list[dict], piso: dict, comprado: dict, *, margen: float
+) -> list[dict]:
     """Una fila por artículo: lo que piden todos los clientes juntos, el piso y lo comprado.
+
+    EL MARGEN ES OBLIGATORIO Y SIN DEFAULT a propósito: mueve TODOS los
+    números de la fila, así que un llamador que no lo diga produce una fila
+    que no se puede leer. Cero es "sin margen" y hay que escribirlo.
 
     LA MAGNITUD DE LA FILA SALE DE LA FICHA, con `magnitud_de_la_ficha` —la
     misma función que elige la unidad en todo el costeo—, y no de una
@@ -3183,13 +3191,23 @@ def _filas_de_que_comprar(renglones: list[dict], piso: dict, comprado: dict) -> 
             comprado_magnitud = 0.0
 
         kilaje = del_articulo[0].get("contenido_referencia")
-        falta = falta_por_comprar(pide, del_piso.get("magnitud"), comprado_magnitud)
+        # EL MARGEN VA SOBRE EL PEDIDO Y NO SOBRE EL FALTANTE: ver `con_margen`.
+        falta = falta_por_comprar(
+            con_margen(pide, margen), del_piso.get("magnitud"), comprado_magnitud
+        )
+        # LO QUE YA TENGO, sumado acá y no en el navegador: es la única parte
+        # de la cuenta que necesita saber de fichas y de lotes, y el JS la
+        # recibe hecha para poder recalcular al mover el margen o el kilaje.
+        ya_tengo = None
+        if del_piso.get("magnitud") is not None and comprado_magnitud is not None:
+            ya_tengo = float(del_piso["magnitud"]) + float(comprado_magnitud)
         filas.append(
             {
                 "articulo_id": articulo_id,
                 "nombre": del_articulo[0]["articulo_nombre"],
                 "sufijo": SUFIJOS_FICHA_REPROCESO.get(del_articulo[0].get("unidad_venta"), ""),
                 "pide": pide,
+                "ya_tengo": ya_tengo,
                 "en_piso": del_piso.get("magnitud"),
                 "sueltos": del_piso.get("sueltos"),
                 "cajas": del_piso.get("cajas"),
@@ -3295,7 +3313,7 @@ def _sueltos_en_magnitud(articulo_id: int, movimientos: dict, sueltos: float, ho
 
 
 @app.get("/compras/que-comprar")
-def ver_que_comprar(request: Request, clientes: str = ""):
+def ver_que_comprar(request: Request, clientes: str = "", margen: str = ""):
     """Qué comprar hoy: cuántos cajones de cada artículo, sumando los clientes elegidos.
 
     UNA FILA POR ARTÍCULO Y EN SU MAGNITUD. Lo único que se suma es el mismo
@@ -3304,14 +3322,15 @@ def ver_que_comprar(request: Request, clientes: str = ""):
     `ARTICULOS_MIXTOS_TODOS 0` — ningún artículo tiene fichas en magnitudes
     distintas, así que ninguna fila mezcla dos.
 
-    NO GUARDA NADA TODAVÍA: los clientes elegidos viajan en la URL y el
-    kilaje se edita en el navegador. Es el primer paso a propósito —ya sirve
-    parado en el Mercado— y lo que se pierde al cerrar es el borrador, que
-    viene después con su migración.
+    NO GUARDA NADA TODAVÍA: los clientes elegidos y el margen viajan en la
+    URL y el kilaje se edita en el navegador. Es el primer paso a propósito
+    —ya sirve parado en el Mercado— y lo que se pierde al cerrar es el
+    borrador, que viene después con su migración.
     """
     elegidos = [int(c) for c in clientes.split(",") if c.strip().isdigit()]
+    porcentaje = margen_valido(margen)
     contexto = {"barra_sector": "compras", "barra_titulo": "Qué comprar hoy",
-                "elegidos": elegidos, "filas": [], "aviso": None}
+                "elegidos": elegidos, "margen": porcentaje, "filas": [], "aviso": None}
     try:
         contexto["clientes"] = listar_clientes()
     except Exception:
@@ -3335,7 +3354,7 @@ def ver_que_comprar(request: Request, clientes: str = ""):
         contexto["aviso"] = "No se pudo leer lo que hace falta comprar. Probá de nuevo."
         return templates.TemplateResponse(request, "compras_que_comprar.html", contexto)
 
-    contexto["filas"] = _filas_de_que_comprar(renglones, piso, comprado)
+    contexto["filas"] = _filas_de_que_comprar(renglones, piso, comprado, margen=porcentaje)
     return templates.TemplateResponse(request, "compras_que_comprar.html", contexto)
 
 

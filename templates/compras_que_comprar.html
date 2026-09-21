@@ -22,6 +22,10 @@
      en el Mercado con el celular en una mano. */
   .kilaje { width: 5.5rem; min-height: 44px; font-size: 1.05rem; padding: 0.4rem;
             border: 2px solid #2563eb; border-radius: 8px; text-align: center; }
+  .margen { display: flex; align-items: center; gap: 0.5rem; margin: 0.75rem 0;
+            flex-wrap: wrap; font-size: 0.95rem; }
+  .margen input { width: 4.5rem; min-height: 44px; font-size: 1.05rem; padding: 0.4rem;
+                  border: 2px solid #2563eb; border-radius: 8px; text-align: center; }
   .elegir { display: flex; flex-wrap: wrap; gap: 0.5rem; margin: 0.75rem 0; }
   .elegir label { display: flex; align-items: center; gap: 0.4rem; min-height: 44px;
                   background: #fff; border-radius: 8px; padding: 0 0.75rem; font-size: 0.95rem; }
@@ -47,6 +51,12 @@
       {% endfor %}
     </div>
     <input type="hidden" name="clientes" id="clientes-elegidos" value="{{ elegidos|join(',') }}">
+    <div class="margen">
+      <label for="margen">Comprar un</label>
+      <input id="margen" name="margen" type="number" inputmode="decimal" step="1" min="0"
+             value="{{ margen|sin_decimales }}" aria-label="Margen en por ciento">
+      <label for="margen">% más de lo que piden</label>
+    </div>
     <button class="boton-ver" type="submit">Ver qué comprar</button>
   </form>
 
@@ -55,7 +65,9 @@
   {% endif %}
 
   {% for f in filas %}
-  <div class="tarjeta" data-articulo="{{ f.articulo_id }}">
+  <div class="tarjeta" data-articulo="{{ f.articulo_id }}"
+       data-pide="{{ f.pide if f.pide is not none else '' }}"
+       data-ya-tengo="{{ f.ya_tengo if f.ya_tengo is not none else '' }}">
     <div class="art">{{ f.nombre }}</div>
     <div class="renglon">
       <span class="dato">Piden por día
@@ -67,7 +79,6 @@
       <span class="dato">Kilaje del cajón
         <b><input class="kilaje" type="number" inputmode="decimal" step="0.1" min="0"
                   value="{{ f.kilaje|sin_decimales if f.kilaje is not none else '' }}"
-                  data-falta="{{ f.falta if f.falta is not none else '' }}"
                   aria-label="Kilaje del cajón de {{ f.nombre }}"></b></span>
       <span class="dato">Falta comprar
         <b class="falta">{% if f.falta is not none and f.falta == 0 %}<span class="ok">OK</span>
@@ -79,24 +90,55 @@
   {% endfor %}
 
 <script>
-// EL KILAJE RECALCULA AL TOQUE, sin ir al server: parado en el Mercado no se
-// espera una recarga. La resta ya viene hecha EN MAGNITUD desde el server
-// (data-falta) y acá solo se divide, que es la única division de la cuenta.
-document.addEventListener("input", function (evento) {
-  var campo = evento.target;
-  if (!campo.classList || !campo.classList.contains("kilaje")) { return; }
-  var tarjeta = campo.closest("[data-articulo]");
-  var destino = tarjeta ? tarjeta.querySelector(".falta") : null;
-  if (!destino) { return; }
-  var falta = parseFloat(campo.dataset.falta);
-  var kilaje = parseFloat(campo.value);
-  if (isNaN(falta)) { return; }
+// RECALCULA AL TOQUE, sin ir al server: parado en el Mercado no se espera una
+// recarga. El margen mueve TODAS las filas, asi que la resta no puede venir
+// hecha desde el server como antes — se rehace acá con los dos numeros que la
+// tarjeta trae: lo que piden (data-pide) y lo que ya tengo (data-ya-tengo).
+//
+// LA CUENTA QUEDA ESCRITA DOS VECES —acá y en `falta_por_comprar` +
+// `cajones_que_faltan`— y es el precio de que sea instantanea. Lo que hace
+// visible una separacion es que el primer dibujo SALE DEL SERVER: si las dos
+// no dicen lo mismo, el numero salta al primer tecleo sin que cambie ningun
+// dato, que es un sintoma que se ve.
+function margenActual() {
+  var campo = document.getElementById("margen");
+  if (!campo) { return 0; }
+  var m = parseFloat(String(campo.value).replace(",", "."));
+  // Lo que no se puede leer vuelve a lo que el server puso, igual que
+  // `margen_valido`. Se lee del `defaultValue` y no de una constante escrita
+  // acá: el valor de arranque vive UNA vez, en core/que_comprar.py.
+  if (isNaN(m) || m < 0) { m = parseFloat(campo.defaultValue); }
+  return isNaN(m) ? 0 : m;
+}
+function recalcular(tarjeta) {
+  var destino = tarjeta.querySelector(".falta");
+  var campo = tarjeta.querySelector(".kilaje");
+  if (!destino || !campo) { return; }
+  var pide = parseFloat(tarjeta.dataset.pide);
+  var yaTengo = parseFloat(tarjeta.dataset.yaTengo);
+  // Un hueco se queda como lo dejo el server, que ya dice POR QUE falta.
+  if (isNaN(pide) || isNaN(yaTengo)) { return; }
+  var falta = Math.max(pide * (1 + margenActual() / 100) - yaTengo, 0);
   if (falta === 0) { destino.innerHTML = '<span class="ok">OK</span>'; return; }
+  var kilaje = parseFloat(String(campo.value).replace(",", "."));
   if (isNaN(kilaje) || kilaje <= 0) {
     destino.innerHTML = '<span class="hueco">poné el kilaje</span>';
     return;
   }
-  destino.textContent = Math.round(falta / kilaje) + " cj";
+  // PARA ARRIBA, igual que `cajones_que_faltan`: quedarse corto es peor que
+  // sobrar un cajon.
+  destino.textContent = Math.ceil(falta / kilaje) + " cj";
+}
+document.addEventListener("input", function (evento) {
+  var campo = evento.target;
+  if (!campo.classList) { return; }
+  if (campo.id === "margen") {
+    Array.from(document.querySelectorAll("[data-articulo]")).forEach(recalcular);
+    return;
+  }
+  if (!campo.classList.contains("kilaje")) { return; }
+  var tarjeta = campo.closest("[data-articulo]");
+  if (tarjeta) { recalcular(tarjeta); }
 });
 // Los tildes viajan en UN parametro separado por comas, no en seis `cliente=`:
 // asi la URL se puede compartir y volver a abrir igual.

@@ -13,6 +13,7 @@ aparezca uno, esa fila se parte en una línea por magnitud, que es lo que ya
 hace Armar Remito: `kilos_enviados` guarda la magnitud de la ficha y esa
 pantalla parte el total en vez de sumar las tres.
 """
+import math
 
 # CUÁNTOS PEDIDOS ENTRAN AL PROMEDIO, y el divisor es ÉSE y no los días en
 # que el artículo apareció. Es decisión del dueño (21/09): "salgo a comprar
@@ -24,6 +25,12 @@ pantalla parte el total en vez de sumar las tres.
 # contesta "cuánto sale un día cualquiera" y con `/2` contestaría "cuánto
 # pide cuando pide", que es otra pregunta.
 PEDIDOS_DEL_PROMEDIO = 6
+
+# EL MARGEN QUE LA PANTALLA PROPONE, en por ciento. Es un valor de arranque
+# de la PANTALLA y no un default de la base: la columna guarda lo que el
+# comprador dejó puesto, y 0 ahí significa "sin margen". Dos defaults que no
+# coinciden es como se separan dos reglas, así que el número vive una vez acá.
+MARGEN_SUGERIDO = 10
 
 
 def promedio_de_un_dia(total_pedido, pedidos=PEDIDOS_DEL_PROMEDIO):
@@ -44,6 +51,29 @@ def promedio_de_un_dia(total_pedido, pedidos=PEDIDOS_DEL_PROMEDIO):
     if pedidos <= 0:
         raise ValueError("el promedio no se puede sacar sobre cero pedidos")
     return float(total_pedido) / pedidos
+
+
+def con_margen(pide, margen_porcentaje):
+    """Lo que se compra de más para no quedarse corto, sobre LO QUE PIDEN.
+
+    Del dueño (21/09): "nunca vendo exacto lo que pedí, y prefiero volver
+    con un cajón de más que quedarme sin".
+
+    VA SOBRE EL PEDIDO Y NO SOBRE EL FALTANTE, y la diferencia es grande.
+    Con 1000 pedidos, 900 en el piso y 10%:
+
+        sobre el pedido    1100 − 900 = 200   <- lo que va
+        sobre el faltante  (1000 − 900) × 1,1 = 110
+
+    El margen existe porque LO QUE SE VA A VENDER es incierto; el piso no
+    —está contado—. Aplicarlo al faltante infla también lo que ya se tiene,
+    que es cubrir dos veces la parte que no hacía falta cubrir.
+    """
+    if pide is None:
+        return None
+    if margen_porcentaje is None:
+        return float(pide)
+    return float(pide) * (1.0 + float(margen_porcentaje) / 100.0)
 
 
 def falta_por_comprar(pide, en_piso, comprado_hoy):
@@ -80,4 +110,37 @@ def cajones_que_faltan(falta, kilaje_del_cajon):
         return None
     if float(kilaje_del_cajon) <= 0:
         return None
-    return float(falta) / float(kilaje_del_cajon)
+    # PARA ARRIBA, SIEMPRE, y es decisión del dueño (21/09): "quedarse corto
+    # es peor que sobrar un cajón". Redondeando, 1120 kg contra cajones de 18
+    # dan 62 — que son 1116, cuatro kilos cortos. Con techo son 63.
+    #
+    # No se puede comprar medio cajón, así que el resultado es un ENTERO y no
+    # un float con coma que la pantalla después recorte: un número que se
+    # redondea al mostrarlo es dos reglas, y la que se vea no siempre es la
+    # que se calculó.
+    return math.ceil(float(falta) / float(kilaje_del_cajon))
+
+
+def margen_valido(texto):
+    """El margen que llega de la URL, en por ciento.
+
+    CERO NO ES VACÍO, y por eso no alcanza un `or MARGEN_SUGERIDO`: el que
+    escribe 0 está diciendo "sin margen", y reemplazárselo por 10 le haría
+    comprar de más sin que nada se lo diga.
+
+    Lo que no se puede leer como un porcentaje —vacío, basura, un negativo—
+    vuelve al sugerido. Un negativo sería comprar MENOS de lo que piden, que
+    no es lo que este campo significa.
+    """
+    if texto is None:
+        return MARGEN_SUGERIDO
+    texto = str(texto).strip().replace(",", ".")
+    if not texto:
+        return MARGEN_SUGERIDO
+    try:
+        margen = float(texto)
+    except ValueError:
+        return MARGEN_SUGERIDO
+    if margen < 0:
+        return MARGEN_SUGERIDO
+    return margen
