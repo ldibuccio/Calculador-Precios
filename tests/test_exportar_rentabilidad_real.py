@@ -20,7 +20,7 @@ RESULTADO_REAL = {
                     # que es justo lo que el desglose tiene que dejar ver.
                     "costo_mermas": 1500.0, "bultos_mermados": 3.0,
                     "costo_mermas_cruda": 700.0, "bultos_mermados_cruda": 2.0,
-                    "costo_mermas_trabajada": 800.0, "bultos_mermados_trabajada": 1.0,
+                    "costo_mermas_trabajada": 800.0, "bultos_mermados_trabajada": 1.0, "costo_segunda": 2100.0, "bultos_pasados_a_segunda": 4.0,
                     "segunda_bultos": 2.0,
                     "devoluciones_bultos": 5.0, "devoluciones_venta": 4500.0,
                     "rechazos_perdidos": 900.0, "rechazos_bultos": 2.0,
@@ -30,7 +30,7 @@ RESULTADO_REAL = {
             "subtotal": {"bultos": 10.0, "venta_neta": 14400.0, "costo_mercaderia": 5000.0,
                          "costo_envase": 320.0, "costo_mermas": 1500.0, "costo_total": 6820.0, "bultos_mermados": 3.0,
                          "costo_mermas_cruda": 700.0, "bultos_mermados_cruda": 2.0,
-                         "costo_mermas_trabajada": 800.0, "bultos_mermados_trabajada": 1.0,
+                         "costo_mermas_trabajada": 800.0, "bultos_mermados_trabajada": 1.0, "costo_segunda": 2100.0, "bultos_pasados_a_segunda": 4.0,
                          "devoluciones_bultos": 5.0, "devoluciones_venta": 4500.0,
                          "rechazos_perdidos": 900.0, "rechazos_bultos": 2.0,
                          "renta_pesos": 3080.0, "utilidad_pct": 61.6},
@@ -40,7 +40,7 @@ RESULTADO_REAL = {
         "bultos": 10.0, "venta_neta": 14400.0, "costo_mercaderia": 5000.0, "costo_envase": 320.0,
         "costo_mermas": 1500.0, "segunda_bultos": 2.0, "costo_total": 6820.0, "bultos_mermados": 3.0,
         "costo_mermas_cruda": 700.0, "bultos_mermados_cruda": 2.0,
-        "costo_mermas_trabajada": 800.0, "bultos_mermados_trabajada": 1.0,
+        "costo_mermas_trabajada": 800.0, "bultos_mermados_trabajada": 1.0, "costo_segunda": 2100.0, "bultos_pasados_a_segunda": 4.0,
         "devoluciones_bultos": 5.0, "devoluciones_venta": 4500.0,
         "rechazos_perdidos": 900.0, "rechazos_bultos": 2.0,
         "renta_pesos": 3080.0, "utilidad_pct": 61.6, "afuera_bultos": 18.0, "afuera_motivos": 2,
@@ -142,6 +142,7 @@ def test_exports_reales_sin_datos_no_rompen():
                                        "costo_envase": 0, "costo_mermas": 0, "bultos_mermados": 0,
                                        "costo_mermas_cruda": 0, "bultos_mermados_cruda": 0,
                                        "costo_mermas_trabajada": 0, "bultos_mermados_trabajada": 0,
+                                       "costo_segunda": 0, "bultos_pasados_a_segunda": 0,
                                        "segunda_bultos": 0,
                                        "costo_total": 0, "renta_pesos": 0, "utilidad_pct": None,
                                        "afuera_bultos": 0, "afuera_motivos": 0},
@@ -152,3 +153,72 @@ def test_exports_reales_sin_datos_no_rompen():
     ).active
     valores = [str(c.value) for f in hoja.iter_rows() for c in f if c.value is not None]
     assert any("Sin movimientos" in v for v in valores)
+
+
+def test_el_PDF_y_el_EXCEL_NOMBRAN_lo_pasado_a_segunda():
+    """Los dos canarios que dieron CERO: se podían borrar las dos columnas del
+    Excel y el párrafo del PDF sin que nada cayera.
+
+    El fixture tiene $2.100 en 4 bultos a propósito: con todo en cero los dos
+    exportables se saltean el renglón y ningún assert puede distinguir "no lo
+    escribe" de "no había nada que escribir" (corolario 30).
+    """
+    import pypdfium2 as pdfium
+
+    pdf = generar_pdf_rentabilidad_real(
+        date(2026, 8, 18), date(2026, 8, 25), ["cliente Día"], RESULTADO_REAL)
+    documento = pdfium.PdfDocument(pdf)
+    texto = "\n".join(p.get_textpage().get_text_range() for p in documento)
+    assert "Pasado a segunda" in texto
+    assert "$2.100" in texto
+
+    hoja = openpyxl.load_workbook(BytesIO(generar_excel_rentabilidad_real(
+        date(2026, 8, 18), date(2026, 8, 25), ["cliente Día"], RESULTADO_REAL))).active
+    encabezados = [str(c.value) for f in hoja.iter_rows() for c in f if c.value is not None]
+    assert "Pasado a segunda $" in encabezados
+    assert "Pasado a segunda bultos" in encabezados
+
+    # Y EL VALOR, no solo el encabezado: una columna con título y sin número
+    # pasa el assert de arriba y no dice nada. Tres veces —la fila, el
+    # subtotal y el total— que es el denominador de esta hoja.
+    valores = [c.value for f in hoja.iter_rows() for c in f if c.value is not None]
+    assert valores.count(2100.0) == 3, valores.count(2100.0)
+    assert valores.count(4.0) >= 3
+
+
+def test_el_Excel_agrega_las_columnas_AL_FINAL_y_no_corre_las_que_ya_estaban():
+    """Esta hoja ubica cada valor por ÍNDICE.
+
+    Meter las dos nuevas en el medio correría todo lo que está a la derecha
+    —renta, utilidad, rechazos— sin que ningún test que mire un número lo
+    pueda ver. Es el mismo mecanismo que el `nth-child` del catálogo de
+    Artículos, en openpyxl.
+    """
+    hoja = openpyxl.load_workbook(BytesIO(generar_excel_rentabilidad_real(
+        date(2026, 8, 18), date(2026, 8, 25), ["cliente Día"], RESULTADO_REAL))).active
+    fila_encabezado = next(
+        f for f in hoja.iter_rows() if f[0].value == "Artículo")
+    titulos = [c.value for c in fila_encabezado]
+
+    assert titulos[-2:] == ["Pasado a segunda $", "Pasado a segunda bultos"]
+    # Las que ya estaban, en su lugar de siempre.
+    assert titulos[17] == "Renta $" and titulos[18] == "Utilidad %"
+
+    # Y LOS VALORES, en LAS TRES FILAS. El encabezado no alcanza: un canario
+    # que movía SOLO el `column=20` de la fila del artículo —dejando el título
+    # al final y el subtotal y el total en su lugar— pasaba los asserts de
+    # arriba y el `count(2100.0) == 3` de más abajo, porque el valor seguía
+    # existiendo tres veces. Lo único que lo ve es DÓNDE está en cada fila, y
+    # las tres van juntas: con una sola, mover las otras dos no rompe nada
+    # (corolario 57, los N hermanos).
+    filas = {f[0].value: f for f in hoja.iter_rows()
+             if f[0].value in ("Banana", "Subtotal", "Total REAL")}
+    assert len(filas) == 3, sorted(filas)
+    for nombre, fila in filas.items():
+        assert fila[19].value == 2100.0, (nombre, fila[19].value)
+        assert fila[20].value == 4.0, (nombre, fila[20].value)
+
+    # Y EL VECINO QUE LA INSERCIÓN EN EL MEDIO PISA: "Mermas bultos" es la
+    # columna 8, que es adonde el canario mandaba el costo de la segunda.
+    assert titulos[7] == "Mermas bultos"
+    assert filas["Banana"][7].value == 3.0

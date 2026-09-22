@@ -2879,6 +2879,79 @@ los 8 sueltos se desbordan al lote siguiente— y con el rejuego recortado el
 número cambia. Un fixture donde las entradas caen todas adentro de la ventana
 da lo mismo con las dos reglas y no prueba nada.
 
+### Y LA RENTABILIDAD REAL TIENE SU PROPIA COLUMNA (22/09)
+
+La pantalla de Pérdidas dice cuánto se perdió. **Rentabilidad Real dice otra
+cosa** —cuánto rindió cada artículo— y hasta el 22/09 el pase **no sumaba en
+ninguna columna suya**: consumía mercadería del FIFO y no aparecía ni en
+`costo_mermas`, ni en `segunda_bultos`, ni en `afuera_por_motivo`. La renta
+salía inflada exactamente en lo que se pasó a segunda.
+
+Son **tres compuertas y no una**, que es lo que costó encontrar: la misma
+pregunta —*¿este artículo tuvo algo además de ventas?*— estaba escrita en
+`articulos_con_salidas_stock` (la consulta), en `filas_con_algo` (la cuenta
+pura) y en un `{% if %}` de la plantilla que decide si se dibuja el renglón
+de chips. Arreglando las dos primeras, una berenjena que solo tuvo un pase
+aparecía con su costo **y sin un solo chip que dijera por qué** — un artículo
+con pérdida y sin nada que la nombre. Lo destapó un test de pantalla, no la
+lectura.
+
+**La caja de la MERMA de cajas armadas sigue AFUERA de Rentabilidad Real, y es
+una decisión que le queda al dueño.** Se pierde igual —lo dice la regla de
+arriba— y contarla movería `costo_mermas`, que es un número que ya se lee
+todos los días. Está medida, está dicha en el docstring de
+`cajas_de_pases_por_articulo`, y la consulta ya devuelve las dos mitades: el
+día que se decida, es una línea. En la pantalla de Pérdidas esa caja **sí**
+está contada, en el renglón "Se tiró".
+
+## Corolario 93: una reducción cuya CLAVE es más gruesa que el grano de la consulta no falla — elige una fila al azar
+
+Del 22/09, y lo encontró un canario en CERO que parecía la enésima lectura de
+un test flojo.
+
+`_SQL_CAJAS_DEL_DEPOSITO_PERDIDAS` agrupa por `(destino, articulo_id)`.
+`cajas_de_pases_por_articulo` armaba su diccionario **por comprensión y con la
+clave solo del artículo**, filtrando `destino == "segunda"`. Con el filtro
+puesto la clave es única y el número es correcto. Sin él —que es justo lo que
+el canario planta— las dos filas del mismo artículo **colisionan, y una pisa a
+la otra**:
+
+```
+filas CRUDAS (3):  ('merma', 1, 2, 100) · ('segunda', 1, 3, 150) · ('segunda', 2, 10, 500)
+con el filtro   :  {1: (3.0, 150.0), 2: (10.0, 500.0)}
+```
+
+**Y cuál gana lo decide el orden en que Postgres las devuelva, que no está
+fijado por ningún `ORDER BY`.** Acá `segunda` venía última, así que sacar el
+filtro daba **exactamente el mismo resultado** y el canario no podía morder.
+Si el plan las devolviera al revés, la misma función entregaría `2 cajas /
+$100` —el número de la MERMA— en silencio.
+
+**Por qué es peor que un test flojo**: el test estaba bien escrito y afirmaba
+lo correcto (`cajas_perdidas == 3.0`). Lo que no podía ver es que la avería
+que se le plantaba fuera **un no-op por casualidad**. Es la octava lectura del
+canario en cero, y no es ninguna de las siete: no es el test, ni el canario,
+ni el pycache, ni una rama muerta, ni un campo vacío, ni el contador, ni el
+fixture que dibuja una sola rama — es que **romper el código no cambió nada
+esta vez, y podría cambiarlo la próxima.**
+
+**La señal, y se hace al escribir el `dict(...)` o la comprensión**: si la
+consulta tiene `GROUP BY a, b` y la reducción indexa por `b` solo, la clave
+**no es única** y hay que mirar qué la desempata. Si lo que la desempata es un
+filtro, la reducción depende de que ese filtro no se mueva nunca — y el día que
+alguien lo toque no va a fallar: va a elegir una fila.
+
+**El arreglo no es agregar un `ORDER BY`** —eso fija cuál gana, que sigue
+siendo una de las dos— sino **acumular**: con `+=`, sacar el filtro SUMA, que
+es la única lectura honesta de "sin filtro", y el canario muerde. De yapa, el
+código dice en su forma que la clave no era única.
+
+**Y buscar la otra copia fue obligatorio**: la misma consulta la consume
+`perdidas_por_periodo`, que indexa por `(destino, articulo_id)` —el grano
+COMPLETO— así que no tiene el problema. La revisé antes de tocar nada, y eso
+es lo que distingue arreglar una copia de arreglar la que estaba mal.
+
+
 ## Un campo sin consecuencia se llena vacío, y eso no es indisciplina
 
 Del 09/09, y va como regla y no como corolario porque **no es de la familia

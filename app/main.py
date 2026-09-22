@@ -98,6 +98,7 @@ from app.db import (
     contar_pedidos_con_renglones_sin_identificar,
     contar_pedidos_incompletos,
     cajas_perdidas,
+    cajas_de_pases_por_articulo,
     perdidas_por_periodo,
     gasto_en_cajas,
     contar_recepciones_sin_pesaje,
@@ -15539,9 +15540,21 @@ def _datos_rentabilidad_real(cliente_id: int, fecha_desde, fecha_hasta, articulo
 
     margenes_por_fecha = _margenes_por_fecha(cliente_id, sorted(fechas_pedido))
 
+    # LA CAJA DE LOS PASES viene de la base y no del margen, y no es un atajo:
+    # `margenes_por_fecha` solo tiene las fechas de PEDIDOS, así que un pase
+    # de un día sin entregas no tendría con qué valuarse. Y la valuación del
+    # envase a la fecha del hecho ya está escrita una sola vez — la comparten
+    # Pérdidas y Plata de cajas.
+    #
+    # NO SE FILTRA POR ARTICULO NI POR GRUPO acá: la función pura solo busca
+    # la caja de los artículos que están en `articulos_datos`, y ésos ya
+    # vienen filtrados. Un segundo filtro sería la misma regla escrita dos
+    # veces, y la copia que se separe deja una caja afuera sin que nada avise.
+    cajas_de_pases = cajas_de_pases_por_articulo(fecha_desde, fecha_hasta)
+
     return calcular_rentabilidad_real(
         articulos_datos, margenes_por_fecha, cliente_id, fecha_desde, fecha_hasta,
-        devoluciones=devoluciones,
+        devoluciones=devoluciones, cajas_de_pases=cajas_de_pases,
     )
 
 

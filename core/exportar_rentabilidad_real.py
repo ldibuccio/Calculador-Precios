@@ -254,6 +254,21 @@ def generar_pdf_rentabilidad_real(
             )
         )
 
+    # LO PASADO A SEGUNDA, en su propio parrafo y no adentro del de mermas:
+    # son dos hechos distintos del galpon y la regla del dueno los separa al
+    # mostrar. Sale solo cuando hubo alguno, como el de mermas.
+    if grupos and totales["costo_segunda"]:
+        elementos.append(Spacer(1, 10))
+        elementos.append(
+            Paragraph(
+                f"Pasado a segunda: {_formatear_moneda(totales['costo_segunda'])} "
+                f"({_texto_bultos(totales['bultos_pasados_a_segunda'])} de primera que dejaron "
+                f"de serlo). Se costea igual que la merma —es la misma perdida con otro "
+                f"destino— e incluye la caja cuando la habia.",
+                estilo_total,
+            )
+        )
+
     if grupos:
         elementos.append(Spacer(1, 16))
         segunda = (
@@ -353,6 +368,12 @@ def generar_excel_rentabilidad_real(
         "Mermas crudas $", "Mermas crudas bultos", "Mermas trabajadas $", "Mermas trabajadas bultos",
         "Segunda bultos", "Devol. bultos", "Devoluciones $",
         "Rechazos perdidos $", "Rechazos perdidos bultos", "Renta $", "Utilidad %",
+        # LAS DOS NUEVAS VAN AL FINAL, y no al lado de las mermas donde se
+        # leerian mejor: esta hoja ubica cada valor por INDICE, asi que
+        # meterlas en el medio corre todo lo que esta a la derecha y ningun
+        # test que mire un numero lo puede ver. Es el mismo mecanismo que el
+        # `nth-child` del catalogo de Articulos, en openpyxl.
+        "Pasado a segunda $", "Pasado a segunda bultos",
     )
     for grupo in grupos:
         hoja.cell(row=fila_actual, column=1, value=grupo["etiqueta"]).font = fuente_grupo
@@ -381,6 +402,9 @@ def generar_excel_rentabilidad_real(
             hoja.cell(row=fila_actual, column=13, value=float(fila["segunda_bultos"]))
             hoja.cell(row=fila_actual, column=14, value=float(fila["devoluciones_bultos"]))
             hoja.cell(row=fila_actual, column=17, value=float(fila["rechazos_bultos"]))
+            celda = hoja.cell(row=fila_actual, column=20, value=round(float(fila["costo_segunda"]), 2))
+            celda.number_format = '"$"#,##0'
+            hoja.cell(row=fila_actual, column=21, value=float(fila["bultos_pasados_a_segunda"]))
             if fila["utilidad_pct"] is not None:
                 celda = hoja.cell(row=fila_actual, column=19, value=round(float(fila["utilidad_pct"]) / 100, 4))
                 celda.number_format = "0.0%"
@@ -404,6 +428,11 @@ def generar_excel_rentabilidad_real(
         hoja.cell(row=fila_actual, column=10, value=float(subtotal["bultos_mermados_cruda"])).font = fuente_subtotal
         hoja.cell(row=fila_actual, column=12, value=float(subtotal["bultos_mermados_trabajada"])).font = fuente_subtotal
         hoja.cell(row=fila_actual, column=17, value=float(subtotal["rechazos_bultos"])).font = fuente_subtotal
+        celda = hoja.cell(row=fila_actual, column=20, value=round(float(subtotal["costo_segunda"]), 2))
+        celda.font = fuente_subtotal
+        celda.number_format = '"$"#,##0'
+        hoja.cell(row=fila_actual, column=21,
+                  value=float(subtotal["bultos_pasados_a_segunda"])).font = fuente_subtotal
         if subtotal["utilidad_pct"] is not None:
             celda = hoja.cell(row=fila_actual, column=19, value=round(float(subtotal["utilidad_pct"]) / 100, 4))
             celda.font = fuente_subtotal
@@ -426,13 +455,18 @@ def generar_excel_rentabilidad_real(
         hoja.cell(row=fila_actual, column=13, value=float(totales["segunda_bultos"])).font = fuente_total
         hoja.cell(row=fila_actual, column=14, value=float(totales["devoluciones_bultos"])).font = fuente_total
         hoja.cell(row=fila_actual, column=17, value=float(totales["rechazos_bultos"])).font = fuente_total
+        celda = hoja.cell(row=fila_actual, column=20, value=round(float(totales["costo_segunda"]), 2))
+        celda.font = fuente_total
+        celda.number_format = '"$"#,##0'
+        hoja.cell(row=fila_actual, column=21,
+                  value=float(totales["bultos_pasados_a_segunda"])).font = fuente_total
         if totales["utilidad_pct"] is not None:
             celda = hoja.cell(row=fila_actual, column=19, value=round(float(totales["utilidad_pct"]) / 100, 4))
             celda.font = fuente_total
             celda.number_format = "0.0%"
 
     for columna, ancho in enumerate(
-        (26, 13, 14, 13, 15, 11, 11, 12, 14, 18, 17, 21, 13, 13, 14, 17, 20, 13, 11), start=1
+        (26, 13, 14, 13, 15, 11, 11, 12, 14, 18, 17, 21, 13, 13, 14, 17, 20, 13, 11, 18, 22), start=1
     ):
         hoja.column_dimensions[get_column_letter(columna)].width = ancho
 

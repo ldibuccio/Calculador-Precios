@@ -182,6 +182,21 @@
   .fila-merma .plata { text-align: right; white-space: nowrap; font-weight: 800; font-size: 1.05rem; }
   .fila-merma .plata .bultos-merma { display: block; font-size: 0.82rem; font-weight: 600; color: #666; }
   .fila-merma.trabajada .plata { color: #991b1b; }
+  /* EL MISMO AMBAR QUE EL PASE EN SUS OTRAS DOS PANTALLAS (Pase a segunda y
+     Perdidas): el que lo ve en las tres tiene que reconocer la misma cosa.
+     Y es un chip aparte del `.chip-segunda`, que dice OTRA cosa —la segunda
+     que PRODUCE un reproceso, en bultos y sin plata—. */
+  .chip-pasado-segunda {
+    display: inline-block;
+    background: #fffbeb;
+    border: 1px solid #fcd34d;
+    color: #92400e;
+    font-size: 0.78rem;
+    font-weight: 800;
+    padding: 0.1rem 0.5rem;
+    border-radius: 999px;
+    white-space: nowrap;
+  }
   .chip-segunda {
     display: inline-block;
     background: #ffedd5;
@@ -332,21 +347,26 @@
     <div class="detalle">
       Renta REAL de {{ resultado.fechas_incluidas|length }} día{{ "s" if resultado.fechas_incluidas|length != 1 }} con envíos —
       venta {{ resultado.totales.venta_neta|moneda }}{% if resultado.totales.devoluciones_bultos %} − devoluciones {{ resultado.totales.devoluciones_venta|moneda }} ({{ resultado.totales.devoluciones_bultos|numero }} bultos que volvieron: se vendió lo enviado menos eso){% endif %}, mercadería {{ resultado.totales.costo_mercaderia|moneda }},
-      envase {{ resultado.totales.costo_envase|moneda }}, mermas {{ resultado.totales.costo_mermas|moneda }}{% if resultado.totales.rechazos_bultos %}, − rechazos perdidos {{ resultado.totales.rechazos_perdidos|moneda }} ({{ resultado.totales.rechazos_bultos|numero }} bultos que volvieron y se fueron a segunda: mercadería + envase, pérdida entera){% endif %},
+      envase {{ resultado.totales.costo_envase|moneda }}, mermas {{ resultado.totales.costo_mermas|moneda }}{% if resultado.totales.bultos_pasados_a_segunda %}, pasado a segunda {{ resultado.totales.costo_segunda|moneda }} ({{ resultado.totales.bultos_pasados_a_segunda|numero }} bulto{{ "s" if resultado.totales.bultos_pasados_a_segunda != 1 }} de primera que dejaron de serlo: mercadería + la caja){% endif %}{% if resultado.totales.rechazos_bultos %}, − rechazos perdidos {{ resultado.totales.rechazos_perdidos|moneda }} ({{ resultado.totales.rechazos_bultos|numero }} bultos que volvieron y se fueron a segunda: mercadería + envase, pérdida entera){% endif %},
       {{ resultado.totales.bultos|numero }} bultos enviados.
       {% if resultado.totales.segunda_bultos %}Segunda generada: {{ resultado.totales.segunda_bultos|numero }} bultos (vale cero).{% endif %}
       La utilidad % es sobre la mercadería.
     </div>
     {% if resultado.totales.cajas_perdidas %}
+    {# DECÍA "Los rechazos se llevaron", y dejó de ser cierto en el mismo
+       commit que le sumó la caja de los pases: desde el 22/09 este número
+       tiene DOS orígenes y uno de ellos no es del cliente. Un texto que
+       nombra un solo origen manda a reclamarle al que no fue. #}
     <p class="cajas-perdidas">
-      Los rechazos se llevaron <strong>{{ resultado.totales.cajas_perdidas|numero }}
+      Se perdieron <strong>{{ resultado.totales.cajas_perdidas|numero }}
       caja{{ "s" if resultado.totales.cajas_perdidas != 1 }} nuestras ·
       {{ resultado.totales.cajas_perdidas_pesos|moneda }}</strong>
-      <span class="por-que">Salieron con una venta que el cliente no pagó y no
-        volvieron: se fueron al Puesto como segunda, de vuelta al proveedor, o se
-        tiraron al pasar la fruta a cajón grande. Esta plata ya está adentro de
+      <span class="por-que">Por dos caminos distintos, y se reclaman a gente
+        distinta: las de los RECHAZOS salieron con una venta que el cliente no
+        pagó y no volvieron; las de los PASES A SEGUNDA se pusieron feas acá
+        adentro, así que ésas son del depósito. Esta plata ya está adentro de
         las cuentas de arriba; acá va separada de la fruta porque es lo que se
-        puede reclamar.</span>
+        puede poner sobre la mesa.</span>
     </p>
     {% endif %}
   </div>
@@ -431,11 +451,18 @@
       <div class="nombre">
         {{ f.articulo_nombre }}
         <span class="detalle">{{ f.bultos|numero }} bultos enviados · venta {{ f.venta_neta|moneda }} — mercadería {{ f.costo_mercaderia|moneda }}{% if f.costo_envase %} — envase {{ f.costo_envase|moneda }}{% endif %}</span>
-        {% if f.bultos_mermados or f.segunda_bultos or f.devoluciones_bultos or f.devueltos_proveedor_bultos %}
+        {# LA TERCERA COMPUERTA, y la encontró un canario en cero. La misma
+           pregunta —"¿este artículo tuvo algo además de ventas?"— está escrita
+           en TRES lugares: `articulos_con_salidas_stock` (qué artículos se
+           miran), `filas_con_algo` (qué filas se arman) y acá (qué renglón de
+           chips se dibuja). Arreglar dos y olvidar la tercera deja la fila
+           dibujada y su pérdida sin una palabra encima, que es peor que no
+           dibujarla: parece un artículo sin nada. #}
+        {% if f.bultos_mermados or f.segunda_bultos or f.bultos_pasados_a_segunda or f.devoluciones_bultos or f.devueltos_proveedor_bultos %}
         {# Un chip por tipo de merma, y SOLO los que tienen algo: el
            artículo que se mermó todo crudo no tiene por qué arrastrar un
            chip de trabajada en cero. #}
-        <span class="detalle">{% if f.bultos_mermados_cruda %}<span class="chip-merma">merma cruda {{ f.bultos_mermados_cruda|numero }} bulto{{ "s" if f.bultos_mermados_cruda != 1 }} · {{ f.costo_mermas_cruda|moneda }}</span>{% endif %} {% if f.bultos_mermados_trabajada %}<span class="chip-merma-trabajada">merma trabajada {{ f.bultos_mermados_trabajada|numero }} bulto{{ "s" if f.bultos_mermados_trabajada != 1 }} · {{ f.costo_mermas_trabajada|moneda }}</span>{% endif %} {% if f.segunda_bultos %}<span class="chip-segunda">{{ f.segunda_bultos|numero }} de segunda</span>{% endif %} {% if f.devoluciones_bultos %}<span class="chip-devolucion">devolvió {{ f.devoluciones_bultos|numero }} bultos · −{{ f.devoluciones_venta|moneda }} de venta</span>{% endif %} {% if f.rechazos_bultos %}<span class="chip-rechazo">rechazo perdido {{ f.rechazos_bultos|numero }} bultos · {{ f.rechazos_perdidos|moneda }}</span>{% endif %} {% if f.devueltos_proveedor_bultos %}<span class="chip-devuelto-proveedor">devuelto al proveedor {{ f.devueltos_proveedor_bultos|numero }} bulto{{ "s" if f.devueltos_proveedor_bultos != 1 }} · sin costo</span>{% endif %} {% if f.cajas_perdidas %}<span class="chip-cajas">{{ f.cajas_perdidas|numero }} caja{{ "s" if f.cajas_perdidas != 1 }} nuestras · {{ f.cajas_perdidas_pesos|moneda }}</span>{% endif %}</span>
+        <span class="detalle">{% if f.bultos_mermados_cruda %}<span class="chip-merma">merma cruda {{ f.bultos_mermados_cruda|numero }} bulto{{ "s" if f.bultos_mermados_cruda != 1 }} · {{ f.costo_mermas_cruda|moneda }}</span>{% endif %} {% if f.bultos_mermados_trabajada %}<span class="chip-merma-trabajada">merma trabajada {{ f.bultos_mermados_trabajada|numero }} bulto{{ "s" if f.bultos_mermados_trabajada != 1 }} · {{ f.costo_mermas_trabajada|moneda }}</span>{% endif %} {% if f.bultos_pasados_a_segunda %}<span class="chip-pasado-segunda">pasado a segunda {{ f.bultos_pasados_a_segunda|numero }} bulto{{ "s" if f.bultos_pasados_a_segunda != 1 }} · {{ f.costo_segunda|moneda }}</span>{% endif %} {% if f.segunda_bultos %}<span class="chip-segunda">{{ f.segunda_bultos|numero }} de segunda</span>{% endif %} {% if f.devoluciones_bultos %}<span class="chip-devolucion">devolvió {{ f.devoluciones_bultos|numero }} bultos · −{{ f.devoluciones_venta|moneda }} de venta</span>{% endif %} {% if f.rechazos_bultos %}<span class="chip-rechazo">rechazo perdido {{ f.rechazos_bultos|numero }} bultos · {{ f.rechazos_perdidos|moneda }}</span>{% endif %} {% if f.devueltos_proveedor_bultos %}<span class="chip-devuelto-proveedor">devuelto al proveedor {{ f.devueltos_proveedor_bultos|numero }} bulto{{ "s" if f.devueltos_proveedor_bultos != 1 }} · sin costo</span>{% endif %} {% if f.cajas_perdidas %}<span class="chip-cajas">{{ f.cajas_perdidas|numero }} caja{{ "s" if f.cajas_perdidas != 1 }} nuestras · {{ f.cajas_perdidas_pesos|moneda }}</span>{% endif %}</span>
         {% endif %}
       </div>
       <div class="renta {% if f.renta_pesos < 0 %}negativa{% endif %}">

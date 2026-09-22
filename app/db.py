@@ -11176,6 +11176,14 @@ def anular_movimiento_stock(movimiento_id: int) -> None:
 # un fragmento de consulta; lo que ata las dos es un test.
 _SQL_TIPO_TIENE_FICHA_PROPIA = "m.tipo IN ('merma', 'pase_a_segunda') AND m.ficha_id IS NOT NULL"
 
+# LOS DOS TIPOS QUE SON UNA PERDIDA, sin mirar la ficha: un pase de SUELTOS
+# tambien se lleva mercaderia, lo que no se lleva es una caja nuestra. Va
+# aparte de la de arriba porque contestan preguntas distintas —aquella es
+# "¿de que pila salio?" y esta "¿esto es una perdida?"— y una sola sirviendo
+# para las dos es como se separan despues sin que nadie lo note.
+# Misma lista que `core.stock.TIPOS_CON_FICHA_PROPIA`, atada por un test.
+_SQL_TIPOS_QUE_SON_PERDIDA = "('merma', 'pase_a_segunda')"
+
 _SQL_REINGRESO_ES_DE_LA_FICHA = """
     m.tipo = 'reingreso_rechazo'
     AND (m.destino_rechazo IS NULL OR m.destino_rechazo = 'stock')
@@ -13430,8 +13438,13 @@ def articulos_con_salidas_stock(cliente_id: int, fecha_desde, fecha_hasta) -> li
                     WHERE v.cliente_id = %s AND v.fecha_operacion >= %s AND v.fecha_operacion <= %s
                       AND r.armado_el IS NOT NULL AND r.anulado_el IS NULL AND r.articulo_id IS NOT NULL
                     UNION
+                    -- EL PASE ENTRA ACA, y esta es la compuerta que de verdad
+                    -- decide: filtrando solo 'merma', una berenjena que no se
+                    -- vendio y a la que solo se le pasaron diez cajones a
+                    -- segunda no llegaba ni a la funcion pura. No aparecia en
+                    -- cero — no aparecia, y su perdida quedaba invisible.
                     SELECT articulo_id FROM movimientos_stock
-                    WHERE anulado_el IS NULL AND tipo = 'merma'
+                    WHERE anulado_el IS NULL AND tipo IN {tipos}
                       AND fecha_operacion >= %s AND fecha_operacion <= %s
                     UNION
                     SELECT articulo_id FROM reprocesos
@@ -13439,7 +13452,7 @@ def articulos_con_salidas_stock(cliente_id: int, fecha_desde, fecha_hasta) -> li
                       AND fecha_operacion >= %s AND fecha_operacion <= %s
                 )
                 ORDER BY a.nombre
-                """,
+                """.format(tipos=_SQL_TIPOS_QUE_SON_PERDIDA),
                 (cliente_id, fecha_desde, fecha_hasta, fecha_desde, fecha_hasta, fecha_desde, fecha_hasta),
             )
             columnas = [descripcion[0] for descripcion in cursor.description]
@@ -14635,6 +14648,56 @@ _SQL_CAJAS_DEL_DEPOSITO_PERDIDAS = """
       {costo_del_envase}
      GROUP BY ev.destino, ev.articulo_id
 """
+
+
+def cajas_de_pases_por_articulo(desde, hasta) -> dict:
+    """{articulo_id: (cajas, pesos)} — la caja de los PASES del rango.
+
+    PARA LA RENTABILIDAD REAL, y sale de la MISMA consulta que Pérdidas y del
+    mismo `_SQL_COSTO_DEL_ENVASE_A_LA_FECHA` que Plata de cajas: el envase se
+    valúa al costo vigente el día del hecho, no al de hoy. Tres pantallas
+    muestran plata de la misma caja y tienen que decir lo mismo — una cuarta
+    versión de la valuación se separa y nadie se entera hasta que dos números
+    no cierran.
+
+    SOLO EL DESTINO 'segunda'. La caja de una MERMA de cajas armadas también
+    se pierde —lo dice la regla del dueño del 21/09— y hoy la Rentabilidad
+    Real no la cuenta por ninguna vía. Eso NO se arregla acá a propósito:
+    meterla movería `costo_mermas`, que es un número que ya se lee todos los
+    días, y esa es una decisión del dueño y no una consecuencia de este
+    cambio. Queda medido y dicho; la consulta ya devuelve las dos mitades.
+
+    `pesos` en None cuando el envase no tiene costo cargado a esa fecha: se
+    devuelve 0.0 para poder sumar, y los bultos igual se cuentan. Un envase
+    sin costo no es una caja que no se perdió.
+    """
+    conexion = obtener_conexion()
+    try:
+        with conexion.cursor() as cursor:
+            cursor.execute(
+                _SQL_CAJAS_DEL_DEPOSITO_PERDIDAS.format(
+                    costo_del_envase=_SQL_COSTO_DEL_ENVASE_A_LA_FECHA),
+                (desde, hasta),
+            )
+            # SE ACUMULA, no se arma por comprensión: la consulta agrupa por
+            # (destino, articulo_id) y ACÁ la clave es solo el artículo, así
+            # que un artículo con merma Y pase devuelve DOS filas. Un dict por
+            # comprensión deja que una PISE a la otra, y cuál gana lo decide el
+            # orden en que Postgres las devuelva —no hay ORDER BY—: medido, el
+            # tomate vuelve como ('merma', 1, 2, 100) y ('segunda', 1, 3, 150),
+            # y con el filtro sacado el resultado quedaba idéntico de casualidad.
+            # Acumulando, sacar el filtro SUMA (que es la única lectura honesta)
+            # en vez de elegir una al azar, y el canario puede morder.
+            cajas: dict = {}
+            for destino, articulo_id, cantidad, pesos in cursor.fetchall():
+                if destino != "segunda":
+                    continue
+                antes = cajas.get(articulo_id, (0.0, 0.0))
+                cajas[articulo_id] = (antes[0] + float(cantidad or 0),
+                                      antes[1] + float(pesos or 0))
+            return cajas
+    finally:
+        conexion.close()
 
 
 def perdidas_por_periodo(desde, hasta) -> dict:

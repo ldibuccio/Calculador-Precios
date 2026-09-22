@@ -7017,7 +7017,7 @@ def test_anular_remito_segunda_es_baja_logica():
     assert "anulado_el IS NULL" in consulta
 
 
-def test_articulos_con_salidas_stock_junta_armados_mermas_y_reprocesos():
+def test_articulos_con_salidas_stock_junta_armados_MERMAS_PASES_y_reprocesos():
     from app.db import articulos_con_salidas_stock
 
     conexion, cursor = _conexion_falsa()
@@ -7028,12 +7028,20 @@ def test_articulos_con_salidas_stock_junta_armados_mermas_y_reprocesos():
         articulos_con_salidas_stock(1, date(2026, 8, 18), date(2026, 8, 25))
 
     consulta = cursor.execute.call_args.args[0]
-    # Armados del cliente en el rango (pedidos vigentes) + mermas y
+    # Armados del cliente en el rango (pedidos vigentes) + mermas, PASES y
     # reprocesos del depósito (no son de un cliente: entran igual).
     assert "DISTINCT ON (cliente_id, fecha_operacion)" in consulta
     assert "v.cliente_id = %s" in consulta
-    assert "tipo = 'merma'" in consulta
+    assert "tipo IN ('merma', 'pase_a_segunda')" in consulta
     assert "FROM reprocesos" in consulta
+
+    # Y LA FORMA VIEJA NO PUEDE ESTAR. Hasta el 22/09 esto decía
+    # `tipo = 'merma'` y ERA EL GUARDIÁN DEL AGUJERO: una berenjena que solo
+    # se pasó a segunda no llegaba a la pantalla, y este assert lo defendía.
+    # Preguntar solo por el texto nuevo pasa igual si el viejo quedó en otra
+    # rama del UNION — es el conjunto ENCONTRADO contra el DECIDIDO aplicado
+    # a una condición.
+    assert "tipo = 'merma'" not in consulta
 
 
 def test_salidas_stock_articulo_trae_cada_salida_tipada_de_toda_la_historia():
