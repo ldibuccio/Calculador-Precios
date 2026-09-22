@@ -248,8 +248,16 @@ def generar_pdf_rentabilidad_real(
                 f"Mermas — ¿materia prima o trabajo?: cruda {_formatear_moneda(totales['costo_mermas_cruda'])} "
                 f"({_texto_bultos(totales['bultos_mermados_cruda'])}, cajones de compra) · "
                 f"ya trabajada {_formatear_moneda(totales['costo_mermas_trabajada'])} "
-                f"({_texto_bultos(totales['bultos_mermados_trabajada'])}, guías R y rechazos que volvieron). "
-                f"Es el mismo total de {_formatear_moneda(totales['costo_mermas'])}, abierto por lo que se tiró.",
+                f"({_texto_bultos(totales['bultos_mermados_trabajada'])}, guías R y rechazos que volvieron)"
+                # EL TERCER TERMINO, desde el 22/09. Las dos mitades de arriba
+                # abren la MERCADERIA tirada, y `costo_mermas` ademas lleva la
+                # caja adentro: sin nombrarla, la frase "es el mismo total"
+                # manda a sumar dos numeros que no dan ese total.
+                + (f" · la caja de Día {_formatear_moneda(totales['cajas_mermadas_pesos'])} "
+                   f"({_formatear_numero(totales['cajas_mermadas'])} caja"
+                   f"{'s' if totales['cajas_mermadas'] != 1 else ''} nuestras que se fueron con la fruta adentro)"
+                   if totales["cajas_mermadas"] else "")
+                + f". Es el mismo total de {_formatear_moneda(totales['costo_mermas'])}, abierto por lo que se tiró.",
                 estilo_total,
             )
         )
@@ -374,6 +382,11 @@ def generar_excel_rentabilidad_real(
         # test que mire un numero lo puede ver. Es el mismo mecanismo que el
         # `nth-child` del catalogo de Articulos, en openpyxl.
         "Pasado a segunda $", "Pasado a segunda bultos",
+        # Y ESTAS DOS TAMBIEN AL FINAL, por lo mismo: "Mermas $" ya lleva la
+        # caja adentro desde el 22/09, asi que sin esta columna las dos de
+        # mermas crudas/trabajadas no suman a la de mermas y no hay forma de
+        # reconstruir por que. Es el termino que hace cerrar la resta.
+        "Caja de la merma $", "Caja de la merma cajas",
     )
     for grupo in grupos:
         hoja.cell(row=fila_actual, column=1, value=grupo["etiqueta"]).font = fuente_grupo
@@ -405,6 +418,9 @@ def generar_excel_rentabilidad_real(
             celda = hoja.cell(row=fila_actual, column=20, value=round(float(fila["costo_segunda"]), 2))
             celda.number_format = '"$"#,##0'
             hoja.cell(row=fila_actual, column=21, value=float(fila["bultos_pasados_a_segunda"]))
+            celda = hoja.cell(row=fila_actual, column=22, value=round(float(fila["cajas_mermadas_pesos"]), 2))
+            celda.number_format = '"$"#,##0'
+            hoja.cell(row=fila_actual, column=23, value=float(fila["cajas_mermadas"]))
             if fila["utilidad_pct"] is not None:
                 celda = hoja.cell(row=fila_actual, column=19, value=round(float(fila["utilidad_pct"]) / 100, 4))
                 celda.number_format = "0.0%"
@@ -433,6 +449,11 @@ def generar_excel_rentabilidad_real(
         celda.number_format = '"$"#,##0'
         hoja.cell(row=fila_actual, column=21,
                   value=float(subtotal["bultos_pasados_a_segunda"])).font = fuente_subtotal
+        celda = hoja.cell(row=fila_actual, column=22, value=round(float(subtotal["cajas_mermadas_pesos"]), 2))
+        celda.font = fuente_subtotal
+        celda.number_format = '"$"#,##0'
+        hoja.cell(row=fila_actual, column=23,
+                  value=float(subtotal["cajas_mermadas"])).font = fuente_subtotal
         if subtotal["utilidad_pct"] is not None:
             celda = hoja.cell(row=fila_actual, column=19, value=round(float(subtotal["utilidad_pct"]) / 100, 4))
             celda.font = fuente_subtotal
@@ -460,13 +481,18 @@ def generar_excel_rentabilidad_real(
         celda.number_format = '"$"#,##0'
         hoja.cell(row=fila_actual, column=21,
                   value=float(totales["bultos_pasados_a_segunda"])).font = fuente_total
+        celda = hoja.cell(row=fila_actual, column=22, value=round(float(totales["cajas_mermadas_pesos"]), 2))
+        celda.font = fuente_total
+        celda.number_format = '"$"#,##0'
+        hoja.cell(row=fila_actual, column=23,
+                  value=float(totales["cajas_mermadas"])).font = fuente_total
         if totales["utilidad_pct"] is not None:
             celda = hoja.cell(row=fila_actual, column=19, value=round(float(totales["utilidad_pct"]) / 100, 4))
             celda.font = fuente_total
             celda.number_format = "0.0%"
 
     for columna, ancho in enumerate(
-        (26, 13, 14, 13, 15, 11, 11, 12, 14, 18, 17, 21, 13, 13, 14, 17, 20, 13, 11, 18, 22), start=1
+        (26, 13, 14, 13, 15, 11, 11, 12, 14, 18, 17, 21, 13, 13, 14, 17, 20, 13, 11, 18, 22, 18, 20), start=1
     ):
         hoja.column_dimensions[get_column_letter(columna)].width = ancho
 

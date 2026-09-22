@@ -2896,13 +2896,49 @@ aparecía con su costo **y sin un solo chip que dijera por qué** — un artícu
 con pérdida y sin nada que la nombre. Lo destapó un test de pantalla, no la
 lectura.
 
-**La caja de la MERMA de cajas armadas sigue AFUERA de Rentabilidad Real, y es
-una decisión que le queda al dueño.** Se pierde igual —lo dice la regla de
-arriba— y contarla movería `costo_mermas`, que es un número que ya se lee
-todos los días. Está medida, está dicha en el docstring de
-`cajas_de_pases_por_articulo`, y la consulta ya devuelve las dos mitades: el
-día que se decida, es una línea. En la pantalla de Pérdidas esa caja **sí**
-está contada, en el renglón "Se tiró".
+**Y LA CAJA DE LA MERMA ENTRÓ HORAS DESPUÉS, el mismo 22/09, y lo que hay que
+llevarse es POR QUÉ QUEDÓ AFUERA la primera vez.** La dejé afuera "como una
+decisión del dueño", con este argumento: contarla movería `costo_mermas`, que
+es un número que ya se lee todos los días. **Ya estaba decidida** —la regla
+del 21/09, tres párrafos más arriba, dice *"caja de Día armada, merma o pase,
+la pérdida son los kilos MÁS la caja"*— y él lo contestó en una línea: *"te
+pregunta algo que ya contestaste"*.
+
+O sea que no fue prudencia: fue **no leer la regla que este mismo archivo ya
+tenía escrita sobre la cosa que estaba tocando**. Es el corolario 2 al revés
+—buscar la otra copia antes de preguntar, no después de decidir— y la copia
+estaba acá adentro, que es la que siempre se olvida.
+
+**Y una consulta de más no es gratis, que es la parte contraintuitiva.**
+Preguntar se siente siempre como el lado seguro, y tiene un costo que no se
+ve: el dueño contesta lo que ya contestó, y la próxima vez que le pregunte
+algo que de verdad no sabe, la pregunta llega con menos crédito. Antes de
+subir una decisión, grepear acá la cosa que se está tocando.
+
+**Lo que costó cerrarla: una línea de cuenta y CUATRO de desglose.** La
+mercadería se abre en `costo_mermas_cruda` + `costo_mermas_trabajada`, y esas
+dos **sumaban `costo_mermas`**. Con la caja adentro dejan de sumar — y la
+tarjeta de la pantalla dice, textual, *"$X en total, abierto por lo que se
+tiró"* arriba de dos renglones que ya no dan $X. El atajo era meter la caja en
+la mitad "trabajada" (una caja armada es trabajo, suena bien) y **eso le hace
+contestar otra pregunta que la de su nombre**: esa columna abre la
+MERCADERÍA, y una caja no es mercadería. Va como un tercer término propio
+—`cajas_mermadas_pesos`, su renglón en la tarjeta, su columna en el Excel y su
+frase en el PDF— y los tres cierran.
+
+**La señal general, y sirve sin este caso**: cuando un número gana un
+sumando, ir a ver si ese número tiene un DESGLOSE publicado. Un total que
+crece mientras su desglose no es una pantalla que se contradice a sí misma, y
+el que la lee no tiene forma de saber cuál de los dos está mal. Lo cuida
+`test_la_tarjeta_de_MERMAS_SIGUE_CERRANDO_con_la_caja_adentro`, que exige los
+tres términos **y** que la mercadería sola NO alcance: sin esa segunda mitad,
+el atajo de la columna "trabajada" pasa el test.
+
+**Y las DOS pantallas la cuentan ahora, cada una a su manera**: Pérdidas la
+tiene en el renglón "Se tiró" desde el 21/09, y Rentabilidad Real adentro de
+`costo_mermas`. Siguen sin sumarse entre sí —lo dice la pantalla— porque
+cuentan la misma caja contestando dos preguntas distintas: allá por DESTINO,
+para el resultado; en Plata de cajas por CLIENTE, para poder reclamarla.
 
 ## Corolario 93: una reducción cuya CLAVE es más gruesa que el grano de la consulta no falla — elige una fila al azar
 
@@ -2911,7 +2947,12 @@ un test flojo.
 
 `_SQL_CAJAS_DEL_DEPOSITO_PERDIDAS` agrupa por `(destino, articulo_id)`.
 `cajas_de_pases_por_articulo` armaba su diccionario **por comprensión y con la
-clave solo del artículo**, filtrando `destino == "segunda"`. Con el filtro
+clave solo del artículo**, filtrando `destino == "segunda"`. (Esa función se
+llama `cajas_perdidas_del_deposito_por_articulo` desde unas horas después, y
+devuelve el grano ENTERO: el nombre se movió con el alcance el día que el
+dueño cerró que la caja de la merma también entra. El corolario no se mueve —
+lo que lo produjo fue la clave más gruesa que el `GROUP BY`, y hoy ya no lo
+es.) Con el filtro
 puesto la clave es única y el número es correcto. Sin él —que es justo lo que
 el canario planta— las dos filas del mismo artículo **colisionan, y una pisa a
 la otra**:

@@ -152,6 +152,11 @@ def test_lo_pasado_a_segunda_se_costea_contra_LA_CAJA_ARMADA_y_suma_la_caja(base
     assert f["cajas_perdidas_pesos"] == 500.0
     # La caja va ADENTRO del costo y además NOMBRADA, igual que en el rechazo:
     # no es una cuenta nueva, es el mismo dinero con nombre.
+    #
+    # Y LA RESTA VALE PORQUE LA BERENJENA NO TIENE MERMA: desde el 22/09
+    # `cajas_perdidas_pesos` junta las dos puertas, así que en un artículo con
+    # las dos —el tomate— esta resta daría otra cosa. Dicho acá y no supuesto.
+    assert f["cajas_mermadas"] == 0.0
     assert f["costo_segunda"] - f["cajas_perdidas_pesos"] == 4000.0
 
 
@@ -171,12 +176,13 @@ def test_el_pase_NO_SE_MEZCLA_con_las_mermas(base):
     """
     f = _filas(_resultado(base))["EJEMPLO Tomate"]
 
-    assert f["bultos_mermados"] == 2.0 and f["costo_mermas"] == 600.0
+    assert f["bultos_mermados"] == 2.0
+    assert f["costo_mermas"] == 700.0        # 2 × $300 + 2 cajas × $50
     assert f["bultos_pasados_a_segunda"] == 3.0
     assert f["costo_segunda"] == 1050.0      # 3 × $300 + 3 cajas × $50
     # Y NO están sumados uno adentro del otro, en ninguna dirección.
     assert f["costo_mermas"] != f["costo_segunda"]
-    assert f["costo_total"] == 600.0 + 1050.0
+    assert f["costo_total"] == 700.0 + 1050.0
 
 
 def test_lo_que_NO_cambio_este_arreglo(base):
@@ -196,25 +202,56 @@ def test_lo_que_NO_cambio_este_arreglo(base):
         "va ahí, y confundirlas sería dos cosas con el mismo nombre")
 
 
-def test_la_caja_de_la_MERMA_no_entra_en_Rentabilidad_Real(base):
-    """El control que faltaba, y lo pidió un canario en CERO.
+def test_la_caja_de_la_MERMA_entra_en_Rentabilidad_Real(base):
+    """La caja de Día que se TIRA también es pérdida — regla del dueño, 21/09.
 
-    El tomate tiene una merma de 2 CAJAS ARMADAS (ficha 1), así que su caja
-    vale 2 × $50 = $100 y se perdió igual de verdad que la del pase. Hoy NO
-    se cuenta acá, y es una decisión del dueño y no un olvido: meterla movería
-    `costo_mermas`, que es un número que ya se lee todos los días.
+    *"Caja de Día armada, sea merma o pase, la pérdida son los kilos que tenía
+    MÁS la caja."* El tomate tiene una merma de 2 CAJAS ARMADAS (ficha 1), así
+    que su caja vale 2 × $50 = $100 y va adentro de `costo_mermas`.
 
-    Sin este test, sacarle a `cajas_de_pases_por_articulo` el filtro de
-    `destino == "segunda"` no hacía caer nada — o sea que la decisión podía
-    darse vuelta sola sin que nada se pusiera rojo.
+    ESTE TEST AFIRMABA LO CONTRARIO hasta el 22/09, y era el guardián de una
+    exclusión que el dueño ya había decidido cerrar: decía "3 del pase y NO 5"
+    y que `costo_mermas` era mercadería pelada. Se da vuelta en el mismo commit
+    que da vuelta la regla, porque un test que defiende lo que pasaba hace que
+    el arreglo correcto se lea como un error propio.
     """
     f = _filas(_resultado(base))["EJEMPLO Tomate"]
 
-    # 3 del pase y NO 5: las 2 de la merma quedan afuera.
-    assert f["cajas_perdidas"] == 3.0
-    assert f["cajas_perdidas_pesos"] == 150.0
-    # Y `costo_mermas` es mercadería pelada: 2 bultos a $300, sin la caja.
-    assert f["costo_mermas"] == 600.0
+    # 5 y no 3: las 2 de la merma entran, al lado de las 3 del pase.
+    assert f["cajas_perdidas"] == 5.0
+    assert f["cajas_perdidas_pesos"] == 250.0
+    # Y la de la merma, nombrada aparte.
+    assert f["cajas_mermadas"] == 2.0
+    assert f["cajas_mermadas_pesos"] == 100.0
+    # CADA DESTINO A SU COLUMNA: la caja de la merma no se fue a la del pase.
+    assert f["costo_mermas"] == 700.0
+    assert f["costo_segunda"] == 1050.0
+
+
+def test_la_tarjeta_de_MERMAS_SIGUE_CERRANDO_con_la_caja_adentro(base):
+    """El desglose de `costo_mermas` tiene que sumar a `costo_mermas`.
+
+    La pantalla dice "$X en total, abierto por lo que se tiró" y muestra el
+    desglose debajo. Las dos mitades viejas abren la MERCADERÍA —cruda contra
+    trabajada— y una caja no es mercadería, así que meterla en cualquiera de
+    las dos las haría contestar otra pregunta que la de su nombre. Va como un
+    término propio, y los tres cierran.
+
+    Sin este test, agregar la caja al total deja el desglose sin sumar y la
+    pantalla afirma un número que lo que muestra contradice — que es peor que
+    no mostrar el desglose.
+    """
+    f = _filas(_resultado(base))["EJEMPLO Tomate"]
+
+    assert f["costo_mermas_cruda"] + f["costo_mermas_trabajada"] + f["cajas_mermadas_pesos"] == f["costo_mermas"]
+    # Y la mercadería sola NO alcanza el total: si alcanzara, la caja no
+    # estaría adentro y este test pasaría sin mirar nada.
+    assert f["costo_mermas_cruda"] + f["costo_mermas_trabajada"] == 600.0
+
+    totales = _resultado(base)["totales"]
+    assert totales["cajas_mermadas"] == 2.0 and totales["cajas_mermadas_pesos"] == 100.0
+    assert (totales["costo_mermas_cruda"] + totales["costo_mermas_trabajada"]
+            + totales["cajas_mermadas_pesos"]) == totales["costo_mermas"]
 
 
 def test_la_PANTALLA_dibuja_lo_pasado_a_segunda(base):
@@ -254,6 +291,23 @@ def test_la_PANTALLA_dibuja_lo_pasado_a_segunda(base):
 
     # Y EL PÁRRAFO DE LAS CAJAS DEJÓ DE DECIR SOLO "LOS RECHAZOS", que es lo
     # que se volvió falso en el mismo commit que le sumó la caja de los pases:
-    # este número tiene dos orígenes y uno no es del cliente.
+    # este número tiene TRES orígenes y dos no son del cliente.
     assert "Los rechazos se llevaron" not in marcado
-    assert "PASES A SEGUNDA" in marcado
+    assert "PASARON A SEGUNDA" in marcado
+    # Y desde el 22/09 son TRES caminos, no dos: el que dice "dos" al lado de
+    # un total que junta tres manda a buscar el que falta.
+    assert "se TIRARON" in marcado
+    assert "Por dos caminos" not in marcado
+    # 15 cajas (13 de los pases + 2 de la merma) · $750.
+    assert "15" in marcado and "$750" in marcado
+
+    # EL RENGLÓN DE LA CAJA EN LA TARJETA DE MERMAS, que es lo único que hace
+    # que el desglose CIERRE contra el total que la misma tarjeta afirma. El
+    # canario que lo borra no mueve ninguna cuenta: sale en verde y deja una
+    # pantalla diciendo $700 arriba de dos renglones que suman $600.
+    assert "$700 en total, abierto por lo que se tiró" in marcado
+    # Y SE MIRA ADENTRO DEL RENGLÓN, no en la página: "$100" suelto lo puede
+    # poner cualquier otro número de esta pantalla (corolario 4).
+    renglon = marcado.split('class="fila-merma la-caja"')[1].split("</div>")[0]
+    assert "La caja de Día que se tiró" in renglon
+    assert "$100" in renglon and "2 cajas" in renglon

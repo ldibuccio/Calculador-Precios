@@ -14650,8 +14650,8 @@ _SQL_CAJAS_DEL_DEPOSITO_PERDIDAS = """
 """
 
 
-def cajas_de_pases_por_articulo(desde, hasta) -> dict:
-    """{articulo_id: (cajas, pesos)} — la caja de los PASES del rango.
+def cajas_perdidas_del_deposito_por_articulo(desde, hasta) -> dict:
+    """{(destino, articulo_id): (cajas, pesos)} — la caja de las MERMAS Y LOS PASES.
 
     PARA LA RENTABILIDAD REAL, y sale de la MISMA consulta que Pérdidas y del
     mismo `_SQL_COSTO_DEL_ENVASE_A_LA_FECHA` que Plata de cajas: el envase se
@@ -14660,12 +14660,22 @@ def cajas_de_pases_por_articulo(desde, hasta) -> dict:
     versión de la valuación se separa y nadie se entera hasta que dos números
     no cierran.
 
-    SOLO EL DESTINO 'segunda'. La caja de una MERMA de cajas armadas también
-    se pierde —lo dice la regla del dueño del 21/09— y hoy la Rentabilidad
-    Real no la cuenta por ninguna vía. Eso NO se arregla acá a propósito:
-    meterla movería `costo_mermas`, que es un número que ya se lee todos los
-    días, y esa es una decisión del dueño y no una consecuencia de este
-    cambio. Queda medido y dicho; la consulta ya devuelve las dos mitades.
+    LOS DOS DESTINOS, Y LA REGLA ES UNA SOLA (del dueño, 21/09): *"caja de Día
+    armada, sea merma o pase, la pérdida son los kilos MÁS la caja"*. Se
+    costean igual y se muestran separadas, así que lo que esta función tiene
+    que devolver es el grano ENTERO y no una de las dos mitades: quien la lee
+    manda la merma a `costo_mermas` y el pase a `costo_segunda`.
+
+    SE LLAMABA `cajas_de_pases_por_articulo` Y DEVOLVÍA SOLO LA SEGUNDA, hasta
+    el 22/09. El nombre era honesto sobre lo que hacía y la exclusión estaba
+    escrita como una decisión pendiente; el dueño la cerró ese día —ya la había
+    decidido el 21— y el nombre se movió con el alcance en el mismo commit.
+
+    LA CLAVE ES EL GRANO COMPLETO DE LA CONSULTA, y eso no es prolijidad: con
+    la clave más gruesa que el `GROUP BY`, un artículo con merma Y pase vuelve
+    en DOS filas que colisionan, y cuál gana lo decide el orden en que Postgres
+    las devuelva —no hay `ORDER BY`— (corolario 93). Acá no puede pasar: la
+    clave es la del `GROUP BY`.
 
     `pesos` en None cuando el envase no tiene costo cargado a esa fecha: se
     devuelve 0.0 para poder sumar, y los bultos igual se cuentan. Un envase
@@ -14679,23 +14689,10 @@ def cajas_de_pases_por_articulo(desde, hasta) -> dict:
                     costo_del_envase=_SQL_COSTO_DEL_ENVASE_A_LA_FECHA),
                 (desde, hasta),
             )
-            # SE ACUMULA, no se arma por comprensión: la consulta agrupa por
-            # (destino, articulo_id) y ACÁ la clave es solo el artículo, así
-            # que un artículo con merma Y pase devuelve DOS filas. Un dict por
-            # comprensión deja que una PISE a la otra, y cuál gana lo decide el
-            # orden en que Postgres las devuelva —no hay ORDER BY—: medido, el
-            # tomate vuelve como ('merma', 1, 2, 100) y ('segunda', 1, 3, 150),
-            # y con el filtro sacado el resultado quedaba idéntico de casualidad.
-            # Acumulando, sacar el filtro SUMA (que es la única lectura honesta)
-            # en vez de elegir una al azar, y el canario puede morder.
-            cajas: dict = {}
-            for destino, articulo_id, cantidad, pesos in cursor.fetchall():
-                if destino != "segunda":
-                    continue
-                antes = cajas.get(articulo_id, (0.0, 0.0))
-                cajas[articulo_id] = (antes[0] + float(cantidad or 0),
-                                      antes[1] + float(pesos or 0))
-            return cajas
+            return {
+                (destino, articulo_id): (float(cantidad or 0), float(pesos or 0))
+                for destino, articulo_id, cantidad, pesos in cursor.fetchall()
+            }
     finally:
         conexion.close()
 

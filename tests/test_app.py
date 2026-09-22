@@ -24707,6 +24707,7 @@ RESULTADO_REAL_DE_PRUEBA = {
             "costo_mermas": 1500.0, "bultos_mermados": 3.0,
             "costo_mermas_cruda": 700.0, "bultos_mermados_cruda": 2.0,
             "costo_mermas_trabajada": 800.0, "bultos_mermados_trabajada": 1.0, "costo_segunda": 0.0, "bultos_pasados_a_segunda": 0.0,
+                     "cajas_mermadas": 0.0, "cajas_mermadas_pesos": 0.0,
             "segunda_bultos": 2.0,
             "devoluciones_bultos": 0.0, "devoluciones_venta": 0.0,
             "rechazos_perdidos": 0.0, "rechazos_bultos": 0.0,
@@ -24716,6 +24717,7 @@ RESULTADO_REAL_DE_PRUEBA = {
                      "costo_envase": 320.0, "costo_mermas": 1500.0, "costo_total": 6820.0, "bultos_mermados": 3.0,
                      "costo_mermas_cruda": 700.0, "bultos_mermados_cruda": 2.0,
                      "costo_mermas_trabajada": 800.0, "bultos_mermados_trabajada": 1.0, "costo_segunda": 0.0, "bultos_pasados_a_segunda": 0.0,
+                     "cajas_mermadas": 0.0, "cajas_mermadas_pesos": 0.0,
                      "devoluciones_bultos": 0.0, "devoluciones_venta": 0.0,
                      "rechazos_perdidos": 0.0, "rechazos_bultos": 0.0,
                      "renta_pesos": 7580.0, "utilidad_pct": 151.6},
@@ -24724,6 +24726,7 @@ RESULTADO_REAL_DE_PRUEBA = {
                 "costo_envase": 320.0, "costo_mermas": 1500.0, "segunda_bultos": 2.0, "bultos_mermados": 3.0,
                 "costo_mermas_cruda": 700.0, "bultos_mermados_cruda": 2.0,
                 "costo_mermas_trabajada": 800.0, "bultos_mermados_trabajada": 1.0, "costo_segunda": 0.0, "bultos_pasados_a_segunda": 0.0,
+                     "cajas_mermadas": 0.0, "cajas_mermadas_pesos": 0.0,
                 "devoluciones_bultos": 0.0, "devoluciones_venta": 0.0,
                 "rechazos_perdidos": 0.0, "rechazos_bultos": 0.0,
                 "afuera_bultos": 42.0, "afuera_motivos": 2, "costo_total": 6820.0,
@@ -24830,7 +24833,7 @@ def test_rentabilidad_real_junta_historia_completa_y_ancla_precios_por_fecha():
         # `mock.patch` no crea el atributo, así que el día que este nombre se
         # pierda el test cae ruidosamente en vez de que un `except` amplio se
         # coma el NameError (corolario 51).
-        patch("app.main.cajas_de_pases_por_articulo", return_value={}),
+        patch("app.main.cajas_perdidas_del_deposito_por_articulo", return_value={}),
         patch("app.main.entradas_y_salidas_stock_articulos", return_value={1: (entradas, _salidas_fifo(4.0))}),
         patch("app.main.salidas_stock_articulos", return_value={1: salidas}),
         patch("app.main.calcular_listados_para_negociar_precios",

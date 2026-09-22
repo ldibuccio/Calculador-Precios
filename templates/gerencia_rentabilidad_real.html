@@ -182,6 +182,12 @@
   .fila-merma .plata { text-align: right; white-space: nowrap; font-weight: 800; font-size: 1.05rem; }
   .fila-merma .plata .bultos-merma { display: block; font-size: 0.82rem; font-weight: 600; color: #666; }
   .fila-merma.trabajada .plata { color: #991b1b; }
+  /* EL MISMO INDIGO QUE `chip-cajas`, que es como se ve la caja nuestra en
+     el resto de esta pantalla: el renglon de la caja NO es una tercera clase
+     de merma, es envase, y tiene que leerse como lo que ya se llama asi mas
+     abajo. Con el rojo de la trabajada se leeria como una tercera mitad de
+     la mercaderia. */
+  .fila-merma.la-caja .plata { color: #3730a3; }
   /* EL MISMO AMBAR QUE EL PASE EN SUS OTRAS DOS PANTALLAS (Pase a segunda y
      Perdidas): el que lo ve en las tres tiene que reconocer la misma cosa.
      Y es un chip aparte del `.chip-segunda`, que dice OTRA cosa —la segunda
@@ -355,18 +361,23 @@
     {% if resultado.totales.cajas_perdidas %}
     {# DECÍA "Los rechazos se llevaron", y dejó de ser cierto en el mismo
        commit que le sumó la caja de los pases: desde el 22/09 este número
-       tiene DOS orígenes y uno de ellos no es del cliente. Un texto que
-       nombra un solo origen manda a reclamarle al que no fue. #}
+       tiene TRES orígenes y dos de ellos no son del cliente. Un texto que
+       nombra un solo origen manda a reclamarle al que no fue.
+
+       EL TERCERO ENTRÓ HORAS DESPUÉS QUE EL SEGUNDO —la caja que se TIRA con
+       la fruta— y la frase se movió con él: una enumeración que dice "por dos
+       caminos" al lado de un total que junta tres invita a buscar el que
+       falta, o peor, a darlo por contado en alguno de los dos. #}
     <p class="cajas-perdidas">
       Se perdieron <strong>{{ resultado.totales.cajas_perdidas|numero }}
       caja{{ "s" if resultado.totales.cajas_perdidas != 1 }} nuestras ·
       {{ resultado.totales.cajas_perdidas_pesos|moneda }}</strong>
-      <span class="por-que">Por dos caminos distintos, y se reclaman a gente
+      <span class="por-que">Por tres caminos distintos, y se reclaman a gente
         distinta: las de los RECHAZOS salieron con una venta que el cliente no
-        pagó y no volvieron; las de los PASES A SEGUNDA se pusieron feas acá
-        adentro, así que ésas son del depósito. Esta plata ya está adentro de
-        las cuentas de arriba; acá va separada de la fruta porque es lo que se
-        puede poner sobre la mesa.</span>
+        pagó y no volvieron; las que se TIRARON y las que PASARON A SEGUNDA se
+        pusieron feas acá adentro, así que ésas son del depósito. Esta plata ya
+        está adentro de las cuentas de arriba; acá va separada de la fruta
+        porque es lo que se puede poner sobre la mesa.</span>
     </p>
     {% endif %}
   </div>
@@ -400,6 +411,20 @@
         <span class="bultos-merma">{{ resultado.totales.bultos_mermados_trabajada|numero }} bulto{{ "s" if resultado.totales.bultos_mermados_trabajada != 1 }}</span>
       </span>
     </div>
+    {# EL TERCER RENGLON, desde el 22/09: sin el, el total de arriba dejo de
+       ser la suma de lo que se muestra. Las otras dos abren la MERCADERIA y
+       la caja no es mercaderia, asi que no se puede meter en ninguna de las
+       dos — va como lo que es, con su propio renglon. #}
+    {% if resultado.totales.cajas_mermadas %}
+    <div class="fila-merma la-caja">
+      <span class="que">La caja de Día que se tiró
+        <span class="aclaracion">Cajas nuestras que se fueron a la basura con la fruta adentro.</span>
+      </span>
+      <span class="plata">{{ resultado.totales.cajas_mermadas_pesos|moneda }}
+        <span class="bultos-merma">{{ resultado.totales.cajas_mermadas|numero }} caja{{ "s" if resultado.totales.cajas_mermadas != 1 }}</span>
+      </span>
+    </div>
+    {% endif %}
   </div>
   {% endif %}
 

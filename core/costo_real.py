@@ -327,7 +327,7 @@ def calcular_rentabilidad_real(
     fecha_desde,
     fecha_hasta,
     devoluciones: list[dict] | None = None,
-    cajas_de_pases: dict | None = None,
+    cajas_del_deposito: dict | None = None,
 ) -> dict:
     """Arma el reporte real a partir de datos ya traídos (puro, testeable sin base).
 
@@ -340,8 +340,10 @@ def calcular_rentabilidad_real(
     a precios distintos), 'merma', 'pase_a_segunda', 'ajuste' (negativo) y
     'reproceso_toma' (con bultos_segunda).
 
-    cajas_de_pases: {articulo_id: (cajas, pesos)} — LA CAJA de los pases del
-    rango, ya valuada. Viene de AFUERA y no se calcula acá por dos razones
+    cajas_del_deposito: {(destino, articulo_id): (cajas, pesos)} — LA CAJA de
+    las mermas y los pases del rango, ya valuada. `destino` es 'merma' o
+    'segunda' y decide a qué columna va, que es lo único que las separa: se
+    costean igual. Viene de AFUERA y no se calcula acá por dos razones
     que tiran para el mismo lado: esta función es pura, y la valuación del
     envase a la fecha del hecho ya está escrita una sola vez en
     `_SQL_COSTO_DEL_ENVASE_A_LA_FECHA` — la misma que usan Pérdidas y Plata
@@ -437,6 +439,20 @@ def calcular_rentabilidad_real(
                 # se rearma sin guía R nueva. Misma lista que db/cajas_7_*.sql.
                 "cajas_perdidas": 0.0,
                 "cajas_perdidas_pesos": 0.0,
+                # LA CAJA DE LA MERMA, NOMBRADA APARTE, y no por simetría: es
+                # el término que hace CERRAR la tarjeta "¿materia prima o
+                # trabajo?". Esas dos mitades abren la MERCADERÍA tirada, y
+                # desde el 22/09 `costo_mermas` además lleva la caja adentro
+                # (regla del dueño: caja de Día armada, merma o pase, la
+                # pérdida son los kilos MÁS la caja). Sin este número, la
+                # pantalla diría un total y mostraría un desglose que no suma.
+                #
+                # Y NO VA ADENTRO DE `costo_mermas_trabajada`, que era el
+                # atajo: esa columna contesta "¿la mercadería que se tiró era
+                # cruda o ya trabajada?" y una caja no es mercadería. Meterla
+                # ahí la haría contestar otra pregunta que la de su nombre.
+                "cajas_mermadas": 0.0,
+                "cajas_mermadas_pesos": 0.0,
                 # Devueltos al proveedor: se muestran, no suman a ninguna cuenta.
                 "devueltos_proveedor_bultos": 0.0,
             }
@@ -524,19 +540,35 @@ def calcular_rentabilidad_real(
             # 'ajuste' negativo: consume lotes en la atribución pero no es
             # pérdida del período — corrección de registro, no operación.
 
-        # LA CAJA DE LOS PASES, que viene valuada de afuera y es POR ARTÍCULO
-        # y no por salida: la fila de esta pantalla es por artículo, así que
-        # no hay nada que repartir. Va DENTRO de `costo_segunda` —los kilos
-        # que tenía MÁS la caja, que es la regla entera— y además NOMBRADA en
-        # `cajas_perdidas`, igual que la del rechazo: ahí no es una cuenta
-        # nueva sino el mismo dinero con nombre, para poder ponerlo sobre la
-        # mesa cuando se negocia la caja.
-        cajas, pesos = (cajas_de_pases or {}).get(articulo["articulo_id"], (0.0, 0.0))
-        if cajas or pesos:
+        # LA CAJA DEL DEPÓSITO, que viene valuada de afuera y es POR ARTÍCULO
+        # y no por salida: la fila de esta pantalla es por artículo, así que no
+        # hay nada que repartir.
+        #
+        # CADA DESTINO A SU COLUMNA, Y LA CUENTA ES LA MISMA — es la regla del
+        # dueño entera: *caja de Día armada, sea merma o pase, la pérdida son
+        # los kilos que tenía MÁS la caja*. Lo único que las separa es dónde se
+        # muestran, igual que con la mercadería de arriba. Y las dos quedan
+        # además NOMBRADAS en `cajas_perdidas`, que no es una cuenta nueva sino
+        # el mismo dinero con nombre, para poder ponerlo sobre la mesa cuando
+        # se negocia la caja.
+        #
+        # SE RECORRE EL MAPA POR DESTINO en vez de leer dos claves a mano: un
+        # destino nuevo en la consulta rompe acá con un KeyError en vez de
+        # desaparecer en silencio, que es la única forma en que un tercer
+        # destino se puede enterar de que existe.
+        columna_del_destino = {"merma": "costo_mermas", "segunda": "costo_segunda"}
+        for destino, columna in columna_del_destino.items():
+            cajas, pesos = (cajas_del_deposito or {}).get(
+                (destino, articulo["articulo_id"]), (0.0, 0.0))
+            if not (cajas or pesos):
+                continue
             fila = _fila(articulo)
-            fila["costo_segunda"] += pesos
+            fila[columna] += pesos
             fila["cajas_perdidas"] += cajas
             fila["cajas_perdidas_pesos"] += pesos
+            if destino == "merma":
+                fila["cajas_mermadas"] += cajas
+                fila["cajas_mermadas_pesos"] += pesos
 
     for devolucion in devoluciones or []:
         articulo = {
@@ -663,6 +695,8 @@ def calcular_rentabilidad_real(
             "bultos_mermados_cruda": sum(f["bultos_mermados_cruda"] for f in filas),
             "costo_mermas_trabajada": sum(f["costo_mermas_trabajada"] for f in filas),
             "bultos_mermados_trabajada": sum(f["bultos_mermados_trabajada"] for f in filas),
+            "cajas_mermadas": sum(f["cajas_mermadas"] for f in filas),
+            "cajas_mermadas_pesos": sum(f["cajas_mermadas_pesos"] for f in filas),
             "costo_segunda": sum(f["costo_segunda"] for f in filas),
             "bultos_pasados_a_segunda": sum(f["bultos_pasados_a_segunda"] for f in filas),
             "devoluciones_bultos": sum(f["devoluciones_bultos"] for f in filas),
@@ -710,6 +744,8 @@ def calcular_rentabilidad_real(
         "bultos_mermados_cruda": sum(g["subtotal"]["bultos_mermados_cruda"] for g in grupos),
         "costo_mermas_trabajada": sum(g["subtotal"]["costo_mermas_trabajada"] for g in grupos),
         "bultos_mermados_trabajada": sum(g["subtotal"]["bultos_mermados_trabajada"] for g in grupos),
+        "cajas_mermadas": sum(g["subtotal"]["cajas_mermadas"] for g in grupos),
+        "cajas_mermadas_pesos": sum(g["subtotal"]["cajas_mermadas_pesos"] for g in grupos),
         "costo_segunda": sum(g["subtotal"]["costo_segunda"] for g in grupos),
         "bultos_pasados_a_segunda": sum(g["subtotal"]["bultos_pasados_a_segunda"] for g in grupos),
         "devoluciones_bultos": sum(g["subtotal"]["devoluciones_bultos"] for g in grupos),

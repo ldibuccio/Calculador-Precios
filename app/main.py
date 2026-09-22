@@ -98,7 +98,7 @@ from app.db import (
     contar_pedidos_con_renglones_sin_identificar,
     contar_pedidos_incompletos,
     cajas_perdidas,
-    cajas_de_pases_por_articulo,
+    cajas_perdidas_del_deposito_por_articulo,
     perdidas_por_periodo,
     gasto_en_cajas,
     contar_recepciones_sin_pesaje,
@@ -15550,11 +15550,11 @@ def _datos_rentabilidad_real(cliente_id: int, fecha_desde, fecha_hasta, articulo
     # la caja de los artículos que están en `articulos_datos`, y ésos ya
     # vienen filtrados. Un segundo filtro sería la misma regla escrita dos
     # veces, y la copia que se separe deja una caja afuera sin que nada avise.
-    cajas_de_pases = cajas_de_pases_por_articulo(fecha_desde, fecha_hasta)
+    cajas_del_deposito = cajas_perdidas_del_deposito_por_articulo(fecha_desde, fecha_hasta)
 
     return calcular_rentabilidad_real(
         articulos_datos, margenes_por_fecha, cliente_id, fecha_desde, fecha_hasta,
-        devoluciones=devoluciones, cajas_de_pases=cajas_de_pases,
+        devoluciones=devoluciones, cajas_del_deposito=cajas_del_deposito,
     )
 
 
