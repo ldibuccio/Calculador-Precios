@@ -13,6 +13,7 @@ from app.costeo import (
     MAGNITUD_CONTEO,
     MAGNITUD_KILOS,
     _envases_por_unidad_ponderado,
+    magnitud_del_articulo,
     agregar_incidencia,
     agrupar_para_negociar,
     calcular_costo_por_unidad_venta_reciente,
@@ -1741,3 +1742,44 @@ def test_el_corte_del_JS_del_Techo_de_Compra_es_LA_MISMA_regla_que_la_de_Python(
         "que core.envases.envases_por_unidad_de_venta aplica en el server"
     )
     assert js.count("umbral") >= 2, "el umbral tiene que leerse y compararse"
+
+
+# --- La magnitud del ARTÍCULO, que es la hermana de magnitud_de_la_ficha ---
+#
+# Van acá y no con las cargas a propósito: son la misma pregunta hecha desde
+# dos lados, y el día que una cambie hay que leer la otra. Separadas se
+# separan solas.
+
+
+def test_un_articulo_SIN_NINGUNA_FICHA_se_carga_en_KILOS():
+    """Y no es un default cómodo: está medido el 22/09 en las dos bases
+    (`sin_ficha_Y_con_conteo` 0) que ningún artículo sin ficha declara
+    `unidad_conteo`, así que la única magnitud que puede tener es la que
+    toda compra declara siempre."""
+    assert magnitud_del_articulo([]) == MAGNITUD_KILOS
+
+
+def test_la_magnitud_la_DECIDE_LA_FICHA_cuando_hay_alguna():
+    """El promedio sale de renglones de pedido —o sea de fichas— y el total
+    tipeado sale del artículo: si las dos no están en la misma unidad, la
+    suma de la fila no significa nada."""
+    assert magnitud_del_articulo([{"unidad_venta": "kilo", "unidad_conteo": None}]) == MAGNITUD_KILOS
+    assert magnitud_del_articulo(
+        [{"unidad_venta": "unidad", "unidad_conteo": "unidad"}]
+    ) == MAGNITUD_CONTEO
+
+
+def test_con_fichas_y_ninguna_que_CONTESTE_devuelve_None_y_NO_cae_a_kilos():
+    """Una ficha en 'cubeta' de un artículo cuyo conteo es 'unidad' es lo que
+    la alerta `unidades_que_difieren` viene a señalar. Caer a kilos ahí sería
+    tipear un total en una unidad y sumarlo en otra, sin descuadrar nada."""
+    assert magnitud_del_articulo([{"unidad_venta": "cubeta", "unidad_conteo": "unidad"}]) is None
+
+
+def test_una_ficha_que_NO_CONTESTA_no_tapa_a_la_que_SI():
+    """El rival plantado: con una sola ficha, "la primera que conteste" y "la
+    primera" son lo mismo y el test no puede distinguirlos."""
+    assert magnitud_del_articulo([
+        {"unidad_venta": "cubeta", "unidad_conteo": "unidad"},
+        {"unidad_venta": "unidad", "unidad_conteo": "unidad"},
+    ]) == MAGNITUD_CONTEO

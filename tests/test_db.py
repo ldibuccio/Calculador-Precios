@@ -11106,3 +11106,52 @@ def test_los_escritores_de_SEGUNDA_POR_CAJON_no_pueden_tener_DEFAULT():
         if f.args.kw_defaults[i] is not None:
             flojos.append(f"{f.name}: tiene default, así que olvidarlo guarda NULL en silencio")
     assert not flojos, "\n".join(flojos)
+
+
+def test_las_DOS_consultas_de_fichas_traen_las_que_el_COSTEO_necesita():
+    """`magnitud_de_la_ficha` lee DOS columnas —`unidad_venta` de la ficha y
+    `unidad_conteo` del artículo— y con la que falta hace un `.get()` que
+    devuelve None. O sea que una ficha leída sin `unidad_conteo` contesta
+    "no se puede costear en esa unidad" para todo lo que no sea kilo, en
+    silencio y sin descuadrar nada.
+
+    Y LAS DOS CONSULTAS SE HABÍAN SEPARADO. El docstring de
+    `listar_fichas_de_todos_los_clientes` dice, textual, "misma consulta y
+    mismo orden que listar_fichas_por_cliente" — y la de un cliente traía
+    `a.unidad_conteo` con su comentario explicando para qué, mientras la de
+    todos no. Es la regla escrita dos veces en su forma barata: ninguna
+    fallaba, una contestaba distinto.
+
+    NO SE EXIGE QUE TRAIGAN LO MISMO, a propósito: la de un cliente trae
+    además `a.unidad_compra`, que está DEPRECADA y sería un error propagar.
+    Lo que se exige es el par que el costeo necesita.
+    """
+    import ast
+    import io
+    import re
+
+    fuente = io.open("app/db.py", encoding="utf-8").read()
+    arbol = ast.parse(fuente)
+    consultas = {}
+    for nodo in ast.walk(arbol):
+        if isinstance(nodo, ast.FunctionDef) and nodo.name in (
+            "listar_fichas_por_cliente", "listar_fichas_de_todos_los_clientes"
+        ):
+            textos = [p.value for p in ast.walk(nodo)
+                      if isinstance(p, ast.Constant) and isinstance(p.value, str)]
+            consultas[nodo.name] = "\n".join(
+                t for t in textos if re.search(r"\bFROM\s+fichas_logistica\b", t, re.I)
+            )
+
+    # El denominador: sin esto, un regex roto deja las dos vacías y el test
+    # pasa afirmando sobre nada (corolario 45).
+    assert len(consultas) == 2, f"se encontraron {len(consultas)} de 2 consultas"
+    for nombre, sql in consultas.items():
+        assert "FROM fichas_logistica" in sql, f"{nombre}: no se aisló la consulta"
+        # Calificadas con el alias: `unidad_venta` suelto matchearía el
+        # comentario que explica por qué está (corolario 4 y 59).
+        assert "fl.unidad_venta" in sql, f"{nombre} dejó de traer fl.unidad_venta"
+        assert "a.unidad_conteo" in sql, (
+            f"{nombre} dejó de traer a.unidad_conteo: sus fichas van a contestar "
+            "'no se puede costear' para todo lo que no sea kilo, en silencio"
+        )

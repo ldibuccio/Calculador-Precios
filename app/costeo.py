@@ -84,6 +84,45 @@ def magnitud_de_la_ficha(ficha: dict) -> str | None:
     return None
 
 
+def magnitud_del_articulo(fichas_del_articulo: list[dict]) -> str | None:
+    """En qué magnitud se CARGA y se SUMA la fila de un artículo de compra.
+
+    Desde el rediseño del 22/09 la carga de "Qué comprar hoy" va contra
+    ARTÍCULOS DE COMPRA y no contra las fichas del cliente: se compra
+    tomate, no "el tomate de Día". Pero la fila sigue sumando dos fuentes
+    —el promedio, que sale de renglones de pedido y por lo tanto de fichas,
+    y el total tipeado, que sale del artículo— así que las dos tienen que
+    estar en la MISMA unidad o la suma no significa nada.
+
+    Por eso la magnitud la sigue decidiendo la ficha cuando hay alguna, con
+    la misma función que la elige en todo el costeo. Medido el 21/09 en las
+    dos bases (`listado_1b`, ARTICULOS_MIXTOS_TODOS 0): ningún artículo
+    tiene fichas que no se pongan de acuerdo entre sí, así que alcanza con
+    la primera que conteste.
+
+    SIN NINGUNA FICHA SON KILOS, y eso no es un default cómodo: está medido
+    el 22/09 en las dos bases (`sin_ficha_Y_con_conteo` 0) que ningún
+    artículo sin ficha declara `unidad_conteo`, así que la única magnitud
+    que puede tener es la que toda compra declara siempre. El día que
+    aparezca uno, esta rama empieza a mentir — y lo que la delata es esa
+    misma consulta, no este comentario.
+
+    CON FICHAS Y NINGUNA QUE CONTESTE DEVUELVE None, en vez de caer a kilos.
+    Eso pasa cuando la unidad de venta de la ficha no es ninguna de las dos
+    que el artículo puede declarar (una ficha en 'cubeta' de un artículo
+    cuyo conteo es 'unidad'), que es exactamente lo que la alerta
+    `unidades_que_difieren` viene a señalar. Caer a kilos ahí sería tipear
+    un total en una unidad y sumarlo en otra, sin que nada se descuadre.
+    """
+    if not fichas_del_articulo:
+        return MAGNITUD_KILOS
+    for ficha in fichas_del_articulo:
+        magnitud = magnitud_de_la_ficha(ficha)
+        if magnitud is not None:
+            return magnitud
+    return None
+
+
 def total_de_la_compra(compra: dict, magnitud: str) -> float | None:
     """Cuánto trajo ESTA compra en la magnitud pedida, o None si no la declaró.
 

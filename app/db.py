@@ -567,6 +567,14 @@ def listar_fichas_de_todos_los_clientes() -> list[dict]:
     cliente_id adentro y agregado al ORDER BY para que cada cliente conserve
     exactamente el orden que tenía suelto. La usa el desglose de Stock del
     Depósito, que antes pedía las fichas cliente por cliente.
+
+    TRAE `a.unidad_conteo` AUNQUE SEA DEL ARTÍCULO Y NO DE LA FICHA, y no
+    es de más: `magnitud_de_la_ficha` necesita las DOS —la unidad en que
+    vende la ficha y la que el artículo puede declarar— y con la que falta
+    hace un `.get()` que devuelve None. O sea que una ficha leída sin esta
+    columna contesta «no se puede costear» para todo lo que no sea kilo, en
+    silencio y sin descuadrar nada. La consulta de los renglones de pedido
+    ya la trae por lo mismo.
     """
     conexion = obtener_conexion()
     try:
@@ -574,7 +582,8 @@ def listar_fichas_de_todos_los_clientes() -> list[dict]:
             cursor.execute(
                 """
                 SELECT fl.id, fl.cliente_id, fl.articulo_id, a.nombre AS articulo_nombre,
-                       a.grupo AS articulo_grupo, fl.envase_id, e.nombre AS envase_nombre,
+                       a.grupo AS articulo_grupo, a.unidad_conteo, fl.envase_id,
+                       e.nombre AS envase_nombre,
                        fl.contenido_caja, fl.unidad_venta, fl.envase_variable,
                        fl.nombre_cliente, fl.codigo_cliente
                 FROM fichas_logistica fl
@@ -9720,6 +9729,189 @@ def cerrar_borrador_de_compra(fecha) -> bool:
     except Exception:
         conexion.rollback()
         raise
+    finally:
+        conexion.close()
+
+
+def carga_de_compra(cliente_id: int, fecha) -> dict | None:
+    """La carga de ESE cliente para ESA fecha, con sus renglones. None si no hay.
+
+    `None` no es una carga vacía: una carga que existe en modo automático
+    tampoco tiene renglones, y las dos cosas se ven igual mirando solo la
+    lista. La pantalla necesita distinguirlas para poder preguntar lo que
+    el dueño pidió —editarla o borrarla y empezar de cero— en vez de crear
+    una segunda que sume doble.
+
+    VIENE ENTERA EN UNA LECTURA porque la pantalla usa las dos mitades en el
+    mismo render.
+    """
+    conexion = obtener_conexion()
+    try:
+        with conexion.cursor() as cursor:
+            cursor.execute(
+                """
+                SELECT id, cliente_id, fecha, modo, promedio_anterior_a
+                FROM cargas_compra WHERE cliente_id = %s AND fecha = %s
+                """,
+                (cliente_id, fecha),
+            )
+            cabecera = cursor.fetchone()
+            if cabecera is None:
+                return None
+            carga_id = cabecera[0]
+            cursor.execute(
+                """
+                SELECT articulo_id, total FROM cargas_compra_renglones
+                WHERE carga_id = %s
+                """,
+                (carga_id,),
+            )
+            renglones = {int(f[0]): float(f[1]) for f in cursor.fetchall()}
+            return {
+                "id": carga_id,
+                "cliente_id": int(cabecera[1]),
+                "fecha": cabecera[2],
+                "modo": cabecera[3],
+                "promedio_anterior_a": cabecera[4],
+                "renglones": renglones,
+            }
+    finally:
+        conexion.close()
+
+
+def guardar_carga_de_compra(cliente_id: int, fecha, modo, promedio_anterior_a) -> int:
+    """Crea o actualiza la carga de ese cliente para esa fecha. Devuelve su id.
+
+    EL `ON CONFLICT` NO PISA `promedio_anterior_a`, Y ESO ES LA REGLA, no una
+    omisión: editar una carga NO mueve el ancla del promedio —es la misma
+    carga— y borrarla y empezar de cero SÍ, porque ahí la fila se borra y la
+    nueva nace con la de hoy. Son exactamente las dos opciones que el dueño
+    pidió al re-entrar (22/09), y completar el SET con esta columna haría
+    que la ventana del promedio se corriera sola cada vez que alguien toca
+    la pantalla.
+
+    Los renglones NO se tocan acá y también es a propósito: pasar un rato a
+    automático no puede borrar lo que se tipeó o se leyó de un archivo. Con
+    el archivo adentro eso dejó de ser barato — re-tipear molesta, releer un
+    archivo cuesta una lectura con IA y otra revisión.
+    """
+    conexion = obtener_conexion()
+    try:
+        with conexion.cursor() as cursor:
+            cursor.execute(
+                """
+                INSERT INTO cargas_compra (cliente_id, fecha, modo, promedio_anterior_a)
+                VALUES (%s, %s, %s, %s)
+                ON CONFLICT (cliente_id, fecha) DO UPDATE
+                   SET modo = EXCLUDED.modo, actualizado_en = now()
+                RETURNING id
+                """,
+                (cliente_id, fecha, modo, promedio_anterior_a),
+            )
+            carga_id = cursor.fetchone()[0]
+            conexion.commit()
+            return carga_id
+    except Exception:
+        conexion.rollback()
+        raise
+    finally:
+        conexion.close()
+
+
+def guardar_renglones_de_carga(carga_id: int, renglones: dict) -> None:
+    """Reemplaza los renglones de una carga. `renglones` es {articulo_id: total}.
+
+    BORRA ANTES DE ESCRIBIR, en una transacción: es lo que quedó, no lo que
+    cambió. Sacarle un artículo a la carga tiene que llevárselo, y eso un
+    `upsert` no lo puede expresar.
+    """
+    conexion = obtener_conexion()
+    try:
+        with conexion.cursor() as cursor:
+            cursor.execute(
+                "DELETE FROM cargas_compra_renglones WHERE carga_id = %s", (carga_id,)
+            )
+            for articulo_id, total in renglones.items():
+                cursor.execute(
+                    "INSERT INTO cargas_compra_renglones VALUES (%s, %s, %s)",
+                    (carga_id, articulo_id, total),
+                )
+            conexion.commit()
+    except Exception:
+        conexion.rollback()
+        raise
+    finally:
+        conexion.close()
+
+
+def borrar_carga_de_compra(cliente_id: int, fecha) -> bool:
+    """Borra la carga de ese cliente y esa fecha. Devuelve si había una.
+
+    Se lleva sus renglones por la cascada. Si algún listado ya la usó, la
+    base RECHAZA el borrado (`listados_compra_cargas.carga_id` no va en
+    cascada) y quien llama traduce el error: borrarla cambiaría en silencio
+    lo que ese listado dice que se salió a comprar.
+    """
+    conexion = obtener_conexion()
+    try:
+        with conexion.cursor() as cursor:
+            cursor.execute(
+                "DELETE FROM cargas_compra WHERE cliente_id = %s AND fecha = %s",
+                (cliente_id, fecha),
+            )
+            borradas = cursor.rowcount
+            conexion.commit()
+            return borradas > 0
+    except Exception:
+        conexion.rollback()
+        raise
+    finally:
+        conexion.close()
+
+
+def listar_cargas_desde(desde, excepto_listado_id: int | None = None) -> list[dict]:
+    """Las cargas de compra con fecha >= `desde`, para elegirlas en el Paso 2.
+
+    DESDE AYER Y NO DESDE HOY, y lo decidió el dueño (22/09): se trabaja de
+    noche, así que esconder lo de ayer a medianoche deja al comprador sin lo
+    que está comprando en ese momento. El recorte lo elige quien llama.
+
+    `usada_en_otros` Y `ultimo_listado` SON EL AVISO, no una traba: una carga
+    que ya se usó se muestra igual y se puede volver a sumar —capaz no se
+    llegó a comprar, o se la quiere de plantilla—. El sistema avisa y decide
+    el comprador.
+
+    Y SE EXCLUYE EL LISTADO QUE SE ESTÁ EDITANDO, que es lo que hace legible
+    el aviso: sin eso, toda carga que se acaba de tildar diría "ya se usó" y
+    el cartel pasaría a estar siempre puesto, que es como se aprende a no
+    leerlo. El conteo va al lado de la fecha porque una carga puede estar en
+    varios y "el del 26/09" sola no lo dice.
+    """
+    conexion = obtener_conexion()
+    try:
+        with conexion.cursor() as cursor:
+            cursor.execute(
+                """
+                SELECT c.id, c.cliente_id, cl.nombre AS cliente_nombre, c.fecha,
+                       c.modo, c.promedio_anterior_a,
+                       (SELECT count(*) FROM cargas_compra_renglones r
+                         WHERE r.carga_id = c.id) AS renglones,
+                       (SELECT count(*) FROM listados_compra_cargas lc
+                         WHERE lc.carga_id = c.id
+                           AND lc.listado_id IS DISTINCT FROM %s) AS usada_en_otros,
+                       (SELECT max(l.fecha) FROM listados_compra_cargas lc
+                          JOIN listados_compra l ON l.id = lc.listado_id
+                         WHERE lc.carga_id = c.id
+                           AND lc.listado_id IS DISTINCT FROM %s) AS ultimo_listado
+                FROM cargas_compra c
+                JOIN clientes cl ON cl.id = c.cliente_id
+                WHERE c.fecha >= %s
+                ORDER BY c.fecha, cl.nombre
+                """,
+                (excepto_listado_id, excepto_listado_id, desde),
+            )
+            columnas = [c[0] for c in cursor.description]
+            return [dict(zip(columnas, fila)) for fila in cursor.fetchall()]
     finally:
         conexion.close()
 
