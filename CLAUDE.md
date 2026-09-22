@@ -2547,10 +2547,14 @@ saber antes de extrañarlos:
 
 **`kilos_3` y `kilos_4` filtran las dos por `contenido_referencia is not
 null`, así que Mango y Cherry ya NO APARECEN en ninguna.** No es que su
-desvío pase a dar cero: la fila se va. El que corra `kilos_4` el 25/09 no los
-va a encontrar, y eso es lo correcto —sin referencia no hay contra qué
-comparar, que es justamente por qué se vaciaron— pero se ve igual que si
-hubieran dejado de tener problema.
+desvío pase a dar cero: la fila se va, y eso es lo correcto —sin referencia
+no hay contra qué comparar, que es justamente por qué se vaciaron— pero se ve
+igual que si hubieran dejado de tener problema.
+
+(Esto decía *"el que corra `kilos_4` el 25/09 no los va a encontrar"*. **Nadie
+la va a correr**: el 22/09 el dueño la retiró, porque la referencia no se
+ajusta por medición. El mecanismo —vaciar un campo saca a esa fila de toda
+consulta que filtre por él— no se mueve, y es lo que esta sección enseña.)
 
 **Vaciar la referencia los saca de la vigilancia, y ése es el precio de la
 decisión.** Está bien pagarlo: un promedio contra un valor que no existe no
@@ -2596,9 +2600,17 @@ falta.
 sabe hoy no cambia ninguna decisión. La referencia ya se dio por buena por
 otro camino, y las dos que estaban mal ya están identificadas.
 
-Queda medible cuando haga falta, y la consulta está escrita:
-`db/kilos_4_cuanto_de_lo_pesado_se_peso.sql` separa por si alguien CAMBIÓ el
-número, que es lo que de verdad distingue "lo pesaron" de "lo aceptaron".
+**Y LA CONSULTA QUE LA MEDÍA SE RETIRÓ EL 22/09**, así que esto deja de ser
+"medible cuando haga falta": `db/kilos_4_cuanto_de_lo_pesado_se_peso.sql`
+separaba por si alguien CAMBIÓ el número —lo único que distingue "lo pesaron"
+de "lo aceptaron"— y el dueño la dio de baja porque **la referencia no se
+ajusta por medición y la evidencia del pesaje es la foto**.
+
+Eso NO borra la contaminación, que sigue siendo un hecho del sistema y por eso
+esta sección se queda. Lo que cambia es que **las dos preguntas que la volvían
+interesante ya están contestadas por otro lado**, así que retomarla necesita
+una pregunta TERCERA que hoy nadie se hace — y si aparece, lo que se retoma es
+la pregunta, no el archivo.
 
 **Y el día que alguien la retome, la trampa está acá**: excluir el ingreso
 directo NO alcanza, y ésa fue la primera reacción de los dos. Es la regla de
@@ -4546,18 +4558,45 @@ puesto, trajo `recepciones_7d 70` y `90d 240`, y **hizo votar a la base que
 no tenía que votar**. Ese testigo no mintió: contestó bien la pregunta de si
 había población. La que no contestó —y ningún testigo puede— es si esa
 población seguía viva.
-### Y lo que queda ANOTADO Y NO HECHO
+### Una DECISIÓN y una cosa anotada, y no son lo mismo
 
-1. **Volver a correr `kilos_4` el 25/09.** Si el 82% sin tocar era falta de
-   pesaje y la foto lo está corrigiendo, en dos semanas el promedio de
-   `contenido_por_cajon_real` va a valer algo que hoy no vale. **Hasta
-   entonces no se mueve ninguna referencia.** Acá había una excepción
-   —Mango a 40— y se cayó: Mango es multiformato y su referencia va vacía,
-   no en 40. **Y Mango y Cherry directamente no van a aparecer**: el 12/09 se
-   les vació la referencia y las dos consultas filtran por
-   `contenido_referencia is not null`. No los busques — su desvío no
-   contestaba nada igual, porque promediar tres formatos no es una pregunta.
-   Lo que hay que mirar son los otros.
+El título de esta sección decía *"lo que queda ANOTADO Y NO HECHO"* y
+listaba dos. **Desde el 22/09 la primera es una decisión cerrada**, y
+dejarlas bajo el mismo rótulo es lo que este archivo se pasa advirtiendo:
+un pendiente se relee a los seis meses como algo que todavía hay que
+hacer, y una decisión releída así manda a rehacer lo que ya se decidió
+que no va.
+
+
+1. ~~Volver a correr `kilos_4` el 25/09.~~ **RETIRADO POR EL DUEÑO EL 22/09,
+   y es una DECISIÓN y no un pendiente que se venza.** Las dos preguntas que
+   esa consulta medía están las dos cerradas, cada una por su lado:
+
+   > **La referencia NO SE AJUSTA POR MEDICIÓN**, nunca. Se compra siempre en
+   > distintos kilajes, y `contenido_referencia` es una SUGERENCIA para cargar
+   > compras — no tiene más importancia que ésa.
+   >
+   > **Y la evidencia del pesaje es LA FOTO.** Lo que importa es que la saquen,
+   > y para eso ya está la alerta `recepciones_sin_pesaje`. No hace falta una
+   > segunda medición que diga lo mismo peor.
+
+   **Lo que eso cierra, y conviene leerlo junto**: el promedio de
+   `contenido_por_cajon_real` se iba a usar para decidir si mover una
+   referencia. Sin esa decisión, el número no alimenta ninguna otra — así que
+   no es que la medición sea mala: **es que su resultado no tiene a dónde
+   ir**, que es la única razón que da de baja una consulta sin discutirle los
+   números.
+
+   **Y la forma de la decisión es la que hay que reconocer**: no se cerró
+   midiendo mejor. Se cerró porque el dueño dijo qué es `contenido_referencia`
+   —una sugerencia, no un parámetro— y con eso la pregunta "¿está bien
+   cargada?" deja de tener consecuencia. Es el corolario 29 con el signo
+   bueno: la pregunta *"¿para qué querés este número?"* borra el trabajo antes
+   de hacerlo, y acá la contestó él sin que hubiera que preguntarla.
+
+   La consulta queda en `db/`, **marcada RETIRADA en su encabezado** — ahí y
+   no solo acá, porque el que la abra dentro de seis meses va a leer el
+   archivo y no este documento.
 2. **La explicación que los datos NO pueden descartar**: que el operario
    saque la foto justo en las cargas que ya le generaban duda. Ahí la foto no
    dispararía nada — sería un *marcador* de sospecha, y el que corrige es el

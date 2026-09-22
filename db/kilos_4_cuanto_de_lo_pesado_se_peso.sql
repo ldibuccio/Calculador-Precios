@@ -1,3 +1,17 @@
+-- RETIRADA EL 22/09 POR EL DUEÑO. NO SE CORRE.
+--
+-- Medía dos cosas y las dos están cerradas: la referencia NO SE AJUSTA POR
+-- MEDICIÓN —se compra siempre en distintos kilajes, y contenido_referencia
+-- es una sugerencia para cargar compras, nada más— y la evidencia del
+-- pesaje es LA FOTO, que ya la cuenta la alerta recepciones_sin_pesaje.
+-- Su número no alimenta ninguna decisión, así que correrla no contesta
+-- nada. Lo de abajo queda como estaba, para leer.
+--
+-- (Y con esto el archivo pasa los 2500 caracteres del editor de Supabase.
+-- Es a propósito y es seguro: una consulta retirada no se pega, y aunque
+-- se pegara es un SELECT — si trunca da error de sintaxis y no escribe
+-- nada. El límite existe para los bloques que ESCRIBEN a medias.)
+--
 -- ¿Cuánto de "lo que Depósito pesó" se pesó de verdad?
 --
 -- RECEPCIÓN PRECARGA LOS DOS CAMPOS REALES CON EL ESTIMADO

@@ -7,7 +7,8 @@
 --
 -- MIDE UN SOLO FACTOR, y no el problema entero: Recepción también precarga
 -- los dos campos reales con el estimado, así que aceptar sin tocar graba
--- real = estimado por el camino NORMAL. Para eso está kilos_4, que separa
+-- real = estimado por el camino NORMAL. Para eso estaba kilos_4 (RETIRADA
+-- el 22/09: la referencia no se ajusta por medición), que separa
 -- por si alguien CAMBIÓ el número. Ésta contesta nada más "¿cuánto pesaba
 -- el ingreso directo?" — si los ceros no se mueven acá, la contaminación
 -- está en Recepción y no en este camino.
