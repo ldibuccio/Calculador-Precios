@@ -1,0 +1,170 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Pérdidas</title>
+<style>
+  :root { font-family: -apple-system, system-ui, sans-serif; }
+  body { margin: 0; padding: 1rem; background: #f5f5f5; color: #222; }
+  h2 { font-size: 1.05rem; margin: 0 0 0.75rem; }
+  .tarjeta { background: #fff; border-radius: 10px; padding: 1rem;
+             margin-bottom: 1rem; box-shadow: 0 1px 3px rgba(0,0,0,.1); }
+  .error { background: #fee2e2; color: #991b1b; padding: .75rem 1rem;
+           border-radius: 8px; margin-bottom: 1rem; font-size: .95rem; }
+  /* EL FILTRO EN FILA QUE ENVUELVE, igual que Plata de cajas: dos fechas y un
+     boton no entran en 390px en una sola linea, y `flex-wrap` las baja en vez
+     de desbordar. */
+  .filtro { display: flex; flex-wrap: wrap; gap: .5rem; align-items: flex-end; }
+  .campo { display: flex; flex-direction: column; flex: 1 1 9rem; min-width: 0; }
+  label { font-size: .85rem; margin-bottom: .2rem; }
+  input { font-size: 1rem; padding: .6rem; min-height: 44px;
+          border: 1px solid #cbd5e1; border-radius: 8px; min-width: 0; }
+  button { font-size: 1rem; padding: .7rem 1.1rem; min-height: 44px;
+           border: 0; border-radius: 8px; background: #2563eb; color: #fff;
+           font-weight: 600; flex: 1 1 8rem; }
+  /* EL RECORTE VIAJA PEGADO AL NUMERO (corolario 19): un total sin su ventana
+     al lado contesta otra pregunta, y este numero va a un estado de
+     resultados — el que lo cite despues no va a volver a buscar de que dias
+     era. */
+  .periodo { font-size: .85rem; color: #6b7280; margin: .6rem 0 0; }
+  .totales { display: flex; flex-wrap: wrap; gap: .5rem 1.5rem; align-items: baseline; }
+  .grande { font-size: 1.8rem; font-weight: 700; }
+  .unidad { font-size: .9rem; color: #6b7280; font-weight: 500; }
+  /* LOS DOS DESTINOS SE DISTINGUEN POR COLOR, y son los mismos que ya usan
+     sus dos pantallas de carga: rojo la merma, ambar el pase. Leidos de
+     corrido en el celular, dos renglones con el mismo formato se confunden. */
+  .destino { display: inline-block; border-radius: 999px; padding: .15rem .6rem;
+             font-size: .85rem; font-weight: 700; margin-bottom: .4rem; }
+  .es-merma { background: #fee2e2; color: #991b1b; }
+  .es-segunda { background: #fffbeb; color: #92400e; border: 1px solid #fcd34d; }
+  .renglon { border-top: 1px solid #e5e7eb; padding: .7rem 0; }
+  .renglon:first-of-type { border-top: 0; padding-top: 0; }
+  .quien { font-size: 1rem; font-weight: 600; }
+  /* `overflow-wrap` porque el largo de un nombre de articulo no lo
+     controlamos: uno sin espacios no tiene donde envolver y se sale de
+     costado sin que el desborde de PAGINA lo muestre. */
+  .quien, .patas { overflow-wrap: anywhere; }
+  .patas { display: flex; flex-wrap: wrap; gap: .3rem .9rem;
+           font-size: .85rem; color: #555; margin-top: .25rem; }
+  .patas span { white-space: nowrap; }
+  .plata { font-weight: 600; color: #b45309; }
+  .vacio { color: #6b7280; font-size: .95rem; }
+  .nota { background: #eff6ff; color: #1e3a8a; border-radius: 8px;
+          padding: .75rem .9rem; margin-top: .75rem; font-size: .88rem; }
+  .aviso { background: #fffbeb; color: #92400e; border-radius: 8px;
+           padding: .75rem .9rem; margin-top: .75rem; font-size: .88rem; }
+  .volver { display: inline-block; margin-top: .5rem; color: #2563eb;
+            text-decoration: none; min-height: 44px; line-height: 44px; }
+</style>
+</head>
+<body>
+  {% set barra_sector = "gerencia" %}
+  {% set barra_titulo = "Pérdidas" %}
+  {% set barra_atras = "/gerencia" %}
+  {% include "_barra_navegacion.html" %}
+
+  {% if error_fecha %}<div class="error">{{ error_fecha }}</div>{% endif %}
+
+  <div class="tarjeta">
+    <form class="filtro" method="get" action="/gerencia/perdidas">
+      <div class="campo">
+        <label for="fecha_desde">Desde</label>
+        <input type="date" id="fecha_desde" name="fecha_desde" value="{{ fecha_desde }}">
+      </div>
+      <div class="campo">
+        <label for="fecha_hasta">Hasta</label>
+        <input type="date" id="fecha_hasta" name="fecha_hasta" value="{{ fecha_hasta }}">
+      </div>
+      <button type="submit">Ver</button>
+    </form>
+  </div>
+
+  {% if resultado %}
+  <div class="tarjeta">
+    <h2>Lo que se perdió</h2>
+    <div class="totales">
+      <span><span class="grande">{{ resultado.total|moneda }}</span></span>
+    </div>
+    <p class="periodo">Del {{ fecha_desde }} al {{ fecha_hasta }} · mercadería al costo de su lote y la caja al costo vigente ese día</p>
+    {# LO QUE NO SE PUDO COSTEAR SE MUESTRA, no se suma como cero: un total
+       que se come bultos sin precio en silencio es mas chico y se lee igual
+       de cerrado, y este numero va a un estado de resultados. #}
+    {% if resultado.bultos_sin_costo %}
+    <p class="aviso">{{ resultado.bultos_sin_costo|sin_decimales }} bulto{{ "s" if resultado.bultos_sin_costo != 1 }}
+      salieron de un lote <strong>sin costo cargado</strong>: están contados en los bultos
+      y <strong>no suman pesos</strong>. El total de arriba no los cubre.</p>
+    {% endif %}
+    {# NO SE SUMA CON "Plata de cajas", y va en la pantalla y no solo en el
+       docstring: las dos muestran plata de la misma caja contestando dos
+       preguntas distintas, y el que las sume la cuenta dos veces. #}
+    <p class="nota">La <strong>caja de Día armada</strong> pierde los kilos que tenía
+      <strong>más la caja</strong>; los bultos sueltos pierden solo los kilos.
+      Esta plata <strong>no se suma</strong> con la de “Plata de cajas”: allá la misma caja
+      se cuenta por cliente para reclamarla, acá por destino para el resultado.</p>
+  </div>
+
+  <div class="tarjeta">
+    <h2>Por destino</h2>
+    {# LOS DOS RENGLONES SE DIBUJAN SIEMPRE, incluso en cero. Un destino que
+       desaparece cuando no tuvo nada deja al otro solo en la pantalla, y ahi
+       "no hubo mermas" y "esta pantalla no cuenta las mermas" se ven igual. #}
+    {% for clave, rotulo in [("merma", "Se tiró"), ("segunda", "Pasó a segunda")] %}
+    {% set r = resultado.renglones[clave] %}
+    {# `data-destino` ES EL ANCLA DEL TEST, y no el rotulo: "Se tiro" aparece
+       tambien en cada renglon del detalle, asi que un `in` sobre el texto
+       contesta por el hermano mas suertudo y pasa con UNO solo de los dos
+       dibujados. Lo que se cuenta tiene que poder ser solo esto. #}
+    <div class="renglon" data-destino="{{ clave }}">
+      <span class="destino {{ 'es-merma' if clave == 'merma' else 'es-segunda' }}">{{ rotulo }}</span>
+      <div class="totales">
+        <span><span class="grande">{{ r.total|moneda }}</span></span>
+        <span><span class="unidad">{{ r.bultos|sin_decimales }} bulto{{ "s" if r.bultos != 1 }}</span></span>
+      </div>
+      <div class="patas">
+        <span>mercadería <span class="plata">{{ r.mercaderia|moneda }}</span></span>
+        {# LA CAJA SE DIBUJA SIEMPRE, con su cero: es la unica forma de leer
+           que ese destino fue todo mercaderia suelta. Escondiendola, un
+           renglon sin caja se ve igual que uno al que se le olvido contarla. #}
+        <span>{{ r.cajas|sin_decimales }} caja{{ "s" if r.cajas != 1 }} <span class="plata">{{ r.caja_pesos|moneda }}</span></span>
+        {% if r.bultos_sin_costo %}
+        <span>{{ r.bultos_sin_costo|sin_decimales }} sin costear</span>
+        {% endif %}
+      </div>
+    </div>
+    {% endfor %}
+  </div>
+
+  <div class="tarjeta">
+    <h2>Por artículo</h2>
+    {% if resultado.detalle %}
+    {% for d in resultado.detalle %}
+    <div class="renglon">
+      <div class="quien">{{ d.articulo }}</div>
+      <div class="patas">
+        <span class="destino {{ 'es-merma' if d.destino == 'merma' else 'es-segunda' }}">{{ "Se tiró" if d.destino == "merma" else "Pasó a segunda" }}</span>
+        <span>{{ d.bultos|sin_decimales }} bulto{{ "s" if d.bultos != 1 }}</span>
+        <span class="plata">{{ d.total|moneda }}</span>
+        {% if d.cajas %}
+        <span>{{ d.cajas|sin_decimales }} caja{{ "s" if d.cajas != 1 }} {{ d.caja_pesos|moneda }}</span>
+        {% endif %}
+        {% if d.bultos_sin_costo %}
+        <span>{{ d.bultos_sin_costo|sin_decimales }} sin costear</span>
+        {% endif %}
+      </div>
+    </div>
+    {% endfor %}
+    {% else %}
+    {# EL VACIO DICE CUAL VACIO ES: "no hubo" y "no se miro" se dibujan igual
+       si la pantalla se calla, y con un rango elegido a mano el segundo caso
+       es el mas probable de los dos. #}
+    <p class="vacio">No se tiró ni pasó a segunda nada entre el {{ fecha_desde }} y el {{ fecha_hasta }}.
+      Si esperabas ver algo, revisá el rango de fechas.</p>
+    {% endif %}
+  </div>
+  {% endif %}
+
+  <a class="volver" href="/gerencia">Volver a Gerencia</a>
+{% include "_pie_version.html" %}
+</body>
+</html>

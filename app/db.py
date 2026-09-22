@@ -11171,8 +11171,9 @@ def anular_movimiento_stock(movimiento_id: int) -> None:
 # restada de la ficha en el saldo y dibujada en sueltos en el extracto.
 # Medido antes de arreglarlo: 10 cajas armadas, se tiran 3, la cuenta dice
 # ficha 7 y el extracto dice `ficha_id` None.
-TIPOS_CON_FICHA_PROPIA = ("merma", "pase_a_segunda")
-
+# La lista de esos tipos vive en `core.stock.TIPOS_CON_FICHA_PROPIA`, al lado
+# de la prioridad del FIFO que la usa. Acá va escrita como SQL porque esto es
+# un fragmento de consulta; lo que ata las dos es un test.
 _SQL_TIPO_TIENE_FICHA_PROPIA = "m.tipo IN ('merma', 'pase_a_segunda') AND m.ficha_id IS NOT NULL"
 
 _SQL_REINGRESO_ES_DE_LA_FICHA = """
@@ -14443,6 +14444,25 @@ def gasto_en_cajas(desde, hasta) -> dict:
     }
 
 
+# EL COSTO DE LA CAJA A LA FECHA DEL HECHO, y no el de hoy: una caja perdida
+# en julio no se revalúa sola. Escrito UNA vez porque lo leen dos cuentas que
+# contestan preguntas distintas —la lista de reclamo por cliente y el estado
+# de resultados por destino— con la misma regla de precio. Escrito dos veces
+# se separa, y el día que difieran los dos números salen de la misma pantalla.
+#
+# Pide los alias `f` (la ficha) y `ev` (el evento, con `fecha_operacion`).
+_SQL_COSTO_DEL_ENVASE_A_LA_FECHA = """
+      LEFT JOIN LATERAL (
+          SELECT h.costo
+            FROM envases_costo_historial h
+           WHERE h.envase_id = f.envase_id
+             AND h.vigente_desde <= ev.fecha_operacion
+           ORDER BY h.vigente_desde DESC
+           LIMIT 1
+      ) c ON true
+"""
+
+
 _SQL_CAJAS_PERDIDAS = """
     WITH eventos AS (
         -- LOS RECHAZOS. La caja se va con la mercadería que vuelve del súper
@@ -14455,23 +14475,26 @@ _SQL_CAJAS_PERDIDAS = """
            AND m.destino_rechazo IN ('segunda', 'devolucion_proveedor', 'reproceso')
            AND m.fecha_operacion >= %s AND m.fecha_operacion <= %s
         UNION ALL
-        -- EL PASE DE CAJAS ARMADAS, desde el 21/09. Una caja armada para un
-        -- cliente que se pone fea se va a segunda con la fruta adentro, así
-        -- que su costo tampoco se recuperó — exactamente igual que las de
-        -- arriba, y por eso están en la misma lista.
+        -- LO QUE SALE DE UNA CAJA ARMADA: la merma y el pase a segunda.
+        -- Una caja armada para un cliente que se pone fea pierde la caja se
+        -- tire o se mande a segunda, así que su costo tampoco se recuperó
+        -- — exactamente igual que las de arriba, y por eso están en la
+        -- misma lista. Es la regla del dueño del 21/09: "merma y pase se
+        -- costean igual, es la misma pérdida con otro destino".
         --
-        -- SOLO CON FICHA: un pase de bultos SUELTOS no lleva caja nuestra
-        -- (la fruta está en el cajón del proveedor), así que sumarlo contaría
-        -- una caja que nunca existió.
+        -- SOLO CON FICHA: de bultos SUELTOS no hay caja nuestra que perder
+        -- (la fruta está en el cajón del proveedor), así que sumarlos
+        -- contaría cajas que nunca existieron. Y los sueltos son el caso
+        -- NORMAL de las dos, así que el número sería casi todo invento.
         --
-        -- `-m.cantidad` PORQUE EL PASE ES NEGATIVO, y no `bultos_segunda`
-        -- aunque valga lo mismo: el CHECK del uno a uno los ata, pero la
-        -- columna que mide cuántas cajas se fueron es la del stock. El día
-        -- que el uno a uno deje de valer, ésta sigue contestando.
-        SELECT m.ficha_id, m.fecha_operacion, -m.cantidad AS cajas, 'pase' AS origen
+        -- `-m.cantidad` PORQUE LAS DOS SON NEGATIVAS, y no `bultos_segunda`
+        -- —que además la merma no tiene—: la columna que mide cuántas cajas
+        -- se fueron es la del stock, y contesta para los dos tipos.
+        SELECT m.ficha_id, m.fecha_operacion, -m.cantidad AS cajas,
+               CASE WHEN m.tipo = 'merma' THEN 'merma' ELSE 'pase' END AS origen
           FROM movimientos_stock m
          WHERE m.anulado_el IS NULL
-           AND m.tipo = 'pase_a_segunda'
+           AND m.tipo IN ('merma', 'pase_a_segunda')
            AND m.ficha_id IS NOT NULL
            AND m.fecha_operacion >= %s AND m.fecha_operacion <= %s
     )
@@ -14479,21 +14502,14 @@ _SQL_CAJAS_PERDIDAS = """
            SUM(ev.cajas)                                             AS cajas,
            SUM(ev.cajas * c.costo)                                   AS pesos,
            COUNT(*)                                                  AS veces,
-           COALESCE(SUM(ev.cajas) FILTER (WHERE ev.origen = 'pase'), 0) AS cajas_por_pase,
+           COALESCE(SUM(ev.cajas) FILTER (WHERE ev.origen <> 'rechazo'), 0) AS cajas_del_deposito,
            MAX(ev.fecha_operacion)                                   AS ultimo
       FROM eventos ev
       JOIN fichas_logistica f ON f.id = ev.ficha_id
       JOIN envases e          ON e.id = f.envase_id
       JOIN clientes cl        ON cl.id = f.cliente_id
       JOIN articulos a        ON a.id = f.articulo_id
-      LEFT JOIN LATERAL (
-          SELECT h.costo
-            FROM envases_costo_historial h
-           WHERE h.envase_id = f.envase_id
-             AND h.vigente_desde <= ev.fecha_operacion
-           ORDER BY h.vigente_desde DESC
-           LIMIT 1
-      ) c ON true
+      {costo_del_envase}
      GROUP BY cl.nombre, a.nombre, e.nombre
      ORDER BY SUM(ev.cajas * c.costo) DESC NULLS LAST, SUM(ev.cajas) DESC
 """
@@ -14524,11 +14540,16 @@ def cajas_perdidas(desde, hasta) -> dict:
     de `core/envases.py` cierra —la caja se descontó al armarla y no vuelve—
     y no hay nada que tocar en la pantalla de Cajas).
 
-    `cajas_por_pase` SEPARA LOS DOS, y no es un adorno: cinco cajas perdidas
-    en rechazos son una conversación con el CLIENTE —le volvió mercadería— y
-    cinco por pase son una conversación con el DEPÓSITO, porque la fruta se
-    puso fea acá adentro. Sumadas en una sola columna, una fila del segundo
-    tipo se lee como del primero y manda a reclamarle a quien no fue.
+    `cajas_del_deposito` SEPARA LOS DOS LADOS, y no es un adorno: cinco cajas
+    perdidas en rechazos son una conversación con el CLIENTE —le volvió
+    mercadería— y cinco tiradas o pasadas a segunda son una conversación con
+    el DEPÓSITO, porque la fruta se puso fea acá adentro. Sumadas en una sola
+    columna, una fila del segundo tipo se lee como del primero y manda a
+    reclamarle a quien no fue.
+
+    Cuenta las DOS del depósito juntas —merma y pase— porque para esa
+    pregunta son lo mismo: la caja se perdió acá. En qué se perdió lo
+    contesta la pantalla de Pérdidas, que las parte por destino.
 
     `reproceso` ENTRÓ EL 17/09, dos días después que las otras dos. Estuvo
     afuera porque su caja ya está cobrada adentro de `rechazos_perdidos` —lo
@@ -14565,7 +14586,10 @@ def cajas_perdidas(desde, hasta) -> dict:
     conexion = obtener_conexion()
     try:
         with conexion.cursor() as cursor:
-            cursor.execute(_SQL_CAJAS_PERDIDAS, (desde, hasta, desde, hasta))
+            cursor.execute(
+                _SQL_CAJAS_PERDIDAS.format(costo_del_envase=_SQL_COSTO_DEL_ENVASE_A_LA_FECHA),
+                (desde, hasta, desde, hasta),
+            )
             filas = cursor.fetchall()
     finally:
         conexion.close()
@@ -14576,7 +14600,7 @@ def cajas_perdidas(desde, hasta) -> dict:
             "cajas": float(f[3] or 0),
             "pesos": float(f[4]) if f[4] is not None else 0.0,
             "veces": int(f[5] or 0),
-            "cajas_por_pase": float(f[6] or 0),
+            "cajas_del_deposito": float(f[6] or 0),
             "ultimo": f[7],
         }
         for f in filas
@@ -14588,6 +14612,163 @@ def cajas_perdidas(desde, hasta) -> dict:
         "cajas": sum(r["cajas"] for r in renglones),
         "pesos": sum(r["pesos"] for r in renglones),
         "ultimo": max((r["ultimo"] for r in renglones if r["ultimo"]), default=None),
+    }
+
+
+_SQL_CAJAS_DEL_DEPOSITO_PERDIDAS = """
+    WITH eventos AS (
+        SELECT m.ficha_id, m.fecha_operacion, m.articulo_id,
+               -m.cantidad AS cajas,
+               CASE WHEN m.tipo = 'merma' THEN 'merma' ELSE 'segunda' END AS destino
+          FROM movimientos_stock m
+         WHERE m.anulado_el IS NULL
+           AND m.tipo IN ('merma', 'pase_a_segunda')
+           AND m.ficha_id IS NOT NULL
+           AND m.fecha_operacion >= %s AND m.fecha_operacion <= %s
+    )
+    SELECT ev.destino, ev.articulo_id,
+           SUM(ev.cajas)           AS cajas,
+           SUM(ev.cajas * c.costo) AS pesos
+      FROM eventos ev
+      JOIN fichas_logistica f ON f.id = ev.ficha_id
+      JOIN envases e          ON e.id = f.envase_id
+      {costo_del_envase}
+     GROUP BY ev.destino, ev.articulo_id
+"""
+
+
+def perdidas_por_periodo(desde, hasta) -> dict:
+    """La plata perdida en el período, partida en MERMAS y SEGUNDA.
+
+    LA REGLA ES UNA SOLA Y ES DEL DUEÑO (21/09): *"todo lo que se tira o
+    pasa a segunda es plata perdida. Va a una cuenta de resultado negativo,
+    no costea a nadie y no vuelve a ningún lote. Una caja de Día armada
+    pierde los kilos que tenía MÁS la caja; los bultos sueltos pierden solo
+    los kilos."*
+
+    DOS RENGLONES Y NO UNO: merma y segunda se costean IGUAL —es la misma
+    pérdida con otro destino— y por eso la cuenta es la misma; se separan al
+    MOSTRAR porque son dos hechos distintos del galpón y el que lee el
+    resultado quiere saber cuál pesa más.
+
+    LA MERCADERÍA SALE DEL REJUEGO DEL FIFO (`atribuir_costos_fifo`) y NO de
+    una consulta propia. Es la misma función que costea la Rentabilidad Real
+    y la pantalla del artículo: una segunda versión de la cuenta se separa, y
+    el día que difieran los dos números salen de la misma pantalla.
+
+    EL REJUEGO VA DESDE EL CORTE Y LA SUMA SOLO SOBRE LA VENTANA, y son dos
+    recortes distintos a propósito: para saber a qué lote se le cobra una
+    merma de ayer hay que haber repartido todo lo anterior. Recortar el
+    rejuego a la ventana costearía contra los lotes equivocados — y
+    devolvería un número plausible.
+
+    LA CAJA SALE DE LA MISMA VALUACIÓN QUE CAJAS PERDIDAS
+    (`_SQL_COSTO_DEL_ENVASE_A_LA_FECHA`): el costo vigente a la fecha del
+    hecho, no el de hoy. Las dos pantallas muestran plata de la misma caja y
+    tienen que decir lo mismo.
+
+    LO QUE NO SE PUEDE COSTEAR SE MUESTRA, no se suma como cero:
+    `bultos_sin_costo` son los bultos que salieron de un lote sin precio. Un
+    total que se los come en silencio es más chico y se lee igual de
+    cerrado — y este número va a un estado de resultados.
+
+    `hasta` NO TIENE DEFAULT, por lo mismo que en `cajas_perdidas`: un
+    llamador que se lo olvidara recibiría todo hasta hoy, que es un número
+    plausible contestando otra pregunta.
+    """
+    from core.costo_real import atribuir_costos_fifo
+    from core.stock import TIPOS_CON_FICHA_PROPIA
+
+    conexion = obtener_conexion()
+    try:
+        with conexion.cursor() as cursor:
+            corte = _fecha_corte(cursor)
+            # LOS CANDIDATOS, y el recorte es por la VENTANA: sin esto habría
+            # que rejugar el FIFO del catálogo entero para contestar por los
+            # pocos artículos que perdieron algo.
+            cursor.execute(
+                """
+                SELECT DISTINCT m.articulo_id, a.nombre
+                FROM movimientos_stock m
+                JOIN articulos a ON a.id = m.articulo_id
+                WHERE m.anulado_el IS NULL
+                  AND m.tipo IN ('merma', 'pase_a_segunda')
+                  AND m.fecha_operacion >= %s AND m.fecha_operacion <= %s
+                """,
+                (desde, hasta),
+            )
+            nombres = dict(cursor.fetchall())
+            por_articulo = (
+                _entradas_y_salidas_stock_varios(cursor, list(nombres), corte)
+                if nombres else {}
+            )
+            cursor.execute(
+                _SQL_CAJAS_DEL_DEPOSITO_PERDIDAS.format(
+                    costo_del_envase=_SQL_COSTO_DEL_ENVASE_A_LA_FECHA),
+                (desde, hasta),
+            )
+            cajas = {
+                (fila[0], fila[1]): (float(fila[2] or 0),
+                                     float(fila[3]) if fila[3] is not None else None)
+                for fila in cursor.fetchall()
+            }
+    finally:
+        conexion.close()
+
+    vacio = {"bultos": 0.0, "mercaderia": 0.0, "cajas": 0.0, "caja_pesos": 0.0,
+             "bultos_sin_costo": 0.0}
+    renglones = {"merma": dict(vacio), "segunda": dict(vacio)}
+    por_articulo_salida: dict = {}
+
+    for articulo_id, (entradas, salidas) in por_articulo.items():
+        for salida in atribuir_costos_fifo(entradas, salidas):
+            if salida["tipo"] not in TIPOS_CON_FICHA_PROPIA:
+                continue
+            # LA VENTANA SE APLICA ACÁ, después de rejugar todo.
+            if not (desde <= salida["fecha"] <= hasta):
+                continue
+            destino = "merma" if salida["tipo"] == "merma" else "segunda"
+            bultos = float(salida["cantidad"])
+            fila = renglones[destino]
+            fila["bultos"] += bultos
+            fila["bultos_sin_costo"] += float(salida["bultos_sin_costo"])
+            # `costo` viene en None cuando NINGUNA porción tuvo precio; las
+            # parciales ya están contadas en `bultos_sin_costo`.
+            fila["mercaderia"] += float(salida["costo"] or 0.0)
+
+            clave = (destino, articulo_id)
+            detalle = por_articulo_salida.setdefault(
+                clave, dict(vacio, destino=destino, articulo_id=articulo_id,
+                            articulo=nombres.get(articulo_id, "")))
+            detalle["bultos"] += bultos
+            detalle["bultos_sin_costo"] += float(salida["bultos_sin_costo"])
+            detalle["mercaderia"] += float(salida["costo"] or 0.0)
+
+    for (destino, articulo_id), (cuantas, pesos) in cajas.items():
+        fila = renglones[destino]
+        fila["cajas"] += cuantas
+        fila["caja_pesos"] += pesos or 0.0
+        detalle = por_articulo_salida.setdefault(
+            (destino, articulo_id),
+            dict(vacio, destino=destino, articulo_id=articulo_id,
+                 articulo=nombres.get(articulo_id, "")))
+        detalle["cajas"] += cuantas
+        detalle["caja_pesos"] += pesos or 0.0
+
+    for fila in list(renglones.values()) + list(por_articulo_salida.values()):
+        fila["total"] = fila["mercaderia"] + fila["caja_pesos"]
+
+    return {
+        "desde": desde,
+        "hasta": hasta,
+        "renglones": renglones,
+        # ORDENADO POR PLATA, que es lo que lo vuelve una lista de trabajo:
+        # por nombre habría que leerla entera para encontrar los dos que
+        # importan.
+        "detalle": sorted(por_articulo_salida.values(),
+                          key=lambda f: (-f["total"], f["articulo"])),
+        "total": sum(f["total"] for f in renglones.values()),
+        "bultos_sin_costo": sum(f["bultos_sin_costo"] for f in renglones.values()),
     }
 
 

@@ -136,13 +136,13 @@
            descuido que "¿Cuántos unidades?", y lo agarró el test y no la
            lectura — las dos palabras van enteras. #}
         <span>en {% if r.veces == 1 %}1 vez{% else %}{{ r.veces }} veces{% endif %}</span>
-        {# DE PASE SOLO CUANDO LAS HAY, y el total esta al lado: un "0 de
-           pase" en cada fila seria ruido en la mayoria. Lo que este chip
-           distingue es a quien reclamarle — una caja perdida en un rechazo es
-           una conversacion con el CLIENTE, y una perdida en un pase es con el
-           DEPOSITO, porque la fruta se puso fea aca adentro. #}
-        {% if r.cajas_por_pase %}
-        <span class="de-pase">{{ r.cajas_por_pase|sin_decimales }} de pase a segunda</span>
+        {# DEL DEPOSITO SOLO CUANDO LAS HAY, y el total esta al lado: un "0"
+           en cada fila seria ruido en la mayoria. Lo que este chip distingue
+           es A QUIEN RECLAMARLE — una caja perdida en un rechazo es una
+           conversacion con el CLIENTE, y una tirada o pasada a segunda es con
+           el DEPOSITO, porque la fruta se puso fea aca adentro. #}
+        {% if r.cajas_del_deposito %}
+        <span class="de-pase">{{ r.cajas_del_deposito|sin_decimales }} del depósito</span>
         {% endif %}
         <span>{{ r.envase }}</span>
       </div>

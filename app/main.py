@@ -98,6 +98,7 @@ from app.db import (
     contar_pedidos_con_renglones_sin_identificar,
     contar_pedidos_incompletos,
     cajas_perdidas,
+    perdidas_por_periodo,
     gasto_en_cajas,
     contar_recepciones_sin_pesaje,
     contenido_por_bulto_de_lotes,
@@ -15596,6 +15597,63 @@ def ver_cajas_perdidas(
         raise HTTPException(status_code=500, detail=f"Error al conectar con la base de datos: {error_db}") from error_db
 
     return templates.TemplateResponse(request, "gerencia_cajas_perdidas.html", contexto)
+
+
+@app.get("/gerencia/perdidas")
+def ver_perdidas(
+    request: Request,
+    fecha_desde: str | None = None,
+    fecha_hasta: str | None = None,
+):
+    """Lo que se perdió en un período: lo tirado y lo que pasó a segunda.
+
+    LA REGLA ES UNA SOLA Y ES DEL DUEÑO (21/09): *"todo lo que se tira o pasa
+    a segunda es plata perdida. Va a una cuenta de resultado negativo, no
+    costea a nadie y no vuelve a ningún lote."* Por eso las dos están en la
+    misma pantalla y con el mismo filtro: con dos recortes distintos, sumarlas
+    no significaría nada.
+
+    DOS RENGLONES Y NO UNO. Se costean IGUAL —es la misma pérdida con otro
+    destino— y se separan al MOSTRAR porque son dos hechos distintos del
+    galpón: lo tirado no vuelve, lo de segunda se vende más barato. El que
+    lee el resultado quiere saber cuál pesa más.
+
+    Y LA CAJA VA ADENTRO DEL MISMO TOTAL, no en una columna aparte que haya
+    que sumar de cabeza: una caja de Día armada que se tira pierde los kilos
+    que tenía MÁS la caja, y eso es UN número. Los bultos sueltos pierden
+    solo los kilos, así que su columna de caja va en cero — y se ve.
+
+    ES UNA PANTALLA DE MIRAR, no de trabajar: no escribe nada y no propone
+    ninguna acción. Va a ser una línea del estado de resultados.
+
+    NO SE SUMA CON "Plata de cajas", y hay que decirlo porque las dos
+    muestran plata de envase: allá la caja se cuenta por CLIENTE para poder
+    reclamarla —e incluye los rechazos, que son del cliente— y acá por
+    DESTINO para el resultado. La misma caja de una merma aparece en las dos,
+    contestando dos preguntas. Sumar los dos totales la contaría dos veces.
+
+    EL FILTRO ES EL MISMO `_leer_rango_de_fechas` que Rentabilidad y Plata de
+    cajas, así que las tres aceptan y rechazan exactamente los mismos rangos.
+    """
+    if not _acceso_gerencia_valido(request):
+        return _pantalla_clave_gerencia(request)
+
+    desde, hasta, error_fecha = _leer_rango_de_fechas(fecha_desde, fecha_hasta)
+    contexto = {
+        "fecha_desde": desde.isoformat(),
+        "fecha_hasta": hasta.isoformat(),
+        "error_fecha": error_fecha,
+        "resultado": None,
+    }
+    if error_fecha:
+        return templates.TemplateResponse(request, "gerencia_perdidas.html", contexto)
+
+    try:
+        contexto["resultado"] = perdidas_por_periodo(desde, hasta)
+    except Exception as error_db:
+        raise HTTPException(status_code=500, detail=f"Error al conectar con la base de datos: {error_db}") from error_db
+
+    return templates.TemplateResponse(request, "gerencia_perdidas.html", contexto)
 
 
 @app.get("/gerencia/rentabilidad-real")

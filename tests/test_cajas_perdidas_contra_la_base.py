@@ -37,7 +37,8 @@ OBLIGATORIO = os.environ.get("HUMO_OBLIGATORIO") == "1"
 
 # EL GALPÓN QUE SE PLANTA, y los tres casos están a propósito:
 #
-#   · 3 cajas ARMADAS que pasan a segunda      -> pierden caja  (lo nuevo)
+#   · 3 cajas ARMADAS que pasan a segunda      -> pierden caja
+#   · 2 cajas ARMADAS que se TIRAN             -> pierden caja  (21/09)
 #   · 4 que volvieron del súper y se remiten   -> pierden caja  (lo de antes)
 #   · 9 bultos SUELTOS que pasan a segunda     -> NO pierden caja
 #
@@ -64,6 +65,9 @@ insert into movimientos_stock (articulo_id, fecha_operacion, tipo, cantidad, mot
 insert into movimientos_stock (articulo_id, fecha_operacion, tipo, cantidad, motivo,
                                stock_sistema, bultos_segunda)
   values (1, '2026-09-12', 'pase_a_segunda', -9, 'se pusieron feas', 5, 9);
+insert into movimientos_stock (articulo_id, fecha_operacion, tipo, cantidad, motivo,
+                               stock_sistema, ficha_id)
+  values (1, '2026-09-13', 'merma', -2, 'se pudrio', 5, 1);
 """
 
 
@@ -105,8 +109,8 @@ def _con(url, funcion, *args):
 DESDE, HASTA = datetime.date(2026, 9, 1), datetime.date(2026, 9, 30)
 
 
-def test_la_consulta_TRAE_el_pase_de_cajas_armadas(base):
-    """3 del pase + 4 del rechazo = 7 cajas a $100 = $700.
+def test_la_consulta_TRAE_las_cajas_armadas_que_se_TIRAN_y_las_que_PASAN(base):
+    """3 del pase + 2 de la merma + 4 del rechazo = 9 cajas a $100 = $900.
 
     El canario del `AND false` daba CERO contra el texto y acá da 4 y $400.
     """
@@ -114,9 +118,9 @@ def test_la_consulta_TRAE_el_pase_de_cajas_armadas(base):
 
     assert len(r["renglones"]) == 1, r["renglones"]
     fila = r["renglones"][0]
-    assert fila["cajas"] == 7.0
-    assert fila["pesos"] == 700.0
-    assert fila["veces"] == 2
+    assert fila["cajas"] == 9.0      # 3 del pase + 2 de la merma + 4 del rechazo
+    assert fila["pesos"] == 900.0
+    assert fila["veces"] == 3
     assert (fila["cliente"], fila["articulo"], fila["envase"]) == (
         "EJEMPLO Dia", "EJEMPLO Berenjena", "EJEMPLO Caja Dia")
 
@@ -129,16 +133,16 @@ def test_los_SUELTOS_no_entran_aunque_pasen_a_segunda(base):
     invento.
     """
     r = _con(base, "cajas_perdidas", DESDE, HASTA)
-    assert r["cajas"] == 7.0, "entraron los 9 sueltos"
+    assert r["cajas"] == 9.0, "entraron los 9 sueltos"
 
 
-def test_la_columna_que_separa_los_dos_origenes_CONTESTA_y_no_solo_existe(base):
-    """3 de las 7 son del pase. El canario que la deja en `0` con el alias
-    puesto pasaba todos los asserts de texto.
+def test_la_columna_que_separa_los_dos_LADOS_CONTESTA_y_no_solo_existe(base):
+    """3 de las 7 son del depósito (el pase). El canario que la deja en `0`
+    con el alias puesto pasaba todos los asserts de texto.
     """
     fila = _con(base, "cajas_perdidas", DESDE, HASTA)["renglones"][0]
-    assert fila["cajas_por_pase"] == 3.0
-    assert fila["cajas_por_pase"] < fila["cajas"], (
+    assert fila["cajas_del_deposito"] == 5.0   # 3 del pase + 2 de la merma
+    assert fila["cajas_del_deposito"] < fila["cajas"], (
         "si fueran iguales, el rechazo no estaría entrando")
 
 
@@ -147,5 +151,5 @@ def test_el_SIGNO_del_pase_suma_en_vez_de_restar(base):
     crudas se restan entre sí: 4 − 3 = 1, que es un número plausible.
     """
     fila = _con(base, "cajas_perdidas", DESDE, HASTA)["renglones"][0]
-    assert fila["cajas"] != 1.0, "el pase se está restando del rechazo"
-    assert fila["cajas"] == 7.0
+    assert fila["cajas"] != 1.0, "las del depósito se están restando del rechazo"
+    assert fila["cajas"] == 9.0

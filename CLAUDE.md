@@ -2766,14 +2766,118 @@ tomó— así que copiar la relación de allá habría sido exactamente el corol
 caso es así. Se preguntó, y va escrito donde se escribe:
 `movimientos_stock_pase_uno_a_uno`.
 
-### Y el pase sale de los SUELTOS, porque la base ya lo decía
+### El pase salía de los SUELTOS — y DEJÓ DE SER CIERTO el 21/09
 
-`movimientos_stock_ficha_solo_merma` dice `tipo = 'merma' or ficha_id is
-null`, así que un pase con ficha lo rechaza **sin que haya que escribir
-ninguna guarda nueva**. Y está bien que sea así: una caja ya armada para un
-cliente que se pone fea no es un pase, es desarmarla primero. Lo que se hizo
-fue no tocar ese CHECK, que es una decisión y no un olvido — queda dicho acá
-porque un CHECK que no se toca no deja rastro en el diff.
+**Lo que decía acá hasta el 21/09, y era verdad cuando se escribió**:
+`movimientos_stock_ficha_solo_merma` decía `tipo = 'merma' or ficha_id is
+null`, así que un pase con ficha lo rechazaba sin ninguna guarda nueva. Y el
+argumento parecía cerrado: *"una caja ya armada para un cliente que se pone
+fea no es un pase, es desarmarla primero"*.
+
+**El dueño lo dio vuelta con el caso**: se armó una caja para Día, no salió, y
+se puso fea. Tiene que poder pasar a segunda DIRECTO, igual que la suelta —
+desarmarla primero es un paso que en el galpón nadie da. Así que el CHECK se
+ensanchó a `movimientos_stock_ficha_solo_merma_o_pase`
+(`db/pase_a_segunda_3_con_ficha.sql`, corrida en las dos bases el 21/09) y el
+pase acepta ficha.
+
+**Y ESTA CORRECCIÓN LLEGÓ UN DÍA TARDE, que es el dato que vale más que el
+caso.** La migración, la pantalla y los tests entraron en v945; esta oración
+—que afirmaba lo contrario de lo que el commit acababa de hacer— se quedó
+acá otras veinticuatro horas. Es exactamente lo que este archivo describe en
+*"la copia que más se olvida es la que está EN ESTE ARCHIVO"*: al arreglar
+algo el `grep` sale sobre `app/`, `core/`, `templates/` y `tests/`, que son
+los lugares donde el arreglo puede romperse. **CLAUDE.md no se rompe nunca,
+no falla ningún test, y no está abierto.**
+
+Lo que la habría encontrado en el momento es lo que esa misma sección pide y
+no se hizo: **grepear acá adentro el nombre de la cosa que se tocó** — un
+`grep ficha_solo_merma CLAUDE.md` de un segundo, en el mismo turno que la
+migración.
+
+## TODO LO QUE SE TIRA O PASA A SEGUNDA ES PLATA PERDIDA (21/09)
+
+Es del dueño y cierra el tema en una regla:
+
+> **Todo lo que se tira o pasa a segunda es plata perdida.** Va a una cuenta de
+> resultado negativo, no costea a nadie y no vuelve a ningún lote.
+>
+> - **Caja de Día armada** (merma o pase) → la pérdida son **los kilos que
+>   tenía MÁS la caja**.
+> - **Bultos sueltos** (merma o pase) → **solo los kilos**.
+>
+> Merma y pase **se costean igual**: es la misma pérdida con otro destino.
+
+**Y por eso son DOS RENGLONES y UNA cuenta.** La cuenta es la misma —no hay
+una fórmula para lo tirado y otra para lo de segunda— y se separan al MOSTRAR,
+porque son dos hechos distintos del galpón y el que lee el resultado quiere
+saber cuál pesa más. Juntarlas en un total sería perder eso; calcularlas con
+dos reglas sería la regla escrita dos veces.
+
+### La mercadería sale del REJUEGO, y la preferencia es lo que la ata a la caja
+
+Una caja de Día armada que se tira **no se costea contra el cajón más viejo
+del artículo**: se costea contra **la caja armada**, que es lo que tiene
+adentro. Eso no es una cuenta nueva — es una línea en `prioridad_de_lote`
+(core/stock.py): una salida con ficha propia PREFIERE los
+`TIPOS_LOTE_TRABAJADO`.
+
+```
+merma o pase CON ficha   -> prefiere ('reproceso', 'reingreso_rechazo')
+merma o pase SIN ficha   -> FIFO puro: no se sabe de qué cajón salió
+```
+
+**Y la preferencia es por TIPO, no por la ficha exacta**, decisión del dueño:
+*"si el pase fuera más preciso que el armado, habría dos reglas para la misma
+pregunta. Y cuando me importe la caja exacta, elijo el lote a mano."* La
+diferencia solo existe con cajas del mismo artículo armadas para dos clientes
+a la vez, y en plata es mínima.
+
+**LO QUE ESO COMPRA GRATIS: recostear lo que ya está cargado.** El costo de una
+merma **no vive en ninguna columna** —el CHECK de `movimientos_stock` prohíbe
+escribirlo (`tipo in ('reingreso_rechazo','stock_inicial') or costo_por_bulto
+is null`)— y `atribuir_costos_fifo` lo rejuega en cada lectura. Así que cambiar
+la prioridad recosteó toda la historia **sin una migración y sin tocar una
+fila**. Es el corolario 80 por cuarta vez: con una cuenta derivada, completar o
+corregir el dato de origen ES el arreglo.
+
+**Y los dos tipos salen de UNA constante** (`TIPOS_CON_FICHA_PROPIA`), que vive
+en `core/stock.py` y no en `app/db.py` porque `core` no puede importar de
+`app`. La consulta del stock partido y la del extracto la leen del mismo lugar:
+escrita dos veces, la copia que se separe deja una pantalla mostrando la merma
+de una caja armada como si fuera suelta — que es el bug que esto vino a cerrar
+y que estuvo vivo desde el 10/09.
+
+### La pantalla: `/gerencia/perdidas`, y lo que NO se suma
+
+Filtrada por fecha como Plata de cajas, con los dos renglones y el detalle por
+artículo. Va a ser una línea del estado de resultados.
+
+**Y dice en la pantalla que NO se suma con "Plata de cajas"**, porque las dos
+muestran plata de la MISMA caja contestando dos preguntas distintas: allá se
+cuenta por CLIENTE para poder reclamarla —e incluye los rechazos, que son del
+cliente— y acá por DESTINO para el resultado. Sumar los dos totales la cuenta
+dos veces, y el que lee "$X perdidos" sin esa frase al lado lo va a restar de
+algún lado.
+
+**Lo que no se pudo costear se MUESTRA**: `bultos_sin_costo` son los bultos que
+salieron de un lote sin precio. Suman bultos y no suman pesos, y el total lo
+dice. Un total que se los come en silencio es más chico y **se lee igual de
+cerrado** — y este número va a un estado de resultados.
+
+### Los DOS recortes, que es lo único fácil de romper acá
+
+**El rejuego va desde el CORTE; la suma, solo sobre la VENTANA.** Son dos
+recortes distintos a propósito: para saber a qué lote se le cobra una merma de
+ayer hay que haber repartido todo lo anterior. Recortar el rejuego a la ventana
+costearía contra los lotes equivocados **y devolvería un número plausible**.
+
+Lo cuida `tests/test_perdidas_contra_la_base.py`, que corre contra Postgres con
+el esquema real: el caso está armado para que el ORDEN decida —a un cajón le
+quedan 5 porque una guía R anterior a la ventana se llevó los otros 5, así que
+los 8 sueltos se desbordan al lote siguiente— y con el rejuego recortado el
+número cambia. Un fixture donde las entradas caen todas adentro de la ventana
+da lo mismo con las dos reglas y no prueba nada.
 
 ## Un campo sin consecuencia se llena vacío, y eso no es indisciplina
 
@@ -8329,10 +8433,16 @@ es la que hace chocar dos fuentes"* (corolario 19), acá adentro de un test.
 **Y el renglón que este corolario defendió YA NO SE VE EN CAJAS** (17/09): la
 pantalla pasó a ser solo stock y `cajas_perdidas` se fue con el resto de la
 plata. **El corolario no se mueve**: sigue diciendo que una lista que ENUMERA
-se evalúa por si está completa, y esa lista va a volver a dibujarse el día que
-alguien la cablee en Gerencia — con el renglón del reproceso adentro, que es
-lo que este corolario compró. Lo que envejeció es DÓNDE se ve, que es el
+se evalúa por si está completa. Lo que envejeció es DÓNDE se ve, que es el
 estado que se anota al lado del mecanismo para ilustrarlo.
+
+**Y el "va a volver a dibujarse el día que alguien la cablee en Gerencia" ya
+pasó**: vive en `/gerencia/cajas-perdidas` ("Plata de cajas"), con el renglón
+del depósito adentro. Desde el 21/09 ese renglón cuenta **la merma Y el pase**
+de cajas armadas, no solo el pase, y el chip dice `N del depósito` para
+separar contra QUIÉN se reclama: una caja perdida en un rechazo es una
+conversación con el CLIENTE, y una tirada o pasada a segunda es con el
+DEPÓSITO, porque la fruta se puso fea acá adentro.
 
 ## Corolario 77: un `JOIN` contra la fila que todavía no existe no devuelve cero, DESAPARECE
 
@@ -8530,12 +8640,20 @@ nombre y no por el uso. La pregunta que lo separa es *¿esto lo abre la misma
 persona en el mismo momento?*, y se contesta sin datos.
 
 **Y las cuentas NO se borran cuando se saca el bloque**: `gasto_en_cajas` y
-`cajas_perdidas_por_rechazo` quedan enteras con sus tests, así que mudarlas a
-Gerencia es cablear una pantalla y no reescribir dos cuentas —con sus
-ventanas, su valuación al costo del día de la compra y su orden por plata—.
-Lo que sí hace falta es **un test que las nombre**: sin un solo llamador son
-exactamente lo que el corolario 33 dice que se lee como "no se usa" y se
-borra. Ese test es hoy la única señal de que existen.
+`cajas_perdidas` quedan enteras con sus tests, así que mudarlas a Gerencia es
+cablear una pantalla y no reescribir dos cuentas —con sus ventanas, su
+valuación al costo del día de la compra y su orden por plata—.
+
+**Y se mudaron: las dos se ven en `/gerencia/cajas-perdidas`**, así que la
+frase que decía que "sin un solo llamador son lo que se lee como 'no se usa'"
+dejó de aplicarles. Lo que sí queda del párrafo es el mecanismo: mientras una
+cuenta no tenga llamador, **el test que la nombra es la única señal de que
+existe** — y eso vale para la próxima que se descuelgue de su pantalla.
+
+(`cajas_perdidas_por_rechazo` se llama `cajas_perdidas` desde el 21/09: dejó
+de contar solo los rechazos cuando entró la merma de cajas armadas, y un
+nombre que nombra un subconjunto de lo que cuenta es el corolario 8 esperando
+a que alguien lo cite mal.)
 
 **Y los imports SÍ se sacan**, que es la mitad opuesta: un `from app.db import
 gasto_en_cajas` que nada usa hace creer al próximo que lee la ruta que la

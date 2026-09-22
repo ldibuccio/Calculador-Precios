@@ -427,9 +427,9 @@ CON_PERDIDAS = {
     "desde": date(2026, 6, 18),
     "renglones": [
         {"cliente": "EJEMPLO Super", "articulo": "Fruta Uno", "envase": "Caja Grande",
-         "cajas": 35.0, "pesos": 56000.0, "veces": 4, "cajas_por_pase": 0.0, "ultimo": date(2026, 9, 12)},
+         "cajas": 35.0, "pesos": 56000.0, "veces": 4, "cajas_del_deposito": 0.0, "ultimo": date(2026, 9, 12)},
         {"cliente": "EJEMPLO Super", "articulo": "Fruta Dos", "envase": "Caja Chica",
-         "cajas": 5.0, "pesos": 3250.0, "veces": 1, "cajas_por_pase": 0.0, "ultimo": date(2026, 9, 3)},
+         "cajas": 5.0, "pesos": 3250.0, "veces": 1, "cajas_del_deposito": 0.0, "ultimo": date(2026, 9, 3)},
     ],
     "cajas": 40.0, "pesos": 59250.0, "ultimo": date(2026, 9, 12),
 }
@@ -901,10 +901,15 @@ def test_lo_que_la_CONSULTA_de_las_perdidas_pide_solo_se_ve_en_su_TEXTO():
     tres cosas para explicarlas, así que un `in` sobre el texto entero
     matchea la prosa (corolario 59).
     """
-    from app.db import _SQL_CAJAS_PERDIDAS
+    from app.db import _SQL_CAJAS_PERDIDAS, _SQL_COSTO_DEL_ENVASE_A_LA_FECHA
 
+    # EL SQL ENSAMBLADO, que es el que corre. Desde el 21/09 la valuación del
+    # envase vive en un fragmento aparte —la comparten esta consulta y la del
+    # estado de resultados— así que mirar la plantilla sin formatear dejaría
+    # de ver el reloj del costo sin que nada avise.
     sql = "\n".join(
-        l for l in _SQL_CAJAS_PERDIDAS.splitlines()
+        l for l in _SQL_CAJAS_PERDIDAS.format(
+            costo_del_envase=_SQL_COSTO_DEL_ENVASE_A_LA_FECHA).splitlines()
         if not l.strip().startswith("--")
     )
 
@@ -1881,9 +1886,9 @@ CAJAS_PERDIDAS = {
     "cajas": 47.0, "pesos": 128400.0, "ultimo": date(2026, 9, 18),
     "renglones": [
         {"cliente": "EJEMPLO Uno", "articulo": "EJEMPLO Fruta", "envase": "Caja Chica",
-         "cajas": 30.0, "pesos": 82000.0, "veces": 1, "cajas_por_pase": 0.0, "ultimo": date(2026, 9, 18)},
+         "cajas": 30.0, "pesos": 82000.0, "veces": 1, "cajas_del_deposito": 0.0, "ultimo": date(2026, 9, 18)},
         {"cliente": "EJEMPLO Dos", "articulo": "EJEMPLO Verdura", "envase": "Caja Grande",
-         "cajas": 17.0, "pesos": 46400.0, "veces": 5, "cajas_por_pase": 0.0, "ultimo": date(2026, 9, 15)},
+         "cajas": 17.0, "pesos": 46400.0, "veces": 5, "cajas_del_deposito": 0.0, "ultimo": date(2026, 9, 15)},
     ],
 }
 
@@ -2381,7 +2386,7 @@ def test_la_caja_de_un_PASE_de_cajas_armadas_entra_en_las_perdidas():
     sql = "\n".join(
         l for l in _SQL_CAJAS_PERDIDAS.splitlines() if not l.strip().startswith("--")
     )
-    assert "m.tipo = 'pase_a_segunda'" in sql
+    assert "m.tipo IN ('merma', 'pase_a_segunda')" in sql
     assert "m.tipo = 'reingreso_rechazo'" in sql
     # UNION ALL y no OR: son dos formas distintas de llegar a la ficha —una
     # por el renglón que volvió y otra por la columna— y un solo WHERE no
@@ -2401,8 +2406,8 @@ def test_un_pase_de_SUELTOS_no_cuenta_como_caja_perdida():
     sql = "\n".join(
         l for l in _SQL_CAJAS_PERDIDAS.splitlines() if not l.strip().startswith("--")
     )
-    pase = sql[sql.index("m.tipo = 'pase_a_segunda'"):]
-    assert "m.ficha_id IS NOT NULL" in pase
+    deposito = sql[sql.index("m.tipo IN ('merma', 'pase_a_segunda')"):]
+    assert "m.ficha_id IS NOT NULL" in deposito
 
 
 def test_el_pase_suma_con_el_signo_dado_vuelta_porque_su_cantidad_es_NEGATIVA():
@@ -2425,18 +2430,18 @@ def test_la_columna_que_SEPARA_los_dos_origenes_existe_y_la_pantalla_la_dibuja()
     """
     from app.db import _SQL_CAJAS_PERDIDAS
 
-    assert "cajas_por_pase" in _SQL_CAJAS_PERDIDAS
+    assert "cajas_del_deposito" in _SQL_CAJAS_PERDIDAS
 
     con_pase = dict(CAJAS_PERDIDAS)
     con_pase["renglones"] = [
-        dict(CAJAS_PERDIDAS["renglones"][0], cajas_por_pase=3.0),
-        dict(CAJAS_PERDIDAS["renglones"][1], cajas_por_pase=0.0),
+        dict(CAJAS_PERDIDAS["renglones"][0], cajas_del_deposito=3.0),
+        dict(CAJAS_PERDIDAS["renglones"][1], cajas_del_deposito=0.0),
     ]
     with _con_clave_de_gerencia() as c, \
          patch("app.main.cajas_perdidas", return_value=con_pase):
         marcado = c.get("/gerencia/cajas-perdidas").text.split("</style>")[-1]
 
-    assert "3 de pase a segunda" in marcado
+    assert "3 del depósito" in marcado
     # Y CUANDO NO HAY, NO SE DIBUJA: un "0 de pase" en cada fila sería ruido
     # en la mayoría, y el total está al lado para leer el cero.
-    assert marcado.count("de pase a segunda") == 1
+    assert marcado.count("del depósito") == 1

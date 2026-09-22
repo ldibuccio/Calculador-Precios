@@ -103,6 +103,16 @@ def momento_de_orden(orden):
 # prioridad del FIFO tienen que decir lo mismo o se separan.
 TIPOS_LOTE_TRABAJADO = ("reproceso", "reingreso_rechazo")
 
+# LOS TIPOS DE MOVIMIENTO QUE DICEN DE QUÉ FICHA SALIERON, y por lo tanto los
+# que pueden salir de CAJAS ARMADAS: la merma (desde el 10/09) y el pase a
+# segunda (desde el 21/09). Los dos son la misma pérdida con otro destino.
+#
+# VIVE ACÁ Y NO EN `app/db.py` porque la usan las dos capas —la consulta que
+# reparte por ficha y la prioridad del FIFO— y `core` no puede importar de
+# `app`. Escrita dos veces se separa, y el día que aparezca un tercer tipo la
+# cuenta lo restaría de la ficha y el costeo lo mandaría al cajón más viejo.
+TIPOS_CON_FICHA_PROPIA = ("merma", "pase_a_segunda")
+
 
 def es_lote_trabajado(tipo_lote) -> bool:
     """¿Este lote ya pasó por la mesa? (guía R o reingreso por rechazo)."""
@@ -188,15 +198,28 @@ def prioridad_de_lote(salida) -> Prioridad:
     producción con el galpón trabajando.
     """
     prioridad = _PRIORIDAD_POR_SALIDA.get(salida.get("tipo"), SIN_PREFERENCIA)
-    # UN PASE DE CAJAS ARMADAS PREFIERE CAJA ARMADA, y es del dueño (21/09):
-    # "armé una caja de Día con tomate; si pasa a segunda es lo mismo que
-    # tirarla, y la pérdida es al costo de ESA caja —el tomate que lleva
-    # adentro más la caja—, no al del cajón más viejo".
+    # LO QUE SALE DE UNA CAJA ARMADA SE COSTEA COMO UNA CAJA ARMADA, y es la
+    # regla del dueño del 21/09, dicha para las dos a la vez:
+    #
+    #     "todo lo que se tira o pasa a segunda es plata perdida. Una caja
+    #      de Día armada pierde los kilos que tenía MÁS la caja; los bultos
+    #      sueltos pierden solo los kilos. Merma y pase se costean igual —
+    #      es la misma pérdida con otro destino."
     #
     # LA FICHA ES LO QUE LO DISTINGUE, y por eso no puede estar en la tabla
     # de arriba: el MISMO tipo sale de dos pilas. Con ficha son cajas
     # armadas; sin ficha son bultos sueltos y ahí no se sabe de qué cajón
-    # salieron, así que queda el FIFO puro.
+    # salieron, así que queda el FIFO puro — que es lo que la tabla dice.
+    #
+    # LA MERMA ENTRÓ DESPUÉS QUE EL PASE, y el motivo de que no estuviera
+    # está escrito arriba: "no hay forma de saberlo desde el tipo de
+    # movimiento". Era cierto el 08/09 y dejó de serlo el 10/09, cuando la
+    # merma ganó su ficha; nadie volvió a leer esa razón. Es la oración que
+    # envejece en el commit de al lado.
+    #
+    # NO HAY NADA QUE RECOSTEAR A MANO: esta función corre adentro de
+    # `atribuir_costos_fifo`, que rejuega la historia entera en CADA lectura.
+    # Las mermas ya cargadas se recostean solas en la próxima corrida.
     #
     # PREFERENCIA Y NO PARED, igual que el armado: si por un agujero viejo no
     # hubiera lote trabajado, una pared trabaría al operario por algo que ya
@@ -204,11 +227,11 @@ def prioridad_de_lote(salida) -> Prioridad:
     #
     # Y NO MIRA CUÁL FICHA, también como el armado: un armado para Día puede
     # consumir una caja armada para Coto y eso es lo que el sistema hace hoy.
-    # Si el pase fuera más preciso que el armado habría dos reglas para la
-    # misma pregunta —de qué caja salió esto— y ganaría la del camino que se
-    # haya usado. Cuando importa la caja exacta está el lote dirigido, que
-    # gana antes que cualquier FIFO.
-    if salida.get("tipo") == "pase_a_segunda" and salida.get("ficha_id") is not None:
+    # Ser más preciso acá serían dos reglas para la misma pregunta —de qué
+    # caja salió esto— y ganaría la del camino que se haya usado. Cuando
+    # importa la caja exacta está el lote dirigido, que gana antes que
+    # cualquier FIFO.
+    if salida.get("tipo") in TIPOS_CON_FICHA_PROPIA and salida.get("ficha_id") is not None:
         return Prioridad(prefiere=TIPOS_LOTE_TRABAJADO, prohibe=())
     return prioridad
 

@@ -415,7 +415,8 @@ def test_los_DOS_tipos_que_llevan_ficha_salen_de_UNA_lista():
     cuenta lo va a restar de la ficha y el extracto lo va a dibujar en
     sueltos — que es exactamente lo que acaba de pasar con el pase.
     """
-    from app.db import TIPOS_CON_FICHA_PROPIA, _SQL_TIPO_TIENE_FICHA_PROPIA
+    from app.db import _SQL_TIPO_TIENE_FICHA_PROPIA
+    from core.stock import TIPOS_CON_FICHA_PROPIA
 
     assert TIPOS_CON_FICHA_PROPIA == ("merma", "pase_a_segunda")
     for tipo in TIPOS_CON_FICHA_PROPIA:
@@ -456,7 +457,7 @@ def test_el_CHECK_del_ESQUEMA_y_la_lista_de_PYTHON_son_LA_MISMA_regla():
     """
     import re
 
-    from app.db import TIPOS_CON_FICHA_PROPIA
+    from core.stock import TIPOS_CON_FICHA_PROPIA
 
     esquema = open("db/esquema_completo.sql", encoding="utf-8").read()
     bloque = re.search(r"create table movimientos_stock.*?\n\);", esquema, re.S).group(0)
@@ -516,19 +517,55 @@ def test_la_preferencia_del_pase_es_PREFERENCIA_y_no_PARED():
     assert cae == ["guia"], "sin caja armada tiene que caer al cajón igual"
 
 
-def test_la_MERMA_con_ficha_NO_cambia_y_eso_es_una_decision():
-    """Queda en FIFO puro, como desde el 08/09.
+def test_la_MERMA_de_cajas_armadas_se_costea_IGUAL_que_el_pase():
+    """Del dueño (21/09): "merma y pase se costean igual — es la misma
+    pérdida con otro destino".
 
-    No es un olvido y no es simetría: el comentario de `_PRIORIDAD_POR_SALIDA`
-    dice que una merma puede ser de un cajón podrido o de una caja golpeada y
-    que el tipo no lo distingue. Desde el 10/09 la merma TIENE ficha, así que
-    hoy sí podría distinguirlo — y moverla cambiaría el costeo de las mermas
-    ya cargadas. Es una decisión del dueño, no nuestra, y hasta que la tome
-    este test la fija.
+    Hasta ese día la merma quedaba en FIFO puro, y la razón escrita en
+    `_PRIORIDAD_POR_SALIDA` era del 08/09: "una merma puede ser de un cajón
+    podrido o de una caja golpeada, y no hay forma de saberlo desde el tipo
+    de movimiento". Era cierta y dejó de serlo el 10/09, cuando la merma ganó
+    su ficha. Nadie volvió a leer esa razón en once días.
+
+    EL RIVAL ESTÁ PLANTADO: un cajón más viejo y más barato del mismo
+    artículo. Sin la preferencia, tirar una caja de $300 se costea a $100 y
+    no hay nada en ninguna pantalla que se vea raro.
+
+    Y NO HIZO FALTA RECOSTEAR NADA A MANO: esto corre adentro de
+    `atribuir_costos_fifo`, que rejuega la historia entera en cada lectura.
     """
-    from core.stock import SIN_PREFERENCIA, prioridad_de_lote
+    from core.stock import pasadas_de_lotes
 
-    assert prioridad_de_lote({"tipo": "merma", "ficha_id": 9}) is SIN_PREFERENCIA
+    lotes = [
+        {"tipo_lote": "guia", "origen_id": 1, "restante": 10.0, "costo": 100.0},
+        {"tipo_lote": "reproceso", "origen_id": 2, "restante": 10.0, "costo": 300.0},
+    ]
+    for tipo in ("merma", "pase_a_segunda"):
+        de_cajas = [l["tipo_lote"] for p in pasadas_de_lotes(
+            lotes, {"tipo": tipo, "ficha_id": 9}) for l in p]
+        assert de_cajas[0] == "reproceso", tipo
+
+        # Y DE SUELTOS SIGUE SIENDO FIFO PURO en los dos: ahí no se sabe de
+        # qué cajón salieron, y suponerlo sería inventar.
+        de_sueltos = [l["tipo_lote"] for p in pasadas_de_lotes(
+            lotes, {"tipo": tipo, "ficha_id": None}) for l in p]
+        assert de_sueltos[0] == "guia", tipo
+
+
+def test_la_preferencia_sale_de_la_LISTA_y_no_de_un_tipo_tipeado():
+    """Moverla tiene que mover el comportamiento, o el tipo está suelto.
+
+    El día que aparezca un tercer movimiento que salga de una ficha, la
+    cuenta lo va a restar de esa ficha (usa la misma lista) y el costeo tiene
+    que mandarlo a caja armada. Con el tipo escrito a mano acá, no.
+    """
+    from core.stock import TIPOS_CON_FICHA_PROPIA, prioridad_de_lote
+
+    for tipo in TIPOS_CON_FICHA_PROPIA:
+        assert prioridad_de_lote({"tipo": tipo, "ficha_id": 9}).prefiere != ()
+    # Uno que NO está en la lista no puede llevarse la preferencia aunque
+    # alguien le mande una ficha: el CHECK de la base tampoco lo dejaría.
+    assert prioridad_de_lote({"tipo": "ajuste", "ficha_id": 9}).prefiere == ()
 
 
 def test_la_SALIDA_trae_la_ficha_desde_la_consulta_y_no_un_NULL():
