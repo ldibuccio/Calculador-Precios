@@ -583,6 +583,42 @@ comment on table listados_compra_manual is 'Lo que un cliente en modo manual pid
 comment on column listados_compra_manual.total is 'EL TOTAL EN LA MAGNITUD DE LA FILA, y nada mas. Los cajones NO se guardan: salen de dividirlo por listados_compra_kilaje, igual que en la fila automatica. Guardarlos seria una segunda verdad que deja de coincidir en cuanto alguien edita el kilaje.';
 
 
+create table cargas_compra (
+    id                   bigint generated always as identity primary key,
+    cliente_id           bigint not null references clientes (id),
+    fecha                date not null,
+    modo                 text not null constraint cargas_compra_modo_check
+                             check (modo in ('automatico', 'manual')),
+    promedio_anterior_a  date not null,
+    creado_en            timestamptz not null default now(),
+    actualizado_en       timestamptz not null default now(),
+    unique (cliente_id, fecha)
+);
+
+comment on table cargas_compra is 'Lo que hay que comprar para UN cliente para UNA fecha (Paso 1). Vive sola y no cuelga de ningun listado: el Paso 2 arma un listado eligiendo varias cargas, y puede tomar dos fechas de un cliente y una de otro. El unique (cliente_id, fecha) impide que entrar de nuevo a Dia para el mismo dia sume doble: si ya existe, se edita o se borra y se empieza de cero.';
+comment on column cargas_compra.fecha is 'LA FECHA DE COMPRA que eligio el comprador, NO el dia en que cargo. Se trabaja de noche y el dia del reloj no sirve: a las 23 se carga para manana y se elige manana.';
+comment on column cargas_compra.promedio_anterior_a is 'EL ANCLA DEL PROMEDIO, y el nombre dice el operador: se miran los pedidos con fecha_operacion < este valor, nunca <=. Es el dia en que se CARGO y no la fecha de compra (dueno, 22/09): si cargo hoy para el 27, mira los 6 anteriores a hoy. Se guarda en vez de sacarlo de now() porque el listado se arma dias despues: ahi "el dia en que cargo" seria otro y la ventana se correria sola. Editar la carga NO lo mueve; borrarla y empezar de cero SI, porque es una carga nueva.';
+comment on column cargas_compra.modo is 'automatico = sale del promedio de los ultimos 6 pedidos vigentes anteriores a promedio_anterior_a. manual = sale de cargas_compra_renglones. SUBIR UN ARCHIVO NO ES UN TERCER MODO: se lee, se revisa, y queda como renglones manuales; el archivo no se guarda (dueno, 22/09) porque lo que vale es lo revisado. Un tercer valor obligaria a escribir modo in (manual, archivo) en cada lector, y el que se lo olvide no falla: muestra la carga vacia.';
+
+create table cargas_compra_renglones (
+    carga_id     bigint not null references cargas_compra (id) on delete cascade,
+    articulo_id  bigint not null references articulos (id),
+    total        numeric not null constraint cargas_compra_renglones_total_check
+                     check (total > 0),
+    primary key (carga_id, articulo_id)
+);
+
+comment on table cargas_compra_renglones is 'Lo que ese cliente pide de un articulo, EN LA UNIDAD DEL ARTICULO. La carga es contra ARTICULOS DE COMPRA y no contra las fichas del cliente (dueno, 22/09): se compra tomate, no "el tomate de Dia"; cada cliente arma despues su ficha con eso. Por eso apunta a articulos: uno que ningun cliente tiene en ficha se carga igual. Cuelga de la carga (cascade) porque sin ella no dice nada; el articulo NO va en cascada: borrarlo no puede vaciar una carga en silencio.';
+comment on column cargas_compra_renglones.total is 'EL TOTAL DEL DIA en la magnitud del articulo. Los cajones NO se guardan: salen de dividirlo por listados_compra_kilaje, que es el kilaje DE COMPRA del Mercado y no el contenido_caja de la ficha. Medido el 22/09 en las dos bases: sin_ficha_Y_con_conteo 0, asi que el articulo sin ficha es siempre kilos.';
+
+create table listados_compra_cargas (
+    listado_id  bigint not null references listados_compra (id) on delete cascade,
+    carga_id    bigint not null references cargas_compra (id),
+    primary key (listado_id, carga_id)
+);
+
+comment on table listados_compra_cargas is 'Que cargas arma este listado. Una carga puede estar en VARIOS a proposito (dueno, 22/09): si no se llego a comprar, o se la quiere de plantilla, se suma de nuevo y la pantalla avisa "ya se uso en el listado del 26/09". La PK impide sumarla dos veces EN EL MISMO listado, que es el unico doble conteo que no se puede querer. carga_id NO va en cascada: borrar una carga que un listado ya uso cambiaria en silencio lo que ese listado dice.';
+
 -- ----------------------------------------------------------------------------
 -- 10. APRENDIZAJE_ARTICULOS — qué texto de comanda corresponde a qué artículo
 -- ----------------------------------------------------------------------------
