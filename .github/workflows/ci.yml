@@ -70,6 +70,13 @@ jobs:
           # con el botón de merge commit: ese commit también suma uno, y
           # entonces el que cae es el CI de main — que es el que frena el
           # deploy.
+          #
+          # Y EL REBASE TIENE SU PROPIA TRAMPA (PR #1, 23/09): GitHub
+          # DESCARTA los merge commits de la rama al rebasear. La rama tenía
+          # un "traer main" adentro, el PR salió verde con 961, y main quedó
+          # con 960 y el sello diciendo 961. O sea: la rama se pone al día
+          # con main por REBASE, no por merge, así lo que el PR testea es
+          # exactamente lo que main va a tener.
           ref: ${{ github.event.pull_request.head.sha || github.sha }}
 
       - uses: actions/setup-python@v5
