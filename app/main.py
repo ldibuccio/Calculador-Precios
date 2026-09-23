@@ -72,6 +72,7 @@ import psycopg2
 from app.db import (
     borrar_carga_de_compra,
     carga_de_compra,
+    cargas_con_renglones,
     borrador_de_compra,
     cerrar_borrador_de_compra,
     compras_de_hoy_por_articulo,
@@ -394,6 +395,7 @@ from core.que_comprar import (
     cajones_que_faltan,
     con_margen,
     falta_por_comprar,
+    lo_que_pide_la_carga,
     margen_valido,
     promedio_de_un_dia,
 )
@@ -3155,73 +3157,47 @@ def exportar_listado_compras_excel(fecha_desde: str = "", fecha_hasta: str = "",
 
 
 def _filas_de_que_comprar(
-    renglones: list[dict], piso: dict, comprado: dict, *,
-    margen: float, manual: list[dict], kilajes: dict | None = None,
+    aportes: list[dict], articulos: dict, unidades: dict, piso: dict, comprado: dict,
+    *, kilajes: dict | None = None,
 ) -> list[dict]:
-    """Una fila por artículo: lo que piden todos los clientes juntos, el piso y lo comprado.
+    """Una fila por artículo: lo que piden las cargas tildadas juntas, el piso y lo comprado.
 
-    DOS FUENTES QUE SUMAN EN LA MISMA FILA. `renglones` es lo AUTOMÁTICO —el
-    promedio de los últimos pedidos— y `manual` lo que el comprador tipeó
-    para un cliente en ese modo. Un artículo puede venir de una, de la otra
-    o de las dos, y en los tres casos es UNA fila.
+    `aportes` es una entrada por CARGA —{"etiqueta": "Día 26/09", "pide":
+    {articulo_id: total}}— y cada `pide` es YA lo que esa carga mostró, con
+    su margen puesto donde corresponde (`lo_que_pide_la_carga`). Acá no se
+    aplica ningún margen: el del listado se fue el 23/09, porque dos
+    márgenes que se multiplican son invisibles (20% y 10% son 32%).
 
-    LO TIPEADO NO SE DIVIDE: es lo que ese cliente pide en un día, dicho por
-    el que lo sabe. Pasarlo por `promedio_de_un_dia` lo partiría en seis, que
-    es exactamente el error que haría comprar la sexta parte.
+    LO ÚNICO QUE SE SUMA ES EL MISMO ARTÍCULO ENTRE CARGAS: dos fechas de
+    Día y una de Tailem son una fila de tomate. Nadie suma Mango con Cherry.
 
-    EL MARGEN Y `manual` SON OBLIGATORIOS Y SIN DEFAULT a propósito: los dos
-    mueven el número de la fila. Un llamador que se olvide el margen produce
-    una fila que no se puede leer, y uno que se olvide lo manual compra de
-    MENOS —que es la dirección cara, porque quedarse corto es peor que
-    sobrar un cajón y no hay nada en la pantalla que lo diga.
+    LA MAGNITUD DE LA FILA ES LA DEL ARTÍCULO (`unidades`, que sale de
+    `_unidad_de_cada_articulo`), la misma en la que la carga se tipeó. Un
+    artículo cuya unidad no se puede saber —lo que la alerta
+    `unidades_que_difieren` señala— deja la fila sin número: su total está
+    en una unidad y el piso se mediría en otra, sin descuadrar nada.
 
-    LA MAGNITUD DE LA FILA SALE DE LA FICHA, con `magnitud_de_la_ficha` —la
-    misma función que elige la unidad en todo el costeo—, y no de una
-    segunda lectura escrita acá. Como ningún artículo tiene fichas en
-    magnitudes distintas (medido, `listado_1b`), alcanza con la primera.
-
-    EL PROMEDIO SE DIVIDE POR CLIENTE, no al final: cada uno tiene su propio
-    `pedidos_del_cliente` —uno con tres pedidos en su historia no se divide
-    por seis— así que sumar primero y dividir después daría otro número.
-
-    UN SOLO HUECO DEJA LA FILA SIN NÚMERO. Si a un cliente no se le puede
-    pasar lo pedido a la magnitud —renglón sin ficha, o ficha sin
-    `contenido_caja`— la fila entera queda sin pedido: mostrar la suma de
-    los demás sería decir que ese cliente no pide nada.
+    DE QUIÉN SALE SE MUESTRA (`de_quien`): un total que junta tres cargas y
+    no lo dice se lee como un dato de un solo cliente.
     """
     kilajes = kilajes or {}
     por_articulo: dict = {}
-    for renglon in renglones:
-        por_articulo.setdefault(renglon["articulo_id"], {"auto": [], "mano": []})["auto"].append(renglon)
-    for linea in manual:
-        por_articulo.setdefault(linea["articulo_id"], {"auto": [], "mano": []})["mano"].append(linea)
+    for aporte in aportes:
+        for articulo_id, total in aporte["pide"].items():
+            if total is None:
+                continue
+            por_articulo.setdefault(articulo_id, []).append((aporte["etiqueta"], float(total)))
 
     filas = []
-    for articulo_id, fuentes in por_articulo.items():
-        # La ficha manda, venga el aporte del promedio o del dedo.
-        primera = (fuentes["auto"] or fuentes["mano"])[0]
-        magnitud = magnitud_de_la_ficha(primera)
-        pide = 0.0
-        for renglon in fuentes["auto"]:
-            contenido = renglon.get("contenido_caja")
-            if contenido is None or magnitud is None:
-                pide = None
-                break
-            pide += promedio_de_un_dia(
-                float(renglon["bultos"]) * float(contenido),
-                pedidos=int(renglon["pedidos_del_cliente"]),
-            )
-        if pide is not None:
-            for linea in fuentes["mano"]:
-                if magnitud is None:
-                    pide = None
-                    break
-                pide += float(linea["total"])
+    for articulo_id, de_quien in por_articulo.items():
+        articulo = articulos.get(articulo_id) or {}
+        unidad = unidades.get(articulo_id)
+        pide = sum(total for _e, total in de_quien) if unidad else None
 
         del_piso = piso.get(articulo_id) or {}
         lo_comprado = comprado.get(articulo_id) or {}
         comprado_magnitud = (
-            lo_comprado.get("kilos") if magnitud == MAGNITUD_KILOS else lo_comprado.get("conteo")
+            lo_comprado.get("kilos") if unidad == "kilo" else lo_comprado.get("conteo")
         )
         # Sin compras de hoy el aporte es CERO y no un hueco: que no haya
         # comprado nada es un hecho, no un dato que falte.
@@ -3231,24 +3207,21 @@ def _filas_de_que_comprar(
         # EL KILAJE GUARDADO LE GANA A LA REFERENCIA, y solo está el del
         # artículo que el comprador TOCÓ: así se distingue "lo dejó como
         # venía" de "puso ese número".
-        kilaje = kilajes.get(articulo_id, primera.get("contenido_referencia"))
-        # EL MARGEN VA SOBRE EL PEDIDO Y NO SOBRE EL FALTANTE: ver `con_margen`.
-        falta = falta_por_comprar(
-            con_margen(pide, margen), del_piso.get("magnitud"), comprado_magnitud
-        )
+        kilaje = kilajes.get(articulo_id, articulo.get("contenido_referencia"))
+        falta = falta_por_comprar(pide, del_piso.get("magnitud"), comprado_magnitud)
         # LO QUE YA TENGO, sumado acá y no en el navegador: es la única parte
         # de la cuenta que necesita saber de fichas y de lotes, y el JS la
-        # recibe hecha para poder recalcular al mover el margen o el kilaje.
+        # recibe hecha para poder recalcular al mover el kilaje.
         ya_tengo = None
         if del_piso.get("magnitud") is not None and comprado_magnitud is not None:
             ya_tengo = float(del_piso["magnitud"]) + float(comprado_magnitud)
         filas.append(
             {
                 "articulo_id": articulo_id,
-                "nombre": primera["articulo_nombre"],
-                "sufijo": SUFIJOS_FICHA_REPROCESO.get(primera.get("unidad_venta"), ""),
+                "nombre": articulo.get("nombre", ""),
+                "sufijo": SUFIJOS_FICHA_REPROCESO.get(unidad, ""),
                 "pide": pide,
-                "a_mano": sum(float(l["total"]) for l in fuentes["mano"]) or None,
+                "de_quien": de_quien,
                 "ya_tengo": ya_tengo,
                 "en_piso": del_piso.get("magnitud"),
                 "sueltos": del_piso.get("sueltos"),
@@ -3354,30 +3327,6 @@ def _sueltos_en_magnitud(articulo_id: int, movimientos: dict, sueltos: float, ho
     return total_magnitud
 
 
-def _lineas_a_mano(fichas_por_cliente: dict, guardado: dict) -> list[dict]:
-    """Lo tipeado para los clientes en modo manual, con la ficha que le da la unidad.
-
-    UNA LÍNEA A MANO NECESITA LA FICHA DE ESE CLIENTE para ese artículo, y
-    por eso el formulario solo ofrece esos artículos: la ficha es lo que
-    dice EN QUÉ UNIDAD compra ese cliente. Sin ella, "500" es un número del
-    que no se sabe si son kilos o unidades, y el sistema no tiene con qué
-    adivinarlo — el factor de conversión no existe y no va a existir.
-
-    Se saltea lo que no tiene ficha en vez de inventarle una magnitud: un
-    número sin unidad no es mejor que ninguno.
-    """
-    lineas = []
-    for (cliente_id, articulo_id), total in sorted(guardado.items()):
-        ficha = (fichas_por_cliente.get(cliente_id) or {}).get(articulo_id)
-        if ficha is None:
-            continue
-        linea = dict(ficha)
-        linea["cliente_id"] = cliente_id
-        linea["total"] = float(total)
-        lineas.append(linea)
-    return lineas
-
-
 def _primera_ficha_por_cliente_y_articulo(elegidos: list[int]) -> dict:
     """{cliente_id: {articulo_id: ficha}} — la PRIMERA ficha de cada artículo.
 
@@ -3403,55 +3352,61 @@ def _primera_ficha_por_cliente_y_articulo(elegidos: list[int]) -> dict:
 
 
 def _contexto_de_que_comprar(request: Request, aviso: str | None = None):
-    """Arma la pantalla desde el BORRADOR de hoy, que es el único estado que hay.
+    """El Paso 2: qué cargas arma el listado de hoy, y la planilla que sale de sumarlas.
 
-    Hasta el 21/09 los clientes y el margen viajaban en la URL y el kilaje
-    se perdía al cerrar. Ahora todo eso vive en `listados_compra`: se abre
-    la pantalla y está como se dejó.
+    Hasta el 23/09 esta pantalla elegía CLIENTES con un modo y un margen
+    global. Desde el Paso 1 lo que se elige son CARGAS —un cliente para una
+    fecha, con su modo y su margen adentro— así que el listado puede tomar
+    dos días de Día y uno de Tailem, que la estructura vieja no podía decir.
 
-    UN BORRADOR QUE NO EXISTE NO ES UN BORRADOR VACÍO. Sin ninguno, el
-    margen que se propone es el sugerido y no hay clientes tildados; con uno
-    vacío de clientes, el margen es el que el comprador dejó. Por eso
-    `borrador_de_compra` devuelve None y no un diccionario con ceros.
+    LAS CARGAS SE OFRECEN DESDE AYER, igual que en el Paso 1 y por la misma
+    razón: se trabaja de noche. Y una carga que ya usó OTRO listado se
+    ofrece igual, con el aviso al lado: capaz no se llegó a comprar, o se la
+    quiere de plantilla. Decide el comprador.
+
+    UN BORRADOR QUE NO EXISTE NO ES UN BORRADOR VACÍO: sin ninguno no hay
+    nada que cerrar, y la pantalla no lo ofrece.
     """
     hoy = datetime.now(ARGENTINA).date()
     contexto = {"barra_sector": "compras", "barra_titulo": "Qué comprar hoy",
-                "elegidos": [], "modos": {}, "margen": MARGEN_SUGERIDO,
-                "filas": [], "a_mano": [], "aviso": aviso, "hay_borrador": False}
+                "cargas": [], "elegidas": set(), "filas": [], "aviso": aviso,
+                "hay_borrador": False}
     try:
-        contexto["clientes"] = listar_clientes()
         borrador = borrador_de_compra(hoy)
+        contexto["cargas"] = listar_cargas_desde(
+            hoy - timedelta(days=1), borrador["id"] if borrador else None)
     except Exception:
         logger.exception("No se pudo leer el borrador de Qué comprar hoy")
-        contexto["clientes"] = []
-        contexto["aviso"] = aviso or "No se pudo leer la lista de clientes."
+        contexto["aviso"] = aviso or "No se pudieron leer las cargas. Probá de nuevo."
         return contexto
 
     if borrador is None:
         return contexto
-
     contexto["hay_borrador"] = True
-    contexto["margen"] = borrador["margen"]
-    contexto["modos"] = borrador["clientes"]
-    elegidos = sorted(borrador["clientes"])
-    contexto["elegidos"] = elegidos
-    if not elegidos:
+    contexto["elegidas"] = set(borrador["cargas"])
+    if not borrador["cargas"]:
         return contexto
 
     try:
-        fichas_por_cliente = _primera_ficha_por_cliente_y_articulo(elegidos)
-        automaticos = [c for c in elegidos if borrador["clientes"][c] == "automatico"]
-        renglones = (
-            # `hoy` es el ancla: los pedidos ANTERIORES a hoy. Sin ese
-            # recorte la consulta tomaba los últimos 6 por fecha, futuros
-            # incluidos, así que el pedido real del día que se va a comprar
-            # entraba al promedio y contaba como un sexto de sí mismo.
-            renglones_de_los_ultimos_pedidos(automaticos, hoy, PEDIDOS_DEL_PROMEDIO)
-            if automaticos else []
-        )
-        manual = _lineas_a_mano(fichas_por_cliente, borrador["manual"])
-        fichas = [f for c in elegidos for f in listar_fichas_por_cliente(c)]
-        ids = sorted({r["articulo_id"] for r in renglones} | {m["articulo_id"] for m in manual})
+        cargas = cargas_con_renglones(borrador["cargas"])
+        aportes = [
+            {
+                "etiqueta": f"{carga['cliente_nombre']} {carga['fecha'].strftime('%d/%m')}",
+                # LA MISMA REGLA QUE DIBUJÓ LA CARGA, con el mismo promedio en
+                # vivo: lo que el listado suma es lo que el comprador vio.
+                "pide": lo_que_pide_la_carga(
+                    carga["renglones"], _propuesto_de_la_carga(carga), carga["margen"]),
+            }
+            for carga in cargas
+        ]
+        articulos = {a["id"]: a for a in listar_articulos()}
+        unidades = _unidad_de_cada_articulo(
+            list(articulos.values()), listar_fichas_de_todos_los_clientes())
+        # Las cajas ya armadas que cuentan son las de los clientes de ESTAS
+        # cargas: una caja de Día no le sirve al pedido de Coto.
+        clientes = sorted({carga["cliente_id"] for carga in cargas})
+        fichas = [f for c in clientes for f in listar_fichas_por_cliente(c)]
+        ids = sorted({a for aporte in aportes for a in aporte["pide"]})
         piso = _piso_en_magnitud(ids, fichas, hoy) if ids else {}
         comprado = compras_de_hoy_por_articulo()
     except Exception:
@@ -3459,31 +3414,8 @@ def _contexto_de_que_comprar(request: Request, aviso: str | None = None):
         contexto["aviso"] = aviso or "No se pudo leer lo que hace falta comprar. Probá de nuevo."
         return contexto
 
-    # Los artículos que cada cliente MANUAL puede pedir: los de sus fichas,
-    # con lo ya tipeado adentro para que el campo vuelva lleno.
-    contexto["a_mano"] = [
-        {
-            "cliente_id": cliente_id,
-            "nombre": next((c["nombre"] for c in contexto["clientes"] if c["id"] == cliente_id), ""),
-            "articulos": [
-                {
-                    "articulo_id": articulo_id,
-                    "nombre": ficha["articulo_nombre"],
-                    "sufijo": SUFIJOS_FICHA_REPROCESO.get(ficha.get("unidad_venta"), ""),
-                    "total": borrador["manual"].get((cliente_id, articulo_id)),
-                }
-                for articulo_id, ficha in sorted(
-                    fichas_por_cliente.get(cliente_id, {}).items(),
-                    key=lambda par: par[1]["articulo_nombre"],
-                )
-            ],
-        }
-        for cliente_id in elegidos
-        if borrador["clientes"][cliente_id] == "manual"
-    ]
     contexto["filas"] = _filas_de_que_comprar(
-        renglones, piso, comprado,
-        margen=borrador["margen"], manual=manual, kilajes=borrador["kilajes"],
+        aportes, articulos, unidades, piso, comprado, kilajes=borrador["kilajes"],
     )
     return contexto
 
@@ -3570,6 +3502,19 @@ DEVUELVE EL PROMEDIO CRUDO, sin margen: el margen se aplica al armar
     return propuesto
 
 
+def _propuesto_de_la_carga(carga: dict) -> dict:
+    """Lo que el promedio propone para una carga, CRUDO y sin margen. Vacío en "a mano".
+
+    EL MODO SE DECIDE ACÁ UNA VEZ, para las dos pantallas que lo necesitan
+    —la carga y el listado—. Escrito en cada una, la copia que se olvide del
+    modo le sumaría el promedio a una carga "a mano": el listado compraría lo
+    tipeado MÁS lo que el cliente suele pedir, sin que nada se vea raro.
+    """
+    if carga["modo"] == "manual":
+        return {}
+    return _promedio_por_articulo(carga["cliente_id"], carga["promedio_anterior_a"])
+
+
 def _bulto_de_cada_articulo(cliente_id: int) -> dict:
     """{articulo_id: contenido_caja} — cuánto entra en UN bulto de ese cliente.
 
@@ -3617,12 +3562,13 @@ def _articulos_para_cargar(cliente_id: int,
     unidades = _unidad_de_cada_articulo(articulos, listar_fichas_de_todos_los_clientes())
     contenidos = _bulto_de_cada_articulo(cliente_id)
     guardado = guardado or {}
-    # EL MARGEN CON `con_margen`, que es la misma función del Paso 2: sobre LO
-    # QUE PIDEN y no sobre el faltante. Escribir la multiplicación a mano
-    # serían dos márgenes, y la copia que se separe no falla — infla distinto
-    # que la otra pantalla y los dos números son plausibles.
+    # LO QUE EL CAMPO MUESTRA SALE DE `lo_que_pide_la_carga`, que es la misma
+    # función con la que el listado la suma: el margen solo sobre lo propuesto,
+    # lo guardado tal cual. Escrito acá a mano serían dos reglas, y la copia
+    # que se separe no falla — el listado compra otra cosa que la que se vio.
     crudo = propuesto or {}
     propuesto = {a: con_margen(total, margen) for a, total in crudo.items()}
+    pide = lo_que_pide_la_carga(guardado, crudo, margen)
 
     def en_bultos(magnitud, contenido):
         return None if magnitud is None or not contenido else float(magnitud) / contenido
@@ -3630,7 +3576,7 @@ def _articulos_para_cargar(cliente_id: int,
     filas = []
     for a in articulos:
         contenido = contenidos.get(a["id"])
-        total = guardado.get(a["id"], propuesto.get(a["id"]))
+        total = pide.get(a["id"])
         filas.append({
             "articulo_id": a["id"],
             "nombre": a["nombre"],
@@ -3689,10 +3635,7 @@ def _contexto_de_carga(carga: dict, aviso: str | None = None) -> dict:
     pulgar.
     """
     cliente = next((c for c in listar_clientes() if c["id"] == carga["cliente_id"]), None)
-    propuesto = {}
-    if carga["modo"] != "manual":
-        propuesto = _promedio_por_articulo(
-            carga["cliente_id"], carga["promedio_anterior_a"])
+    propuesto = _propuesto_de_la_carga(carga)
     return {
         "barra_sector": "compras",
         # NO se llama igual que la lista de la que se entra: son dos pantallas
@@ -3830,8 +3773,16 @@ async def guardar_carga_de_compra_ruta(request: Request, cliente_id: int, fecha:
             return RedirectResponse(f"{volver}?aviso=Pasada+a+{comoquedo}", status_code=303)
 
         renglones = _renglones_del_formulario(formulario, cliente_id)
+        # EN "A MANO" EL CAMPO DEL MARGEN NO SE DIBUJA —no mueve nada: el
+        # margen va solo sobre lo propuesto— así que no llega. Leerlo igual
+        # con `margen_valido` lo pisaría con el sugerido, y la carga volvería
+        # a "del promedio" con un margen que nadie eligió.
+        if "margen" in formulario:
+            margen = margen_valido(formulario.get("margen"))
+        else:
+            margen = antes["margen"] if antes else MARGEN_SUGERIDO
         carga_id = guardar_carga_de_compra(cliente_id, fecha_valor, modo, _hoy_argentina(),
-                                           margen_valido(formulario.get("margen")))
+                                           margen)
         guardar_renglones_de_carga(carga_id, renglones)
     except Exception:
         logger.exception("No se pudo guardar la carga de compra")
@@ -4150,7 +4101,7 @@ def borrar_carga_de_compra_ruta(request: Request, cliente_id: int, fecha: str):
 
 @app.get("/compras/que-comprar")
 def ver_que_comprar(request: Request):
-    """Qué comprar hoy: cuántos cajones de cada artículo, sumando los clientes elegidos.
+    """Qué comprar hoy: cuántos cajones de cada artículo, sumando las cargas elegidas.
 
     UNA FILA POR ARTÍCULO Y EN SU MAGNITUD. Lo único que se suma es el mismo
     artículo entre clientes distintos; nadie suma Mango con Cherry. Medido
@@ -4169,10 +4120,11 @@ def ver_que_comprar(request: Request):
 async def guardar_que_comprar(request: Request):
     """Guarda el borrador entero, o lo cierra. Siempre redirige (POST-redirect-GET).
 
-    LAS TRES COSAS QUE SE EDITAN VIAJAN JUNTAS —clientes con su modo, el
-    margen y los kilajes, más lo tipeado a mano— porque se guardan
-    reemplazando: destildar un cliente tiene que llevarse sus líneas, y eso
-    un guardado parcial no lo puede expresar.
+    LAS DOS COSAS QUE SE EDITAN VIAJAN JUNTAS —qué cargas y los kilajes—
+    porque se guardan reemplazando: destildar una carga tiene que sacarla, y
+    eso un guardado parcial no lo puede expresar.
+
+    NO HAY MARGEN ACÁ, y no es un olvido: vive en cada carga (23/09).
 
     EL FORMULARIO ES LA PANTALLA ENTERA, con un solo botón. Parado en el
     Mercado, ajustar un kilaje y que se pierda por no haber apretado otro
@@ -4189,33 +4141,17 @@ async def guardar_que_comprar(request: Request):
             return RedirectResponse("/compras/que-comprar?error=cerrar", status_code=303)
         return RedirectResponse("/compras/que-comprar", status_code=303)
 
-    elegidos = [int(v) for v in formulario.getlist("cliente") if str(v).strip().isdigit()]
-    clientes = {
-        c: ("manual" if formulario.get(f"modo_{c}") == "manual" else "automatico")
-        for c in elegidos
-    }
+    cargas = {int(v) for v in formulario.getlist("carga") if str(v).strip().isdigit()}
     kilajes = {}
-    manual = {}
     for clave, valor in formulario.multi_items():
         numero = _numero_del_formulario(valor)
         if numero is None:
             continue
         if clave.startswith("kilaje_") and clave[7:].isdigit() and numero > 0:
             kilajes[int(clave[7:])] = numero
-        elif clave.startswith("manual_") and numero > 0:
-            partes = clave[7:].split("_")
-            if len(partes) == 2 and all(p.isdigit() for p in partes):
-                cliente_id, articulo_id = int(partes[0]), int(partes[1])
-                # Una línea de un cliente que no quedó tildado no se guarda:
-                # la FK la rechazaría, y rebotar el guardado entero por un
-                # campo que el comprador ya no ve sería trabarlo por nada.
-                if cliente_id in clientes:
-                    manual[(cliente_id, articulo_id)] = numero
 
     try:
-        guardar_borrador_de_compra(
-            hoy, margen_valido(formulario.get("margen")), clientes, kilajes, manual
-        )
+        guardar_borrador_de_compra(hoy, cargas, kilajes)
     except Exception:
         logger.exception("No se pudo guardar el borrador de Qué comprar hoy")
         return RedirectResponse("/compras/que-comprar?error=guardar", status_code=303)

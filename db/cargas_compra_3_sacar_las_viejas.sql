@@ -2,6 +2,7 @@ do $$
 begin
   drop table if exists listados_compra_manual;
   drop table if exists listados_compra_clientes;
+  alter table listados_compra drop column if exists margen_porcentaje;
 end $$;
 
 -- SE CORRE DESPUÉS DE QUE EL CÓDIGO NUEVO ESTÉ DESPLEGADO, no con los otros
@@ -23,7 +24,12 @@ end $$;
 -- Las dos estaban en CERO en las dos bases el 22/09 (`listados_ya_cargados`
 -- 0 en la verificación de listados_compra), así que no hay nada que migrar.
 --
--- Verificación, APARTE: tiene que dar 0 · 0 · <clientes>.
+-- Y EL MARGEN DEL LISTADO SE VA EN EL MISMO BLOQUE: vive en cada carga desde
+-- el 23/09, y el código nuevo ya no lo lee ni lo escribe. Dejarlo en cero
+-- sería el apagado que alguien toca: vuelve la multiplicación, invisible.
+-- Su CHECK se va con la columna.
+--
+-- Verificación, APARTE: tiene que dar 0 · 0 · 0 · <clientes>.
 --   select 'sacar_las_viejas' as QUE_MIGRACION,
 --          (select count(*) from pg_class c join pg_namespace n
 --                 on n.oid = c.relnamespace
@@ -33,4 +39,7 @@ end $$;
 --                 on n.oid = c.relnamespace
 --            where n.nspname = 'public'
 --              and c.relname = 'listados_compra_manual') as manual_de_0,
+--          (select count(*) from information_schema.columns
+--            where table_schema = 'public' and table_name = 'listados_compra'
+--              and column_name = 'margen_porcentaje') as margen_de_0,
 --          (select count(*) from clientes) as POBLACION_clientes;

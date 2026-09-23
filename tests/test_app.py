@@ -2720,21 +2720,27 @@ def test_exportar_listado_compras_excel_fecha_invalida_da_400():
     assert respuesta.status_code == 400
 
 
-def test_que_comprar_hoy_SIN_BORRADOR_muestra_el_selector_y_el_margen_sugerido():
+def test_que_comprar_hoy_SIN_BORRADOR_ofrece_las_cargas_y_no_ofrece_cerrar():
     """Era el placeholder "Armar listado de compras" hasta el 21/09.
 
-    UN BORRADOR QUE NO EXISTE NO ES UN BORRADOR VACIO: sin ninguno, el
-    margen que se propone es el sugerido y no hay boton de cerrar. Con uno
-    vacio de clientes, el margen seria el que el comprador dejo.
+    UN BORRADOR QUE NO EXISTE NO ES UN BORRADOR VACIO: sin ninguno no hay
+    boton de cerrar. Y las cargas se ofrecen igual: armar el primer listado
+    del dia es justamente tildarlas.
     """
-    with patch("app.main.listar_clientes", return_value=[{"id": 7, "nombre": "Dia"}]), \
+    from datetime import date
+    carga = {"id": 7, "cliente_nombre": "EJEMPLO Uno", "fecha": date(2026, 9, 26),
+             "modo": "automatico", "margen_porcentaje": 10, "usada_en_otros": 0,
+             "ultimo_listado": None}
+    with patch("app.main.listar_cargas_desde", return_value=[carga]) as listar, \
          patch("app.main.borrador_de_compra", return_value=None):
         respuesta = cliente.get("/compras/que-comprar")
 
     marcado = respuesta.text.split("</style>")[-1]
     assert respuesta.status_code == 200
     assert "Qué comprar hoy" in respuesta.text
-    assert 'value="7"' in marcado and "Dia" in marcado
+    assert 'name="carga" value="7"' in marcado and "EJEMPLO Uno" in marcado
+    # Sin borrador no hay listado que excluir del aviso de "ya usada".
+    assert listar.call_args.args[1] is None
     # Sin borrador no hay nada que cerrar: el boton ofreceria una accion que
     # no existe, que es peor que no ofrecer nada.
     assert 'value="cerrar"' not in marcado
@@ -2742,44 +2748,14 @@ def test_que_comprar_hoy_SIN_BORRADOR_muestra_el_selector_y_el_margen_sugerido()
     assert "En construcción" not in respuesta.text
 
 
-def test_el_campo_del_MARGEN_sale_del_BORRADOR_y_un_CERO_guardado_se_respeta():
-    """El rival es un `or MARGEN_SUGERIDO`: con 0 guardado mostraria 10.
-
-    El campo se dibuja con el valor que el server resolvio —y el JS lee ESE
-    `defaultValue` cuando no puede leer lo tipeado— asi que si la ruta
-    reemplaza el 0, el navegador tambien vuelve al 10.
-    """
-    def con(margen):
-        borrador = {"id": 1, "fecha": None, "estado": "borrador", "margen": margen,
-                    "clientes": {}, "kilajes": {}, "manual": {}}
-        with patch("app.main.listar_clientes", return_value=[{"id": 7, "nombre": "Dia"}]), \
-             patch("app.main.borrador_de_compra", return_value=borrador):
-            return cliente.get("/compras/que-comprar").text
-
-    sugerido = 'id="margen" name="margen" type="number" inputmode="decimal" step="1" min="0"\n             value="%s"'
-    with patch("app.main.listar_clientes", return_value=[{"id": 7, "nombre": "Dia"}]), \
-         patch("app.main.borrador_de_compra", return_value=None):
-        assert sugerido % 10 in cliente.get("/compras/que-comprar").text
-    assert sugerido % 0 in con(0.0)
-    assert sugerido % 35 in con(35.0)
-
-
-def test_el_navegador_redondea_PARA_ARRIBA_y_aplica_el_margen_igual_que_el_server():
-    """La cuenta esta escrita dos veces —acá y en core— y es el precio de que
-    sea instantanea. Lo que no puede pasar es que el JS se quede con la
-    version vieja: `Math.round` y una resta sin margen dan otro numero con la
-    misma pantalla.
-    """
-    with patch("app.main.listar_clientes", return_value=[]), \
-         patch("app.main.borrador_de_compra", return_value=None):
-        script = cliente.get("/compras/que-comprar").text.split("<script>")[-1]
-
-    assert "Math.ceil(falta / kilaje)" in script
-    assert "Math.round(falta / kilaje)" not in script
-    assert "pide * (1 + margenActual() / 100) - yaTengo" in script
-    # El `data-falta` de antes traia la resta hecha CON el margen de la carga:
-    # con el margen editable ese numero envejece al primer tecleo.
-    assert "dataset.falta" not in script
+def test_el_aviso_de_YA_USADA_excluye_el_listado_que_se_esta_editando():
+    """Sin excluirlo, toda carga recien tildada diria "ya se uso" y el cartel
+    pasaria a estar siempre puesto, que es como se aprende a no leerlo."""
+    borrador = {"id": 41, "fecha": None, "estado": "borrador", "cargas": set(), "kilajes": {}}
+    with patch("app.main.listar_cargas_desde", return_value=[]) as listar, \
+         patch("app.main.borrador_de_compra", return_value=borrador):
+        cliente.get("/compras/que-comprar")
+    assert listar.call_args.args[1] == 41
 
 
 def test_ver_compras_muestra_la_botonera_de_cargar_y_operaciones():

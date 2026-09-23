@@ -192,8 +192,8 @@ def test_borrar_una_carga_QUE_UN_LISTADO_YA_USO_lo_RECHAZA_la_base(galpon):
     # CERRADO y en otra fecha: el índice parcial deja UN borrador por día, y
     # el test de abajo abre el suyo para el 27. Para la FK da lo mismo.
     (listado,), = sql(
-        "INSERT INTO listados_compra (fecha, estado, margen_porcentaje)"
-        " VALUES (%s, 'cerrado', 10) RETURNING id", (date(2026, 9, 24),))
+        "INSERT INTO listados_compra (fecha, estado)"
+        " VALUES (%s, 'cerrado') RETURNING id", (date(2026, 9, 24),))
     sql("INSERT INTO listados_compra_cargas VALUES (%s, %s)", (listado, carga_id))
 
     with pytest.raises(Exception) as rebote:
@@ -223,11 +223,11 @@ def test_el_aviso_de_YA_SE_USO_excluye_el_listado_QUE_SE_ESTA_EDITANDO(galpon):
     d, sql, cliente, _t, _l = galpon
     carga_id = d.guardar_carga_de_compra(cliente, EL_27, "automatico", CARGADA_EL, 0)
     (viejo,), = sql(
-        "INSERT INTO listados_compra (fecha, estado, margen_porcentaje)"
-        " VALUES (%s, 'cerrado', 10) RETURNING id", (date(2026, 9, 26),))
+        "INSERT INTO listados_compra (fecha, estado)"
+        " VALUES (%s, 'cerrado') RETURNING id", (date(2026, 9, 26),))
     (editando,), = sql(
-        "INSERT INTO listados_compra (fecha, estado, margen_porcentaje)"
-        " VALUES (%s, 'borrador', 10) RETURNING id", (EL_27,))
+        "INSERT INTO listados_compra (fecha, estado)"
+        " VALUES (%s, 'borrador') RETURNING id", (EL_27,))
     sql("INSERT INTO listados_compra_cargas VALUES (%s, %s)", (viejo, carga_id))
     sql("INSERT INTO listados_compra_cargas VALUES (%s, %s)", (editando, carga_id))
 
@@ -240,6 +240,60 @@ def test_el_aviso_de_YA_SE_USO_excluye_el_listado_QUE_SE_ESTA_EDITANDO(galpon):
     assert editando_ahora["ultimo_listado"] == date(2026, 9, 26)
     # Sin excluir nada los ve a los dos: el parámetro hace algo.
     assert la_carga(None)["usada_en_otros"] == 2
+
+
+def test_el_BORRADOR_guarda_CARGAS_y_KILAJES_y_al_volver_a_guardar_REEMPLAZA(galpon):
+    """Contra la base de verdad: el INSERT sin margen tiene que entrar —la
+    columna se va del listado— y destildar una carga tiene que sacarla."""
+    d, _sql, cliente, tomate, _l = galpon
+    uno = d.guardar_carga_de_compra(cliente, EL_27, "automatico", CARGADA_EL, 0)
+    dos = d.guardar_carga_de_compra(cliente, EL_27 + timedelta(days=1), "manual", CARGADA_EL, 0)
+    fecha = date(2026, 3, 9)   # un día que ningún otro test usa para su borrador
+
+    listado = d.guardar_borrador_de_compra(fecha, {uno, dos}, {tomate: 18.5})
+    borrador = d.borrador_de_compra(fecha)
+    assert borrador["id"] == listado
+    assert borrador["cargas"] == {uno, dos}
+    assert borrador["kilajes"] == {tomate: 18.5}
+    assert "margen" not in borrador
+
+    d.guardar_borrador_de_compra(fecha, {dos}, {})
+    borrador = d.borrador_de_compra(fecha)
+    assert borrador["id"] == listado, "guardar de nuevo abrió otro listado"
+    assert borrador["cargas"] == {dos} and borrador["kilajes"] == {}
+
+
+def test_una_carga_del_listado_MAS_VIEJA_que_ayer_se_sigue_ofreciendo(galpon):
+    """La pantalla guarda lo que viene tildado: una carga del listado que no
+    se dibuja se DESTILDA sola al primer Guardar."""
+    d, _sql, cliente, _t, _l = galpon
+    vieja = d.guardar_carga_de_compra(cliente, EL_27 - timedelta(days=10), "automatico",
+                                      CARGADA_EL, 0)
+    fecha = date(2026, 3, 10)
+    listado = d.guardar_borrador_de_compra(fecha, {vieja}, {})
+    desde = EL_27 - timedelta(days=1)
+
+    con = [c["id"] for c in d.listar_cargas_desde(desde, listado)]
+    sin = [c["id"] for c in d.listar_cargas_desde(desde, None)]
+    assert vieja in con
+    assert vieja not in sin, "sin listado el recorte por fecha tiene que seguir mordiendo"
+
+
+def test_cargas_con_renglones_trae_lo_que_la_carga_GUARDO(galpon):
+    d, _sql, cliente, tomate, lima = galpon
+    carga = d.guardar_carga_de_compra(cliente, EL_27, "automatico", CARGADA_EL, 15)
+    d.guardar_renglones_de_carga(carga, {tomate: 40.0})
+    otra = d.guardar_carga_de_compra(cliente, EL_27 + timedelta(days=1), "manual", CARGADA_EL, 0)
+    d.guardar_renglones_de_carga(otra, {lima: 7.0})
+
+    leidas = {c["id"]: c for c in d.cargas_con_renglones([carga, otra])}
+    assert set(leidas) == {carga, otra}
+    assert leidas[carga]["renglones"] == {tomate: 40.0}
+    assert leidas[carga]["margen"] == 15.0
+    assert leidas[carga]["promedio_anterior_a"] == CARGADA_EL
+    assert leidas[otra]["renglones"] == {lima: 7.0} and leidas[otra]["modo"] == "manual"
+    assert leidas[carga]["cliente_nombre"].startswith("EJEMPLO Cliente")
+    assert d.cargas_con_renglones([]) == []
 
 
 def test_la_carga_trae_CUANTOS_RENGLONES_tiene_al_lado(galpon):
@@ -822,6 +876,81 @@ def test_CAMBIAR_DE_MODO_conserva_el_margen():
     _, abiertos = _entrar(ctx, "post", f"/compras/carga/1/{EL_27.isoformat()}",
                           data={"modo": "automatico", "margen": "99"})
     assert abiertos["guardar_carga_de_compra"].call_args.args[4] == 20.0
+
+
+def test_A_MANO_no_muestra_el_margen_y_DEL_PROMEDIO_si():
+    """El margen va solo sobre lo que el promedio propone (dueño, 23/09): en
+    "a mano" no movería nada, y un campo sin consecuencia invita a creer que
+    hizo algo."""
+    def campo(modo):
+        ctx = _con_catalogo(**{"app.main.carga_de_compra": _carga(modo=modo, margen=20.0)})
+        respuesta, _ = _entrar(ctx, "get", f"/compras/carga/1/{EL_27.isoformat()}")
+        # El input ENTERO y no el nombre suelto: el JS dice getElementById("margen").
+        return 'id="margen" name="margen"' in respuesta.text.split("</style>")[-1]
+    assert campo("automatico") is True
+    assert campo("manual") is False
+
+
+def test_guardar_A_MANO_sin_el_campo_CONSERVA_el_margen_que_tenia():
+    """El campo no se dibuja en "a mano", así que no llega. El rival es leerlo
+    igual con `margen_valido`: lo pisaría con el sugerido, y al volver a "del
+    promedio" la carga aparecería con un margen que nadie eligió."""
+    ctx = _con_catalogo(**{"app.main.carga_de_compra": _carga(modo="manual", margen=20.0)})
+    ctx.append(patch("app.main.guardar_carga_de_compra", return_value=3))
+    ctx.append(patch("app.main.guardar_renglones_de_carga"))
+    _, abiertos = _entrar(ctx, "post", f"/compras/carga/1/{EL_27.isoformat()}",
+                          data={"modo": "manual", "total_7": "40"})
+    assert abiertos["guardar_carga_de_compra"].call_args.args[4] == 20.0
+
+
+def test_una_CORRECCION_no_lleva_el_margen_encima():
+    """Lo corregido se corrige MIRANDO la propuesta que ya tiene el margen:
+    inflarlo de nuevo le cobra el margen dos veces. Con 20%: el 7 guardado se
+    muestra 7, no 8,4."""
+    ctx = _con_catalogo(**{
+        "app.main.carga_de_compra": _carga(modo="automatico", margen=20.0, renglones={7: 7.0}),
+        "app.main.renglones_de_los_ultimos_pedidos": _RENGLONES_DE_PEDIDO,
+    })
+    respuesta, _ = _entrar(ctx, "get", f"/compras/carga/1/{EL_27.isoformat()}")
+    corrido = " ".join(respuesta.text.split("</style>")[-1].split())
+    assert 'name="total_7"' in corrido
+    campo = corrido.split('name="total_7"')[1].split(">")[0]
+    assert 'value="7"' in campo, campo
+
+
+def test_la_CARGA_y_el_LISTADO_calculan_lo_que_se_pide_con_la_MISMA_funcion():
+    """La regla está escrita una vez (`lo_que_pide_la_carga`) y las dos
+    pantallas la LLAMAN. Si una la reescribe, el listado compra otra cosa que
+    la que el comprador vio en la carga — y los dos números son plausibles.
+
+    Pregunta por la LLAMADA en el árbol y no por el nombre en el texto: el
+    docstring de cada una nombra la regla para explicarla (corolario 59).
+    """
+    import ast
+    import inspect
+    import textwrap
+    import app.main as m
+
+    def llama(funcion, nombre):
+        arbol = ast.parse(textwrap.dedent(inspect.getsource(funcion)))
+        return any(isinstance(n, ast.Call) and isinstance(n.func, ast.Name)
+                   and n.func.id == nombre for n in ast.walk(arbol))
+
+    for funcion in (m._articulos_para_cargar, m._contexto_de_que_comprar):
+        assert llama(funcion, "lo_que_pide_la_carga"), funcion.__name__
+    # Y el modo se decide en UN lugar: el listado no puede llamar al promedio
+    # directo, o le sumaría el promedio a una carga "a mano".
+    assert llama(m._contexto_de_que_comprar, "_propuesto_de_la_carga")
+    assert not llama(m._contexto_de_que_comprar, "_promedio_por_articulo")
+    assert llama(m._contexto_de_carga, "_propuesto_de_la_carga")
+
+
+def test_A_MANO_no_pide_el_promedio():
+    from app.main import _propuesto_de_la_carga
+    with patch("app.main._promedio_por_articulo", return_value={1: 99.0}) as promedio:
+        assert _propuesto_de_la_carga(_carga(modo="manual")) == {}
+        assert not promedio.called
+        assert _propuesto_de_la_carga(_carga(modo="automatico")) == {1: 99.0}
 
 
 def test_un_margen_en_CERO_deja_la_propuesta_como_esta():

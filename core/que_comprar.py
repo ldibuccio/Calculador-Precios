@@ -26,10 +26,12 @@ import math
 # pide cuando pide", que es otra pregunta.
 PEDIDOS_DEL_PROMEDIO = 6
 
-# EL MARGEN QUE LA PANTALLA PROPONE, en por ciento. Es un valor de arranque
-# de la PANTALLA y no un default de la base: la columna guarda lo que el
-# comprador dejó puesto, y 0 ahí significa "sin margen". Dos defaults que no
-# coinciden es como se separan dos reglas, así que el número vive una vez acá.
+# EL MARGEN QUE LA PANTALLA PROPONE, en por ciento, para una CARGA NUEVA. Es
+# un valor de arranque de la PANTALLA y no un default de la base: la columna
+# guarda lo que el comprador dejó puesto, y 0 ahí significa "sin margen". Dos
+# defaults que no coinciden es como se separan dos reglas, así que el número
+# vive una vez acá. El listado NO tiene margen propio desde el 23/09: dos
+# márgenes que se multiplican son invisibles (20% y 10% son 32%).
 MARGEN_SUGERIDO = 10
 
 
@@ -74,6 +76,30 @@ def con_margen(pide, margen_porcentaje):
     if margen_porcentaje is None:
         return float(pide)
     return float(pide) * (1.0 + float(margen_porcentaje) / 100.0)
+
+
+def lo_que_pide_la_carga(guardado, propuesto, margen_porcentaje):
+    """{articulo_id: total} — lo que UNA carga pide, tal como la pantalla de la carga lo mostró.
+
+    ES LA REGLA DE LAS DOS PANTALLAS, escrita una vez: la carga la dibuja
+    con esto y el listado la suma con esto. Escrita en cada una serían dos
+    reglas, y la copia que se separe no falla — el listado compra otra cosa
+    que la que el comprador vio en la carga, y los dos números son
+    plausibles.
+
+    EL MARGEN VA SOLO SOBRE LO PROPUESTO (dueño, 23/09). Lo guardado —lo
+    corregido en "del promedio" y todo lo de "a mano"— es el número que el
+    comprador ya decidió comprar, y entra tal cual. Inflarlo de nuevo sería
+    cobrarle el margen dos veces a lo corregido: el campo se corrige mirando
+    la propuesta que YA tiene el margen puesto.
+
+    `propuesto` es el promedio CRUDO, sin margen, y viene vacío en "a mano":
+    el modo lo decide quien llama, porque es quien sabe si hay que calcular
+    el promedio.
+    """
+    pide = {a: con_margen(total, margen_porcentaje) for a, total in (propuesto or {}).items()}
+    pide.update(guardado or {})
+    return pide
 
 
 def falta_por_comprar(pide, en_piso, comprado_hoy):
