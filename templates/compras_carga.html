@@ -32,13 +32,21 @@
      traer— con el atributo bien puesto en cada fila (corolario 32: el
      atributo es la intención, no el efecto). */
   .fila[hidden] { display: none; }
+  /* LA FILA ES UNA COLUMNA: el nombre arriba y los tres números abajo, cada
+     uno con su rótulo. En 390px no entran un nombre y tres campos en un
+     renglón, y un campo sin rótulo es lo que el dueño no entendía (23/09). */
+  .fila { flex-direction: column; align-items: stretch; padding: 0.6rem 0; }
   /* El nombre no lo controlamos: uno sin espacios tiene que partir en vez de
      arrastrar la pantalla de costado. */
-  .fila span { flex: 1 1 auto; min-width: 0; overflow-wrap: anywhere; font-size: 0.95rem; }
+  .fila .nombre { overflow-wrap: anywhere; font-size: 0.95rem; font-weight: 700; }
+  .tres { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 0.4rem; }
+  .campo { display: flex; flex-direction: column; gap: 0.15rem; font-size: 0.78rem;
+           color: #555; font-weight: 700; min-width: 0; }
   /* 44px es el mínimo tocable con el pulgar. */
-  .fila input { width: 5.5rem; min-height: 44px; font-size: 1.05rem; padding: 0.4rem;
-                border: 2px solid #2563eb; border-radius: 8px; text-align: center; }
-  .sufijo { flex: 0 0 auto; font-size: 0.85rem; color: #555; font-weight: 700; width: 2.4rem; }
+  .campo input { width: 100%; box-sizing: border-box; min-height: 44px; font-size: 1.05rem;
+                 padding: 0.4rem; border: 2px solid #2563eb; border-radius: 8px;
+                 text-align: center; }
+  .origen { font-size: 0.78rem; color: #666; overflow-wrap: anywhere; }
   .sin-unidad { color: #92400e; font-weight: 700; font-size: 0.85rem; }
   .hallazgos { display: flex; flex-wrap: wrap; gap: 0.4rem; margin-bottom: 0.5rem; }
   /* 44px es el mínimo tocable con el pulgar: esto se agrega de a uno, parado. */
@@ -46,9 +54,6 @@
                       background: #7c3aed; border: 0; border-radius: 8px; padding: 0 0.9rem;
                       overflow-wrap: anywhere; }
   .propuesta { font-size: 0.78rem; color: #3730a3; font-weight: 800; }
-  /* La magnitud va AL LADO y chica: el número grande es bultos, que es como
-     piensa el que compra. 370 kilos de arándano no le dicen nada. */
-  .en-magnitud { font-size: 0.78rem; color: #666; white-space: nowrap; }
   .guardar { min-height: 52px; width: 100%; font-size: 1.1rem; font-weight: 800; color: #fff;
              background: #16a34a; border: 0; border-radius: 10px; margin-bottom: 0.75rem; }
   .borrar { min-height: 44px; width: 100%; font-size: 0.95rem; font-weight: 700;
@@ -118,52 +123,57 @@
            aria-label="Agregar un artículo" autocomplete="off">
     <div class="hallazgos" id="hallazgos"></div>
     {% for a in articulos %}
-      <label class="fila" data-nombre="{{ a.nombre|lower }}"
-             data-articulo="{{ a.articulo_id }}"
-             {% if not a.cargado %}hidden{% endif %}>
-        <span>{{ a.nombre }}</span>
+      <div class="fila" data-nombre="{{ a.nombre|lower }}"
+           data-articulo="{{ a.articulo_id }}"
+           {% if not a.cargado %}hidden{% endif %}>
+        <span class="nombre">{{ a.nombre }}</span>
         {% if a.unidad %}
-          {# EL CAMPO SE LLAMA POR LO QUE ES: bultos_ cuando la ficha del
-             cliente dice cuánto entra en uno, total_ cuando no hay con qué
-             dividir. Un solo nombre serían dos unidades en el mismo campo y
-             el server no tendría cómo saber cuál llegó. #}
-          {% set en_bultos = a.contenido is not none %}
-          {% set valor = a.bultos if en_bultos else a.total %}
-          {% set propuesto = a.bultos_propuesto if en_bultos else a.propuesto %}
-          {% if propuesto is not none %}
-            {# Viaja el número TAL COMO SE DIBUJA, no el float: al guardar se
+          {% if a.propuesto is not none %}
+            {# Viaja el TOTAL tal como se dibuja, no el float: al guardar se
                comparan los dos textos y "igual" es exacto, sin tolerancia. #}
             <input type="hidden" name="propuesto_{{ a.articulo_id }}"
-                   value="{{ propuesto|sin_decimales }}">
+                   value="{{ a.propuesto|numero }}">
           {% endif %}
           {# UNA CORRECCION SE VE, y dice contra qué: al reabrir la carga el
              campo muestra lo corregido, y sin esto no hay forma de saber que
              el promedio se movió desde que se corrigió. #}
-          {% if propuesto is not none and valor is not none
-                and valor|sin_decimales != propuesto|sin_decimales %}
-            <span class="propuesta">prom. {{ propuesto|sin_decimales }}</span>
+          {% if a.propuesto is not none and a.total is not none
+                and a.total|numero != a.propuesto|numero %}
+            <span class="propuesta">el promedio dice {{ a.propuesto|numero }} {{ a.sufijo }}</span>
           {% endif %}
-          <input name="{{ 'bultos_' if en_bultos else 'total_' }}{{ a.articulo_id }}"
-                 type="number" inputmode="decimal" step="0.1" min="0"
-                 value="{{ valor|sin_decimales if valor is not none else '' }}"
-                 data-contenido="{{ a.contenido if en_bultos else '' }}"
-                 {% set base = a.bultos_crudo if en_bultos else a.crudo %}
-                 data-base="{{ base|sin_decimales if base is not none else '' }}"
-                 aria-label="{{ 'Bultos' if en_bultos else 'Total' }} de {{ a.nombre }}">
-          {% if en_bultos %}
-            <span class="sufijo">blt</span>
-            {# La magnitud, calculada y al lado: el JS la rehace al tipear. #}
-            <span class="en-magnitud" data-magnitud-de="{{ a.articulo_id }}">{% if valor is not none %}{{ (valor * a.contenido)|sin_decimales }} {{ a.sufijo }}{% endif %}</span>
-          {% else %}
-            <span class="sufijo">{{ a.sufijo }}</span>
-          {% endif %}
+          {# TRES NÚMEROS Y UNO SE DEDUCE (dueño, 23/09): se carga cualquiera y
+             los otros dos se ajustan. El que MANDA al guardar es el total —es
+             lo que el listado suma— y el por bulto se guarda con él. #}
+          <div class="tres">
+            <label class="campo">{{ a.palabra|capitalize }} en total
+              <input name="total_{{ a.articulo_id }}" class="c-total"
+                     type="number" inputmode="decimal" step="any" min="0"
+                     value="{{ a.total|numero if a.total is not none else '' }}"
+                     data-base="{{ a.crudo|numero if a.crudo is not none else '' }}"
+                     aria-label="{{ a.palabra|capitalize }} en total de {{ a.nombre }}"></label>
+            <label class="campo">Bultos
+              <input name="bultos_{{ a.articulo_id }}" class="c-bultos"
+                     type="number" inputmode="decimal" step="any" min="0"
+                     value="{{ a.bultos|numero if a.bultos is not none else '' }}"
+                     aria-label="Bultos de {{ a.nombre }}"></label>
+            <label class="campo">{{ a.palabra|capitalize }} por bulto
+              <input name="por_bulto_{{ a.articulo_id }}" class="c-por-bulto"
+                     type="number" inputmode="decimal" step="any" min="0"
+                     value="{{ a.contenido|numero if a.contenido else '' }}"
+                     aria-label="{{ a.palabra|capitalize }} por bulto de {{ a.nombre }}"></label>
+          </div>
+          {# DE DÓNDE SALE EL POR BULTO, que es el número que decide los bultos:
+             "hoy no sé de dónde sale el número que veo" (dueño, 23/09). #}
+          <span class="origen">{% if a.por_bulto_declarado %}Por bulto: lo pusiste vos{% if a.contenido_ficha %} (la ficha dice {{ a.contenido_ficha|numero }}){% endif %}.
+            {%- elif a.contenido_ficha %}Por bulto: el de la ficha de {{ cliente_nombre }}.
+            {%- else %}Sin ficha de {{ cliente_nombre }}: poné cuánto trae un bulto para ver los bultos.{% endif %}</span>
         {% else %}
           {# Sin magnitud no hay campo: cualquier número que se tipee acá va a
              estar en una unidad y sumarse en otra. Es lo que la alerta
              unidades_que_difieren señala. #}
           <span class="sin-unidad">no se puede cargar: revisá sus fichas</span>
         {% endif %}
-      </label>
+      </div>
     {% endfor %}
   </div>
 
@@ -219,12 +229,48 @@
     }).slice(0, 8).forEach(function (fila) {
       var boton = document.createElement("button");
       boton.type = "button";   // sin esto ENVÍA el formulario al tocarlo
-      boton.textContent = fila.querySelector("span").textContent;
+      boton.textContent = fila.querySelector(".nombre").textContent;
       boton.addEventListener("click", function () { mostrar(fila); });
       hallazgos.appendChild(boton);
     });
   }
   caja.addEventListener("input", pintar);
+
+  // LOS TRES NUMEROS DE UNA FILA, relacionados (dueño, 23/09): se carga
+  // cualquiera y los otros dos se ajustan.
+  //   total    -> bultos = total / por bulto
+  //   bultos   -> total  = bultos x por bulto
+  //   por bulto -> se quedan los bultos y cambia el total; si todavia no hay
+  //                bultos, se sacan del total.
+  // Dos decimales y sin ceros de mas, igual que el filtro `numero` del server:
+  // si el primer dibujo y el recalculo escriben distinto, el numero cambia de
+  // forma al primer tecleo sin que cambie ningun dato.
+  function numero(n) { return String(Math.round(n * 100) / 100); }
+  function leer(campo) { return parseFloat(String(campo.value).replace(",", ".")); }
+  function ajustar(fila, cual) {
+    var total = fila.querySelector(".c-total");
+    var bultos = fila.querySelector(".c-bultos");
+    var porBulto = fila.querySelector(".c-por-bulto");
+    if (!total || !bultos || !porBulto) return;
+    var t = leer(total), b = leer(bultos), p = leer(porBulto);
+    var hayP = !isNaN(p) && p > 0;
+    if (cual === "total") {
+      bultos.value = (hayP && !isNaN(t)) ? numero(t / p) : "";
+    } else if (cual === "bultos") {
+      if (hayP) total.value = isNaN(b) ? "" : numero(b * p);
+    } else if (cual === "por-bulto" && hayP) {
+      if (!isNaN(b)) total.value = numero(b * p);
+      else if (!isNaN(t)) bultos.value = numero(t / p);
+    }
+  }
+  document.addEventListener("input", function (evento) {
+    var campo = evento.target;
+    var fila = campo.closest && campo.closest(".fila[data-articulo]");
+    if (!fila || !campo.classList) return;
+    if (campo.classList.contains("c-total")) ajustar(fila, "total");
+    else if (campo.classList.contains("c-bultos")) ajustar(fila, "bultos");
+    else if (campo.classList.contains("c-por-bulto")) ajustar(fila, "por-bulto");
+  });
 
   // EL MARGEN REHACE LA PROPUESTA AL TOQUE, sin ir al server. Solo mueve las
   // filas que TODAVIA muestran lo propuesto: la que se corrigio a mano queda
@@ -234,32 +280,17 @@
   if (campoMargen) campoMargen.addEventListener("input", function () {
     var por = parseFloat(campoMargen.value);
     if (isNaN(por) || por < 0) return;
-    document.querySelectorAll("[data-base]").forEach(function (campo) {
+    document.querySelectorAll(".c-total[data-base]").forEach(function (campo) {
       var base = parseFloat(campo.dataset.base || "");
       if (isNaN(base)) return;
       var espejo = document.querySelector('input[name="propuesto_'
-        + campo.name.replace(/^(bultos|total)_/, "") + '"]');
+        + campo.name.replace(/^total_/, "") + '"]');
       if (!espejo || campo.value !== espejo.value) return;   // tocada a mano
-      var nuevo = String(Math.round(base * (1 + por / 100)));
+      var nuevo = numero(base * (1 + por / 100));
       campo.value = nuevo;
       espejo.value = nuevo;
-      campo.dispatchEvent(new Event("input", {bubbles: true}));
+      ajustar(campo.closest(".fila"), "total");
     });
-  });
-
-  // LA MAGNITUD SE REHACE AL TIPEAR, sin ir al server: el número grande es
-  // bultos y el de al lado tiene que seguirlo, o los dos dicen cosas
-  // distintas mientras se carga.
-  document.addEventListener("input", function (evento) {
-    var campo = evento.target;
-    var contenido = parseFloat(campo.dataset.contenido || "");
-    if (!campo.name || campo.name.indexOf("bultos_") !== 0 || !contenido) return;
-    var espejo = document.querySelector(
-      '[data-magnitud-de="' + campo.name.slice(7) + '"]');
-    if (!espejo) return;
-    var bultos = parseFloat(campo.value);
-    var sufijo = espejo.textContent.replace(/[\d.,\s]/g, "");
-    espejo.textContent = isNaN(bultos) ? "" : Math.round(bultos * contenido) + " " + sufijo;
   });
 })();
 </script>

@@ -173,6 +173,24 @@ def test_guardar_renglones_REEMPLAZA_y_no_mezcla(galpon):
     assert d.carga_de_compra(cliente, EL_27)["renglones"] == {tomate: 600.0}
 
 
+def test_el_POR_BULTO_se_GUARDA_y_se_LEE_y_el_que_falta_queda_en_NULL(galpon):
+    """Contra la base de verdad: el INSERT nombra la columna nueva y el SELECT
+    la trae. Un mock no puede ver si ese SQL parsea (corolario 89).
+
+    El que no se declaró queda en NULL y NO viaja en `por_bulto`: es "proponé
+    el de la ficha", y un 0 o un valor inventado ahí lo taparía."""
+    d, sql, cliente, tomate, lima = galpon
+    carga_id = d.guardar_carga_de_compra(cliente, EL_27, "manual", CARGADA_EL, 0)
+    d.guardar_renglones_de_carga(carga_id, {tomate: 500, lima: 20}, {tomate: 20})
+
+    carga = d.carga_de_compra(cliente, EL_27)
+    assert carga["renglones"] == {tomate: 500.0, lima: 20.0}
+    assert carga["por_bulto"] == {tomate: 20.0}
+    (nulos,), = sql("SELECT count(*) FROM cargas_compra_renglones"
+                    " WHERE carga_id = %s AND contenido_por_bulto IS NULL", (carga_id,))
+    assert nulos == 1
+
+
 def test_borrar_la_carga_SE_LLEVA_sus_renglones(galpon):
     d, sql, cliente, tomate, _l = galpon
     carga_id = d.guardar_carga_de_compra(cliente, EL_27, "manual", CARGADA_EL, 0)
@@ -448,9 +466,13 @@ def _entrar(contextos, metodo, ruta, **kwargs):
     return respuesta, por_nombre
 
 
-def _carga(modo="manual", renglones=None, margen=0.0):
+def _carga(modo="manual", renglones=None, margen=0.0, por_bulto=None):
+    # CON `por_bulto` COMO LO DEVUELVE LA BASE (un dict, vacío si nada se
+    # declaró): un fixture sin la clave probaría una forma que producción no
+    # tiene.
     return {"id": 3, "cliente_id": 1, "fecha": EL_27, "modo": modo, "margen": margen,
-            "promedio_anterior_a": CARGADA_EL, "renglones": renglones or {}}
+            "promedio_anterior_a": CARGADA_EL, "renglones": renglones or {},
+            "por_bulto": por_bulto or {}}
 
 
 def test_abrir_una_carga_QUE_YA_EXISTE_PREGUNTA_en_vez_de_crear_otra():
@@ -683,7 +705,7 @@ def test_A_MANO_arranca_VACIA_y_los_demas_llegan_ESCONDIDOS():
     ctx = _con_catalogo(**{"app.main.carga_de_compra": _carga(renglones={7: 500.0})})
     respuesta, _ = _entrar(ctx, "get", f"/compras/carga/1/{EL_27.isoformat()}")
     marcado = respuesta.text.split("</style>")[-1]
-    filas = re.findall(r'<label class="fila"[^>]*data-articulo="(\d+)"([^>]*)>', marcado)
+    filas = re.findall(r'<div class="fila"[^>]*data-articulo="(\d+)"([^>]*)>', marcado)
     # El denominador: sin esto un regex roto deja la lista vacía y los dos
     # asserts de abajo pasan sobre nada (corolario 45).
     assert len(filas) == len(_ARTICULOS), f"se encontraron {len(filas)} de {len(_ARTICULOS)} filas"
@@ -712,7 +734,7 @@ def test_una_CORRECCION_dice_contra_que_se_corrigio():
     respuesta, _ = _entrar(ctx, "get", f"/compras/carga/1/{EL_27.isoformat()}")
     marcado = respuesta.text.split("</style>")[-1]
     assert 'value="120"' in marcado, "no mostró lo corregido"
-    assert "prom. 100" in marcado, "no dijo contra qué se corrigió"
+    assert "el promedio dice 100 kg" in marcado, "no dijo contra qué se corrigió"
 
 
 def test_lo_que_NO_se_corrigio_no_lleva_el_cartel():
@@ -723,43 +745,70 @@ def test_lo_que_NO_se_corrigio_no_lleva_el_cartel():
         "app.main.renglones_de_los_ultimos_pedidos": _RENGLONES_DE_PEDIDO,
     })
     respuesta, _ = _entrar(ctx, "get", f"/compras/carga/1/{EL_27.isoformat()}")
-    assert "prom. " not in respuesta.text.split("</style>")[-1]
+    # LA LEYENDA DE HOY, no la vieja: con "prom. " este assert pasaba siempre
+    # desde que el texto cambió, que es el assert por la negativa que no
+    # puede fallar.
+    assert "el promedio dice" not in respuesta.text.split("</style>")[-1]
 
 
 # --- BULTOS, que es como piensa el que compra --------------------------------
 
 
-def test_el_numero_GRANDE_es_BULTOS_cuando_la_ficha_dice_cuanto_entra():
-    """370 kilos de arándano no le dicen nada al comprador; 370 cubetas sí.
-    El bulto sale de `fichas_logistica.contenido_caja` DEL CLIENTE — no del
-    kilaje del Mercado, que es otro número y vive en el Paso 2."""
+def _campo(corrido, nombre):
+    """El `<input>` entero de ese nombre, para leer su value sin confundirlo con el de al lado."""
+    return corrido.split(f'name="{nombre}"')[1].split(">")[0]
+
+
+def test_la_fila_DIBUJA_LOS_TRES_numeros_y_de_donde_sale_el_por_bulto():
+    """"Hoy no sé de dónde sale el número que veo ni en qué unidad está"
+    (dueño, 23/09). Kilos en total, bultos y kilos por bulto, cada uno con su
+    rótulo, y una línea que dice de dónde sale el por bulto.
+
+    100 kilos por día sobre un bulto de 10 de la ficha = 10 bultos. La
+    propuesta viaja en KILOS, que es lo que se guarda y lo que el listado suma.
+    """
     ctx = _con_catalogo(**{
         "app.main.carga_de_compra": _carga(modo="automatico"),
         "app.main.renglones_de_los_ultimos_pedidos": _RENGLONES_DE_PEDIDO,
     })
     respuesta, _ = _entrar(ctx, "get", f"/compras/carga/1/{EL_27.isoformat()}")
-    marcado = respuesta.text.split("</style>")[-1]
-    # 100 kilos por día sobre un bulto de 10 = 10 bultos.
-    assert 'name="bultos_10"' in marcado and 'value="10"' in marcado
-    # CORRIDO: el atributo cae en la línea siguiente del template, así que
-    # el par name/value no es contiguo en el texto.
-    corrido = " ".join(marcado.split())
-    assert 'name="propuesto_10" value="10"' in corrido, "la propuesta viaja en BULTOS"
-    # Y la magnitud al lado, chica.
-    assert "100 kg" in marcado, "no mostró los kilos al lado"
+    corrido = " ".join(respuesta.text.split("</style>")[-1].split())
+    assert 'value="100"' in _campo(corrido, "total_10")
+    assert 'value="10"' in _campo(corrido, "bultos_10")
+    assert 'value="10"' in _campo(corrido, "por_bulto_10")
+    assert 'name="propuesto_10" value="100"' in corrido, "la propuesta viaja en KILOS"
+    assert "Kg en total" in corrido and "Kg por bulto" in corrido
+    assert "Por bulto: el de la ficha de EJEMPLO Día" in corrido
 
 
-def test_SIN_ficha_del_cliente_el_campo_sigue_siendo_LA_MAGNITUD():
+def test_SIN_ficha_del_cliente_el_POR_BULTO_arranca_VACIO_y_lo_dice():
     """El rival. La carga va contra el catálogo de compra, así que un
     artículo que este cliente no tiene en ficha se carga igual — y ahí no hay
-    con qué dividir. El campo se llama por lo que es."""
+    con qué dividir. Los tres campos están, el por bulto vacío, y la pantalla
+    dice qué falta en vez de inventar un bulto."""
     ctx = _con_catalogo(**{
         "app.main.carga_de_compra": _carga(modo="automatico"),
         "app.main.renglones_de_los_ultimos_pedidos": _RENGLONES_DE_PEDIDO,
     })
     respuesta, _ = _entrar(ctx, "get", f"/compras/carga/1/{EL_27.isoformat()}")
-    marcado = respuesta.text.split("</style>")[-1]
-    assert 'name="total_7"' in marcado and 'name="bultos_7"' not in marcado
+    corrido = " ".join(respuesta.text.split("</style>")[-1].split())
+    assert 'value="100"' in _campo(corrido, "total_7")
+    assert 'value=""' in _campo(corrido, "bultos_7")
+    assert 'value=""' in _campo(corrido, "por_bulto_7")
+    assert "Sin ficha de EJEMPLO Día: poné cuánto trae un bulto" in corrido
+
+
+def test_un_POR_BULTO_GUARDADO_le_gana_a_la_ficha_y_la_pantalla_lo_dice():
+    """Si el que cargó puso 20 donde la ficha dice 10, al reabrir ve SUS
+    bultos: 200 kilos son 10 bultos de 20, no 20 de 10."""
+    ctx = _con_catalogo(**{
+        "app.main.carga_de_compra": _carga(renglones={10: 200.0}, por_bulto={10: 20.0}),
+    })
+    respuesta, _ = _entrar(ctx, "get", f"/compras/carga/1/{EL_27.isoformat()}")
+    corrido = " ".join(respuesta.text.split("</style>")[-1].split())
+    assert 'value="20"' in _campo(corrido, "por_bulto_10")
+    assert 'value="10"' in _campo(corrido, "bultos_10")
+    assert "Por bulto: lo pusiste vos (la ficha dice 10)" in corrido
 
 
 def test_los_BULTOS_tipeados_se_guardan_en_la_MAGNITUD():
@@ -775,9 +824,8 @@ def test_los_BULTOS_tipeados_se_guardan_en_la_MAGNITUD():
 
 
 def test_un_bultos_de_un_articulo_SIN_contenido_no_entra():
-    """La pantalla no pudo haber dibujado ese campo: sin contenido el campo
-    se llama `total_`. Si llega igual, vino por otro lado y no se guarda con
-    una conversión inventada."""
+    """Bultos solos, sin ficha y sin por bulto tipeado, no dicen cuántos kilos
+    son: no se guarda con una conversión inventada."""
     ctx = _con_catalogo()
     ctx.append(patch("app.main.guardar_carga_de_compra", return_value=3))
     ctx.append(patch("app.main.guardar_renglones_de_carga"))
@@ -837,8 +885,8 @@ def test_el_margen_INFLA_lo_que_propone_el_promedio():
     })
     respuesta, _ = _entrar(ctx, "get", f"/compras/carga/1/{EL_27.isoformat()}")
     corrido = " ".join(respuesta.text.split("</style>")[-1].split())
-    # 10 bultos de promedio, 20% más = 12.
-    assert 'name="propuesto_10" value="12"' in corrido
+    # 100 kilos de promedio, 20% más = 120.
+    assert 'name="propuesto_10" value="120"' in corrido
     assert 'name="margen" type="number"' in corrido
 
 
@@ -851,7 +899,7 @@ def test_la_fila_lleva_la_BASE_SIN_margen_para_recalcular_sin_ir_al_server():
     })
     respuesta, _ = _entrar(ctx, "get", f"/compras/carga/1/{EL_27.isoformat()}")
     corrido = " ".join(respuesta.text.split("</style>")[-1].split())
-    assert 'data-base="10"' in corrido, "la fila no trae el promedio crudo"
+    assert 'data-base="100"' in corrido, "la fila no trae el promedio crudo"
     # Y el JS solo mueve lo que TODAVÍA muestra lo propuesto: sin eso, subir
     # el porcentaje pisaría las correcciones.
     assert "campo.value !== espejo.value" in respuesta.text
@@ -962,7 +1010,121 @@ def test_un_margen_en_CERO_deja_la_propuesta_como_esta():
     })
     respuesta, _ = _entrar(ctx, "get", f"/compras/carga/1/{EL_27.isoformat()}")
     corrido = " ".join(respuesta.text.split("</style>")[-1].split())
-    assert 'name="propuesto_10" value="10"' in corrido
+    assert 'name="propuesto_10" value="100"' in corrido
+
+
+# --- LOS TRES NÚMEROS AL GUARDAR (dueño, 23/09) ------------------------------
+
+
+def _guardar(datos, carga=None):
+    ctx = _con_catalogo(**({"app.main.carga_de_compra": carga} if carga else {}))
+    ctx.append(patch("app.main.guardar_carga_de_compra", return_value=3))
+    ctx.append(patch("app.main.guardar_renglones_de_carga"))
+    _, abiertos = _entrar(ctx, "post", f"/compras/carga/1/{EL_27.isoformat()}", data=datos)
+    llamada = abiertos["guardar_renglones_de_carga"].call_args
+    return llamada.args[1], llamada.args[2]
+
+
+def test_el_TOTAL_manda_y_un_POR_BULTO_distinto_de_la_ficha_se_GUARDA():
+    """500 kilos de a 20 donde la ficha dice 10: se guardan los 500 y el 20."""
+    renglones, por_bulto = _guardar({"modo": "manual", "total_10": "500",
+                                     "bultos_10": "25", "por_bulto_10": "20"})
+    assert renglones == {10: 500.0}
+    assert por_bulto == {10: 20.0}
+
+
+def test_un_POR_BULTO_IGUAL_al_de_la_ficha_NO_se_guarda():
+    """Igual al de la ficha es "no lo toqué". Guardarlo lo dejaría fijo el día
+    que la ficha cambie; NULL es exactamente "proponé el de la ficha"."""
+    renglones, por_bulto = _guardar({"modo": "manual", "total_10": "500",
+                                     "por_bulto_10": "10"})
+    assert renglones == {10: 500.0}
+    assert por_bulto == {}
+
+
+def test_SIN_TOTAL_se_saca_de_BULTOS_por_el_POR_BULTO_tipeado():
+    """El camino sin JavaScript: 25 bultos de 20 son 500 kilos, aunque la
+    ficha diga 10. El rival —multiplicar por la ficha— daría 250."""
+    renglones, por_bulto = _guardar({"modo": "manual", "bultos_10": "25",
+                                     "por_bulto_10": "20"})
+    assert renglones == {10: 500.0}
+    assert por_bulto == {10: 20.0}
+
+
+def test_un_articulo_SIN_ficha_con_POR_BULTO_tipeado_se_guarda_con_el():
+    """Sin ficha, cualquier por bulto es declarado: no hay contra qué comparar."""
+    renglones, por_bulto = _guardar({"modo": "manual", "bultos_7": "5",
+                                     "por_bulto_7": "18"})
+    assert renglones == {7: 90.0}
+    assert por_bulto == {7: 18.0}
+
+
+def test_en_DEL_PROMEDIO_cambiar_SOLO_el_por_bulto_es_una_CORRECCION():
+    """El total quedó igual a la propuesta pero el por bulto no: el que cargó
+    decidió algo, y eso se guarda. El rival —mirar solo el total— lo tiraría."""
+    renglones, por_bulto = _guardar(
+        {"modo": "automatico", "total_10": "100", "propuesto_10": "100",
+         "por_bulto_10": "20"},
+        carga=_carga(modo="automatico"))
+    assert renglones == {10: 100.0}
+    assert por_bulto == {10: 20.0}
+
+
+def test_en_DEL_PROMEDIO_lo_que_quedo_IGUAL_no_se_guarda_ni_el_por_bulto():
+    """El caso que no tiene que guardar nada, sin el cual una regla que
+    guarda todo pasaría los tres de arriba."""
+    renglones, por_bulto = _guardar(
+        {"modo": "automatico", "total_10": "100", "propuesto_10": "100",
+         "bultos_10": "10", "por_bulto_10": "10"},
+        carga=_carga(modo="automatico"))
+    assert renglones == {} and por_bulto == {}
+
+
+def _en_el_navegador(html, pasos):
+    """Tipea en la primera fila visible y devuelve lo que quedó en los tres campos."""
+    pytest.importorskip("playwright", reason="el recálculo en vivo necesita un navegador")
+    from playwright.sync_api import sync_playwright
+    from scripts.medir_layout import CHROMIUM
+
+    with sync_playwright() as p:
+        navegador = p.chromium.launch(executable_path=CHROMIUM)
+        pagina = navegador.new_page(viewport={"width": 390, "height": 844})
+        pagina.set_content(html)
+        for selector, valor in pasos:
+            pagina.fill(selector, valor)
+        leido = pagina.evaluate("""() => ({
+            total: document.querySelector('[name="total_10"]').value,
+            bultos: document.querySelector('[name="bultos_10"]').value,
+            por_bulto: document.querySelector('[name="por_bulto_10"]').value,
+            ancho: document.documentElement.scrollWidth - document.documentElement.clientWidth})""")
+        navegador.close()
+    return leido
+
+
+def _pantalla_con_arandano():
+    ctx = _con_catalogo(**{"app.main.carga_de_compra": _carga(renglones={10: 100.0})})
+    respuesta, _ = _entrar(ctx, "get", f"/compras/carga/1/{EL_27.isoformat()}")
+    assert respuesta.status_code == 200
+    return respuesta.text
+
+
+@pytest.mark.parametrize("pasos, esperado", [
+    # "Pongo 500 kilos y 20 kilos por bulto -> me muestra 25 bultos."
+    ([('[name="por_bulto_10"]', "20"), ('[name="total_10"]', "500")],
+     {"total": "500", "bultos": "25", "por_bulto": "20"}),
+    # "O pongo 25 bultos y 20 por bulto -> me muestra 500 kilos."
+    ([('[name="por_bulto_10"]', "20"), ('[name="bultos_10"]', "25")],
+     {"total": "500", "bultos": "25", "por_bulto": "20"}),
+    # Cambiar el por bulto deja los bultos y rehace el total: 10 bultos de 25.
+    ([('[name="por_bulto_10"]', "25")],
+     {"total": "250", "bultos": "10", "por_bulto": "25"}),
+])
+def test_los_TRES_campos_se_AJUSTAN_solos_al_tipear(pasos, esperado):
+    """Los dos ejemplos del dueño, al pie de la letra, más el tercer campo.
+    Arranca con 100 kilos de a 10 = 10 bultos (la ficha del arándano)."""
+    leido = _en_el_navegador(_pantalla_con_arandano(), pasos)
+    assert {k: leido[k] for k in esperado} == esperado
+    assert leido["ancho"] <= 0, "la fila arrastra la pantalla de costado"
 
 
 # --- SUBIR ARCHIVO: se lee, se revisa, se corrige, y recién ahí se guarda ----

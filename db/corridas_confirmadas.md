@@ -242,3 +242,17 @@ están. Lo que identifica la base son los clientes —3 contra 5—, que es lo
 
 **Y `db/esquema_completo.sql` las perdió en el MISMO commit que anotó esta
 fila**, no antes: hasta este drop una base nueva las necesitaba.
+
+## 23/09 — `cargas_compra_5_por_bulto`
+
+`db/cargas_compra_5_por_bulto.sql`, con su verificación corrida aparte.
+
+```
+FRUTAMAX  columna 1 · guarda 1 · mayor a cero 1 · 3 renglones · último pedido 23/09
+PALMALA   columna 1 · guarda 1 · mayor a cero 1 · 0 renglones · último pedido 23/09
+```
+
+**Lo que identifica la base son los renglones** —3 contra 0—: las tres
+columnas de la migración dan lo mismo por diseño y el último pedido coincide.
+La columna nace en NULL en todos los renglones que ya estaban, que es "proponé
+el bulto de la ficha": lo mismo que mostraban hasta hoy.

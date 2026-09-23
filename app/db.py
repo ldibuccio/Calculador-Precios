@@ -9757,12 +9757,18 @@ def carga_de_compra(cliente_id: int, fecha) -> dict | None:
             carga_id = cabecera[0]
             cursor.execute(
                 """
-                SELECT articulo_id, total FROM cargas_compra_renglones
+                SELECT articulo_id, total, contenido_por_bulto FROM cargas_compra_renglones
                 WHERE carga_id = %s
                 """,
                 (carga_id,),
             )
-            renglones = {int(f[0]): float(f[1]) for f in cursor.fetchall()}
+            filas = cursor.fetchall()
+            renglones = {int(f[0]): float(f[1]) for f in filas}
+            # EL "POR BULTO" VIAJA APARTE y no adentro de `renglones`: ese dict
+            # es {articulo: total} y lo leen el listado y `lo_que_pide_la_carga`,
+            # que suman kilos y no necesitan saber de bultos. Meterlo adentro
+            # cambiaría la forma de lo que tres lugares ya leen.
+            por_bulto = {int(f[0]): float(f[2]) for f in filas if f[2] is not None}
             return {
                 "id": carga_id,
                 "cliente_id": int(cabecera[1]),
@@ -9771,6 +9777,7 @@ def carga_de_compra(cliente_id: int, fecha) -> dict | None:
                 "promedio_anterior_a": cabecera[4],
                 "margen": float(cabecera[5]),
                 "renglones": renglones,
+                "por_bulto": por_bulto,
             }
     finally:
         conexion.close()
@@ -9870,8 +9877,13 @@ def guardar_carga_de_compra(cliente_id: int, fecha, modo, promedio_anterior_a, m
         conexion.close()
 
 
-def guardar_renglones_de_carga(carga_id: int, renglones: dict) -> None:
+def guardar_renglones_de_carga(carga_id: int, renglones: dict,
+                               por_bulto: dict | None = None) -> None:
     """Reemplaza los renglones de una carga. `renglones` es {articulo_id: total}.
+
+    `por_bulto` es {articulo_id: cuánto trae un bulto}, SOLO de los que el
+    que cargó declaró distinto del de la ficha: el que falta queda en NULL y
+    la pantalla le propone el de la ficha, que es lo que la columna dice.
 
     BORRA ANTES DE ESCRIBIR, en una transacción: es lo que quedó, no lo que
     cambió. Sacarle un artículo a la carga tiene que llevárselo, y eso un
@@ -9883,10 +9895,16 @@ def guardar_renglones_de_carga(carga_id: int, renglones: dict) -> None:
             cursor.execute(
                 "DELETE FROM cargas_compra_renglones WHERE carga_id = %s", (carga_id,)
             )
+            por_bulto = por_bulto or {}
             for articulo_id, total in renglones.items():
+                # CON LAS COLUMNAS NOMBRADAS: el INSERT posicional de antes
+                # dependía del orden de la tabla, y la columna nueva quedó al
+                # final justo por eso. El que se agregue en el medio no avisaría.
                 cursor.execute(
-                    "INSERT INTO cargas_compra_renglones VALUES (%s, %s, %s)",
-                    (carga_id, articulo_id, total),
+                    "INSERT INTO cargas_compra_renglones"
+                    " (carga_id, articulo_id, total, contenido_por_bulto)"
+                    " VALUES (%s, %s, %s, %s)",
+                    (carga_id, articulo_id, total, por_bulto.get(articulo_id)),
                 )
             conexion.commit()
     except Exception:
