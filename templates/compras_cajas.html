@@ -125,9 +125,9 @@
 </style>
 </head>
 <body>
-  {% set barra_sector = "compras" %}
+  {% set barra_sector = camino.sector %}
   {% set barra_titulo = "Cajas" %}
-  {% set barra_atras = "/compras" %}
+  {% set barra_atras = camino.atras %}
   {% include "_barra_navegacion.html" %}
 
   {% if error %}<div class="error">{{ error }}</div>{% endif %}
@@ -195,7 +195,7 @@
     {# EL UMBRAL VA ADENTRO DE LA TARJETA, decisión del dueño: es de ESTE tipo
        de caja y de ninguno más. En un formulario aparte habría que elegir el
        tipo de nuevo, que es elegir dos veces lo mismo. #}
-    <form class="fila" method="post" action="/compras/cajas/umbral" style="margin-top:.75rem">
+    <form class="fila" method="post" action="{{ camino.base }}/cajas/umbral" style="margin-top:.75rem">
       <input type="hidden" name="envase_id" value="{{ e.id }}">
       <div class="campo">
         <label for="u{{ e.id }}">Avisame cuando queden menos de</label>
@@ -218,7 +218,7 @@
   <details class="accion">
     <summary>Arrancar la cuenta de una caja</summary>
     <div class="cuerpo-accion">
-      <form class="fila" method="post" action="/compras/cajas/conteo-inicial">
+      <form class="fila" method="post" action="{{ camino.base }}/cajas/conteo-inicial">
         <div class="campo">
           <label for="ci-envase">¿Qué caja contaste?</label>
           <select id="ci-envase" name="envase_id" required>
@@ -264,7 +264,7 @@
   <details class="accion">
     <summary>Cargar un movimiento</summary>
     <div class="cuerpo-accion">
-      <form class="fila" method="post" action="/compras/cajas/movimiento">
+      <form class="fila" method="post" action="{{ camino.base }}/cajas/movimiento">
         <div class="campo">
           <label for="mv-envase">¿Qué caja?</label>
           <select id="mv-envase" name="envase_id" required>
@@ -326,7 +326,7 @@
   <div class="tarjeta">
     <h2>Cuentas con colegas</h2>
     {% for c in cuentas %}
-    <a class="colega-fila" href="/compras/cajas/colega/{{ c.colega_id }}">
+    <a class="colega-fila" href="{{ camino.base }}/cajas/colega/{{ c.colega_id }}">
       <span class="cuerpo">
         <span class="quien">{{ c.colega }}</span>
         {% for p in c.por_envase %}
@@ -346,7 +346,7 @@
       vas a poder anotar los préstamos desde "Cargar un movimiento".</p>
     {% endfor %}
 
-    <form class="fila" method="post" action="/compras/cajas/colegas"
+    <form class="fila" method="post" action="{{ camino.base }}/cajas/colegas"
           style="margin-top:.75rem">
       <div class="campo">
         <label for="colega-nuevo">Agregar un colega</label>

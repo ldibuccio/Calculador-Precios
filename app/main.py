@@ -5732,6 +5732,36 @@ def _armar_aviso_bloqueo_edicion(estado: str | None, cantidad_bloqueada: bool, p
     return f"El precio no se puede modificar: la compra {razon_precio}. La cantidad sí se puede corregir."
 
 
+# CAJAS Y VACÍOS TIENEN DOS PUERTAS: Compras, donde se decide reponer, y
+# Administración, que lleva la cuenta (pedido del dueño, 23/09). Las pantallas
+# son las MISMAS —los mismos handlers, las mismas consultas— y lo único que
+# cambia es el CAMINO: la barra, el atrás, la `action` de cada formulario y el
+# destino de cada redirect.
+#
+# EL SECTOR SALE DEL PREFIJO DE LA URL, no de un `?origen=` (corolario 63): la
+# puerta se aplica por prefijo en el middleware, así que el sector de la barra
+# y la clave que se pidió son el MISMO hecho y no se pueden separar. Con el
+# sector en la query, la URL de una puerta dibujaría el candado de la otra.
+#
+# Y el camino viaja ENTERO en un dict (corolario 56): la base y el atrás
+# juntos, y todas las URLs de las cuatro plantillas salen de la base en vez de
+# estar escritas con `/compras` adentro. La primera que quedara fija sacaría
+# del sector al que entró por Administración recién en el primer submit, que
+# es justo lo que no se ve probando a mano.
+CAMINOS_DE_CAJAS_Y_VACIOS = {
+    "compras": {"sector": "compras", "base": "/compras", "atras": "/compras"},
+    "administracion": {"sector": "administracion", "base": "/administracion",
+                       "atras": "/administracion"},
+}
+
+
+def _camino_de_cajas_y_vacios(request: Request) -> dict:
+    """Por cuál de las dos puertas entró: lo dice el prefijo, igual que al middleware."""
+    if request.url.path.startswith("/administracion/"):
+        return CAMINOS_DE_CAJAS_Y_VACIOS["administracion"]
+    return CAMINOS_DE_CAJAS_Y_VACIOS["compras"]
+
+
 def _renderizar_pantalla_cajas(request: Request, *, error: str | None = None,
                                aviso: str | None = None, status_code: int = 200):
     """La pantalla de Cajas: CUANTAS HAY y CON QUIEN ESTA LA CUENTA. Nada más.
@@ -5790,18 +5820,22 @@ def _renderizar_pantalla_cajas(request: Request, *, error: str | None = None,
          "cuentas": cuentas, "colegas": colegas,
          "arrancadas": [e for e in envases if e["stock"] is not None],
          "sin_arrancar": [e for e in envases if e["stock"] is None],
-         "origenes_colega": ORIGENES_DE_COLEGA},
+         "origenes_colega": ORIGENES_DE_COLEGA,
+         "camino": _camino_de_cajas_y_vacios(request)},
         status_code=status_code,
     )
 
 
 @app.get("/compras/cajas")
+@app.get("/administracion/cajas")
 def ver_cajas(request: Request, aviso: str | None = None):
     """Stock de CAJAS NUESTRAS, derivado en cada lectura.
 
-    Vive en Compras porque es donde se decide reponerlas, y queda detrás de
-    la clave de Gerencia sola: la puerta se aplica por PREFIJO en el
-    middleware, así que esta ruta nace cerrada sin escribir una línea.
+    Vive en Compras porque es donde se decide reponerlas, y desde el 23/09
+    también en Administración, que lleva la cuenta: la MISMA pantalla con su
+    propia dirección (ver CAMINOS_DE_CAJAS_Y_VACIOS). Cada puerta se aplica
+    por PREFIJO en el middleware, así que las dos rutas nacen cerradas por la
+    suya sin escribir una línea.
 
     OJO CON EL NOMBRE: en este sistema ya hay tres cosas que se llaman
     "Stock" —la de Vacíos en Puesto, la del Depósito y la que se llamó así
@@ -5812,6 +5846,7 @@ def ver_cajas(request: Request, aviso: str | None = None):
 
 
 @app.post("/compras/cajas/conteo-inicial")
+@app.post("/administracion/cajas/conteo-inicial")
 def cargar_conteo_inicial_caja(request: Request, envase_id: str = Form(""),
                                  cantidad: str = Form(""), fecha: str = Form("")):
     """La foto que ARRANCA la cuenta de un envase. Una sola por envase.
@@ -5830,6 +5865,7 @@ def cargar_conteo_inicial_caja(request: Request, envase_id: str = Form(""),
 
 
 @app.post("/compras/cajas/movimiento")
+@app.post("/administracion/cajas/movimiento")
 def cargar_movimiento_caja(request: Request, envase_id: str = Form(""),
                              origen: str = Form(""), cantidad: str = Form(""),
                              fecha: str = Form(""), motivo: str = Form(""),
@@ -5915,12 +5951,13 @@ def _guardar_movimiento_de_envase(request: Request, envase_id: str, cantidad: st
             request, error=f"No se pudo guardar: {error_db}", status_code=400)
 
     return RedirectResponse(
-        url="/compras/cajas?" + urlencode({"aviso": "Movimiento guardado."}),
+        url=f"{_camino_de_cajas_y_vacios(request)['base']}/cajas?" + urlencode({"aviso": "Movimiento guardado."}),
         status_code=303,
     )
 
 
 @app.post("/compras/cajas/colegas")
+@app.post("/administracion/cajas/colegas")
 def crear_colega_ruta(request: Request, nombre: str = Form("")):
     """Da de alta un colega para la cuenta de cajas. Unifica por nombre plegado."""
     limpio = nombre.strip()
@@ -5933,12 +5970,13 @@ def crear_colega_ruta(request: Request, nombre: str = Form("")):
         return _renderizar_pantalla_cajas(
             request, error=f"No se pudo guardar: {error_db}", status_code=400)
     return RedirectResponse(
-        url="/compras/cajas?" + urlencode({"aviso": f"Colega {limpio} guardado."}),
+        url=f"{_camino_de_cajas_y_vacios(request)['base']}/cajas?" + urlencode({"aviso": f"Colega {limpio} guardado."}),
         status_code=303,
     )
 
 
 @app.get("/compras/cajas/colega/{colega_id}")
+@app.get("/administracion/cajas/colega/{colega_id}")
 def ver_cuenta_de_colega(request: Request, colega_id: int):
     """El detalle de la cuenta de un colega: lo que le di y lo que me dio, con fechas.
 
@@ -5966,11 +6004,13 @@ def ver_cuenta_de_colega(request: Request, colega_id: int):
         movimiento["salio"] = del_mapa.get("piso", 0) < 0
     return templates.TemplateResponse(
         request, "compras_cajas_colega.html",
-        {"cuenta": cuenta, "movimientos": movimientos},
+        {"cuenta": cuenta, "movimientos": movimientos,
+         "camino": _camino_de_cajas_y_vacios(request)},
     )
 
 
 @app.post("/compras/cajas/umbral")
+@app.post("/administracion/cajas/umbral")
 def guardar_umbral_caja_ruta(request: Request, envase_id: str = Form(""), umbral: str = Form("")):
     """Debajo de cuántas cajas avisa la alerta. Vacío = este envase no se vigila."""
     if not envase_id.strip().isdigit():
@@ -5992,15 +6032,17 @@ def guardar_umbral_caja_ruta(request: Request, envase_id: str = Form(""), umbral
             request, error=f"No se pudo guardar el aviso: {error_db}", status_code=400)
 
     return RedirectResponse(
-        url="/compras/cajas?" + urlencode({"aviso": "Aviso guardado."}), status_code=303)
+        url=f"{_camino_de_cajas_y_vacios(request)['base']}/cajas?" + urlencode({"aviso": "Aviso guardado."}),
+        status_code=303)
 
 
 # ============================================================================
 # VACÍOS DEL DEPÓSITO — los cajones del proveedor de COMPRAS
 #
 # Vive en Compras porque es el proveedor de Compras el que los reclama, y
-# queda detrás de la clave de Gerencia SOLA: la puerta se aplica por PREFIJO
-# en el middleware, así que estas rutas nacen cerradas sin escribir una línea.
+# desde el 23/09 también en Administración con su propia dirección (ver
+# CAMINOS_DE_CAJAS_Y_VACIOS). Cada puerta se aplica por PREFIJO en el
+# middleware, así que cada ruta nace cerrada por la suya.
 #
 # NO ES `/puesto/vacios`, que existe desde antes y es otro circuito entero:
 # allá un cliente del puesto TRAE cajones y un proveedor del puesto los
@@ -6022,12 +6064,14 @@ def _renderizar_vacios(request: Request, *, error: str | None = None,
         request,
         "compras_vacios.html",
         {"proveedores": proveedores, "error": error, "aviso": aviso,
-         "hoy": _hoy_argentina().isoformat()},
+         "hoy": _hoy_argentina().isoformat(),
+         "camino": _camino_de_cajas_y_vacios(request)},
         status_code=status_code,
     )
 
 
 @app.get("/compras/vacios")
+@app.get("/administracion/vacios")
 def ver_vacios_deposito(request: Request, aviso: str | None = None):
     """Los cajones del proveedor que están en el galpón, DERIVADOS en cada lectura.
 
@@ -6038,6 +6082,7 @@ def ver_vacios_deposito(request: Request, aviso: str | None = None):
 
 
 @app.post("/compras/vacios/conteo")
+@app.post("/administracion/vacios/conteo")
 def cargar_conteo_vacios(request: Request, proveedor_id: str = Form(""),
                          cantidad: str = Form(""), fecha: str = Form("")):
     """La foto que ARRANCA la cuenta de un proveedor.
@@ -6075,7 +6120,8 @@ def cargar_conteo_vacios(request: Request, proveedor_id: str = Form(""),
             request, error=f"No se pudo guardar el conteo: {error_db}", status_code=400)
 
     return RedirectResponse(
-        url="/compras/vacios?" + urlencode({"aviso": "La cuenta de ese proveedor arrancó."}),
+        url=f"{_camino_de_cajas_y_vacios(request)['base']}/vacios?" +
+            urlencode({"aviso": "La cuenta de ese proveedor arrancó."}),
         status_code=303)
 
 
@@ -6111,12 +6157,14 @@ def _renderizar_vacios_proveedor(request: Request, proveedor_id: int, *,
         request,
         "compras_vacios_proveedor.html",
         {"p": fila, "compras": compras, "devoluciones": devoluciones,
-         "tipos": tipos, "error": error, "aviso": aviso},
+         "tipos": tipos, "error": error, "aviso": aviso,
+         "camino": _camino_de_cajas_y_vacios(request)},
         status_code=status_code,
     )
 
 
 @app.get("/compras/vacios/{proveedor_id}")
+@app.get("/administracion/vacios/{proveedor_id}")
 def ver_vacios_de_proveedor(request: Request, proveedor_id: int,
                             error: str | None = None, aviso: str | None = None):
     """El detalle de un proveedor."""
@@ -6144,6 +6192,7 @@ def _tipo_cajon_elegido(tipo_cajon_id: str, nombre_nuevo: str) -> int | None:
 
 
 @app.post("/compras/vacios/{proveedor_id}/cajon")
+@app.post("/administracion/vacios/{proveedor_id}/cajon")
 def guardar_tipo_cajon_de_proveedor(request: Request, proveedor_id: int,
                                     tipo_cajon_id: str = Form(""),
                                     nombre_nuevo: str = Form("")):
@@ -6170,11 +6219,12 @@ def guardar_tipo_cajon_de_proveedor(request: Request, proveedor_id: int,
             request, proveedor_id, error=f"No se pudo guardar el cajón: {error_db}",
             status_code=500)
 
-    return RedirectResponse(url=f"/compras/vacios/{proveedor_id}?" +
+    return RedirectResponse(url=f"{_camino_de_cajas_y_vacios(request)['base']}/vacios/{proveedor_id}?" +
                             urlencode({"aviso": "Cajón guardado."}), status_code=303)
 
 
 @app.post("/compras/vacios/{proveedor_id}/devolucion")
+@app.post("/administracion/vacios/{proveedor_id}/devolucion")
 async def cargar_devolucion_vacios(request: Request, proveedor_id: int,
                                    compra_id: str = Form(""), cantidad: str = Form(""),
                                    importe: str = Form(""),
@@ -6195,7 +6245,7 @@ async def cargar_devolucion_vacios(request: Request, proveedor_id: int,
 
     texto = cantidad.strip()
     if not texto.isdigit() or int(texto) <= 0:
-        return ver_vacios_de_proveedor(
+        return _renderizar_vacios_proveedor(
             request, proveedor_id,
             error="Los cajones devueltos tienen que ser un número entero mayor que cero.",
             status_code=400)
@@ -6205,10 +6255,10 @@ async def cargar_devolucion_vacios(request: Request, proveedor_id: int,
         try:
             valor_importe = float(importe.replace(".", "").replace(",", ".").strip())
         except ValueError:
-            return ver_vacios_de_proveedor(
+            return _renderizar_vacios_proveedor(
                 request, proveedor_id, error="El importe del vale no es un número.", status_code=400)
         if valor_importe < 0:
-            return ver_vacios_de_proveedor(
+            return _renderizar_vacios_proveedor(
                 request, proveedor_id, error="El importe del vale no puede ser negativo.",
                 status_code=400)
 
@@ -6235,30 +6285,33 @@ async def cargar_devolucion_vacios(request: Request, proveedor_id: int,
             status_code=400)
 
     return RedirectResponse(
-        url=f"/compras/vacios/{proveedor_id}?" +
+        url=f"{_camino_de_cajas_y_vacios(request)['base']}/vacios/{proveedor_id}?" +
             urlencode({"aviso": f"Devolución de {texto} cajones guardada.{aviso_foto}"}),
         status_code=303)
 
 
 @app.post("/compras/vacios/devolucion/{devolucion_id}/anular")
+@app.post("/administracion/vacios/devolucion/{devolucion_id}/anular")
 def anular_devolucion_vacios_ruta(request: Request, devolucion_id: int,
                                   proveedor_id: str = Form("")):
     """Anula una devolución. El stock se corrige SOLO: no vive en ninguna columna."""
-    destino = proveedor_id if proveedor_id.strip().isdigit() else ""
+    destino = (f"{_camino_de_cajas_y_vacios(request)['base']}/vacios/"
+               + (proveedor_id if proveedor_id.strip().isdigit() else ""))
     try:
         anular_devolucion_vacios(devolucion_id)
     except ValueError as invalido:
         return RedirectResponse(
-            url=f"/compras/vacios/{destino}?" + urlencode({"error": str(invalido)}),
+            url=f"{destino}?" + urlencode({"error": str(invalido)}),
             status_code=303)
 
     return RedirectResponse(
-        url=f"/compras/vacios/{destino}?" +
+        url=f"{destino}?" +
             urlencode({"aviso": "Devolución anulada. El stock ya lo refleja."}),
         status_code=303)
 
 
 @app.get("/compras/vacios/devolucion/{devolucion_id}/foto")
+@app.get("/administracion/vacios/devolucion/{devolucion_id}/foto")
 def ver_foto_del_vale(devolucion_id: int, proveedor_id: int):
     """URL firmada de la foto del vale."""
     for devolucion in listar_devoluciones_vacios(proveedor_id):

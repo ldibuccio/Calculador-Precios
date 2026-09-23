@@ -34,7 +34,7 @@
 </style>
 </head>
 <body>
-  {% set barra_sector = "compras" %}
+  {% set barra_sector = camino.sector %}
   {# EL NOMBRE NO VA EN LA BARRA, y es la única pantalla que lo intentó: las
      otras 91 ponen un literal y las dos dinámicas usan valores del sistema.
      La barra es compartida y su título no está hecho para texto que tipea una
@@ -42,7 +42,7 @@
      página 430px a 390px de ancho, y el que se salía era `.barra-titulo`.
      El nombre va abajo, en el h2, donde sí puede envolver. #}
   {% set barra_titulo = "Cuenta con un colega" %}
-  {% set barra_atras = "/compras/cajas" %}
+  {% set barra_atras = camino.base ~ "/cajas" %}
   {% include "_barra_navegacion.html" %}
 
   <div class="tarjeta">
