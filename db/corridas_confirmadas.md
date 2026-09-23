@@ -308,3 +308,17 @@ PALMALA   columna 1 · acepta null YES · guarda 1 · 0 cargas · 0 sin días ·
 ```
 
 **Lo que identifica la base son las cargas** —3 contra 0—.
+
+## 23/09 — `cargas_compra_dias` (bloque 2, NOT NULL)
+
+`db/cargas_compra_dias_2.sql`, corrido **después** del deploy de v974 (corolario
+94), con la verificación corrida aparte.
+
+```
+FRUTAMAX  columna 1 · acepta null NO · guarda 1 · 3 cargas · 0 sin días · 0 distintas de uno · última 23/09
+PALMALA   columna 1 · acepta null NO · guarda 1 · 0 cargas · 0 sin días · 0 distintas de uno
+```
+
+**Lo que identifica la base son las cargas** —3 contra 0—.
+`db/esquema_completo.sql` pasó `dias` a `not null` en el mismo commit que anotó
+esta fila.

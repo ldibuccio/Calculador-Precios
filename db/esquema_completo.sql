@@ -594,8 +594,8 @@ create table cargas_compra (
     margen_porcentaje    numeric not null constraint cargas_compra_margen_check
                              check (margen_porcentaje >= 0),
     promedio_anterior_a  date not null,
-    -- NULLABLE hasta que corra db/cargas_compra_dias_2.sql (después del deploy).
-    dias                 integer constraint cargas_compra_dias_check
+    -- NOT NULL desde db/cargas_compra_dias_2.sql (corrida en las dos el 23/09).
+    dias                 integer not null constraint cargas_compra_dias_check
                              check (dias is null or dias >= 1),
     creado_en            timestamptz not null default now(),
     actualizado_en       timestamptz not null default now(),
