@@ -4025,6 +4025,126 @@ def mover_compra_de_fecha(compra_id: int, nueva_fecha, nueva_recepcion=None) -> 
         conexion.close()
 
 
+def _frenos_para_cambiar_proveedor(cursor, compra_id: int) -> list[str]:
+    """Los motivos —en texto— por los que esta compra NO puede cambiar de proveedor.
+
+    UNA función para las dos mitades: la pantalla la usa para decidir si
+    dibuja el formulario y la escritura para rechazar. Escrita dos veces, la
+    copia que se separe ofrece un botón que el POST después rechaza.
+    """
+    frenos = []
+    consumida, _elegida = _lote_de_la_compra_YA_SE_USO(cursor, compra_id)
+    if consumida:
+        frenos.append(f"{consumida} guía{'' if consumida == 1 else 's'} R tomó de su lote")
+    cursor.execute(
+        """
+        SELECT count(*) FROM vacios_deposito_devoluciones
+        WHERE compra_id = %s AND anulado_el IS NULL
+        """,
+        (compra_id,),
+    )
+    vales = int(cursor.fetchone()[0])
+    if vales:
+        frenos.append(f"tiene {vales} vale{'' if vales == 1 else 's'} de vacíos cargado")
+    cursor.execute(
+        """
+        SELECT count(*) FROM movimientos_stock
+        WHERE compra_devolucion_id = %s AND anulado_el IS NULL
+        """,
+        (compra_id,),
+    )
+    devoluciones = int(cursor.fetchone()[0])
+    if devoluciones:
+        frenos.append(f"tiene {devoluciones} devolución{'' if devoluciones == 1 else 'es'} "
+                      "al proveedor")
+    vivas = _guias_en_origen_vivas(cursor, compra_id)
+    if vivas:
+        frenos.append("vino armada y generó la guía R "
+                      + ", ".join(f"R{g}" for g in vivas))
+    return frenos
+
+
+def frenos_para_cambiar_proveedor(compra_id: int) -> list[str]:
+    """Lo mismo que lee la escritura, para que la pantalla ofrezca solo lo que acepta."""
+    conexion = obtener_conexion()
+    try:
+        with conexion.cursor() as cursor:
+            return _frenos_para_cambiar_proveedor(cursor, compra_id)
+    finally:
+        conexion.close()
+
+
+def cambiar_proveedor_de_compra(compra_id: int, proveedor_id: int) -> dict:
+    """Cambia el proveedor de una compra, y la muda a la GUÍA de ese proveedor ese día.
+
+    Del dueño (23/09), con la clave de Gerencia. LOS CUATRO FRENOS son los
+    lugares donde el proveedor viejo YA QUEDÓ ESCRITO en otro lado, y cambiarlo
+    acá los dejaría contradiciéndose sin que nada avise:
+
+      1. una guía R CONSUMIÓ su lote (`reprocesos_consumos`), que lista el
+         proveedor del lote en su documento congelado;
+      2. un VALE de vacíos se cargó contra esta compra: esa devolución es de
+         cajones del proveedor viejo;
+      3. una DEVOLUCIÓN AL PROVEEDOR salió de un rechazo de esta compra;
+      4. generó una guía R EN ORIGEN (vino armada): la guía y la compra dicen
+         lo mismo uno a uno.
+
+    Las cuatro se preguntan con `SELECT` sin agregado o con el conteo leído
+    como número, nunca con `is None` sobre un `count` (corolario 27). Y las dos
+    que ya tenían su helper lo reusan: `_lote_de_la_compra_YA_SE_USO` y
+    `_guias_en_origen_vivas`, escritas una vez.
+
+    LA GUÍA SE MUDA con `_guia_de_compra`, el mismo helper que usa mover la
+    fecha: la guía es por (día, proveedor), así que con otro proveedor la
+    compra pertenece a otra guía. Las fotos del papel se quedan con la vieja,
+    que es el papel que se fotografió.
+
+    LOS VACÍOS DEL DEPÓSITO SE ACOMODAN SOLOS: se derivan de las recepciones
+    por proveedor, así que los cajones de esta compra pasan al nuevo sin tocar
+    nada. Si el nuevo no tiene conteo inicial, esos cajones pasan a esperar.
+    """
+    conexion = obtener_conexion()
+    try:
+        with conexion.cursor() as cursor:
+            cursor.execute(
+                "SELECT proveedor_id, fecha_operacion, guia_id FROM compras WHERE id = %s",
+                (compra_id,),
+            )
+            fila = cursor.fetchone()
+            if fila is None:
+                raise ValueError("Esa compra no existe.")
+            proveedor_viejo, fecha, guia_vieja_id = fila
+            if int(proveedor_viejo) == int(proveedor_id):
+                raise ValueError("Esa compra ya es de ese proveedor.")
+            cursor.execute("SELECT id FROM proveedores WHERE id = %s", (proveedor_id,))
+            if cursor.fetchone() is None:
+                raise ValueError("Ese proveedor no existe.")
+
+            frenos = _frenos_para_cambiar_proveedor(cursor, compra_id)
+            if frenos:
+                raise ValueError(
+                    "No se puede cambiar el proveedor: esta compra " + "; ".join(frenos)
+                    + ". Ahí el proveedor viejo ya quedó escrito. Anulá eso primero y volvé."
+                )
+
+            guia_id, guia_punto = _guia_de_compra(cursor, fecha, proveedor_id)
+            cursor.execute(
+                """
+                UPDATE compras SET proveedor_id = %s, guia_id = %s, guia_punto = %s
+                WHERE id = %s
+                """,
+                (proveedor_id, guia_id, guia_punto, compra_id),
+            )
+        conexion.commit()
+        return {"proveedor_viejo": int(proveedor_viejo), "guia_id": guia_id,
+                "guia_vieja_id": guia_vieja_id}
+    except Exception:
+        conexion.rollback()
+        raise
+    finally:
+        conexion.close()
+
+
 def corregir_recepcion_compra(
     compra_id: int,
     cantidad_cajones_real: float,
@@ -9924,7 +10044,7 @@ def carga_de_compra(cliente_id: int, fecha) -> dict | None:
             cursor.execute(
                 """
                 SELECT id, cliente_id, fecha, modo, promedio_anterior_a,
-                       margen_porcentaje
+                       margen_porcentaje, dias
                 FROM cargas_compra WHERE cliente_id = %s AND fecha = %s
                 """,
                 (cliente_id, fecha),
@@ -9954,6 +10074,9 @@ def carga_de_compra(cliente_id: int, fecha) -> dict | None:
                 "modo": cabecera[3],
                 "promedio_anterior_a": cabecera[4],
                 "margen": float(cabecera[5]),
+                # NULL es UNO: es lo que eran las cargas antes de la columna,
+                # y mientras no corra el NOT NULL una fila puede venir así.
+                "dias": int(cabecera[6] or 1),
                 "renglones": renglones,
                 "por_bulto": por_bulto,
             }
@@ -9979,7 +10102,7 @@ def cargas_con_renglones(carga_ids) -> list[dict]:
             cursor.execute(
                 """
                 SELECT c.id, c.cliente_id, cl.nombre, c.fecha, c.modo,
-                       c.promedio_anterior_a, c.margen_porcentaje
+                       c.promedio_anterior_a, c.margen_porcentaje, c.dias
                 FROM cargas_compra c
                 JOIN clientes cl ON cl.id = c.cliente_id
                 WHERE c.id = ANY(%s)
@@ -9990,7 +10113,7 @@ def cargas_con_renglones(carga_ids) -> list[dict]:
             cargas = [
                 {"id": int(f[0]), "cliente_id": int(f[1]), "cliente_nombre": f[2],
                  "fecha": f[3], "modo": f[4], "promedio_anterior_a": f[5],
-                 "margen": float(f[6]), "renglones": {}}
+                 "margen": float(f[6]), "dias": int(f[7] or 1), "renglones": {}}
                 for f in cursor.fetchall()
             ]
             por_id = {c["id"]: c for c in cargas}
@@ -10008,7 +10131,8 @@ def cargas_con_renglones(carga_ids) -> list[dict]:
         conexion.close()
 
 
-def guardar_carga_de_compra(cliente_id: int, fecha, modo, promedio_anterior_a, margen) -> int:
+def guardar_carga_de_compra(cliente_id: int, fecha, modo, promedio_anterior_a, margen,
+                            dias: int = 1) -> int:
     """Crea o actualiza la carga de ese cliente para esa fecha. Devuelve su id.
 
     EL MARGEN SÍ SE PISA Y EL ANCLA NO, y no es una inconsistencia: el
@@ -10035,15 +10159,16 @@ def guardar_carga_de_compra(cliente_id: int, fecha, modo, promedio_anterior_a, m
             cursor.execute(
                 """
                 INSERT INTO cargas_compra
-                       (cliente_id, fecha, modo, promedio_anterior_a, margen_porcentaje)
-                VALUES (%s, %s, %s, %s, %s)
+                       (cliente_id, fecha, modo, promedio_anterior_a, margen_porcentaje, dias)
+                VALUES (%s, %s, %s, %s, %s, %s)
                 ON CONFLICT (cliente_id, fecha) DO UPDATE
                    SET modo = EXCLUDED.modo,
                        margen_porcentaje = EXCLUDED.margen_porcentaje,
+                       dias = EXCLUDED.dias,
                        actualizado_en = now()
                 RETURNING id
                 """,
-                (cliente_id, fecha, modo, promedio_anterior_a, margen),
+                (cliente_id, fecha, modo, promedio_anterior_a, margen, dias),
             )
             carga_id = cursor.fetchone()[0]
             conexion.commit()
@@ -14412,6 +14537,7 @@ COLUMNAS_STOCK_DE_ENVASES = (
     "id", "nombre", "umbral_reposicion", "desde",
     "contadas", "declaradas", "por_guias", "stock",
     "esperando_mov", "esperando_guias", "esperando_desde",
+    "cajas_por_pallet",
 )
 
 _SQL_STOCK_DE_ENVASES = """
@@ -14504,7 +14630,8 @@ _SQL_STOCK_DE_ENVASES = """
            b.cantidad + COALESCE(d.cajas, 0) + COALESCE(g.cajas, 0) AS stock,
            CASE WHEN b.envase_id IS NULL THEN COALESCE(em.movimientos, 0) ELSE 0 END AS esperando_mov,
            CASE WHEN b.envase_id IS NULL THEN COALESCE(eg.guias, 0) ELSE 0 END AS esperando_guias,
-           CASE WHEN b.envase_id IS NULL THEN LEAST(em.desde, eg.desde) END AS esperando_desde
+           CASE WHEN b.envase_id IS NULL THEN LEAST(em.desde, eg.desde) END AS esperando_desde,
+           e.cajas_por_pallet
       FROM envases e
       LEFT JOIN base b      ON b.envase_id = e.id
       LEFT JOIN declarados d ON d.envase_id = e.id
@@ -15293,6 +15420,24 @@ def guardar_umbral_de_envase(envase_id: int, umbral: int | None) -> None:
             cursor.execute(
                 "UPDATE envases SET umbral_reposicion = %s, actualizado_en = now() WHERE id = %s",
                 (umbral, envase_id),
+            )
+        conexion.commit()
+    finally:
+        conexion.close()
+
+
+def guardar_cajas_por_pallet(envase_id: int, cajas: int | None) -> None:
+    """Cuántas cajas de este envase entran en un pallet. None = no se sabe.
+
+    El `> 0` lo rechaza el CHECK de la base (`envases_cajas_por_pallet_
+    positivo`), igual que el umbral: la regla vive donde se escribe.
+    """
+    conexion = obtener_conexion()
+    try:
+        with conexion.cursor() as cursor:
+            cursor.execute(
+                "UPDATE envases SET cajas_por_pallet = %s, actualizado_en = now() WHERE id = %s",
+                (cajas, envase_id),
             )
         conexion.commit()
     finally:

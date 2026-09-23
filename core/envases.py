@@ -333,3 +333,20 @@ def cuenta_por_tipo_de_caja(cuentas: list[dict]) -> dict:
             elif renglon["lado"] == "le debo":
                 destino["debo"] += renglon["cuantas"]
     return por_tipo
+
+
+def en_pallets(cajas, cajas_por_pallet):
+    """(pallets enteros, cajas sueltas) de un stock, o None si no se puede decir.
+
+    Del dueño (23/09): el stock se lee como pallets más cajas sueltas. Sin el
+    número de cajas por pallet no hay nada que decir, y un stock NEGATIVO
+    tampoco se parte — "−2 pallets y 40 sueltas" no describe ningún piso; el
+    faltante se lee en cajas.
+    """
+    if cajas is None or not cajas_por_pallet or cajas_por_pallet <= 0:
+        return None
+    cajas = int(cajas)
+    if cajas < 0:
+        return None
+    return divmod(cajas, int(cajas_por_pallet))
+

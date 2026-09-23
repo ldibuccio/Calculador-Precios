@@ -402,6 +402,7 @@ UN_ENVASE_SIN_ARRANCAR = [{
     "id": 1, "nombre": "Caja Grande", "umbral_reposicion": 50, "desde": None,
     "contadas": None, "declaradas": 0, "por_guias": 0, "stock": None,
     "esperando_mov": 0, "esperando_guias": 0, "esperando_desde": None,
+    "cajas_por_pallet": None,
 }]
 UN_ENVASE_SIN_ARRANCAR_CON_COSAS_ESPERANDO = [{
     "id": 1, "nombre": "Caja Grande", "umbral_reposicion": 50, "desde": None,
@@ -413,6 +414,7 @@ UN_ENVASE_BAJO = [{
     "id": 1, "nombre": "Caja Grande", "umbral_reposicion": 50, "desde": date(2026, 9, 10),
     "contadas": 100, "declaradas": -70, "por_guias": -20, "stock": 10,
     "esperando_mov": 0, "esperando_guias": 0, "esperando_desde": None,
+    "cajas_por_pallet": None,
 }]
 
 # El gasto en cajas viaja SIEMPRE, así que todas las pruebas de pantalla lo
@@ -1011,7 +1013,7 @@ def test_guardar_un_movimiento_LEE_EL_STOCK_y_NO_revienta():
     conexion = MagicMock()
     cursor = conexion.cursor.return_value.__enter__.return_value
     fila = (1, "Caja EJEMPLO Grande", 100, date(2026, 9, 10), 500, 0, 0, 500,
-            0, 0, None)
+            0, 0, None, None)
     assert len(fila) == len(
         __import__("app.db", fromlist=["x"]).COLUMNAS_STOCK_DE_ENVASES
     ), "el fixture tiene que tener las columnas que la consulta devuelve, ni una más"
@@ -1508,8 +1510,9 @@ def test_la_consulta_del_CATALOGO_trae_las_dos_columnas_del_filtro():
 # porque desmarcar exige que la guia R este anulada, y anular vive detras de
 # la clave de Administracion.
 
-def _pantalla_corregir(marca, estado="recepcionado", uso_lote=None):
-    compra = {"id": 663, "proveedor_nombre": "Proveedor EJEMPLO",
+def _pantalla_corregir(marca, estado="recepcionado", uso_lote=None,
+                       frenos_proveedor=None, proveedores=None, url_extra=""):
+    compra = {"id": 663, "proveedor_id": 1, "proveedor_nombre": "Proveedor EJEMPLO",
               "proveedor_codigo_puesto": "N01P01", "articulo_nombre": "Pera EJEMPLO",
               "guia_id": 105, "guia_punto": 2, "estado": estado,
               "cantidad_cajones_real": 5.0, "contenido_por_cajon_real": 18.0,
@@ -1528,6 +1531,8 @@ def _pantalla_corregir(marca, estado="recepcionado", uso_lote=None):
         # esta pantalla, igual que las dos de arriba.
         patch("app.main.uso_del_lote_de_la_compra",
               return_value=uso_lote or {"guias": 0, "armados": 0}),
+        patch("app.main.frenos_para_cambiar_proveedor", return_value=frenos_proveedor or []),
+        patch("app.main.listar_proveedores", return_value=proveedores or []),
         patch("app.main._dependencias_con_nombres", return_value=None),
         patch("app.main._fotos_de_la_guia_de", return_value=[]),
         patch("app.main.listar_fotos_de_recepcion", return_value=[]),
@@ -1537,7 +1542,7 @@ def _pantalla_corregir(marca, estado="recepcionado", uso_lote=None):
     ):
         cliente.cookies.set("acceso_gerencia", _firma_acceso_gerencia("secreta"))
         try:
-            return cliente.get("/gerencia/compras/663/corregir-recepcion")
+            return cliente.get("/gerencia/compras/663/corregir-recepcion" + url_extra)
         finally:
             cliente.cookies.clear()
 
@@ -1647,9 +1652,10 @@ def test_desmarcar_NO_anula_la_guia_y_eso_es_una_DECISION():
     assert "anulado_el = " not in codigo and "anular" not in codigo.lower()
 
 
-def test_los_CUATRO_que_miran_la_guia_en_origen_LLAMAN_A_LA_MISMA_guarda():
-    """La pantalla que ofrece desmarcar, el desmarcar, Corregir Recepcion y
-    mover la compra de fecha: los cuatro preguntan lo mismo, y si se separan
+def test_los_CINCO_que_miran_la_guia_en_origen_LLAMAN_A_LA_MISMA_guarda():
+    """La pantalla que ofrece desmarcar, el desmarcar, Corregir Recepcion,
+    mover la compra de fecha y —desde el 23/09— los frenos de cambiar el
+    proveedor: los cinco preguntan lo mismo, y si se separan
     uno ofrece un boton que el otro despues rechaza — el callejon.
 
     Hasta el 19/09 el filtro estaba COPIADO en tres cuerpos y este test
@@ -1681,6 +1687,7 @@ def test_los_CUATRO_que_miran_la_guia_en_origen_LLAMAN_A_LA_MISMA_guarda():
         "desmarcar_compra_armada_en_origen",
         "corregir_recepcion_compra",
         "mover_compra_de_fecha",
+        "_frenos_para_cambiar_proveedor",
     }, f"cambio quien pregunta por la guia en origen: {sorted(llamadores)}"
 
 
@@ -2346,7 +2353,8 @@ def test_los_dos_numeros_LLEGAN_A_LA_TARJETA_y_no_solo_a_la_funcion():
     envases = [{"id": 1, "nombre": "Caja EJEMPLO Chica", "umbral_reposicion": None,
                 "desde": date(2026, 9, 10), "contadas": 500, "declaradas": -440,
                 "por_guias": 0, "stock": 60,
-                "esperando_mov": 0, "esperando_guias": 0, "esperando_desde": None}]
+                "esperando_mov": 0, "esperando_guias": 0, "esperando_desde": None,
+                "cajas_por_pallet": None}]
     cuentas = [
         {"colega_id": 3, "colega": "EJEMPLO Juan", "movimientos": 1,
          "por_envase": [{"envase_id": 1, "envase": "Caja EJEMPLO Chica",

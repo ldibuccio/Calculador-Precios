@@ -186,6 +186,24 @@ def test_A_MANO_no_tiene_propuesta_y_el_margen_no_mueve_nada():
     assert lo_que_pide_la_carga({1: 500.0}, {}, 0) == lo_que_pide_la_carga({1: 500.0}, {}, 35)
 
 
+
+def test_los_DIAS_multiplican_SOLO_lo_propuesto_igual_que_el_margen():
+    """Dueño, 23/09: "para cuántos días es la compra" multiplica el promedio
+    diario. Con 3 días y 10%: el tomate propuesto 100 va a 330; la lima
+    corregida a 50 se queda en 50. El RIVAL es multiplicar también lo
+    corregido, que daría 150."""
+    from core.que_comprar import lo_que_pide_la_carga as regla
+    pide = regla({2: 50.0}, {1: 100.0, 2: 80.0}, 10, dias=3)
+    assert pide == {1: pytest.approx(330.0), 2: 50.0}
+
+
+def test_los_DIAS_en_None_o_basura_son_UNO_y_nunca_cero():
+    from core.que_comprar import dias_validos, para_los_dias
+    assert para_los_dias(100.0, None) == 100.0
+    assert para_los_dias(None, 3) is None
+    assert [dias_validos(x) for x in ("3", " 2 ", "", "0", "-1", "abc", None)] == \
+        [3, 2, 1, 1, 1, 1, 1]
+
 # --- El armado de las filas, llamado DIRECTO ---------------------------------
 #
 # Sin mocks: `_filas_de_que_comprar` es pura y recibe lo que las consultas

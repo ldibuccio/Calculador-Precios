@@ -58,6 +58,7 @@ from core.envases import (
     ORIGENES_DE_COLEGA,
     envase_derivado_de_la_ficha,
     envases_por_unidad_de_venta,
+    en_pallets,
     cuenta_por_tipo_de_caja,
     hay_que_reponer,
 )
@@ -341,6 +342,7 @@ from app.db import (
     asignar_tipo_cajon,
     crear_movimiento_envase,
     guardar_umbral_de_envase,
+    guardar_cajas_por_pallet,
     contar_envases_a_reponer,
     detallar_envases_a_reponer,
     listar_proveedores_puesto,
@@ -381,6 +383,8 @@ from app.db import (
     agregar_foto_recepcion,
     listar_fotos_de_recepcion,
     marca_en_origen_de_la_compra,
+    cambiar_proveedor_de_compra,
+    frenos_para_cambiar_proveedor,
     deficit_de_cajas_por_ficha,
     obtener_uso_storage_bucket,
     recepcionar_compra,
@@ -398,6 +402,8 @@ from core.que_comprar import (
     PEDIDOS_DEL_PROMEDIO,
     cajones_que_faltan,
     con_margen,
+    dias_validos,
+    para_los_dias,
     falta_por_comprar,
     lo_que_pide_la_carga,
     margen_valido,
@@ -3549,7 +3555,8 @@ def _contexto_de_que_comprar(request: Request, aviso: str | None = None):
                 # LA MISMA REGLA QUE DIBUJÓ LA CARGA, con el mismo promedio en
                 # vivo: lo que el listado suma es lo que el comprador vio.
                 "pide": lo_que_pide_la_carga(
-                    carga["renglones"], _propuesto_de_la_carga(carga), carga["margen"]),
+                    carga["renglones"], _propuesto_de_la_carga(carga), carga["margen"],
+                    carga.get("dias", 1)),
             }
             for carga in cargas
         ]
@@ -3716,7 +3723,8 @@ def _articulos_para_cargar(cliente_id: int,
                            guardado: dict | None = None,
                            propuesto: dict | None = None,
                            margen: float = 0.0,
-                           por_bulto: dict | None = None) -> list[dict]:
+                           por_bulto: dict | None = None,
+                           dias: int = 1) -> list[dict]:
     """El catálogo de compra con su unidad, lo ya cargado y lo que se propone.
 
     Una sola lectura de fichas para todos los artículos, no una por
@@ -3739,8 +3747,8 @@ def _articulos_para_cargar(cliente_id: int,
     # lo guardado tal cual. Escrito acá a mano serían dos reglas, y la copia
     # que se separe no falla — el listado compra otra cosa que la que se vio.
     crudo = propuesto or {}
-    propuesto = {a: con_margen(total, margen) for a, total in crudo.items()}
-    pide = lo_que_pide_la_carga(guardado, crudo, margen)
+    propuesto = {a: con_margen(para_los_dias(total, dias), margen) for a, total in crudo.items()}
+    pide = lo_que_pide_la_carga(guardado, crudo, margen, dias)
     declarado = por_bulto or {}
 
     def en_bultos(magnitud, contenido):
@@ -3833,7 +3841,7 @@ def _contexto_de_carga(carga: dict, aviso: str | None = None) -> dict:
         "fecha_mostrar": carga["fecha"].strftime("%d/%m/%Y"),
         "articulos": _articulos_para_cargar(
             carga["cliente_id"], carga["renglones"], propuesto, carga["margen"],
-            carga.get("por_bulto")),
+            carga.get("por_bulto"), carga.get("dias", 1)),
         "hay_propuesta": bool(propuesto),
         "aviso": aviso,
     }
@@ -3900,7 +3908,7 @@ async def empezar_carga_de_compra(request: Request):
         # proponía. El valor de arranque lo pone la pantalla y no la base:
         # dos defaults que no coinciden es como se separan dos reglas.
         guardar_carga_de_compra(cliente_id, fecha, modo, _hoy_argentina(),
-                                MARGEN_SUGERIDO)
+                                MARGEN_SUGERIDO, dias=1)
     except Exception:
         logger.exception("No se pudo abrir la carga de compra")
         return RedirectResponse("/compras/carga?aviso=No+se+pudo+abrir+la+carga",
@@ -3956,7 +3964,7 @@ async def guardar_carga_de_compra_ruta(request: Request, cliente_id: int, fecha:
         antes = carga_de_compra(cliente_id, fecha_valor)
         if antes is not None and antes["modo"] != modo:
             guardar_carga_de_compra(cliente_id, fecha_valor, modo,
-                                    _hoy_argentina(), antes["margen"])
+                                    _hoy_argentina(), antes["margen"], dias=antes["dias"])
             comoquedo = "Del+promedio" if modo == "automatico" else "A+mano"
             return RedirectResponse(f"{volver}?aviso=Pasada+a+{comoquedo}", status_code=303)
 
@@ -3969,8 +3977,14 @@ async def guardar_carga_de_compra_ruta(request: Request, cliente_id: int, fecha:
             margen = margen_valido(formulario.get("margen"))
         else:
             margen = antes["margen"] if antes else MARGEN_SUGERIDO
+        # LOS DÍAS, POR LA MISMA RAZÓN QUE EL MARGEN: en "a mano" el campo no se
+        # dibuja, y leerlo igual lo volvería a 1 sin que nadie lo eligiera.
+        if "dias" in formulario:
+            dias = dias_validos(formulario.get("dias"))
+        else:
+            dias = antes["dias"] if antes else 1
         carga_id = guardar_carga_de_compra(cliente_id, fecha_valor, modo, _hoy_argentina(),
-                                           margen)
+                                           margen, dias=dias)
         guardar_renglones_de_carga(carga_id, renglones, por_bulto)
     except Exception:
         logger.exception("No se pudo guardar la carga de compra")
@@ -4274,7 +4288,8 @@ async def confirmar_archivo_de_carga(request: Request, cliente_id: int, fecha: s
         antes = carga_de_compra(cliente_id, fecha_valor)
         carga_id = guardar_carga_de_compra(
             cliente_id, fecha_valor, "manual", _hoy_argentina(),
-            antes["margen"] if antes else MARGEN_SUGERIDO)
+            antes["margen"] if antes else MARGEN_SUGERIDO,
+            dias=antes["dias"] if antes else 1)
         guardar_renglones_de_carga(carga_id, totales)
     except Exception:
         logger.exception("No se pudo guardar la carga leída del archivo")
@@ -6014,6 +6029,9 @@ def _renderizar_pantalla_cajas(request: Request, *, error: str | None = None,
         cuenta = por_tipo.get(envase["id"], {"me_deben": 0, "debo": 0})
         envase["me_deben"] = cuenta["me_deben"]
         envase["debo"] = cuenta["debo"]
+        # PALLETS Y SUELTAS (dueño, 23/09): se parte el MISMO stock, no se
+        # cuenta aparte. La regla vive en core/envases.py.
+        envase["pallets"] = en_pallets(envase["stock"], envase.get("cajas_por_pallet"))
 
     return templates.TemplateResponse(
         request,
@@ -6210,6 +6228,32 @@ def ver_cuenta_de_colega(request: Request, colega_id: int):
         {"cuenta": cuenta, "movimientos": movimientos,
          "camino": _camino_de_cajas_y_vacios(request)},
     )
+
+
+@app.post("/compras/cajas/pallet")
+@app.post("/administracion/cajas/pallet")
+def guardar_cajas_por_pallet_ruta(request: Request, envase_id: str = Form(""),
+                                  cajas: str = Form("")):
+    """Cuántas cajas entran en un pallet. Vacío = no se sabe, y el stock va solo en cajas."""
+    if not envase_id.strip().isdigit():
+        return _renderizar_pantalla_cajas(request, error="Elegí un envase.", status_code=400)
+    texto = cajas.strip()
+    valor = None
+    if texto:
+        if not texto.isdigit() or int(texto) == 0:
+            return _renderizar_pantalla_cajas(
+                request, error="Las cajas por pallet tienen que ser un número entero mayor que cero, "
+                               "o vacío si no lo sabés.", status_code=400)
+        valor = int(texto)
+    try:
+        guardar_cajas_por_pallet(int(envase_id), valor)
+    except Exception as error_db:
+        return _renderizar_pantalla_cajas(
+            request, error=f"No se pudo guardar: {error_db}", status_code=400)
+    return RedirectResponse(
+        url=f"{_camino_de_cajas_y_vacios(request)['base']}/cajas?" +
+            urlencode({"aviso": "Cajas por pallet guardadas."}),
+        status_code=303)
 
 
 @app.post("/compras/cajas/umbral")
@@ -7319,7 +7363,8 @@ def ver_detalle_compra(request: Request, compra_id: int, aviso: str | None = Non
 
 def _renderizar_pantalla_corregir_recepcion(
     request: Request, compra_id: int, *, error: str | None = None, aviso=None,
-    precarga=None, desmarcada: bool = False, status_code: int = 200
+    precarga=None, desmarcada: bool = False, proveedor_cambiado: bool = False,
+    status_code: int = 200
 ):
     try:
         compra = obtener_detalle_compra(compra_id)
@@ -7345,6 +7390,10 @@ def _renderizar_pantalla_corregir_recepcion(
         # deshacer la recepción solo se dibuja donde el POST acepta, o sería
         # un callejón.
         uso_lote = uso_del_lote_de_la_compra(compra_id) if compra else None
+        # CAMBIAR EL PROVEEDOR (23/09): la MISMA función de frenos que usa la
+        # escritura, así el selector solo se dibuja donde el POST acepta.
+        frenos_proveedor = frenos_para_cambiar_proveedor(compra_id) if compra else []
+        proveedores = listar_proveedores() if compra and not frenos_proveedor else []
     except Exception as error_db:
         raise HTTPException(status_code=500, detail=f"Error al conectar con la base de datos: {error_db}") from error_db
 
@@ -7357,7 +7406,9 @@ def _renderizar_pantalla_corregir_recepcion(
         {"compra": compra, "error": error, "dependencias": dependencias,
          "fotos_guia": fotos_guia, "fotos_balanza": fotos_balanza,
          "marca": marca, "desmarcada": desmarcada, "uso_lote": uso_lote,
-         "aviso": aviso, "precarga": precarga or {}},
+         "aviso": aviso, "precarga": precarga or {},
+         "frenos_proveedor": frenos_proveedor, "proveedores": proveedores,
+         "proveedor_cambiado": proveedor_cambiado},
         status_code=status_code,
     )
 
@@ -7800,7 +7851,8 @@ def cargar_ingreso_retroactivo(
 
 
 @app.get("/gerencia/compras/{compra_id}/corregir-recepcion")
-def ver_corregir_recepcion_compra(request: Request, compra_id: int, desmarcada: str = ""):
+def ver_corregir_recepcion_compra(request: Request, compra_id: int, desmarcada: str = "",
+                                  proveedor_cambiado: str = ""):
     """Formulario para corregir los valores reales de una compra ya recepcionada (ej. error de tipeo en Depósito).
 
     VIVE EN GERENCIA, y tiene que vivir acá: la cookie de la clave se emite
@@ -7818,7 +7870,8 @@ def ver_corregir_recepcion_compra(request: Request, compra_id: int, desmarcada: 
     if puerta is not None:
         return puerta
     return _renderizar_pantalla_corregir_recepcion(
-        request, compra_id, desmarcada=bool(desmarcada.strip()))
+        request, compra_id, desmarcada=bool(desmarcada.strip()),
+        proveedor_cambiado=bool(proveedor_cambiado.strip()))
 
 
 @app.post("/gerencia/compras/{compra_id}/desmarcar-armada")
@@ -7861,6 +7914,36 @@ def desmarcar_armada_ruta(request: Request, compra_id: int):
 
     return RedirectResponse(
         url=f"/gerencia/compras/{compra_id}/corregir-recepcion?desmarcada=1",
+        status_code=303,
+    )
+
+
+@app.post("/gerencia/compras/{compra_id}/cambiar-proveedor")
+def cambiar_proveedor_ruta(request: Request, compra_id: int, proveedor_id: str = Form("")):
+    """Cambia el proveedor de una compra (dueño, 23/09), detrás de la clave de Gerencia.
+
+    Los cuatro frenos viven en `cambiar_proveedor_de_compra`, que es donde se
+    escribe; la pantalla pregunta por la misma función para no ofrecer un
+    botón que esto después rechace.
+    """
+    puerta = _puerta_de_gerencia_para_escribir(request)
+    if puerta is not None:
+        return puerta
+
+    texto = (proveedor_id or "").strip()
+    if not texto.isdigit():
+        return _renderizar_pantalla_corregir_recepcion(
+            request, compra_id, error="Elegí el proveedor nuevo.", status_code=400)
+    try:
+        cambiar_proveedor_de_compra(compra_id, int(texto))
+    except ValueError as invalida:
+        return _renderizar_pantalla_corregir_recepcion(
+            request, compra_id, error=str(invalida), status_code=400)
+    except Exception as error_db:
+        raise HTTPException(status_code=500, detail=f"Error al conectar con la base de datos: {error_db}") from error_db
+
+    return RedirectResponse(
+        url=f"/gerencia/compras/{compra_id}/corregir-recepcion?proveedor_cambiado=1",
         status_code=303,
     )
 

@@ -97,6 +97,15 @@
              value="{{ carga.margen|sin_decimales }}" aria-label="Margen en por ciento">
       <label for="margen">% más de lo que pide</label>
     </div>
+    {# LOS DÍAS, AL LADO DEL MARGEN Y CON SU MISMA REGLA (dueño, 23/09):
+       multiplican lo que el promedio propone para un día. Lo corregido a mano
+       no se mueve. #}
+    <div class="margen">
+      <label for="dias">Comprar para</label>
+      <input id="dias" name="dias" type="number" inputmode="numeric" step="1" min="1"
+             value="{{ carga.dias }}" aria-label="Para cuántos días">
+      <label for="dias">{{ "día" if carga.dias == 1 else "días" }}</label>
+    </div>
     {% endif %}
     <p class="ayuda">
       Del promedio: los últimos 6 pedidos anteriores al
@@ -276,22 +285,29 @@
   // filas que TODAVIA muestran lo propuesto: la que se corrigio a mano queda
   // donde el comprador la dejo, que es la misma regla que el guardado aplica
   // del otro lado. Sin eso, subir el porcentaje pisaria las correcciones.
+  // Y LOS DIAS HACEN LO MISMO: la base es el promedio de UN dia, asi que la
+  // propuesta es base x dias x (1 + margen). La misma cuenta que el server.
   var campoMargen = document.getElementById("margen");
-  if (campoMargen) campoMargen.addEventListener("input", function () {
+  var campoDias = document.getElementById("dias");
+  function rehacerPropuesta() {
     var por = parseFloat(campoMargen.value);
     if (isNaN(por) || por < 0) return;
+    var dias = campoDias ? parseInt(campoDias.value, 10) : 1;
+    if (isNaN(dias) || dias < 1) return;
     document.querySelectorAll(".c-total[data-base]").forEach(function (campo) {
       var base = parseFloat(campo.dataset.base || "");
       if (isNaN(base)) return;
       var espejo = document.querySelector('input[name="propuesto_'
         + campo.name.replace(/^total_/, "") + '"]');
       if (!espejo || campo.value !== espejo.value) return;   // tocada a mano
-      var nuevo = numero(base * (1 + por / 100));
+      var nuevo = numero(base * dias * (1 + por / 100));
       campo.value = nuevo;
       espejo.value = nuevo;
       ajustar(campo.closest(".fila"), "total");
     });
-  });
+  }
+  if (campoMargen) campoMargen.addEventListener("input", rehacerPropuesta);
+  if (campoDias && campoMargen) campoDias.addEventListener("input", rehacerPropuesta);
 })();
 </script>
 {% include "_pie_version.html" %}

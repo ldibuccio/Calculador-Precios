@@ -36,6 +36,7 @@
             min-width: 0; }
   .stock { font-size: 1.6rem; font-weight: 700; }
   .stock.bajo { color: #b91c1c; }
+  .pallets { display: block; font-size: .9rem; color: #374151; margin-top: .15rem; }
   .stock.sin-arrancar { font-size: 1rem; font-weight: 500; color: #6b7280; }
   .patas { display: flex; flex-wrap: wrap; gap: .4rem .9rem;
            font-size: .85rem; color: #555; margin: .35rem 0 .75rem; }
@@ -151,6 +152,10 @@
         <span class="n {% if e.bajo %}bajo{% endif %}">{{ e.stock|numero }}</span>
         {% endif %}
         <span class="r">en el piso</span>
+        {% if e.pallets %}
+        <span class="pallets">{{ e.pallets[0] }} pallet{{ "" if e.pallets[0] == 1 else "s" }}
+          {%- if e.pallets[1] %} y {{ e.pallets[1] }} suelta{{ "" if e.pallets[1] == 1 else "s" }}{% endif %}</span>
+        {% endif %}
       </div>
       {# ME DEBEN y DEBO se ven SIEMPRE, aunque la cuenta del piso no haya
          arrancado: salen de los movimientos con colegas, que no dependen del
@@ -204,6 +209,18 @@
                placeholder="vacío = no avisar">
       </div>
       <button type="submit">Guardar el aviso</button>
+    </form>
+    {# CUÁNTAS ENTRAN EN UN PALLET, también adentro de la tarjeta: es de este
+       tipo de caja. Se carga una vez y el stock de arriba se parte solo. #}
+    <form class="fila" method="post" action="{{ camino.base }}/cajas/pallet" style="margin-top:.75rem">
+      <input type="hidden" name="envase_id" value="{{ e.id }}">
+      <div class="campo">
+        <label for="p{{ e.id }}">¿Cuántas entran en un pallet?</label>
+        <input type="number" id="p{{ e.id }}" name="cajas" min="1" step="1"
+               inputmode="numeric" value="{{ e.cajas_por_pallet if e.cajas_por_pallet is not none else '' }}"
+               placeholder="vacío = no lo sé">
+      </div>
+      <button type="submit">Guardar</button>
     </form>
   </div>
   {% else %}

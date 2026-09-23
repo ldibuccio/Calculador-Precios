@@ -118,6 +118,19 @@ def test_EDITAR_una_carga_SI_MUEVE_el_margen(galpon):
     assert carga["promedio_anterior_a"] == CARGADA_EL, "y el ancla igual no se movió"
 
 
+def test_los_DIAS_se_guardan_y_EDITAR_los_mueve(galpon):
+    """Contra Postgres: la columna existe, la escritura la nombra, y el `SET`
+    del `ON CONFLICT` la pisa — que es lo único que un mock no puede ver
+    (corolario 89). El rival es olvidarla en el SET: la carga nueva la
+    guardaría y la edición la perdería en silencio, igual que el margen."""
+    d, _sql, cliente, _t, _l = galpon
+    d.guardar_carga_de_compra(cliente, EL_27, "automatico", CARGADA_EL, 10, dias=2)
+    assert d.carga_de_compra(cliente, EL_27)["dias"] == 2
+    carga_id = d.guardar_carga_de_compra(cliente, EL_27, "automatico", CARGADA_EL, 10, dias=5)
+    assert d.carga_de_compra(cliente, EL_27)["dias"] == 5
+    assert d.cargas_con_renglones([carga_id])[0]["dias"] == 5
+
+
 def test_BORRARLA_Y_EMPEZAR_DE_CERO_si_mueve_el_ancla(galpon):
     """La otra mitad, y es la que hace que la de arriba no sea una traba: sin
     esto, una carga vieja quedaría con su ancla para siempre."""
@@ -469,13 +482,13 @@ def _entrar(contextos, metodo, ruta, **kwargs):
     return respuesta, por_nombre
 
 
-def _carga(modo="manual", renglones=None, margen=0.0, por_bulto=None):
+def _carga(modo="manual", renglones=None, margen=0.0, por_bulto=None, dias=1):
     # CON `por_bulto` COMO LO DEVUELVE LA BASE (un dict, vacío si nada se
     # declaró): un fixture sin la clave probaría una forma que producción no
     # tiene.
     return {"id": 3, "cliente_id": 1, "fecha": EL_27, "modo": modo, "margen": margen,
             "promedio_anterior_a": CARGADA_EL, "renglones": renglones or {},
-            "por_bulto": por_bulto or {}}
+            "por_bulto": por_bulto or {}, "dias": dias}
 
 
 def test_abrir_una_carga_QUE_YA_EXISTE_PREGUNTA_en_vez_de_crear_otra():
@@ -915,6 +928,65 @@ def test_el_margen_SE_GUARDA():
     _, abiertos = _entrar(ctx, "post", f"/compras/carga/1/{EL_27.isoformat()}",
                           data={"modo": "automatico", "margen": "25"})
     assert abiertos["guardar_carga_de_compra"].call_args.args[4] == 25.0
+
+
+def test_los_DIAS_SE_GUARDAN_y_A_MANO_sin_el_campo_los_CONSERVA():
+    ctx = _con_catalogo()
+    ctx.append(patch("app.main.guardar_carga_de_compra", return_value=3))
+    ctx.append(patch("app.main.guardar_renglones_de_carga"))
+    _, abiertos = _entrar(ctx, "post", f"/compras/carga/1/{EL_27.isoformat()}",
+                          data={"modo": "automatico", "margen": "10", "dias": "3"})
+    assert abiertos["guardar_carga_de_compra"].call_args.kwargs["dias"] == 3
+
+    ctx = _con_catalogo(**{"app.main.carga_de_compra": _carga(modo="manual", dias=4)})
+    ctx.append(patch("app.main.guardar_carga_de_compra", return_value=3))
+    ctx.append(patch("app.main.guardar_renglones_de_carga"))
+    _, abiertos = _entrar(ctx, "post", f"/compras/carga/1/{EL_27.isoformat()}",
+                          data={"modo": "manual", "total_7": "40"})
+    assert abiertos["guardar_carga_de_compra"].call_args.kwargs["dias"] == 4
+
+
+def test_TODA_llamada_que_guarda_una_carga_PASA_los_dias():
+    """Con `dias=1` de default en la función, el camino que se olvide de
+    pasarlos no falla: le vuelve la carga a un día. Se enumeran las llamadas
+    con `ast`, así la quinta no depende de que alguien se acuerde."""
+    import ast
+    import io as _io
+    arbol = ast.parse(_io.open("app/main.py", encoding="utf-8").read())
+    llamadas = [n for n in ast.walk(arbol) if isinstance(n, ast.Call)
+                and getattr(n.func, "id", None) == "guardar_carga_de_compra"]
+    assert len(llamadas) >= 4
+    sin_dias = [n.lineno for n in llamadas if not any(k.arg == "dias" for k in n.keywords)]
+    assert sin_dias == [], f"no pasan los días: líneas {sin_dias}"
+
+
+def test_los_DIAS_MULTIPLICAN_la_propuesta_y_el_campo_va_solo_en_DEL_PROMEDIO():
+    """100 kilos de promedio diario, 3 días, sin margen = 300. Y en "a mano"
+    el campo no se dibuja, por la misma razón que el margen."""
+    ctx = _con_catalogo(**{
+        "app.main.carga_de_compra": _carga(modo="automatico", margen=0.0, dias=3),
+        "app.main.renglones_de_los_ultimos_pedidos": _RENGLONES_DE_PEDIDO,
+    })
+    respuesta, _ = _entrar(ctx, "get", f"/compras/carga/1/{EL_27.isoformat()}")
+    corrido = " ".join(respuesta.text.split("</style>")[-1].split())
+    assert 'name="propuesto_10" value="300"' in corrido
+    assert 'data-base="100"' in corrido, "la base tiene que seguir siendo la de UN día"
+    assert 'id="dias" name="dias"' in corrido
+
+    ctx = _con_catalogo(**{"app.main.carga_de_compra": _carga(modo="manual", dias=3)})
+    respuesta, _ = _entrar(ctx, "get", f"/compras/carga/1/{EL_27.isoformat()}")
+    assert 'id="dias" name="dias"' not in respuesta.text.split("</style>")[-1]
+
+
+def test_cambiar_los_DIAS_rehace_la_propuesta_en_un_NAVEGADOR():
+    """Lo mismo que el margen: al toque y sin ir al server. 100 × 2 días × 1,1."""
+    ctx = _con_catalogo(**{
+        "app.main.carga_de_compra": _carga(modo="automatico", margen=10.0, dias=1),
+        "app.main.renglones_de_los_ultimos_pedidos": _RENGLONES_DE_PEDIDO,
+    })
+    respuesta, _ = _entrar(ctx, "get", f"/compras/carga/1/{EL_27.isoformat()}")
+    leido = _en_el_navegador(respuesta.text, [('#dias', "2")])
+    assert leido["total"] == "220"
 
 
 def test_CAMBIAR_DE_MODO_conserva_el_margen():

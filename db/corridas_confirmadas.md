@@ -285,3 +285,26 @@ PALMALA   viejo 0 · nuevo 1 · sobre constante 1 · 0 abiertos · 0 listados ·
 El índice de "uno por día" se fue y el de "uno abierto, punto" está puesto
 en las dos. `db/esquema_completo.sql` lo cambió en el mismo commit que anotó
 esta fila.
+
+## 23/09 — `pallet_1_cajas_por_pallet`
+
+`db/pallet_1_cajas_por_pallet.sql`, con su verificación corrida aparte.
+
+```
+FRUTAMAX  columna 1 · guarda 1 · 2 envases · 0 con pallet · último mov de cajas 17/09
+PALMALA   columna 1 · guarda 1 · 2 envases · 0 con pallet · sin movimientos
+```
+
+**Lo que identifica la base es el testigo** —17/09 contra ninguno—.
+
+## 23/09 — `cargas_compra_dias` (bloque 1)
+
+`db/cargas_compra_dias_1.sql`, con su verificación corrida aparte. El bloque 2
+(`cargas_compra_dias_2.sql`, NOT NULL) va **después** del deploy (corolario 94).
+
+```
+FRUTAMAX  columna 1 · acepta null YES · guarda 1 · 3 cargas · 0 sin días · 0 distintas de uno
+PALMALA   columna 1 · acepta null YES · guarda 1 · 0 cargas · 0 sin días · 0 distintas de uno
+```
+
+**Lo que identifica la base son las cargas** —3 contra 0—.

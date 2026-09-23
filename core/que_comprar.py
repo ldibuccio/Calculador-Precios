@@ -78,7 +78,33 @@ def con_margen(pide, margen_porcentaje):
     return float(pide) * (1.0 + float(margen_porcentaje) / 100.0)
 
 
-def lo_que_pide_la_carga(guardado, propuesto, margen_porcentaje):
+def para_los_dias(promedio, dias):
+    """El promedio de UN día llevado a los días que cubre la compra (dueño, 23/09).
+
+    None entra y sale, igual que el promedio: un hueco no se vuelve un cero.
+    Y `dias` en None es UNO, que es lo que eran todas las cargas antes de que
+    existiera la columna.
+    """
+    if promedio is None:
+        return None
+    return float(promedio) * (int(dias) if dias else 1)
+
+
+def dias_validos(texto):
+    """Los días que llegan del formulario: un entero de 1 para arriba, o 1.
+
+    Cero o un negativo no son "no comprar": serían una carga que propone nada
+    y se ve igual que un cliente que no pide. Lo que no se puede leer vuelve a
+    1, que es el valor de toda carga vieja.
+    """
+    try:
+        dias = int(str(texto).strip())
+    except (TypeError, ValueError):
+        return 1
+    return dias if dias >= 1 else 1
+
+
+def lo_que_pide_la_carga(guardado, propuesto, margen_porcentaje, dias=1):
     """{articulo_id: total} — lo que UNA carga pide, tal como la pantalla de la carga lo mostró.
 
     ES LA REGLA DE LAS DOS PANTALLAS, escrita una vez: la carga la dibuja
@@ -96,8 +122,14 @@ def lo_que_pide_la_carga(guardado, propuesto, margen_porcentaje):
     `propuesto` es el promedio CRUDO, sin margen, y viene vacío en "a mano":
     el modo lo decide quien llama, porque es quien sabe si hay que calcular
     el promedio.
+
+    LOS DÍAS VAN IGUAL QUE EL MARGEN (dueño, 23/09): multiplican lo que el
+    promedio propone y nada más. Primero los días y después el margen, que
+    da lo mismo porque son dos productos — lo que importa es que lo tipeado
+    no pase por ninguno de los dos.
     """
-    pide = {a: con_margen(total, margen_porcentaje) for a, total in (propuesto or {}).items()}
+    pide = {a: con_margen(para_los_dias(total, dias), margen_porcentaje)
+            for a, total in (propuesto or {}).items()}
     pide.update(guardado or {})
     return pide
 
