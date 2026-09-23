@@ -10337,3 +10337,353 @@ de poder marcar y se queda con el cartel colgado.
 grepear es **`innerHTML =`**, que es la lista corta de lugares donde el
 marcado entra sin ejecutarse — y después, para cada uno, qué partials viajan
 adentro de lo que se inyecta.
+
+## QUÉ COMPRAR HOY: las decisiones del 22 y 23/09, con su razón
+
+El diseño completo vive en `docs/que_comprar_hoy.md`. Acá van las decisiones
+que **no se reabren** y los mecanismos que costaron encontrar, que es lo que
+este archivo guarda.
+
+**Las seis cerradas, del dueño, con fecha (23/09):**
+
+1. **Un solo margen, el de la carga.** El del Paso 2 **se va, no queda en
+   cero.**
+2. **La carga es contra ARTÍCULOS DE COMPRA, no contra fichas.** *"Yo compro
+   tomate, no 'el tomate de Día'."*
+3. **El archivo no se guarda.** Es una herramienta para tipear más rápido; lo
+   que vale es lo revisado.
+4. **El promedio son los últimos 6 pedidos ANTERIORES AL DÍA DE CARGA**,
+   divisor 6.
+5. **Cargas desde ayer en adelante**; una ya usada se muestra marcada y se
+   puede volver a sumar.
+6. **El kilaje del Mercado vive en el Paso 2 y es editable.**
+
+### Un margen por CARGA, y la razón es que dos márgenes se MULTIPLICAN
+
+Decisión del dueño, y la escribió él mismo antes de que se la propusiera:
+*"Si los dos se multiplican, termino comprando 32% de más sin darme cuenta."*
+
+**20% y 10% son 32%, y esa cuenta nadie la hace con el pulgar.** No es que el
+segundo margen esté mal calculado: es que el resultado de dos porcentajes
+compuestos **no se parece a ninguno de los dos números que están en la
+pantalla**, así que no hay nada que se vea raro. Es la familia del corolario
+74 —dos respuestas verdaderas que nadie pone al lado— con la vuelta de que
+acá las dos se multiplican en silencio en vez de contradecirse.
+
+**Y va en la CARGA y no en el listado porque es un hecho sobre el CLIENTE**:
+cuánto inflar lo de Día es algo que se sabe de Día, y el listado suma varios
+clientes. Puesto en el listado, un margen tendría que valer para todos a la
+vez.
+
+**El valor de arranque lo propone la pantalla (`MARGEN_SUGERIDO`), no la
+base**: la columna es `NOT NULL` **sin default**, a propósito. Dos defaults
+—uno en el `create table` y otro en el código— son la regla escrita dos veces,
+y la copia que se separe propone un número y guarda otro.
+
+**Y el backfill puso 0, no el sugerido**: las cargas que ya estaban se
+cargaron cuando el margen no existía, o sea sin ninguno. Ponerles 10 las
+infla un 10% que nadie pidió, **y el número que sale es plausible** — que es
+exactamente el modo de falla que este archivo persigue.
+
+### El `NOT NULL` sin default de la base es una PARED, y la primera que chocó fue la siembra del humo
+
+La columna entró `NOT NULL` sin default y **el humo dejó de arrancar**: su
+siembra insertaba `cargas_compra` sin el margen. Eso es la guarda funcionando
+—la fila incompleta no entra— y vale anotarlo porque el reflejo al verlo es
+ponerle un default a la base para que la siembra pase.
+
+**Ponerle el default arregla la siembra y rompe la regla**: el día que alguien
+inserte desde otro camino sin pasar por la pantalla, la fila nace con el
+margen de la base en vez de con el que se decidió, y no hay nada que avise. La
+siembra es la que se corrige.
+
+### `promedio_anterior_a`: migrada, ESCRITA, MOSTRADA, y leída por nadie
+
+Del 22/09, y es el **corolario 72 en su forma más incómoda: lo construí yo,
+dos commits antes, y no lo vi.**
+
+La columna se migró con su comentario, `guardar_carga_de_compra` la escribía,
+la pantalla del "ya existe" la mostraba para explicar que editar conserva el
+ancla — y **ninguna cuenta la leía**, porque el Paso 1 no calculaba el
+promedio. El modo "Del promedio" dibujaba **la misma pantalla que "A mano"**:
+la lista entera de artículos con los campos vacíos.
+
+Lo destapó el dueño usándolo: *"el modo 'Del promedio' no trae nada"*.
+
+**Y ninguna de las guardas de esta casa podía verlo**, que es lo que lo pone
+en la familia del 72:
+
+- la **verificación de la migración** pregunta si la columna está. Está.
+- el **test del INSERT** compara la estructura entera, y la columna estaba en
+  los dos lados.
+- la **pantalla** se veía perfecta: un modo automático que no precarga nada es
+  idéntico a uno manual.
+- y el **humo** la abría en 200, porque abrir no es traer.
+
+**La pregunta que lo encuentra es la del 72 con una palabra cambiada**: no
+*¿qué código la ESCRIBE?* —eso estaba— sino **¿qué cuenta la LEE?**. Una
+columna que solo se escribe y se muestra es una etiqueta, y una etiqueta que
+describe un cálculo que no ocurre es peor que no tenerla: afirma que el modo
+significa algo.
+
+**Y la señal barata, para el día que se agregue un modo a cualquier pantalla**:
+si dos modos dibujan el mismo marcado, uno de los dos no está cableado. Eso se
+ve **mirando la pantalla** (CLAUDE.md pt 6), no corriendo la suite — las dos
+pantallas contestan 200 y el humo las cuenta a las dos como abiertas.
+
+### El ANCLA no se mueve al editar; el MARGEN sí — y las dos mitades se ven igual leyendo el `SET`
+
+`guardar_carga_de_compra` inserta con `ON CONFLICT (cliente_id, fecha) DO
+UPDATE`, y ese `SET` decide **dos cosas opuestas**:
+
+```sql
+SET modo = EXCLUDED.modo,
+    margen_porcentaje = EXCLUDED.margen_porcentaje,   -- SE PISA
+    actualizado_en = now()
+    -- promedio_anterior_a NO SE PISA: el ancla es de la carga, no del guardado
+```
+
+- **El ancla se queda** porque el promedio se contó desde el día en que se
+  cargó. Pisarla al editar movería la ventana de los 6 pedidos y los números
+  de la pantalla cambiarían solos entre una corrección y la siguiente.
+- **El margen se pisa** porque es justamente lo que el que edita viene a
+  cambiar.
+
+**Y el canario en cero del margen fue el hallazgo del turno** (palabras del
+dueño): la carga NUEVA lo guardaba bien y **solo la edición lo perdía**, en
+silencio, volviendo al que ya estaba. Un `SET` con una columna de más y uno
+con una de menos **se leen exactamente igual**; lo único que los separa es un
+test que edite y mire.
+
+Lo cuida un par de tests contra Postgres de verdad —*el ancla NO se mueve al
+editar* y *el margen SÍ se mueve al editar*— y hacen falta los dos: con uno
+solo, la versión que pisa todo y la que no pisa nada pasan una cada una.
+
+### El BULTO de la carga y el KILAJE del Mercado son dos números y los dos son "cuánto trae un bulto"
+
+Del 22/09, y es del dueño: *"Los kilos totales no me dicen nada. Necesito ver
+bultos. 370 kg de arándano no significa nada para el comprador."*
+
+**Lo que los separa es DE QUIÉN ES EL BULTO**, y es la familia de siempre —dos
+cosas distintas con el mismo nombre— atajada al bautizar:
+
+| | qué es | dónde vive |
+|---|---|---|
+| **el bulto de la CARGA** | `fichas_logistica.contenido_caja` — cómo lo pide ESE cliente | Paso 1 |
+| **el kilaje del MERCADO** | `listados_compra_kilaje` — de a cuánto viene el cajón | Paso 2, editable |
+
+Que Día pida el arándano en cubetas de 1 no dice nada de si en el Mercado hay
+cajones de 1. Confundirlos no descuadra ninguna cuenta: **propone comprar un
+número plausible de cajones equivocados.**
+
+**Y el que carga ve bultos y el sistema guarda la MAGNITUD.** La fila muestra
+el bulto porque es como piensa el comprador; la base guarda kilos (o el
+conteo) porque es lo que el Paso 2 necesita para sumar varios clientes que
+piden el mismo artículo en formatos distintos.
+
+**Sin ficha no hay bulto que decir, y el artículo se carga igual**: la carga va
+contra el catálogo de compra. Ahí el número queda en la magnitud y **la
+pantalla lo dice** en vez de inventar una conversión.
+
+#### El campo se llama POR LO QUE ES, y el contenido sale del SERVER
+
+`bultos_<id>` cuando hay con qué dividir, `total_<id>` cuando no. Un solo
+nombre sería **una columna del formulario con dos unidades**, y el server no
+tendría cómo saber cuál llegó — el mismo `12` significaría 12 bultos en una
+fila y 12 kilos en la de al lado.
+
+**Y el contenido no viaja en un campo escondido**: con el contenido en el
+formulario, un POST armado a mano cambia la conversión y el número guardado no
+es el que la pantalla mostró. *La guarda va donde se ESCRIBE* (corolario 26)
+aplicado a una unidad en vez de a una fecha.
+
+### Lo que quedó IGUAL a la propuesta no se guarda, y eso es lo que hace que los modos signifiquen algo
+
+**Un artículo sin fila guardada se vuelve a calcular al armar el listado**
+—así un pedido que entre en el medio se ve— **y uno corregido queda fijo.**
+Decisión del dueño (*"yo prefiero que se recalcule"*) con la precisión de que
+lo corregido es una decisión y no un cálculo.
+
+**La comparación es entre los DOS TEXTOS tal como la pantalla los dibujó**, no
+entre floats: los dos salen del mismo filtro, así que "igual" es exacto y no
+una tolerancia. Comparando números, un `0.1 + 0.2` guardaría una corrección
+que nadie hizo.
+
+### "Subir archivo" NO es un tercer modo, y por eso no está en el CHECK
+
+`cargas_compra.modo` acepta `'automatico'` y `'manual'`, y nada más. El
+archivo **es una forma de TIPEAR**, no una procedencia del número: confirmar
+una revisión deja la carga en `'manual'`, porque lo que quedó guardado es lo
+que una persona revisó y aceptó.
+
+**Si fuera un tercer modo habría que contestar qué hace al reabrirla** —¿vuelve
+a leer el archivo que no guardamos?— y la respuesta no existe. Un valor de
+CHECK que no puede contestar qué significa al releerlo es un valor de más.
+
+**Y confirmar REEMPLAZA, no suma.** Lo que se revisó es la carga entera; sumar
+dejaría el total dependiendo de cuántas veces se subió el mismo archivo. **Dos
+renglones del MISMO artículo adentro de una lectura SÍ se suman** —el listado
+puede nombrar el tomate dos veces— y eso es otra pregunta.
+
+### El artículo que falta se da de alta ADENTRO de la revisión
+
+Del dueño: *"Si me piden algo que no tengo como artículo, que me avise y lo
+doy de alta antes de seguir."*
+
+**Mandarlo a `/compras/articulos` le hace perder la revisión entera**, que es
+trabajo que todavía no se guardó —y la pantalla lo dice con todas las letras:
+*"Todavía no se guardó nada"*—. El alta va con `formaction` sobre el mismo
+formulario, vuelve a la misma revisión con el artículo nuevo ya elegido en su
+fila, y `crear_articulo` devuelve el id justamente para eso (`RETURNING id`).
+
+Es el corolario 56 al revés: allá el problema era un link que manda a una
+puerta ajena; acá **es un link que manda a una pantalla propia y aun así
+rompe**, porque lo que se pierde no es el acceso sino el estado.
+
+### Guardar tiene que NOTARSE, y el aviso arriba de una pantalla larga no se nota
+
+Del 22/09, y es del dueño: *"Apreto Guardar y no pasa nada."*
+
+**Estaba guardando perfecto.** El POST escribía, la pantalla se volvía a
+dibujar, y el aviso salía arriba de todo — con el botón Guardar al pie de
+treinta y ocho artículos. El que aprieta está abajo y ve exactamente lo mismo
+que antes de apretar.
+
+> **Un aviso que aparece fuera de la pantalla que el dedo está mirando es un
+> aviso que no existe.** Es el corolario 68 —un camino que funciona y no se
+> ve— aplicado a la RESPUESTA en vez de a la puerta.
+
+El arreglo no fue mover el cartel: **Guardar lleva a otro lado** (la lista de
+cargas, con el aviso arriba de una pantalla corta). Un cambio de pantalla es
+la confirmación más barata que hay, y no depende de dónde quedó el scroll.
+
+**Y hay DOS destinos, a propósito**: Guardar sale a la lista, y **cambiar de
+modo se queda en la misma carga** con su propio aviso. Cambiar de modo no es
+terminar: el que lo aprieta quiere seguir en esa carga. Y **no toca los
+renglones**, que es lo que permite pasar de "a mano" a "del promedio" para ver
+qué propone sin perder lo tipeado.
+
+### La copia separada que encontró el cableado del promedio
+
+`listar_fichas_de_todos_los_clientes` **no traía `unidad_conteo`**, y
+`listar_fichas_por_cliente` sí —con seis líneas de comentario explicando por
+qué—, mientras el docstring de la primera decía *"misma consulta y mismo orden
+que `listar_fichas_por_cliente`"*.
+
+**El modo de falla es el peor que hay: ninguna fallaba, una contestaba
+distinto.** Un artículo que se cuenta por unidad, leído por la consulta sin
+`unidad_conteo`, contesta en kilos — y el número sale.
+
+Es el corolario 65 otra vez (el mock entrega lo que le pidieron, no lo que la
+consulta pidió) con la parte nueva de que **el docstring afirmaba la igualdad
+que el SQL no cumplía**. Una afirmación de "esto es lo mismo que aquello"
+escrita en prosa es exactamente lo que envejece sin romper nada.
+
+### `magnitud_del_articulo`: tres ramas, y la del medio se midió
+
+La carga es por artículo y la magnitud vive en la ficha, así que hubo que
+decidir qué magnitud tiene un artículo que va a varios clientes. Quedó en
+`app/costeo.py`, al lado de `magnitud_de_la_ficha`, con tres ramas:
+
+| | qué devuelve | por qué |
+|---|---|---|
+| **sin ninguna ficha** | kilos | medido: `sin_ficha_Y_con_conteo 0` en las DOS bases |
+| **con fichas, alguna contesta** | la primera que contesta | |
+| **con fichas y ninguna contesta** | `None` | **nunca cae a kilos** |
+
+**La tercera es la que importa**: caer a kilos ahí sería inventar la unidad de
+un artículo cuyo conteo el sistema declaró que no puede resolver, y el número
+saldría igual de prolijo. El `None` es lo que hace que la pantalla diga que no
+puede en vez de proponer.
+
+**Y la primera está apoyada en un número, no en una intuición**: si existiera
+un artículo sin ninguna ficha y con `unidad_conteo`, la rama de kilos lo
+etiquetaría mal. `sin_ficha_Y_con_conteo` dio 0 en Palmala (63 activos, 15 sin
+ficha) y 0 en Frutamax (38 activos, 5 sin ficha). El día que aparezca uno, esa
+rama es la que hay que volver a mirar.
+
+## Corolario 94: una migración de EXPAND se corre cuando se escribe; el DROP espera al deploy
+
+Del 22/09, y es de secuencia y no de SQL.
+
+`cargas_compra` reemplaza a `listados_compra_manual` y
+`listados_compra_clientes`, así que la tanda tiene dos clases de bloque y
+**solo una se puede correr el día que se escribe**:
+
+| | cuándo corre | qué pasa si se adelanta |
+|---|---|---|
+| los que **CREAN** (bloques 1, 2 y 4) | ya, sin esperar nada | nada: una tabla que nadie lee no molesta |
+| el que **DROPEA** (bloque 3) | **después del deploy** | el código vivo en Railway sigue leyendo esas tablas y revienta |
+
+**La asimetría no es de prudencia: es de qué está corriendo en producción
+mientras tanto.** Entre que el SQL se corre a mano y que el commit se
+despliega pasan minutos u horas, y en esos minutos el código que hay arriba es
+el viejo. Crear no lo toca; borrar le saca la tabla de abajo.
+
+**Por eso el bloque del drop va en su propio archivo y con la condición
+escrita EN SU ENCABEZADO** (*"se corre después de que el Paso 2 esté
+desplegado, porque hasta entonces `borrador_de_compra` todavía lee estas
+tablas"*), y no en este documento: el que lo abra dentro de seis meses va a
+leer el archivo.
+
+**Y `db/esquema_completo.sql` sigue teniendo las dos tablas viejas hasta que
+el drop corra.** El esquema del repo describe lo que una base nueva tiene que
+tener, y hasta ese día una base nueva necesita las dos — el código todavía las
+lee. Sacarlas antes es el corolario 60 al revés: el archivo adelantado rompe
+la base que todavía no existe.
+
+## Corolario 95: un test que ancla en HOY no puede fallar el día que su fecha fija ES hoy
+
+Del 22/09, y es el **corolario 92 mordiendo adentro del test escrito para
+verificar el ancla del promedio**.
+
+El test afirmaba que editar una carga **no mueve** `promedio_anterior_a`. La
+constante era `HOY = date(2026, 9, 22)`, y `_hoy_argentina()`, corrido a las
+02:21 UTC, devolvía **22/09** en Argentina. O sea que el valor conservado y el
+valor que el bug habría escrito **eran el mismo número**, y el canario que
+hacía que el `ON CONFLICT` pisara el ancla salió en **cero**.
+
+**El test estaba bien escrito, afirmaba lo correcto, y no podía fallar.** Es
+la misma forma que el umbral mágico del 92: el resultado no describía la
+función, describía **qué día era cuando se corrió**. Y la parte fea del
+reparto es la de siempre: pasa acá y también habría pasado en el runner
+durante 24 horas, y después habría empezado a fallar solo.
+
+**El arreglo es una fecha que NO PUEDE ser hoy**: `CARGADA_EL = date(2026, 3,
+5)`. Con eso, conservar y pisar dan números distintos siempre, y el canario
+muerde.
+
+**La señal, y se hace al escribir la constante**: si el test compara un valor
+guardado contra lo que devolvería el reloj, preguntarse **qué pasa el día que
+los dos coincidan**. Si la respuesta es "el test pasa igual", la fecha del
+fixture tiene que estar lejos del presente a propósito — y lejos quiere decir
+en otro mes, no ayer.
+
+## Corolario 96: un helper que devuelve sus mocks POR POSICIÓN los entrega cambiados el día que un nombre ya estaba
+
+Del 22/09, y es el corolario 91 en el andamio compartido de un archivo de
+tests.
+
+`_entrar` abre un stack de parches y devuelve la lista de mocks para que cada
+test afirme sobre el que le interesa. Los tests leían `abiertos[-1]`
+—"el último que pedí"— y eso **dejó de ser cierto** cuando uno de los parches
+que el test pasaba ya estaba en el diccionario base: `dict.update` **conserva
+la posición de una clave que ya existía** en vez de moverla al final. Así que
+`abiertos[-1]` devolvía `carga_de_compra` y el test afirmaba sobre el mock
+equivocado.
+
+**Y no falla ruidosamente**: un mock es un mock, `.return_value` acepta
+cualquier cosa, y el assert pasa o falla por razones que no tienen nada que
+ver con lo que el test dice mirar.
+
+**El arreglo es devolver un diccionario con la clave del parche**
+(`patch.attribute`), y leer por nombre. Es exactamente el arreglo del lector
+por índice de `_SQL_STOCK_DE_ENVASES` (17/09): **las posiciones no se
+mantienen solas, y el que las lee no nombra nada**, así que ningún `grep`
+encuentra a los que quedaron desfasados.
+
+**La regla corta, que ya vale tres veces en este repo**: un helper compartido
+que devuelve una TUPLA o una LISTA de cosas heterogéneas —columnas de una
+consulta, mocks de un stack, valores de un `side_effect`— se lee por nombre o
+se rompe en silencio. Una lista está bien cuando todos sus elementos son la
+misma cosa; acá nunca lo son.

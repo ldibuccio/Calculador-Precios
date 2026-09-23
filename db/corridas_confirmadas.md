@@ -138,3 +138,79 @@ nueva creada desde ahí habría rechazado todo pase. Corregido en el mismo
 commit, y verificado comparando las 25 guardas de `movimientos_stock` entre
 una base creada desde el esquema y otra creada desde las migraciones:
 idénticas.
+
+## 22/09 — `cargas_compra` (la cabecera, los renglones y el puente del Paso 1)
+
+`db/cargas_compra_1_cabecera.sql` y `_2_renglones_y_puente.sql`, con
+`db/cargas_compra_verificacion.sql` corrida aparte.
+
+```
+PALMALA   3 tablas · 2 guardas · 1 único · 2 cascadas · 3 sin cascada · 5 clientes · último pedido 22/09
+FRUTAMAX  3 tablas · 2 guardas · 1 único · 2 cascadas · 3 sin cascada · 3 clientes · último pedido 22/09
+```
+
+**El único se cuenta por `contype = 'u'` y no por nombre**: el nombre lo genera
+Postgres (`cargas_compra_cliente_id_fecha_key`) y un conteo por nombre
+inventado no encuentra nada aunque el constraint esté.
+
+**Y las cascadas se cuentan por COMPORTAMIENTO** (`confdeltype` `'c'` contra
+`'a'`), no por cantidad de FK: las cinco existen en los dos estados y lo que
+cambia es qué hacen. Un `count(*)` de foreign keys da 5 antes y después. Es el
+mismo caso del `on delete` de los precios (14/09) y el de las guardas
+NULL-safe (16/09) — la tercera vez que contar por nombre no alcanza.
+
+**Las 2 con cascada son las que tienen que tenerla**: `cargas_compra_renglones
+→ cargas_compra` (los renglones son de la carga) y `listados_compra_cargas →
+listados_compra` (el puente es del listado). **Las 3 sin cascada son las que
+tienen que rebotar**: las dos que apuntan a `clientes` y `articulos`, y —la que
+importa— `listados_compra_cargas → cargas_compra`. Borrar una carga que ya se
+usó en un listado **tiene que rebotar**, no borrar el rastro de que se usó.
+
+**La verificación usa `to_regclass(...)`** para que una tabla que falte
+devuelva NULL en vez de tirar el error: sin eso, correrla antes de la
+migración revienta y no se puede usar como "antes".
+
+**El `0 listados` no está en la fila porque la tabla es nueva**: lo que
+identifica la base son los clientes —5 contra 3— y el testigo del último
+pedido, que es lo que hace falta para que el promedio tenga de dónde salir.
+
+## 23/09 — `cargas_compra_4_margen` (el margen por carga)
+
+`db/cargas_compra_4_margen.sql`, con `db/cargas_compra_4_verificacion.sql`
+corrida aparte.
+
+```
+FRUTAMAX  columna 1 · guarda 1 · NOT NULL 1 · con margen 0 · 1 carga  · último pedido 22/09
+PALMALA   columna 1 · guarda 1 · NOT NULL 1 · con margen 0 · 0 cargas · último pedido 22/09
+```
+
+**`NOT_NULL_de_1` va como columna aparte porque un conteo de COLUMNA da 1 en
+los dos estados.** La columna existe nulleable y existe `NOT NULL`, y la fila
+se leería igual. Lo que decide es `is_nullable = 'NO'`, igual que el `on
+delete` y el `IS DISTINCT FROM` de las otras dos.
+
+**`con_margen 0` es el resultado BUENO, no un backfill que no corrió.** Las
+cargas que ya estaban se crearon cuando el margen no existía, o sea sin
+ninguno, y el bloque las pone en **0 y no en el sugerido**: ponerles 10 las
+inflaría un 10% que nadie pidió, y el número que saldría es plausible.
+
+**La columna va SIN DEFAULT en la base a propósito.** El valor de arranque lo
+propone la pantalla (`MARGEN_SUGERIDO`, core/que_comprar.py). Dos defaults que
+no coinciden es como se separan dos reglas, y el de la base gana en silencio
+para todo el que inserte sin pasar por la pantalla.
+
+**La `1 carga` de Frutamax contra `0` de Palmala es lo que identifica la
+fila**: las cuatro columnas de la izquierda dicen que la columna y la guarda
+están, y eso no puede depender de la base.
+
+## PENDIENTE de correr: `cargas_compra_3_sacar_las_viejas`
+
+`db/cargas_compra_3_sacar_las_viejas.sql` **todavía NO se corrió en ninguna
+base**, y es a propósito: dropea `listados_compra_manual` y
+`listados_compra_clientes`, que el código desplegado **todavía lee**
+(`borrador_de_compra`). Se corre **después** de que el Paso 2 reescrito esté
+desplegado.
+
+**Y `db/esquema_completo.sql` sigue teniendo las dos tablas hasta ese día**,
+por lo mismo: una base nueva creada hoy las necesita. Sacarlas del esquema
+antes del drop rompe la base que todavía no existe.
