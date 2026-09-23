@@ -161,7 +161,8 @@
         <b class="en-camino">{% if f.en_camino is none %}<span class="hueco">no se sabe la unidad</span>
            {%- else %}{{ f.en_camino_cajones|sin_decimales }} cj{% endif %}</b></span>
       <span class="dato dato-a-comprar">A comprar hoy
-        <b class="a-comprar">{% if f.pide is not none and f.de_partida is not none and f.a_comprar is not none %}{% if f.a_comprar == 0 %}<span class="ok">OK</span>{% else %}{{ f.a_comprar }} cj{% endif %}
+        <b class="a-comprar">{% if f.a_comprar_magnitud is not none and f.a_comprar_magnitud == 0 %}<span class="ok">OK</span>
+           {%- elif f.pide is not none and f.de_partida is not none and f.a_comprar is not none %}{{ f.a_comprar }} cj
            {%- elif f.pide is not none and f.de_partida is not none %}<span class="hueco">poné el por bulto</span>
            {%- else %}<span class="hueco">—</span>{% endif %}</b></span>
       <span class="dato dato-compre">Compré

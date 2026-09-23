@@ -457,7 +457,8 @@ def _fila(articulo_id, nombre):
             "sueltos": 2, "cajas": 0, "comprado_cajones": 0.0, "comprado": 0.0,
             "kilaje": 18.0, "falta": 200.0, "cajones": 12,
             "a_comprar": 12, "pide_bultos": 13.3, "stock_bultos": 2.2, "palabra": "kg",
-            "de_partida": 40.0, "en_camino": 0.0, "en_camino_cajones": 0.0}
+            "de_partida": 40.0, "en_camino": 0.0, "en_camino_cajones": 0.0,
+            "a_comprar_magnitud": 200.0}
 
 
 def _contexto(filas=(), cargas=(), elegidas=(), salio_el=None, viejas=()):
@@ -724,6 +725,23 @@ def test_EN_CAMINO_sin_la_magnitud_de_la_fila_deja_la_fila_SIN_NUMERO():
         en_camino={1: {"cajones": 2.0, "kilos": 30.0, "conteo": None}})[0]
     assert fila["en_camino"] is None
     assert fila["a_comprar"] is None and fila["falta"] is None
+
+
+def test_sin_POR_BULTO_pero_SIN_NADA_QUE_COMPRAR_las_dos_columnas_dicen_OK():
+    """Cero no se divide por nada. El rival era el de hasta el 23/09: A comprar
+    decía "poné el por bulto" y Falta decía OK en la misma fila, sobre el
+    mismo dato."""
+    articulos = {1: {"id": 1, "nombre": "MANGO", "contenido_referencia": None}}
+    fila = _filas_de_que_comprar(
+        [_aporte("Dia", a1=100.0)], articulos, UNIDADES, piso=PISO_VACIO, comprado={},
+        en_camino={1: {"cajones": 10.0, "kilos": 150.0, "conteo": None}})[0]
+    assert fila["a_comprar_magnitud"] == 0.0 and fila["falta"] == 0.0
+    import re
+    marcado = _render(_contexto([dict(_fila(3, "MANGO"), kilaje=None, a_comprar=None,
+                                      a_comprar_magnitud=0.0, falta=0.0, cajones=None)]))
+    marcado = " ".join(marcado.split("</style>")[-1].split())
+    assert re.search(r'class="a-comprar"><span class="ok">OK</span>', marcado)
+    assert re.search(r'class="falta"><span class="ok">OK</span>', marcado)
 
 
 def test_la_pantalla_dice_si_YA_SALISTE_y_desde_cuando():
