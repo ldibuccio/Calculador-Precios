@@ -22,7 +22,10 @@
      en el Mercado con el celular en una mano. */
   .kilaje { width: 5.5rem; min-height: 44px; font-size: 1.05rem; padding: 0.4rem;
             border: 2px solid #2563eb; border-radius: 8px; text-align: center; }
-  .elegir { display: flex; flex-direction: column; gap: 0.5rem; margin: 0.75rem 0; }
+  .elegir { display: flex; flex-direction: column; gap: 0.5rem; margin: 0.4rem 0 0.75rem; }
+  .cliente { margin-top: 0.75rem; }
+  /* EL NOMBRE NO LO CONTROLAMOS, igual que el del artículo. */
+  .cliente-nombre { font-weight: 800; font-size: 1rem; overflow-wrap: anywhere; }
   .elegir label { display: flex; align-items: flex-start; gap: 0.6rem; min-height: 44px;
                   background: #f8fafc; border: 1px solid #e2e8f0; border-radius: 8px;
                   padding: 0.6rem 0.75rem; font-size: 0.95rem; }
@@ -50,27 +53,32 @@
 
   <form method="post" action="/compras/que-comprar">
   <div class="tarjeta">
-    <div class="art">Qué cargas entran</div>
-    {# SE ELIGEN CARGAS, no clientes: cada una ya trae su cliente, su fecha, su
-       modo y su margen. El listado no tiene margen propio — dos que se
-       multiplican son invisibles (20% y 10% son 32%). #}
-    {% if cargas %}
-    <div class="elegir">
-      {% for c in cargas %}
-        <label><input type="checkbox" name="carga" value="{{ c.id }}"
-                      {% if c.id in elegidas %}checked{% endif %}>
-          <span class="que"><b>{{ c.cliente_nombre }}</b> · {{ c.fecha.strftime("%d/%m") }}
-            <span class="como">{% if c.modo == 'manual' %}a mano{% else %}del promedio, {{ c.margen_porcentaje|sin_decimales }}% más{% endif %}</span>
-            {% if c.usada_en_otros %}
-              <span class="ya-usada">Ya se usó en el listado del {{ c.ultimo_listado.strftime("%d/%m") }}{% if c.usada_en_otros > 1 %} (y {{ c.usada_en_otros - 1 }} más){% endif %}</span>
-            {% endif %}
-          </span>
-        </label>
-      {% endfor %}
+    <div class="art">Qué clientes y qué fechas</div>
+    {# SE ELIGE POR CLIENTE Y, DE CADA UNO, SUS FECHAS (dueño, 22/09): "puedo
+       tomar dos días de Día y uno de Tailem". Cada tilde es una CARGA —un
+       cliente para una fecha— y ya trae su modo y su margen. El listado no
+       tiene margen propio: dos que se multiplican son invisibles (20% y 10%
+       son 32%). #}
+    {% for bloque in clientes %}
+    <div class="cliente">
+      <div class="cliente-nombre">{{ bloque.cliente_nombre }}</div>
+      <div class="elegir">
+        {% for c in bloque.cargas %}
+          <label><input type="checkbox" name="carga" value="{{ c.id }}"
+                        {% if c.id in elegidas %}checked{% endif %}>
+            <span class="que"><b>{{ c.fecha.strftime("%d/%m") }}</b>
+              <span class="como">{% if c.modo == 'manual' %}a mano{% else %}del promedio, {{ c.margen_porcentaje|sin_decimales }}% más{% endif %}</span>
+              {% if c.usada_en_otros %}
+                <span class="ya-usada">Ya se usó en el listado del {{ c.ultimo_listado.strftime("%d/%m") }}{% if c.usada_en_otros > 1 %} (y {{ c.usada_en_otros - 1 }} más){% endif %}</span>
+              {% endif %}
+            </span>
+          </label>
+        {% endfor %}
+      </div>
     </div>
     {% else %}
       <p class="vacio">No hay cargas desde ayer.</p>
-    {% endif %}
+    {% endfor %}
     <a class="ir-paso-1" href="/compras/carga">Cargar lo que pide un cliente →</a>
   </div>
 

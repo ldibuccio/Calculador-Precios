@@ -405,9 +405,10 @@ def _fila(articulo_id, nombre):
 
 
 def _contexto(filas=(), cargas=(), elegidas=()):
+    from app.main import _cargas_por_cliente
     return {"barra_sector": "compras", "barra_titulo": "Qué comprar hoy",
-            "cargas": list(cargas), "elegidas": set(elegidas), "filas": list(filas),
-            "aviso": None, "hay_borrador": True}
+            "clientes": _cargas_por_cliente(list(cargas)), "elegidas": set(elegidas),
+            "filas": list(filas), "aviso": None, "hay_borrador": True}
 
 
 def test_el_campo_del_KILAJE_lleva_su_NAME_o_lo_editado_no_LLEGA_a_guardarse():
@@ -441,18 +442,74 @@ def test_cada_CARGA_se_ofrece_con_su_tilde_y_el_aviso_de_YA_USADA():
     import re
     from datetime import date
     cargas = [
-        {"id": 3, "cliente_nombre": "EJEMPLO Uno", "fecha": date(2026, 9, 26),
+        {"id": 3, "cliente_id": 1, "cliente_nombre": "EJEMPLO Uno", "fecha": date(2026, 9, 26),
          "modo": "automatico", "margen_porcentaje": 10, "usada_en_otros": 2,
          "ultimo_listado": date(2026, 9, 25)},
-        {"id": 5, "cliente_nombre": "EJEMPLO Dos", "fecha": date(2026, 9, 27),
+        {"id": 5, "cliente_id": 2, "cliente_nombre": "EJEMPLO Dos", "fecha": date(2026, 9, 27),
          "modo": "manual", "margen_porcentaje": 0, "usada_en_otros": 0,
          "ultimo_listado": None},
     ]
     marcado = _render(_contexto(cargas=cargas, elegidas={3})).split("</style>")[-1]
+    # POR CARGA y no por posición: el orden lo decide el agrupado por
+    # cliente, no este test (corolario 96).
     etiquetas = re.findall(r"<label>(.*?)</label>", marcado, re.S)
     assert len(etiquetas) == 2
-    assert 'value="3"' in etiquetas[0] and "checked" in etiquetas[0]
-    assert "Ya se usó en el listado del 25/09 (y 1 más)" in etiquetas[0]
-    assert 'value="5"' in etiquetas[1] and "checked" not in etiquetas[1]
-    assert "Ya se usó" not in etiquetas[1]
-    assert "a mano" in etiquetas[1]
+    por_carga = {re.search(r'value="(\d+)"', e).group(1): e for e in etiquetas}
+    assert "checked" in por_carga["3"]
+    assert "Ya se usó en el listado del 25/09 (y 1 más)" in por_carga["3"]
+    assert "checked" not in por_carga["5"]
+    assert "Ya se usó" not in por_carga["5"]
+    assert "a mano" in por_carga["5"]
+
+
+def _carga_ofrecida(id, cliente_id, nombre, dia):
+    from datetime import date
+    return {"id": id, "cliente_id": cliente_id, "cliente_nombre": nombre,
+            "fecha": date(2026, 9, dia), "modo": "automatico", "margen_porcentaje": 10,
+            "usada_en_otros": 0, "ultimo_listado": None}
+
+
+def test_las_cargas_se_AGRUPAN_por_cliente_con_sus_FECHAS_adentro():
+    """Decisión del dueño (22/09): "se eligen los clientes y, de cada uno,
+    qué fechas sumar".
+
+    El RIVAL es la lista como viene de la base, ordenada por FECHA: ahí Día
+    aparece dos veces separado por Tailem, y elegir "dos días de Día" es ir
+    a buscar sus fechas entre las de otro. Por eso el fixture llega en ese
+    orden, mezclado.
+    """
+    from app.main import _cargas_por_cliente
+    # Tailem PRIMERO, con una fecha anterior: así llega de la base (ordenada
+    # por fecha), y es el caso donde ordenar por nombre cambia algo. Con Día
+    # primero, el orden de la base y el alfabético coinciden y el test no
+    # puede distinguirlos (el canario dio cero con ese fixture).
+    como_viene = [_carga_ofrecida(2, 8, "EJEMPLO Tailem", 25), _carga_ofrecida(1, 7, "EJEMPLO Dia", 26),
+                  _carga_ofrecida(3, 7, "EJEMPLO Dia", 27)]
+    bloques = _cargas_por_cliente(como_viene)
+    assert [b["cliente_nombre"] for b in bloques] == ["EJEMPLO Dia", "EJEMPLO Tailem"]
+    assert [c["id"] for c in bloques[0]["cargas"]] == [1, 3]
+    assert [c["id"] for c in bloques[1]["cargas"]] == [2]
+
+
+def test_las_fechas_de_un_cliente_van_de_la_mas_VIEJA_a_la_mas_nueva():
+    """"Ayer" arriba: es la que se está comprando a la madrugada, y no se
+    puede perder entre las de mañana."""
+    from app.main import _cargas_por_cliente
+    bloques = _cargas_por_cliente([_carga_ofrecida(9, 7, "EJEMPLO Dia", 28),
+                                   _carga_ofrecida(4, 7, "EJEMPLO Dia", 25)])
+    assert [c["id"] for c in bloques[0]["cargas"]] == [4, 9]
+
+
+def test_la_pantalla_dibuja_UN_bloque_por_cliente_y_UN_tilde_por_fecha():
+    """El denominador va al lado: dos clientes, tres tildes. Un `in` sobre la
+    página pasaría con el nombre de Día dibujado una sola vez en una lista
+    plana (corolario 57)."""
+    import re
+    cargas = [_carga_ofrecida(1, 7, "EJEMPLO Dia", 26), _carga_ofrecida(2, 8, "EJEMPLO Tailem", 26),
+              _carga_ofrecida(3, 7, "EJEMPLO Dia", 27)]
+    marcado = _render(_contexto(cargas=cargas, elegidas={1, 3})).split("</style>")[-1]
+    bloques = re.findall(r'<div class="cliente">(.*?)</div>\s*</div>', marcado, re.S)
+    assert len(bloques) == 2
+    assert "EJEMPLO Dia" in bloques[0] and bloques[0].count('name="carga"') == 2
+    assert "EJEMPLO Tailem" in bloques[1] and bloques[1].count('name="carga"') == 1
+    assert bloques[0].count("checked") == 2 and "checked" not in bloques[1]
