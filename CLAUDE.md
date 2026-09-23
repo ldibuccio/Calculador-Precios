@@ -10731,3 +10731,32 @@ que devuelve una TUPLA o una LISTA de cosas heterogéneas —columnas de una
 consulta, mocks de un stack, valores de un `side_effect`— se lee por nombre o
 se rompe en silencio. Una lista está bien cuando todos sus elementos son la
 misma cosa; acá nunca lo son.
+
+## SEGUNDA AL CLIENTE (23/09): las decisiones del dueño y dónde vive cada una
+
+A un cliente que la acepta se le puede mandar mercadería de segunda **adentro
+del mismo renglón**: misma ficha, mismo artículo, mismo precio, mismo remito.
+
+| decisión | dónde vive |
+|---|---|
+| **Solo si el cliente la acepta** — un catering sí, Día no | `clientes.acepta_segunda`, default `false`; el campo de Armar Pedido sale solo con el tilde, y `marcar_renglon_armado` lo vuelve a mirar |
+| **Nunca se elige sola** | el campo arranca cerrado y vacío; retildar sin decirla la limpia |
+| **Cualquier segunda del artículo**, sin importar la caja | la guarda lee el pool con `_segunda_de_articulo`, la misma cuenta del Remanente |
+| **Parte y parte**: 4 de segunda y 6 de primera | `pedidos_renglones.bultos_de_segunda`, una parte de lo armado |
+| **Venta a precio lleno, costo cero** | el FIFO recibe SOLO la primera; la venta sale de los kilos del renglón entero |
+| **Un rechazo vuelve a segunda con costo cero** | la segunda vuelve PRIMERO (`_segunda_que_vuelve`), no puede ir a `stock`, y su costo congelado se promedia a cero |
+
+**LA REGLA ESCRITA UNA VEZ ES `_SQL_BULTOS_DE_PRIMERA`** (app/db.py): toda
+consulta que resta del stock de primera la lee, y las únicas que leen el armado
+ENTERO son las que miran lo que el CLIENTE recibió (el tope del rechazo y los
+kilos de la devolución). Lo cuida un barrido que compara el conjunto ENCONTRADO
+contra el DECIDIDO: la octava que aparezca con el armado entero falla hasta que
+alguien decida de qué lado va.
+
+**Y LA PARED DE LA BASE tiene CUATRO escritores que la conocen**:
+`pedidos_renglones_segunda_solo_armado` exige armado, no anulado y no más que
+lo armado. Marcar la escribe (con `cantidad_armada` EXPLÍCITA, para que
+corregir lo pedido después no la deje arriba de lo armado), desmarcar y anular
+la limpian, y la recarga la traslada con el armado. Un quinto que toque el
+armado sin saberlo rebota contra la base — que es lo que la pared está para
+hacer, y el motivo por el que los tests de esto corren contra Postgres.

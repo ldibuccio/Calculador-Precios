@@ -1210,3 +1210,22 @@ def test_SIN_cajas_perdidas_el_renglon_NO_aparece():
     tenga un número.
     """
     assert 'class="cajas-perdidas"' not in _pantalla_real({})
+
+
+def test_lo_que_salio_de_SEGUNDA_se_vende_entero_y_no_cuesta_nada():
+    """Dueño, 23/09: 10 bultos, 4 de segunda. El FIFO recibe 6 (la primera) y
+    los cobra; la venta sale de los 160 kg del renglón entero; la fila dice
+    10 bultos. Contra la misma salida sin segunda, el costo es MENOR y la
+    venta IGUAL — con la segunda contada como primera, los dos serían iguales.
+    """
+    fecha = date(2026, 8, 25)
+    con_segunda = dict(_armado(fecha, 6, 160.0), de_segunda=4)
+    resultado = calcular_rentabilidad_real(
+        _datos([con_segunda]), {fecha: {901: dict(MARGEN)}},
+        cliente_id=1, fecha_desde=fecha, fecha_hasta=fecha,
+    )
+    fila = resultado["grupos"][0]["filas"][0]
+
+    assert fila["bultos"] == 10.0
+    assert fila["venta_neta"] == 160.0 * 100.0 * 0.9
+    assert fila["costo_mercaderia"] == 6 * 500.0

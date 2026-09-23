@@ -669,6 +669,20 @@
                    placeholder="¿Cuántos?" oninput="actualizarTotal('{{ r.id }}')">
             <button type="submit">Listo</button>
           </div>
+          {# LA SEGUNDA NUNCA SE ELIGE SOLA (dueño, 23/09): el campo arranca
+             cerrado y vacío, y solo existe para los clientes que la aceptan.
+             Es PARTE de lo armado —4 de segunda y 6 de primera en el mismo
+             renglón— y el server revisa las tres cosas que la pantalla no
+             puede: el tilde del cliente, que no pase lo armado, y que haya
+             esa segunda del artículo. #}
+          {% if acepta_segunda %}
+          <button type="button" class="link-parcial" onclick="document.getElementById('segunda-{{ r.id }}').classList.toggle('abierto')">Va con segunda</button>
+          <div class="form-parcial" id="segunda-{{ r.id }}">
+            <input type="number" name="bultos_de_segunda" min="0" step="0.01"
+                   placeholder="¿Cuántos?" aria-label="¿Cuántos de los armados van de segunda?">
+            <button type="submit">Listo</button>
+          </div>
+          {% endif %}
         </form>
         <div class="acciones-renglon-armar">
           <button type="submit" form="armar-{{ r.id }}" class="boton-tilde" aria-label="Marcar {{ r.nombre_venta }} como armado">✓</button>
@@ -730,6 +744,9 @@
           <span class="marca-de-mas">armó {{ r.cantidad_armada|numero }} de {{ r.cantidad|numero }}</span>
           {% else %}{{ r.cantidad|numero }} bultos{% endif %}
         </div>
+        {% if r.bultos_de_segunda %}
+        <div><span class="marca-de-mas marca-segunda">{{ r.bultos_de_segunda|numero }} de segunda</span></div>
+        {% endif %}
         <div class="kilos-enviados">
           {% if r.kilos_enviados is not none %}
           Mandó {{ r.kilos_enviados|numero }} kg{% if r.kilos_editados %} <span class="marca-kilos-mano">kilaje editado a mano</span>{% endif %}

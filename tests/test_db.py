@@ -3939,7 +3939,9 @@ def test_marcar_renglon_armado_completo_y_parcial():
 
     consulta, parametros = cursor.execute.call_args_list[0].args
     assert "SET armado_el = now(), cantidad_armada = %s, kilos_enviados = %s" in consulta
-    assert parametros == (None, None, 11)
+    # El cuarto es la segunda: sin decirla, va en NULL — la segunda nunca
+    # se elige sola, y retildar sin ella la limpia.
+    assert parametros == (None, None, None, 11)
     # Y en la MISMA transacción se va la corrección de lotes vieja: puede
     # estar cambiando la cantidad, y una corrección que reparte 15 bultos
     # sobre un renglón que ahora manda 8 es una mentira guardada.
@@ -3948,7 +3950,7 @@ def test_marcar_renglon_armado_completo_y_parcial():
     conexion2, cursor2 = _conexion_falsa()
     with patch("app.db.obtener_conexion", return_value=conexion2):
         marcar_renglon_armado(11, 12.0, 120.0)
-    assert cursor2.execute.call_args_list[0].args[1] == (12.0, 120.0, 11)
+    assert cursor2.execute.call_args_list[0].args[1] == (12.0, 120.0, None, 11)
 
 
 def test_desmarcar_renglon_armado_borra_tilde_y_cantidad():
@@ -5174,10 +5176,10 @@ def test_stock_deposito_se_calcula_de_las_tablas_reales_y_nunca_se_guarda():
     cursor.description = [("articulo_id",), ("nombre",), ("entradas",), ("salidas",), ("reingresos",),
                           ("ajustes",), ("reproceso_primera",), ("reproceso_tomados",),
                           ("segunda_producida",), ("segunda_de_rechazos",),
-                          ("segunda_de_pases",), ("segunda_remitida",)]
-    # Los cuatro números del pool son DISTINTOS entre sí a propósito: con
+                          ("segunda_de_pases",), ("segunda_remitida",), ("segunda_enviada",)]
+    # Los cinco números del pool son DISTINTOS entre sí a propósito: con
     # dos iguales, una pata leída del lugar equivocado da el mismo total.
-    cursor.fetchall.return_value = [(1, "Banana", 40, 15, 2, -3, 6, 10, 5, 4, 7, 2)]
+    cursor.fetchall.return_value = [(1, "Banana", 40, 15, 2, -3, 6, 10, 5, 4, 7, 2, 3)]
 
     with patch("app.db.obtener_conexion", return_value=conexion):
         filas = stock_deposito_por_articulo(date(2026, 9, 6))
@@ -5202,7 +5204,9 @@ def test_stock_deposito_se_calcula_de_las_tablas_reales_y_nunca_se_guarda():
     # La segunda es un pool APARTE, con TRES entradas y una salida: lo
     # producido en reprocesos, lo que entró por rechazos que no volvieron al
     # stock, y lo que el depósito pasó de primera a segunda − lo remitido.
-    assert filas[0]["segunda"] == 5 + 4 + 7 - 2
+    # Y desde el 23/09 una SEGUNDA salida: la que se armó para un cliente
+    # que la acepta (`bultos_de_segunda`).
+    assert filas[0]["segunda"] == 5 + 4 + 7 - 2 - 3
     # Un rechazo mandado a segunda no suma al stock normal.
     assert "destino_rechazo IS NULL OR destino_rechazo = 'stock'" in consulta
     assert "destino_rechazo IN ('segunda', 'reproceso')" in consulta
@@ -5227,7 +5231,7 @@ def test_el_pool_de_segunda_arranca_en_el_CORTE_y_por_las_TRES_patas():
     cursor.description = [("articulo_id",), ("nombre",), ("entradas",), ("salidas",), ("reingresos",),
                           ("ajustes",), ("reproceso_primera",), ("reproceso_tomados",),
                           ("segunda_producida",), ("segunda_de_rechazos",),
-                          ("segunda_de_pases",), ("segunda_remitida",)]
+                          ("segunda_de_pases",), ("segunda_remitida",), ("segunda_enviada",)]
     cursor.fetchall.return_value = []
 
     with patch("app.db.obtener_conexion", return_value=conexion):
@@ -10247,9 +10251,11 @@ def test_un_armado_de_CERO_no_es_un_dia_en_rojo():
     con un cursor falso la fila la entrega el mock y el HAVING no se ejercita
     (corolario 65).
     """
-    from app.db import _SQL_ARMADOS_DESDE
+    from app.db import _SQL_ARMADOS_DESDE, _SQL_BULTOS_DE_PRIMERA
 
-    assert "HAVING SUM(COALESCE(r.cantidad_armada, r.cantidad)) > 0" in _SQL_ARMADOS_DESDE
+    # Lo que sale de PRIMERA: un renglón armado entero de segunda tampoco
+    # sacó nada del stock.
+    assert "HAVING SUM(" + _SQL_BULTOS_DE_PRIMERA + ") > 0" in _SQL_ARMADOS_DESDE
 
 
 def test_el_rojo_a_su_fecha_solo_mira_los_pedidos_VIGENTES():

@@ -268,11 +268,30 @@ _CLIENTE_CON_TASAS_VIGENTES_SQL = f"""
     SELECT c.id, c.nombre,
            COALESCE(totales.total_resta, 0) * 100 AS descuento,
            COALESCE(totales.total_suma, 0) * 100 AS adicionales,
-           utilidades.valor * 100 AS utilidad_objetivo
+           utilidades.valor * 100 AS utilidad_objetivo,
+           c.acepta_segunda
     FROM clientes c
     LEFT JOIN totales ON totales.cliente_id = c.id
     LEFT JOIN utilidades ON utilidades.cliente_id = c.id
 """
+
+
+def guardar_acepta_segunda(cliente_id: int, acepta: bool) -> None:
+    """El tilde "acepta mercadería de segunda" del cliente (dueño, 23/09).
+
+    Solo decide qué se OFRECE de acá en adelante: sacarlo no toca los
+    renglones que ya salieron con segunda, que son hechos que ocurrieron.
+    """
+    conexion = obtener_conexion()
+    try:
+        with conexion.cursor() as cursor:
+            cursor.execute(
+                "UPDATE clientes SET acepta_segunda = %s, actualizado_en = now() WHERE id = %s",
+                (bool(acepta), cliente_id),
+            )
+        conexion.commit()
+    finally:
+        conexion.close()
 
 
 def listar_clientes() -> list[dict]:
@@ -7428,7 +7447,12 @@ def crear_pedido(
                 cursor.execute(
                     """
                     UPDATE pedidos_renglones nuevo
-                    SET armado_el = viejo.armado_el, cantidad_armada = viejo.cantidad_armada
+                    SET armado_el = viejo.armado_el, cantidad_armada = viejo.cantidad_armada,
+                        -- La segunda viaja con el armado: es PARTE de lo que
+                        -- se armó. Sin esto el renglón nuevo sale armado todo
+                        -- de primera y el stock de primera baja por bultos
+                        -- que salieron del pool de segunda.
+                        bultos_de_segunda = viejo.bultos_de_segunda
                     FROM pedidos_renglones viejo
                     WHERE nuevo.pedido_id = %s AND viejo.pedido_id = %s
                       AND viejo.armado_el IS NOT NULL
@@ -7594,7 +7618,11 @@ def listar_renglones_pedido(pedido_id: int) -> list[dict]:
                        -- ellas la pantalla no puede distinguir un renglón que
                        -- vino en la comanda de uno que agregué yo, que es
                        -- exactamente lo que el dueño pidió que se viera.
-                       r.agregado_a_mano_el, r.cantidad_original
+                       r.agregado_a_mano_el, r.cantidad_original,
+                       -- Cuántos de lo armado salieron de la SEGUNDA: la
+                       -- pantalla lo muestra al lado del tilde y lo precarga
+                       -- al corregir el armado.
+                       r.bultos_de_segunda
                 FROM pedidos_renglones r
                 LEFT JOIN articulos a ON a.id = r.articulo_id
                 LEFT JOIN fichas_logistica fl ON fl.id = r.ficha_id
@@ -7946,7 +7974,17 @@ def borrar_foto_pedido(foto_id: int) -> str | None:
         conexion.close()
 
 
-def marcar_renglon_armado(renglon_id: int, cantidad_armada=None, kilos_enviados=None) -> None:
+class SegundaNoPermitida(ValueError):
+    """La segunda que se quiso mandar en un renglón no se puede: el motivo va en el mensaje."""
+
+
+def _fmt_bultos(numero: float) -> str:
+    """12.0 -> "12", 2.5 -> "2,5": para los mensajes de la segunda."""
+    return f"{numero:g}".replace(".", ",")
+
+
+def marcar_renglon_armado(renglon_id: int, cantidad_armada=None, kilos_enviados=None,
+                          bultos_de_segunda=None) -> None:
     """Tilda un renglón como armado. El tilde significa "terminé con este renglón", no "está completo".
 
     cantidad_armada solo si armó MENOS de lo pedido (Día pide 15 y hay
@@ -7956,13 +7994,74 @@ def marcar_renglon_armado(renglon_id: int, cantidad_armada=None, kilos_enviados=
     kilos_enviados: los kilos REALES con los que se mandó el renglón (lo
     que se factura). El default sugerido en pantalla sale de la ficha,
     pero acá se guarda lo que el depósito dijo — puede diferir.
+
+    bultos_de_segunda: cuántos de lo armado salieron del pool de SEGUNDA del
+    artículo (dueño, 23/09). None = ninguno, y es el default a propósito:
+    **la segunda nunca se elige sola**. Volver a tildar sin decirlo la
+    limpia — el tilde nuevo es la declaración entera, igual que la cantidad.
+
+    TRES GUARDAS, y van ACÁ y no en la pantalla (un POST armado a mano no ve
+    ningún cartel):
+
+    1. **El cliente la acepta** (`clientes.acepta_segunda`). Día no.
+    2. **No es más que lo armado.** Lo repite el CHECK de la base; acá se
+       dice en palabras antes de que la base lo rechace con un 500.
+    3. **Hay esa segunda del artículo.** El pool se lee con la MISMA cuenta
+       que el Remanente (`_segunda_de_articulo`), y a lo que da se le suma lo
+       que ESTE renglón ya tenía: retildar no puede rebotar contra sí mismo.
+
+    Con segunda, `cantidad_armada` se escribe EXPLÍCITA aunque sea completa:
+    si quedara en NULL, corregir después lo pedido movería lo armado por
+    debajo de la segunda y el CHECK rebotaría una corrección legítima.
     """
+    segunda = float(bultos_de_segunda) if bultos_de_segunda not in (None, "") else 0.0
+    if segunda < 0:
+        raise SegundaNoPermitida("La segunda no puede ser negativa.")
+
     conexion = obtener_conexion()
     try:
         with conexion.cursor() as cursor:
+            if segunda > 0:
+                cursor.execute(
+                    """
+                    SELECT r.articulo_id, r.cantidad, r.anulado_el, r.armado_el,
+                           r.bultos_de_segunda, cl.acepta_segunda, cl.nombre
+                    FROM pedidos_renglones r
+                    JOIN pedidos p ON p.id = r.pedido_id
+                    JOIN clientes cl ON cl.id = p.cliente_id
+                    WHERE r.id = %s
+                    """,
+                    (renglon_id,),
+                )
+                fila = cursor.fetchone()
+                if fila is None:
+                    raise SegundaNoPermitida("No existe ese renglón.")
+                articulo_id, cantidad, anulado_el, armado_el, segunda_previa, acepta, cliente = fila
+                if anulado_el is not None:
+                    raise SegundaNoPermitida("Ese renglón está anulado.")
+                if not acepta:
+                    raise SegundaNoPermitida(
+                        f"{cliente} no acepta mercadería de segunda. Se habilita en la ficha del cliente."
+                    )
+                armado = float(cantidad_armada) if cantidad_armada is not None else float(cantidad)
+                if segunda > armado:
+                    raise SegundaNoPermitida(
+                        f"Pusiste {_fmt_bultos(segunda)} de segunda y armaste {_fmt_bultos(armado)}: "
+                        "la segunda es parte de lo armado, no puede ser más."
+                    )
+                ya_tenia = float(segunda_previa or 0) if armado_el is not None else 0.0
+                disponible = _segunda_de_articulo(cursor, articulo_id) + ya_tenia
+                if segunda > disponible:
+                    raise SegundaNoPermitida(
+                        f"De este artículo hay {_fmt_bultos(max(disponible, 0))} de segunda y pusiste "
+                        f"{_fmt_bultos(segunda)}."
+                    )
+                cantidad_armada = armado
+
             cursor.execute(
-                "UPDATE pedidos_renglones SET armado_el = now(), cantidad_armada = %s, kilos_enviados = %s WHERE id = %s",
-                (cantidad_armada, kilos_enviados, renglon_id),
+                "UPDATE pedidos_renglones SET armado_el = now(), cantidad_armada = %s, kilos_enviados = %s,"
+                " bultos_de_segunda = %s WHERE id = %s",
+                (cantidad_armada, kilos_enviados, segunda or None, renglon_id),
             )
             # Vuelve a tildar: la corrección vieja se va. Puede estar
             # cambiando la cantidad, y una corrección que reparte 15 bultos
@@ -8058,7 +8157,7 @@ def desglose_de_renglon_armado(renglon_id: int) -> dict | None:
         with conexion.cursor() as cursor:
             cursor.execute(
                 """
-                SELECT r.articulo_id, COALESCE(r.cantidad_armada, r.cantidad), r.armado_el
+                SELECT r.articulo_id, """ + _SQL_BULTOS_DE_PRIMERA + """, r.armado_el
                 FROM pedidos_renglones r
                 WHERE r.id = %s AND r.armado_el IS NOT NULL AND r.anulado_el IS NULL
                 """,
@@ -8328,6 +8427,10 @@ def desmarcar_renglon_armado(renglon_id: int) -> bool:
     código: sin el `controlado_el = NULL` el CHECK
     pedidos_renglones_controlado_solo_armado RECHAZA este UPDATE.
 
+    La segunda sale con el tilde por la misma razón y con su propio CHECK
+    (pedidos_renglones_segunda_solo_armado): sin armado no salió nada, ni de
+    primera ni de segunda, y el bulto vuelve al pool.
+
     Devuelve True si había un control puesto, para que la pantalla pueda
     decir que se tiró abajo — el que desarma tiene que enterarse.
     """
@@ -8338,7 +8441,7 @@ def desmarcar_renglon_armado(renglon_id: int) -> bool:
                 """
                 UPDATE pedidos_renglones
                 SET armado_el = NULL, cantidad_armada = NULL, kilos_enviados = NULL,
-                    controlado_el = NULL
+                    controlado_el = NULL, bultos_de_segunda = NULL
                 WHERE id = %s
                 RETURNING (controlado_el IS NOT NULL)
                 """,
@@ -8359,7 +8462,8 @@ def anular_renglon_pedido(renglon_id: int) -> None:
     Si estaba tildado, el tilde y sus números se limpian: anulado y armado
     son estados excluyentes — un renglón anulado no manda nada. Y con ellos
     el control de Administración, que sin el armado no puede quedar: lo
-    obliga el CHECK pedidos_renglones_controlado_solo_armado.
+    obliga el CHECK pedidos_renglones_controlado_solo_armado. Y la segunda,
+    por su CHECK hermano (pedidos_renglones_segunda_solo_armado).
     """
     conexion = obtener_conexion()
     try:
@@ -8368,7 +8472,7 @@ def anular_renglon_pedido(renglon_id: int) -> None:
                 """
                 UPDATE pedidos_renglones
                 SET anulado_el = now(), armado_el = NULL, cantidad_armada = NULL,
-                    kilos_enviados = NULL, controlado_el = NULL
+                    kilos_enviados = NULL, controlado_el = NULL, bultos_de_segunda = NULL
                 WHERE id = %s
                 """,
                 (renglon_id,),
@@ -10643,6 +10747,18 @@ def fecha_corte():
 # NULL = hoy, para el que quiere el estado actual y no una fecha. Así hay UN
 # solo camino: la consulta de hoy es la misma que la del 3 de septiembre con
 # otra fecha, y no una segunda versión sin tope que se pueda ir separando.
+# LO QUE UN RENGLÓN ARMADO SACÓ DE LA PRIMERA, escrito UNA vez (dueño, 23/09).
+# Un renglón puede salir en parte de segunda —a un cliente que la acepta— y esa
+# parte no baja el stock de primera, ni las cajas de la ficha, ni consume lotes
+# del FIFO: sale del pool de segunda. Las seis cuentas que tratan el armado como
+# salida de primera leen ESTO y no `COALESCE(r.cantidad_armada, r.cantidad)`, que
+# es lo que recibió el cliente (y lo siguen leyendo el reingreso, las
+# devoluciones y los incompletos, que preguntan eso). Escrita en cada una, la
+# copia que se olvide la resta descuenta de primera lo que salió de segunda, y
+# con envase la ficha queda negativa con el cartel falso de "cargá la guía R".
+# Pide el renglón con alias `r`.
+_SQL_BULTOS_DE_PRIMERA = "(COALESCE(r.cantidad_armada, r.cantidad) - COALESCE(r.bultos_de_segunda, 0))"
+
 _SQL_TOPE = """SELECT COALESCE(%s::date,
         (now() AT TIME ZONE 'America/Argentina/Buenos_Aires')::date) AS fecha"""
 
@@ -10661,7 +10777,7 @@ _SQL_SUMAS_STOCK = """
         FROM pedidos WHERE anulado_el IS NULL
         ORDER BY cliente_id, fecha_operacion, creado_en DESC
     ), salidas AS (
-        SELECT r.articulo_id, SUM(COALESCE(r.cantidad_armada, r.cantidad)) AS total
+        SELECT r.articulo_id, SUM(""" + _SQL_BULTOS_DE_PRIMERA + """) AS total
         FROM pedidos_renglones r JOIN vigentes v ON v.id = r.pedido_id, tope
         WHERE r.armado_el IS NOT NULL AND r.anulado_el IS NULL
           AND r.articulo_id IS NOT NULL
@@ -10757,11 +10873,34 @@ _SQL_POOL_SEGUNDA = """
                       AND fecha_operacion <= tope.fecha
                       {filtro_articulo}
                     GROUP BY articulo_id
+                ), vigentes_seg AS (
+                    SELECT DISTINCT ON (cliente_id, fecha_operacion) id
+                    FROM pedidos WHERE anulado_el IS NULL
+                    ORDER BY cliente_id, fecha_operacion, creado_en DESC
+                ), enviada AS (
+                    -- LA SEGUNDA QUE SE LE MANDO A UN CLIENTE QUE LA ACEPTA
+                    -- (duenio, 23/09): la parte de un renglon armado que salio
+                    -- de aca y no de la primera. Es la otra mitad de
+                    -- _SQL_BULTOS_DE_PRIMERA: lo que esa resta le saca a la
+                    -- primera, esta pata se lo saca a la segunda. Con los
+                    -- mismos recortes que las otras: pedido vigente, fecha del
+                    -- armado en hora argentina, despues del corte.
+                    SELECT r.articulo_id, SUM(r.bultos_de_segunda) AS total
+                    FROM pedidos_renglones r
+                    JOIN vigentes_seg v ON v.id = r.pedido_id, corte_seg, tope
+                    WHERE r.bultos_de_segunda IS NOT NULL
+                      AND r.armado_el IS NOT NULL AND r.anulado_el IS NULL
+                      AND (r.armado_el AT TIME ZONE 'America/Argentina/Buenos_Aires')::date
+                          > corte_seg.fecha
+                      AND (r.armado_el AT TIME ZONE 'America/Argentina/Buenos_Aires')::date
+                          <= tope.fecha
+                      {filtro_r_articulo}
+                    GROUP BY r.articulo_id
                 )
 """
 
 
-def _pool_segunda(producida, de_rechazos, de_pases, remitida) -> float:
+def _pool_segunda(producida, de_rechazos, de_pases, remitida, enviada) -> float:
     """Lo que HAY en el pool de segunda, sumando las TRES entradas y restando la salida.
 
     Entra lo PRODUCIDO en un reproceso, lo que volvió RECHAZADO y no fue al
@@ -10775,8 +10914,13 @@ def _pool_segunda(producida, de_rechazos, de_pases, remitida) -> float:
     comodidad: con un default, un llamador que se lo olvidara devolvería un
     pool CHICO —le faltaría lo que el depósito pasó— y eso no se descuadra
     contra nada, solo hace que no se pueda remitir mercadería que está.
+
+    `enviada` (23/09) es la segunda que salió en un renglón armado para un
+    cliente que la acepta. Tampoco tiene default, por la misma razón al
+    revés: el llamador que se la olvide ofrece segunda que ya se fue.
     """
-    return round(float(producida) + float(de_rechazos) + float(de_pases) - float(remitida), 2)
+    return round(float(producida) + float(de_rechazos) + float(de_pases)
+                 - float(remitida) - float(enviada), 2)
 
 
 def _segunda_de_articulo(cursor, articulo_id: int, hasta=None) -> float:
@@ -10791,14 +10935,16 @@ def _segunda_de_articulo(cursor, articulo_id: int, hasta=None) -> float:
         """
         WITH tope AS (SELECT COALESCE(%s::date, CURRENT_DATE) AS fecha)
         """
-        + _SQL_POOL_SEGUNDA.format(filtro_articulo="AND articulo_id = %s")
+        + _SQL_POOL_SEGUNDA.format(filtro_articulo="AND articulo_id = %s",
+                                   filtro_r_articulo="AND r.articulo_id = %s")
         + """
         SELECT COALESCE((SELECT total FROM segunda), 0),
                COALESCE((SELECT total FROM segunda_rechazo), 0),
                COALESCE((SELECT total FROM segunda_pase), 0),
-               COALESCE((SELECT total FROM remitida), 0)
+               COALESCE((SELECT total FROM remitida), 0),
+               COALESCE((SELECT total FROM enviada), 0)
         """,
-        (hasta, articulo_id, articulo_id, articulo_id, articulo_id),
+        (hasta, articulo_id, articulo_id, articulo_id, articulo_id, articulo_id),
     )
     return _pool_segunda(*cursor.fetchone())
 
@@ -10871,7 +11017,7 @@ def stock_deposito_por_articulo(hasta, articulo_id=None) -> list[dict]:
                 -- el piso lo rebasea y el techo lo corta. Los dos son sobre
                 -- `fecha_operacion`, así que se leen juntos.
                 """
-                + _SQL_POOL_SEGUNDA.format(filtro_articulo="")
+                + _SQL_POOL_SEGUNDA.format(filtro_articulo="", filtro_r_articulo="")
                 + """
                 SELECT a.id AS articulo_id, a.nombre, a.grupo,
                        COALESCE(e.total, 0) AS entradas,
@@ -10883,7 +11029,8 @@ def stock_deposito_por_articulo(hasta, articulo_id=None) -> list[dict]:
                        COALESCE(sg.total, 0) AS segunda_producida,
                        COALESCE(sr.total, 0) AS segunda_de_rechazos,
                        COALESCE(sp.total, 0) AS segunda_de_pases,
-                       COALESCE(rm.total, 0) AS segunda_remitida
+                       COALESCE(rm.total, 0) AS segunda_remitida,
+                       COALESCE(en.total, 0) AS segunda_enviada
                 FROM articulos a
                 LEFT JOIN entradas e ON e.articulo_id = a.id
                 LEFT JOIN salidas s ON s.articulo_id = a.id
@@ -10894,6 +11041,7 @@ def stock_deposito_por_articulo(hasta, articulo_id=None) -> list[dict]:
                 LEFT JOIN segunda_rechazo sr ON sr.articulo_id = a.id
                 LEFT JOIN segunda_pase sp ON sp.articulo_id = a.id
                 LEFT JOIN remitida rm ON rm.articulo_id = a.id
+                LEFT JOIN enviada en ON en.articulo_id = a.id
                 -- `sp` VA EN EL FILTRO aunque hoy sea redundante: un pase
                 -- resta del stock por la pata de `ajustes` (que es
                 -- `tipo <> 'reingreso_rechazo'`), así que el artículo ya
@@ -10905,7 +11053,7 @@ def stock_deposito_por_articulo(hasta, articulo_id=None) -> list[dict]:
                 WHERE (e.total IS NOT NULL OR s.total IS NOT NULL
                    OR r.total IS NOT NULL OR aj.total IS NOT NULL
                    OR rp.articulo_id IS NOT NULL OR sr.articulo_id IS NOT NULL
-                   OR sp.articulo_id IS NOT NULL)
+                   OR sp.articulo_id IS NOT NULL OR en.articulo_id IS NOT NULL)
                   {filtro_articulo_final}
                 ORDER BY a.nombre
                 """.format(
@@ -10920,12 +11068,14 @@ def stock_deposito_por_articulo(hasta, articulo_id=None) -> list[dict]:
                 float(fila["entradas"]) + float(fila["reingresos"]) + float(fila["ajustes"])
                 + float(fila["reproceso_primera"]) - float(fila["reproceso_tomados"]) - float(fila["salidas"])
             )
-            # La SEGUNDA es un pool aparte: no es vendible por pedidos y no
-            # infla el stock normal — lo que se produjo (en reprocesos y en
-            # rechazos que no volvieron al stock) menos lo remitido.
+            # La SEGUNDA es un pool aparte y no infla el stock normal: lo que
+            # se produjo (en reprocesos, en rechazos que no volvieron al stock
+            # y en pases) menos lo remitido al Puesto y lo que salió en un
+            # renglón armado para un cliente que acepta segunda (23/09).
             fila["segunda"] = _pool_segunda(
                 fila["segunda_producida"], fila["segunda_de_rechazos"],
                 fila["segunda_de_pases"], fila["segunda_remitida"],
+                fila["segunda_enviada"],
             )
         return filas
     finally:
@@ -11246,7 +11396,11 @@ def obtener_renglon_para_reingreso(renglon_id: int) -> dict | None:
                        ps.orden_compra,
                        COALESCE(r.cantidad_armada, r.cantidad) AS bultos_armados,
                        r.kilos_enviados,
-                       COALESCE(d.devuelto, 0) AS ya_devuelto
+                       COALESCE(d.devuelto, 0) AS ya_devuelto,
+                       -- Cuántos de lo armado salieron de SEGUNDA: el rechazo
+                       -- los devuelve primero, y esos no vuelven a la primera
+                       -- ni traen costo (la pérdida ya se contó al pasarlos).
+                       COALESCE(r.bultos_de_segunda, 0) AS bultos_de_segunda
                 FROM pedidos_renglones r
                 JOIN vigentes v ON v.id = r.pedido_id
                 JOIN pedidos p ON p.id = r.pedido_id
@@ -11780,7 +11934,7 @@ _SQL_STOCK_PARTIDO = """
         GROUP BY articulo_id, ficha_id
     ), salidas_ficha AS (
         SELECT r.articulo_id, r.ficha_id,
-               SUM(COALESCE(r.cantidad_armada, r.cantidad)) AS total
+               SUM({_SQL_BULTOS_DE_PRIMERA}) AS total
         FROM pedidos_renglones r JOIN vigentes v ON v.id = r.pedido_id, corte, tope
         WHERE r.armado_el IS NOT NULL AND r.anulado_el IS NULL
           AND r.articulo_id IS NOT NULL AND r.ficha_id IS NOT NULL
@@ -12410,13 +12564,16 @@ def eventos_de_stock_del_dia(articulo_id: int, fecha) -> dict:
                 )
                 SELECT cl.nombre, r.sucursal, r.ficha_id, r.pedido_id,
                        v.fecha_operacion,
-                       SUM(COALESCE(r.cantidad_armada, r.cantidad)) AS bultos
+                       SUM(""" + _SQL_BULTOS_DE_PRIMERA + """) AS bultos
                 FROM pedidos_renglones r
                 JOIN vigentes v ON v.id = r.pedido_id
                 JOIN clientes cl ON cl.id = v.cliente_id
                 WHERE r.articulo_id = %s AND r.armado_el IS NOT NULL AND r.anulado_el IS NULL
                   AND (r.armado_el AT TIME ZONE 'America/Argentina/Buenos_Aires')::date = %s
                 GROUP BY cl.nombre, r.sucursal, r.ficha_id, r.pedido_id, v.fecha_operacion
+                -- Un renglón que salió ENTERO de segunda no sacó nada de la
+                -- primera: dibujarlo como una salida de cero es ruido.
+                HAVING SUM(""" + _SQL_BULTOS_DE_PRIMERA + """) <> 0
                 ORDER BY r.pedido_id, r.sucursal
                 """,
                 (articulo_id, fecha),
@@ -12615,7 +12772,7 @@ _SQL_ARMADOS_DESDE = """
     )
     SELECT r.articulo_id, a.nombre,
            (r.armado_el AT TIME ZONE 'America/Argentina/Buenos_Aires')::date AS fecha,
-           SUM(COALESCE(r.cantidad_armada, r.cantidad)) AS bultos
+           SUM(""" + _SQL_BULTOS_DE_PRIMERA + """) AS bultos
     FROM pedidos_renglones r
     JOIN vigentes v ON v.id = r.pedido_id
     JOIN articulos a ON a.id = r.articulo_id
@@ -12627,7 +12784,7 @@ _SQL_ARMADOS_DESDE = """
     -- día no se armó nada sin tener con qué. Sin esto, un artículo que queda
     -- descubierto suma un caso por cada día que alguien le cargue un renglón
     -- en cero, y el número crece sin que pase nada nuevo.
-    HAVING SUM(COALESCE(r.cantidad_armada, r.cantidad)) > 0
+    HAVING SUM(""" + _SQL_BULTOS_DE_PRIMERA + """) > 0
 """
 
 # El saldo de CADA artículo a la fecha tope. Se le pega a _sql_sumas_stock, que
@@ -14048,7 +14205,8 @@ _SQL_SALIDAS_STOCK = """
                r.armado_el AS momento_orden,
                'armado' AS tipo,
                v.fecha_operacion AS fecha,
-               COALESCE(r.cantidad_armada, r.cantidad) AS cantidad,
+               """ + _SQL_BULTOS_DE_PRIMERA + """ AS cantidad,
+               COALESCE(r.bultos_de_segunda, 0) AS de_segunda,
                r.kilos_enviados AS unidades,
                v.cliente_id AS cliente_id,
                NULL AS motivo,
@@ -14087,7 +14245,7 @@ _SQL_SALIDAS_STOCK = """
         -- pared del ARMADO (con envase, el armado no puede salir de un
         -- cajón) y un movimiento no es un armado.
         SELECT m.fecha_operacion, m.creado_en, m.tipo, m.fecha_operacion,
-               -m.cantidad, NULL, NULL, m.motivo, NULL,
+               -m.cantidad, 0, NULL, NULL, m.motivo, NULL,
                m.lote_tipo, m.lote_origen_id, m.ficha_id, FALSE, NULL::bigint, m.articulo_id
         FROM movimientos_stock m
         WHERE m.anulado_el IS NULL AND m.cantidad < 0 AND m.articulo_id = ANY(%s)
@@ -14100,7 +14258,7 @@ _SQL_SALIDAS_STOCK = """
           AND m.tipo <> 'cierre_modelo_viejo'
         UNION ALL
         SELECT rp.fecha_operacion, rp.creado_en, 'reproceso_toma', rp.fecha_operacion,
-               rp.bultos_tomados, NULL, NULL, NULL, rp.bultos_segunda,
+               rp.bultos_tomados, 0, NULL, NULL, NULL, rp.bultos_segunda,
                NULL, NULL, NULL, FALSE, NULL::bigint, rp.articulo_id
         FROM reprocesos rp
         WHERE rp.anulado_el IS NULL AND rp.articulo_id = ANY(%s)

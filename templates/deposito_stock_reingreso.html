@@ -86,6 +86,10 @@
   }
   .dato { margin: 0.15rem 0; font-size: 0.95rem; color: #444; }
   .dato strong { color: #222; }
+  .aviso-segunda {
+    margin: 0.4rem 0; padding: 0.5rem 0.7rem; font-size: 0.95rem;
+    background: #fef3c7; color: #78350f; border-radius: 8px;
+  }
   label {
     display: block;
     margin-top: 0.7rem;
@@ -239,6 +243,10 @@
     <h2>{{ renglon.articulo_nombre }} — pedido del {{ renglon.fecha_pedido.strftime("%d/%m/%Y") }} ({{ renglon.sucursal }})</h2>
     <p class="dato">Cliente: <strong>{{ renglon.cliente_nombre }}</strong>{% if renglon.orden_compra %} · OC {{ renglon.orden_compra }}{% endif %}</p>
     <p class="dato">Armaste <strong>{{ renglon.bultos_armados|numero }}</strong> bultos{% if renglon.ya_devuelto %} y ya devolviste <strong>{{ renglon.ya_devuelto|numero }}</strong>{% endif %}: podés devolver hasta <strong>{{ tope|numero }}</strong>.</p>
+    {% if segunda_pendiente %}
+    <p class="aviso-segunda">De esos, <strong>{{ segunda_pendiente|numero }}</strong> salieron de segunda:
+      son los primeros que vuelven, y no pueden volver al stock de primera.</p>
+    {% endif %}
     <form method="post" action="/deposito/stock/reingreso">
       <input type="hidden" name="renglon_id" value="{{ renglon.id }}">
 

@@ -139,9 +139,13 @@ create table clientes (
     nombre          text not null unique,
     activo          boolean not null default true,
     creado_en       timestamptz not null default now(),
-    actualizado_en  timestamptz not null default now()
+    actualizado_en  timestamptz not null default now(),
+    -- db/segunda_al_cliente_3_tilde_y_renglon.sql
+    acepta_segunda  boolean not null default false
 );
 
+comment on column clientes.acepta_segunda is
+    'Si a este cliente se le puede mandar mercaderia de segunda como si fuera de primera (dueno, 23/09). Default NO: un catering si, Dia no. Decide si Armar Pedido ofrece la segunda, y el POST lo revisa igual.';
 comment on table clientes is 'Clientes a los que se les vende (ej. supermercado Dia). Cada uno con sus propios conceptos (tasas y utilidad objetivo).';
 
 create table clientes_parametros_historial (
@@ -916,6 +920,14 @@ create table pedidos_renglones (
     -- pregunta del dia que algo no cierra es "la OC dice 5 y el sistema 8,
     -- por que", y eso lo contesta el numero viejo.
     cantidad_original numeric,
+    -- db/segunda_al_cliente_3_tilde_y_renglon.sql
+    bultos_de_segunda numeric,
+    constraint pedidos_renglones_segunda_solo_armado
+        check (bultos_de_segunda is null
+               or (bultos_de_segunda > 0
+                   and armado_el is not null
+                   and anulado_el is null
+                   and bultos_de_segunda <= coalesce(cantidad_armada, cantidad))),
     -- Sin artículo no hay ficha: un renglón sin identificar no puede traer
     -- una ficha colgada (y al revés sí: identificado sin ficha es posible).
     constraint pedidos_renglones_ficha_solo_identificados
@@ -937,6 +949,8 @@ comment on column pedidos_renglones.controlado_el is 'Cuando Administracion tild
 
 comment on column pedidos_renglones.agregado_a_mano_el is 'Cuando se agrego este renglon a mano a un pedido YA CARGADO. NULL = vino en la comanda, que es el caso normal. Existe porque pedidos.origen es del PEDIDO y no del renglon: sin esto un articulo que el super agrego por telefono es indistinguible de uno que vino en el mail, y el dia que algo no cierre contra la orden de compra eso es lo primero que hay que mirar. Guarda CUANDO y nada mas, igual que controlado_el: el sistema no tiene usuarios, asi que un quien seria un campo sin consecuencia.';
 
+comment on column pedidos_renglones.bultos_de_segunda is
+    'Cuantos de los bultos ARMADOS salieron de la segunda y no de la primera (dueno, 23/09). NULL = ninguno. Salen del pool de segunda del articulo, no del stock de primera ni de las cajas de la ficha, y se venden a precio lleno con costo cero: la perdida ya se conto al pasar a segunda.';
 comment on column pedidos_renglones.cantidad_original is 'Con que cantidad NACIO este renglon, si despues alguien la corrigio a mano. NULL = nunca se corrigio y cantidad es la de siempre. Guarda el VALOR y no un timestamp a proposito: la pregunta que aparece el dia que algo no cierra es "la orden de compra dice 5 y el sistema dice 8, por que", y eso lo contesta el numero viejo, no la hora. Se escribe UNA sola vez, en la primera correccion.';
 
 comment on column pedidos_renglones.ficha_id is 'La ficha con la que el cliente pidió este renglón: la clave de VENTA (precio, kilaje, envase y el nombre que ve el que arma). Sale del código del cliente al matchear. articulo_id sigue al lado como clave de COMPRA — es lo que descuenta stock, y dos fichas del mismo artículo descuentan del mismo stock. NULL = renglón sin identificar, o ficha borrada después.';
