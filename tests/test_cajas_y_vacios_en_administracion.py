@@ -109,6 +109,7 @@ PANTALLAS = [
     ("/cajas/colega/3", 'Cuenta con Colega EJEMPLO Uno', "/cajas"),
     ("/vacios", 'Puesto EJEMPLO', ""),
     ("/vacios/7", 'Ver el vale', "/vacios"),
+    ("/vacios/stock", '<span class="cantidad">35</span>', "/vacios"),
 ]
 
 
@@ -225,3 +226,49 @@ def test_el_hub_de_ADMINISTRACION_tiene_el_recuadro_y_los_otros_TRES_intactos():
     recuadro = marcado.split("<h2>Cajas y vacíos</h2>")[1].split("</div>")[0]
     assert 'href="/administracion/cajas"' in recuadro
     assert 'href="/administracion/vacios"' in recuadro
+
+
+# EL STOCK DE VACÍOS (23/09): la lista simple con sus dos exportes.
+SIN_CONTEO = dict(UN_PROVEEDOR[0], id=8, nombre="Otro EJEMPLO", desde=None, contados=None,
+                  stock=None, esperando_recepciones=3)
+
+
+def test_el_STOCK_de_vacios_lista_proveedor_tipo_y_cantidad_y_CUENTA_los_sin_conteo():
+    """El que no tiene conteo no sale en CERO: se cuenta al pie. Un cero diría
+    que no hay cajones, y lo que pasa es que nadie los contó."""
+    with patch("app.main.stock_de_vacios_deposito",
+               return_value=[dict(UN_PROVEEDOR[0]), dict(SIN_CONTEO)]):
+        respuesta = cliente.get("/administracion/vacios/stock")
+    assert respuesta.status_code == 200
+    marcado = respuesta.text.split("</style>")[-1]
+    assert marcado.count('<div class="fila">') == 1
+    assert '<span class="nombre">Puesto EJEMPLO</span>' in marcado
+    assert '<span class="tipo">Cajón de ejemplo</span>' in marcado
+    assert '<span class="cantidad">35</span>' in marcado
+    assert "Otro EJEMPLO" not in marcado
+    assert "1 proveedor con cajones cargados pero sin conteo" in marcado
+    assert 'href="/administracion/vacios/stock/excel"' in marcado
+    assert 'href="/administracion/vacios/stock/pdf"' in marcado
+
+
+def test_el_indice_de_vacios_tiene_el_BOTON_del_stock():
+    with _con_datos():
+        marcado = cliente.get("/administracion/vacios").text.split("</style>")[-1]
+    assert 'class="boton-stock" href="/administracion/vacios/stock"' in marcado
+
+
+def test_los_EXPORTES_del_stock_de_vacios_dicen_lo_MISMO_que_la_pantalla():
+    import io as _io
+    from openpyxl import load_workbook
+    datos = [dict(UN_PROVEEDOR[0]), dict(SIN_CONTEO)]
+    with patch("app.main.stock_de_vacios_deposito", return_value=datos):
+        excel = cliente.get("/administracion/vacios/stock/excel")
+        pdf = cliente.get("/compras/vacios/stock/pdf")
+    assert excel.status_code == 200 and pdf.status_code == 200
+    assert pdf.content.startswith(b"%PDF")
+    hoja = load_workbook(_io.BytesIO(excel.content)).active
+    filas = [tuple(c.value for c in f[:3]) for f in hoja.iter_rows(min_row=5)]
+    assert filas[0] == ("Puesto EJEMPLO", "Cajón de ejemplo", 35)
+    assert filas[1] == (None, "Total", 35)
+    assert any("1 proveedor(es) con cajones sin conteo" in str(f[0]) for f in filas)
+

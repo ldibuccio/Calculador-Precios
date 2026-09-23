@@ -49,6 +49,10 @@
 </div>
 {% endif %}
 
+{# Lo que va ANTES de "Todos": mientras el buscador de arriba tiene texto se
+   esconde, así lo que coincide queda pegado al campo (Márgenes por
+   Artículo, 23/09). Con el campo vacío la pantalla queda como siempre. #}
+<div id="secciones-antes-de-todos">
 <h2>Bajas (frescos que bajaron de costo)</h2>
 {% if bajas %}
 <div class="tabla-scroll">
@@ -182,13 +186,11 @@
 </p>
 {% endif %}
 
+</div>
+
 <h2>Todos los artículos</h2>
 {% if todos %}
-<label for="buscar-todos-articulos" class="etiqueta-buscar-todos">Buscar artículo</label>
-<div class="campo-buscar-todos">
-  <input type="text" id="buscar-todos-articulos" placeholder="Buscar artículo" autocomplete="off" oninput="filtrarTodosArticulos()">
-  <button type="button" class="boton-limpiar-busqueda" onclick="limpiarBusquedaTodosArticulos()" aria-label="Limpiar búsqueda">✕</button>
-</div>
+{% if not buscador_arriba %}{% include "_buscador_todos_articulos.html" %}{% endif %}
 <div class="tabla-scroll">
   <table class="tabla-precios">
     <thead>
@@ -249,6 +251,12 @@
       if (coincide) visibles++;
     });
     document.getElementById("sin-coincidencias-todos-articulos").style.display = visibles === 0 ? "block" : "none";
+    // Solo cuando el buscador vive ARRIBA (Márgenes por Artículo): ahí las
+    // Bajas, Subas y Bajo objetivo quedan entre el campo y lo que coincide.
+    // En Cargar Precios el campo está pegado a la tabla y no se esconde nada.
+    if (campo.dataset.arriba === "si") {
+      document.getElementById("secciones-antes-de-todos").hidden = !!filtro;
+    }
   }
 
   function limpiarBusquedaTodosArticulos() {

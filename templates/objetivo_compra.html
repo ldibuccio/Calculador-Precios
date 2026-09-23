@@ -254,7 +254,7 @@
 
       input.addEventListener("input", function () {
         var kilos = parseFloat(input.value.replace(",", "."));
-        if (!isFinite(kilos) || sin_decimales <= 0) {
+        if (!isFinite(kilos) || kilos <= 0) {
           bulto.textContent = "—";
           unidad.textContent = "";
           return;

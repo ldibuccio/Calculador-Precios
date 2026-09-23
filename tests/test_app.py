@@ -288,7 +288,9 @@ def test_el_filtro_que_REDONDEA_no_se_llama_por_una_MAGNITUD_que_no_tiene():
     culpables = [
         ruta.name
         for ruta in Path("templates").glob("*.html")
-        if re.search(r"\|\s*kilos\b", ruta.read_text(encoding="utf-8"))
+        # Sin los `|` del `||` de JavaScript: `if (x || kilos <= 0)` es una
+        # variable, no el filtro (23/09 — es el arreglo del objetivo de compra).
+        if re.search(r"(?<!\|)\|(?!\|)\s*kilos\b", ruta.read_text(encoding="utf-8"))
     ]
     assert culpables == [], f"quedó el filtro viejo en: {culpables}"
 
@@ -8866,6 +8868,63 @@ def test_ver_negociar_sin_articulos_no_muestra_el_buscador():
     assert "No hay artículos para mostrar." in respuesta.text
 
 
+def test_el_buscador_de_MARGENES_va_ARRIBA_y_esconde_lo_de_antes_mientras_busca_en_un_NAVEGADOR():
+    """Del 23/09: el buscador estaba al pie, arriba de "Todos", y es lo
+    primero que se usa. Va pegado al cliente, y mientras tiene texto las
+    Bajas, Subas y Bajo objetivo se esconden para que lo que coincide quede
+    abajo del campo. Con el campo vacío la pantalla vuelve a como estaba.
+
+    Medido con getComputedStyle y no con el atributo (corolario 32): un
+    `hidden` que el CSS pisa pasa cualquier test de marcado.
+    """
+    pytest.importorskip("playwright", reason="el filtro corre en el navegador")
+    from playwright.sync_api import sync_playwright
+    from scripts.medir_layout import CHROMIUM
+
+    with (
+        patch("app.main.listar_clientes", return_value=CLIENTES_DE_PRUEBA),
+        patch("app.main.listar_fichas_por_cliente", return_value=FICHAS_NEGOCIAR_DE_PRUEBA),
+        patch("app.main.calcular_listado_para_negociar_precios", return_value=ARTICULOS_NEGOCIAR_DE_PRUEBA),
+        patch("app.main.facturacion_por_ficha", return_value=FACTURACION_DE_PRUEBA),
+    ):
+        respuesta = cliente.get("/negociar?cliente_id=1")
+    html = respuesta.text
+    marcado = html.split("</style>")[-1]
+    # UN solo campo, y ANTES de la primera sección.
+    assert marcado.count('id="buscar-todos-articulos"') == 1
+    assert marcado.index('id="buscar-todos-articulos"') < marcado.index("<h2>Bajas")
+
+    errores = []
+    with sync_playwright() as p:
+        navegador = p.chromium.launch(executable_path=CHROMIUM)
+        pagina = navegador.new_page(viewport={"width": 390, "height": 844})
+        pagina.on("pageerror", lambda e: errores.append(str(e)))
+        pagina.set_content(html)
+        visible = lambda sel: pagina.eval_on_selector(sel, "e => getComputedStyle(e).display !== 'none'")
+        filas_visibles = lambda: pagina.eval_on_selector_all(
+            "#tbody-todos-articulos tr", "fs => fs.filter(f => getComputedStyle(f).display !== 'none').length")
+        antes = (visible("#secciones-antes-de-todos"), filas_visibles())
+        pagina.fill("#buscar-todos-articulos", "mango")
+        buscando = (visible("#secciones-antes-de-todos"), filas_visibles())
+        pagina.click(".boton-limpiar-busqueda")
+        despues = (visible("#secciones-antes-de-todos"), filas_visibles())
+        navegador.close()
+
+    assert antes == (True, 3)
+    assert buscando == (False, 1)
+    assert despues == (True, 3)
+    assert errores == []
+
+
+def test_en_CARGAR_PRECIOS_el_buscador_se_queda_donde_estaba_y_no_esconde_nada():
+    """El cuadro es el mismo: lo que se mueve es solo en Márgenes."""
+    import io as _io
+    plantilla = _io.open("templates/precios_cargar.html", encoding="utf-8").read()
+    assert "buscador_arriba" not in plantilla
+    cuadro = _io.open("templates/_cuadro_negociacion.html", encoding="utf-8").read()
+    assert '{% if not buscador_arriba %}{% include "_buscador_todos_articulos.html" %}' in cuadro
+
+
 def test_ver_negociar_con_precio_de_compra_sin_cerrar_en_fresco_muestra_advertencia():
     # Un artículo fresco (compra dentro de las últimas 48 hs) con alguna
     # compra sin precio de compra cargado todavía -> el costo puede estar
@@ -12929,15 +12988,20 @@ TASAS_ANALISIS = {
 SIN_TASAS_ANALISIS = {"tasas_suman": [], "tasas_restan": [], "utilidad": None, "detalle": []}
 
 
-def _analizar(url, fichas=None, fila=None, tasas=None, entero=False):
+def _analizar(url, fichas=None, fila=None, tasas=None, entero=False, listado=None,
+              precios=None, envases=None):
     from unittest.mock import patch as _patch
     with (
+        _patch("app.main.listar_precios_vigentes_por_cliente",
+               return_value=precios if precios is not None else []),
+        _patch("app.main.listar_costos_envases_vigentes",
+               return_value=envases if envases is not None else []),
         _patch("app.main.listar_articulos", return_value=[{"id": 1, "nombre": "EJEMPLO Uno"}]),
         _patch("app.main.listar_fichas_de_todos_los_clientes",
                return_value=[dict(f) for f in (fichas or [FICHA_ANALISIS])]),
         _patch("app.main.listar_clientes", return_value=[{"id": 1, "nombre": "EJEMPLO Cli"}]),
         _patch("app.main.calcular_listado_para_negociar_precios",
-               return_value=[dict(fila or FILA_ANALISIS)]),
+               return_value=listado if listado is not None else [dict(fila or FILA_ANALISIS)]),
         _patch("app.main.listar_conceptos_vigentes_por_cliente",
                return_value=tasas if tasas is not None else TASAS_ANALISIS),
         _patch("app.main._hoy_argentina", return_value=date(2026, 9, 12)),
@@ -13289,11 +13353,40 @@ def test_con_DOS_fichas_del_cliente_hay_que_elegir_y_con_una_se_saltea():
     assert 'id="importe_cajon"' in una
 
 
-def test_sin_costo_reciente_lo_DICE_en_vez_de_mostrar_una_pantalla_vacia():
+def test_SIN_COMPRA_reciente_arranca_en_MIL_con_la_ficha_el_precio_y_el_envase():
+    """Del 23/09: "es una pantalla para jugar con los números". Hasta ese día
+    se negaba (y este test afirmaba la negativa: corolario 22).
+
+    Lo inventado es SOLO el importe. El bulto sale de la ficha (16), el precio
+    del vigente (1500) y el envase de su costo por la regla de siempre
+    (800 / 16 = 50 por kilo). Con las tasas del fixture:
+    (1500 × 0,875 − 50 − 62,5) / 62,5 = 1920 %. El RIVAL es el envase en
+    cero: daría 2000 %.
+    """
+    marcado = _analizar("/compras/analizar?cliente_id=1", listado=[],
+                        precios=[{"ficha_id": 901, "precio": 1500}],
+                        envases=[{"envase_id": 5, "costo": 800}])
+    assert _valor(marcado, "importe_cajon") == "1000"
+    assert float(_valor(marcado, "kilos_bulto")) == 16
+    assert float(_valor(marcado, "precio")) == 1500
+    assert abs(float(_valor(marcado, "utilidad")) - 1920) < 0.01
+    assert 'class="desde costo-por-defecto"' in marcado
+    assert "no hay costo del que partir" not in marcado
+    assert "Última compra" not in marcado
+
+
+def test_con_compra_SIN_PRECIO_tambien_arranca_en_mil_y_dice_por_que():
+    """El listado trae la fila (hubo compra) pero sin costo: mismo camino."""
     marcado = _analizar("/compras/analizar?cliente_id=1",
                         fila=dict(FILA_ANALISIS, costo_actual=None))
-    assert "no hay costo del que partir" in marcado
-    assert 'id="importe_cajon"' not in marcado
+    assert _valor(marcado, "importe_cajon") == "1000"
+    assert 'class="desde costo-por-defecto"' in marcado
+
+
+def test_con_COSTO_reciente_NO_aparece_el_aviso_de_los_mil():
+    marcado = _analizar("/compras/analizar?cliente_id=1")
+    assert 'costo-por-defecto' not in marcado
+    assert "Última compra" in marcado
 
 
 def test_las_TASAS_del_cliente_se_muestran():
@@ -14433,6 +14526,46 @@ def test_objetivo_de_compra_etiqueta_el_input_con_la_unidad_de_la_ficha():
     assert "Unidades por cajón" in respuesta.text
     assert "Cubetas por cajón" in respuesta.text
     assert "por bulto" not in respuesta.text
+
+
+def test_objetivo_de_compra_RECALCULA_al_tipear_el_kilaje_en_un_NAVEGADOR():
+    """Del 23/09: "cambio los kilajes y no pasa nada". El renombre del filtro
+    `kilos` a `sin_decimales` (19/09) pisó también la VARIABLE `kilos` del JS
+    de esta pantalla, así que el handler tiraba ReferenceError en cada
+    tecleo. Ningún test lo vio porque todos leían el MARCADO: el script solo
+    falla cuando corre (corolario 32 — el atributo es la intención, el
+    efecto lo decide el navegador).
+
+    Con 10 kg: (760,5 − 40,625) / 1,2 × 10 = $5.999. Y la página no puede
+    tirar un solo error de JavaScript: sin esa segunda mitad, un handler roto
+    que deja el número viejo pasaría si el número viejo coincidiera.
+    """
+    pytest.importorskip("playwright", reason="el recálculo en vivo necesita un navegador")
+    from playwright.sync_api import sync_playwright
+    from scripts.medir_layout import CHROMIUM
+
+    with (
+        patch("app.main.listar_clientes", return_value=CLIENTES_DE_PRUEBA),
+        patch("app.main.calcular_objetivos_de_compra", return_value=OBJETIVOS_DE_PRUEBA),
+    ):
+        html = cliente.get("/compras/objetivo?cliente_id=1").text
+
+    errores = []
+    with sync_playwright() as p:
+        navegador = p.chromium.launch(executable_path=CHROMIUM)
+        pagina = navegador.new_page(viewport={"width": 390, "height": 844})
+        pagina.on("pageerror", lambda e: errores.append(str(e)))
+        pagina.set_content(html)
+        antes = pagina.text_content(".objetivo-bulto").strip()
+        pagina.fill(".input-kilos", "10")
+        despues = pagina.text_content(".objetivo-bulto").strip()
+        tarjetas = pagina.locator(".tarjeta-articulo").count()
+        navegador.close()
+
+    assert tarjetas == 1
+    assert antes == "$10.798"
+    assert despues == "$5.999", despues
+    assert errores == []
 
 
 def test_ver_objetivo_de_compra_cliente_sin_utilidad_objetivo_avisa():
@@ -30270,9 +30403,22 @@ def test_TODA_rama_que_REARMA_el_formulario_conserva_la_segunda_magnitud():
     no la tiene, no — y eso el texto no lo puede distinguir (corolario 59).
     """
     arbol = ast.parse(io.open("app/main.py", encoding="utf-8").read())
+    # FUNCIONES CUYO DICT NO ES UN FORMULARIO, con su razón, y comparadas
+    # contra lo encontrado: si una deja de existir o de armar ese dict, falla.
+    no_son_ramas = {
+        "_fila_de_partida_sin_costo": "arma la FILA de Analizar artículo (23/09), no un formulario de compra",
+    }
+    excluidos = set()
+    for funcion in ast.walk(arbol):
+        if isinstance(funcion, ast.FunctionDef) and funcion.name in no_son_ramas:
+            propios = [n for n in ast.walk(funcion) if isinstance(n, ast.Dict)
+                       and any(isinstance(k, ast.Constant) and k.value == "contenido_por_cajon"
+                               for k in n.keys)]
+            assert propios, f"{funcion.name} ya no arma ese dict: sacala de no_son_ramas"
+            excluidos.update(id(n) for n in propios)
     ramas = [
         nodo for nodo in ast.walk(arbol)
-        if isinstance(nodo, ast.Dict)
+        if isinstance(nodo, ast.Dict) and id(nodo) not in excluidos
         and any(isinstance(k, ast.Constant) and k.value == "contenido_por_cajon"
                 for k in nodo.keys)
     ]
@@ -30394,6 +30540,20 @@ PANTALLAS_SIN_LINK_DECIDIDAS = {
     # verdad y nadie la linkea. El hub ofrece /compras/nueva/manual. Queda acá
     # para que se vea, no para que se olvide.
     "/compras/nueva": "DEUDA: renderiza pantalla y nada la linkea (17/09)",
+    # Los links existen y los afirma el test de la pantalla sobre el marcado
+    # RENDERIZADO (test_cajas_y_vacios_en_administracion.py).
+    "/compras/vacios/stock":
+        "el href se arma con {{ camino.base }}, que un regex literal no ve",
+    "/compras/vacios/stock/excel":
+        "el href se arma con {{ camino.base }}, que un regex literal no ve",
+    "/compras/vacios/stock/pdf":
+        "el href se arma con {{ camino.base }}, que un regex literal no ve",
+    "/administracion/vacios/stock":
+        "el href se arma con {{ camino.base }}, que un regex literal no ve",
+    "/administracion/vacios/stock/excel":
+        "el href se arma con {{ camino.base }}, que un regex literal no ve",
+    "/administracion/vacios/stock/pdf":
+        "el href se arma con {{ camino.base }}, que un regex literal no ve",
 }
 
 
