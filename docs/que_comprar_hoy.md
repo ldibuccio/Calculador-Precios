@@ -107,6 +107,19 @@ queda en cero.**
 - El valor de arranque lo propone la pantalla (`MARGEN_SUGERIDO = 10`), **no
   la base**: la columna es `NOT NULL` **sin default**.
 - **0 significa sin margen**, y es distinto de vacío.
+- **CERRADA (dueño, 23/09): va SOLO sobre lo que el promedio PROPONE.** Lo
+  corregido en "del promedio" y todo lo de "a mano" ya es el número que se va
+  a comprar, y entra tal cual: *"si el número ya es el que voy a comprar, un
+  porcentaje encima no tiene sentido."* Inflar lo corregido le cobraría el
+  margen dos veces, porque se corrige mirando la propuesta que ya lo tiene.
+- **Por eso en "A mano" la pantalla NO muestra el campo**: ahí no movería
+  nada, y un campo sin consecuencia invita a creer que hizo algo. Guardar sin
+  el campo conserva el margen que la carga ya tenía, en vez de pisarlo con el
+  sugerido.
+- **La regla vive UNA vez**, en `lo_que_pide_la_carga` (core/que_comprar.py),
+  y la llaman las dos pantallas: la carga la dibuja con eso y el listado la
+  suma con eso. Escrita en cada una, la copia que se separe hace que el
+  listado compre otra cosa que la que se vio en la carga.
 
 ### Bultos
 
@@ -163,13 +176,29 @@ contesta; con fichas y ninguna que conteste → **`None`**, nunca kilos.
 
 ## Paso 2 — Armar el listado (`/compras/que-comprar`)
 
-**Todavía no reescrito.** Lo que hay es la pantalla del 21/09, que sigue
-leyendo las tablas viejas.
+**Reescrito el 23/09.** Reemplaza la pantalla del 21/09, que elegía clientes
+con un modo y un margen propio.
 
-### Cómo va a quedar (dueño, 22/09)
+### Cómo quedó (dueño, 22/09)
 
 **Se eligen los clientes y, DE CADA UNO, qué fechas sumar.** *"Puedo tomar dos
-días de Día y uno de Tailem, y que todo vaya al mismo listado."*
+días de Día y uno de Tailem, y que todo vaya al mismo listado."* La pantalla
+dibuja un bloque por cliente con un tilde por fecha adentro, de la más vieja a
+la más nueva. **Lo que se tilda es la CARGA** —un cliente para una fecha, con
+su modo y su margen— y eso es lo que el listado guarda en
+`listados_compra_cargas`.
+
+- **La fila suma el mismo artículo entre todas las cargas tildadas** y dice
+  de quién sale cada parte ("Día 26/09 160 · Tailem 26/09 40"): un total que
+  junta tres cargas y no lo dice se lee como el pedido de un solo cliente.
+- **Lo que suma de cada carga es lo que esa carga mostró**, con
+  `lo_que_pide_la_carga`: el promedio en vivo contra el ancla de la carga,
+  con su margen, y lo guardado tal cual. El modo se decide una vez
+  (`_propuesto_de_la_carga`): el listado nunca le suma el promedio a una
+  carga "a mano".
+- **Una carga que el listado ya tiene se ofrece aunque sea más vieja que
+  ayer**: la pantalla guarda lo tildado, y una que no se dibuja se destildaría
+  sola al primer Guardar.
 
 - **CERRADA**: se muestran **las cargas desde ayer en adelante**. Con eso **no
   hace falta ninguna hora de corte**: se trabaja de noche y el que decide es
@@ -185,7 +214,9 @@ días de Día y uno de Tailem, y que todo vaya al mismo listado."*
 
 **Toda la aritmética de `core/que_comprar.py`** (dueño, 22/09):
 `promedio_de_un_dia`, `con_margen`, `falta_por_comprar`, `cajones_que_faltan`,
-`margen_valido`.
+`margen_valido`. Lo único que se agregó es `lo_que_pide_la_carga`, que no es
+una cuenta nueva: es la regla que la pantalla de la carga ya aplicaba,
+mudada a un lugar donde el listado también la llama.
 
 ---
 
@@ -196,24 +227,24 @@ días de Día y uno de Tailem, y que todo vaya al mismo listado."*
 | `cargas_compra` | la cabecera: cliente, fecha, modo, ancla del promedio, margen. Único por `(cliente_id, fecha)` |
 | `cargas_compra_renglones` | el total por artículo, **en la magnitud**. PK `(carga_id, articulo_id)`, cascada desde la carga |
 | `listados_compra_cargas` | qué cargas entraron en qué listado. **Sin cascada hacia la carga**: borrar una carga usada tiene que rebotar, no borrar el rastro |
-| `listados_compra` | la cabecera del listado (del 21/09) |
+| `listados_compra` | la cabecera del listado (del 21/09). Su `margen_porcentaje` está **en retiro**: sin NOT NULL desde el 23/09 (`listados_compra_5`), el código ya no la escribe, y se dropea con el bloque 3 |
 | `listados_compra_kilaje` | el kilaje del Mercado, editable (del 21/09) |
 
-**Se van cuando el Paso 2 esté desplegado**: `listados_compra_manual` y
-`listados_compra_clientes`, con `db/cargas_compra_3_sacar_las_viejas.sql`.
+**Se van cuando el Paso 2 esté desplegado**: `listados_compra_manual`,
+`listados_compra_clientes` y la columna `listados_compra.margen_porcentaje`,
+con `db/cargas_compra_3_sacar_las_viejas.sql`.
 
 ---
 
 ## Lo que falta
 
-1. **El Paso 2 reescrito**: elegir clientes y, de cada uno, sus fechas; la
-   marca de "ya se usó"; la planilla interactiva que ya existe; **y sacar de
-   ahí el margen global.**
-2. **Correr `db/cargas_compra_3_sacar_las_viejas.sql`** en las dos bases,
-   **después** del deploy del Paso 2 — hasta entonces `borrador_de_compra`
-   todavía lee esas tablas.
-3. **Sacar las dos tablas de `db/esquema_completo.sql`** en el mismo commit
-   que el drop, no antes: hasta ese día una base nueva las necesita.
+1. **Correr `db/cargas_compra_3_sacar_las_viejas.sql`** en las dos bases,
+   **después** del deploy del Paso 2 — hasta entonces el código viejo, que es
+   el que está arriba, todavía lee esas tablas y escribe el margen del
+   listado.
+2. **Sacar las dos tablas y la columna del margen de
+   `db/esquema_completo.sql`** en el mismo commit que el drop, no antes:
+   hasta ese día una base nueva las necesita.
 
 ---
 

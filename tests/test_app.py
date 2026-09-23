@@ -2728,7 +2728,7 @@ def test_que_comprar_hoy_SIN_BORRADOR_ofrece_las_cargas_y_no_ofrece_cerrar():
     del dia es justamente tildarlas.
     """
     from datetime import date
-    carga = {"id": 7, "cliente_nombre": "EJEMPLO Uno", "fecha": date(2026, 9, 26),
+    carga = {"id": 7, "cliente_id": 1, "cliente_nombre": "EJEMPLO Uno", "fecha": date(2026, 9, 26),
              "modo": "automatico", "margen_porcentaje": 10, "usada_en_otros": 0,
              "ultimo_listado": None}
     with patch("app.main.listar_cargas_desde", return_value=[carga]) as listar, \

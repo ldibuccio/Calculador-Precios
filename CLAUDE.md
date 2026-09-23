@@ -10347,7 +10347,10 @@ este archivo guarda.
 **Las seis cerradas, del dueño, con fecha (23/09):**
 
 1. **Un solo margen, el de la carga.** El del Paso 2 **se va, no queda en
-   cero.**
+   cero.** Y (23/09) **va SOLO sobre lo que el promedio propone**: lo
+   corregido y lo de "a mano" ya es lo que se compra, entra tal cual, y en
+   "a mano" la pantalla no muestra el campo. La regla vive una vez
+   (`lo_que_pide_la_carga`) y la llaman la carga y el listado.
 2. **La carga es contra ARTÍCULOS DE COMPRA, no contra fichas.** *"Yo compro
    tomate, no 'el tomate de Día'."*
 3. **El archivo no se guarda.** Es una herramienta para tipear más rápido; lo

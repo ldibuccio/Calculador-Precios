@@ -3351,6 +3351,32 @@ def _primera_ficha_por_cliente_y_articulo(elegidos: list[int]) -> dict:
     return por_cliente
 
 
+def _cargas_por_cliente(cargas: list[dict]) -> list[dict]:
+    """[{cliente_id, cliente_nombre, cargas: [...]}] — un bloque por cliente, sus fechas adentro.
+
+    ES COMO EL DUEÑO LO PENSÓ (22/09): *"se eligen los clientes y, de cada
+    uno, qué fechas sumar"*. La consulta devuelve las cargas ordenadas por
+    fecha, que es la forma en que se guardan; la pantalla las agrupa por
+    cliente, que es la forma en que se deciden.
+
+    Lo que se tilda sigue siendo la CARGA —un cliente para una fecha—, así que
+    el guardado no cambia: esto es solo el orden en que se dibuja. Los
+    clientes van por nombre y las fechas de cada uno de la más vieja a la más
+    nueva, para que "ayer" quede arriba y no se pierda entre las de mañana.
+    """
+    por_cliente: dict = {}
+    for carga in cargas:
+        bloque = por_cliente.setdefault(carga["cliente_id"], {
+            "cliente_id": carga["cliente_id"],
+            "cliente_nombre": carga["cliente_nombre"],
+            "cargas": [],
+        })
+        bloque["cargas"].append(carga)
+    for bloque in por_cliente.values():
+        bloque["cargas"].sort(key=lambda c: c["fecha"])
+    return sorted(por_cliente.values(), key=lambda b: (b["cliente_nombre"] or "").lower())
+
+
 def _contexto_de_que_comprar(request: Request, aviso: str | None = None):
     """El Paso 2: qué cargas arma el listado de hoy, y la planilla que sale de sumarlas.
 
@@ -3369,12 +3395,12 @@ def _contexto_de_que_comprar(request: Request, aviso: str | None = None):
     """
     hoy = datetime.now(ARGENTINA).date()
     contexto = {"barra_sector": "compras", "barra_titulo": "Qué comprar hoy",
-                "cargas": [], "elegidas": set(), "filas": [], "aviso": aviso,
+                "clientes": [], "elegidas": set(), "filas": [], "aviso": aviso,
                 "hay_borrador": False}
     try:
         borrador = borrador_de_compra(hoy)
-        contexto["cargas"] = listar_cargas_desde(
-            hoy - timedelta(days=1), borrador["id"] if borrador else None)
+        contexto["clientes"] = _cargas_por_cliente(listar_cargas_desde(
+            hoy - timedelta(days=1), borrador["id"] if borrador else None))
     except Exception:
         logger.exception("No se pudo leer el borrador de Qué comprar hoy")
         contexto["aviso"] = aviso or "No se pudieron leer las cargas. Probá de nuevo."

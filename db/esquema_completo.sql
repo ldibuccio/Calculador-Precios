@@ -534,14 +534,28 @@ create table listados_compra (
     fecha              date not null,
     estado             text not null constraint listados_compra_estado_check
                         check (estado in ('borrador', 'cerrado')),
+    margen_porcentaje  numeric constraint listados_compra_margen_check
+                        check (margen_porcentaje >= 0),
     creado_en          timestamptz not null default now(),
     actualizado_en     timestamptz not null default now()
 );
 
-comment on table listados_compra is 'Cabecera de un "Que comprar hoy". borrador = se sigue editando parado en el Mercado; cerrado = queda como historial de lo que se salio a comprar ese dia. Arma CARGAS (listados_compra_cargas) y NO TIENE MARGEN propio desde el 23/09: vive en cada carga, y dos que se multiplican son invisibles (20% y 10% son 32%).';
+comment on table listados_compra is 'Cabecera de un "Que comprar hoy". borrador = se sigue editando parado en el Mercado; cerrado = queda como historial de lo que se salio a comprar ese dia.';
+comment on column listados_compra.margen_porcentaje is 'EN RETIRO (23/09): el margen vive en cargas_compra. Dos que se multiplican son invisibles (20% y 10% son 32%). El codigo nuevo ya no la escribe; se dropea con cargas_compra_3_sacar_las_viejas.sql, DESPUES del deploy.';
 
 create unique index listados_compra_un_borrador_por_dia_idx
     on listados_compra (fecha) where estado = 'borrador';
+
+create table listados_compra_clientes (
+    listado_id  bigint not null references listados_compra (id) on delete cascade,
+    cliente_id  bigint not null references clientes (id),
+    modo        text not null constraint listados_compra_clientes_modo_check
+                  check (modo in ('automatico', 'manual')),
+    primary key (listado_id, cliente_id)
+);
+
+comment on table listados_compra_clientes is 'Que clientes alimentan este listado y de que forma. La fila se borra con el listado (cascade) porque sin el no dice nada; el cliente NO se borra en cascada a proposito: borrar un cliente no puede vaciar un listado viejo en silencio.';
+comment on column listados_compra_clientes.modo is 'automatico = lo que ese cliente pide sale del promedio de sus ultimos 6 pedidos vigentes. manual = sale de lo que el comprador tipea en listados_compra_manual. Es por CLIENTE y no por listado: un listado puede tener a Dia en automatico y a Tailem a mano, y los dos suman en la misma fila del articulo.';
 
 create table listados_compra_kilaje (
     listado_id   bigint not null references listados_compra (id) on delete cascade,
@@ -553,6 +567,21 @@ create table listados_compra_kilaje (
 
 comment on table listados_compra_kilaje is 'Lo que trae un cajon de ese articulo EN EL MERCADO, en la magnitud de la fila, tal como lo dejo el comprador. Se guarda por listado y no en articulos: el mango viene en 40, 12 y 10 y no hay valor dominante, asi que lo de hoy no es una correccion de la referencia del articulo.';
 comment on column listados_compra_kilaje.kilaje is 'En la magnitud de la fila (la unidad_venta de las fichas de ese articulo), no siempre en kilos. Solo se escribe la fila que el comprador TOCO: la que no esta usa articulos.contenido_referencia, y asi se distingue "lo dejo como venia" de "puso ese numero".';
+
+create table listados_compra_manual (
+    listado_id   bigint not null,
+    cliente_id   bigint not null,
+    articulo_id  bigint not null references articulos (id),
+    total        numeric not null constraint listados_compra_manual_total_check
+                   check (total > 0),
+    primary key (listado_id, cliente_id, articulo_id),
+    foreign key (listado_id, cliente_id)
+        references listados_compra_clientes (listado_id, cliente_id) on delete cascade
+);
+
+comment on table listados_compra_manual is 'Lo que un cliente en modo manual pide de un articulo, tipeado por el comprador. La FK va contra listados_compra_clientes y no contra listados_compra: una linea a mano de un cliente que no esta en el listado no puede existir, y destildarlo se la lleva. La base NO exige que ese cliente este hoy en modo manual, y es a proposito: pasarlo a automatico un rato no le tiene que borrar lo que tipeo. Quien decide cual se lee es el modo, no la existencia de la fila.';
+comment on column listados_compra_manual.total is 'EL TOTAL EN LA MAGNITUD DE LA FILA, y nada mas. Los cajones NO se guardan: salen de dividirlo por listados_compra_kilaje, igual que en la fila automatica. Guardarlos seria una segunda verdad que deja de coincidir en cuanto alguien edita el kilaje.';
+
 
 create table cargas_compra (
     id                   bigint generated always as identity primary key,

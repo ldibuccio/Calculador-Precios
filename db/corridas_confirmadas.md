@@ -203,6 +203,27 @@ para todo el que inserte sin pasar por la pantalla.
 fila**: las cuatro columnas de la izquierda dicen que la columna y la guarda
 están, y eso no puede depender de la base.
 
+## 23/09 — `listados_compra_5_margen_opcional` (el margen se va del listado)
+
+`db/listados_compra_5_margen_opcional.sql`, con su verificación corrida
+aparte. Es la mitad de EXPAND (corolario 94): le saca el NOT NULL a
+`listados_compra.margen_porcentaje` para que el Paso 2 reescrito pueda crear un
+listado sin margen. El código desplegado la sigue escribiendo y no se entera.
+
+```
+FRUTAMAX  columna 1 · acepta NULL 1 · 0 listados · último pedido 22/09
+PALMALA   columna 1 · acepta NULL 1 · 0 listados · último pedido 22/09
+```
+
+**Las dos filas son IDÉNTICAS, testigo incluido**, y eso deja una sola cosa
+que dice de qué base es cada una: la etiqueta que el dueño les puso al
+pegarlas. Las columnas de la migración dan lo mismo por diseño; lo que no
+estaba previsto es que la población (0 listados en las dos: la pantalla que los
+escribe todavía no está desplegada) y el último pedido también coincidieran.
+Para la próxima verificación de esta tabla, una columna de población que
+difiera entre bases —`count(*) from clientes`, 5 contra 3 el 21/09— hace el
+trabajo de identificar que acá no hizo nadie.
+
 ## PENDIENTE de correr: `cargas_compra_3_sacar_las_viejas`
 
 `db/cargas_compra_3_sacar_las_viejas.sql` **todavía NO se corrió en ninguna
@@ -210,6 +231,10 @@ base**, y es a propósito: dropea `listados_compra_manual` y
 `listados_compra_clientes`, que el código desplegado **todavía lee**
 (`borrador_de_compra`). Se corre **después** de que el Paso 2 reescrito esté
 desplegado.
+
+**Y desde el 23/09 también dropea `listados_compra.margen_porcentaje`**, la
+mitad de CONTRACT de `listados_compra_5`: hasta el deploy el código viejo la
+lee y la escribe.
 
 **Y `db/esquema_completo.sql` sigue teniendo las dos tablas hasta ese día**,
 por lo mismo: una base nueva creada hoy las necesita. Sacarlas del esquema
