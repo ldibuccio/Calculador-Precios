@@ -834,3 +834,138 @@ def test_un_margen_en_CERO_deja_la_propuesta_como_esta():
     respuesta, _ = _entrar(ctx, "get", f"/compras/carga/1/{EL_27.isoformat()}")
     corrido = " ".join(respuesta.text.split("</style>")[-1].split())
     assert 'name="propuesto_10" value="10"' in corrido
+
+
+# --- SUBIR ARCHIVO: se lee, se revisa, se corrige, y recién ahí se guarda ----
+#
+# LAS RUTAS SON POST, así que el humo no las abre: estos tests son lo único
+# que mira que la revisión se dibuje. El archivo NO SE GUARDA (dueño, 22/09):
+# es una herramienta para tipear más rápido y lo que vale es lo revisado.
+
+_LEIDO = {"items": [
+    {"articulo": "EJEMPLO Arandano", "cantidad": 12, "confianza": "alta"},
+    {"articulo": "Algo que no existe", "cantidad": 5, "confianza": "baja"},
+]}
+
+
+def _subir(ctx, datos_leidos=None, archivo=("listado.xlsx", b"x")):
+    ctx = list(ctx)
+    ctx.append(patch("app.main._extraer_carga_de_archivo",
+                     return_value=datos_leidos if datos_leidos is not None else _LEIDO))
+    from contextlib import ExitStack
+    with ExitStack() as pila:
+        abiertos = [pila.enter_context(c) for c in ctx]
+        respuesta = _cliente.post(
+            f"/compras/carga/1/{EL_27.isoformat()}/archivo",
+            files={"archivo": (archivo[0], archivo[1], "application/octet-stream")},
+            follow_redirects=False)
+    return respuesta, abiertos
+
+
+def test_el_archivo_se_LEE_y_abre_la_REVISION_sin_guardar_nada():
+    ctx = _con_catalogo()
+    ctx.append(patch("app.main.guardar_renglones_de_carga"))
+    respuesta, abiertos = _subir(ctx)
+    marcado = respuesta.text.split("</style>")[-1]
+    assert respuesta.status_code == 200, "redirigió en vez de mostrar la revisión"
+    assert "Todavía no se guardó" in " ".join(marcado.split())
+    assert abiertos[-2].call_count == 0, "guardó antes de que nadie revisara"
+    # El que matcheó llega con su artículo elegido.
+    assert 'value="10" data-unidad="blt" selected' in " ".join(marcado.split())
+
+
+def test_un_renglon_SIN_ARTICULO_llega_marcado_y_no_elegido():
+    """El rival del test de arriba: sin un renglón que NO matchee, "la
+    pantalla marca los que faltan" pasa igual con la marca sacada."""
+    ctx = _con_catalogo()
+    respuesta, _ = _subir(ctx)
+    marcado = respuesta.text.split("</style>")[-1]
+    assert "No hay artículo que le corresponda" in marcado
+    assert "no se leyó bien, mirala" in marcado, "no marcó la confianza baja"
+
+
+def test_el_ALIAS_del_cliente_es_lo_que_matchea_su_listado():
+    """El nombre con que ÉL llama al artículo es el alias más preciso que
+    existe, y el único que puede reconocer su listado."""
+    fichas = [dict(_FICHAS_DEL_CLIENTE[0], nombre_cliente="ARAND. BANDEJA")]
+    ctx = _con_catalogo(**{"app.main.listar_fichas_por_cliente": fichas})
+    respuesta, _ = _subir(ctx, {"items": [
+        {"articulo": "ARAND. BANDEJA", "cantidad": 7, "confianza": "alta"}]})
+    corrido = " ".join(respuesta.text.split("</style>")[-1].split())
+    assert 'value="10" data-unidad="blt" selected' in corrido
+
+
+def test_un_archivo_que_NO_se_reconoce_avisa_en_vez_de_romper():
+    ctx = _con_catalogo()
+    respuesta, _ = _subir(ctx, archivo=("listado.docx", b"x"))
+    assert respuesta.status_code == 303
+    assert "No+se+reconoci" in respuesta.headers["location"]
+
+
+def test_CONFIRMAR_guarda_en_la_MAGNITUD_y_deja_la_carga_A_MANO():
+    """Lo que se tipea son bultos cuando la ficha dice cuánto entra en uno; la
+    conversión la hace el server. Y subir un archivo es DECLARAR lo que pide,
+    así que la carga queda a mano."""
+    ctx = _con_catalogo()
+    ctx.append(patch("app.main.guardar_carga_de_compra", return_value=3))
+    ctx.append(patch("app.main.guardar_renglones_de_carga"))
+    respuesta, abiertos = _entrar(
+        ctx, "post", f"/compras/carga/1/{EL_27.isoformat()}/archivo/confirmar",
+        data={"cantidad_renglones": "2",
+              "articulo_10": "x",            # ruido: no es un campo del form
+              "articulo_0": "10", "cantidad_0": "12", "texto_0": "Arandano",
+              "articulo_1": "7", "cantidad_1": "50", "texto_1": "Tomate"})
+    assert respuesta.status_code == 303
+    # El 10 tiene bulto de 10 -> 120 en magnitud; el 7 no tiene ficha -> tal cual.
+    assert abiertos["guardar_renglones_de_carga"].call_args.args[1] == {10: 120.0, 7: 50.0}
+    assert abiertos["guardar_carga_de_compra"].call_args.args[2] == "manual"
+
+
+def test_DOS_renglones_del_mismo_articulo_se_SUMAN():
+    """Un listado que nombra el tomate dos veces. Un diccionario por artículo
+    se quedaría con uno solo, en silencio — y los dos están a la vista con su
+    número en la pantalla."""
+    ctx = _con_catalogo()
+    ctx.append(patch("app.main.guardar_carga_de_compra", return_value=3))
+    ctx.append(patch("app.main.guardar_renglones_de_carga"))
+    _, abiertos = _entrar(
+        ctx, "post", f"/compras/carga/1/{EL_27.isoformat()}/archivo/confirmar",
+        data={"cantidad_renglones": "2",
+              "articulo_0": "7", "cantidad_0": "30", "texto_0": "Tomate",
+              "articulo_1": "7", "cantidad_1": "20", "texto_1": "Tomate perita"})
+    assert abiertos["guardar_renglones_de_carga"].call_args.args[1] == {7: 50.0}
+
+
+def test_un_renglon_TIRADO_no_entra():
+    ctx = _con_catalogo()
+    ctx.append(patch("app.main.guardar_carga_de_compra", return_value=3))
+    ctx.append(patch("app.main.guardar_renglones_de_carga"))
+    _, abiertos = _entrar(
+        ctx, "post", f"/compras/carga/1/{EL_27.isoformat()}/archivo/confirmar",
+        data={"cantidad_renglones": "2",
+              "articulo_0": "7", "cantidad_0": "30", "texto_0": "Tomate",
+              "articulo_1": "8", "cantidad_1": "20", "descartar_1": "on", "texto_1": "Mango"})
+    assert abiertos["guardar_renglones_de_carga"].call_args.args[1] == {7: 30.0}
+
+
+def test_DAR_DE_ALTA_crea_el_articulo_y_NO_PIERDE_la_revision():
+    """Mandarlo a /compras/articulos y volver significaría SUBIR EL ARCHIVO DE
+    NUEVO — la revisión costó una lectura con IA."""
+    nuevo = dict(_ARTICULOS[0], id=77, nombre="EJEMPLO Radicheta")
+    ctx = _con_catalogo(**{"app.main.listar_articulos": _ARTICULOS + [nuevo]})
+    ctx.append(patch("app.main.crear_articulo", return_value=77))
+    respuesta, abiertos = _entrar(
+        ctx, "post", f"/compras/carga/1/{EL_27.isoformat()}/archivo/articulo",
+        data={"cantidad_renglones": "2", "fila_del_alta": "1",
+              "articulo_nuevo": "EJEMPLO Radicheta",
+              "articulo_0": "7", "cantidad_0": "30", "texto_0": "Tomate",
+              "articulo_1": "", "cantidad_1": "5", "texto_1": "Radicheta"})
+    corrido = " ".join(respuesta.text.split("</style>")[-1].split())
+    assert respuesta.status_code == 200, "salió de la revisión"
+    assert abiertos["crear_articulo"].call_args.args[0] == "EJEMPLO Radicheta"
+    # SIN contenido_referencia: un artículo nuevo no tiene valor dominante.
+    assert abiertos["crear_articulo"].call_args.args[1] is None
+    assert "quedó dado de alta" in corrido
+    # Y la revisión vuelve ENTERA, con el nuevo elegido en SU renglón.
+    assert 'value="30"' in corrido and 'value="5"' in corrido
+    assert 'value="77" data-unidad="kg" selected' in corrido

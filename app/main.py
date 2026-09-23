@@ -443,6 +443,8 @@ from core.lector_comandas import (
     TEXTOS_PLACEHOLDER_LECTOR,
     extraer_comanda,
     extraer_listado_consolidado,
+    extraer_carga_de_imagenes,
+    extraer_carga_de_texto,
     extraer_listado_precios_de_imagenes,
     extraer_listado_precios_de_texto,
     extraer_pedido_de_imagenes,
@@ -3880,6 +3882,250 @@ def _renglones_del_formulario(formulario, cliente_id: int) -> dict:
             renglones[int(articulo)] = numero * contenido if en_bultos else numero
             break
     return renglones
+
+
+# --------------------------------------------------------------------------
+# SUBIR UN ARCHIVO a la carga: se lee, se revisa, se corrige y se guarda
+# --------------------------------------------------------------------------
+#
+# EL ARCHIVO NO SE GUARDA (dueño, 22/09): es una herramienta para tipear más
+# rápido, y lo que vale es lo revisado. Por eso no hay Storage, ni columna de
+# procedencia, ni un tercer `modo` — lo que queda después de la revisión son
+# renglones a mano como cualquier otro.
+
+
+def _extraer_carga_de_archivo(bytes_archivo: bytes, tipo_archivo: str) -> dict:
+    """Lee un listado de lo que pide un cliente, según el tipo de archivo.
+
+    Los tres formatos terminan en el mismo contrato ({"items": [...]}): foto
+    y PDF —página por página, convertida a imagen— van por la IA en modo
+    imagen, y el Excel volcado a texto va en modo texto. Es el mismo reparto
+    que usa Cargar Foto Precios, con `core/lector_archivos.py` sin tocar.
+    """
+    if tipo_archivo == "foto":
+        return extraer_carga_de_imagenes([bytes_archivo])
+    if tipo_archivo == "pdf":
+        return extraer_carga_de_imagenes(imagenes_desde_pdf(bytes_archivo))
+    if tipo_archivo == "excel":
+        return extraer_carga_de_texto(texto_desde_excel(bytes_archivo))
+    raise ValueError(f"Tipo de archivo no soportado: {tipo_archivo}")
+
+
+def _renglones_leidos_de_la_carga(datos: dict, cliente_id: int) -> list[dict]:
+    """Lo que la IA leyó, con el artículo del CATÁLOGO que le corresponde.
+
+    MATCHEA CONTRA ARTÍCULOS Y NO CONTRA FICHAS, porque la carga va contra el
+    catálogo de compra: se compra tomate, no "el tomate de Día". Pero los
+    ALIAS que se le pasan son los de las fichas de ESTE cliente —el nombre
+    con que él llama a cada artículo— que es el alias más preciso que existe
+    y el único que puede reconocer su listado.
+
+    Sin candidato, el renglón llega con `articulo_id` en None y la pantalla
+    lo marca: ahí se elige a mano, o se da de alta el artículo que falta.
+    `adivinar_articulo` ya descarta los placeholders del lector, así que un
+    "completar articulo" no sugiere nada.
+    """
+    articulos = listar_articulos()
+    fichas = listar_fichas_por_cliente(cliente_id)
+    conversiones = [
+        {"nombre_cliente": f["nombre_cliente"], "articulo_id": f["articulo_id"]}
+        for f in fichas if f.get("nombre_cliente")
+    ]
+    renglones = []
+    for item in datos.get("items") or []:
+        cantidad = item.get("cantidad")
+        if cantidad is None:
+            continue
+        renglones.append({
+            "texto_leido": item.get("articulo") or "",
+            "articulo_id": adivinar_articulo(
+                item.get("articulo") or "", {}, articulos, conversiones),
+            "cantidad": float(cantidad),
+            "confianza": item.get("confianza") or "alta",
+        })
+    return renglones
+
+
+def _contexto_de_revision(cliente_id: int, fecha, renglones: list[dict],
+                          aviso: str | None = None) -> dict:
+    """La pantalla de revisión: lo leído, editable, antes de que se guarde nada."""
+    cliente = next((c for c in listar_clientes() if c["id"] == cliente_id), None)
+    articulos = listar_articulos()
+    unidades = _unidad_de_cada_articulo(articulos, listar_fichas_de_todos_los_clientes())
+    contenidos = _bulto_de_cada_articulo(cliente_id)
+    return {
+        "barra_sector": "compras",
+        "barra_titulo": "Revisar lo que se leyó",
+        "cliente_id": cliente_id,
+        "cliente_nombre": cliente["nombre"] if cliente else "",
+        "fecha": fecha.isoformat(),
+        "fecha_mostrar": fecha.strftime("%d/%m/%Y"),
+        "renglones": renglones,
+        # El catálogo entero: la carga va contra artículos de compra, no
+        # contra las fichas de este cliente.
+        "articulos": [
+            {"articulo_id": a["id"], "nombre": a["nombre"],
+             "sufijo": SUFIJOS_FICHA_REPROCESO.get(unidades.get(a["id"]), ""),
+             "contenido": contenidos.get(a["id"])}
+            for a in articulos
+        ],
+        "aviso": aviso,
+    }
+
+
+@app.post("/compras/carga/{cliente_id}/{fecha}/archivo")
+async def leer_archivo_de_carga(request: Request, cliente_id: int, fecha: str,
+                                archivo: UploadFile = File(...)):
+    """Lee el archivo con la IA y abre la revisión. TODAVÍA NO GUARDA NADA."""
+    fecha_valor = _fecha_de_carga(fecha)
+    volver = f"/compras/carga/{cliente_id}/{fecha_valor.isoformat()}"
+
+    tipo_archivo = _detectar_tipo_archivo_precios(archivo.filename or "")
+    if tipo_archivo is None:
+        return RedirectResponse(
+            f"{volver}?aviso=No+se+reconoció+el+archivo:+subí+una+foto,+un+PDF+o+un+Excel",
+            status_code=303)
+    try:
+        datos = _extraer_carga_de_archivo(await archivo.read(), tipo_archivo)
+    except Exception:
+        logger.exception("No se pudo leer el archivo de la carga")
+        return RedirectResponse(f"{volver}?aviso=No+se+pudo+leer+el+archivo", status_code=303)
+
+    try:
+        renglones = _renglones_leidos_de_la_carga(datos, cliente_id)
+        if not renglones:
+            return RedirectResponse(
+                f"{volver}?aviso=No+se+encontró+ningún+artículo+con+cantidad+en+el+archivo",
+                status_code=303)
+        contexto = _contexto_de_revision(cliente_id, fecha_valor, renglones)
+    except Exception:
+        logger.exception("No se pudo armar la revisión de la carga")
+        return RedirectResponse(f"{volver}?aviso=No+se+pudo+leer+el+archivo", status_code=303)
+    return templates.TemplateResponse(request, "compras_carga_revision.html", contexto)
+
+
+def _renglones_de_la_revision(formulario) -> list[dict]:
+    """Lo que quedó en la pantalla de revisión, después de corregir.
+
+    RECORRE POR ÍNDICE Y NO POR ARTÍCULO: dos renglones leídos pueden caer en
+    el mismo artículo —un listado que nombra el tomate dos veces— y un
+    diccionario por artículo se quedaría con uno solo, en silencio. Se suman
+    al guardar, que es lo que el comprador ve en la pantalla.
+    """
+    cuantos = int(formulario.get("cantidad_renglones") or 0)
+    renglones = []
+    for i in range(cuantos):
+        if formulario.get(f"descartar_{i}"):
+            continue
+        articulo = str(formulario.get(f"articulo_{i}") or "")
+        cantidad = _numero_del_formulario(formulario.get(f"cantidad_{i}"))
+        if not articulo.isdigit() or cantidad is None or cantidad <= 0:
+            continue
+        renglones.append({"articulo_id": int(articulo), "cantidad": cantidad,
+                          "texto_leido": str(formulario.get(f"texto_{i}") or "")})
+    return renglones
+
+
+@app.post("/compras/carga/{cliente_id}/{fecha}/archivo/articulo")
+async def dar_de_alta_desde_la_revision(request: Request, cliente_id: int, fecha: str):
+    """Crea el artículo que faltaba y REDIBUJA la misma revisión, con él elegido.
+
+    LO PIDIÓ EL DUEÑO ASÍ (22/09): "si me piden algo que no tengo como
+    artículo, que me avise y lo doy de alta antes de seguir". Mandarlo a
+    /compras/articulos y volver significaría SUBIR EL ARCHIVO DE NUEVO — la
+    revisión costó una lectura con IA, y es la única pantalla del sistema
+    donde perderla cuesta plata.
+
+    Es un POST y un redibujo, sin JS: el formulario entero viaja y vuelve con
+    el artículo nuevo puesto en su renglón. No se guarda la carga todavía.
+    """
+    formulario = await request.form()
+    fecha_valor = _fecha_de_carga(fecha)
+    nombre = str(formulario.get("articulo_nuevo") or "").strip()
+    try:
+        fila = int(formulario.get("fila_del_alta") or -1)
+    except ValueError:
+        fila = -1
+
+    renglones = []
+    for i in range(int(formulario.get("cantidad_renglones") or 0)):
+        articulo = str(formulario.get(f"articulo_{i}") or "")
+        renglones.append({
+            "texto_leido": str(formulario.get(f"texto_{i}") or ""),
+            "articulo_id": int(articulo) if articulo.isdigit() else None,
+            "cantidad": _numero_del_formulario(formulario.get(f"cantidad_{i}")) or 0.0,
+            "confianza": "alta",
+            "descartado": bool(formulario.get(f"descartar_{i}")),
+        })
+
+    aviso = None
+    if not nombre:
+        aviso = "Escribí el nombre del artículo nuevo."
+    else:
+        try:
+            # SIN contenido_referencia: un artículo recién dado de alta no
+            # tiene valor dominante conocido, y precargar mal es lo que
+            # invita a aceptar mal. El campo pregunta en vez de proponer.
+            nuevo_id = crear_articulo(nombre, None)
+            if 0 <= fila < len(renglones):
+                renglones[fila]["articulo_id"] = nuevo_id
+            aviso = f"«{nombre}» quedó dado de alta."
+        except Exception:
+            logger.exception("No se pudo dar de alta el artículo desde la revisión")
+            aviso = f"No se pudo dar de alta «{nombre}». Puede que ya exista."
+
+    return templates.TemplateResponse(
+        request, "compras_carga_revision.html",
+        _contexto_de_revision(cliente_id, fecha_valor, renglones, aviso),
+    )
+
+
+@app.post("/compras/carga/{cliente_id}/{fecha}/archivo/confirmar")
+async def confirmar_archivo_de_carga(request: Request, cliente_id: int, fecha: str):
+    """Guarda lo revisado. Recién acá queda cargado.
+
+    REEMPLAZA lo que la carga tuviera, y la pantalla lo dice antes: el
+    archivo es el listado ENTERO de lo que ese cliente pide, no un agregado.
+    Sumarlo a lo que ya estaba haría que subir el mismo archivo dos veces
+    cargara el doble, sin que nada se vea raro.
+
+    Y LA DEJA EN A MANO: subir un archivo es declarar lo que pide. En
+    automático esos números serían correcciones sobre la propuesta y los
+    artículos que el archivo no nombra seguirían saliendo del promedio, que
+    es una mezcla que nadie pidió.
+
+    DOS RENGLONES QUE CAEN EN EL MISMO ARTÍCULO SE SUMAN —un listado que
+    nombra el tomate dos veces— porque es lo que el comprador ve en la
+    pantalla: los dos renglones están a la vista con su número.
+    """
+    formulario = await request.form()
+    fecha_valor = _fecha_de_carga(fecha)
+    volver = f"/compras/carga/{cliente_id}/{fecha_valor.isoformat()}"
+
+    try:
+        contenidos = _bulto_de_cada_articulo(cliente_id)
+        totales: dict = {}
+        for renglon in _renglones_de_la_revision(formulario):
+            contenido = contenidos.get(renglon["articulo_id"])
+            # La misma regla que el campo de la carga: lo que se tipea son
+            # BULTOS cuando la ficha dice cuánto entra en uno, y la magnitud
+            # cuando no. La conversión la hace el server.
+            en_magnitud = renglon["cantidad"] * contenido if contenido else renglon["cantidad"]
+            totales[renglon["articulo_id"]] = totales.get(renglon["articulo_id"], 0.0) + en_magnitud
+        if not totales:
+            return RedirectResponse(
+                f"{volver}?aviso=No+quedó+ningún+artículo+para+cargar", status_code=303)
+
+        antes = carga_de_compra(cliente_id, fecha_valor)
+        carga_id = guardar_carga_de_compra(
+            cliente_id, fecha_valor, "manual", _hoy_argentina(),
+            antes["margen"] if antes else MARGEN_SUGERIDO)
+        guardar_renglones_de_carga(carga_id, totales)
+    except Exception:
+        logger.exception("No se pudo guardar la carga leída del archivo")
+        return RedirectResponse(f"{volver}?aviso=No+se+pudo+guardar", status_code=303)
+    return RedirectResponse(
+        f"/compras/carga?aviso=Cargados+{len(totales)}+artículos+del+archivo", status_code=303)
 
 
 @app.post("/compras/carga/{cliente_id}/{fecha}/borrar")

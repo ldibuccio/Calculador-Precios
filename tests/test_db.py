@@ -9884,13 +9884,20 @@ def test_un_articulo_NUEVO_nace_con_la_unidad_del_contenido_en_KILO():
     expresado ese número.
 
     Lo encontró un canario: poner la constante en None no hacía caer nada.
+
+    LA FILA FALSA ES EL ID QUE DEVUELVE EL `RETURNING`: `crear_articulo`
+    devuelve el id desde el 23/09 —la revisión del archivo da de alta un
+    artículo y tiene que dejarlo ELEGIDO en su renglón— así que el cursor
+    tiene que tener algo que entregar. Con la lista vacía el `fetchone()`
+    corta la función antes del commit.
     """
-    conexion, cursor = _conexion_falsa([])
+    conexion, cursor = _conexion_falsa([(77,)])
 
     with patch("app.db.obtener_conexion", return_value=conexion):
-        crear_articulo("EJEMPLO Uno", 16.0, "fruta", "unidad")
+        assert crear_articulo("EJEMPLO Uno", 16.0, "fruta", "unidad") == 77
 
     consulta, parametros = _sql_y_parametros_que_contienen(cursor, "INSERT INTO articulos")
+    assert "RETURNING id" in consulta, "sin esto el alta no puede dejar el artículo elegido"
     assert "unidad_compra" in consulta
     nombre, unidad_compra, unidad_conteo, referencia, grupo = parametros
     assert unidad_compra == "kilo", "el contenido por cajón de un artículo nuevo se carga en kilos"

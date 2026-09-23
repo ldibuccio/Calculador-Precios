@@ -4833,6 +4833,29 @@ diciendo que el código no dice lo que uno cree. Vale tanto como uno que no
 hace caer ningún test (corolario 35), y por la misma razón: las dos veces lo
 que falla es la herramienta de verificar, que también es código.
 
+### Y UN `| head` LO MATA IGUAL QUE UN SIGTERM (23/09)
+
+La regla de arriba dice que matar un canario deja la avería puesta, y uno
+piensa en `kill`. **Un pipe también lo mata**: `python3 canarios.py | head -3`
+cierra la tubería en la tercera línea, el proceso se lleva un SIGPIPE en el
+medio de la tanda, y el `finally` que restaura no corre.
+
+Pasó así el 23/09, y el modo de falla es el peor de esta familia porque
+**parece un canario que se portó raro**: la tanda siguiente sacó su foto de un
+árbol ya mutado, un canario reportó `ancla x0` —el texto que iba a romper ya
+no estaba— y otro hizo caer dos tests en vez de uno. Los tres síntomas se leen
+como "el canario está mal escrito", que es exactamente lo que no era.
+
+Lo accionable, y son dos cosas:
+
+- **La salida de un canario va a un ARCHIVO y se lee después** (`> /tmp/x.txt`
+  y `cat`), nunca por un pipe que pueda cerrarse. `tail` al final del pipe es
+  igual de peligroso que `head` si el proceso escribe de a poco.
+- **Y el control de lo que quedó escrito se hace POR MUTACIÓN**, no mirando si
+  `git status` se ve raro: acá el archivo figuraba modificado igual, porque
+  tenía el trabajo del turno sin commitear. Lo único que lo encontró fue
+  grepear las seis mutaciones una por una y contar — `6 de 6 controladas`.
+
 ### Y una vuelta más, del 13/09: el archivo en disco puede estar bien y PYTHON TENER CARGADO EL OTRO
 
 La regla de arriba dice mirar qué quedó ESCRITO después de un canario. No

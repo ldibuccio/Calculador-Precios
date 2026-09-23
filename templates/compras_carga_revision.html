@@ -1,0 +1,120 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Revisar lo que se leyó</title>
+<style>
+  :root { font-family: -apple-system, system-ui, sans-serif; }
+  body { margin: 0; padding: 1rem; background: #f5f5f5; color: #222; }
+  .tarjeta { background: #fff; border-radius: 10px; padding: 1rem; margin-bottom: 0.75rem;
+             box-shadow: 0 1px 3px rgba(0,0,0,0.08); }
+  .art { font-weight: 800; font-size: 1.05rem; overflow-wrap: anywhere; }
+  .ayuda { font-size: 0.9rem; color: #555; margin: 0.4rem 0 0; }
+  .aviso { background: #fff7ed; border-left: 5px solid #f97316; }
+  .renglon { border-bottom: 1px solid #eee; padding: 0.6rem 0; }
+  /* El texto leído, arriba y tal cual vino: es contra lo que se compara. */
+  .leido { font-size: 0.85rem; color: #555; overflow-wrap: anywhere; }
+  .leido b { color: #222; }
+  .baja { color: #92400e; font-weight: 800; }
+  .sin-match { color: #b91c1c; font-weight: 800; font-size: 0.85rem; }
+  .campos { display: flex; align-items: center; gap: 0.5rem; margin-top: 0.35rem;
+            flex-wrap: wrap; }
+  /* 44px es el mínimo tocable con el pulgar. */
+  .campos select { flex: 1 1 10rem; min-width: 0; min-height: 44px; font-size: 0.95rem;
+                   border-radius: 8px; padding: 0 0.4rem; }
+  .campos input[type=number] { width: 5.5rem; min-height: 44px; font-size: 1.05rem;
+                               padding: 0.4rem; border: 2px solid #2563eb;
+                               border-radius: 8px; text-align: center; }
+  .unidad { font-size: 0.85rem; color: #555; font-weight: 700; width: 2.6rem; }
+  .tirar { display: flex; align-items: center; gap: 0.4rem; min-height: 44px;
+           font-size: 0.85rem; color: #555; }
+  .tirar input { width: 22px; height: 22px; }
+  .alta { display: flex; gap: 0.5rem; flex-wrap: wrap; margin-top: 0.75rem; }
+  .alta input[type=text] { flex: 1 1 10rem; min-width: 0; min-height: 44px;
+                           font-size: 0.95rem; padding: 0 0.5rem; border: 2px solid #7c3aed;
+                           border-radius: 8px; }
+  .alta button { min-height: 44px; font-size: 0.95rem; font-weight: 800; color: #fff;
+                 background: #7c3aed; border: 0; border-radius: 8px; padding: 0 1rem; }
+  .guardar { min-height: 52px; width: 100%; font-size: 1.1rem; font-weight: 800; color: #fff;
+             background: #16a34a; border: 0; border-radius: 10px; }
+</style>
+</head>
+<body>
+  {% set barra_titulo = "Revisar lo que se leyó" %}
+  {% set barra_sector = "compras" %}
+  {% include "_barra_navegacion.html" %}
+
+  {% if aviso %}<div class="tarjeta aviso"><p class="art">{{ aviso }}</p></div>{% endif %}
+
+  <form method="post"
+        action="/compras/carga/{{ cliente_id }}/{{ fecha }}/archivo/confirmar">
+  <input type="hidden" name="cantidad_renglones" value="{{ renglones|length }}">
+
+  <div class="tarjeta">
+    <div class="art">{{ cliente_nombre }} · {{ fecha_mostrar }}</div>
+    {# TODAVIA NO SE GUARDO NADA, y se dice arriba: es lo que separa esta
+       pantalla de la de carga, donde todo lo que se ve ya está guardado. #}
+    <p class="ayuda">Esto es lo que el sistema entendió del archivo. <b>Todavía no se guardó
+      nada.</b> Corregí lo que haga falta y recién después Guardar.</p>
+  </div>
+
+  {% for r in renglones %}
+  <div class="tarjeta renglon">
+    <div class="leido">Leyó: <b>{{ r.texto_leido }}</b>
+      {% if r.confianza == 'baja' %}<span class="baja">· no se leyó bien, mirala</span>{% endif %}
+    </div>
+    {% if not r.articulo_id %}
+      <div class="sin-match">No hay artículo que le corresponda: elegilo, o dalo de alta abajo.</div>
+    {% endif %}
+    <input type="hidden" name="texto_{{ loop.index0 }}" value="{{ r.texto_leido }}">
+    <div class="campos">
+      <select name="articulo_{{ loop.index0 }}" data-fila="{{ loop.index0 }}"
+              aria-label="Artículo para «{{ r.texto_leido }}»">
+        <option value="">Elegí el artículo</option>
+        {% for a in articulos %}
+          <option value="{{ a.articulo_id }}"
+                  data-unidad="{{ 'blt' if a.contenido is not none else a.sufijo }}"
+                  {% if a.articulo_id == r.articulo_id %}selected{% endif %}>{{ a.nombre }}</option>
+        {% endfor %}
+      </select>
+      <input type="number" name="cantidad_{{ loop.index0 }}" inputmode="decimal"
+             step="0.1" min="0" value="{{ r.cantidad|sin_decimales }}"
+             aria-label="Cantidad de «{{ r.texto_leido }}»">
+      {# LA UNIDAD SIGUE AL SELECT: cambiar el artículo puede cambiarla, y un
+         rótulo viejo al lado de un número es peor que ninguno. #}
+      <span class="unidad" data-unidad-de="{{ loop.index0 }}"></span>
+      <label class="tirar"><input type="checkbox" name="descartar_{{ loop.index0 }}"
+             {% if r.descartado %}checked{% endif %}>tirar</label>
+    </div>
+    <div class="alta">
+      <input type="text" name="articulo_nuevo" placeholder="¿Falta el artículo? Nombre nuevo"
+             aria-label="Nombre del artículo a dar de alta">
+      <button type="submit" name="fila_del_alta" value="{{ loop.index0 }}"
+              formaction="/compras/carga/{{ cliente_id }}/{{ fecha }}/archivo/articulo">Dar de alta</button>
+    </div>
+  </div>
+  {% endfor %}
+
+  <button class="guardar" type="submit">Guardar la carga</button>
+  </form>
+
+<script>
+// LA UNIDAD SIGUE AL SELECT. Un rótulo viejo al lado de un número es peor que
+// ninguno: el que tipea 12 no sabe si son 12 bultos o 12 kilos.
+(function () {
+  function pintar(select) {
+    var destino = document.querySelector('[data-unidad-de="' + select.dataset.fila + '"]');
+    if (!destino) return;
+    var elegida = select.options[select.selectedIndex];
+    destino.textContent = (elegida && elegida.dataset.unidad) || "";
+  }
+  document.querySelectorAll("select[data-fila]").forEach(function (select) {
+    pintar(select);
+    select.addEventListener("change", function () { pintar(select); });
+  });
+})();
+</script>
+{% include "_pie_version.html" %}
+</body>
+</html>

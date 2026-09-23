@@ -47,6 +47,10 @@
   .borrar { min-height: 44px; width: 100%; font-size: 0.95rem; font-weight: 700;
             color: #b91c1c; background: #fff; border: 2px solid #b91c1c; border-radius: 8px; }
   .aviso { background: #fff7ed; border-left: 5px solid #f97316; }
+  .archivo { width: 100%; min-height: 44px; font-size: 0.95rem; box-sizing: border-box;
+             margin-bottom: 0.5rem; }
+  .leer { min-height: 52px; width: 100%; font-size: 1rem; font-weight: 800; color: #fff;
+          background: #7c3aed; border: 0; border-radius: 10px; }
   .vacio { color: #666; font-size: 0.95rem; }
 </style>
 </head>
@@ -150,6 +154,22 @@
   </div>
 
   <button class="guardar" type="submit">Guardar la carga</button>
+  </form>
+
+  {# SUBIR ARCHIVO ES UN FORMULARIO APARTE, y tiene que serlo: va con
+     multipart y su propia acción. Adentro del de arriba, elegir un archivo
+     mandaría también todos los totales. #}
+  <form method="post" enctype="multipart/form-data"
+        action="/compras/carga/{{ carga.cliente_id }}/{{ carga.fecha.isoformat() }}/archivo">
+  <div class="tarjeta">
+    <div class="art">O subí lo que te mandaron</div>
+    <p class="ayuda">Una foto del listado, una captura del mail, un PDF o un Excel. El sistema lo
+      lee y te lo muestra para revisar <b>antes</b> de guardar nada.
+      {% if carga.renglones %}Reemplaza los {{ carga.renglones|length }} que ya tiene.{% endif %}</p>
+    <input class="archivo" type="file" name="archivo"
+           accept=".jpg,.jpeg,.png,.pdf,.xlsx" required aria-label="Archivo para leer">
+    <button class="leer" type="submit">Leer el archivo</button>
+  </div>
   </form>
 
   <form method="post" action="/compras/carga/{{ carga.cliente_id }}/{{ carga.fecha.isoformat() }}/borrar">

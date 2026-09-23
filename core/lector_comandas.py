@@ -124,6 +124,49 @@ Respondé ÚNICAMENTE con el JSON, sin texto adicional antes ni después, y sin
 comillas invertidas (backticks) ni bloques de código markdown.
 """
 
+MAX_TOKENS_CARGA_DE_COMPRA = 16384
+
+PROMPT_CARGA_DE_COMPRA = """
+Estás leyendo un listado de lo que un cliente (un supermercado) le pide a un
+distribuidor mayorista de frutas y verduras para un día. Puede venir como
+foto de un papel, captura de un mail, página(s) de PDF, o el contenido de una
+planilla Excel ya convertido a texto — no importa el formato ni el orden de
+las columnas: tu trabajo es extraer cada artículo con la cantidad que le
+corresponde, tal como está escrita, sin hacer ninguna cuenta.
+
+Devolvé ÚNICAMENTE un JSON con este formato exacto:
+
+{
+  "items": [
+    {"articulo": "...", "cantidad": ..., "confianza": "alta|baja"}
+  ]
+}
+
+REGLAS DE EXTRACCIÓN:
+
+- Un ítem por cada artículo con cantidad que aparezca, en el mismo orden en
+  que aparecen.
+- "articulo": el texto COMPLETO tal como está escrito, nunca una parte
+  cortada de la palabra. Si está abreviado, transcribir la abreviatura tal
+  cual, no acortarla más ni inventar el resto.
+- "cantidad": el número tal como está, SIN la unidad y sin separadores de
+  miles (ej. "12 cajas" -> 12, "1.250" -> 1250, "7,5" -> 7.5). NO conviertas
+  entre unidades ni multipliques por nada: el sistema decide después en qué
+  unidad va cada artículo, y una cuenta hecha acá la haría dos veces.
+- Si un renglón no tiene cantidad, no lo incluyas en la lista.
+- NUNCA adivinar. Si el nombre o la cantidad de un renglón no se leen con
+  seguridad, igual transcribí lo que se alcanza a leer y marcá
+  "confianza": "baja" en ese ítem — mejor un dato marcado para revisar a
+  mano que uno inventado.
+- Si el archivo tiene varias páginas (PDF) u hojas (Excel), juntá todos los
+  artículos encontrados en una sola lista "items".
+- Ignorar encabezados, totales, fechas, subtítulos, firmas, o cualquier fila
+  que no sea un artículo con su cantidad.
+
+Respondé ÚNICAMENTE con el JSON, sin texto adicional antes ni después, y sin
+comillas invertidas (backticks) ni bloques de código markdown.
+"""
+
 PROMPT_LISTADO_CONSOLIDADO = """
 Estás leyendo la foto de una planilla de compras CONSOLIDADA de un
 distribuidor mayorista de frutas y verduras: una sola hoja con muchos
@@ -396,6 +439,34 @@ def extraer_listado_precios_de_texto(texto: str) -> dict:
     """
     respuesta_texto = _llamar_api_claude_texto(
         texto, prompt=PROMPT_LISTADO_PRECIOS, max_tokens=MAX_TOKENS_LISTADO_PRECIOS
+    )
+    return _parsear_json_de_la_respuesta(respuesta_texto)
+
+
+def extraer_carga_de_imagenes(imagenes: list[bytes]) -> dict:
+    """Extrae {"items": [{"articulo", "cantidad", "confianza"}, ...]} de una o varias imágenes.
+
+    Para "subir archivo" del Paso 1 de Qué comprar: una foto, o un PDF con
+    una imagen por página (ver core/lector_archivos.py).
+
+    NO PIDE LA UNIDAD, y es a propósito: en qué unidad va cada artículo lo
+    decide el sistema con la ficha del cliente, igual que en la carga a mano.
+    Pedírsela a la IA sería un segundo lugar donde se decide lo mismo, y el
+    que se separe no falla — carga el número en la unidad de al lado.
+    """
+    respuesta_texto = _llamar_api_claude_multi_imagen(
+        imagenes, prompt=PROMPT_CARGA_DE_COMPRA, max_tokens=MAX_TOKENS_CARGA_DE_COMPRA
+    )
+    return _parsear_json_de_la_respuesta(respuesta_texto)
+
+
+def extraer_carga_de_texto(texto: str) -> dict:
+    """Mismo contrato que extraer_carga_de_imagenes, desde texto plano (ej. un Excel).
+
+    La revisión no necesita saber de qué formato salió cada ítem.
+    """
+    respuesta_texto = _llamar_api_claude_texto(
+        texto, prompt=PROMPT_CARGA_DE_COMPRA, max_tokens=MAX_TOKENS_CARGA_DE_COMPRA
     )
     return _parsear_json_de_la_respuesta(respuesta_texto)
 

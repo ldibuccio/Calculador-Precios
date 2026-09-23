@@ -104,8 +104,13 @@ def crear_articulo(
     contenido_referencia: float | None,
     grupo: str | None = None,
     unidad_conteo: str | None = None,
-) -> None:
-    """Inserta un artículo nuevo en la tabla articulos. grupo es opcional: None = sin clasificar todavía.
+) -> int:
+    """Inserta un artículo nuevo y DEVUELVE SU ID. grupo es opcional: None = sin clasificar todavía.
+
+    Devolvía None. El id hace falta desde que la revisión del archivo puede
+    dar de alta un artículo que falta y tiene que dejarlo ELEGIDO en su
+    renglón: buscarlo después por nombre sería preguntar por algo que se
+    acaba de escribir, con el plegado de por medio.
 
     `unidad_compra` NO es un parámetro: se escribe 'kilo' y punto. Dejó de
     ser una decisión el día que la compra pasó a declarar las dos magnitudes
@@ -117,11 +122,13 @@ def crear_articulo(
         with conexion.cursor() as cursor:
             cursor.execute(
                 "INSERT INTO articulos (nombre, unidad_compra, unidad_conteo, contenido_referencia, grupo)"
-                " VALUES (%s, %s, %s, %s, %s)",
+                " VALUES (%s, %s, %s, %s, %s) RETURNING id",
                 (nombre, UNIDAD_DEL_CONTENIDO_DE_UN_ARTICULO_NUEVO, unidad_conteo,
                  contenido_referencia, grupo),
             )
+            nuevo_id = cursor.fetchone()[0]
         conexion.commit()
+        return nuevo_id
     finally:
         conexion.close()
 
