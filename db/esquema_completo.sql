@@ -579,11 +579,14 @@ create table cargas_compra_renglones (
     articulo_id  bigint not null references articulos (id),
     total        numeric not null constraint cargas_compra_renglones_total_check
                      check (total > 0),
+    contenido_por_bulto numeric constraint cargas_compra_renglones_por_bulto_check
+                     check (contenido_por_bulto is null or contenido_por_bulto > 0),
     primary key (carga_id, articulo_id)
 );
 
 comment on table cargas_compra_renglones is 'Lo que ese cliente pide de un articulo, EN LA UNIDAD DEL ARTICULO. La carga es contra ARTICULOS DE COMPRA y no contra las fichas del cliente (dueno, 22/09): se compra tomate, no "el tomate de Dia"; cada cliente arma despues su ficha con eso. Por eso apunta a articulos: uno que ningun cliente tiene en ficha se carga igual. Cuelga de la carga (cascade) porque sin ella no dice nada; el articulo NO va en cascada: borrarlo no puede vaciar una carga en silencio.';
 comment on column cargas_compra_renglones.total is 'EL TOTAL DEL DIA en la magnitud del articulo. Los cajones NO se guardan: salen de dividirlo por listados_compra_kilaje, que es el kilaje DE COMPRA del Mercado y no el contenido_caja de la ficha. Medido el 22/09 en las dos bases: sin_ficha_Y_con_conteo 0, asi que el articulo sin ficha es siempre kilos.';
+comment on column cargas_compra_renglones.contenido_por_bulto is 'CUANTO TRAE UN BULTO de este renglon, en la magnitud del articulo (kilos, o unidades si se cuenta), tal como lo dejo el que cargo. La pantalla relaciona tres numeros —total, bultos y por bulto— y guarda dos: total y este; los bultos salen de dividir (dueno, 23/09: "cargar indistintamente kilos totales, bultos y kilos por bulto, y que los tres queden relacionados"). NULL = no se declaro y la pantalla propone el contenido_caja de la ficha del cliente. NO ES el kilaje del Mercado (listados_compra_kilaje): aquel es de a cuanto viene el cajon al comprar; este es como piensa el pedido de ese cliente.';
 
 create table listados_compra_cargas (
     listado_id  bigint not null references listados_compra (id) on delete cascade,
