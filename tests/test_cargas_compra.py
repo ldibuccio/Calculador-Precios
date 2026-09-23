@@ -33,7 +33,16 @@ from scripts.humo import hay_postgres, preparar_base  # noqa: E402
 # salteado se lee exactamente igual que uno verde.
 OBLIGATORIO = os.environ.get("HUMO_OBLIGATORIO") == "1"
 
-HOY = date(2026, 9, 22)
+# EL DÍA EN QUE SE CARGÓ, y va a una fecha que NUNCA puede ser hoy.
+#
+# Se llamaba CARGADA_EL y valía 2026-09-22, que era el día de ayer. El canario que
+# le cambia el ancla por `_hoy_argentina()` daba CERO: corrido a las 02:21
+# UTC, `_hoy_argentina()` devuelve el 22 en Argentina, o sea el mismo valor
+# — el test comparaba dos cosas iguales por la hora a la que se corría.
+# Es un test que mide el ENTORNO: pasa donde se escribe y donde decide,
+# calla (corolario 92). Con una fecha fija y lejana, los dos valores no
+# pueden coincidir nunca.
+CARGADA_EL = date(2026, 3, 5)
 EL_27 = date(2026, 9, 27)
 
 
@@ -79,13 +88,13 @@ def test_EDITAR_una_carga_NO_MUEVE_el_ancla_del_promedio(galpon):
     """La regla del dueño: editarla la deja donde está; el que la mueve es
     borrarla y empezar de cero. El canario está abajo."""
     d, _sql, cliente, _t, _l = galpon
-    d.guardar_carga_de_compra(cliente, EL_27, "automatico", HOY)
+    d.guardar_carga_de_compra(cliente, EL_27, "automatico", CARGADA_EL)
     # Se edita al día siguiente, con lo que el server pondría de ancla hoy.
-    d.guardar_carga_de_compra(cliente, EL_27, "manual", HOY + timedelta(days=1))
+    d.guardar_carga_de_compra(cliente, EL_27, "manual", CARGADA_EL + timedelta(days=1))
 
     carga = d.carga_de_compra(cliente, EL_27)
     assert carga["modo"] == "manual", "el modo SÍ se actualiza al editar"
-    assert carga["promedio_anterior_a"] == HOY, (
+    assert carga["promedio_anterior_a"] == CARGADA_EL, (
         "editar movió el ancla: la ventana del promedio se corre sola"
     )
 
@@ -94,19 +103,19 @@ def test_BORRARLA_Y_EMPEZAR_DE_CERO_si_mueve_el_ancla(galpon):
     """La otra mitad, y es la que hace que la de arriba no sea una traba: sin
     esto, una carga vieja quedaría con su ancla para siempre."""
     d, _sql, cliente, _t, _l = galpon
-    d.guardar_carga_de_compra(cliente, EL_27, "automatico", HOY)
+    d.guardar_carga_de_compra(cliente, EL_27, "automatico", CARGADA_EL)
     assert d.borrar_carga_de_compra(cliente, EL_27) is True
-    d.guardar_carga_de_compra(cliente, EL_27, "automatico", HOY + timedelta(days=1))
+    d.guardar_carga_de_compra(cliente, EL_27, "automatico", CARGADA_EL + timedelta(days=1))
 
-    assert d.carga_de_compra(cliente, EL_27)["promedio_anterior_a"] == HOY + timedelta(days=1)
+    assert d.carga_de_compra(cliente, EL_27)["promedio_anterior_a"] == CARGADA_EL + timedelta(days=1)
 
 
 def test_UNA_carga_por_cliente_y_fecha_y_la_segunda_EDITA_en_vez_de_sumar(galpon):
     """Lo que el dueño pidió: entrar de nuevo a Día para el mismo día abre la
     que ya existe. Que no pueda haber dos lo decide la BASE, no el código."""
     d, sql, cliente, _t, _l = galpon
-    primera = d.guardar_carga_de_compra(cliente, EL_27, "automatico", HOY)
-    segunda = d.guardar_carga_de_compra(cliente, EL_27, "manual", HOY)
+    primera = d.guardar_carga_de_compra(cliente, EL_27, "automatico", CARGADA_EL)
+    segunda = d.guardar_carga_de_compra(cliente, EL_27, "manual", CARGADA_EL)
     assert primera == segunda, "la segunda creó una carga nueva en vez de editar"
     (cuantas,), = sql("SELECT count(*) FROM cargas_compra WHERE cliente_id = %s", (cliente,))
     assert cuantas == 1
@@ -117,7 +126,7 @@ def test_una_carga_que_NO_EXISTE_devuelve_None_y_no_una_vacia(galpon):
     renglones, y la pantalla necesita distinguirlas para poder preguntar."""
     d, _sql, cliente, _t, _l = galpon
     assert d.carga_de_compra(cliente, EL_27) is None
-    d.guardar_carga_de_compra(cliente, EL_27, "automatico", HOY)
+    d.guardar_carga_de_compra(cliente, EL_27, "automatico", CARGADA_EL)
     carga = d.carga_de_compra(cliente, EL_27)
     assert carga is not None and carga["renglones"] == {}
 
@@ -127,10 +136,10 @@ def test_los_renglones_SOBREVIVEN_un_cambio_de_modo(galpon):
     un archivo: re-tipear molesta, releer un archivo cuesta una lectura con IA
     y otra revisión."""
     d, _sql, cliente, tomate, _l = galpon
-    carga_id = d.guardar_carga_de_compra(cliente, EL_27, "manual", HOY)
+    carga_id = d.guardar_carga_de_compra(cliente, EL_27, "manual", CARGADA_EL)
     d.guardar_renglones_de_carga(carga_id, {tomate: 500})
 
-    d.guardar_carga_de_compra(cliente, EL_27, "automatico", HOY)
+    d.guardar_carga_de_compra(cliente, EL_27, "automatico", CARGADA_EL)
     assert d.carga_de_compra(cliente, EL_27)["renglones"] == {tomate: 500.0}
 
 
@@ -138,7 +147,7 @@ def test_guardar_renglones_REEMPLAZA_y_no_mezcla(galpon):
     """Es lo que quedó, no lo que cambió: sacarle un artículo a la carga tiene
     que llevárselo, y eso un upsert no lo puede expresar."""
     d, _sql, cliente, tomate, lima = galpon
-    carga_id = d.guardar_carga_de_compra(cliente, EL_27, "manual", HOY)
+    carga_id = d.guardar_carga_de_compra(cliente, EL_27, "manual", CARGADA_EL)
     d.guardar_renglones_de_carga(carga_id, {tomate: 500, lima: 20})
     d.guardar_renglones_de_carga(carga_id, {tomate: 600})
 
@@ -147,7 +156,7 @@ def test_guardar_renglones_REEMPLAZA_y_no_mezcla(galpon):
 
 def test_borrar_la_carga_SE_LLEVA_sus_renglones(galpon):
     d, sql, cliente, tomate, _l = galpon
-    carga_id = d.guardar_carga_de_compra(cliente, EL_27, "manual", HOY)
+    carga_id = d.guardar_carga_de_compra(cliente, EL_27, "manual", CARGADA_EL)
     d.guardar_renglones_de_carga(carga_id, {tomate: 500})
     d.borrar_carga_de_compra(cliente, EL_27)
 
@@ -160,7 +169,7 @@ def test_borrar_una_carga_QUE_UN_LISTADO_YA_USO_lo_RECHAZA_la_base(galpon):
     """Borrarla cambiaría en silencio lo que ese listado dice que se salió a
     comprar. Decide la BASE (la FK no va en cascada) y el código traduce."""
     d, sql, cliente, _t, _l = galpon
-    carga_id = d.guardar_carga_de_compra(cliente, EL_27, "automatico", HOY)
+    carga_id = d.guardar_carga_de_compra(cliente, EL_27, "automatico", CARGADA_EL)
     # CERRADO y en otra fecha: el índice parcial deja UN borrador por día, y
     # el test de abajo abre el suyo para el 27. Para la FK da lo mismo.
     (listado,), = sql(
@@ -178,8 +187,8 @@ def test_listar_cargas_RECORTA_por_fecha_y_el_recorte_lo_elige_QUIEN_LLAMA(galpo
     """"Desde ayer en adelante" es del dueño y vive en la pantalla; acá lo que
     se fija es que el recorte exista y muerda."""
     d, _sql, cliente, _t, _l = galpon
-    d.guardar_carga_de_compra(cliente, EL_27, "automatico", HOY)
-    d.guardar_carga_de_compra(cliente, EL_27 - timedelta(days=10), "automatico", HOY)
+    d.guardar_carga_de_compra(cliente, EL_27, "automatico", CARGADA_EL)
+    d.guardar_carga_de_compra(cliente, EL_27 - timedelta(days=10), "automatico", CARGADA_EL)
 
     desde_ayer = [c for c in d.listar_cargas_desde(EL_27 - timedelta(days=1))
                   if c["cliente_id"] == cliente]
@@ -193,7 +202,7 @@ def test_el_aviso_de_YA_SE_USO_excluye_el_listado_QUE_SE_ESTA_EDITANDO(galpon):
     cartel pasaría a estar siempre puesto, que es como se aprende a no
     leerlo."""
     d, sql, cliente, _t, _l = galpon
-    carga_id = d.guardar_carga_de_compra(cliente, EL_27, "automatico", HOY)
+    carga_id = d.guardar_carga_de_compra(cliente, EL_27, "automatico", CARGADA_EL)
     (viejo,), = sql(
         "INSERT INTO listados_compra (fecha, estado, margen_porcentaje)"
         " VALUES (%s, 'cerrado', 10) RETURNING id", (date(2026, 9, 26),))
@@ -218,11 +227,48 @@ def test_la_carga_trae_CUANTOS_RENGLONES_tiene_al_lado(galpon):
     """El denominador: "Día, 27/09, a mano" sin el conteo no distingue una
     carga cargada de una que se abrió y quedó vacía."""
     d, _sql, cliente, tomate, lima = galpon
-    carga_id = d.guardar_carga_de_compra(cliente, EL_27, "manual", HOY)
+    carga_id = d.guardar_carga_de_compra(cliente, EL_27, "manual", CARGADA_EL)
     d.guardar_renglones_de_carga(carga_id, {tomate: 500, lima: 20})
 
     fila = next(c for c in d.listar_cargas_desde(EL_27) if c["id"] == carga_id)
     assert fila["renglones"] == 2 and fila["cliente_nombre"].startswith("EJEMPLO")
+
+
+def test_el_promedio_recorta_ESTRICTO_y_el_dia_del_ancla_NO_entra(galpon):
+    """EL RECORTE DE FECHA, contra Postgres de verdad.
+
+    Sin él la consulta tomaba los últimos 6 por `fecha_operacion DESC`,
+    FUTUROS INCLUIDOS: el pedido real del día que se va a comprar entraba al
+    promedio y, con divisor 6, contaba como un sexto de sí mismo.
+
+    Y EL CASO QUE DECIDE ES EL DEL DÍA DEL ANCLA, no el del futuro: el
+    operador es `<` y no `<=`, así que el día en que se carga no entra. Con
+    solo un pedido futuro plantado, un `<=` pasaría este test igual.
+    """
+    d, sql, cliente, tomate, _l = galpon
+    (ficha,), = sql(
+        "INSERT INTO fichas_logistica (articulo_id, cliente_id, unidad_venta, contenido_caja)"
+        " VALUES (%s, %s, 'kilo', 10) RETURNING id", (tomate, cliente))
+
+    def pedido(fecha, cantidad):
+        (pedido_id,), = sql(
+            "INSERT INTO pedidos (cliente_id, fecha_operacion, origen)"
+            " VALUES (%s, %s, 'mail') RETURNING id", (cliente, fecha))
+        sql("INSERT INTO pedidos_renglones (pedido_id, sucursal, articulo_id, ficha_id, cantidad)"
+            " VALUES (%s, 'EJ', %s, %s, %s)", (pedido_id, tomate, ficha, cantidad))
+
+    ancla = date(2026, 9, 22)
+    pedido(ancla - timedelta(days=1), 10)   # ANTERIOR: entra
+    pedido(ancla, 99)                       # EL DÍA DEL ANCLA: no entra
+    pedido(ancla + timedelta(days=5), 99)   # FUTURO: no entra
+
+    filas = d.renglones_de_los_ultimos_pedidos([cliente], ancla, 6)
+    assert len(filas) == 1, f"entraron {len(filas)} de 1 renglón"
+    assert float(filas[0]["bultos"]) == 10.0
+    assert int(filas[0]["pedidos_del_cliente"]) == 1, (
+        "el divisor cuenta pedidos de afuera de la ventana"
+    )
+
 
 
 # --- LAS PANTALLAS del Paso 1 -------------------------------------------------
@@ -232,6 +278,7 @@ def test_la_carga_trae_CUANTOS_RENGLONES_tiene_al_lado(galpon):
 # contestan los de arriba contra Postgres de verdad.
 
 import os  # noqa: E402
+import re  # noqa: E402
 from unittest.mock import patch  # noqa: E402
 
 from fastapi.testclient import TestClient  # noqa: E402
@@ -260,11 +307,25 @@ _FICHAS = [
 ]
 
 
+# Dos pedidos del mismo artículo, para que el divisor tenga algo que dividir:
+# 3 pedidos en la historia del cliente, 300 bultos de 1 kilo -> 100 por día.
+_RENGLONES_DE_PEDIDO = [
+    {"cliente_id": 1, "articulo_id": 7, "bultos": 300, "contenido_caja": 1,
+     "unidad_venta": "kilo", "unidad_conteo": None, "pedidos_del_cliente": 3},
+    # Sin contenido_caja: no se puede pasar a la magnitud, así que NO se
+    # propone. Es el rival — sin él, "un hueco deja el artículo afuera" pasa
+    # igual con la guarda sacada.
+    {"cliente_id": 1, "articulo_id": 8, "bultos": 60, "contenido_caja": None,
+     "unidad_venta": "unidad", "unidad_conteo": "unidad", "pedidos_del_cliente": 3},
+]
+
+
 def _con_catalogo(**extra):
     parches = {
         "app.main.listar_clientes": _CLIENTES,
         "app.main.listar_articulos": _ARTICULOS,
         "app.main.listar_fichas_de_todos_los_clientes": _FICHAS,
+        "app.main.renglones_de_los_ultimos_pedidos": [],
     }
     parches.update(extra)
     contextos = [patch.dict(os.environ, {"CLAVE_COMPRAS": "compras-secreta"})]
@@ -273,16 +334,28 @@ def _con_catalogo(**extra):
 
 
 def _entrar(contextos, metodo, ruta, **kwargs):
+    """Devuelve la respuesta y los mocks POR NOMBRE.
+
+    Por posición no: `abiertos[-1]` es el último que entró al diccionario de
+    parches, y ese orden lo decide `dict.update` —una clave que ya estaba
+    conserva su lugar— no el test. El test del ancla estaba leyendo el
+    `call_args` de `carga_de_compra` creyendo mirar el del promedio, y pasó a
+    fallar por un motivo que no era el suyo.
+    """
     from contextlib import ExitStack
     with ExitStack() as pila:
         abiertos = [pila.enter_context(c) for c in contextos]
         respuesta = getattr(_cliente, metodo)(ruta, follow_redirects=False, **kwargs)
-    return respuesta, abiertos
+    # El primero es patch.dict(os.environ), que no tiene nombre de función.
+    por_nombre = {}
+    for contexto, mock in zip(contextos[1:], abiertos[1:]):
+        por_nombre[getattr(contexto, "attribute", "") or str(contexto)] = mock
+    return respuesta, por_nombre
 
 
 def _carga(modo="manual", renglones=None):
     return {"id": 3, "cliente_id": 1, "fecha": EL_27, "modo": modo,
-            "promedio_anterior_a": HOY, "renglones": renglones or {}}
+            "promedio_anterior_a": CARGADA_EL, "renglones": renglones or {}}
 
 
 def test_abrir_una_carga_QUE_YA_EXISTE_PREGUNTA_en_vez_de_crear_otra():
@@ -293,7 +366,7 @@ def test_abrir_una_carga_QUE_YA_EXISTE_PREGUNTA_en_vez_de_crear_otra():
     respuesta, abiertos = _entrar(ctx, "post", "/compras/carga",
                                   data={"cliente_id": "1", "fecha": EL_27.isoformat(),
                                         "modo": "manual"})
-    guardar = abiertos[-1]
+    guardar = abiertos["guardar_carga_de_compra"]
     assert respuesta.status_code == 200, "redirigió en vez de preguntar"
     marcado = respuesta.text.split("</style>")[-1]
     assert "Editar la que está" in marcado and "Borrar y empezar de cero" in marcado
@@ -306,7 +379,7 @@ def test_abrir_una_carga_QUE_NO_EXISTE_la_crea_con_el_ancla_de_HOY():
     respuesta, abiertos = _entrar(ctx, "post", "/compras/carga",
                                   data={"cliente_id": "1", "fecha": EL_27.isoformat(),
                                         "modo": "automatico"})
-    guardar = abiertos[-1]
+    guardar = abiertos["guardar_carga_de_compra"]
     assert respuesta.status_code == 303
     assert respuesta.headers["location"] == f"/compras/carga/1/{EL_27.isoformat()}"
     cliente_id, fecha, modo, ancla = guardar.call_args.args
@@ -329,16 +402,39 @@ def test_la_pantalla_dibuja_un_campo_POR_ARTICULO_con_SU_unidad():
     assert "no se puede cargar" in marcado
 
 
-def test_en_modo_AUTOMATICO_el_guardado_NO_TOCA_los_renglones():
-    """Pasar un rato a automático no puede borrar lo que se tipeó o se leyó de
-    un archivo: re-tipear molesta, releer un archivo cuesta una lectura con IA
-    y otra revisión."""
+def test_lo_que_queda_IGUAL_A_LA_PROPUESTA_no_se_guarda():
+    """SE DIO VUELTA EL 23/09, y el que estaba era el guardián de un hueco.
+
+    Decía que en automático el guardado no tocaba los renglones — cierto
+    mientras el modo no propusiera nada, que es justo lo que estaba mal: la
+    pantalla salía idéntica a la de a mano y el modo no significaba nada.
+
+    Ahora los dos modos escriben, y lo que los separa es ESTO: un artículo
+    que quedó igual a lo que el promedio propuso NO se guarda, así que se
+    vuelve a calcular al armar el listado; uno corregido queda fijo.
+    """
     ctx = _con_catalogo()
     ctx.append(patch("app.main.guardar_carga_de_compra", return_value=3))
     ctx.append(patch("app.main.guardar_renglones_de_carga"))
-    _, abiertos = _entrar(ctx, "post", f"/compras/carga/1/{EL_27.isoformat()}",
-                          data={"modo": "automatico", "total_7": "500"})
-    assert abiertos[-1].call_count == 0
+    _, abiertos = _entrar(
+        ctx, "post", f"/compras/carga/1/{EL_27.isoformat()}",
+        data={"modo": "automatico",
+              "total_7": "500", "propuesto_7": "500",    # sin tocar
+              "total_8": "120", "propuesto_8": "90"})    # corregido
+    assert abiertos["guardar_renglones_de_carga"].call_args.args[1] == {8: 120.0}
+
+
+def test_un_articulo_AGREGADO_a_una_carga_automatica_se_guarda():
+    """El que el promedio no propuso no tiene `propuesto_`, así que no hay
+    contra qué compararlo: cualquier número ahí lo puso una persona."""
+    ctx = _con_catalogo()
+    ctx.append(patch("app.main.guardar_carga_de_compra", return_value=3))
+    ctx.append(patch("app.main.guardar_renglones_de_carga"))
+    _, abiertos = _entrar(
+        ctx, "post", f"/compras/carga/1/{EL_27.isoformat()}",
+        data={"modo": "automatico", "total_7": "500", "propuesto_7": "500",
+              "total_8": "40"})
+    assert abiertos["guardar_renglones_de_carga"].call_args.args[1] == {8: 40.0}
 
 
 def test_en_modo_A_MANO_los_totales_llegan_y_el_VACIO_no_se_guarda_en_cero():
@@ -348,7 +444,7 @@ def test_en_modo_A_MANO_los_totales_llegan_y_el_VACIO_no_se_guarda_en_cero():
     respuesta, abiertos = _entrar(
         ctx, "post", f"/compras/carga/1/{EL_27.isoformat()}",
         data={"modo": "manual", "total_7": "500", "total_8": "", "total_9": "0"})
-    guardar_renglones = abiertos[-1]
+    guardar_renglones = abiertos["guardar_renglones_de_carga"]
     assert respuesta.status_code == 303, "dibujó en vez de redirigir"
     assert guardar_renglones.call_args.args[1] == {7: 500.0}
 
@@ -367,7 +463,7 @@ def test_borrar_una_carga_QUE_UN_LISTADO_USO_avisa_en_vez_de_tirar_500():
 def test_la_lista_de_entrada_MARCA_la_carga_que_ya_se_uso():
     """El aviso, no una traba: se puede sumar de nuevo y decide el comprador."""
     usada = {"id": 3, "cliente_id": 1, "cliente_nombre": "EJEMPLO Día", "fecha": EL_27,
-             "modo": "manual", "promedio_anterior_a": HOY, "renglones": 2,
+             "modo": "manual", "promedio_anterior_a": CARGADA_EL, "renglones": 2,
              "usada_en_otros": 1, "ultimo_listado": date(2026, 9, 26)}
     ctx = _con_catalogo(**{"app.main.listar_cargas_desde": [usada]})
     respuesta, _ = _entrar(ctx, "get", "/compras/carga")
@@ -432,3 +528,103 @@ def test_la_carga_no_se_ARRASTRA_de_costado_a_390px(nombre):
         f"la pantalla se arrastra {desborde}px con el nombre «{nombre[:20]}…»"
     )
     assert medicion["solapes"] == [], f"hay cajas que se pisan: {medicion['solapes']}"
+
+
+# --- EL PROMEDIO EN LA PANTALLA -----------------------------------------------
+#
+# Lo que faltaba y lo encontró el dueño usándola: "Del promedio" dibujaba la
+# lista vacía, idéntica a la de a mano, así que el modo no significaba nada.
+# El promedio se calculaba —en el Paso 2— y el Paso 1 nunca lo pedía.
+
+
+def test_DEL_PROMEDIO_trae_los_numeros_a_la_pantalla():
+    ctx = _con_catalogo(**{
+        "app.main.carga_de_compra": _carga(modo="automatico"),
+        "app.main.renglones_de_los_ultimos_pedidos": _RENGLONES_DE_PEDIDO,
+    })
+    respuesta, _ = _entrar(ctx, "get", f"/compras/carga/1/{EL_27.isoformat()}")
+    marcado = respuesta.text.split("</style>")[-1]
+    assert respuesta.status_code == 200
+    # 300 bultos de 1 kilo sobre 3 pedidos = 100 por día.
+    assert 'name="total_7"' in marcado and 'value="100"' in marcado
+    assert 'name="propuesto_7"' in marcado, "sin esto no hay contra qué comparar al guardar"
+    # CORRIDO: el wrap de la plantilla parte la frase, y chequear "por
+    # partes" solo posterga el problema hasta que la frase crezca.
+    corrido = " ".join(marcado.split())
+    assert "Lo que no toques se vuelve a calcular" in corrido
+
+
+def test_un_articulo_SIN_MAGNITUD_no_se_propone_a_medias():
+    """Proponer la suma de los demás diría que ese cliente pide menos de lo
+    que pide. El rival está en el fixture: el 8 viene sin contenido_caja."""
+    ctx = _con_catalogo(**{
+        "app.main.carga_de_compra": _carga(modo="automatico"),
+        "app.main.renglones_de_los_ultimos_pedidos": _RENGLONES_DE_PEDIDO,
+    })
+    respuesta, _ = _entrar(ctx, "get", f"/compras/carga/1/{EL_27.isoformat()}")
+    marcado = respuesta.text.split("</style>")[-1]
+    assert 'name="propuesto_8"' not in marcado
+
+
+def test_el_promedio_se_pide_con_el_ANCLA_de_la_carga_y_no_con_hoy():
+    """El ancla es el día en que se abrió la carga. Pedirlo con hoy correría
+    la ventana sola cada vez que se abre la pantalla, que es exactamente lo
+    que guardar la columna vino a impedir."""
+    ctx = _con_catalogo(**{"app.main.carga_de_compra": _carga(modo="automatico")})
+    _, abiertos = _entrar(ctx, "get", f"/compras/carga/1/{EL_27.isoformat()}")
+    pedidos = abiertos["renglones_de_los_ultimos_pedidos"]
+    assert pedidos.call_args.args[1] == CARGADA_EL, "el promedio se pidió con otra fecha"
+
+
+def test_A_MANO_arranca_VACIA_y_los_demas_llegan_ESCONDIDOS():
+    """38 artículos con un campo cada uno es lo que hace que la pantalla no se
+    pueda usar con el pulgar. Están en el DOM para que el buscador los traiga
+    sin ir al server, y arrancan `hidden`.
+
+    SE MIRA EL ATRIBUTO EN SU FILA y no `"hidden" in marcado`: el atributo es
+    la intención y hay que ver en cuál de las filas cayó.
+    """
+    ctx = _con_catalogo(**{"app.main.carga_de_compra": _carga(renglones={7: 500.0})})
+    respuesta, _ = _entrar(ctx, "get", f"/compras/carga/1/{EL_27.isoformat()}")
+    marcado = respuesta.text.split("</style>")[-1]
+    filas = re.findall(r'<label class="fila"[^>]*data-articulo="(\d+)"([^>]*)>', marcado)
+    # El denominador: sin esto un regex roto deja la lista vacía y los dos
+    # asserts de abajo pasan sobre nada (corolario 45).
+    assert len(filas) == len(_ARTICULOS), f"se encontraron {len(filas)} de {len(_ARTICULOS)} filas"
+    escondidas = {a for a, resto in filas if "hidden" in resto}
+    assert escondidas == {"8", "9"}, "la carga a mano no arrancó con solo lo cargado"
+
+
+def test_el_buscador_AGREGA_en_vez_de_filtrar_una_lista_entera():
+    """El botón que agrega lleva type="button": sin eso, tocarlo ENVÍA el
+    formulario y la carga se guarda a medias en vez de sumar el artículo."""
+    ctx = _con_catalogo(**{"app.main.carga_de_compra": _carga(renglones={7: 500.0})})
+    respuesta, _ = _entrar(ctx, "get", f"/compras/carga/1/{EL_27.isoformat()}")
+    assert 'boton.type = "button"' in respuesta.text
+    assert "f.hidden && f.dataset.nombre.indexOf(texto)" in respuesta.text, (
+        "el buscador dejó de ofrecer SOLO las que no están puestas"
+    )
+
+
+def test_una_CORRECCION_dice_contra_que_se_corrigio():
+    """Al reabrir, el campo muestra lo corregido. Sin el número del promedio
+    al lado no hay forma de saber que se movió desde entonces."""
+    ctx = _con_catalogo(**{
+        "app.main.carga_de_compra": _carga(modo="automatico", renglones={7: 120.0}),
+        "app.main.renglones_de_los_ultimos_pedidos": _RENGLONES_DE_PEDIDO,
+    })
+    respuesta, _ = _entrar(ctx, "get", f"/compras/carga/1/{EL_27.isoformat()}")
+    marcado = respuesta.text.split("</style>")[-1]
+    assert 'value="120"' in marcado, "no mostró lo corregido"
+    assert "prom. 100" in marcado, "no dijo contra qué se corrigió"
+
+
+def test_lo_que_NO_se_corrigio_no_lleva_el_cartel():
+    """El rival: si el cartel saliera siempre, no distinguiría una corrección
+    de una propuesta aceptada — que es justo lo que viene a decir."""
+    ctx = _con_catalogo(**{
+        "app.main.carga_de_compra": _carga(modo="automatico"),
+        "app.main.renglones_de_los_ultimos_pedidos": _RENGLONES_DE_PEDIDO,
+    })
+    respuesta, _ = _entrar(ctx, "get", f"/compras/carga/1/{EL_27.isoformat()}")
+    assert "prom. " not in respuesta.text.split("</style>")[-1]

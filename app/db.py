@@ -9489,7 +9489,7 @@ def compras_de_hoy_por_articulo() -> dict:
         conexion.close()
 
 
-def renglones_de_los_ultimos_pedidos(cliente_ids: list[int], pedidos: int = 6) -> list[dict]:
+def renglones_de_los_ultimos_pedidos(cliente_ids: list[int], anterior_a, pedidos: int = 6) -> list[dict]:
     """Lo que pidieron estos clientes en sus últimos `pedidos` pedidos VIGENTES.
 
     Para "Qué comprar hoy": una fila por (cliente, artículo, ficha) con los
@@ -9510,6 +9510,19 @@ def renglones_de_los_ultimos_pedidos(cliente_ids: list[int], pedidos: int = 6) -
     "vino sin cantidades en el mail y no se arma jamás" — el confirmar los
     guarda igual, en cero, porque nada del mail se pierde. Sin ese filtro
     entran al promedio como ceros y lo hunden.
+
+    `anterior_a` ES EL ANCLA Y NO TIENE DEFAULT, a propósito. Se miran los
+    pedidos con `fecha_operacion < anterior_a`, ESTRICTO: el día que se carga
+    no entra. Es el día en que se abrió la carga y no la fecha de compra
+    (dueño, 22/09): si se carga hoy para el 27, el promedio mira los 6
+    anteriores a hoy.
+
+    SIN ESTE RECORTE LA CONSULTA NO FILTRABA POR FECHA NINGUNA y tomaba los
+    últimos 6 por `fecha_operacion DESC`, FUTUROS INCLUIDOS. O sea que el
+    pedido real de la fecha que se va a comprar entraba al promedio y, con
+    divisor 6, contaba como un sexto de sí mismo — diluyéndolo en vez de
+    usarlo. Un default acá volvería a abrir eso para el llamador que se lo
+    olvide, y no fallaría: devolvería un número plausible.
 
     `pedidos_del_cliente` ES EL DIVISOR, y viene por fila porque puede ser
     MENOR que `pedidos`: un cliente con tres pedidos en su historia tiene
@@ -9534,6 +9547,7 @@ def renglones_de_los_ultimos_pedidos(cliente_ids: list[int], pedidos: int = 6) -
                            p.id, p.cliente_id, p.fecha_operacion
                     FROM pedidos p
                     WHERE p.cliente_id = ANY(%s) AND p.anulado_el IS NULL
+                      AND p.fecha_operacion < %s
                     ORDER BY p.cliente_id, p.fecha_operacion DESC, p.creado_en DESC
                 ), elegidos AS (
                     SELECT v.id, v.cliente_id, v.fecha_operacion
@@ -9560,7 +9574,7 @@ def renglones_de_los_ultimos_pedidos(cliente_ids: list[int], pedidos: int = 6) -
                 GROUP BY e.cliente_id, r.articulo_id, a.nombre, a.unidad_conteo,
                          a.contenido_referencia, r.ficha_id, f.contenido_caja, f.unidad_venta
                 """,
-                (list(cliente_ids), pedidos),
+                (list(cliente_ids), anterior_a, pedidos),
             )
             columnas = [c[0] for c in cursor.description]
             return [dict(zip(columnas, fila)) for fila in cursor.fetchall()]

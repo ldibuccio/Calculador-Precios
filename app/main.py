@@ -3440,7 +3440,11 @@ def _contexto_de_que_comprar(request: Request, aviso: str | None = None):
         fichas_por_cliente = _primera_ficha_por_cliente_y_articulo(elegidos)
         automaticos = [c for c in elegidos if borrador["clientes"][c] == "automatico"]
         renglones = (
-            renglones_de_los_ultimos_pedidos(automaticos, PEDIDOS_DEL_PROMEDIO)
+            # `hoy` es el ancla: los pedidos ANTERIORES a hoy. Sin ese
+            # recorte la consulta tomaba los últimos 6 por fecha, futuros
+            # incluidos, así que el pedido real del día que se va a comprar
+            # entraba al promedio y contaba como un sexto de sí mismo.
+            renglones_de_los_ultimos_pedidos(automaticos, hoy, PEDIDOS_DEL_PROMEDIO)
             if automaticos else []
         )
         manual = _lineas_a_mano(fichas_por_cliente, borrador["manual"])
@@ -3525,23 +3529,71 @@ def _unidad_de_cada_articulo(articulos: list[dict], fichas: list[dict]) -> dict:
     return unidades
 
 
-def _articulos_para_cargar(guardado: dict | None = None) -> list[dict]:
-    """El catálogo de compra con su unidad y lo ya cargado adentro.
+def _promedio_por_articulo(cliente_id: int, anterior_a) -> dict:
+    """{articulo_id: total del día} — lo que ese cliente pide un día cualquiera.
+
+    LA MISMA CUENTA QUE EL PASO 2, con las mismas funciones: los bultos de
+    cada renglón pasados a la magnitud de su ficha y divididos por los
+    pedidos de ESE cliente. Escrita dos veces serían dos promedios, y la
+    copia que se separe no falla — propone un número distinto del que el
+    listado después va a usar, que es la peor forma de que una pantalla
+    mienta.
+
+    UN HUECO DEJA EL ARTÍCULO AFUERA en vez de proponer un número a medias:
+    si a un renglón no se le puede pasar lo pedido a la magnitud —sin ficha,
+    o ficha sin `contenido_caja`— ese artículo no se propone. Proponer la
+    suma de los demás diría que ese cliente pide menos de lo que pide.
+    """
+    renglones = renglones_de_los_ultimos_pedidos([cliente_id], anterior_a,
+                                                 PEDIDOS_DEL_PROMEDIO)
+    propuesto: dict = {}
+    sin_magnitud = set()
+    for renglon in renglones:
+        articulo_id = renglon["articulo_id"]
+        contenido = renglon.get("contenido_caja")
+        if contenido is None or magnitud_de_la_ficha(renglon) is None:
+            sin_magnitud.add(articulo_id)
+            continue
+        propuesto[articulo_id] = propuesto.get(articulo_id, 0.0) + promedio_de_un_dia(
+            float(renglon["bultos"]) * float(contenido),
+            pedidos=int(renglon["pedidos_del_cliente"]),
+        )
+    for articulo_id in sin_magnitud:
+        propuesto.pop(articulo_id, None)
+    return propuesto
+
+
+def _articulos_para_cargar(guardado: dict | None = None,
+                           propuesto: dict | None = None) -> list[dict]:
+    """El catálogo de compra con su unidad, lo ya cargado y lo que se propone.
 
     Una sola lectura de fichas para todos los artículos, no una por
     artículo: es la misma consulta que usa el desglose de Stock del
     Depósito.
+
+    `total` ES LO QUE EL CAMPO MUESTRA y `propuesto` lo que el promedio
+    dijo. Los dos viajan porque la pantalla los COMPARA al guardar: lo que
+    quedó igual a la propuesta se vuelve a calcular al armar el listado, y
+    lo que se corrigió queda fijo. Con un solo número no hay forma de
+    distinguir "lo dejé como venía" de "puse ese número", que es la misma
+    distinción que ya hace el kilaje del Paso 2.
     """
     articulos = listar_articulos()
     unidades = _unidad_de_cada_articulo(articulos, listar_fichas_de_todos_los_clientes())
     guardado = guardado or {}
+    propuesto = propuesto or {}
     return [
         {
             "articulo_id": a["id"],
             "nombre": a["nombre"],
             "unidad": unidades.get(a["id"]),
             "sufijo": SUFIJOS_FICHA_REPROCESO.get(unidades.get(a["id"]), ""),
-            "total": guardado.get(a["id"]),
+            "total": guardado.get(a["id"], propuesto.get(a["id"])),
+            "propuesto": propuesto.get(a["id"]),
+            # LO QUE DIBUJA LA FILA, y por eso se decide acá y no en tres
+            # `{% if %}` de la plantilla: a mano se arranca vacío y se agrega
+            # de a uno; del promedio se ve lo que propone.
+            "cargado": a["id"] in guardado or a["id"] in propuesto,
         }
         for a in articulos
     ]
@@ -3565,8 +3617,22 @@ def _fecha_de_carga(texto: str | None):
 
 
 def _contexto_de_carga(carga: dict, aviso: str | None = None) -> dict:
-    """La pantalla de UNA carga, en cualquiera de sus dos modos."""
+    """La pantalla de UNA carga, en cualquiera de sus dos modos.
+
+    DEL PROMEDIO TRAE LOS NÚMEROS, y ésa es la diferencia entre los dos
+    modos: sin ellos la pantalla es idéntica a la de a mano y el modo no
+    significa nada. Se calculan acá, en vivo, contra el ancla de la carga —
+    no se guardan— así que un pedido que entre en el medio se ve.
+
+    A MANO NO PROPONE NADA, a propósito: ahí se arranca vacío y se agregan
+    los artículos de a uno con el buscador. El catálogo entero con un campo
+    por artículo es lo que hace que la pantalla no se pueda usar con el
+    pulgar.
+    """
     cliente = next((c for c in listar_clientes() if c["id"] == carga["cliente_id"]), None)
+    propuesto = {}
+    if carga["modo"] != "manual":
+        propuesto = _promedio_por_articulo(carga["cliente_id"], carga["promedio_anterior_a"])
     return {
         "barra_sector": "compras",
         # NO se llama igual que la lista de la que se entra: son dos pantallas
@@ -3575,7 +3641,8 @@ def _contexto_de_carga(carga: dict, aviso: str | None = None) -> dict:
         "carga": carga,
         "cliente_nombre": cliente["nombre"] if cliente else "",
         "fecha_mostrar": carga["fecha"].strftime("%d/%m/%Y"),
-        "articulos": _articulos_para_cargar(carga["renglones"]),
+        "articulos": _articulos_para_cargar(carga["renglones"], propuesto),
+        "hay_propuesta": bool(propuesto),
         "aviso": aviso,
     }
 
@@ -3678,22 +3745,37 @@ async def guardar_carga_de_compra_ruta(request: Request, cliente_id: int, fecha:
     modo = "manual" if formulario.get("modo") == "manual" else "automatico"
     volver = f"/compras/carga/{cliente_id}/{fecha_valor.isoformat()}"
 
+    # LO QUE QUEDÓ IGUAL A LA PROPUESTA NO SE GUARDA, y es lo que hace que
+    # los dos modos signifiquen algo distinto: un artículo sin fila guardada
+    # se vuelve a calcular al armar el listado —así un pedido que entre en el
+    # medio se ve— y uno corregido queda fijo. La comparación es entre los
+    # DOS TEXTOS tal como la pantalla los dibujó, no entre floats: los dos
+    # salen del mismo filtro, así que "igual" es exacto y no una tolerancia.
+    propuestos = {c[10:]: v for c, v in formulario.multi_items()
+                  if c.startswith("propuesto_") and c[10:].isdigit()}
     renglones = {}
     for clave, valor in formulario.multi_items():
         if not clave.startswith("total_") or not clave[6:].isdigit():
             continue
+        articulo = clave[6:]
         numero = _numero_del_formulario(valor)
-        if numero is not None and numero > 0:
-            renglones[int(clave[6:])] = numero
+        if numero is None or numero <= 0:
+            continue
+        if str(valor).strip() == propuestos.get(articulo):
+            continue
+        renglones[int(articulo)] = numero
 
     try:
         carga_id = guardar_carga_de_compra(cliente_id, fecha_valor, modo, _hoy_argentina())
-        if modo == "manual":
-            guardar_renglones_de_carga(carga_id, renglones)
+        guardar_renglones_de_carga(carga_id, renglones)
     except Exception:
         logger.exception("No se pudo guardar la carga de compra")
         return RedirectResponse(f"{volver}?aviso=No+se+pudo+guardar", status_code=303)
-    return RedirectResponse("/compras/carga?aviso=Carga+guardada", status_code=303)
+    # VUELVE A LA MISMA CARGA y no a la lista: el modo se cambia acá, y
+    # mandarlo a la lista después de pasar a "Del promedio" lo dejaría sin
+    # ver nunca lo que el promedio propone. La lista está a un toque en la
+    # barra.
+    return RedirectResponse(f"{volver}?aviso=Carga+guardada", status_code=303)
 
 
 @app.post("/compras/carga/{cliente_id}/{fecha}/borrar")

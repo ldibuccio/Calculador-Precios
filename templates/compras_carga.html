@@ -29,6 +29,12 @@
                 border: 2px solid #2563eb; border-radius: 8px; text-align: center; }
   .sufijo { flex: 0 0 auto; font-size: 0.85rem; color: #555; font-weight: 700; width: 2.4rem; }
   .sin-unidad { color: #92400e; font-weight: 700; font-size: 0.85rem; }
+  .hallazgos { display: flex; flex-wrap: wrap; gap: 0.4rem; margin-bottom: 0.5rem; }
+  /* 44px es el mínimo tocable con el pulgar: esto se agrega de a uno, parado. */
+  .hallazgos button { min-height: 44px; font-size: 0.95rem; font-weight: 700; color: #fff;
+                      background: #7c3aed; border: 0; border-radius: 8px; padding: 0 0.9rem;
+                      overflow-wrap: anywhere; }
+  .propuesta { font-size: 0.78rem; color: #3730a3; font-weight: 800; }
   .guardar { min-height: 52px; width: 100%; font-size: 1.1rem; font-weight: 800; color: #fff;
              background: #16a34a; border: 0; border-radius: 10px; margin-bottom: 0.75rem; }
   .borrar { min-height: 44px; width: 100%; font-size: 0.95rem; font-weight: 700;
@@ -63,17 +69,40 @@
 
   <div class="tarjeta">
     <div class="art">Lo que pide, por artículo</div>
-    {# El total va en la unidad del ARTÍCULO y el rótulo la nombra: la magnitud
-       viaja con el número. Lo que se deje vacío no se pide. #}
-    <p class="ayuda">Poné el total del día. Lo que dejes vacío no se pide. Solo cuenta si el modo
-      está en <b>A mano</b>.</p>
-    <input class="buscar" id="buscar" type="search" placeholder="Buscar un artículo"
-           aria-label="Buscar un artículo">
+    {# ARRANCA CON LO QUE HAY Y NADA MÁS. El catálogo entero con un campo por
+       artículo es lo que hace que la pantalla no se pueda usar con el pulgar:
+       los demás están en el DOM escondidos y los trae el buscador. #}
+    {% if hay_propuesta %}
+      <p class="ayuda">Esto es lo que propone el promedio. <b>Lo que no toques se vuelve a
+        calcular</b> al armar el listado, así que un pedido que entre en el medio se ve;
+        <b>lo que corrijas queda fijo</b>.</p>
+    {% else %}
+      <p class="ayuda">Agregá los artículos de a uno con el buscador. Para sacar uno,
+        dejale el campo vacío.</p>
+    {% endif %}
+    <input class="buscar" id="buscar" type="search" placeholder="Agregar un artículo"
+           aria-label="Agregar un artículo" autocomplete="off">
+    <div class="hallazgos" id="hallazgos"></div>
     {% for a in articulos %}
-      <label class="fila" data-nombre="{{ a.nombre|lower }}">
+      <label class="fila" data-nombre="{{ a.nombre|lower }}"
+             data-articulo="{{ a.articulo_id }}"
+             {% if not a.cargado %}hidden{% endif %}>
         <span>{{ a.nombre }}</span>
         {% if a.unidad %}
           <span class="sufijo">{{ a.sufijo }}</span>
+          {% if a.propuesto is not none %}
+            {# Viaja el número TAL COMO SE DIBUJA, no el float: al guardar se
+               comparan los dos textos y "igual" es exacto, sin tolerancia. #}
+            <input type="hidden" name="propuesto_{{ a.articulo_id }}"
+                   value="{{ a.propuesto|sin_decimales }}">
+          {% endif %}
+          {# UNA CORRECCION SE VE, y dice contra qué: al reabrir la carga el
+             campo muestra lo corregido, y sin esto no hay forma de saber que
+             el promedio se movió desde que se corrigió. #}
+          {% if a.propuesto is not none and a.total is not none
+                and a.total|sin_decimales != a.propuesto|sin_decimales %}
+            <span class="propuesta">prom. {{ a.propuesto|sin_decimales }}</span>
+          {% endif %}
           <input name="total_{{ a.articulo_id }}" type="number" inputmode="decimal"
                  step="0.1" min="0"
                  value="{{ a.total|sin_decimales if a.total is not none else '' }}"
@@ -97,18 +126,39 @@
   </form>
 
 <script>
-// Filtrar sin ir al server: el catálogo tiene decenas de artículos y buscar
-// uno scrolleando con el pulgar es lo que hace que la pantalla no se use.
+// AGREGAR DE A UNO, no filtrar 38 campos. Las filas están todas en el DOM y
+// las que no se cargaron arrancan `hidden`: el buscador ofrece ésas, y tocar
+// una la muestra. Sin viaje al server —el guardado es uno solo, porque
+// perder lo tipeado por no haber apretado otro botón es peor que un viaje.
 (function () {
   var caja = document.getElementById("buscar");
-  if (!caja) return;
-  var filas = Array.prototype.slice.call(document.querySelectorAll(".fila[data-nombre]"));
-  caja.addEventListener("input", function () {
+  var hallazgos = document.getElementById("hallazgos");
+  if (!caja || !hallazgos) return;
+  var filas = Array.prototype.slice.call(document.querySelectorAll(".fila[data-articulo]"));
+
+  function mostrar(fila) {
+    fila.hidden = false;
+    var campo = fila.querySelector('input[type="number"]');
+    if (campo) campo.focus();
+    caja.value = "";
+    pintar();
+  }
+
+  function pintar() {
     var texto = caja.value.trim().toLowerCase();
-    filas.forEach(function (fila) {
-      fila.style.display = (!texto || fila.dataset.nombre.indexOf(texto) !== -1) ? "" : "none";
+    hallazgos.textContent = "";
+    if (!texto) return;
+    filas.filter(function (f) {
+      return f.hidden && f.dataset.nombre.indexOf(texto) !== -1;
+    }).slice(0, 8).forEach(function (fila) {
+      var boton = document.createElement("button");
+      boton.type = "button";   // sin esto ENVÍA el formulario al tocarlo
+      boton.textContent = fila.querySelector("span").textContent;
+      boton.addEventListener("click", function () { mostrar(fila); });
+      hallazgos.appendChild(boton);
     });
-  });
+  }
+  caja.addEventListener("input", pintar);
 })();
 </script>
 {% include "_pie_version.html" %}

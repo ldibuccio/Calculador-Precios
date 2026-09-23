@@ -195,10 +195,24 @@ def siembra():
                          contenido_por_cajon, cantidad_kilos, importe, estado)
       select pr.id, a.id, current_date, 10, 16, 160, 100000, 'pendiente'
       from proveedores pr, articulos a limit 1;
-    insert into fichas_logistica (articulo_id, cliente_id, unidad_venta)
-      select a.id, c.id, 'kilo' from articulos a, clientes c limit 1;
+    insert into fichas_logistica (articulo_id, cliente_id, unidad_venta, contenido_caja)
+      select a.id, c.id, 'kilo', 10 from articulos a, clientes c limit 1;
+    -- UN PEDIDO DE AYER, con su ficha: el promedio recorta con `< ancla`,
+    -- ESTRICTO, así que con el de hoy solo la carga automática propone una
+    -- lista vacía y el camino nuevo queda sin mirar. Y el renglón lleva
+    -- ficha_id porque sin ella no hay contenido_caja, y sin contenido_caja
+    -- el artículo no se puede pasar a la magnitud de la fila.
+    insert into pedidos (cliente_id, fecha_operacion, creado_en, origen)
+      select id, current_date - 1, now(), 'mail' from clientes limit 1;
+    insert into pedidos_renglones (pedido_id, sucursal, articulo_id, ficha_id, cantidad)
+      select p.id, 'EJ', a.id, f.id, 12
+      from pedidos p, articulos a, fichas_logistica f
+      where p.fecha_operacion = current_date - 1 limit 1;
+    -- AUTOMATICA y no manual: es el modo que corre la consulta del promedio,
+    -- que es SQL nuevo. El de a mano no tiene consulta propia, así que
+    -- sembrarlo así dejaría sin mirar lo único que el humo puede ver.
     insert into cargas_compra (cliente_id, fecha, modo, promedio_anterior_a)
-      select id, current_date, 'manual', current_date from clientes limit 1;
+      select id, current_date, 'automatico', current_date from clientes limit 1;
     insert into cargas_compra_renglones (carga_id, articulo_id, total)
       select ca.id, a.id, 100 from cargas_compra ca, articulos a limit 1;
     insert into colegas (nombre, nombre_normalizado) values ('EJEMPLO Colega', 'ejemplo colega');
