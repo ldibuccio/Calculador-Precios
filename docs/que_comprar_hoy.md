@@ -298,12 +298,16 @@ suma.
 - **La foto es de todo el catálogo**, no de lo tildado: se puede tildar otra
   carga después de salir.
 - **Un listado abierto a la vez, sea del día que sea.** El código ya lo lee
-  así; el índice que lo garantiza es `db/listados_compra_8_un_solo_abierto.sql`,
-  que se corre **después** del deploy (corolario 94).
-- **Lo que no ve**: una compra que llega ya armada en caja nuestra
-  (`ficha_en_origen_id`) en camino se suma a la fila del artículo sin mirar de
-  qué cliente es la ficha. Las cajas ya armadas de la foto sí se filtran por
-  cliente tildado.
+  así, y lo garantiza el índice de `db/listados_compra_8_un_solo_abierto.sql`,
+  corrido en las dos bases el 23/09 después del deploy (corolario 94).
+- **Lo que no ve, y es el primer lugar donde buscar si "En camino" da raro**:
+  una compra que viene ya armada en caja nuestra (`ficha_en_origen_id`) y
+  todavía no llegó se suma a la fila del ARTÍCULO **sin mirar de qué cliente
+  es la ficha**. Las cajas ya armadas de la foto sí se filtran por cliente
+  tildado. O sea: una compra armada para Coto en camino achica lo que falta
+  comprar para Día, y el listado propone comprar **de menos**. Está dicho en
+  el docstring de `compras_alrededor_de_la_salida`, que es donde iría el
+  filtro por ficha el día que haga falta.
 
 ### Lo que NO cambia
 

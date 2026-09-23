@@ -9505,6 +9505,16 @@ def compras_alrededor_de_la_salida(momento=None) -> dict:
 
     Quedan afuera 'rechazado' y 'no_ingresado': no van a llegar.
 
+    LO QUE NO MIRA, y es el primer lugar donde buscar si "En camino" da un
+    número raro: una compra que viene YA ARMADA en caja nuestra
+    (`ficha_en_origen_id` no nulo) se suma a la fila del ARTÍCULO sin mirar
+    de qué cliente es esa ficha. Las cajas de la foto, en cambio, sí se
+    filtran por los clientes tildados (`_piso_de_la_foto`). O sea que una
+    compra armada para Coto que todavía no llegó achica lo que falta comprar
+    para Día, y el listado propone comprar DE MENOS. Hoy no se filtra porque
+    son pocas; el día que importe, el filtro va acá, por ficha, igual que en
+    la foto.
+
     LO REAL PRIMERO Y EL ESTIMADO DE RESPALDO, igual que la cuenta de stock,
     y LAS DOS MAGNITUDES SEPARADAS: quien llama elige la de la fila.
     """
@@ -9648,9 +9658,10 @@ def borrador_de_compra() -> dict | None:
     en que se abrió.
 
     El `ORDER BY id DESC LIMIT 1` no es un desempate que se use: el índice
-    `listados_compra_un_solo_abierto_idx` impide dos abiertos. Está porque
-    hasta que ese índice corra, el viejo (uno por día) deja que haya dos de
-    días distintos, y ahí el más nuevo es el que se está usando.
+    `listados_compra_un_solo_abierto_idx` impide dos abiertos (corrido en las
+    dos bases el 23/09). Se queda porque no cuesta nada y porque el código se
+    escribió para andar también con el índice viejo, que dejaba dos de días
+    distintos.
 
     Devuelve `None` cuando no hay ninguno, que es distinto de un borrador
     vacío: no hay nada que cerrar y la pantalla no lo ofrece.
@@ -9868,9 +9879,10 @@ def foto_del_listado(listado_id: int) -> dict:
 def cerrar_borrador_de_compra() -> bool:
     """Pasa el listado abierto a 'cerrado'. Devuelve si había uno.
 
-    CIERRA TODOS LOS ABIERTOS y no uno: hasta que corra el índice de uno solo
-    abierto, el viejo deja que queden dos de días distintos, y cerrar uno
-    solo dejaría al otro apareciendo como "el abierto" al volver.
+    CIERRA TODOS LOS ABIERTOS y no uno. Con el índice de uno solo abierto
+    (corrido el 23/09) hay a lo sumo uno; el `WHERE` sin id se escribió para
+    el tiempo en que el viejo dejaba dos de días distintos, y no cuesta nada
+    dejarlo.
 
     Cerrar NO borra nada: el listado queda como historial —con su foto— de
     lo que se salió a comprar, y el índice parcial deja abrir uno nuevo.

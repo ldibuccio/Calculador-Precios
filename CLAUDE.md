@@ -10366,6 +10366,13 @@ este archivo guarda.
    pendientes más viejas van a un aviso sin sumarse. Uno solo abierto, sea del
    día que sea. Detalle en `docs/que_comprar_hoy.md`.
 
+   **Lo que no mira, anotado para el día que dé un número raro**: una compra
+   en camino que viene ARMADA en caja nuestra se suma a la fila del artículo
+   sin mirar de qué cliente es la ficha; las cajas de la FOTO sí se filtran
+   por cliente tildado. Una armada para Coto achica lo que falta para Día, y
+   el listado propone de menos. Dónde iría el filtro: en
+   `compras_alrededor_de_la_salida`, por ficha, igual que en la foto.
+
 ### El `?error=` que se escribe y nadie lee es un error mudo
 
 Del 23/09. El POST de Qué comprar hoy redirigía a `?error=guardar` y a

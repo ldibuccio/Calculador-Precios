@@ -217,14 +217,27 @@ def siembra():
     insert into cargas_compra_renglones (carga_id, articulo_id, total)
       select ca.id, a.id, 100 from cargas_compra ca, articulos a limit 1;
     -- EL PASO 2 CON UNA CARGA ADENTRO. Sin borrador la pantalla corta antes de
-    -- leer cargas, piso y compras, y el humo solo ve el caso vacío. Dos
-    -- borradores y no uno porque el "hoy" de la pantalla es el ARGENTINO y el
-    -- de la base es UTC: desde las 21h difieren, y con uno solo el humo mira
-    -- la mitad del día el caso vacío sin decirlo.
-    insert into listados_compra (fecha, estado)
-      select d, 'borrador' from (values (current_date), (current_date - 1)) v(d);
+    -- leer cargas, piso y compras, y el humo solo ve el caso vacío.
+    --
+    -- UNO SOLO: la base no acepta dos abiertos desde el 23/09 (índice
+    -- listados_compra_un_solo_abierto_idx), y la pantalla toma "el abierto"
+    -- sea del día que sea, así que la diferencia entre el hoy argentino y el
+    -- UTC —que era la razón de sembrar dos— ya no juega.
+    --
+    -- Y YA SALIDO, con su foto, para que la pantalla recorra el camino de
+    -- después de salir. PERO EL HUMO NO PUEDE VER SI ESE SQL SE ROMPE, medido
+    -- con canario el 23/09: la pantalla envuelve la cuenta en un except que
+    -- muestra un aviso y contesta 200, así que una consulta rota se cuenta
+    -- como ABIERTA. Lo que cubre foto_del_listado contra el esquema real es
+    -- tests/test_salgo_a_comprar.py, no esto.
+    insert into listados_compra (fecha, estado, generado_el)
+      values (current_date, 'borrador', now() - interval '1 hour');
     insert into listados_compra_cargas (listado_id, carga_id)
       select l.id, ca.id from listados_compra l, cargas_compra ca;
+    insert into listados_compra_foto (listado_id, articulo_id, sueltos, sueltos_magnitud)
+      select l.id, a.id, 2, 32 from listados_compra l, articulos a;
+    insert into listados_compra_foto_cajas (listado_id, ficha_id, articulo_id, cajas, magnitud)
+      select l.id, f.id, f.articulo_id, 1, null from listados_compra l, fichas_logistica f limit 1;
     insert into colegas (nombre, nombre_normalizado) values ('EJEMPLO Colega', 'ejemplo colega');
     insert into vacios_deposito_devoluciones (proveedor_id, compra_id, cantidad, stock_sistema)
       select pr.id, co.id, 1, 1 from proveedores pr, compras co limit 1;

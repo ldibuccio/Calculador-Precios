@@ -167,13 +167,24 @@ def test_el_listado_abierto_es_UNO_sea_del_dia_que_sea(galpon):
     assert borrador["id"] == ayer and borrador["fecha"] == SALIDA.date()
 
 
-def test_CERRAR_cierra_TODOS_los_abiertos(galpon):
-    """Hasta que corra el índice de uno solo abierto, el viejo deja dos de
-    días distintos. Cerrando uno solo, el otro aparece como "el abierto"."""
+def test_la_BASE_rechaza_un_SEGUNDO_abierto_aunque_sea_de_OTRO_dia(galpon):
+    """El índice de `db/listados_compra_8_un_solo_abierto.sql`, que corrió en
+    las dos bases el 23/09. El RIVAL es el índice viejo, uno por DÍA: con ése
+    el segundo entraba porque la fecha es distinta. Por eso las dos filas
+    llevan fechas distintas a propósito — con la misma, los dos índices
+    rebotan y el test no los distingue.
+
+    Hasta el 23/09 este test afirmaba lo contrario (que cerrar cerraba DOS
+    abiertos), porque el esquema los permitía: era el estado de antes de la
+    migración y quedó guardándolo (corolario 22)."""
     d, sql, _c, _t, _l = galpon
     _cerrar_abiertos(sql)
-    sql("INSERT INTO listados_compra (fecha, estado) VALUES (%s, 'borrador'), (%s, 'borrador')",
-        (SALIDA.date() - timedelta(days=40), SALIDA.date() - timedelta(days=39)))
+    sql("INSERT INTO listados_compra (fecha, estado) VALUES (%s, 'borrador')",
+        (SALIDA.date() - timedelta(days=40),))
+    with pytest.raises(Exception) as rebote:
+        sql("INSERT INTO listados_compra (fecha, estado) VALUES (%s, 'borrador')",
+            (SALIDA.date() - timedelta(days=39),))
+    assert "listados_compra_un_solo_abierto_idx" in str(rebote.value)
     assert d.cerrar_borrador_de_compra() is True
     assert d.borrador_de_compra() is None
 
