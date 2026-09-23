@@ -224,18 +224,21 @@ Para la próxima verificación de esta tabla, una columna de población que
 difiera entre bases —`count(*) from clientes`, 5 contra 3 el 21/09— hace el
 trabajo de identificar que acá no hizo nadie.
 
-## PENDIENTE de correr: `cargas_compra_3_sacar_las_viejas`
+## 23/09 — `cargas_compra_3_sacar_las_viejas` (el drop, después del deploy)
 
-`db/cargas_compra_3_sacar_las_viejas.sql` **todavía NO se corrió en ninguna
-base**, y es a propósito: dropea `listados_compra_manual` y
-`listados_compra_clientes`, que el código desplegado **todavía lee**
-(`borrador_de_compra`). Se corre **después** de que el Paso 2 reescrito esté
-desplegado.
+`db/cargas_compra_3_sacar_las_viejas.sql`, con su verificación corrida
+aparte. Corrió **después** del deploy del Paso 2 (v962): hasta ahí el código
+de arriba todavía leía las dos tablas y escribía el margen del listado
+(corolario 94).
 
-**Y desde el 23/09 también dropea `listados_compra.margen_porcentaje`**, la
-mitad de CONTRACT de `listados_compra_5`: hasta el deploy el código viejo la
-lee y la escribe.
+```
+FRUTAMAX  clientes 0 · manual 0 · margen 0 · 3 clientes
+PALMALA   clientes 0 · manual 0 · margen 0 · 5 clientes
+```
 
-**Y `db/esquema_completo.sql` sigue teniendo las dos tablas hasta ese día**,
-por lo mismo: una base nueva creada hoy las necesita. Sacarlas del esquema
-antes del drop rompe la base que todavía no existe.
+**Los tres ceros son el resultado BUENO**: las dos tablas y la columna ya no
+están. Lo que identifica la base son los clientes —3 contra 5—, que es lo
+único que puede ser distinto entre dos bases a las que se les sacó lo mismo.
+
+**Y `db/esquema_completo.sql` las perdió en el MISMO commit que anotó esta
+fila**, no antes: hasta este drop una base nueva las necesitaba.

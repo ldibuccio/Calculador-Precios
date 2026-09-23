@@ -239,24 +239,20 @@ mudada a un lugar donde el listado también la llama.
 | `cargas_compra` | la cabecera: cliente, fecha, modo, ancla del promedio, margen. Único por `(cliente_id, fecha)` |
 | `cargas_compra_renglones` | el total por artículo, **en la magnitud**. PK `(carga_id, articulo_id)`, cascada desde la carga |
 | `listados_compra_cargas` | qué cargas entraron en qué listado. **Sin cascada hacia la carga**: borrar una carga usada tiene que rebotar, no borrar el rastro |
-| `listados_compra` | la cabecera del listado (del 21/09). Su `margen_porcentaje` está **en retiro**: sin NOT NULL desde el 23/09 (`listados_compra_5`), el código ya no la escribe, y se dropea con el bloque 3 |
+| `listados_compra` | la cabecera del listado (del 21/09). **Sin margen**: su `margen_porcentaje` se dropeó el 23/09 con el bloque 3 |
 | `listados_compra_kilaje` | el kilaje del Mercado, editable (del 21/09) |
 
-**Se van cuando el Paso 2 esté desplegado**: `listados_compra_manual`,
-`listados_compra_clientes` y la columna `listados_compra.margen_porcentaje`,
-con `db/cargas_compra_3_sacar_las_viejas.sql`.
+**Ya no existen** `listados_compra_manual`, `listados_compra_clientes` ni la
+columna `listados_compra.margen_porcentaje`: se dropearon el 23/09 con
+`db/cargas_compra_3_sacar_las_viejas.sql`, en las dos bases y después del
+deploy del Paso 2, y en el mismo commit salieron de `db/esquema_completo.sql`.
 
 ---
 
 ## Lo que falta
 
-1. **Correr `db/cargas_compra_3_sacar_las_viejas.sql`** en las dos bases,
-   **después** del deploy del Paso 2 — hasta entonces el código viejo, que es
-   el que está arriba, todavía lee esas tablas y escribe el margen del
-   listado.
-2. **Sacar las dos tablas y la columna del margen de
-   `db/esquema_completo.sql`** en el mismo commit que el drop, no antes:
-   hasta ese día una base nueva las necesita.
+Nada de la migración: el drop corrió el 23/09 en las dos bases (ver
+`db/corridas_confirmadas.md`).
 
 ---
 
