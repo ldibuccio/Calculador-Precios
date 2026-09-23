@@ -58,6 +58,18 @@ persona revisó y aceptó.
 artículos con un campo cada uno. Con el pulgar eso es imposible de usar."* Se
 agrega de a uno con el buscador, como en Armar Pedido.
 
+**Y "Del promedio" arranca con lo que encontró y nada más** (dueño, 23/09):
+*"no me muestres los artículos en cero"*. Se ven los que tienen número en los
+últimos 6 pedidos; lo que falte se trae con el mismo buscador. Las dos
+pantallas se comportan igual: arrancan con lo que hay y se agrega lo que
+falte. Un artículo cuyo promedio da cero exacto tampoco se muestra.
+
+**Hasta el 23/09 ninguna de las dos escondía nada**, y es un dato que conviene
+tener: las filas llevaban `hidden` bien puesto y `.fila { display: flex }` le
+ganaba al del navegador, así que las dos modalidades mostraban el catálogo
+entero con los campos vacíos. Lo cuidan tres tests que miran la pantalla en un
+navegador, no el atributo.
+
 ### El promedio
 
 **CERRADA**: son los **últimos 6 pedidos ANTERIORES AL DÍA DE CARGA**, con

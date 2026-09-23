@@ -1098,3 +1098,68 @@ def test_DAR_DE_ALTA_crea_el_articulo_y_NO_PIERDE_la_revision():
     # Y la revisión vuelve ENTERA, con el nuevo elegido en SU renglón.
     assert 'value="30"' in corrido and 'value="5"' in corrido
     assert 'value="77" data-unidad="kg" selected' in corrido
+
+
+# --- LO QUE SE VE, y no lo que dice el atributo -------------------------------
+#
+# Del 23/09, y lo encontró el dueño usándola: "no me muestres los artículos en
+# cero, son decenas de filas vacías". Las filas llevaban `hidden` bien puesto
+# —el test de arriba lo confirma y pasaba— y se veían igual, en los DOS modos:
+# `.fila { display: flex }` le gana al `[hidden]` del navegador. Es el
+# corolario 32 al pie de la letra, así que esto se mide en un navegador.
+
+
+def _filas_que_se_ven(html, buscar=None):
+    pytest.importorskip("playwright", reason="lo que se ve necesita un navegador")
+    from playwright.sync_api import sync_playwright
+    from scripts.medir_layout import CHROMIUM
+
+    with sync_playwright() as p:
+        navegador = p.chromium.launch(executable_path=CHROMIUM)
+        pagina = navegador.new_page(viewport={"width": 390, "height": 844})
+        pagina.set_content(html)
+        if buscar:
+            pagina.fill("#buscar", buscar)
+            pagina.click("#hallazgos button")
+        resultado = pagina.evaluate("""() => {
+          const f = [...document.querySelectorAll('.fila[data-articulo]')];
+          return {total: f.length,
+                  visibles: f.filter(x => getComputedStyle(x).display !== 'none')
+                             .map(x => x.dataset.articulo)};
+        }""")
+        navegador.close()
+    return resultado
+
+
+def _pantalla(modo, renglones_de_pedido=_RENGLONES_DE_PEDIDO):
+    ctx = _con_catalogo(**{"app.main.carga_de_compra": _carga(modo=modo),
+                           "app.main.renglones_de_los_ultimos_pedidos": renglones_de_pedido})
+    respuesta, _ = _entrar(ctx, "get", f"/compras/carga/1/{EL_27.isoformat()}")
+    assert respuesta.status_code == 200, "se midió otra pantalla"
+    return respuesta.text
+
+
+def test_DEL_PROMEDIO_se_ven_SOLO_los_que_encontro_en_los_6_pedidos():
+    """El 7 y el 10 salen del promedio; el 8 no tiene magnitud y el 9 nadie
+    lo pidió. Con el CSS roto se ven los cuatro."""
+    medicion = _filas_que_se_ven(_pantalla("automatico"))
+    # El denominador: cuatro filas en el DOM, así el buscador tiene qué traer.
+    assert medicion["total"] == len(_ARTICULOS)
+    assert sorted(medicion["visibles"]) == ["10", "7"]
+
+
+def test_A_MANO_arranca_sin_ninguna_fila_a_la_vista():
+    medicion = _filas_que_se_ven(_pantalla("manual"))
+    assert medicion["total"] == len(_ARTICULOS)
+    assert medicion["visibles"] == []
+
+
+def test_un_articulo_que_el_promedio_da_en_CERO_no_se_muestra_y_se_puede_AGREGAR():
+    """El pedido del dueño son las dos mitades: el cero no aparece, y si hace
+    falta se trae con el buscador. La segunda es la que hace que esconderlo no
+    sea perderlo."""
+    en_cero = [dict(_RENGLONES_DE_PEDIDO[0], bultos=0)] + _RENGLONES_DE_PEDIDO[1:]
+    html = _pantalla("automatico", en_cero)
+    assert sorted(_filas_que_se_ven(html)["visibles"]) == ["10"]
+    agregado = _filas_que_se_ven(html, buscar="tomate")
+    assert sorted(agregado["visibles"]) == ["10", "7"], "el buscador no lo trajo"
