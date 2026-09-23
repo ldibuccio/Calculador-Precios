@@ -233,6 +233,8 @@ from app.db import (
     fijar_auto_confirmar_casilla,
     guardar_alias_en_ficha,
     guardar_condiciones_pedido,
+    guardar_acepta_segunda,
+    SegundaNoPermitida,
     guardar_horario_revision_casilla,
     listar_casillas_pedidos,
     listar_condiciones_pedido,
@@ -2429,6 +2431,21 @@ async def guardar_dias_pedido_cliente(request: Request, cliente_id: int):
         guardar_condiciones_pedido(cliente_id, ",".join(dias) or None)
     except Exception as error_db:
         raise HTTPException(status_code=500, detail=f"No se pudieron guardar los días de pedido: {error_db}") from error_db
+    return RedirectResponse(url=f"/clientes/{cliente_id}/editar", status_code=303)
+
+
+@app.post("/clientes/{cliente_id}/acepta-segunda")
+async def guardar_acepta_segunda_cliente(request: Request, cliente_id: int):
+    """El tilde "acepta mercadería de segunda" (dueño, 23/09), en su propio formulario.
+
+    Separado del de las tasas por lo mismo que los días de pedido: no es una
+    tasa, y meterlo ahí obligaría a re-guardar las tasas para cambiarlo.
+    """
+    form = await request.form()
+    try:
+        guardar_acepta_segunda(cliente_id, form.get("acepta_segunda") == "si")
+    except Exception as error_db:
+        raise HTTPException(status_code=500, detail=f"No se pudo guardar si acepta segunda: {error_db}") from error_db
     return RedirectResponse(url=f"/clientes/{cliente_id}/editar", status_code=303)
 
 
@@ -12963,6 +12980,39 @@ def _costo_congelado_para_reingreso(renglon: dict) -> float | None:
         return None
 
 
+def _segunda_que_vuelve(renglon: dict, cantidad: float) -> float:
+    """Cuántos de los bultos que se devuelven son de SEGUNDA (dueño, 23/09).
+
+    LA SEGUNDA VUELVE PRIMERO. No se sabe cuáles bultos físicos volvieron,
+    así que se decide una regla y se escribe una sola vez: lo que quede de
+    segunda sin devolver se come la devolución antes que la primera. Es la
+    lectura conservadora —la mercadería de segunda es la que más
+    probablemente se rechace— y es la que impide que un bulto de segunda
+    vuelva a la primera por un rechazo.
+
+    Lo que el renglón ya devolvió se descuenta de la segunda con el mismo
+    orden: si ya volvieron 3 y tenía 4 de segunda, queda 1.
+    """
+    segunda = float(renglon.get("bultos_de_segunda") or 0)
+    pendiente = max(segunda - float(renglon.get("ya_devuelto") or 0), 0.0)
+    return min(float(cantidad), pendiente)
+
+
+def _costo_del_reingreso_con_segunda(costo_por_bulto: float | None, cantidad: float,
+                                     de_segunda: float) -> float | None:
+    """El costo congelado PROMEDIADO para una devolución que trae segunda adentro.
+
+    La parte de segunda vuelve con costo CERO: ya se contó como pérdida
+    cuando pasó a segunda, y ya se vendió a precio lleno sin costo. Cobrarla
+    de nuevo al volver la perdería dos veces. `movimientos_stock` guarda UN
+    costo por bulto por movimiento, así que se guarda el promedio: el total
+    (bultos × costo) queda exacto, que es lo que leen las dos cuentas.
+    """
+    if costo_por_bulto is None or not de_segunda or cantidad <= 0:
+        return costo_por_bulto
+    return round(float(costo_por_bulto) * (cantidad - de_segunda) / cantidad, 2)
+
+
 # EL CUARTO ES DEVOLUCIÓN AL PROVEEDOR (11/09): la mercadería que el cliente
 # rechazó vuelve al proveedor que la trajo y NO se le paga. Sale del stock,
 # no entra al pool de segunda, y su costo no es ni venta ni pérdida — la
@@ -13021,6 +13071,10 @@ def _renderizar_form_reingreso(request: Request, renglon: dict, *, precarga=None
         "paso": "form",
         "renglon": renglon,
         "tope": float(renglon["bultos_armados"]) - float(renglon["ya_devuelto"]),
+        # Lo que queda de segunda sin devolver: la pantalla lo avisa ANTES
+        # del destino, porque es lo que decide que 'stock' no se puede. Es
+        # un dato del propio armado, no del sistema.
+        "segunda_pendiente": _segunda_que_vuelve(renglon, float("inf")),
         "precarga": precarga or {},
         "hoy": _hoy_argentina().isoformat(),
         "proveedores": proveedores,
@@ -13127,6 +13181,23 @@ def cargar_reingreso_stock_ruta(
             + f" — el tope es {_formatear_numero(tope)}."
         )
 
+    # LA SEGUNDA NO VUELVE A LA PRIMERA (dueño, 23/09). Si lo que se
+    # devuelve trae segunda adentro —vuelve primero, ver `_segunda_que_
+    # vuelve`— el destino 'stock' lo sumaría al stock de primera, que es de
+    # donde nunca salió. Los otros tres destinos no suman a la primera.
+    de_segunda = 0.0
+    if not error:
+        de_segunda = _segunda_que_vuelve(renglon, cantidad_valor)
+        # El mismo default que el destino de abajo: lo que no es un destino
+        # conocido termina en 'stock', así que también se frena.
+        if de_segunda and (destino if destino in DESTINOS_REINGRESO else "stock") == "stock":
+            error = (
+                f"De lo que devolvés, {_formatear_numero(de_segunda)} "
+                f"{'bulto salió' if de_segunda == 1 else 'bultos salieron'} de segunda: "
+                "no pueden volver al stock de primera. Cargalos a segunda (o a otro destino) "
+                "y el resto, si hay, en otra carga."
+            )
+
     fecha_valor = None
     if not error:
         hoy = _hoy_argentina()
@@ -13189,7 +13260,9 @@ def cargar_reingreso_stock_ruta(
         }
         return _renderizar_form_reingreso(request, renglon, precarga=precarga, error=error, status_code=400)
 
-    costo_por_bulto = _costo_congelado_para_reingreso(renglon)
+    costo_por_bulto = _costo_del_reingreso_con_segunda(
+        _costo_congelado_para_reingreso(renglon), cantidad_valor, de_segunda
+    )
     try:
         crear_movimiento_stock(
             renglon["articulo_id"], "reingreso_rechazo", cantidad_valor, motivo_limpio, fecha_valor,
@@ -20645,6 +20718,14 @@ def ver_armar_pedido(request: Request, cliente_id: str | None = None, fecha: str
             # esta ruta YA leyó para el kilaje: una segunda consulta por la
             # misma lista es la forma cara de escribir lo mismo.
             "fichas_cliente": [{"id": f["id"], "nombre": _nombre_de_ficha(f)} for f in fichas],
+            # Si a este cliente se le puede mandar segunda (dueño, 23/09).
+            # Sale de `clientes`, que esta ruta ya leyó. Decide SOLO si el
+            # campo se ofrece: el POST lo vuelve a mirar en la base, porque
+            # un formulario armado a mano no ve esta condición. Y sin número
+            # del pool: es pantalla de operario (criterio Vacíos).
+            "acepta_segunda": any(
+                c["id"] == cliente_id_valor and c.get("acepta_segunda") for c in clientes
+            ),
         }
     )
     return templates.TemplateResponse(request, "deposito_pedido_armar.html", contexto)
@@ -20718,8 +20799,15 @@ def armar_renglon_pedido_ruta(
     cantidad_armada: str = Form(""),
     cantidad_pedida: str = Form(""),
     kilos_por_bulto: str = Form(""),
+    bultos_de_segunda: str = Form(""),
 ):
     """Tilda un renglón como armado. Con cantidad_armada (menor a lo pedido), queda "incompleto" con su cantidad real.
+
+    bultos_de_segunda: cuántos de los armados salen de la SEGUNDA (dueño,
+    23/09). Vacío = ninguno, que es el default: la segunda nunca se elige
+    sola. Las guardas —el cliente la acepta, no es más que lo armado, hay
+    esa segunda— viven en `marcar_renglon_armado`, que es donde se escribe;
+    acá solo se traduce su motivo a un 400 que se lee.
 
     kilos_por_bulto: lo que la persona carga (el cajón va con 16 kg — ese
     es el número que sabe y corrige). El TOTAL enviado lo calcula el
@@ -20767,8 +20855,23 @@ def armar_renglon_pedido_ruta(
             raise HTTPException(status_code=400, detail="Falta la cantidad de bultos para calcular los kilos enviados.")
         kilos_valor = round(por_bulto * bultos_armados, 2)
 
+    segunda_valor = None
+    texto_segunda = bultos_de_segunda.strip()
+    if texto_segunda:
+        try:
+            segunda_valor = float(texto_segunda.replace(",", "."))
+        except ValueError:
+            raise HTTPException(status_code=400, detail="Los bultos de segunda tienen que ser un número.")
+        if segunda_valor < 0:
+            raise HTTPException(status_code=400, detail="Los bultos de segunda no pueden ser negativos.")
+        if segunda_valor == 0:
+            segunda_valor = None
+
     try:
-        marcar_renglon_armado(renglon_id, cantidad_armada_valor, kilos_valor)
+        marcar_renglon_armado(renglon_id, cantidad_armada_valor, kilos_valor,
+                              bultos_de_segunda=segunda_valor)
+    except SegundaNoPermitida as motivo:
+        raise HTTPException(status_code=400, detail=str(motivo)) from motivo
     except Exception as error_db:
         raise HTTPException(status_code=500, detail=f"No se pudo marcar el renglón: {error_db}") from error_db
 

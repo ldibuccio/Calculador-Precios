@@ -469,7 +469,13 @@ def calcular_rentabilidad_real(
                 if salida.get("cliente_id") != cliente_id:
                     continue  # venta de otro cliente: no es de esta pantalla
                 fechas_incluidas.add(salida["fecha"])
-                bultos = float(salida["cantidad"])
+                # LO QUE SALIÓ DE SEGUNDA SE VENDE ENTERO Y NO CUESTA NADA
+                # (dueño, 23/09): esa plata ya se perdió al pasar a segunda.
+                # El FIFO recibe SOLO la parte de primera —`cantidad`—, así que
+                # el costo ya viene sin ella; la venta sale de los kilos del
+                # renglón entero. Lo único que hay que sumar acá son los bultos,
+                # para que la fila diga cuántos se mandaron de verdad.
+                bultos = float(salida["cantidad"]) + float(salida.get("de_segunda") or 0)
                 unidades = _numero(salida.get("unidades"))
                 if unidades is None:
                     _sumar_afuera("sin_kilaje", articulo, bultos)

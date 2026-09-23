@@ -220,6 +220,24 @@
       <button type="submit">Guardar días de pedido</button>
     </div>
   </form>
+
+  <form method="post" action="/clientes/{{ cliente.id }}/acepta-segunda">
+    <div class="tarjeta">
+      <h2>Mercadería de segunda</h2>
+      <p class="subtexto-grupo">¿A este cliente se le puede mandar mercadería de segunda? Un catering sí; Día no. Si decís que sí, al armar un pedido suyo aparece dónde poner cuántos bultos van de segunda. Nunca se pone sola.</p>
+      <div class="dias-pedido">
+        <label class="dia-pedido">
+          <input type="radio" name="acepta_segunda" value="no" {% if not cliente.acepta_segunda %}checked{% endif %}>
+          <span>No</span>
+        </label>
+        <label class="dia-pedido">
+          <input type="radio" name="acepta_segunda" value="si" {% if cliente.acepta_segunda %}checked{% endif %}>
+          <span>Sí, acepta segunda</span>
+        </label>
+      </div>
+      <button type="submit">Guardar</button>
+    </div>
+  </form>
   {% endif %}
 
   <script>

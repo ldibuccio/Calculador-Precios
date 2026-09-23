@@ -17708,7 +17708,7 @@ def test_armar_renglon_completo_no_guarda_cantidad():
 
     assert respuesta.status_code == 303
     assert "sucursal=VL" in respuesta.headers["location"]
-    mock_marcar.assert_called_once_with(11, None, None)
+    mock_marcar.assert_called_once_with(11, None, None, bultos_de_segunda=None)
 
 
 def test_armar_renglon_parcial_guarda_la_cantidad_real():
@@ -17721,7 +17721,7 @@ def test_armar_renglon_parcial_guarda_la_cantidad_real():
         )
 
     assert respuesta.status_code == 303
-    mock_marcar.assert_called_once_with(11, 12.0, None)
+    mock_marcar.assert_called_once_with(11, 12.0, None, bultos_de_segunda=None)
 
 
 def test_armar_renglon_con_todo_lo_pedido_cuenta_como_completo():
@@ -17735,7 +17735,7 @@ def test_armar_renglon_con_todo_lo_pedido_cuenta_como_completo():
             follow_redirects=False,
         )
 
-    mock_marcar.assert_called_once_with(11, None, None)
+    mock_marcar.assert_called_once_with(11, None, None, bultos_de_segunda=None)
 
 
 def test_armar_DE_MAS_guarda_los_bultos_de_verdad():
@@ -17754,7 +17754,7 @@ def test_armar_DE_MAS_guarda_los_bultos_de_verdad():
         )
 
     assert respuesta.status_code == 303
-    mock_marcar.assert_called_once_with(11, 80.0, None)
+    mock_marcar.assert_called_once_with(11, 80.0, None, bultos_de_segunda=None)
 
 
 def test_los_kilos_de_un_armado_DE_MAS_salen_por_los_bultos_de_verdad():
@@ -17772,7 +17772,7 @@ def test_los_kilos_de_un_armado_DE_MAS_salen_por_los_bultos_de_verdad():
             follow_redirects=False,
         )
 
-    mock_marcar.assert_called_once_with(11, 80.0, 1280.0)
+    mock_marcar.assert_called_once_with(11, 80.0, 1280.0, bultos_de_segunda=None)
 
 
 def test_el_renglon_armado_de_MAS_no_lleva_el_ambar_del_incompleto():
@@ -21380,10 +21380,10 @@ FICHAS_ARMADO_CON_CONTENIDO = [
 ]
 
 
-def _get_armar_sucursal(renglones, pedido=None):
+def _get_armar_sucursal(renglones, pedido=None, clientes=None):
     with (
         patch("app.main._hoy_argentina", return_value=date(2026, 8, 21)),
-        patch("app.main.listar_clientes", return_value=CLIENTES_PARA_SELECTOR),
+        patch("app.main.listar_clientes", return_value=clientes or CLIENTES_PARA_SELECTOR),
         patch("app.main.listar_pedidos_vigentes_con_armado", return_value=[]),
         patch("app.main.obtener_pedido_vigente", return_value=pedido or PEDIDO_VIGENTE_DE_PRUEBA),
         patch("app.main.listar_sucursales_pedido", return_value=[dict(s) for s in SUCURSALES_PEDIDO_DE_PRUEBA]),
@@ -21448,7 +21448,7 @@ def test_armar_renglon_guarda_el_total_calculado_por_el_server():
         )
 
     assert respuesta.status_code == 303
-    mock_marcar.assert_called_once_with(11, None, 240.0)
+    mock_marcar.assert_called_once_with(11, None, 240.0, bultos_de_segunda=None)
 
 
 def test_armar_renglon_incompleto_calcula_el_total_con_los_bultos_armados():
@@ -21463,7 +21463,7 @@ def test_armar_renglon_incompleto_calcula_el_total_con_los_bultos_armados():
         )
 
     assert respuesta.status_code == 303
-    mock_marcar.assert_called_once_with(11, 12.0, 192.0)
+    mock_marcar.assert_called_once_with(11, 12.0, 192.0, bultos_de_segunda=None)
 
 
 def test_armar_renglon_kilos_invalidos_da_400():
@@ -22200,6 +22200,9 @@ RENGLON_REINGRESO_DE_PRUEBA = {
     "articulo_nombre": "Anco", "cliente_id": 1, "cliente_nombre": "Día",
     "fecha_pedido": date(2026, 8, 24), "orden_compra": "1257673",
     "bultos_armados": 25.0, "kilos_enviados": 500.0, "ya_devuelto": 5.0,
+    # Como lo trae la consulta desde el 23/09: sin segunda, un cero y no
+    # una clave que falta.
+    "bultos_de_segunda": 0.0,
     # EL ENVASE DE LA FICHA, como lo trae la consulta en producción: envase
     # FIJO, que es el caso común. Sin estas dos el fixture haría que la
     # pantalla preguntara siempre —`.get` devuelve None y un None se lee como
@@ -32869,3 +32872,210 @@ def test_los_campos_de_KILAJE_aceptan_decimales_Y_PIDEN_EL_TECLADO_QUE_CORRESPON
     assert con_step, "no hay un solo campo de kilaje: el fixture no dibujó el formulario"
     sin_teclado = [i for i in con_step if 'inputmode="decimal"' not in i]
     assert not sin_teclado, f"campos de kilaje sin inputmode decimal: {sin_teclado}"
+
+
+# --- Segunda al cliente (dueño, 23/09) ---
+
+
+def _get_armar_con_clientes(renglones, clientes):
+    # Por PARÁMETRO y no con un patch de afuera: el helper parchea
+    # `listar_clientes` adentro, y el de adentro gana — el de afuera no
+    # llegaba y el test de "no sale" pasaba sin haber mirado nada.
+    return _get_armar_sucursal(renglones, clientes=clientes)
+
+
+def _dos_pendientes():
+    """DOS renglones sin tildar: con uno solo, un campo puesto en uno de los
+    formularios y no en el otro pasa igual (corolario 57, N hermanos)."""
+    base_renglon = dict(RENGLONES_ARMADO_DE_PRUEBA[0])
+    return [base_renglon, dict(base_renglon, id=base_renglon["id"] + 1000)]
+
+
+def test_el_campo_de_SEGUNDA_sale_en_CADA_renglon_si_el_cliente_la_acepta():
+    renglones = _dos_pendientes()
+    clientes = [dict(c, acepta_segunda=(c["id"] == 1)) for c in CLIENTES_PARA_SELECTOR]
+    respuesta = _get_armar_con_clientes(renglones, clientes)
+
+    assert respuesta.status_code == 200
+    marcado = respuesta.text.split("</style>")[-1]
+    formularios = re.findall(r'<form method="post" action="/deposito/pedido/\d+/renglones/\d+/armar".*?</form>',
+                             marcado, re.S)
+    assert len(formularios) == 2
+    assert sum('name="bultos_de_segunda"' in f for f in formularios) == len(formularios)
+    # Vacío: la segunda nunca se elige sola.
+    assert 'name="bultos_de_segunda" min="0" step="0.01"\n                   placeholder' in marcado
+
+
+def test_el_campo_de_SEGUNDA_NO_sale_si_el_cliente_no_la_acepta():
+    """Día no acepta. Y el cliente de AL LADO sí: con el tilde leído de
+    cualquier cliente de la lista en vez del de esta pantalla, sale igual."""
+    clientes = [dict(c, acepta_segunda=(c["id"] == 2)) for c in CLIENTES_PARA_SELECTOR]
+    respuesta = _get_armar_con_clientes(_dos_pendientes(), clientes)
+
+    assert respuesta.status_code == 200
+    assert 'name="bultos_de_segunda"' not in respuesta.text
+    assert "Va con segunda" not in respuesta.text.split("</style>")[-1]
+
+
+def test_armar_con_segunda_la_pasa_al_db_y_su_motivo_vuelve_como_400():
+    from app.db import SegundaNoPermitida
+
+    with patch("app.main.marcar_renglon_armado") as mock_marcar:
+        respuesta = cliente.post(
+            "/deposito/pedido/1/renglones/11/armar",
+            data={"cliente_id": "1", "fecha": "2026-08-21", "sucursal": "VL",
+                  "cantidad_pedida": "10", "bultos_de_segunda": "4"},
+            follow_redirects=False,
+        )
+    assert respuesta.status_code == 303
+    mock_marcar.assert_called_once_with(11, None, None, bultos_de_segunda=4.0)
+
+    with patch("app.main.marcar_renglon_armado",
+               side_effect=SegundaNoPermitida("Día no acepta mercadería de segunda.")):
+        respuesta = cliente.post(
+            "/deposito/pedido/1/renglones/11/armar",
+            data={"cliente_id": "1", "fecha": "2026-08-21", "sucursal": "VL",
+                  "cantidad_pedida": "10", "bultos_de_segunda": "4"},
+            follow_redirects=False,
+        )
+    assert respuesta.status_code == 400
+    assert "no acepta mercadería de segunda" in respuesta.text
+
+
+def test_el_tilde_del_cliente_se_guarda_por_su_propio_formulario():
+    for valor, esperado in (("si", True), ("no", False)):
+        with patch("app.main.guardar_acepta_segunda") as mock_guardar:
+            respuesta = cliente.post("/clientes/7/acepta-segunda", data={"acepta_segunda": valor},
+                                     follow_redirects=False)
+        assert respuesta.status_code == 303
+        mock_guardar.assert_called_once_with(7, esperado)
+
+
+def _reingreso_con_segunda(destino, cantidad, costo=120.0):
+    renglon = dict(RENGLON_REINGRESO_DE_PRUEBA, ya_devuelto=0.0, bultos_de_segunda=4.0)
+    with (
+        patch("app.main.obtener_renglon_para_reingreso", return_value=renglon),
+        patch("app.main._costo_congelado_para_reingreso", return_value=costo),
+        patch("app.main.crear_movimiento_stock") as mock_crear,
+        patch("app.main.listar_todos_los_proveedores", return_value=PROVEEDORES_DE_PRUEBA),
+        patch("app.main.compras_que_alimentaron_el_renglon", return_value=[]),
+        patch("app.main._hoy_argentina", return_value=date(2026, 8, 25)),
+    ):
+        respuesta = cliente.post(
+            "/deposito/stock/reingreso",
+            data={"renglon_id": "77", "cantidad": str(cantidad), "motivo": "rechazado",
+                  "fecha": "2026-08-24", "destino": destino},
+            follow_redirects=False,
+        )
+    return respuesta, mock_crear
+
+
+def test_la_SEGUNDA_rechazada_no_puede_volver_al_stock_de_PRIMERA():
+    """La segunda vuelve primero: 3 de un renglón con 4 de segunda son los 3
+    de segunda, y 'stock' los sumaría a la primera, de donde nunca salieron."""
+    respuesta, mock_crear = _reingreso_con_segunda("stock", 3)
+
+    assert respuesta.status_code == 400
+    assert "salieron de segunda" in respuesta.text
+    mock_crear.assert_not_called()
+
+
+def test_la_SEGUNDA_rechazada_vuelve_a_segunda_con_COSTO_CERO():
+    """3 bultos, los 3 de segunda: el costo congelado es cero — la pérdida ya
+    se contó al pasarlos. Contra un costo de $120, no 0 sería perderlos dos
+    veces."""
+    respuesta, mock_crear = _reingreso_con_segunda("segunda", 3)
+
+    assert respuesta.status_code == 303
+    assert mock_crear.call_args.kwargs["costo_por_bulto"] == 0.0
+
+
+def test_un_rechazo_MIXTO_se_costea_solo_por_la_parte_de_primera():
+    """6 bultos, 4 de segunda y 2 de primera: el total congelado tiene que ser
+    2 x 120 = 240, o sea 40 por bulto. Con el costo entero serían 720."""
+    respuesta, mock_crear = _reingreso_con_segunda("segunda", 6)
+
+    assert respuesta.status_code == 303
+    assert mock_crear.call_args.kwargs["costo_por_bulto"] * 6 == pytest.approx(240.0)
+
+
+def test_sin_segunda_el_rechazo_al_stock_no_cambia():
+    """El control: un renglón sin segunda sigue pudiendo volver al stock con
+    su costo entero. Sin este, una guarda que frenara siempre pasa los de
+    arriba."""
+    renglon = dict(RENGLON_REINGRESO_DE_PRUEBA, ya_devuelto=0.0, bultos_de_segunda=0.0)
+    with (
+        patch("app.main.obtener_renglon_para_reingreso", return_value=renglon),
+        patch("app.main._costo_congelado_para_reingreso", return_value=120.0),
+        patch("app.main.crear_movimiento_stock") as mock_crear,
+        patch("app.main._hoy_argentina", return_value=date(2026, 8, 25)),
+    ):
+        respuesta = cliente.post(
+            "/deposito/stock/reingreso",
+            data={"renglon_id": "77", "cantidad": "3", "motivo": "rechazado",
+                  "fecha": "2026-08-24", "destino": "stock"},
+            follow_redirects=False,
+        )
+    assert respuesta.status_code == 303
+    assert mock_crear.call_args.kwargs["costo_por_bulto"] == 120.0
+
+
+def test_toda_salida_de_PRIMERA_lee_la_constante_y_solo_los_TOTALES_leen_el_armado_entero():
+    """El conjunto ENCONTRADO contra el DECIDIDO (corolario 60).
+
+    Desde el 23/09 lo armado es primera + segunda. Toda consulta que resta
+    del stock tiene que leer `_SQL_BULTOS_DE_PRIMERA`; las que leen el armado
+    ENTERO son las que miran lo que el CLIENTE recibió, y están nombradas acá
+    con su razón. Una octava que aparezca con el armado entero falla este
+    test hasta que alguien decida de qué lado va.
+    """
+    import ast
+    import app.db as modulo
+
+    fuente = open(modulo.__file__, encoding="utf-8").read()
+    arbol = ast.parse(fuente)
+    encontradas = set()
+    for nodo in ast.walk(arbol):
+        if isinstance(nodo, ast.FunctionDef):
+            texto = ast.get_source_segment(fuente, nodo) or ""
+            sin_comentarios = "\n".join(l.split("--")[0] for l in texto.splitlines())
+            if "COALESCE(r.cantidad_armada, r.cantidad) AS bultos_armados" in sin_comentarios:
+                encontradas.add(nodo.name)
+    decididas = {
+        # Lo que el CLIENTE recibió: el tope de lo que puede devolver.
+        "listar_renglones_para_reingreso",
+        "obtener_renglon_para_reingreso",
+        # Pasar bultos devueltos a kilos: kilos_enviados es del renglón entero.
+        "devoluciones_vinculadas_por_rango",
+    }
+    assert encontradas == decididas
+    # Y la constante está donde se resta del stock.
+    for nombre in ("_SQL_SALIDAS_STOCK", "_SQL_ARMADOS_DESDE"):
+        assert modulo._SQL_BULTOS_DE_PRIMERA in getattr(modulo, nombre), nombre
+    assert modulo._SQL_BULTOS_DE_PRIMERA in modulo._sql_sumas_stock(por_articulo=True)
+    assert modulo._SQL_BULTOS_DE_PRIMERA in modulo._SQL_STOCK_PARTIDO
+
+
+def test_la_RECARGA_traslada_la_segunda_con_el_armado_y_el_extracto_no_dibuja_ceros():
+    """Dos escritores/lectores que ningún otro test ejercita.
+
+    La recarga: el renglón nuevo hereda el armado del viejo, y la segunda es
+    PARTE de ese armado. Sin copiarla, el renglón nuevo sale armado todo de
+    primera y el stock de primera baja por bultos que salieron del pool.
+
+    El extracto: un renglón armado entero de segunda no sacó nada de la
+    primera, y dibujarlo como "−0" es ruido.
+    """
+    import ast
+    import inspect
+    import app.db as modulo
+
+    traslado = next(
+        n for n in ast.walk(ast.parse(inspect.getsource(modulo.crear_pedido)))
+        if isinstance(n, ast.Constant) and isinstance(n.value, str)
+        and "armado_el = viejo.armado_el" in n.value
+    ).value
+    assert "bultos_de_segunda = viejo.bultos_de_segunda" in traslado
+
+    extracto = inspect.getsource(modulo.eventos_de_stock_del_dia)
+    assert 'HAVING SUM(""" + _SQL_BULTOS_DE_PRIMERA + """) <> 0' in extracto

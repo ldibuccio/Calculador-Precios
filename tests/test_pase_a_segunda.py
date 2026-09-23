@@ -305,9 +305,10 @@ def test_la_CUARTA_pata_del_pool_suma_lo_que_paso_a_segunda():
 
     # Y la resta suma las TRES entradas: con un default en la pata nueva, un
     # llamador que se la olvidara devolvería un pool chico y nada avisaría.
-    assert _pool_segunda(5, 4, 7, 2) == 14
+    # (Y desde el 23/09 una quinta, la segunda que se le mandó a un cliente.)
+    assert _pool_segunda(5, 4, 7, 2, 3) == 11
     with pytest.raises(TypeError):
-        _pool_segunda(5, 4, 2)
+        _pool_segunda(5, 4, 7, 2)
 
 
 def test_el_pase_SE_NOMBRA_en_Movimientos_y_dice_ADONDE_fue():
