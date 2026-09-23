@@ -322,3 +322,14 @@ PALMALA   columna 1 · acepta null NO · guarda 1 · 0 cargas · 0 sin días · 
 **Lo que identifica la base son las cargas** —3 contra 0—.
 `db/esquema_completo.sql` pasó `dias` a `not null` en el mismo commit que anotó
 esta fila.
+
+## 23/09 — `segunda_al_cliente_3`
+
+`db/segunda_al_cliente_3_tilde_y_renglon.sql`, con la verificación corrida aparte.
+
+```
+FRUTAMAX  tilde 1 · columna 1 · guarda 1 · 0 con tilde · 3 clientes · 0 renglones con segunda · último armado 23/09
+PALMALA   tilde 1 · columna 1 · guarda 1 · 0 con tilde · 5 clientes · 0 renglones con segunda · último armado 23/09
+```
+
+**Lo que identifica la base son los clientes** —3 contra 5—.
