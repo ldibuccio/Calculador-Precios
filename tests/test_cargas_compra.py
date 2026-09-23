@@ -269,14 +269,14 @@ def test_el_BORRADOR_guarda_CARGAS_y_KILAJES_y_al_volver_a_guardar_REEMPLAZA(gal
     fecha = date(2026, 3, 9)   # un día que ningún otro test usa para su borrador
 
     listado = d.guardar_borrador_de_compra(fecha, {uno, dos}, {tomate: 18.5})
-    borrador = d.borrador_de_compra(fecha)
+    borrador = d.borrador_de_compra()
     assert borrador["id"] == listado
     assert borrador["cargas"] == {uno, dos}
     assert borrador["kilajes"] == {tomate: 18.5}
     assert "margen" not in borrador
 
     d.guardar_borrador_de_compra(fecha, {dos}, {})
-    borrador = d.borrador_de_compra(fecha)
+    borrador = d.borrador_de_compra()
     assert borrador["id"] == listado, "guardar de nuevo abrió otro listado"
     assert borrador["cargas"] == {dos} and borrador["kilajes"] == {}
 

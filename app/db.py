@@ -1013,6 +1013,31 @@ def _negar_si_tiene_precios(cursor, ficha_id: int, accion: str) -> None:
     )
 
 
+def _negar_si_esta_en_una_foto(cursor, ficha_id: int, accion: str) -> None:
+    """La CUARTA de "¿quién apunta a esta ficha?": la foto del stock de un listado de compra.
+
+    La FK es NO ACTION (`db/listados_compra_7_foto_del_stock.sql`): borrar la
+    ficha no puede cambiar lo que un listado dice que había al salir a
+    comprar. Sin esta guarda el DELETE reventaría con el error crudo de la
+    foreign key. Casi nunca dispara: la foto guarda solo las fichas con
+    cajas armadas, y ésas casi siempre tienen guías R, que ya frenan antes.
+    """
+    cursor.execute(
+        "SELECT count(DISTINCT listado_id) FROM listados_compra_foto_cajas WHERE ficha_id = %s",
+        (ficha_id,),
+    )
+    listados = cursor.fetchone()[0]
+    if not listados:
+        return
+    cuantos = f"{listados} {'listado de compra' if listados == 1 else 'listados de compra'}"
+    raise ValueError(
+        f"Esa ficha figura en la foto del stock de {cuantos}: "
+        f"{'no se puede borrar' if accion == 'borrar' else 'no se le puede cambiar el artículo'}. "
+        "El listado guarda cuántas cajas tenía al salir a comprar, y eso no se puede "
+        "dejar colgado."
+    )
+
+
 def eliminar_ficha(ficha_id: int) -> None:
     """Borra una ficha de logística (borrado real). El estado final queda en la bitácora.
 
@@ -1086,6 +1111,7 @@ def eliminar_ficha(ficha_id: int) -> None:
                 )
 
             _negar_si_tiene_precios(cursor, ficha_id, "borrar")
+            _negar_si_esta_en_una_foto(cursor, ficha_id, "borrar")
 
             cursor.execute(
                 """
@@ -1161,6 +1187,7 @@ def cambiar_articulo_de_ficha(
     try:
         with conexion.cursor() as cursor:
             _negar_si_tiene_precios(cursor, ficha_id, "cambiarle el artículo")
+            _negar_si_esta_en_una_foto(cursor, ficha_id, "cambiarle el artículo")
 
             cursor.execute(
                 """
@@ -9445,53 +9472,76 @@ def contar_mails_pedido_leidos_con_ia(fecha_desde) -> dict:
         conexion.close()
 
 
-def compras_de_hoy_por_articulo() -> dict:
-    """Lo comprado HOY por artículo: {articulo_id: {cajones, kilos, conteo}}.
+# CUÁNTOS DÍAS ANTES DE SALIR cuenta una compra sin recibir como "en camino"
+# (dueño, 23/09). Una compra de anteayer que no llegó está viniendo; una de
+# hace dos semanas que no llegó es un error de carga o una compra que no
+# vino, y sumarla haría comprar de menos. Ésas no se cuentan: van al aviso.
+DIAS_EN_CAMINO = 3
 
-    Para la columna "Compré hoy" de "Qué comprar hoy", que tiene que bajar
-    el saldo MIENTRAS SE COMPRA y no cuando llega.
 
-    ENTRAN 'pendiente' Y 'recepcionado', y es decisión del dueño (21/09):
-    "parado en el Mercado el saldo tiene que bajar cuando compro, no cuando
-    llega". Una compra recién cargada está en 'pendiente' — contando solo lo
-    recepcionado, la columna no se movería justo en el momento en que se la
-    mira. Quedan afuera 'rechazado' y 'no_ingresado', que no entraron.
+def compras_alrededor_de_la_salida(momento=None) -> dict:
+    """Las compras partidas contra el momento de SALIR A COMPRAR, por artículo.
 
-    LAS DOS MAGNITUDES VIAJAN SEPARADAS y ninguna se deduce de la otra:
-    quien llama elige con `magnitud_de_la_ficha` cuál corresponde a la fila.
-    Sumarlas o convertirlas sería el factor que este sistema rechazó.
+    Devuelve {"compre": {...}, "en_camino": {...}, "viejas": {...}}, cada uno
+    {articulo_id: {cajones, kilos, conteo, compras, desde}}. `momento` es
+    `listados_compra.generado_el`; None es "ahora", que es lo que la pantalla
+    muestra antes de apretar el botón: lo que la foto sería si se sacara ya.
 
-    LO REAL PRIMERO Y EL ESTIMADO DE RESPALDO, que es la misma regla que usa
-    la cuenta de stock: lo pesado es lo que hay, y el estimado entra solo
-    donde nadie pesó todavía — que es el caso normal de una compra de hoy,
-    porque el camión no llegó.
+    LAS TRES SALEN DE LA MISMA CONSULTA y se reparten por `cargado_el`, que
+    es cuándo se TIPEÓ la compra y no para qué día es:
 
-    HOY es el día ARGENTINO, no el del servidor: un offset fijo no se entera
-    el día que el país mueva el reloj, y lo haría en silencio.
+      - COMPRÉ: cargadas desde el momento, recibidas o no (dueño, 21/09: el
+        saldo tiene que bajar cuando compro, no cuando llega).
+      - EN CAMINO: cargadas en los `DIAS_EN_CAMINO` anteriores y que al
+        momento NO estaban recibidas. Se suman a la foto: no están en el
+        piso y tampoco hay que volver a comprarlas.
+      - VIEJAS: lo mismo pero más antiguas. NO se suman: se avisan.
+
+    "NO ESTABA RECIBIDA AL MOMENTO" ES POR ESTADO Y HORA: una 'pendiente', o
+    una 'recepcionada' cuyo `procesada_el` es POSTERIOR al momento —llegó
+    después de la foto, así que la foto no la tiene—. Una recepcionada antes
+    ya está en la foto y contarla acá la sumaría dos veces, que es el bug
+    que el stock congelado vino a cerrar el 23/09.
+
+    Quedan afuera 'rechazado' y 'no_ingresado': no van a llegar.
+
+    LO REAL PRIMERO Y EL ESTIMADO DE RESPALDO, igual que la cuenta de stock,
+    y LAS DOS MAGNITUDES SEPARADAS: quien llama elige la de la fila.
     """
     conexion = obtener_conexion()
     try:
         with conexion.cursor() as cursor:
             cursor.execute(
-                f"""
-                SELECT c.articulo_id,
-                       SUM(COALESCE(c.cantidad_cajones_real, c.cantidad_cajones)) AS cajones,
-                       SUM(COALESCE(c.cantidad_kilos_real, c.cantidad_kilos))     AS kilos,
-                       SUM(COALESCE(c.cantidad_fraccion_real, c.cantidad_fraccion)) AS conteo
-                FROM compras c
-                WHERE c.fecha_operacion = {_SQL_HOY_ARGENTINA}
-                  AND c.estado IN ('pendiente', 'recepcionado')
-                GROUP BY c.articulo_id
                 """
+                WITH m AS (SELECT COALESCE(%s::timestamptz, now()) AS t)
+                SELECT c.articulo_id,
+                       CASE WHEN c.cargado_el >= m.t THEN 'compre'
+                            WHEN c.cargado_el >= m.t - make_interval(days => %s) THEN 'en_camino'
+                            ELSE 'viejas' END AS grupo,
+                       SUM(COALESCE(c.cantidad_cajones_real, c.cantidad_cajones)),
+                       SUM(COALESCE(c.cantidad_kilos_real, c.cantidad_kilos)),
+                       SUM(COALESCE(c.cantidad_fraccion_real, c.cantidad_fraccion)),
+                       count(*),
+                       MIN(c.cargado_el)
+                FROM compras c CROSS JOIN m
+                WHERE c.estado IN ('pendiente', 'recepcionado')
+                  AND (c.cargado_el >= m.t
+                       OR c.estado = 'pendiente'
+                       OR c.procesada_el > m.t)
+                GROUP BY 1, 2
+                """,
+                (momento, DIAS_EN_CAMINO),
             )
-            return {
-                fila[0]: {
-                    "cajones": float(fila[1]) if fila[1] is not None else 0.0,
-                    "kilos": float(fila[2]) if fila[2] is not None else None,
-                    "conteo": float(fila[3]) if fila[3] is not None else None,
+            grupos = {"compre": {}, "en_camino": {}, "viejas": {}}
+            for articulo_id, grupo, cajones, kilos, conteo, compras, desde in cursor.fetchall():
+                grupos[grupo][articulo_id] = {
+                    "cajones": float(cajones) if cajones is not None else 0.0,
+                    "kilos": float(kilos) if kilos is not None else None,
+                    "conteo": float(conteo) if conteo is not None else None,
+                    "compras": int(compras),
+                    "desde": desde,
                 }
-                for fila in cursor.fetchall()
-            }
+            return grupos
     finally:
         conexion.close()
 
@@ -9589,29 +9639,36 @@ def renglones_de_los_ultimos_pedidos(cliente_ids: list[int], anterior_a, pedidos
         conexion.close()
 
 
-def borrador_de_compra(fecha) -> dict | None:
-    """El borrador de "Qué comprar hoy" de esa fecha: qué cargas arma y los kilajes tocados.
+def borrador_de_compra() -> dict | None:
+    """El listado ABIERTO de "Qué comprar hoy", sea del día que sea. None si no hay.
+
+    ATADO AL MOMENTO Y NO AL RELOJ (dueño, 23/09): se trabaja de noche, y un
+    listado armado a las 22 para salir a las 4 no puede quedar huérfano
+    porque cambió la fecha. Hay UNO abierto a la vez; `fecha` es solo el día
+    en que se abrió.
+
+    El `ORDER BY id DESC LIMIT 1` no es un desempate que se use: el índice
+    `listados_compra_un_solo_abierto_idx` impide dos abiertos. Está porque
+    hasta que ese índice corra, el viejo (uno por día) deja que haya dos de
+    días distintos, y ahí el más nuevo es el que se está usando.
 
     Devuelve `None` cuando no hay ninguno, que es distinto de un borrador
-    vacío: el `None` dice que hoy todavía no se armó ninguno, y la pantalla
-    no ofrece cerrar algo que no existe.
+    vacío: no hay nada que cerrar y la pantalla no lo ofrece.
 
     NO TRAE MARGEN, a propósito (dueño, 23/09): el margen vive en cada
     carga. Un segundo margen acá se multiplica con el de la carga —20% y 10%
-    son 32%— y nadie hace esa cuenta con el pulgar. No existe "los dos, pero
-    uno casi siempre en cero": el día que alguien toque el apagado, vuelve la
-    multiplicación y vuelve invisible.
+    son 32%— y nadie hace esa cuenta con el pulgar.
     """
     conexion = obtener_conexion()
     try:
         with conexion.cursor() as cursor:
             cursor.execute(
                 """
-                SELECT id, fecha, estado
+                SELECT id, fecha, estado, generado_el
                 FROM listados_compra
-                WHERE fecha = %s AND estado = 'borrador'
-                """,
-                (fecha,),
+                WHERE estado = 'borrador'
+                ORDER BY id DESC LIMIT 1
+                """
             )
             cabecera = cursor.fetchone()
             if cabecera is None:
@@ -9634,6 +9691,7 @@ def borrador_de_compra(fecha) -> dict | None:
                 "id": listado_id,
                 "fecha": cabecera[1],
                 "estado": cabecera[2],
+                "generado_el": cabecera[3],
                 "cargas": cargas,
                 "kilajes": kilajes,
             }
@@ -9642,7 +9700,10 @@ def borrador_de_compra(fecha) -> dict | None:
 
 
 def guardar_borrador_de_compra(fecha, cargas: set, kilajes: dict) -> int:
-    """Guarda el borrador de esa fecha entero, y devuelve su id.
+    """Guarda el listado abierto entero, y devuelve su id. Si no hay uno, lo abre con `fecha`.
+
+    `fecha` SOLO SE USA PARA ABRIR: un listado abierto ayer se sigue
+    guardando sobre sí mismo hoy (atado al momento, no al reloj).
 
     TODO EN UNA TRANSACCIÓN Y BORRANDO ANTES DE ESCRIBIR. Las dos tablas
     hijas se reemplazan, no se mezclan: destildar una carga o borrar un
@@ -9659,9 +9720,9 @@ def guardar_borrador_de_compra(fecha, cargas: set, kilajes: dict) -> int:
             cursor.execute(
                 """
                 SELECT id FROM listados_compra
-                WHERE fecha = %s AND estado = 'borrador'
-                """,
-                (fecha,),
+                WHERE estado = 'borrador'
+                ORDER BY id DESC LIMIT 1
+                """
             )
             fila = cursor.fetchone()
             if fila is None:
@@ -9702,11 +9763,117 @@ def guardar_borrador_de_compra(fecha, cargas: set, kilajes: dict) -> int:
         conexion.close()
 
 
-def cerrar_borrador_de_compra(fecha) -> bool:
-    """Pasa el borrador de esa fecha a 'cerrado'. Devuelve si había uno.
+def salir_a_comprar(listado_id: int, sueltos: dict, cajas: dict):
+    """Marca el listado como SALIDO y guarda la foto del stock de ese instante.
 
-    Cerrar NO borra nada: el listado queda como historial de lo que se salió
-    a comprar ese día, y el índice parcial deja abrir uno nuevo.
+    `sueltos` es {articulo_id: (bultos, magnitud o None)} y `cajas`
+    {ficha_id: (articulo_id, cajas, magnitud o None)}. La foto la arma quien
+    llama, con la misma cuenta que la pantalla usa en vivo: escrita dos
+    veces, la pantalla antes de salir y después de salir dirían cosas
+    distintas sin que haya pasado nada.
+
+    SE SALE UNA SOLA VEZ: el `generado_el IS NULL` del UPDATE hace que un
+    segundo click —o dos pestañas— no vuelvan a sacar la foto. Sacarla de
+    nuevo movería el punto de partida y lo que se compró entre medio pasaría
+    de "Compré" al stock, que es la mitad del listado cambiando de lugar sin
+    que nadie lo pida. Para empezar de nuevo se cierra el listado.
+
+    Devuelve el `generado_el` escrito, o None si el listado ya había salido
+    o no está abierto.
+
+    LA HORA ES LA DE LA BASE (`now()`) y no la del server, igual que
+    `compras.cargado_el`: las dos se comparan entre sí, y dos relojes
+    distintos correrían la frontera entre "en camino" y "Compré".
+    """
+    conexion = obtener_conexion()
+    try:
+        with conexion.cursor() as cursor:
+            cursor.execute(
+                """
+                UPDATE listados_compra SET generado_el = now(), actualizado_en = now()
+                 WHERE id = %s AND estado = 'borrador' AND generado_el IS NULL
+                RETURNING generado_el
+                """,
+                (listado_id,),
+            )
+            fila = cursor.fetchone()
+            if fila is None:
+                conexion.rollback()
+                return None
+            for articulo_id, (bultos, magnitud) in sueltos.items():
+                cursor.execute(
+                    """
+                    INSERT INTO listados_compra_foto
+                        (listado_id, articulo_id, sueltos, sueltos_magnitud)
+                    VALUES (%s, %s, %s, %s)
+                    """,
+                    (listado_id, articulo_id, bultos, magnitud),
+                )
+            for ficha_id, (articulo_id, bultos, magnitud) in cajas.items():
+                cursor.execute(
+                    """
+                    INSERT INTO listados_compra_foto_cajas
+                        (listado_id, ficha_id, articulo_id, cajas, magnitud)
+                    VALUES (%s, %s, %s, %s, %s)
+                    """,
+                    (listado_id, ficha_id, articulo_id, bultos, magnitud),
+                )
+            conexion.commit()
+            return fila[0]
+    except Exception:
+        conexion.rollback()
+        raise
+    finally:
+        conexion.close()
+
+
+def foto_del_listado(listado_id: int) -> dict:
+    """La foto guardada al salir: {"sueltos": {...}, "cajas": {...}}, en la forma de `salir_a_comprar`.
+
+    UN ARTÍCULO QUE NO ESTÁ EN LA FOTO NO TIENE STOCK CERO: no se sabe. La
+    foto guarda todo el catálogo, así que el que falta es uno creado después
+    de salir, y quien llama lo deja sin número. Una FICHA que no está, en
+    cambio, sí es cero: la foto guarda solo las que tenían cajas.
+    """
+    conexion = obtener_conexion()
+    try:
+        with conexion.cursor() as cursor:
+            cursor.execute(
+                """
+                SELECT articulo_id, sueltos, sueltos_magnitud
+                FROM listados_compra_foto WHERE listado_id = %s
+                """,
+                (listado_id,),
+            )
+            sueltos = {
+                int(a): (float(b), float(m) if m is not None else None)
+                for a, b, m in cursor.fetchall()
+            }
+            cursor.execute(
+                """
+                SELECT ficha_id, articulo_id, cajas, magnitud
+                FROM listados_compra_foto_cajas WHERE listado_id = %s
+                """,
+                (listado_id,),
+            )
+            cajas = {
+                int(f): (int(a), float(c), float(m) if m is not None else None)
+                for f, a, c, m in cursor.fetchall()
+            }
+            return {"sueltos": sueltos, "cajas": cajas}
+    finally:
+        conexion.close()
+
+
+def cerrar_borrador_de_compra() -> bool:
+    """Pasa el listado abierto a 'cerrado'. Devuelve si había uno.
+
+    CIERRA TODOS LOS ABIERTOS y no uno: hasta que corra el índice de uno solo
+    abierto, el viejo deja que queden dos de días distintos, y cerrar uno
+    solo dejaría al otro apareciendo como "el abierto" al volver.
+
+    Cerrar NO borra nada: el listado queda como historial —con su foto— de
+    lo que se salió a comprar, y el índice parcial deja abrir uno nuevo.
     """
     conexion = obtener_conexion()
     try:
@@ -9714,9 +9881,8 @@ def cerrar_borrador_de_compra(fecha) -> bool:
             cursor.execute(
                 """
                 UPDATE listados_compra SET estado = 'cerrado', actualizado_en = now()
-                 WHERE fecha = %s AND estado = 'borrador'
-                """,
-                (fecha,),
+                 WHERE estado = 'borrador'
+                """
             )
             cambiadas = cursor.rowcount
             conexion.commit()

@@ -5,6 +5,8 @@ equivocada de cada decisión da un número distinto y plausible, así que sin
 el rival adentro del fixture cualquiera de las dos se "simplifica" sin que
 caiga nada.
 """
+from datetime import date
+
 import pytest
 
 from core.que_comprar import (
@@ -354,6 +356,58 @@ def test_CERRAR_no_guarda_nada_y_es_otra_accion():
     assert cerrar.called and not guardar.called
 
 
+def test_SALGO_A_COMPRAR_guarda_PRIMERO_y_saca_la_foto_de_TODO_el_catalogo():
+    """El que tildó una carga y apretó directo "Salgo" no puede perder el
+    tilde. Y la foto es de todo el catálogo: se puede tildar otra carga
+    después de salir, y de un artículo que no está en la foto no se sabe
+    qué había."""
+    import os
+    orden = []
+    with patch.dict(os.environ, {"CLAVE_COMPRAS": "compras-secreta"}), \
+         patch("app.main.guardar_borrador_de_compra", return_value=77,
+               side_effect=lambda *a: orden.append("guardar") or 77) as guardar, \
+         patch("app.main.listar_articulos", return_value=[{"id": 9}, {"id": 1}]), \
+         patch("app.main._foto_del_stock", return_value={"sueltos": {}, "cajas": {}}) as foto, \
+         patch("app.main.salir_a_comprar",
+               side_effect=lambda *a: orden.append("salir")) as salir:
+        respuesta = _cliente.post("/compras/que-comprar", data={"accion": "salgo", "carga": ["3"]},
+                                  follow_redirects=False)
+    assert respuesta.headers["location"] == "/compras/que-comprar"
+    assert orden == ["guardar", "salir"]
+    assert guardar.call_args.args[1] == {3}
+    assert foto.call_args.args[0] == [1, 9]
+    assert salir.call_args.args[0] == 77
+
+
+def test_GUARDAR_no_saca_la_foto():
+    """El rival: sacarla en cada guardado, que movería el punto de partida
+    cada vez que se toca un kilaje parado en el Mercado."""
+    import os
+    with patch.dict(os.environ, {"CLAVE_COMPRAS": "compras-secreta"}), \
+         patch("app.main.guardar_borrador_de_compra", return_value=77), \
+         patch("app.main.salir_a_comprar") as salir:
+        _cliente.post("/compras/que-comprar", data={"accion": "guardar"}, follow_redirects=False)
+    assert not salir.called
+
+
+def test_si_la_FOTO_FALLA_la_pantalla_LO_DICE():
+    """Hasta el 23/09 el `?error=` se escribía y nadie lo leía. Con la foto
+    es caro: el comprador sale creyendo que el stock quedó fijo."""
+    import os
+    with patch.dict(os.environ, {"CLAVE_COMPRAS": "compras-secreta"}), \
+         patch("app.main.guardar_borrador_de_compra", return_value=77), \
+         patch("app.main.listar_articulos", return_value=[]), \
+         patch("app.main._foto_del_stock", side_effect=RuntimeError("se cayó la base")):
+        respuesta = _cliente.post("/compras/que-comprar", data={"accion": "salgo"},
+                                  follow_redirects=False)
+    assert respuesta.headers["location"] == "/compras/que-comprar?error=salgo"
+    with patch.dict(os.environ, {"CLAVE_COMPRAS": "compras-secreta"}), \
+         patch("app.main.borrador_de_compra", return_value=None), \
+         patch("app.main.listar_cargas_desde", return_value=[]):
+        texto = _cliente.get("/compras/que-comprar?error=salgo").text.split("</style>")[-1]
+    assert "NO se pudo sacar la foto del stock" in texto
+
+
 # --- EL GUARDADO CONTRA LA BASE ----------------------------------------------
 
 
@@ -402,16 +456,16 @@ def _fila(articulo_id, nombre):
             "de_quien": [("Dia 26/09", 240.0)], "ya_tengo": 40.0, "en_piso": 40.0,
             "sueltos": 2, "cajas": 0, "comprado_cajones": 0.0, "comprado": 0.0,
             "kilaje": 18.0, "falta": 200.0, "cajones": 12,
-            "a_comprar": 12, "pide_bultos": 13.3, "stock_bultos": 2.2, "palabra": "kg"}
+            "a_comprar": 12, "pide_bultos": 13.3, "stock_bultos": 2.2, "palabra": "kg",
+            "de_partida": 40.0, "en_camino": 0.0, "en_camino_cajones": 0.0}
 
 
-def _contexto(filas=(), cargas=(), elegidas=()):
-    from datetime import date
+def _contexto(filas=(), cargas=(), elegidas=(), salio_el=None, viejas=()):
     from app.main import _cargas_por_cliente
     return {"barra_sector": "compras", "barra_titulo": "Qué comprar hoy",
             "clientes": _cargas_por_cliente(list(cargas)), "elegidas": set(elegidas),
             "filas": list(filas), "aviso": None, "hay_borrador": True,
-            "stock_al": date(2026, 9, 22)}
+            "salio_el": salio_el, "viejas": list(viejas)}
 
 
 def test_el_campo_del_KILAJE_lleva_su_NAME_o_lo_editado_no_LLEGA_a_guardarse():
@@ -552,48 +606,161 @@ def test_sin_POR_BULTO_no_hay_bultos_que_decir_en_ninguna_columna():
     assert fila["a_comprar"] is None and fila["cajones"] is None
 
 
-def test_el_STOCK_se_pide_al_CIERRE_DE_AYER_y_no_en_vivo():
-    """"Es lo que tengo antes de salir a comprar" (dueño, 23/09).
+# --- EL LISTADO ATADO AL MOMENTO DE SALIR (dueño, 23/09) --------------------
 
-    El RIVAL es el de hasta el 23/09: el stock de HOY. Con ése, una compra
-    de hoy ya recepcionada sumaba al stock Y a "Compré hoy", y el faltante
-    bajaba el doble mientras se compraba.
-    """
-    from datetime import date, datetime, timedelta
-    from app.main import ARGENTINA, _contexto_de_que_comprar
+_CARGA_DIA = {"id": 1, "cliente_id": 7, "cliente_nombre": "EJEMPLO Dia",
+              "fecha": date(2026, 9, 24), "modo": "manual", "margen": 0,
+              "promedio_anterior_a": date(2026, 9, 23), "renglones": {1: 500.0}}
+_SIN_COMPRAS = {"compre": {}, "en_camino": {}, "viejas": {}}
 
-    carga = {"id": 1, "cliente_id": 7, "cliente_nombre": "EJEMPLO Dia",
-             "fecha": date(2026, 9, 24), "modo": "manual", "margen": 0,
-             "promedio_anterior_a": date(2026, 9, 23), "renglones": {1: 500.0}}
-    with patch("app.main.borrador_de_compra", return_value={"id": 3, "cargas": [1], "kilajes": {}}), \
-         patch("app.main.listar_cargas_desde", return_value=[]), \
-         patch("app.main.cargas_con_renglones", return_value=[carga]), \
+
+def _contexto_real(borrador, *, foto_guardada=None, compras=_SIN_COMPRAS):
+    """El contexto de verdad, con la base parcheada en sus bordes. Devuelve
+    también los mocks de las dos fotos para ver CUÁL se leyó."""
+    from app.main import _contexto_de_que_comprar
+    foto = {"sueltos": {1: (2.0, 40.0)}, "cajas": {}}
+    with patch("app.main.borrador_de_compra", return_value=borrador), \
+         patch("app.main.listar_cargas_desde", return_value=[]) as ofrecidas, \
+         patch("app.main.cargas_con_renglones", return_value=[_CARGA_DIA]), \
          patch("app.main.listar_articulos", return_value=[ARTICULOS[1]]), \
          patch("app.main.listar_fichas_de_todos_los_clientes", return_value=[]), \
          patch("app.main.listar_fichas_por_cliente", return_value=[]), \
-         patch("app.main.compras_de_hoy_por_articulo", return_value={}), \
-         patch("app.main._piso_en_magnitud",
-               return_value={1: {"magnitud": 40.0, "sueltos": 2, "cajas": 0}}) as piso:
+         patch("app.main.compras_alrededor_de_la_salida", return_value=compras) as alrededor, \
+         patch("app.main._foto_del_stock", return_value=foto) as en_vivo, \
+         patch("app.main.foto_del_listado", return_value=foto_guardada or foto) as guardada:
         contexto = _contexto_de_que_comprar(None)
-
-    ayer = datetime.now(ARGENTINA).date() - timedelta(days=1)
-    assert piso.call_count == 1, "no se pidió el stock"
-    assert piso.call_args.args[2] == ayer
-    assert contexto["stock_al"] == ayer
-    assert len(contexto["filas"]) == 1
+    return contexto, {"en_vivo": en_vivo, "guardada": guardada,
+                      "alrededor": alrededor, "ofrecidas": ofrecidas}
 
 
-def test_el_STOCK_de_la_pantalla_dice_de_QUE_DIA_es():
-    """Un stock congelado que no dice de cuándo se lee como el de ahora."""
-    marcado = " ".join(_render(_contexto([_fila(3, "TOMATE")])).split("</style>")[-1].split())
-    assert "<b>cierre del 22/09</b>" in marcado
+def test_ANTES_de_salir_el_stock_es_el_de_AHORA_y_no_el_de_ayer():
+    """"El stock de partida es el del momento en que generé el listado"
+    (dueño, 23/09). Antes de apretar el botón ese momento es AHORA: la
+    pantalla muestra lo que la foto sería si se sacara ya.
+
+    El RIVAL es el del 23/09 a la mañana, el cierre de ayer: con ése una
+    compra recepcionada hoy no estaba en el stock NI en camino (ya llegó), y
+    se volvía a comprar."""
+    from datetime import datetime
+    from app.main import ARGENTINA
+    borrador = {"id": 3, "fecha": date(2026, 9, 23), "cargas": [1], "kilajes": {},
+                "generado_el": None}
+    contexto, mocks = _contexto_real(borrador)
+    assert mocks["en_vivo"].call_count == 1 and not mocks["guardada"].called
+    assert mocks["en_vivo"].call_args.args[1] == datetime.now(ARGENTINA).date()
+    assert mocks["alrededor"].call_args.args[0] is None, "antes de salir el momento es AHORA"
+    assert contexto["salio_el"] is None
+    assert len(contexto["filas"]) == 1 and contexto["filas"][0]["en_piso"] == 40.0
 
 
-def test_las_SIETE_columnas_van_en_el_ORDEN_del_dueño():
+def test_DESPUES_de_salir_el_stock_es_la_FOTO_GUARDADA_y_no_se_recalcula():
+    """El stock se cuenta por DÍA: el de las 22 no se puede recalcular a las
+    4. Si la pantalla lo recalculara, lo recepcionado entre medio entraría
+    al stock Y a "Compré"."""
+    from datetime import datetime, timezone
+    salida = datetime(2026, 9, 23, 1, 5, tzinfo=timezone.utc)   # 22:05 en Argentina
+    borrador = {"id": 3, "fecha": date(2026, 9, 22), "cargas": [1], "kilajes": {},
+                "generado_el": salida}
+    foto = {"sueltos": {1: (5.0, 90.0)}, "cajas": {}}
+    contexto, mocks = _contexto_real(borrador, foto_guardada=foto)
+    assert not mocks["en_vivo"].called, "recalculó el stock en vivo después de salir"
+    assert mocks["guardada"].call_args.args[0] == 3
+    assert mocks["alrededor"].call_args.args[0] == salida
+    assert contexto["filas"][0]["en_piso"] == 90.0
+    assert contexto["salio_el"].strftime("%d/%m %H:%M") == "22/09 22:05"
+
+
+def test_un_listado_ABIERTO_AYER_sigue_ofreciendo_sus_cargas_de_antes_de_ayer():
+    """Atado al momento y no al reloj: el guardado REEMPLAZA las cargas, así
+    que una tildada que no se dibuja se destilda sola al próximo Guardar."""
+    from datetime import datetime, timedelta
+    from app.main import ARGENTINA
+    abierto = datetime.now(ARGENTINA).date() - timedelta(days=3)
+    borrador = {"id": 3, "fecha": abierto, "cargas": [1], "kilajes": {}, "generado_el": None}
+    _contexto, mocks = _contexto_real(borrador)
+    assert mocks["ofrecidas"].call_args.args[0] == abierto - timedelta(days=1)
+
+
+def test_las_VIEJAS_se_avisan_SOLO_las_de_los_articulos_del_listado():
+    """Una compra de pera colgada no le dice nada al que compra tomate."""
+    from datetime import datetime, timezone
+    viejas = {1: {"cajones": 20.0, "kilos": 360.0, "conteo": None, "compras": 2,
+                  "desde": datetime(2026, 9, 10, 15, 0, tzinfo=timezone.utc)},
+              9: {"cajones": 4.0, "kilos": 80.0, "conteo": None, "compras": 1,
+                  "desde": datetime(2026, 9, 1, 15, 0, tzinfo=timezone.utc)}}
+    borrador = {"id": 3, "fecha": date(2026, 9, 23), "cargas": [1], "kilajes": {},
+                "generado_el": None}
+    contexto, _m = _contexto_real(borrador, compras=dict(_SIN_COMPRAS, viejas=viejas))
+    assert contexto["viejas"] == [{"nombre": "TOMATE", "compras": 2, "cajones": 20.0,
+                                   "desde": date(2026, 9, 10)}]
+
+
+def test_EN_CAMINO_se_suma_al_punto_de_partida_y_NO_al_stock():
+    """500 kg de a 20, 40 en el piso, 100 en camino y 60 comprados: a comprar
+    techo(360/20) = 18 y falta techo(300/20) = 15. El stock sigue diciendo 40:
+    lo que está en camino no está en el galpón.
+
+    El RIVAL es ignorarlo: a comprar 23, o sea comprar de nuevo lo que ya
+    viene."""
+    fila = _filas_de_que_comprar(
+        [_aporte("Dia", a1=500.0)], ARTICULOS, UNIDADES,
+        piso={1: {"magnitud": 40.0, "sueltos": 2, "cajas": 0}},
+        comprado={1: {"cajones": 3.0, "kilos": 60.0, "conteo": None}},
+        en_camino={1: {"cajones": 5.0, "kilos": 100.0, "conteo": None}},
+        kilajes={1: 20.0})[0]
+    assert fila["en_piso"] == 40.0 and fila["stock_bultos"] == 2.0
+    assert fila["en_camino"] == 100.0 and fila["en_camino_cajones"] == 5.0
+    assert fila["de_partida"] == 140.0
+    assert fila["a_comprar"] == 18
+    assert fila["cajones"] == 15
+    assert fila["ya_tengo"] == 200.0
+
+
+def test_EN_CAMINO_sin_la_magnitud_de_la_fila_deja_la_fila_SIN_NUMERO():
+    """Una compra en camino que no declaró el conteo de un artículo que se
+    cuenta: no se sabe cuánto viene, y un cero haría comprar de más."""
+    fila = _filas_de_que_comprar(
+        [_aporte("Dia", a1=100.0)], ARTICULOS, {1: "unidad"}, piso=PISO_VACIO, comprado={},
+        en_camino={1: {"cajones": 2.0, "kilos": 30.0, "conteo": None}})[0]
+    assert fila["en_camino"] is None
+    assert fila["a_comprar"] is None and fila["falta"] is None
+
+
+def test_la_pantalla_dice_si_YA_SALISTE_y_desde_cuando():
+    """Un stock congelado que no dice de cuándo se lee como el de ahora, y
+    uno de ahora se lee como congelado."""
+    from datetime import datetime
+    from app.main import ARGENTINA
+    antes = " ".join(_render(_contexto([_fila(3, "TOMATE")])).split("</style>")[-1].split())
+    assert "Todavía no saliste a comprar." in antes
+    assert 'value="salgo"' in antes
+    salida = datetime(2026, 9, 22, 22, 5, tzinfo=ARGENTINA)
+    despues = " ".join(_render(_contexto([_fila(3, "TOMATE")], salio_el=salida))
+                       .split("</style>")[-1].split())
+    assert "Saliste a comprar el <b>22/09 a las 22:05</b>" in despues
+    # LA JERGA QUE NO PUEDE QUEDAR: el botón de salir de nuevo, y el cierre de ayer.
+    assert 'value="salgo"' not in despues
+    assert "cierre del" not in despues and "cierre del" not in antes
+
+
+def test_el_aviso_de_las_VIEJAS_se_dibuja_con_cuantas_y_desde_cuando():
+    marcado = " ".join(_render(_contexto(
+        [_fila(3, "TOMATE")],
+        viejas=[{"nombre": "TOMATE", "compras": 2, "cajones": 20.0,
+                 "desde": date(2026, 9, 10)}])).split("</style>")[-1].split())
+    assert 'class="tarjeta aviso-viejas"' in marcado
+    assert "<b>TOMATE</b>: 2 compras, 20 cj, desde el 10/09" in marcado
+    assert 'href="/compras/pendientes"' in marcado
+    sin = _render(_contexto([_fila(3, "TOMATE")])).split("</style>")[-1]
+    assert 'class="tarjeta aviso-viejas"' not in sin
+
+
+def test_las_OCHO_columnas_van_en_el_ORDEN_del_dueño():
     """Por la CLASE y no por el texto (corolario 38), y con el denominador:
-    las dos tarjetas miradas, cada una con las siete."""
+    las dos tarjetas miradas, cada una con las ocho. "En camino" va al lado
+    del stock, que es a lo que se suma."""
     import re
-    decidido = ["dato-pide", "dato-kilaje", "dato-bultos", "dato-stock",
+    decidido = ["dato-pide", "dato-kilaje", "dato-bultos", "dato-stock", "dato-en-camino",
                 "dato-a-comprar", "dato-compre", "dato-falta"]
     marcado = _render(_contexto([_fila(3, "TOMATE"), _fila(8, "ZAPALLITO")])).split("</style>")[-1]
     tarjetas = re.findall(r'data-articulo="\d+"(.*?)(?=data-articulo="|\Z)', marcado, re.S)
@@ -639,4 +806,17 @@ def test_mover_el_POR_BULTO_rehace_las_CUATRO_columnas_que_dependen_de_el():
     assert leido["stock"] == "2 blt"
     assert leido["a_comprar"] == "10 cj"
     assert leido["falta"] == "7 cj"
+
+
+def test_mover_el_POR_BULTO_resta_LO_EN_CAMINO_en_A_COMPRAR():
+    """Con 40 en el piso y 80 en camino, el punto de partida es 120: de a 20
+    son 6 a comprar. El RIVAL —restar solo el piso— da 10, y con EN CAMINO
+    EN CERO los dos dan lo mismo: por eso el fixture lo trae puesto."""
+    fila = dict(_fila(3, "TOMATE"), en_camino=80.0, en_camino_cajones=4.0,
+                de_partida=120.0, ya_tengo=120.0)
+    leido = _recalcular_en_el_navegador(_render(_contexto([fila])), 20)
+    assert leido["tarjetas"] == 1
+    assert leido["stock"] == "2 blt"
+    assert leido["a_comprar"] == "6 cj"
+    assert leido["falta"] == "6 cj"
     assert leido["ancho"] <= 0, "la tarjeta arrastra la pantalla de costado"

@@ -249,6 +249,10 @@ Stock · A comprar hoy · Compré hoy · Falta comprar.** El "por bulto" va entr
 los dos "piden" porque es lo que dice de dónde salen los bultos. Es el mismo
 kilaje del Mercado de siempre, editable, con otro rótulo.
 
+(Esa misma tarde entró una octava, **En camino**, entre Stock y A comprar, y
+"Compré hoy" pasó a decir **"Compré"**: cuenta desde que se salió, no desde
+las cero horas. Ver "El listado atado al momento de SALIR".)
+
 - **A comprar hoy = lo que piden menos el stock**, sin descontar lo comprado.
   Con la misma `falta_por_comprar` y lo comprado en cero, no con una resta
   propia. **Falta comprar** sí descuenta lo comprado.
@@ -259,16 +263,47 @@ kilaje del Mercado de siempre, editable, con otro rótulo.
   "Compré hoy" puede no dar "Falta" exacto si los cajones que se compraron no
   son del tamaño del "por bulto". Eso es correcto, no un descuadre.
 
-**EL STOCK ES EL DEL CIERRE DE AYER**, congelado: *"es lo que tengo antes de
-salir a comprar, mi punto de partida"*. Hasta el 23/09 era el de hoy, en vivo,
-y contaba dos veces lo comprado: una compra de hoy ya recepcionada sumaba al
-stock **y** a "Compré hoy". Ahora lo de hoy entra por un solo lado. La
-pantalla dice de qué día es el stock.
+**EL STOCK YA NO ES EL DEL CIERRE DE AYER** (fue la versión de la mañana del
+23/09, v967). Tapaba el doble conteo pero dejaba un agujero: una compra de ayer
+sin recepcionar no estaba en el stock de ayer ni en "Compré hoy", y no aparecía
+en ningún lado de la fila. Eso cerró el listado atado al momento, abajo.
 
-**Lo que el congelado no ve**: una compra de ayer que todavía no se
-recepcionó no está en el stock de ayer (el stock cuenta por recepción) ni en
-"Compré hoy" (que cuenta por fecha de compra). Si eso pasa, esa mercadería no
-aparece en ningún lado de la fila.
+### El listado atado al momento de SALIR (dueño, 23/09)
+
+**CERRADA**: *"no hay una hora fija; atalo al listado, no al reloj"*. Hay un
+botón explícito, **"Salgo a comprar"**, porque armar la lista y salir pueden
+ser momentos distintos. Ese botón guarda el listado y deja
+`listados_compra.generado_el`, y desde ahí:
+
+| | qué es | de dónde sale |
+|---|---|---|
+| **Stock** | la FOTO de ese instante | `listados_compra_foto` (sueltos por artículo) y `listados_compra_foto_cajas` (cajas por ficha) |
+| **En camino** | cargado en los **3 días** antes de salir y que a esa hora **no había llegado** | `compras_alrededor_de_la_salida`, por `cargado_el`, estado y `procesada_el` |
+| **Compré** | cargado **desde** que salí, llegado o no | la misma consulta |
+| **aviso aparte** | las pendientes **más viejas** que 3 días | la misma consulta; **no se suman** |
+
+**Una compra está en un solo lugar**: en la foto si llegó antes de salir, en
+camino si se cargó antes y llegó después (o no llegó), en Compré si se cargó
+después. "A comprar" resta la foto **más** lo en camino; "Falta" además lo
+comprado. La columna **En camino** va al lado del stock, que es a lo que se
+suma.
+
+- **Por qué se guarda la foto**: el stock se cuenta por DÍA y no por hora. El
+  de las 22 no se puede recalcular a las 4.
+- **Se sale UNA vez**: una segunda foto movería el punto de partida y lo
+  comprado entre medio pasaría de "Compré" al stock. Para empezar de nuevo se
+  cierra el listado.
+- **Antes de apretar el botón** la pantalla muestra el stock de AHORA y nada
+  comprado: lo que la foto sería si se sacara ya. Lo dice arriba.
+- **La foto es de todo el catálogo**, no de lo tildado: se puede tildar otra
+  carga después de salir.
+- **Un listado abierto a la vez, sea del día que sea.** El código ya lo lee
+  así; el índice que lo garantiza es `db/listados_compra_8_un_solo_abierto.sql`,
+  que se corre **después** del deploy (corolario 94).
+- **Lo que no ve**: una compra que llega ya armada en caja nuestra
+  (`ficha_en_origen_id`) en camino se suma a la fila del artículo sin mirar de
+  qué cliente es la ficha. Las cajas ya armadas de la foto sí se filtran por
+  cliente tildado.
 
 ### Lo que NO cambia
 

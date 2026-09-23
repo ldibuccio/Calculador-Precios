@@ -2751,7 +2751,9 @@ def test_que_comprar_hoy_SIN_BORRADOR_ofrece_las_cargas_y_no_ofrece_cerrar():
 def test_el_aviso_de_YA_USADA_excluye_el_listado_que_se_esta_editando():
     """Sin excluirlo, toda carga recien tildada diria "ya se uso" y el cartel
     pasaria a estar siempre puesto, que es como se aprende a no leerlo."""
-    borrador = {"id": 41, "fecha": None, "estado": "borrador", "cargas": set(), "kilajes": {}}
+    # `fecha` como en la base (NOT NULL): el listado abierto es de algún día.
+    borrador = {"id": 41, "fecha": date(2026, 9, 23), "estado": "borrador", "cargas": set(),
+                "kilajes": {}, "generado_el": None}
     with patch("app.main.listar_cargas_desde", return_value=[]) as listar, \
          patch("app.main.borrador_de_compra", return_value=borrador):
         cliente.get("/compras/que-comprar")

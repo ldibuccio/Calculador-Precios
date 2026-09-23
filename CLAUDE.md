@@ -10360,6 +10360,24 @@ este archivo guarda.
 5. **Cargas desde ayer en adelante**; una ya usada se muestra marcada y se
    puede volver a sumar.
 6. **El kilaje del Mercado vive en el Paso 2 y es editable.**
+7. **El listado está atado al momento de SALIR, no al reloj.** El botón
+   "Salgo a comprar" guarda la foto del stock; "Compré" es lo cargado desde
+   ahí, "En camino" lo cargado en los 3 días antes que no había llegado, y las
+   pendientes más viejas van a un aviso sin sumarse. Uno solo abierto, sea del
+   día que sea. Detalle en `docs/que_comprar_hoy.md`.
+
+### El `?error=` que se escribe y nadie lee es un error mudo
+
+Del 23/09. El POST de Qué comprar hoy redirigía a `?error=guardar` y a
+`?error=cerrar` desde el primer día, y **el GET nunca leyó ese parámetro**: un
+guardado que fallaba volvía a la pantalla como si hubiera salido bien. Con la
+foto del stock se vuelve caro —el comprador sale al Mercado creyendo que el
+stock quedó fijo—, así que el GET ahora lo traduce a un aviso.
+
+**La señal, y se busca con un `grep`**: un `?error=` en un `RedirectResponse`
+es la mitad de un mensaje. La otra mitad es un `query_params.get("error")` en
+la ruta de destino, y si no está, el error existe y no lo ve nadie — la
+familia de *la ausencia de error no es confirmación*, del lado de la pantalla.
 
 ### Un margen por CARGA, y la razón es que dos márgenes se MULTIPLICAN
 
