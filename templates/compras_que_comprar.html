@@ -12,11 +12,16 @@
   /* EL NOMBRE NO LO CONTROLAMOS: un artículo sin espacios tiene que partir
      en vez de arrastrar la pantalla de costado. */
   .art { font-weight: 800; font-size: 1.05rem; overflow-wrap: anywhere; }
-  .renglon { display: flex; flex-wrap: wrap; gap: 0.5rem 1.25rem; margin-top: 0.6rem; }
-  .dato { font-size: 0.9rem; color: #555; }
+  /* LAS SIETE COLUMNAS SE LEEN EN ORDEN (dueño, 23/09): de lo que piden a
+     lo que falta. Grilla y no flex: en el celular entran dos o tres por fila
+     y el orden de lectura sigue siendo de izquierda a derecha, arriba abajo. */
+  .renglon { display: grid; grid-template-columns: repeat(auto-fill, minmax(6.4rem, 1fr));
+             gap: 0.6rem 0.9rem; margin-top: 0.6rem; }
+  .dato { font-size: 0.85rem; color: #555; min-width: 0; }
   .dato b { display: block; font-size: 1.05rem; color: #222; font-weight: 700; }
+  .dato small { display: block; font-size: 0.78rem; color: #666; }
+  .a-comprar, .falta { font-size: 1.35rem; font-weight: 800; }
   .hueco { color: #92400e; font-weight: 700; }
-  .falta { font-size: 1.35rem; font-weight: 800; }
   .ok { color: #16a34a; }
   /* 44px es el mínimo tocable con el pulgar, y este input se toca parado
      en el Mercado con el celular en una mano. */
@@ -86,28 +91,48 @@
     <div class="tarjeta"><p class="vacio">Esas cargas no piden nada.</p></div>
   {% endif %}
 
+  {% if filas %}
+    <div class="tarjeta"><p class="vacio">El stock es el del <b>cierre del
+      {{ stock_al.strftime("%d/%m") }}</b>: lo que había antes de salir a comprar. Lo
+      que compres hoy entra por "Compré hoy" y no mueve el stock.</p></div>
+  {% endif %}
+
   {% for f in filas %}
   <div class="tarjeta" data-articulo="{{ f.articulo_id }}"
        data-pide="{{ f.pide if f.pide is not none else '' }}"
+       data-en-piso="{{ f.en_piso if f.en_piso is not none else '' }}"
        data-ya-tengo="{{ f.ya_tengo if f.ya_tengo is not none else '' }}">
     <div class="art">{{ f.nombre }}</div>
+    {# EN ESTE ORDEN Y NO OTRO (dueño, 23/09): piden kg · kg por bulto · piden
+       bultos · stock · a comprar hoy · compré hoy · falta comprar. El "por
+       bulto" va entre los dos "piden" porque es lo que dice de dónde salen
+       los bultos. #}
     <div class="renglon">
-      <span class="dato">Piden
+      <span class="dato dato-pide">Piden {{ f.palabra }} totales
         <b>{% if f.pide is not none %}{{ f.pide|sin_decimales }} {{ f.sufijo }}
            {%- else %}<span class="hueco">no se sabe la unidad</span>{% endif %}</b></span>
-      <span class="dato">En el piso
-        <b>{% if f.en_piso is not none %}{{ f.en_piso|sin_decimales }} {{ f.sufijo }}{% else %}<span class="hueco">no se puede saber</span>{% endif %}</b></span>
-      <span class="dato">Compré hoy
-        <b>{{ f.comprado_cajones|sin_decimales }} cj</b></span>
-      <span class="dato">Kilaje del cajón
+      <span class="dato dato-kilaje">{{ f.palabra|capitalize }} por bulto
         <b><input class="kilaje" name="kilaje_{{ f.articulo_id }}" type="number"
                   inputmode="decimal" step="0.1" min="0"
                   value="{{ f.kilaje|sin_decimales if f.kilaje is not none else '' }}"
-                  aria-label="Kilaje del cajón de {{ f.nombre }}"></b></span>
-      <span class="dato">Falta comprar
+                  aria-label="{{ f.palabra|capitalize }} por bulto de {{ f.nombre }}"></b></span>
+      <span class="dato dato-bultos">Piden bultos
+        <b class="pide-bultos">{{ f.pide_bultos|numero if f.pide_bultos is not none else '—' }}</b></span>
+      <span class="dato dato-stock">Stock
+        <b class="stock-bultos">{% if f.en_piso is none %}<span class="hueco">no se puede saber</span>
+           {%- elif f.stock_bultos is not none %}{{ f.stock_bultos|numero }} blt
+           {%- else %}{{ f.en_piso|sin_decimales }} {{ f.sufijo }}{% endif %}</b>
+        {% if f.en_piso is not none and f.stock_bultos is not none %}<small class="stock-magnitud">{{ f.en_piso|sin_decimales }} {{ f.sufijo }}</small>{% endif %}</span>
+      <span class="dato dato-a-comprar">A comprar hoy
+        <b class="a-comprar">{% if f.pide is not none and f.en_piso is not none and f.a_comprar is not none %}{% if f.a_comprar == 0 %}<span class="ok">OK</span>{% else %}{{ f.a_comprar }} cj{% endif %}
+           {%- elif f.pide is not none and f.en_piso is not none %}<span class="hueco">poné el por bulto</span>
+           {%- else %}<span class="hueco">—</span>{% endif %}</b></span>
+      <span class="dato dato-compre">Compré hoy
+        <b>{{ f.comprado_cajones|sin_decimales }} cj</b></span>
+      <span class="dato dato-falta">Falta comprar
         <b class="falta">{% if f.falta is not none and f.falta == 0 %}<span class="ok">OK</span>
            {%- elif f.cajones is not none %}<span class="cajones">{{ f.cajones|sin_decimales }}</span> cj
-           {%- elif f.falta is not none %}<span class="hueco">poné el kilaje</span>
+           {%- elif f.falta is not none %}<span class="hueco">poné el por bulto</span>
            {%- else %}<span class="hueco">—</span>{% endif %}</b></span>
     </div>
     {# DE QUIÉN SALE: un total que junta tres cargas y no lo dice se lee como
@@ -137,24 +162,43 @@
 // visible una separacion es que el primer dibujo SALE DEL SERVER: si las dos
 // no dicen lo mismo, el numero salta al primer tecleo sin que cambie ningun
 // dato, que es un sintoma que se ve.
-function recalcular(tarjeta) {
-  var destino = tarjeta.querySelector(".falta");
-  var campo = tarjeta.querySelector(".kilaje");
-  if (!destino || !campo) { return; }
-  var pide = parseFloat(tarjeta.dataset.pide);
-  var yaTengo = parseFloat(tarjeta.dataset.yaTengo);
-  // Un hueco se queda como lo dejo el server, que ya dice POR QUE falta.
-  if (isNaN(pide) || isNaN(yaTengo)) { return; }
-  var falta = Math.max(pide - yaTengo, 0);
-  if (falta === 0) { destino.innerHTML = '<span class="ok">OK</span>'; return; }
-  var kilaje = parseFloat(String(campo.value).replace(",", "."));
-  if (isNaN(kilaje) || kilaje <= 0) {
-    destino.innerHTML = '<span class="hueco">poné el kilaje</span>';
-    return;
-  }
+// EL MISMO FORMATO QUE EL FILTRO `numero` DEL SERVER (punto y sin ceros de
+// mas): si el primer dibujo y el recalculo escriben distinto, el numero cambia
+// de forma al primer tecleo sin que cambie ningun dato.
+function unDecimal(n) { return String(Math.round(n * 10) / 10); }
+function cajonesDe(falta, kilaje) {
+  if (falta === 0) { return '<span class="ok">OK</span>'; }
+  if (isNaN(kilaje) || kilaje <= 0) { return '<span class="hueco">poné el por bulto</span>'; }
   // PARA ARRIBA, igual que `cajones_que_faltan`: quedarse corto es peor que
   // sobrar un cajon.
-  destino.textContent = Math.ceil(falta / kilaje) + " cj";
+  return Math.ceil(falta / kilaje) + " cj";
+}
+function recalcular(tarjeta) {
+  var campo = tarjeta.querySelector(".kilaje");
+  if (!campo) { return; }
+  var pide = parseFloat(tarjeta.dataset.pide);
+  var enPiso = parseFloat(tarjeta.dataset.enPiso);
+  var yaTengo = parseFloat(tarjeta.dataset.yaTengo);
+  var kilaje = parseFloat(String(campo.value).replace(",", "."));
+  var hayKilaje = !isNaN(kilaje) && kilaje > 0;
+  var bultos = tarjeta.querySelector(".pide-bultos");
+  if (bultos && !isNaN(pide)) { bultos.textContent = hayKilaje ? unDecimal(pide / kilaje) : "—"; }
+  var stock = tarjeta.querySelector(".stock-bultos");
+  var stockMagnitud = tarjeta.querySelector(".stock-magnitud");
+  if (stock && !isNaN(enPiso) && hayKilaje && stockMagnitud) {
+    stock.textContent = unDecimal(enPiso / kilaje) + " blt";
+  }
+  // Un hueco se queda como lo dejo el server, que ya dice POR QUE falta.
+  if (isNaN(pide) || isNaN(enPiso) || isNaN(yaTengo)) { return; }
+  var aComprar = tarjeta.querySelector(".a-comprar");
+  if (aComprar) { aComprar.innerHTML = cajonesDe(Math.max(pide - enPiso, 0), kilaje); }
+  var destino = tarjeta.querySelector(".falta");
+  var falta = Math.max(pide - yaTengo, 0);
+  if (destino) {
+    destino.innerHTML = (falta > 0 && hayKilaje)
+      ? '<span class="cajones">' + Math.ceil(falta / kilaje) + "</span> cj"
+      : cajonesDe(falta, kilaje);
+  }
 }
 document.addEventListener("input", function (evento) {
   var campo = evento.target;

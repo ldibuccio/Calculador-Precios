@@ -401,14 +401,17 @@ def _fila(articulo_id, nombre):
     return {"articulo_id": articulo_id, "nombre": nombre, "sufijo": "k", "pide": 240.0,
             "de_quien": [("Dia 26/09", 240.0)], "ya_tengo": 40.0, "en_piso": 40.0,
             "sueltos": 2, "cajas": 0, "comprado_cajones": 0.0, "comprado": 0.0,
-            "kilaje": 18.0, "falta": 200.0, "cajones": 12}
+            "kilaje": 18.0, "falta": 200.0, "cajones": 12,
+            "a_comprar": 12, "pide_bultos": 13.3, "stock_bultos": 2.2, "palabra": "kg"}
 
 
 def _contexto(filas=(), cargas=(), elegidas=()):
+    from datetime import date
     from app.main import _cargas_por_cliente
     return {"barra_sector": "compras", "barra_titulo": "Qué comprar hoy",
             "clientes": _cargas_por_cliente(list(cargas)), "elegidas": set(elegidas),
-            "filas": list(filas), "aviso": None, "hay_borrador": True}
+            "filas": list(filas), "aviso": None, "hay_borrador": True,
+            "stock_al": date(2026, 9, 22)}
 
 
 def test_el_campo_del_KILAJE_lleva_su_NAME_o_lo_editado_no_LLEGA_a_guardarse():
@@ -513,3 +516,127 @@ def test_la_pantalla_dibuja_UN_bloque_por_cliente_y_UN_tilde_por_fecha():
     assert "EJEMPLO Dia" in bloques[0] and bloques[0].count('name="carga"') == 2
     assert "EJEMPLO Tailem" in bloques[1] and bloques[1].count('name="carga"') == 1
     assert bloques[0].count("checked") == 2 and "checked" not in bloques[1]
+
+
+# --- LAS SIETE COLUMNAS Y EL STOCK CONGELADO (dueño, 23/09) -----------------
+
+
+def test_A_COMPRAR_HOY_no_descuenta_lo_COMPRADO_y_FALTA_si():
+    """"A comprar hoy sale de restarle el stock a lo que piden" (dueño, 23/09).
+
+    El RIVAL es restarle también lo comprado: daría lo mismo que "Falta" y
+    la columna no diría nada. 500 kg de a 20, 40 de stock, ya compré 5 cajones
+    de 20: a comprar techo(460/20) = 23, falta techo(360/20) = 18.
+    """
+    filas = _filas_de_que_comprar(
+        [_aporte("Dia", a1=500.0)], ARTICULOS, UNIDADES,
+        piso={1: {"magnitud": 40.0, "sueltos": 2, "cajas": 0}},
+        comprado={1: {"cajones": 5.0, "kilos": 100.0, "conteo": None}},
+        kilajes={1: 20.0})
+    fila = filas[0]
+    assert fila["a_comprar"] == 23
+    assert fila["cajones"] == 18
+    # Los dos "en bultos" del medio, con un decimal y sin techo: son lo que
+    # piden y lo que hay, no lo que se compra.
+    assert fila["pide_bultos"] == 25.0
+    assert fila["stock_bultos"] == 2.0
+    assert fila["palabra"] == "kg"
+
+
+def test_sin_POR_BULTO_no_hay_bultos_que_decir_en_ninguna_columna():
+    """Sin kilaje los bultos serían una invención: las tres columnas quedan en None."""
+    articulos = {1: {"id": 1, "nombre": "MANGO", "contenido_referencia": None}}
+    fila = _filas_de_que_comprar([_aporte("Dia", a1=500.0)], articulos, UNIDADES,
+                                 piso=PISO_VACIO, comprado={})[0]
+    assert fila["pide_bultos"] is None and fila["stock_bultos"] is None
+    assert fila["a_comprar"] is None and fila["cajones"] is None
+
+
+def test_el_STOCK_se_pide_al_CIERRE_DE_AYER_y_no_en_vivo():
+    """"Es lo que tengo antes de salir a comprar" (dueño, 23/09).
+
+    El RIVAL es el de hasta el 23/09: el stock de HOY. Con ése, una compra
+    de hoy ya recepcionada sumaba al stock Y a "Compré hoy", y el faltante
+    bajaba el doble mientras se compraba.
+    """
+    from datetime import date, datetime, timedelta
+    from app.main import ARGENTINA, _contexto_de_que_comprar
+
+    carga = {"id": 1, "cliente_id": 7, "cliente_nombre": "EJEMPLO Dia",
+             "fecha": date(2026, 9, 24), "modo": "manual", "margen": 0,
+             "promedio_anterior_a": date(2026, 9, 23), "renglones": {1: 500.0}}
+    with patch("app.main.borrador_de_compra", return_value={"id": 3, "cargas": [1], "kilajes": {}}), \
+         patch("app.main.listar_cargas_desde", return_value=[]), \
+         patch("app.main.cargas_con_renglones", return_value=[carga]), \
+         patch("app.main.listar_articulos", return_value=[ARTICULOS[1]]), \
+         patch("app.main.listar_fichas_de_todos_los_clientes", return_value=[]), \
+         patch("app.main.listar_fichas_por_cliente", return_value=[]), \
+         patch("app.main.compras_de_hoy_por_articulo", return_value={}), \
+         patch("app.main._piso_en_magnitud",
+               return_value={1: {"magnitud": 40.0, "sueltos": 2, "cajas": 0}}) as piso:
+        contexto = _contexto_de_que_comprar(None)
+
+    ayer = datetime.now(ARGENTINA).date() - timedelta(days=1)
+    assert piso.call_count == 1, "no se pidió el stock"
+    assert piso.call_args.args[2] == ayer
+    assert contexto["stock_al"] == ayer
+    assert len(contexto["filas"]) == 1
+
+
+def test_el_STOCK_de_la_pantalla_dice_de_QUE_DIA_es():
+    """Un stock congelado que no dice de cuándo se lee como el de ahora."""
+    marcado = " ".join(_render(_contexto([_fila(3, "TOMATE")])).split("</style>")[-1].split())
+    assert "<b>cierre del 22/09</b>" in marcado
+
+
+def test_las_SIETE_columnas_van_en_el_ORDEN_del_dueño():
+    """Por la CLASE y no por el texto (corolario 38), y con el denominador:
+    las dos tarjetas miradas, cada una con las siete."""
+    import re
+    decidido = ["dato-pide", "dato-kilaje", "dato-bultos", "dato-stock",
+                "dato-a-comprar", "dato-compre", "dato-falta"]
+    marcado = _render(_contexto([_fila(3, "TOMATE"), _fila(8, "ZAPALLITO")])).split("</style>")[-1]
+    tarjetas = re.findall(r'data-articulo="\d+"(.*?)(?=data-articulo="|\Z)', marcado, re.S)
+    assert len(tarjetas) == 2
+    for tarjeta in tarjetas:
+        assert re.findall(r'class="dato (dato-[a-z-]+)"', tarjeta) == decidido
+
+
+def _recalcular_en_el_navegador(html, kilaje):
+    pytest.importorskip("playwright", reason="el recálculo en vivo necesita un navegador")
+    from playwright.sync_api import sync_playwright
+    from scripts.medir_layout import CHROMIUM
+
+    with sync_playwright() as p:
+        navegador = p.chromium.launch(executable_path=CHROMIUM)
+        pagina = navegador.new_page(viewport={"width": 390, "height": 844})
+        pagina.set_content(html)
+        pagina.fill(".kilaje", str(kilaje))
+        leido = pagina.evaluate("""() => {
+          const t = document.querySelector('[data-articulo]');
+          const txt = s => t.querySelector(s).textContent.trim();
+          return {tarjetas: document.querySelectorAll('[data-articulo]').length,
+                  bultos: txt('.pide-bultos'), stock: txt('.stock-bultos'),
+                  a_comprar: txt('.a-comprar'), falta: txt('.falta'),
+                  ancho: document.documentElement.scrollWidth - document.documentElement.clientWidth};
+        }""")
+        navegador.close()
+    return leido
+
+
+def test_mover_el_POR_BULTO_rehace_las_CUATRO_columnas_que_dependen_de_el():
+    """El JS es la segunda copia de la cuenta: tiene que dar lo mismo que el
+    server con el mismo dato. 240 piden, 40 de stock, 60 ya comprados, de a
+    20: 12 bultos, 2 de stock, 10 a comprar y 7 falta.
+
+    CON ALGO COMPRADO A PROPÓSITO: con cero, "stock" y "stock + comprado" son
+    el mismo número y un JS que restara lo comprado en "A comprar" pasaba
+    igual (el canario dio cero con ese fixture)."""
+    fila = dict(_fila(3, "TOMATE"), comprado=60.0, ya_tengo=100.0)
+    leido = _recalcular_en_el_navegador(_render(_contexto([fila])), 20)
+    assert leido["tarjetas"] == 1
+    assert leido["bultos"] == "12"
+    assert leido["stock"] == "2 blt"
+    assert leido["a_comprar"] == "10 cj"
+    assert leido["falta"] == "7 cj"
+    assert leido["ancho"] <= 0, "la tarjeta arrastra la pantalla de costado"

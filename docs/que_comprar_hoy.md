@@ -222,6 +222,34 @@ su modo y su margen— y eso es lo que el listado guarda en
 - **CERRADA**: **el margen global de esta pantalla SE VA.** No queda en cero:
   se va.
 
+### Las siete columnas, y el stock congelado (dueño, 23/09)
+
+**CERRADA**, en este orden: **Piden kg totales · kg por bulto · Piden bultos ·
+Stock · A comprar hoy · Compré hoy · Falta comprar.** El "por bulto" va entre
+los dos "piden" porque es lo que dice de dónde salen los bultos. Es el mismo
+kilaje del Mercado de siempre, editable, con otro rótulo.
+
+- **A comprar hoy = lo que piden menos el stock**, sin descontar lo comprado.
+  Con la misma `falta_por_comprar` y lo comprado en cero, no con una resta
+  propia. **Falta comprar** sí descuenta lo comprado.
+- **Piden bultos y Stock van en bultos del Mercado con un decimal y sin
+  techo**: son lo que piden y lo que hay. El techo va solo en las dos columnas
+  de comprar, donde no existe medio cajón.
+- **La resta sigue en la magnitud** (decisión del 21/09): "A comprar" menos
+  "Compré hoy" puede no dar "Falta" exacto si los cajones que se compraron no
+  son del tamaño del "por bulto". Eso es correcto, no un descuadre.
+
+**EL STOCK ES EL DEL CIERRE DE AYER**, congelado: *"es lo que tengo antes de
+salir a comprar, mi punto de partida"*. Hasta el 23/09 era el de hoy, en vivo,
+y contaba dos veces lo comprado: una compra de hoy ya recepcionada sumaba al
+stock **y** a "Compré hoy". Ahora lo de hoy entra por un solo lado. La
+pantalla dice de qué día es el stock.
+
+**Lo que el congelado no ve**: una compra de ayer que todavía no se
+recepcionó no está en el stock de ayer (el stock cuenta por recepción) ni en
+"Compré hoy" (que cuenta por fecha de compra). Si eso pasa, esa mercadería no
+aparece en ningún lado de la fila.
+
 ### Lo que NO cambia
 
 **Toda la aritmética de `core/que_comprar.py`** (dueño, 22/09):
