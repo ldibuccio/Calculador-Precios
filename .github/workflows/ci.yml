@@ -58,6 +58,19 @@ jobs:
           # viejo — y un clon shallow ya costó cinco commits sin desplegar
           # (corolario 92).
           fetch-depth: 0
+          # EN UN PR, LA PUNTA DE LA RAMA Y NO EL MERGE SINTÉTICO. Por
+          # defecto `pull_request` hace checkout de `refs/pull/N/merge`, un
+          # commit de merge que GitHub fabrica y que nunca va a existir: suma
+          # uno a la historia, y el test del número de versión cae con un
+          # archivo que está al día (23/09, PR #1: "dice 960 y la historia
+          # tiene 961"). En un push a main el SHA es el del push, así que el
+          # `||` deja ese caso como estaba.
+          #
+          # Por lo mismo EL PR SE MERGEA CON REBASE (o fast-forward), NUNCA
+          # con el botón de merge commit: ese commit también suma uno, y
+          # entonces el que cae es el CI de main — que es el que frena el
+          # deploy.
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
 
       - uses: actions/setup-python@v5
         with:
