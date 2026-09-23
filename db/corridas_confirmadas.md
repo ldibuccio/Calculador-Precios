@@ -270,3 +270,18 @@ PALMALA   columna 1 · foto 1 · foto_cajas 1 · fk no action 1 · 0 listados ·
 `db/listados_compra_6_cuantos_abiertos.sql`: Frutamax 1 abierto (23/09, con
 cargas), Palmala 0. Con uno solo abierto, el bloque 8 (un solo listado
 abierto, sin fecha) no tiene que decidir nada sobre listados viejos.
+
+## 23/09 — `listados_compra_8_un_solo_abierto`
+
+`db/listados_compra_8_un_solo_abierto.sql`, corrida **después** del deploy
+de v971 (corolario 94), con su verificación aparte.
+
+```
+FRUTAMAX  viejo 0 · nuevo 1 · sobre constante 1 · 1 abierto  · 1 listado  · último pedido 23/09
+PALMALA   viejo 0 · nuevo 1 · sobre constante 1 · 0 abiertos · 0 listados · último pedido 23/09
+```
+
+**Lo que identifica la base son los listados** —1 contra 0— y los abiertos.
+El índice de "uno por día" se fue y el de "uno abierto, punto" está puesto
+en las dos. `db/esquema_completo.sql` lo cambió en el mismo commit que anotó
+esta fila.

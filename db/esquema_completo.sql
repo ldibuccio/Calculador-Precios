@@ -542,8 +542,11 @@ create table listados_compra (
 comment on table listados_compra is 'Cabecera de un "Que comprar hoy". borrador = se sigue editando parado en el Mercado; cerrado = queda como historial de lo que se salio a comprar ese dia.';
 comment on column listados_compra.generado_el is 'CUANDO SE APRETO "SALGO A COMPRAR" (dueno, 23/09). Es el punto de partida del listado: la foto del stock se saca en ese instante, lo comprado es lo que se cargo DESPUES, y lo en camino lo que se cargo ANTES y todavia no se habia recepcionado. NULL = todavia no se salio. No es creado_en: armar la lista y salir pueden ser momentos distintos.';
 
-create unique index listados_compra_un_borrador_por_dia_idx
-    on listados_compra (fecha) where estado = 'borrador';
+-- UNO abierto, sea del dia que sea: el indice va sobre una constante, asi
+-- que todas las filas en borrador chocan entre si. Reemplazo al de "uno por
+-- dia" el 23/09 (db/listados_compra_8_un_solo_abierto.sql).
+create unique index listados_compra_un_solo_abierto_idx
+    on listados_compra ((true)) where estado = 'borrador';
 
 create table listados_compra_foto (
     listado_id        bigint not null references listados_compra (id) on delete cascade,

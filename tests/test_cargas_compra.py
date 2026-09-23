@@ -239,6 +239,9 @@ def test_el_aviso_de_YA_SE_USO_excluye_el_listado_QUE_SE_ESTA_EDITANDO(galpon):
     cartel pasaría a estar siempre puesto, que es como se aprende a no
     leerlo."""
     d, sql, cliente, _t, _l = galpon
+    # UN SOLO ABIERTO en la base (índice del 23/09): uno que haya dejado otro
+    # test haría rebotar el INSERT de abajo según el orden en que corran.
+    sql("UPDATE listados_compra SET estado = 'cerrado' WHERE estado = 'borrador'")
     carga_id = d.guardar_carga_de_compra(cliente, EL_27, "automatico", CARGADA_EL, 0)
     (viejo,), = sql(
         "INSERT INTO listados_compra (fecha, estado)"

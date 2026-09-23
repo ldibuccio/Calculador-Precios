@@ -3213,6 +3213,9 @@ def _filas_de_que_comprar(
         if not lo_comprado:
             comprado_magnitud = 0.0
         # EN CAMINO, con la misma regla: sin compras sin llegar es CERO.
+        # NO se filtra por cliente, a diferencia de las cajas de la foto: una
+        # compra que viene armada para OTRO cliente suma igual. Ver el
+        # docstring de `compras_alrededor_de_la_salida`.
         lo_en_camino = en_camino.get(articulo_id) or {}
         en_camino_magnitud = (
             lo_en_camino.get("kilos") if unidad == "kilo" else lo_en_camino.get("conteo")
