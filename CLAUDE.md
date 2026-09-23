@@ -2577,46 +2577,32 @@ vieja. Las dos veces la forma de los datos parecía un error del sistema, la
 explicación estaba en cómo se compra la fruta, y **se contestó preguntando,
 no midiendo de nuevo.**
 
-### Lo que queda ANOTADO Y NO CONSTRUIDO: la otra contaminación
+### La precarga de Recepción: CERRADO por el dueño el 23/09, no se toca
 
-**Recepción precarga LOS DOS campos reales con el estimado**
-(`deposito_recepcion.html`: `value="{{ c.cantidad_cajones }}"` y
-`value="{{ c.contenido_por_cajon }}"`, sin JS que los limpie). Apretar
-"Recibir" sin tocar nada graba `real = estimado` **por el camino normal**,
-no por el excepcional — así que es mucho más grande que el ingreso directo
-que sí se midió.
+**Es una DECISIÓN, no un pendiente.** El hecho sigue siendo cierto y se deja
+escrito para que nadie lo "descubra" de nuevo: Recepción precarga los dos
+campos reales con el estimado (`deposito_recepcion.html`, `value="{{
+c.cantidad_cajones }}"` y `value="{{ c.contenido_por_cajon }}"`), así que
+apretar "Recibir" sin tocar nada graba `real = estimado`.
 
-**Y DESDE EL 20/09 LA RAZÓN ES MÁS FUERTE, no más débil**, decisión del
-dueño: con el modal de la foto puesto en las DOS puertas que recepcionan
-—Recibir y Rechazo parcial— el que recibe ya no aprieta derecho sin darse
-cuenta. Tiene que leer y elegir. Eso no borra la contaminación (apretar
-"Recibir sin foto" sigue grabando `real = estimado`) pero sí le saca lo que la
-hacía peligrosa: que pasara sin que nadie la mirara.
+> **No se va a cambiar.** Con el cartel de "¿lo pesaste?" alcanza: el que
+> aprieta derecho se entera, y eso es lo que el dueño quería.
 
-Sigue anotada y sin construir, con la consulta escrita para el día que haga
-falta.
+**Qué la cerró, y por qué no se reabre con un número**: esta nota llevaba
+tres semanas como "anotada y no construida" esperando una razón para hacerse.
+Las dos que la volvían interesante ya estaban contestadas por otro lado —la
+referencia no se ajusta por medición, y la evidencia del pesaje es la foto
+(ver `kilos_4`, retirada el 22/09)— y lo que quedaba era el riesgo de que
+nadie mirara. Eso lo tapa el modal de las dos puertas que recepcionan. **Lo
+que la precarga todavía hace** —grabar el estimado cuando alguien elige no
+pesar— ya no es un accidente: es una decisión que el que recibe toma leyendo.
 
-**No se construyó nada, por pedido, y la razón es buena**: con lo que se
-sabe hoy no cambia ninguna decisión. La referencia ya se dio por buena por
-otro camino, y las dos que estaban mal ya están identificadas.
-
-**Y LA CONSULTA QUE LA MEDÍA SE RETIRÓ EL 22/09**, así que esto deja de ser
-"medible cuando haga falta": `db/kilos_4_cuanto_de_lo_pesado_se_peso.sql`
-separaba por si alguien CAMBIÓ el número —lo único que distingue "lo pesaron"
-de "lo aceptaron"— y el dueño la dio de baja porque **la referencia no se
-ajusta por medición y la evidencia del pesaje es la foto**.
-
-Eso NO borra la contaminación, que sigue siendo un hecho del sistema y por eso
-esta sección se queda. Lo que cambia es que **las dos preguntas que la volvían
-interesante ya están contestadas por otro lado**, así que retomarla necesita
-una pregunta TERCERA que hoy nadie se hace — y si aparece, lo que se retoma es
-la pregunta, no el archivo.
-
-**Y el día que alguien la retome, la trampa está acá**: excluir el ingreso
-directo NO alcanza, y ésa fue la primera reacción de los dos. Es la regla de
-las exclusiones al pie de la letra — el motivo de esa exclusión (escribe las
-dos columnas) no es el motivo del problema (el real puede ser igual al
-estimado sin que nadie pese).
+**Si dentro de seis meses alguien mide cuántas recepciones tienen `real =
+estimado` y el número le parece grande: ya se sabe, y no mueve nada.** Un
+`real = estimado` no distingue "lo pesaron y dio eso" de "lo aceptaron", y
+eso no lo arregla sacar la precarga — lo que lo distingue es la foto, y para
+eso está la alerta `recepciones_sin_pesaje`. Retomar esto necesita que el
+dueño cambie de opinión, no una consulta.
 
 ### La señal que inventé, y que falló en el caso que la generó
 
