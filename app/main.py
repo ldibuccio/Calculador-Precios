@@ -3208,7 +3208,16 @@ def _filas_de_que_comprar(
         # artículo que el comprador TOCÓ: así se distingue "lo dejó como
         # venía" de "puso ese número".
         kilaje = kilajes.get(articulo_id, articulo.get("contenido_referencia"))
+        kilaje = float(kilaje) if kilaje is not None else None
         falta = falta_por_comprar(pide, del_piso.get("magnitud"), comprado_magnitud)
+        # A COMPRAR HOY ES LO QUE HABIA QUE SALIR A BUSCAR antes de comprar
+        # nada: lo que piden menos el stock del cierre de ayer. Con la misma
+        # `falta_por_comprar` y lo comprado en CERO, no con una resta propia:
+        # escrita dos veces, "A comprar" y "Falta" podrían restar distinto y
+        # la diferencia entre las dos no sería lo que se compró (dueño, 23/09:
+        # "a comprar hoy sale de restarle el stock a lo que piden").
+        a_comprar = cajones_que_faltan(
+            falta_por_comprar(pide, del_piso.get("magnitud"), 0.0), kilaje)
         # LO QUE YA TENGO, sumado acá y no en el navegador: es la única parte
         # de la cuenta que necesita saber de fichas y de lotes, y el JS la
         # recibe hecha para poder recalcular al mover el kilaje.
@@ -3228,15 +3237,37 @@ def _filas_de_que_comprar(
                 "cajas": del_piso.get("cajas"),
                 "comprado_cajones": lo_comprado.get("cajones", 0.0),
                 "comprado": comprado_magnitud,
-                "kilaje": float(kilaje) if kilaje is not None else None,
+                "kilaje": kilaje,
                 "falta": falta,
-                "cajones": cajones_que_faltan(falta, float(kilaje) if kilaje is not None else None),
+                "cajones": cajones_que_faltan(falta, kilaje),
+                "a_comprar": a_comprar,
+                # EN BULTOS DEL MERCADO, para leer la fila de izquierda a
+                # derecha: "piden 500 kg, de a 20, son 25 bultos". Con un
+                # decimal y SIN redondear para arriba: son lo que piden y lo
+                # que hay, no lo que se compra. El techo va solo en "A comprar"
+                # y "Falta", que es donde no se puede comprar medio cajón.
+                "pide_bultos": _en_bultos(pide, kilaje),
+                "stock_bultos": _en_bultos(del_piso.get("magnitud"), kilaje),
+                "palabra": PALABRA_DE_LA_UNIDAD.get(unidad, ""),
             }
         )
     return sorted(filas, key=lambda f: f["nombre"])
 
 
-def _piso_en_magnitud(articulo_ids: list[int], fichas_tildadas: list[dict], hoy):
+# CÓMO SE NOMBRA LA MAGNITUD EN UN RÓTULO de Qué comprar hoy: "Piden kg
+# totales", "Piden unidades totales". El sufijo corto (`kg`, `u`) va al lado
+# de un número; ésta va en la pregunta, donde "Piden u totales" no se lee.
+PALABRA_DE_LA_UNIDAD = {"kilo": "kg", "unidad": "unidades", "cubeta": "cubetas"}
+
+
+def _en_bultos(magnitud, kilaje):
+    """Una magnitud pasada a bultos del Mercado, con un decimal. None si falta algo."""
+    if magnitud is None or not kilaje:
+        return None
+    return round(float(magnitud) / float(kilaje), 1)
+
+
+def _piso_en_magnitud(articulo_ids: list[int], fichas_tildadas: list[dict], al_cierre_de):
     """Cuánto hay en el piso de cada artículo, EN LA MAGNITUD de su fila.
 
     Dos pilas y dos conversiones distintas, que es lo que obliga a hacerlo
@@ -3261,8 +3292,8 @@ def _piso_en_magnitud(articulo_ids: list[int], fichas_tildadas: list[dict], hoy)
     # UNA consulta para todos los artículos, no una por artículo: es la
     # misma que usan Stock del Depósito, Guías R y Rentabilidad Real.
     movimientos = entradas_y_salidas_stock_articulos(articulo_ids)
-    cajas = cajas_armadas_por_ficha(hoy)
-    stock = {f["articulo_id"]: float(f["stock"] or 0) for f in stock_deposito_por_articulo(hoy)}
+    cajas = cajas_armadas_por_ficha(al_cierre_de)
+    stock = {f["articulo_id"]: float(f["stock"] or 0) for f in stock_deposito_por_articulo(al_cierre_de)}
 
     fichas_por_articulo = {}
     for ficha in fichas_tildadas:
@@ -3287,7 +3318,7 @@ def _piso_en_magnitud(articulo_ids: list[int], fichas_tildadas: list[dict], hoy)
         )
         sueltos = max(stock.get(articulo_id, 0.0) - todas_las_cajas, 0.0)
 
-        sueltos_magnitud = _sueltos_en_magnitud(articulo_id, movimientos, sueltos, hoy)
+        sueltos_magnitud = _sueltos_en_magnitud(articulo_id, movimientos, sueltos, al_cierre_de)
         if sueltos_magnitud is None or falta_contenido:
             piso[articulo_id] = {"magnitud": None, "sueltos": sueltos, "cajas": en_cajas_bultos}
             continue
@@ -3299,7 +3330,7 @@ def _piso_en_magnitud(articulo_ids: list[int], fichas_tildadas: list[dict], hoy)
     return piso
 
 
-def _sueltos_en_magnitud(articulo_id: int, movimientos: dict, sueltos: float, hoy):
+def _sueltos_en_magnitud(articulo_id: int, movimientos: dict, sueltos: float, al_cierre_de):
     """Los cajones crudos que quedan, pasados a la magnitud de la fila. None si no cierra.
 
     Rejuega el reparto a la fecha y se queda con los lotes de COMPRA con
@@ -3312,7 +3343,7 @@ def _sueltos_en_magnitud(articulo_id: int, movimientos: dict, sueltos: float, ho
     if sueltos <= 0:
         return 0.0
     entradas, salidas = movimientos.get(articulo_id, ([], []))
-    reparto = reparto_a_la_fecha(entradas, salidas_para_reparto(salidas), hoy)
+    reparto = reparto_a_la_fecha(entradas, salidas_para_reparto(salidas), al_cierre_de)
     lotes = [l for l in reparto["lotes"] if l["restante"] > 0 and l["tipo_lote"] == "guia"]
     contenidos = _contenidos_de(lotes)
     total_bultos, total_magnitud = 0.0, 0.0
@@ -3394,9 +3425,10 @@ def _contexto_de_que_comprar(request: Request, aviso: str | None = None):
     nada que cerrar, y la pantalla no lo ofrece.
     """
     hoy = datetime.now(ARGENTINA).date()
+    cierre_de_ayer = hoy - timedelta(days=1)
     contexto = {"barra_sector": "compras", "barra_titulo": "Qué comprar hoy",
                 "clientes": [], "elegidas": set(), "filas": [], "aviso": aviso,
-                "hay_borrador": False}
+                "hay_borrador": False, "stock_al": cierre_de_ayer}
     try:
         borrador = borrador_de_compra(hoy)
         contexto["clientes"] = _cargas_por_cliente(listar_cargas_desde(
@@ -3433,7 +3465,13 @@ def _contexto_de_que_comprar(request: Request, aviso: str | None = None):
         clientes = sorted({carga["cliente_id"] for carga in cargas})
         fichas = [f for c in clientes for f in listar_fichas_por_cliente(c)]
         ids = sorted({a for aporte in aportes for a in aporte["pide"]})
-        piso = _piso_en_magnitud(ids, fichas, hoy) if ids else {}
+        # EL STOCK ES EL DEL CIERRE DE AYER, congelado (dueño, 23/09): "es lo
+        # que tengo antes de salir a comprar, mi punto de partida". Hasta el
+        # 23/09 era el de HOY, en vivo, y eso contaba dos veces lo comprado:
+        # una compra de hoy que ya se recepcionó sumaba al stock Y a "Compré
+        # hoy", así que el faltante bajaba el doble mientras se compraba. Lo
+        # de hoy entra por UN solo lado, que es "Compré hoy".
+        piso = _piso_en_magnitud(ids, fichas, cierre_de_ayer) if ids else {}
         comprado = compras_de_hoy_por_articulo()
     except Exception:
         logger.exception("No se pudo armar Qué comprar hoy")
