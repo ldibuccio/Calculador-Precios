@@ -16,6 +16,10 @@
                  min-height: 52px; padding: 0 0.75rem; border: 2px solid #ddd;
                  border-radius: 10px; font-weight: 700; font-size: 0.95rem; }
   .modos input { width: 22px; height: 22px; }
+  .margen { display: flex; align-items: center; gap: 0.5rem; margin-top: 0.75rem;
+            flex-wrap: wrap; font-size: 0.95rem; }
+  .margen input { width: 4.5rem; min-height: 44px; font-size: 1.05rem; padding: 0.4rem;
+                  border: 2px solid #2563eb; border-radius: 8px; text-align: center; }
   .buscar { width: 100%; min-height: 44px; font-size: 1.05rem; padding: 0 0.6rem;
             border: 2px solid #2563eb; border-radius: 8px; box-sizing: border-box;
             margin-bottom: 0.5rem; }
@@ -61,6 +65,15 @@
                     {% if carga.modo != 'manual' %}checked{% endif %}>Del promedio</label>
       <label><input type="radio" name="modo" value="manual"
                     {% if carga.modo == 'manual' %}checked{% endif %}>A mano</label>
+    </div>
+    {# EL MARGEN ES DE ESTA CARGA, o sea de este cliente. No hay otro en el
+       listado: dos que se multiplican son invisibles —20% y 10% son 32%— y
+       nadie hace esa cuenta con el pulgar. #}
+    <div class="margen">
+      <label for="margen">Comprar un</label>
+      <input id="margen" name="margen" type="number" inputmode="decimal" step="1" min="0"
+             value="{{ carga.margen|sin_decimales }}" aria-label="Margen en por ciento">
+      <label for="margen">% más de lo que pide</label>
     </div>
     <p class="ayuda">
       Del promedio: los últimos 6 pedidos anteriores al
@@ -116,6 +129,8 @@
                  type="number" inputmode="decimal" step="0.1" min="0"
                  value="{{ valor|sin_decimales if valor is not none else '' }}"
                  data-contenido="{{ a.contenido if en_bultos else '' }}"
+                 {% set base = a.bultos_crudo if en_bultos else a.crudo %}
+                 data-base="{{ base|sin_decimales if base is not none else '' }}"
                  aria-label="{{ 'Bultos' if en_bultos else 'Total' }} de {{ a.nombre }}">
           {% if en_bultos %}
             <span class="sufijo">blt</span>
@@ -176,6 +191,27 @@
     });
   }
   caja.addEventListener("input", pintar);
+
+  // EL MARGEN REHACE LA PROPUESTA AL TOQUE, sin ir al server. Solo mueve las
+  // filas que TODAVIA muestran lo propuesto: la que se corrigio a mano queda
+  // donde el comprador la dejo, que es la misma regla que el guardado aplica
+  // del otro lado. Sin eso, subir el porcentaje pisaria las correcciones.
+  var campoMargen = document.getElementById("margen");
+  if (campoMargen) campoMargen.addEventListener("input", function () {
+    var por = parseFloat(campoMargen.value);
+    if (isNaN(por) || por < 0) return;
+    document.querySelectorAll("[data-base]").forEach(function (campo) {
+      var base = parseFloat(campo.dataset.base || "");
+      if (isNaN(base)) return;
+      var espejo = document.querySelector('input[name="propuesto_'
+        + campo.name.replace(/^(bultos|total)_/, "") + '"]');
+      if (!espejo || campo.value !== espejo.value) return;   // tocada a mano
+      var nuevo = String(Math.round(base * (1 + por / 100)));
+      campo.value = nuevo;
+      espejo.value = nuevo;
+      campo.dispatchEvent(new Event("input", {bubbles: true}));
+    });
+  });
 
   // LA MAGNITUD SE REHACE AL TIPEAR, sin ir al server: el número grande es
   // bultos y el de al lado tiene que seguirlo, o los dos dicen cosas

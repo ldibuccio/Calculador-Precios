@@ -211,8 +211,8 @@ def siembra():
     -- AUTOMATICA y no manual: es el modo que corre la consulta del promedio,
     -- que es SQL nuevo. El de a mano no tiene consulta propia, así que
     -- sembrarlo así dejaría sin mirar lo único que el humo puede ver.
-    insert into cargas_compra (cliente_id, fecha, modo, promedio_anterior_a)
-      select id, current_date, 'automatico', current_date from clientes limit 1;
+    insert into cargas_compra (cliente_id, fecha, modo, promedio_anterior_a, margen_porcentaje)
+      select id, current_date, 'automatico', current_date, 10 from clientes limit 1;
     insert into cargas_compra_renglones (carga_id, articulo_id, total)
       select ca.id, a.id, 100 from cargas_compra ca, articulos a limit 1;
     insert into colegas (nombre, nombre_normalizado) values ('EJEMPLO Colega', 'ejemplo colega');

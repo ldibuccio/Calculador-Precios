@@ -88,9 +88,9 @@ def test_EDITAR_una_carga_NO_MUEVE_el_ancla_del_promedio(galpon):
     """La regla del dueño: editarla la deja donde está; el que la mueve es
     borrarla y empezar de cero. El canario está abajo."""
     d, _sql, cliente, _t, _l = galpon
-    d.guardar_carga_de_compra(cliente, EL_27, "automatico", CARGADA_EL)
+    d.guardar_carga_de_compra(cliente, EL_27, "automatico", CARGADA_EL, 0)
     # Se edita al día siguiente, con lo que el server pondría de ancla hoy.
-    d.guardar_carga_de_compra(cliente, EL_27, "manual", CARGADA_EL + timedelta(days=1))
+    d.guardar_carga_de_compra(cliente, EL_27, "manual", CARGADA_EL + timedelta(days=1), 0)
 
     carga = d.carga_de_compra(cliente, EL_27)
     assert carga["modo"] == "manual", "el modo SÍ se actualiza al editar"
@@ -99,13 +99,32 @@ def test_EDITAR_una_carga_NO_MUEVE_el_ancla_del_promedio(galpon):
     )
 
 
+def test_EDITAR_una_carga_SI_MUEVE_el_margen(galpon):
+    """EL ESPEJO DEL TEST DE ARRIBA, y hace falta: el `ON CONFLICT` pisa el
+    margen y NO pisa el ancla, y las dos mitades se ven igual leyendo el SET.
+
+    El margen es lo que el comprador acaba de tipear en la pantalla, así que
+    guardarlo es el punto de guardar; el ancla es cuándo se abrió la carga y
+    no cambia porque alguien la edite. Sin este test, sacar el margen del
+    `SET` no rompe nada: la carga nueva lo guarda bien y solo la EDICIÓN lo
+    pierde, en silencio.
+    """
+    d, _sql, cliente, _t, _l = galpon
+    d.guardar_carga_de_compra(cliente, EL_27, "automatico", CARGADA_EL, 10)
+    d.guardar_carga_de_compra(cliente, EL_27, "automatico", CARGADA_EL, 25)
+
+    carga = d.carga_de_compra(cliente, EL_27)
+    assert carga["margen"] == 25.0, "editar no guardó el margen nuevo"
+    assert carga["promedio_anterior_a"] == CARGADA_EL, "y el ancla igual no se movió"
+
+
 def test_BORRARLA_Y_EMPEZAR_DE_CERO_si_mueve_el_ancla(galpon):
     """La otra mitad, y es la que hace que la de arriba no sea una traba: sin
     esto, una carga vieja quedaría con su ancla para siempre."""
     d, _sql, cliente, _t, _l = galpon
-    d.guardar_carga_de_compra(cliente, EL_27, "automatico", CARGADA_EL)
+    d.guardar_carga_de_compra(cliente, EL_27, "automatico", CARGADA_EL, 0)
     assert d.borrar_carga_de_compra(cliente, EL_27) is True
-    d.guardar_carga_de_compra(cliente, EL_27, "automatico", CARGADA_EL + timedelta(days=1))
+    d.guardar_carga_de_compra(cliente, EL_27, "automatico", CARGADA_EL + timedelta(days=1), 0)
 
     assert d.carga_de_compra(cliente, EL_27)["promedio_anterior_a"] == CARGADA_EL + timedelta(days=1)
 
@@ -114,8 +133,8 @@ def test_UNA_carga_por_cliente_y_fecha_y_la_segunda_EDITA_en_vez_de_sumar(galpon
     """Lo que el dueño pidió: entrar de nuevo a Día para el mismo día abre la
     que ya existe. Que no pueda haber dos lo decide la BASE, no el código."""
     d, sql, cliente, _t, _l = galpon
-    primera = d.guardar_carga_de_compra(cliente, EL_27, "automatico", CARGADA_EL)
-    segunda = d.guardar_carga_de_compra(cliente, EL_27, "manual", CARGADA_EL)
+    primera = d.guardar_carga_de_compra(cliente, EL_27, "automatico", CARGADA_EL, 0)
+    segunda = d.guardar_carga_de_compra(cliente, EL_27, "manual", CARGADA_EL, 0)
     assert primera == segunda, "la segunda creó una carga nueva en vez de editar"
     (cuantas,), = sql("SELECT count(*) FROM cargas_compra WHERE cliente_id = %s", (cliente,))
     assert cuantas == 1
@@ -126,7 +145,7 @@ def test_una_carga_que_NO_EXISTE_devuelve_None_y_no_una_vacia(galpon):
     renglones, y la pantalla necesita distinguirlas para poder preguntar."""
     d, _sql, cliente, _t, _l = galpon
     assert d.carga_de_compra(cliente, EL_27) is None
-    d.guardar_carga_de_compra(cliente, EL_27, "automatico", CARGADA_EL)
+    d.guardar_carga_de_compra(cliente, EL_27, "automatico", CARGADA_EL, 0)
     carga = d.carga_de_compra(cliente, EL_27)
     assert carga is not None and carga["renglones"] == {}
 
@@ -136,10 +155,10 @@ def test_los_renglones_SOBREVIVEN_un_cambio_de_modo(galpon):
     un archivo: re-tipear molesta, releer un archivo cuesta una lectura con IA
     y otra revisión."""
     d, _sql, cliente, tomate, _l = galpon
-    carga_id = d.guardar_carga_de_compra(cliente, EL_27, "manual", CARGADA_EL)
+    carga_id = d.guardar_carga_de_compra(cliente, EL_27, "manual", CARGADA_EL, 0)
     d.guardar_renglones_de_carga(carga_id, {tomate: 500})
 
-    d.guardar_carga_de_compra(cliente, EL_27, "automatico", CARGADA_EL)
+    d.guardar_carga_de_compra(cliente, EL_27, "automatico", CARGADA_EL, 0)
     assert d.carga_de_compra(cliente, EL_27)["renglones"] == {tomate: 500.0}
 
 
@@ -147,7 +166,7 @@ def test_guardar_renglones_REEMPLAZA_y_no_mezcla(galpon):
     """Es lo que quedó, no lo que cambió: sacarle un artículo a la carga tiene
     que llevárselo, y eso un upsert no lo puede expresar."""
     d, _sql, cliente, tomate, lima = galpon
-    carga_id = d.guardar_carga_de_compra(cliente, EL_27, "manual", CARGADA_EL)
+    carga_id = d.guardar_carga_de_compra(cliente, EL_27, "manual", CARGADA_EL, 0)
     d.guardar_renglones_de_carga(carga_id, {tomate: 500, lima: 20})
     d.guardar_renglones_de_carga(carga_id, {tomate: 600})
 
@@ -156,7 +175,7 @@ def test_guardar_renglones_REEMPLAZA_y_no_mezcla(galpon):
 
 def test_borrar_la_carga_SE_LLEVA_sus_renglones(galpon):
     d, sql, cliente, tomate, _l = galpon
-    carga_id = d.guardar_carga_de_compra(cliente, EL_27, "manual", CARGADA_EL)
+    carga_id = d.guardar_carga_de_compra(cliente, EL_27, "manual", CARGADA_EL, 0)
     d.guardar_renglones_de_carga(carga_id, {tomate: 500})
     d.borrar_carga_de_compra(cliente, EL_27)
 
@@ -169,7 +188,7 @@ def test_borrar_una_carga_QUE_UN_LISTADO_YA_USO_lo_RECHAZA_la_base(galpon):
     """Borrarla cambiaría en silencio lo que ese listado dice que se salió a
     comprar. Decide la BASE (la FK no va en cascada) y el código traduce."""
     d, sql, cliente, _t, _l = galpon
-    carga_id = d.guardar_carga_de_compra(cliente, EL_27, "automatico", CARGADA_EL)
+    carga_id = d.guardar_carga_de_compra(cliente, EL_27, "automatico", CARGADA_EL, 0)
     # CERRADO y en otra fecha: el índice parcial deja UN borrador por día, y
     # el test de abajo abre el suyo para el 27. Para la FK da lo mismo.
     (listado,), = sql(
@@ -187,8 +206,8 @@ def test_listar_cargas_RECORTA_por_fecha_y_el_recorte_lo_elige_QUIEN_LLAMA(galpo
     """"Desde ayer en adelante" es del dueño y vive en la pantalla; acá lo que
     se fija es que el recorte exista y muerda."""
     d, _sql, cliente, _t, _l = galpon
-    d.guardar_carga_de_compra(cliente, EL_27, "automatico", CARGADA_EL)
-    d.guardar_carga_de_compra(cliente, EL_27 - timedelta(days=10), "automatico", CARGADA_EL)
+    d.guardar_carga_de_compra(cliente, EL_27, "automatico", CARGADA_EL, 0)
+    d.guardar_carga_de_compra(cliente, EL_27 - timedelta(days=10), "automatico", CARGADA_EL, 0)
 
     desde_ayer = [c for c in d.listar_cargas_desde(EL_27 - timedelta(days=1))
                   if c["cliente_id"] == cliente]
@@ -202,7 +221,7 @@ def test_el_aviso_de_YA_SE_USO_excluye_el_listado_QUE_SE_ESTA_EDITANDO(galpon):
     cartel pasaría a estar siempre puesto, que es como se aprende a no
     leerlo."""
     d, sql, cliente, _t, _l = galpon
-    carga_id = d.guardar_carga_de_compra(cliente, EL_27, "automatico", CARGADA_EL)
+    carga_id = d.guardar_carga_de_compra(cliente, EL_27, "automatico", CARGADA_EL, 0)
     (viejo,), = sql(
         "INSERT INTO listados_compra (fecha, estado, margen_porcentaje)"
         " VALUES (%s, 'cerrado', 10) RETURNING id", (date(2026, 9, 26),))
@@ -227,7 +246,7 @@ def test_la_carga_trae_CUANTOS_RENGLONES_tiene_al_lado(galpon):
     """El denominador: "Día, 27/09, a mano" sin el conteo no distingue una
     carga cargada de una que se abrió y quedó vacía."""
     d, _sql, cliente, tomate, lima = galpon
-    carga_id = d.guardar_carga_de_compra(cliente, EL_27, "manual", CARGADA_EL)
+    carga_id = d.guardar_carga_de_compra(cliente, EL_27, "manual", CARGADA_EL, 0)
     d.guardar_renglones_de_carga(carga_id, {tomate: 500, lima: 20})
 
     fila = next(c for c in d.listar_cargas_desde(EL_27) if c["id"] == carga_id)
@@ -375,8 +394,8 @@ def _entrar(contextos, metodo, ruta, **kwargs):
     return respuesta, por_nombre
 
 
-def _carga(modo="manual", renglones=None):
-    return {"id": 3, "cliente_id": 1, "fecha": EL_27, "modo": modo,
+def _carga(modo="manual", renglones=None, margen=0.0):
+    return {"id": 3, "cliente_id": 1, "fecha": EL_27, "modo": modo, "margen": margen,
             "promedio_anterior_a": CARGADA_EL, "renglones": renglones or {}}
 
 
@@ -404,9 +423,10 @@ def test_abrir_una_carga_QUE_NO_EXISTE_la_crea_con_el_ancla_de_HOY():
     guardar = abiertos["guardar_carga_de_compra"]
     assert respuesta.status_code == 303
     assert respuesta.headers["location"] == f"/compras/carga/1/{EL_27.isoformat()}"
-    cliente_id, fecha, modo, ancla = guardar.call_args.args
+    cliente_id, fecha, modo, ancla, margen = guardar.call_args.args
     assert (cliente_id, fecha, modo) == (1, EL_27, "automatico")
     assert ancla == _main._hoy_argentina(), "el ancla no es el día en que se carga"
+    assert margen == _main.MARGEN_SUGERIDO, "una carga nueva no nace con el sugerido"
 
 
 def test_la_pantalla_dibuja_un_campo_POR_ARTICULO_con_SU_unidad():
@@ -744,3 +764,73 @@ def test_CAMBIAR_DE_MODO_no_toca_los_renglones_y_vuelve_a_la_carga():
     assert respuesta.headers["location"].endswith("?aviso=Pasada+a+Del+promedio")
     abiertos["guardar_renglones_de_carga"].assert_not_called()
     assert abiertos["guardar_carga_de_compra"].call_args.args[2] == "automatico"
+
+
+# --- EL MARGEN, uno solo y por carga -----------------------------------------
+#
+# Del dueño (23/09): "si los dos se multiplican, termino comprando 32% de más
+# sin darme cuenta". Por eso vive acá y no en el listado: 1,20 × 1,10 = 1,32 y
+# nadie hace esa cuenta con el pulgar.
+
+
+def test_el_margen_INFLA_lo_que_propone_el_promedio():
+    """Con `con_margen`, que es la misma función del Paso 2 —sobre LO QUE
+    PIDEN y no sobre el faltante—. Escrita a mano serían dos márgenes, y la
+    copia que se separe infla distinto y los dos números son plausibles."""
+    ctx = _con_catalogo(**{
+        "app.main.carga_de_compra": _carga(modo="automatico", margen=20.0),
+        "app.main.renglones_de_los_ultimos_pedidos": _RENGLONES_DE_PEDIDO,
+    })
+    respuesta, _ = _entrar(ctx, "get", f"/compras/carga/1/{EL_27.isoformat()}")
+    corrido = " ".join(respuesta.text.split("</style>")[-1].split())
+    # 10 bultos de promedio, 20% más = 12.
+    assert 'name="propuesto_10" value="12"' in corrido
+    assert 'name="margen" type="number"' in corrido
+
+
+def test_la_fila_lleva_la_BASE_SIN_margen_para_recalcular_sin_ir_al_server():
+    """"Recalcula los bultos al toque" (dueño, 23/09). Sin la base, mover el
+    porcentaje tendría que pasar por un guardado."""
+    ctx = _con_catalogo(**{
+        "app.main.carga_de_compra": _carga(modo="automatico", margen=20.0),
+        "app.main.renglones_de_los_ultimos_pedidos": _RENGLONES_DE_PEDIDO,
+    })
+    respuesta, _ = _entrar(ctx, "get", f"/compras/carga/1/{EL_27.isoformat()}")
+    corrido = " ".join(respuesta.text.split("</style>")[-1].split())
+    assert 'data-base="10"' in corrido, "la fila no trae el promedio crudo"
+    # Y el JS solo mueve lo que TODAVÍA muestra lo propuesto: sin eso, subir
+    # el porcentaje pisaría las correcciones.
+    assert "campo.value !== espejo.value" in respuesta.text
+
+
+def test_el_margen_SE_GUARDA():
+    ctx = _con_catalogo()
+    ctx.append(patch("app.main.guardar_carga_de_compra", return_value=3))
+    ctx.append(patch("app.main.guardar_renglones_de_carga"))
+    _, abiertos = _entrar(ctx, "post", f"/compras/carga/1/{EL_27.isoformat()}",
+                          data={"modo": "automatico", "margen": "25"})
+    assert abiertos["guardar_carga_de_compra"].call_args.args[4] == 25.0
+
+
+def test_CAMBIAR_DE_MODO_conserva_el_margen():
+    """El modo se cambia sin tocar nada más: el margen que llega en el
+    formulario es el del modo viejo y no hay por qué creerle más que a la
+    fila guardada."""
+    ctx = _con_catalogo(**{"app.main.carga_de_compra": _carga(modo="manual", margen=20.0)})
+    ctx.append(patch("app.main.guardar_carga_de_compra", return_value=3))
+    ctx.append(patch("app.main.guardar_renglones_de_carga"))
+    _, abiertos = _entrar(ctx, "post", f"/compras/carga/1/{EL_27.isoformat()}",
+                          data={"modo": "automatico", "margen": "99"})
+    assert abiertos["guardar_carga_de_compra"].call_args.args[4] == 20.0
+
+
+def test_un_margen_en_CERO_deja_la_propuesta_como_esta():
+    """0 significa sin margen y es distinto de vacío — el rival del sugerido:
+    un `or MARGEN_SUGERIDO` le pondría 10 a quien pidió ninguno."""
+    ctx = _con_catalogo(**{
+        "app.main.carga_de_compra": _carga(modo="automatico", margen=0.0),
+        "app.main.renglones_de_los_ultimos_pedidos": _RENGLONES_DE_PEDIDO,
+    })
+    respuesta, _ = _entrar(ctx, "get", f"/compras/carga/1/{EL_27.isoformat()}")
+    corrido = " ".join(respuesta.text.split("</style>")[-1].split())
+    assert 'name="propuesto_10" value="10"' in corrido

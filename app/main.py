@@ -3532,6 +3532,11 @@ def _unidad_de_cada_articulo(articulos: list[dict], fichas: list[dict]) -> dict:
 def _promedio_por_articulo(cliente_id: int, anterior_a) -> dict:
     """{articulo_id: total del día} — lo que ese cliente pide un día cualquiera.
 
+DEVUELVE EL PROMEDIO CRUDO, sin margen: el margen se aplica al armar
+    la fila, que es donde también se pasa a bultos. Aplicado acá, la fila no
+    tendría la base y el navegador no podría rehacer la cuenta al mover el
+    porcentaje sin ir al server.
+
     LA MISMA CUENTA QUE EL PASO 2, con las mismas funciones: los bultos de
     cada renglón pasados a la magnitud de su ficha y divididos por los
     pedidos de ESE cliente. Escrita dos veces serían dos promedios, y la
@@ -3591,7 +3596,8 @@ def _bulto_de_cada_articulo(cliente_id: int) -> dict:
 
 def _articulos_para_cargar(cliente_id: int,
                            guardado: dict | None = None,
-                           propuesto: dict | None = None) -> list[dict]:
+                           propuesto: dict | None = None,
+                           margen: float = 0.0) -> list[dict]:
     """El catálogo de compra con su unidad, lo ya cargado y lo que se propone.
 
     Una sola lectura de fichas para todos los artículos, no una por
@@ -3609,7 +3615,12 @@ def _articulos_para_cargar(cliente_id: int,
     unidades = _unidad_de_cada_articulo(articulos, listar_fichas_de_todos_los_clientes())
     contenidos = _bulto_de_cada_articulo(cliente_id)
     guardado = guardado or {}
-    propuesto = propuesto or {}
+    # EL MARGEN CON `con_margen`, que es la misma función del Paso 2: sobre LO
+    # QUE PIDEN y no sobre el faltante. Escribir la multiplicación a mano
+    # serían dos márgenes, y la copia que se separe no falla — infla distinto
+    # que la otra pantalla y los dos números son plausibles.
+    crudo = propuesto or {}
+    propuesto = {a: con_margen(total, margen) for a, total in crudo.items()}
 
     def en_bultos(magnitud, contenido):
         return None if magnitud is None or not contenido else float(magnitud) / contenido
@@ -3633,6 +3644,10 @@ def _articulos_para_cargar(cliente_id: int,
             "contenido": contenido,
             "bultos": en_bultos(total, contenido),
             "bultos_propuesto": en_bultos(propuesto.get(a["id"]), contenido),
+            # LA BASE SIN MARGEN, para que mover el porcentaje rehaga la
+            # cuenta en el navegador en vez de esperar un guardado.
+            "bultos_crudo": en_bultos(crudo.get(a["id"]), contenido),
+            "crudo": crudo.get(a["id"]),
             # LO QUE DIBUJA LA FILA, y por eso se decide acá y no en tres
             # `{% if %}` de la plantilla: a mano se arranca vacío y se agrega
             # de a uno; del promedio se ve lo que propone.
@@ -3674,7 +3689,8 @@ def _contexto_de_carga(carga: dict, aviso: str | None = None) -> dict:
     cliente = next((c for c in listar_clientes() if c["id"] == carga["cliente_id"]), None)
     propuesto = {}
     if carga["modo"] != "manual":
-        propuesto = _promedio_por_articulo(carga["cliente_id"], carga["promedio_anterior_a"])
+        propuesto = _promedio_por_articulo(
+            carga["cliente_id"], carga["promedio_anterior_a"])
     return {
         "barra_sector": "compras",
         # NO se llama igual que la lista de la que se entra: son dos pantallas
@@ -3683,7 +3699,8 @@ def _contexto_de_carga(carga: dict, aviso: str | None = None) -> dict:
         "carga": carga,
         "cliente_nombre": cliente["nombre"] if cliente else "",
         "fecha_mostrar": carga["fecha"].strftime("%d/%m/%Y"),
-        "articulos": _articulos_para_cargar(carga["cliente_id"], carga["renglones"], propuesto),
+        "articulos": _articulos_para_cargar(
+            carga["cliente_id"], carga["renglones"], propuesto, carga["margen"]),
         "hay_propuesta": bool(propuesto),
         "aviso": aviso,
     }
@@ -3746,7 +3763,11 @@ async def empezar_carga_de_compra(request: Request):
                  "cliente_nombre": cliente["nombre"] if cliente else "",
                  "fecha_mostrar": fecha.strftime("%d/%m/%Y")},
             )
-        guardar_carga_de_compra(cliente_id, fecha, modo, _hoy_argentina())
+        # UNA CARGA NUEVA NACE CON EL SUGERIDO, que es lo que el Paso 2 ya
+        # proponía. El valor de arranque lo pone la pantalla y no la base:
+        # dos defaults que no coinciden es como se separan dos reglas.
+        guardar_carga_de_compra(cliente_id, fecha, modo, _hoy_argentina(),
+                                MARGEN_SUGERIDO)
     except Exception:
         logger.exception("No se pudo abrir la carga de compra")
         return RedirectResponse("/compras/carga?aviso=No+se+pudo+abrir+la+carga",
@@ -3801,12 +3822,14 @@ async def guardar_carga_de_compra_ruta(request: Request, cliente_id: int, fecha:
     try:
         antes = carga_de_compra(cliente_id, fecha_valor)
         if antes is not None and antes["modo"] != modo:
-            guardar_carga_de_compra(cliente_id, fecha_valor, modo, _hoy_argentina())
+            guardar_carga_de_compra(cliente_id, fecha_valor, modo,
+                                    _hoy_argentina(), antes["margen"])
             comoquedo = "Del+promedio" if modo == "automatico" else "A+mano"
             return RedirectResponse(f"{volver}?aviso=Pasada+a+{comoquedo}", status_code=303)
 
         renglones = _renglones_del_formulario(formulario, cliente_id)
-        carga_id = guardar_carga_de_compra(cliente_id, fecha_valor, modo, _hoy_argentina())
+        carga_id = guardar_carga_de_compra(cliente_id, fecha_valor, modo, _hoy_argentina(),
+                                           margen_valido(formulario.get("margen")))
         guardar_renglones_de_carga(carga_id, renglones)
     except Exception:
         logger.exception("No se pudo guardar la carga de compra")

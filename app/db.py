@@ -9764,7 +9764,8 @@ def carga_de_compra(cliente_id: int, fecha) -> dict | None:
         with conexion.cursor() as cursor:
             cursor.execute(
                 """
-                SELECT id, cliente_id, fecha, modo, promedio_anterior_a
+                SELECT id, cliente_id, fecha, modo, promedio_anterior_a,
+                       margen_porcentaje
                 FROM cargas_compra WHERE cliente_id = %s AND fecha = %s
                 """,
                 (cliente_id, fecha),
@@ -9787,14 +9788,20 @@ def carga_de_compra(cliente_id: int, fecha) -> dict | None:
                 "fecha": cabecera[2],
                 "modo": cabecera[3],
                 "promedio_anterior_a": cabecera[4],
+                "margen": float(cabecera[5]),
                 "renglones": renglones,
             }
     finally:
         conexion.close()
 
 
-def guardar_carga_de_compra(cliente_id: int, fecha, modo, promedio_anterior_a) -> int:
+def guardar_carga_de_compra(cliente_id: int, fecha, modo, promedio_anterior_a, margen) -> int:
     """Crea o actualiza la carga de ese cliente para esa fecha. Devuelve su id.
+
+    EL MARGEN SÍ SE PISA Y EL ANCLA NO, y no es una inconsistencia: el
+    margen es lo que el comprador acaba de tipear en esta pantalla, así que
+    guardarlo es el punto de guardar. El ancla es cuándo se abrió la carga,
+    que no cambia porque alguien la edite.
 
     EL `ON CONFLICT` NO PISA `promedio_anterior_a`, Y ESO ES LA REGLA, no una
     omisión: editar una carga NO mueve el ancla del promedio —es la misma
@@ -9814,13 +9821,16 @@ def guardar_carga_de_compra(cliente_id: int, fecha, modo, promedio_anterior_a) -
         with conexion.cursor() as cursor:
             cursor.execute(
                 """
-                INSERT INTO cargas_compra (cliente_id, fecha, modo, promedio_anterior_a)
-                VALUES (%s, %s, %s, %s)
+                INSERT INTO cargas_compra
+                       (cliente_id, fecha, modo, promedio_anterior_a, margen_porcentaje)
+                VALUES (%s, %s, %s, %s, %s)
                 ON CONFLICT (cliente_id, fecha) DO UPDATE
-                   SET modo = EXCLUDED.modo, actualizado_en = now()
+                   SET modo = EXCLUDED.modo,
+                       margen_porcentaje = EXCLUDED.margen_porcentaje,
+                       actualizado_en = now()
                 RETURNING id
                 """,
-                (cliente_id, fecha, modo, promedio_anterior_a),
+                (cliente_id, fecha, modo, promedio_anterior_a, margen),
             )
             carga_id = cursor.fetchone()[0]
             conexion.commit()
@@ -9907,7 +9917,7 @@ def listar_cargas_desde(desde, excepto_listado_id: int | None = None) -> list[di
             cursor.execute(
                 """
                 SELECT c.id, c.cliente_id, cl.nombre AS cliente_nombre, c.fecha,
-                       c.modo, c.promedio_anterior_a,
+                       c.modo, c.promedio_anterior_a, c.margen_porcentaje,
                        (SELECT count(*) FROM cargas_compra_renglones r
                          WHERE r.carga_id = c.id) AS renglones,
                        (SELECT count(*) FROM listados_compra_cargas lc
