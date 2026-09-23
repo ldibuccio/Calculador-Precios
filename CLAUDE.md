@@ -10640,11 +10640,13 @@ desplegado, porque hasta entonces `borrador_de_compra` todavía lee estas
 tablas"*), y no en este documento: el que lo abra dentro de seis meses va a
 leer el archivo.
 
-**Y `db/esquema_completo.sql` sigue teniendo las dos tablas viejas hasta que
-el drop corra.** El esquema del repo describe lo que una base nueva tiene que
-tener, y hasta ese día una base nueva necesita las dos — el código todavía las
-lee. Sacarlas antes es el corolario 60 al revés: el archivo adelantado rompe
-la base que todavía no existe.
+**Y `db/esquema_completo.sql` tuvo las dos tablas viejas hasta que el drop
+corrió.** El esquema del repo describe lo que una base nueva tiene que tener,
+y hasta ese día una base nueva necesitaba las dos — el código todavía las
+leía. Sacarlas antes es el corolario 60 al revés: el archivo adelantado rompe
+la base que todavía no existe. (El drop corrió el 23/09 en las dos bases,
+después del deploy del Paso 2, y el esquema las perdió en el mismo commit que
+anotó la corrida.)
 
 ## Corolario 95: un test que ancla en HOY no puede fallar el día que su fecha fija ES hoy
 
