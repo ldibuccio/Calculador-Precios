@@ -9678,6 +9678,10 @@ def test_el_ON_DELETE_de_las_FK_a_fichas_esta_DECIDIDO_una_por_una():
         "movimientos_stock",
         # NOT NULL: es el respaldo que hace posible deshacer el corte.
         "corte_respaldo_fichas_reprocesos",
+        # LA FOTO DEL STOCK al salir a comprar (23/09): lo que un listado dice
+        # que había. Nulearla convertiría esas cajas en ninguna ficha, y
+        # borrar una ficha no puede cambiar la historia de lo que se compró.
+        "listados_compra_foto_cajas",
     }
     # Ésta SÍ va en SET NULL, y es a propósito: un renglón viejo describe una
     # entrega que ya pasó y nadie la consulta hacia atrás POR FICHA.
