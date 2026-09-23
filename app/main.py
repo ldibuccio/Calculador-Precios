@@ -3608,7 +3608,8 @@ def _bulto_de_cada_articulo(cliente_id: int) -> dict:
 def _articulos_para_cargar(cliente_id: int,
                            guardado: dict | None = None,
                            propuesto: dict | None = None,
-                           margen: float = 0.0) -> list[dict]:
+                           margen: float = 0.0,
+                           por_bulto: dict | None = None) -> list[dict]:
     """El catálogo de compra con su unidad, lo ya cargado y lo que se propone.
 
     Una sola lectura de fichas para todos los artículos, no una por
@@ -3633,19 +3634,27 @@ def _articulos_para_cargar(cliente_id: int,
     crudo = propuesto or {}
     propuesto = {a: con_margen(total, margen) for a, total in crudo.items()}
     pide = lo_que_pide_la_carga(guardado, crudo, margen)
+    declarado = por_bulto or {}
 
     def en_bultos(magnitud, contenido):
         return None if magnitud is None or not contenido else float(magnitud) / contenido
 
     filas = []
     for a in articulos:
-        contenido = contenidos.get(a["id"])
+        # EL POR BULTO DE LA FILA: el que se declaró en esta carga, y si no se
+        # declaró ninguno, el de la ficha del cliente (dueño, 23/09: "cargar
+        # indistintamente kilos totales, bultos y kilos por bulto").
+        ficha = contenidos.get(a["id"])
+        contenido = declarado.get(a["id"]) or ficha
         total = pide.get(a["id"])
         filas.append({
             "articulo_id": a["id"],
             "nombre": a["nombre"],
             "unidad": unidades.get(a["id"]),
             "sufijo": SUFIJOS_FICHA_REPROCESO.get(unidades.get(a["id"]), ""),
+            # LA MISMA PALABRA QUE QUÉ COMPRAR HOY ("kg por bulto"): la carga y
+            # el listado nombran igual el mismo número.
+            "palabra": PALABRA_DE_LA_UNIDAD.get(unidades.get(a["id"]), ""),
             "total": total,
             "propuesto": propuesto.get(a["id"]),
             # EL NÚMERO GRANDE ES BULTOS, que es como piensa el que compra:
@@ -3654,6 +3663,8 @@ def _articulos_para_cargar(cliente_id: int,
             # el grande pasa a ser la magnitud — la pantalla lo dice en vez
             # de inventar una división.
             "contenido": contenido,
+            "contenido_ficha": ficha,
+            "por_bulto_declarado": a["id"] in declarado,
             "bultos": en_bultos(total, contenido),
             "bultos_propuesto": en_bultos(propuesto.get(a["id"]), contenido),
             # LA BASE SIN MARGEN, para que mover el porcentaje rehaga la
@@ -3714,7 +3725,8 @@ def _contexto_de_carga(carga: dict, aviso: str | None = None) -> dict:
         "cliente_nombre": cliente["nombre"] if cliente else "",
         "fecha_mostrar": carga["fecha"].strftime("%d/%m/%Y"),
         "articulos": _articulos_para_cargar(
-            carga["cliente_id"], carga["renglones"], propuesto, carga["margen"]),
+            carga["cliente_id"], carga["renglones"], propuesto, carga["margen"],
+            carga.get("por_bulto")),
         "hay_propuesta": bool(propuesto),
         "aviso": aviso,
     }
@@ -3841,7 +3853,7 @@ async def guardar_carga_de_compra_ruta(request: Request, cliente_id: int, fecha:
             comoquedo = "Del+promedio" if modo == "automatico" else "A+mano"
             return RedirectResponse(f"{volver}?aviso=Pasada+a+{comoquedo}", status_code=303)
 
-        renglones = _renglones_del_formulario(formulario, cliente_id)
+        renglones, por_bulto = _renglones_del_formulario(formulario, cliente_id)
         # EN "A MANO" EL CAMPO DEL MARGEN NO SE DIBUJA —no mueve nada: el
         # margen va solo sobre lo propuesto— así que no llega. Leerlo igual
         # con `margen_valido` lo pisaría con el sugerido, y la carga volvería
@@ -3852,56 +3864,72 @@ async def guardar_carga_de_compra_ruta(request: Request, cliente_id: int, fecha:
             margen = antes["margen"] if antes else MARGEN_SUGERIDO
         carga_id = guardar_carga_de_compra(cliente_id, fecha_valor, modo, _hoy_argentina(),
                                            margen)
-        guardar_renglones_de_carga(carga_id, renglones)
+        guardar_renglones_de_carga(carga_id, renglones, por_bulto)
     except Exception:
         logger.exception("No se pudo guardar la carga de compra")
         return RedirectResponse(f"{volver}?aviso=No+se+pudo+guardar", status_code=303)
     return RedirectResponse("/compras/carga?aviso=Carga+guardada", status_code=303)
 
 
-def _renglones_del_formulario(formulario, cliente_id: int) -> dict:
-    """{articulo_id: total en la MAGNITUD} a partir de lo que se tipeó.
+def _renglones_del_formulario(formulario, cliente_id: int) -> tuple[dict, dict]:
+    """({articulo_id: total en la MAGNITUD}, {articulo_id: por bulto declarado}).
 
-    EL CAMPO SE LLAMA POR LO QUE ES: `bultos_` cuando la ficha del cliente
-    dice cuánto entra en uno, y `total_` cuando no hay con qué dividir. Un
-    solo nombre para los dos sería una columna del formulario con dos
-    unidades, y el server no tendría cómo saber cuál llegó.
+    TRES CAMPOS POR FILA Y UNO MANDA (dueño, 23/09): kilos en total, bultos y
+    kilos por bulto, relacionados en la pantalla. Se guarda el TOTAL, que es
+    lo que el listado suma, y el POR BULTO; los bultos salen de dividir.
 
-    Y EL CONTENIDO SALE DEL SERVER, no de un campo escondido: con el
-    contenido viajando en el formulario, un POST armado a mano cambiaría la
+      - `total_` manda si llegó con un número.
+      - Si no, `bultos_ × por bulto` — el por bulto tipeado, o el de la ficha.
+        Es el camino sin JavaScript, y el de un formulario viejo.
+      - Sin total y sin por bulto no hay nada que guardar: los bultos solos no
+        dicen cuántos kilos son.
+
+    EL POR BULTO SE GUARDA SOLO SI DIFIERE DEL DE LA FICHA. Igual al de la
+    ficha es "no lo toqué", y guardarlo lo dejaría fijo el día que la ficha
+    cambie; NULL es exactamente "proponé el de la ficha".
+
+    Y EL CONTENIDO DE LA FICHA SALE DEL SERVER, no de un campo escondido: con
+    él viajando en el formulario, un POST armado a mano cambiaría la
     conversión y el número guardado no sería el que la pantalla mostró.
 
     LO QUE QUEDÓ IGUAL A LA PROPUESTA NO SE GUARDA, y es lo que hace que los
     dos modos signifiquen algo distinto: un artículo sin fila guardada se
     vuelve a calcular al armar el listado —así un pedido que entre en el
     medio se ve— y uno corregido queda fijo. La comparación es entre los DOS
-    TEXTOS tal como la pantalla los dibujó, no entre floats: los dos salen
-    del mismo filtro, así que "igual" es exacto y no una tolerancia.
+    TEXTOS del total tal como la pantalla los dibujó, no entre floats. Cambiar
+    solo el por bulto SÍ cuenta como corrección.
     """
-    propuestos = {c[10:]: v for c, v in formulario.multi_items()
-                  if c.startswith("propuesto_") and c[10:].isdigit()}
+    campos = dict(formulario.multi_items())
     contenidos = _bulto_de_cada_articulo(cliente_id)
-    renglones = {}
-    for clave, valor in formulario.multi_items():
-        for prefijo, en_bultos in (("bultos_", True), ("total_", False)):
-            if not clave.startswith(prefijo):
+    articulos = set()
+    for clave in campos:
+        for prefijo in ("total_", "bultos_"):
+            if clave.startswith(prefijo) and clave[len(prefijo):].isdigit():
+                articulos.add(int(clave[len(prefijo):]))
+
+    renglones, por_bulto = {}, {}
+    for articulo in sorted(articulos):
+        ficha = contenidos.get(articulo)
+        tipeado = _numero_del_formulario(campos.get(f"por_bulto_{articulo}", ""))
+        declarado = tipeado if tipeado is not None and tipeado > 0 else None
+        contenido = declarado or ficha
+
+        total = _numero_del_formulario(campos.get(f"total_{articulo}", ""))
+        if total is None or total <= 0:
+            bultos = _numero_del_formulario(campos.get(f"bultos_{articulo}", ""))
+            if bultos is None or bultos <= 0 or not contenido:
                 continue
-            articulo = clave[len(prefijo):]
-            if not articulo.isdigit():
-                continue
-            numero = _numero_del_formulario(valor)
-            if numero is None or numero <= 0:
-                break
-            if str(valor).strip() == propuestos.get(articulo):
-                break
-            contenido = contenidos.get(int(articulo))
-            if en_bultos and not contenido:
-                # La pantalla no pudo haber dibujado este campo: sin
-                # contenido el campo se llama `total_`. Llegó por otro lado.
-                break
-            renglones[int(articulo)] = numero * contenido if en_bultos else numero
-            break
-    return renglones
+            total = bultos * contenido
+
+        cambio_el_bulto = declarado is not None and (ficha is None or abs(declarado - ficha) > 1e-9)
+        propuesto = campos.get(f"propuesto_{articulo}")
+        if (propuesto is not None and not cambio_el_bulto
+                and str(campos.get(f"total_{articulo}", "")).strip() == propuesto):
+            continue
+        renglones[articulo] = total
+        if cambio_el_bulto:
+            por_bulto[articulo] = declarado
+    return renglones, por_bulto
 
 
 # --------------------------------------------------------------------------

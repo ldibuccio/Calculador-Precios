@@ -148,8 +148,28 @@ arándano en cubetas de 1 no dice nada de si en el Mercado hay cajones de 1.
 **Sin ficha no hay bulto**, y el artículo se carga igual — en la magnitud, y
 la pantalla lo dice.
 
-El campo se llama por lo que es: **`bultos_<id>` o `total_<id>`**, y el
-contenido para convertir **sale del server**, nunca de un campo escondido.
+**Desde el 23/09 son TRES campos por fila, relacionados**: *"cargar
+indistintamente kilos totales, bultos y kilos por bulto, y que los tres queden
+relacionados"* (dueño). Se tipea cualquiera y los otros se ajustan en la
+pantalla: total → bultos; bultos → total; el por bulto deja los bultos y rehace
+el total. Cada campo lleva su rótulo con la unidad ("Kg en total", "Kg por
+bulto"), y abajo una línea dice de dónde sale el por bulto: *de la ficha de
+Día*, *lo pusiste vos (la ficha dice 10)*, o *sin ficha: poné cuánto trae*.
+
+- **Se guardan dos: el total y el por bulto** (`cargas_compra_renglones.
+  contenido_por_bulto`, migrada el 23/09). Los bultos salen de dividir.
+- **El total manda** al guardar. Sin total, `bultos × por bulto`, que es el
+  camino sin JavaScript.
+- **El por bulto se guarda SOLO si difiere del de la ficha.** Igual al de la
+  ficha es "no lo toqué", y guardarlo lo dejaría fijo el día que la ficha
+  cambie; NULL es "proponé el de la ficha".
+- **En "Del promedio", cambiar solo el por bulto es una corrección** y fija la
+  fila, igual que cambiar el total.
+- **La propuesta viaja en la magnitud** (`propuesto_<id>` es el total), no en
+  bultos como hasta el 23/09.
+
+El contenido de la ficha para convertir **sale del server**, nunca de un campo
+escondido.
 
 ### Subir archivo
 
