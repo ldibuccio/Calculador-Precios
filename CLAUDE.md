@@ -10434,6 +10434,17 @@ si dos modos dibujan el mismo marcado, uno de los dos no está cableado. Eso se
 ve **mirando la pantalla** (CLAUDE.md pt 6), no corriendo la suite — las dos
 pantallas contestan 200 y el humo las cuenta a las dos como abiertas.
 
+**Y MIRAR LA PANTALLA TAMPOCO ALCANZÓ, porque se miró el MARCADO (23/09).**
+Arreglado lo de arriba, las dos modalidades siguieron mostrando el catálogo
+entero: las filas llevaban `hidden` y `.fila { display: flex }` le ganaba al
+`[hidden]` del navegador. El test que afirmaba *"A mano arranca vacía y los
+demás llegan escondidos"* leía el atributo fila por fila y pasaba. Es el
+corolario 32 dos semanas después de escribirlo, en una pantalla nueva: el
+atributo es la intención y el efecto lo decide el CSS. Lo destapó el dueño
+(*"decenas de filas vacías"*), y ahora lo cuidan tests que cuentan las filas
+con `getComputedStyle` en un navegador, con su canario (sin la regla caen los
+tres).
+
 ### El ANCLA no se mueve al editar; el MARGEN sí — y las dos mitades se ven igual leyendo el `SET`
 
 `guardar_carga_de_compra` inserta con `ON CONFLICT (cliente_id, fecha) DO

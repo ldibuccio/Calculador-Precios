@@ -25,6 +25,13 @@
             margin-bottom: 0.5rem; }
   .fila { display: flex; align-items: center; gap: 0.5rem; padding: 0.35rem 0;
           border-bottom: 1px solid #eee; }
+  /* SIN ESTO NO SE ESCONDE NINGUNA: `display: flex` le gana al
+     `[hidden] { display: none }` del navegador, que viene sin `!important`.
+     Estuvo así desde que la pantalla existe —las dos modalidades mostraban el
+     catálogo entero con los campos vacíos y el buscador no tenía nada que
+     traer— con el atributo bien puesto en cada fila (corolario 32: el
+     atributo es la intención, no el efecto). */
+  .fila[hidden] { display: none; }
   /* El nombre no lo controlamos: uno sin espacios tiene que partir en vez de
      arrastrar la pantalla de costado. */
   .fila span { flex: 1 1 auto; min-width: 0; overflow-wrap: anywhere; font-size: 0.95rem; }

@@ -3625,7 +3625,12 @@ def _articulos_para_cargar(cliente_id: int,
             # LO QUE DIBUJA LA FILA, y por eso se decide acá y no en tres
             # `{% if %}` de la plantilla: a mano se arranca vacío y se agrega
             # de a uno; del promedio se ve lo que propone.
-            "cargado": a["id"] in guardado or a["id"] in propuesto,
+            #
+            # Y UNA PROPUESTA EN CERO NO SE MUESTRA (dueño, 23/09: "no me
+            # muestres los artículos en cero"). Un renglón corregido a cero
+            # en los 6 pedidos suma cero, y como fila es una línea vacía más
+            # entre las que importan. Si hace falta, se agrega con el buscador.
+            "cargado": a["id"] in guardado or bool(propuesto.get(a["id"])),
         })
     return filas
 
