@@ -3232,7 +3232,8 @@ def _filas_de_que_comprar(
         # escrita dos veces, "A comprar" y "Falta" podrían restar distinto y
         # la diferencia entre las dos no sería lo que se compró (dueño, 23/09:
         # "a comprar hoy sale de restarle el stock a lo que piden").
-        a_comprar = cajones_que_faltan(falta_por_comprar(pide, de_partida, 0.0), kilaje)
+        a_comprar_magnitud = falta_por_comprar(pide, de_partida, 0.0)
+        a_comprar = cajones_que_faltan(a_comprar_magnitud, kilaje)
         # LO QUE YA TENGO, sumado acá y no en el navegador: es la única parte
         # de la cuenta que necesita saber de fichas y de lotes, y el JS la
         # recibe hecha para poder recalcular al mover el kilaje.
@@ -3257,6 +3258,12 @@ def _filas_de_que_comprar(
                 "falta": falta,
                 "cajones": cajones_que_faltan(falta, kilaje),
                 "a_comprar": a_comprar,
+                # EN LA MAGNITUD, para que "no hace falta nada" se diga OK aunque
+                # no haya kilaje: cero no se divide por nada. Sin esto la
+                # pantalla decía "poné el por bulto" en A comprar y OK en Falta
+                # sobre la misma fila, y el JS —que ya miraba el cero— la daba
+                # vuelta al primer tecleo.
+                "a_comprar_magnitud": a_comprar_magnitud,
                 # EN BULTOS DEL MERCADO, para leer la fila de izquierda a
                 # derecha: "piden 500 kg, de a 20, son 25 bultos". Con un
                 # decimal y SIN redondear para arriba: son lo que piden y lo
