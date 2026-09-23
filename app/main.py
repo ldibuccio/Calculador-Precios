@@ -3563,7 +3563,34 @@ def _promedio_por_articulo(cliente_id: int, anterior_a) -> dict:
     return propuesto
 
 
-def _articulos_para_cargar(guardado: dict | None = None,
+def _bulto_de_cada_articulo(cliente_id: int) -> dict:
+    """{articulo_id: contenido_caja} — cuánto entra en UN bulto de ese cliente.
+
+    EL BULTO ES EL DEL CLIENTE, no el cajón del Mercado. Si Día pide el
+    arándano en cubetas de 1 kilo, 370 kilos son 370 bultos; si la berenjena
+    va en cajas de 4, 127 kilos son 32. Es `fichas_logistica.contenido_caja`,
+    o sea lo mismo por lo que el promedio multiplica los bultos del pedido
+    para llegar a la magnitud — acá se usa para volver.
+
+    NO CONFUNDIR CON `listados_compra_kilaje`, que es el kilaje DE COMPRA del
+    Mercado y vive en el Paso 2: que Día lo pida de 15 no significa que en el
+    Mercado haya de 15. Son dos números distintos y los dos son "cuánto trae
+    un bulto"; lo que los separa es de quién es el bulto.
+
+    Sin ficha para ese artículo no hay bulto que decir, y el artículo se
+    carga igual — la carga va contra el catálogo de compra, no contra las
+    fichas. Ahí el número queda en la magnitud y la pantalla lo dice.
+    """
+    del_cliente = _primera_ficha_por_cliente_y_articulo([cliente_id]).get(cliente_id, {})
+    return {
+        articulo_id: float(ficha["contenido_caja"])
+        for articulo_id, ficha in del_cliente.items()
+        if ficha.get("contenido_caja")
+    }
+
+
+def _articulos_para_cargar(cliente_id: int,
+                           guardado: dict | None = None,
                            propuesto: dict | None = None) -> list[dict]:
     """El catálogo de compra con su unidad, lo ya cargado y lo que se propone.
 
@@ -3580,23 +3607,38 @@ def _articulos_para_cargar(guardado: dict | None = None,
     """
     articulos = listar_articulos()
     unidades = _unidad_de_cada_articulo(articulos, listar_fichas_de_todos_los_clientes())
+    contenidos = _bulto_de_cada_articulo(cliente_id)
     guardado = guardado or {}
     propuesto = propuesto or {}
-    return [
-        {
+
+    def en_bultos(magnitud, contenido):
+        return None if magnitud is None or not contenido else float(magnitud) / contenido
+
+    filas = []
+    for a in articulos:
+        contenido = contenidos.get(a["id"])
+        total = guardado.get(a["id"], propuesto.get(a["id"]))
+        filas.append({
             "articulo_id": a["id"],
             "nombre": a["nombre"],
             "unidad": unidades.get(a["id"]),
             "sufijo": SUFIJOS_FICHA_REPROCESO.get(unidades.get(a["id"]), ""),
-            "total": guardado.get(a["id"], propuesto.get(a["id"])),
+            "total": total,
             "propuesto": propuesto.get(a["id"]),
+            # EL NÚMERO GRANDE ES BULTOS, que es como piensa el que compra:
+            # 370 kilos de arándano no le dicen nada y 370 cubetas sí. La
+            # magnitud viaja al lado y chica. Sin contenido no hay bultos y
+            # el grande pasa a ser la magnitud — la pantalla lo dice en vez
+            # de inventar una división.
+            "contenido": contenido,
+            "bultos": en_bultos(total, contenido),
+            "bultos_propuesto": en_bultos(propuesto.get(a["id"]), contenido),
             # LO QUE DIBUJA LA FILA, y por eso se decide acá y no en tres
             # `{% if %}` de la plantilla: a mano se arranca vacío y se agrega
             # de a uno; del promedio se ve lo que propone.
             "cargado": a["id"] in guardado or a["id"] in propuesto,
-        }
-        for a in articulos
-    ]
+        })
+    return filas
 
 
 def _fecha_de_carga(texto: str | None):
@@ -3641,7 +3683,7 @@ def _contexto_de_carga(carga: dict, aviso: str | None = None) -> dict:
         "carga": carga,
         "cliente_nombre": cliente["nombre"] if cliente else "",
         "fecha_mostrar": carga["fecha"].strftime("%d/%m/%Y"),
-        "articulos": _articulos_para_cargar(carga["renglones"], propuesto),
+        "articulos": _articulos_para_cargar(carga["cliente_id"], carga["renglones"], propuesto),
         "hay_propuesta": bool(propuesto),
         "aviso": aviso,
     }
@@ -3733,49 +3775,88 @@ def ver_carga_de_compra(request: Request, cliente_id: int, fecha: str,
 
 @app.post("/compras/carga/{cliente_id}/{fecha}")
 async def guardar_carga_de_compra_ruta(request: Request, cliente_id: int, fecha: str):
-    """Guarda el modo y, si es a mano, los totales. Siempre redirige.
+    """Guarda la carga, o cambia el modo. Siempre redirige, y NUNCA al mismo lugar.
 
-    EL MODO Y LOS RENGLONES SE GUARDAN POR SEPARADO a propósito: pasar un
-    rato a automático no puede borrar lo que se tipeó o se leyó de un
-    archivo. Con el archivo adentro eso dejó de ser barato — re-tipear
-    molesta, releer un archivo cuesta una lectura con IA y otra revisión.
+    DOS SALIDAS Y DOS DESTINOS, y es lo que arregla el "apreto Guardar y no
+    pasa nada" del 23/09. Guardaba bien; lo que no pasaba es que se viera: el
+    aviso es una tarjeta ARRIBA DE TODO y el botón está abajo, así que en una
+    carga larga la pantalla vuelve a dibujarse igual y el cartel queda fuera
+    de la vista. Un aviso que hay que ir a buscar no es un aviso.
+
+      - GUARDAR vuelve a LA LISTA, con el aviso. Otra pantalla es la única
+        señal que no se puede perder de vista.
+      - CAMBIAR DE MODO vuelve a la MISMA carga, para ver el otro modo.
+
+    Y CAMBIAR DE MODO NO TOCA LOS RENGLONES, que no es prolijidad: los campos
+    que llegan en el formulario son los que la pantalla dibujó para el modo
+    VIEJO. Pasando de a mano a del promedio, esos totales no traen su
+    `propuesto_` al lado, así que se leerían como correcciones y quedarían
+    todos fijos — el promedio no volvería a proponer nada nunca.
     """
     formulario = await request.form()
     fecha_valor = _fecha_de_carga(fecha)
     modo = "manual" if formulario.get("modo") == "manual" else "automatico"
     volver = f"/compras/carga/{cliente_id}/{fecha_valor.isoformat()}"
 
-    # LO QUE QUEDÓ IGUAL A LA PROPUESTA NO SE GUARDA, y es lo que hace que
-    # los dos modos signifiquen algo distinto: un artículo sin fila guardada
-    # se vuelve a calcular al armar el listado —así un pedido que entre en el
-    # medio se ve— y uno corregido queda fijo. La comparación es entre los
-    # DOS TEXTOS tal como la pantalla los dibujó, no entre floats: los dos
-    # salen del mismo filtro, así que "igual" es exacto y no una tolerancia.
-    propuestos = {c[10:]: v for c, v in formulario.multi_items()
-                  if c.startswith("propuesto_") and c[10:].isdigit()}
-    renglones = {}
-    for clave, valor in formulario.multi_items():
-        if not clave.startswith("total_") or not clave[6:].isdigit():
-            continue
-        articulo = clave[6:]
-        numero = _numero_del_formulario(valor)
-        if numero is None or numero <= 0:
-            continue
-        if str(valor).strip() == propuestos.get(articulo):
-            continue
-        renglones[int(articulo)] = numero
-
     try:
+        antes = carga_de_compra(cliente_id, fecha_valor)
+        if antes is not None and antes["modo"] != modo:
+            guardar_carga_de_compra(cliente_id, fecha_valor, modo, _hoy_argentina())
+            comoquedo = "Del+promedio" if modo == "automatico" else "A+mano"
+            return RedirectResponse(f"{volver}?aviso=Pasada+a+{comoquedo}", status_code=303)
+
+        renglones = _renglones_del_formulario(formulario, cliente_id)
         carga_id = guardar_carga_de_compra(cliente_id, fecha_valor, modo, _hoy_argentina())
         guardar_renglones_de_carga(carga_id, renglones)
     except Exception:
         logger.exception("No se pudo guardar la carga de compra")
         return RedirectResponse(f"{volver}?aviso=No+se+pudo+guardar", status_code=303)
-    # VUELVE A LA MISMA CARGA y no a la lista: el modo se cambia acá, y
-    # mandarlo a la lista después de pasar a "Del promedio" lo dejaría sin
-    # ver nunca lo que el promedio propone. La lista está a un toque en la
-    # barra.
-    return RedirectResponse(f"{volver}?aviso=Carga+guardada", status_code=303)
+    return RedirectResponse("/compras/carga?aviso=Carga+guardada", status_code=303)
+
+
+def _renglones_del_formulario(formulario, cliente_id: int) -> dict:
+    """{articulo_id: total en la MAGNITUD} a partir de lo que se tipeó.
+
+    EL CAMPO SE LLAMA POR LO QUE ES: `bultos_` cuando la ficha del cliente
+    dice cuánto entra en uno, y `total_` cuando no hay con qué dividir. Un
+    solo nombre para los dos sería una columna del formulario con dos
+    unidades, y el server no tendría cómo saber cuál llegó.
+
+    Y EL CONTENIDO SALE DEL SERVER, no de un campo escondido: con el
+    contenido viajando en el formulario, un POST armado a mano cambiaría la
+    conversión y el número guardado no sería el que la pantalla mostró.
+
+    LO QUE QUEDÓ IGUAL A LA PROPUESTA NO SE GUARDA, y es lo que hace que los
+    dos modos signifiquen algo distinto: un artículo sin fila guardada se
+    vuelve a calcular al armar el listado —así un pedido que entre en el
+    medio se ve— y uno corregido queda fijo. La comparación es entre los DOS
+    TEXTOS tal como la pantalla los dibujó, no entre floats: los dos salen
+    del mismo filtro, así que "igual" es exacto y no una tolerancia.
+    """
+    propuestos = {c[10:]: v for c, v in formulario.multi_items()
+                  if c.startswith("propuesto_") and c[10:].isdigit()}
+    contenidos = _bulto_de_cada_articulo(cliente_id)
+    renglones = {}
+    for clave, valor in formulario.multi_items():
+        for prefijo, en_bultos in (("bultos_", True), ("total_", False)):
+            if not clave.startswith(prefijo):
+                continue
+            articulo = clave[len(prefijo):]
+            if not articulo.isdigit():
+                continue
+            numero = _numero_del_formulario(valor)
+            if numero is None or numero <= 0:
+                break
+            if str(valor).strip() == propuestos.get(articulo):
+                break
+            contenido = contenidos.get(int(articulo))
+            if en_bultos and not contenido:
+                # La pantalla no pudo haber dibujado este campo: sin
+                # contenido el campo se llama `total_`. Llegó por otro lado.
+                break
+            renglones[int(articulo)] = numero * contenido if en_bultos else numero
+            break
+    return renglones
 
 
 @app.post("/compras/carga/{cliente_id}/{fecha}/borrar")

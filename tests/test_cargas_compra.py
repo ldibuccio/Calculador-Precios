@@ -296,6 +296,11 @@ _ARTICULOS = [
      "merma_porcentaje": 0, "unidad_compra": "unidad", "contenido_referencia": None},
     {"id": 9, "nombre": "EJEMPLO Sin magnitud", "unidad_conteo": "unidad", "grupo": None,
      "merma_porcentaje": 0, "unidad_compra": "unidad", "contenido_referencia": None},
+    # EL RIVAL DE LOS BULTOS: mismo tipo de magnitud que el 7, pero el cliente
+    # tiene ficha con contenido_caja. Sin él, "el número grande es bultos" no
+    # se puede distinguir de "el número grande es la magnitud".
+    {"id": 10, "nombre": "EJEMPLO Arándano", "unidad_conteo": None, "grupo": "frutas",
+     "merma_porcentaje": 0, "unidad_compra": "kilo", "contenido_referencia": 4},
 ]
 # El de magnitud imposible es el RIVAL: una ficha en 'cubeta' de un artículo
 # cuyo conteo es 'unidad'. Sin él, "la pantalla dibuja un campo por artículo"
@@ -304,6 +309,15 @@ _FICHAS = [
     {"articulo_id": 7, "unidad_venta": "kilo", "unidad_conteo": None},
     {"articulo_id": 8, "unidad_venta": "unidad", "unidad_conteo": "unidad"},
     {"articulo_id": 9, "unidad_venta": "cubeta", "unidad_conteo": "unidad"},
+    {"articulo_id": 10, "unidad_venta": "kilo", "unidad_conteo": None},
+]
+# LAS FICHAS DE ESTE CLIENTE, que son las que dicen cuánto entra en un bulto.
+# Solo el 10 la tiene: el 7 se carga en su magnitud porque este cliente no
+# tiene ficha suya, y ése es el par que hace legible la distinción.
+_FICHAS_DEL_CLIENTE = [
+    {"id": 40, "articulo_id": 10, "cliente_id": 1, "articulo_nombre": "EJEMPLO Arándano",
+     "unidad_venta": "kilo", "unidad_conteo": None, "contenido_caja": 10,
+     "nombre_cliente": None, "envase_id": None},
 ]
 
 
@@ -317,6 +331,9 @@ _RENGLONES_DE_PEDIDO = [
     # igual con la guarda sacada.
     {"cliente_id": 1, "articulo_id": 8, "bultos": 60, "contenido_caja": None,
      "unidad_venta": "unidad", "unidad_conteo": "unidad", "pedidos_del_cliente": 3},
+    # 30 bultos de 10 sobre 3 pedidos = 100 kilos por día = 10 bultos.
+    {"cliente_id": 1, "articulo_id": 10, "bultos": 30, "contenido_caja": 10,
+     "unidad_venta": "kilo", "unidad_conteo": None, "pedidos_del_cliente": 3},
 ]
 
 
@@ -326,6 +343,11 @@ def _con_catalogo(**extra):
         "app.main.listar_articulos": _ARTICULOS,
         "app.main.listar_fichas_de_todos_los_clientes": _FICHAS,
         "app.main.renglones_de_los_ultimos_pedidos": [],
+        "app.main.listar_fichas_por_cliente": _FICHAS_DEL_CLIENTE,
+        # Por default NO hay carga previa: el POST la lee para saber si lo
+        # que llegó es un cambio de modo, y sin este parche se iría a la base
+        # de verdad. El test que ejercita el cambio de modo la pone.
+        "app.main.carga_de_compra": None,
     }
     parches.update(extra)
     contextos = [patch.dict(os.environ, {"CLAVE_COMPRAS": "compras-secreta"})]
@@ -592,7 +614,7 @@ def test_A_MANO_arranca_VACIA_y_los_demas_llegan_ESCONDIDOS():
     # asserts de abajo pasan sobre nada (corolario 45).
     assert len(filas) == len(_ARTICULOS), f"se encontraron {len(filas)} de {len(_ARTICULOS)} filas"
     escondidas = {a for a, resto in filas if "hidden" in resto}
-    assert escondidas == {"8", "9"}, "la carga a mano no arrancó con solo lo cargado"
+    assert escondidas == {"8", "9", "10"}, "la carga a mano no arrancó con solo lo cargado"
 
 
 def test_el_buscador_AGREGA_en_vez_de_filtrar_una_lista_entera():
@@ -628,3 +650,97 @@ def test_lo_que_NO_se_corrigio_no_lleva_el_cartel():
     })
     respuesta, _ = _entrar(ctx, "get", f"/compras/carga/1/{EL_27.isoformat()}")
     assert "prom. " not in respuesta.text.split("</style>")[-1]
+
+
+# --- BULTOS, que es como piensa el que compra --------------------------------
+
+
+def test_el_numero_GRANDE_es_BULTOS_cuando_la_ficha_dice_cuanto_entra():
+    """370 kilos de arándano no le dicen nada al comprador; 370 cubetas sí.
+    El bulto sale de `fichas_logistica.contenido_caja` DEL CLIENTE — no del
+    kilaje del Mercado, que es otro número y vive en el Paso 2."""
+    ctx = _con_catalogo(**{
+        "app.main.carga_de_compra": _carga(modo="automatico"),
+        "app.main.renglones_de_los_ultimos_pedidos": _RENGLONES_DE_PEDIDO,
+    })
+    respuesta, _ = _entrar(ctx, "get", f"/compras/carga/1/{EL_27.isoformat()}")
+    marcado = respuesta.text.split("</style>")[-1]
+    # 100 kilos por día sobre un bulto de 10 = 10 bultos.
+    assert 'name="bultos_10"' in marcado and 'value="10"' in marcado
+    # CORRIDO: el atributo cae en la línea siguiente del template, así que
+    # el par name/value no es contiguo en el texto.
+    corrido = " ".join(marcado.split())
+    assert 'name="propuesto_10" value="10"' in corrido, "la propuesta viaja en BULTOS"
+    # Y la magnitud al lado, chica.
+    assert "100 kg" in marcado, "no mostró los kilos al lado"
+
+
+def test_SIN_ficha_del_cliente_el_campo_sigue_siendo_LA_MAGNITUD():
+    """El rival. La carga va contra el catálogo de compra, así que un
+    artículo que este cliente no tiene en ficha se carga igual — y ahí no hay
+    con qué dividir. El campo se llama por lo que es."""
+    ctx = _con_catalogo(**{
+        "app.main.carga_de_compra": _carga(modo="automatico"),
+        "app.main.renglones_de_los_ultimos_pedidos": _RENGLONES_DE_PEDIDO,
+    })
+    respuesta, _ = _entrar(ctx, "get", f"/compras/carga/1/{EL_27.isoformat()}")
+    marcado = respuesta.text.split("</style>")[-1]
+    assert 'name="total_7"' in marcado and 'name="bultos_7"' not in marcado
+
+
+def test_los_BULTOS_tipeados_se_guardan_en_la_MAGNITUD():
+    """La columna guarda UNA unidad. Lo que se tipea son bultos y lo que se
+    guarda es la magnitud, y la conversión la hace el SERVER con la ficha —
+    no un campo escondido, que un POST armado a mano podría cambiar."""
+    ctx = _con_catalogo()
+    ctx.append(patch("app.main.guardar_carga_de_compra", return_value=3))
+    ctx.append(patch("app.main.guardar_renglones_de_carga"))
+    _, abiertos = _entrar(ctx, "post", f"/compras/carga/1/{EL_27.isoformat()}",
+                          data={"modo": "manual", "bultos_10": "12"})
+    assert abiertos["guardar_renglones_de_carga"].call_args.args[1] == {10: 120.0}
+
+
+def test_un_bultos_de_un_articulo_SIN_contenido_no_entra():
+    """La pantalla no pudo haber dibujado ese campo: sin contenido el campo
+    se llama `total_`. Si llega igual, vino por otro lado y no se guarda con
+    una conversión inventada."""
+    ctx = _con_catalogo()
+    ctx.append(patch("app.main.guardar_carga_de_compra", return_value=3))
+    ctx.append(patch("app.main.guardar_renglones_de_carga"))
+    _, abiertos = _entrar(ctx, "post", f"/compras/carga/1/{EL_27.isoformat()}",
+                          data={"modo": "manual", "bultos_7": "12", "total_10": "99"})
+    assert abiertos["guardar_renglones_de_carga"].call_args.args[1] == {10: 99.0}
+
+
+# --- "Apreto Guardar y no pasa nada" -----------------------------------------
+
+
+def test_GUARDAR_lleva_a_LA_LISTA_y_no_deja_la_pantalla_igual():
+    """Guardaba bien; lo que no pasaba es que se viera. El aviso es una
+    tarjeta ARRIBA y el botón está abajo, así que en una carga larga la
+    pantalla vuelve a dibujarse igual y el cartel queda fuera de la vista.
+    Otra pantalla es la única señal que no se puede perder de vista."""
+    ctx = _con_catalogo()
+    ctx.append(patch("app.main.guardar_carga_de_compra", return_value=3))
+    ctx.append(patch("app.main.guardar_renglones_de_carga"))
+    respuesta, _ = _entrar(ctx, "post", f"/compras/carga/1/{EL_27.isoformat()}",
+                           data={"modo": "manual", "total_7": "500"})
+    assert respuesta.status_code == 303
+    assert respuesta.headers["location"] == "/compras/carga?aviso=Carga+guardada"
+
+
+def test_CAMBIAR_DE_MODO_no_toca_los_renglones_y_vuelve_a_la_carga():
+    """Los campos que llegan son los que la pantalla dibujó para el modo
+    VIEJO: pasando de a mano a del promedio no traen su `propuesto_` al lado,
+    así que se leerían como correcciones y quedarían TODOS fijos — el
+    promedio no volvería a proponer nada nunca."""
+    ctx = _con_catalogo(**{"app.main.carga_de_compra": _carga(modo="manual")})
+    ctx.append(patch("app.main.guardar_carga_de_compra", return_value=3))
+    ctx.append(patch("app.main.guardar_renglones_de_carga"))
+    respuesta, abiertos = _entrar(
+        ctx, "post", f"/compras/carga/1/{EL_27.isoformat()}",
+        data={"modo": "automatico", "total_7": "500", "bultos_10": "12"})
+    assert respuesta.status_code == 303
+    assert respuesta.headers["location"].endswith("?aviso=Pasada+a+Del+promedio")
+    abiertos["guardar_renglones_de_carga"].assert_not_called()
+    assert abiertos["guardar_carga_de_compra"].call_args.args[2] == "automatico"

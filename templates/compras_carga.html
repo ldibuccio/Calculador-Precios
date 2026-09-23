@@ -35,6 +35,9 @@
                       background: #7c3aed; border: 0; border-radius: 8px; padding: 0 0.9rem;
                       overflow-wrap: anywhere; }
   .propuesta { font-size: 0.78rem; color: #3730a3; font-weight: 800; }
+  /* La magnitud va AL LADO y chica: el número grande es bultos, que es como
+     piensa el que compra. 370 kilos de arándano no le dicen nada. */
+  .en-magnitud { font-size: 0.78rem; color: #666; white-space: nowrap; }
   .guardar { min-height: 52px; width: 100%; font-size: 1.1rem; font-weight: 800; color: #fff;
              background: #16a34a; border: 0; border-radius: 10px; margin-bottom: 0.75rem; }
   .borrar { min-height: 44px; width: 100%; font-size: 0.95rem; font-weight: 700;
@@ -89,24 +92,38 @@
              {% if not a.cargado %}hidden{% endif %}>
         <span>{{ a.nombre }}</span>
         {% if a.unidad %}
-          <span class="sufijo">{{ a.sufijo }}</span>
-          {% if a.propuesto is not none %}
+          {# EL CAMPO SE LLAMA POR LO QUE ES: bultos_ cuando la ficha del
+             cliente dice cuánto entra en uno, total_ cuando no hay con qué
+             dividir. Un solo nombre serían dos unidades en el mismo campo y
+             el server no tendría cómo saber cuál llegó. #}
+          {% set en_bultos = a.contenido is not none %}
+          {% set valor = a.bultos if en_bultos else a.total %}
+          {% set propuesto = a.bultos_propuesto if en_bultos else a.propuesto %}
+          {% if propuesto is not none %}
             {# Viaja el número TAL COMO SE DIBUJA, no el float: al guardar se
                comparan los dos textos y "igual" es exacto, sin tolerancia. #}
             <input type="hidden" name="propuesto_{{ a.articulo_id }}"
-                   value="{{ a.propuesto|sin_decimales }}">
+                   value="{{ propuesto|sin_decimales }}">
           {% endif %}
           {# UNA CORRECCION SE VE, y dice contra qué: al reabrir la carga el
              campo muestra lo corregido, y sin esto no hay forma de saber que
              el promedio se movió desde que se corrigió. #}
-          {% if a.propuesto is not none and a.total is not none
-                and a.total|sin_decimales != a.propuesto|sin_decimales %}
-            <span class="propuesta">prom. {{ a.propuesto|sin_decimales }}</span>
+          {% if propuesto is not none and valor is not none
+                and valor|sin_decimales != propuesto|sin_decimales %}
+            <span class="propuesta">prom. {{ propuesto|sin_decimales }}</span>
           {% endif %}
-          <input name="total_{{ a.articulo_id }}" type="number" inputmode="decimal"
-                 step="0.1" min="0"
-                 value="{{ a.total|sin_decimales if a.total is not none else '' }}"
-                 aria-label="Total de {{ a.nombre }} en {{ a.unidad }}">
+          <input name="{{ 'bultos_' if en_bultos else 'total_' }}{{ a.articulo_id }}"
+                 type="number" inputmode="decimal" step="0.1" min="0"
+                 value="{{ valor|sin_decimales if valor is not none else '' }}"
+                 data-contenido="{{ a.contenido if en_bultos else '' }}"
+                 aria-label="{{ 'Bultos' if en_bultos else 'Total' }} de {{ a.nombre }}">
+          {% if en_bultos %}
+            <span class="sufijo">blt</span>
+            {# La magnitud, calculada y al lado: el JS la rehace al tipear. #}
+            <span class="en-magnitud" data-magnitud-de="{{ a.articulo_id }}">{% if valor is not none %}{{ (valor * a.contenido)|sin_decimales }} {{ a.sufijo }}{% endif %}</span>
+          {% else %}
+            <span class="sufijo">{{ a.sufijo }}</span>
+          {% endif %}
         {% else %}
           {# Sin magnitud no hay campo: cualquier número que se tipee acá va a
              estar en una unidad y sumarse en otra. Es lo que la alerta
@@ -159,6 +176,21 @@
     });
   }
   caja.addEventListener("input", pintar);
+
+  // LA MAGNITUD SE REHACE AL TIPEAR, sin ir al server: el número grande es
+  // bultos y el de al lado tiene que seguirlo, o los dos dicen cosas
+  // distintas mientras se carga.
+  document.addEventListener("input", function (evento) {
+    var campo = evento.target;
+    var contenido = parseFloat(campo.dataset.contenido || "");
+    if (!campo.name || campo.name.indexOf("bultos_") !== 0 || !contenido) return;
+    var espejo = document.querySelector(
+      '[data-magnitud-de="' + campo.name.slice(7) + '"]');
+    if (!espejo) return;
+    var bultos = parseFloat(campo.value);
+    var sufijo = espejo.textContent.replace(/[\d.,\s]/g, "");
+    espejo.textContent = isNaN(bultos) ? "" : Math.round(bultos * contenido) + " " + sufijo;
+  });
 })();
 </script>
 {% include "_pie_version.html" %}
