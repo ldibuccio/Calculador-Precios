@@ -57,6 +57,7 @@ from app.costeo import (
 from core.envases import (
     ORIGENES_DE_COLEGA,
     envase_derivado_de_la_ficha,
+    envases_por_unidad_de_venta,
     cuenta_por_tipo_de_caja,
     hay_que_reponer,
 )
@@ -319,6 +320,7 @@ from app.db import (
     listar_precios_anteriores_por_cliente,
     listar_historial_de_precios_de_ficha,
     listar_precios_vigentes_por_cliente,
+    listar_costos_envases_vigentes,
     listar_vigencias_de_precios,
     listar_proveedores,
     listar_proveedores_para_abm,
@@ -421,6 +423,11 @@ from core.exportar_vacios import (
     generar_excel_stock_vacios,
     generar_pdf_movimientos_vacios,
     generar_pdf_stock_vacios,
+)
+from core.exportar_vacios_deposito import (
+    filas_del_stock as filas_del_stock_de_vacios,
+    generar_excel_stock_vacios_deposito,
+    generar_pdf_stock_vacios_deposito,
 )
 from core.casilla_pedidos import (
     CLAVE_CASILLA_ENV_VAR,
@@ -6275,6 +6282,57 @@ def ver_vacios_deposito(request: Request, aviso: str | None = None):
     mano es el conteo que arranca la cuenta y la devolución.
     """
     return _renderizar_vacios(request, aviso=aviso)
+
+
+# LAS TRES VAN ANTES DE `/vacios/{proveedor_id}`: esa ruta toma cualquier
+# segmento, así que declarada primero se comería "stock" y contestaría 422.
+def _stock_de_vacios_para_listar():
+    try:
+        return stock_de_vacios_deposito()
+    except Exception as error_db:
+        raise HTTPException(
+            status_code=500, detail=f"Error al conectar con la base de datos: {error_db}"
+        ) from error_db
+
+
+@app.get("/compras/vacios/stock")
+@app.get("/administracion/vacios/stock")
+def ver_stock_de_vacios_deposito(request: Request):
+    """La lista simple del 23/09: proveedor, tipo de cajón y cantidad.
+
+    Sale de la MISMA cuenta que el índice (`stock_de_vacios_deposito`), así
+    que no puede decir otro número. Uno por proveedor: el tipo es una columna
+    de `proveedores`, o sea que cada uno entrega en un solo tipo.
+    """
+    filas, sin_conteo = filas_del_stock_de_vacios(_stock_de_vacios_para_listar())
+    return templates.TemplateResponse(
+        request, "compras_vacios_stock.html",
+        {"filas": filas, "sin_conteo": sin_conteo,
+         "total": sum(int(f["stock"]) for f in filas),
+         "camino": _camino_de_cajas_y_vacios(request)},
+    )
+
+
+@app.get("/compras/vacios/stock/excel")
+@app.get("/administracion/vacios/stock/excel")
+def exportar_stock_de_vacios_excel():
+    hoy = _hoy_argentina()
+    return Response(
+        content=generar_excel_stock_vacios_deposito(hoy, _stock_de_vacios_para_listar()),
+        media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        headers={"Content-Disposition": f'attachment; filename="Vacios_Deposito_{hoy.isoformat()}.xlsx"'},
+    )
+
+
+@app.get("/compras/vacios/stock/pdf")
+@app.get("/administracion/vacios/stock/pdf")
+def exportar_stock_de_vacios_pdf():
+    hoy = _hoy_argentina()
+    return Response(
+        content=generar_pdf_stock_vacios_deposito(hoy, _stock_de_vacios_para_listar()),
+        media_type="application/pdf",
+        headers={"Content-Disposition": f'attachment; filename="Vacios_Deposito_{hoy.isoformat()}.pdf"'},
+    )
 
 
 @app.post("/compras/vacios/conteo")
@@ -15907,6 +15965,37 @@ def _analizar_ficha(fila: dict, tasas: dict, editado: str, valores: dict) -> dic
     return resultado
 
 
+# El costo de partida de un artículo SIN compra con precio en 15 días (23/09,
+# del dueño): "es una pantalla para jugar con los números". Un número redondo
+# y a la vista, que se pisa tipeando — no una estimación de nada.
+IMPORTE_CAJON_POR_DEFECTO = 1000.0
+
+
+def _fila_de_partida_sin_costo(ficha: dict, fila: dict | None, precio_vigente: float | None,
+                               costo_envase: float | None, kilos_bulto: float | None) -> dict:
+    """La fila que `_analizar_ficha` necesita cuando el listado no trae costo.
+
+    LO QUE SÍ SE SABE SE USA: el contenido del bulto de la última compra si
+    la hubo sin precio, y si no el de la FICHA; el precio vigente; y el
+    envase de la ficha con la misma regla del resto (`envases_por_unidad_de_
+    venta`, contra el bulto que está puesto), así una caja de Día no sale
+    gratis. Lo ÚNICO inventado es el importe, y la pantalla lo dice.
+    """
+    contenido = (fila or {}).get("contenido_por_cajon") or ficha.get("contenido_caja")
+    bulto = kilos_bulto if kilos_bulto is not None else _numero_o_none(contenido)
+    cajas = envases_por_unidad_de_venta(
+        float(ficha["contenido_caja"]) if ficha.get("contenido_caja") else None,
+        bool(ficha.get("envase_variable")), bulto,
+    )
+    return {
+        "importe_por_cajon": IMPORTE_CAJON_POR_DEFECTO,
+        "contenido_por_cajon": contenido,
+        "precio_vigente": precio_vigente,
+        "costo_envase_unidad_venta": (costo_envase or 0.0) * cajas,
+        "fecha_ultima_compra": (fila or {}).get("fecha_ultima_compra"),
+    }
+
+
 def _etiqueta_de_ficha(ficha: dict) -> str:
     """Cómo se lee una ficha en el selector, ADENTRO de un cliente ya elegido.
 
@@ -16022,13 +16111,23 @@ def ver_analizar_articulo(
         raise HTTPException(status_code=500, detail=f"Error al conectar con la base de datos: {error_db}") from error_db
 
     fila = next((f for f in listado if f["ficha_id"] == ficha_valor), None)
-    if fila is None or fila["costo_actual"] is None:
-        # El listado deja afuera lo que no se compró en 15 días, y sin costo
-        # no hay nada que analizar. Se dice cuál de las dos cosas es.
-        contexto["sin_datos"] = ("No hay compras con precio de este artículo en los últimos 15 días, "
-                                 "así que no hay costo del que partir. Cargá el precio de la compra "
-                                 "y volvé.")
-        return templates.TemplateResponse(request, "compras_analizar.html", contexto)
+    # SIN COSTO SE ARRANCA DE $1.000 (23/09): el listado deja afuera lo que no
+    # se compró en 15 días, y hasta ese día la pantalla se negaba. Es una
+    # calculadora para jugar: lo que falta se propone y se dice.
+    costo_por_defecto = fila is None or fila["costo_actual"] is None
+    if costo_por_defecto:
+        try:
+            precios = listar_precios_vigentes_por_cliente(ficha["cliente_id"], hoy)
+            envases = listar_costos_envases_vigentes(hoy) if ficha.get("envase_id") else []
+        except Exception as error_db:
+            raise HTTPException(status_code=500, detail=f"Error al conectar con la base de datos: {error_db}") from error_db
+        precio_vigente = next((float(p["precio"]) for p in precios if p["ficha_id"] == ficha_valor), None)
+        costo_envase = next((float(e["costo"]) for e in envases if e["envase_id"] == ficha.get("envase_id")), None)
+        fila = _fila_de_partida_sin_costo(
+            ficha, fila, precio_vigente, costo_envase,
+            _numero_del_formulario(kilos_bulto) if kilos_bulto is not None else None,
+        )
+    contexto["costo_por_defecto"] = costo_por_defecto
 
     # El punto de partida: los valores de la última compra y el precio
     # vigente. Los tipeados pisan al de partida, uno por uno.
@@ -16046,7 +16145,7 @@ def ver_analizar_articulo(
     # fue el 12/09 y con ella se había ido esto, que sí hacía falta — un costo
     # de partida de hace diez días no se usa igual que uno de ayer.
     contexto["ultima_compra"] = fila["fecha_ultima_compra"]
-    contexto["hace_dias"] = (hoy - fila["fecha_ultima_compra"]).days
+    contexto["hace_dias"] = (hoy - fila["fecha_ultima_compra"]).days if fila["fecha_ultima_compra"] else None
     contexto["tasas"] = tasas
     return templates.TemplateResponse(request, "compras_analizar.html", contexto)
 

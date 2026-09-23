@@ -177,6 +177,12 @@
       </select>
       <button type="submit">Ver</button>
     </form>
+    {# El buscador va ACÁ, pegado al cliente, y no al pie de la pantalla
+       arriba de "Todos" (23/09): es lo primero que se usa. #}
+    {% if cliente_id and todos %}
+    {% set buscador_arriba = true %}
+    {% include "_buscador_todos_articulos.html" %}
+    {% endif %}
   </div>
 
   {% if not cliente_id %}

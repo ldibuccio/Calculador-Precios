@@ -237,7 +237,9 @@
            procedencia pegada a un campo editable empieza a mentir en cuanto
            alguien lo edita; como hecho del artículo sigue siendo verdad, se
            tipee lo que se tipee. #}
-        {% if ultima_compra %}
+        {% if costo_por_defecto %}
+        <p class="desde costo-por-defecto">Sin compra con precio en 15 días: arranca en $1.000 para jugar. Cambialo.</p>
+        {% elif ultima_compra %}
         <p class="desde">Última compra: {{ ultima_compra|fecha_corta }} · {% if hace_dias == 0 %}hoy{% elif hace_dias == 1 %}ayer{% else %}hace {{ hace_dias }} días{% endif %}</p>
         {% endif %}
       </div>

@@ -1,0 +1,5 @@
+<label for="buscar-todos-articulos" class="etiqueta-buscar-todos">Buscar artículo</label>
+<div class="campo-buscar-todos">
+  <input type="text" id="buscar-todos-articulos" placeholder="Buscar artículo" autocomplete="off" oninput="filtrarTodosArticulos()"{% if buscador_arriba %} data-arriba="si"{% endif %}>
+  <button type="button" class="boton-limpiar-busqueda" onclick="limpiarBusquedaTodosArticulos()" aria-label="Limpiar búsqueda">✕</button>
+</div>
