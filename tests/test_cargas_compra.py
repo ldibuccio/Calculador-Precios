@@ -223,3 +223,212 @@ def test_la_carga_trae_CUANTOS_RENGLONES_tiene_al_lado(galpon):
 
     fila = next(c for c in d.listar_cargas_desde(EL_27) if c["id"] == carga_id)
     assert fila["renglones"] == 2 and fila["cliente_nombre"].startswith("EJEMPLO")
+
+
+# --- LAS PANTALLAS del Paso 1 -------------------------------------------------
+#
+# Mockeadas, como el resto de las rutas: acá lo que se mira es el CABLEADO
+# —qué se guarda, a dónde redirige, qué dibuja— y no si el SQL parsea, que lo
+# contestan los de arriba contra Postgres de verdad.
+
+import os  # noqa: E402
+from unittest.mock import patch  # noqa: E402
+
+from fastapi.testclient import TestClient  # noqa: E402
+
+import app.main as _main  # noqa: E402
+
+_cliente = TestClient(_main.app)
+_cliente.cookies.set(_main.PUERTA_COMPRAS.cookie, _main.PUERTA_COMPRAS.firma("compras-secreta"))
+
+_CLIENTES = [{"id": 1, "nombre": "EJEMPLO Día"}]
+_ARTICULOS = [
+    {"id": 7, "nombre": "EJEMPLO Tomate", "unidad_conteo": None, "grupo": "hortalizas",
+     "merma_porcentaje": 0, "unidad_compra": "kilo", "contenido_referencia": 16},
+    {"id": 8, "nombre": "EJEMPLO Mango", "unidad_conteo": "unidad", "grupo": "frutas",
+     "merma_porcentaje": 0, "unidad_compra": "unidad", "contenido_referencia": None},
+    {"id": 9, "nombre": "EJEMPLO Sin magnitud", "unidad_conteo": "unidad", "grupo": None,
+     "merma_porcentaje": 0, "unidad_compra": "unidad", "contenido_referencia": None},
+]
+# El de magnitud imposible es el RIVAL: una ficha en 'cubeta' de un artículo
+# cuyo conteo es 'unidad'. Sin él, "la pantalla dibuja un campo por artículo"
+# pasa igual con la guarda sacada.
+_FICHAS = [
+    {"articulo_id": 7, "unidad_venta": "kilo", "unidad_conteo": None},
+    {"articulo_id": 8, "unidad_venta": "unidad", "unidad_conteo": "unidad"},
+    {"articulo_id": 9, "unidad_venta": "cubeta", "unidad_conteo": "unidad"},
+]
+
+
+def _con_catalogo(**extra):
+    parches = {
+        "app.main.listar_clientes": _CLIENTES,
+        "app.main.listar_articulos": _ARTICULOS,
+        "app.main.listar_fichas_de_todos_los_clientes": _FICHAS,
+    }
+    parches.update(extra)
+    contextos = [patch.dict(os.environ, {"CLAVE_COMPRAS": "compras-secreta"})]
+    contextos += [patch(nombre, return_value=valor) for nombre, valor in parches.items()]
+    return contextos
+
+
+def _entrar(contextos, metodo, ruta, **kwargs):
+    from contextlib import ExitStack
+    with ExitStack() as pila:
+        abiertos = [pila.enter_context(c) for c in contextos]
+        respuesta = getattr(_cliente, metodo)(ruta, follow_redirects=False, **kwargs)
+    return respuesta, abiertos
+
+
+def _carga(modo="manual", renglones=None):
+    return {"id": 3, "cliente_id": 1, "fecha": EL_27, "modo": modo,
+            "promedio_anterior_a": HOY, "renglones": renglones or {}}
+
+
+def test_abrir_una_carga_QUE_YA_EXISTE_PREGUNTA_en_vez_de_crear_otra():
+    """Lo pidió el dueño así: ni una segunda que sume doble ni abrir la vieja
+    en silencio. Las dos salidas son legítimas y las dos borran trabajo."""
+    ctx = _con_catalogo(**{"app.main.carga_de_compra": _carga()})
+    ctx.append(patch("app.main.guardar_carga_de_compra"))
+    respuesta, abiertos = _entrar(ctx, "post", "/compras/carga",
+                                  data={"cliente_id": "1", "fecha": EL_27.isoformat(),
+                                        "modo": "manual"})
+    guardar = abiertos[-1]
+    assert respuesta.status_code == 200, "redirigió en vez de preguntar"
+    marcado = respuesta.text.split("</style>")[-1]
+    assert "Editar la que está" in marcado and "Borrar y empezar de cero" in marcado
+    guardar.assert_not_called()
+
+
+def test_abrir_una_carga_QUE_NO_EXISTE_la_crea_con_el_ancla_de_HOY():
+    ctx = _con_catalogo(**{"app.main.carga_de_compra": None})
+    ctx.append(patch("app.main.guardar_carga_de_compra", return_value=3))
+    respuesta, abiertos = _entrar(ctx, "post", "/compras/carga",
+                                  data={"cliente_id": "1", "fecha": EL_27.isoformat(),
+                                        "modo": "automatico"})
+    guardar = abiertos[-1]
+    assert respuesta.status_code == 303
+    assert respuesta.headers["location"] == f"/compras/carga/1/{EL_27.isoformat()}"
+    cliente_id, fecha, modo, ancla = guardar.call_args.args
+    assert (cliente_id, fecha, modo) == (1, EL_27, "automatico")
+    assert ancla == _main._hoy_argentina(), "el ancla no es el día en que se carga"
+
+
+def test_la_pantalla_dibuja_un_campo_POR_ARTICULO_con_SU_unidad():
+    """El total va en la unidad del ARTÍCULO y el rótulo la nombra: la
+    magnitud viaja con el número."""
+    ctx = _con_catalogo(**{"app.main.carga_de_compra": _carga(renglones={7: 500.0})})
+    respuesta, _ = _entrar(ctx, "get", f"/compras/carga/1/{EL_27.isoformat()}")
+    marcado = respuesta.text.split("</style>")[-1]
+    assert respuesta.status_code == 200
+    assert 'name="total_7"' in marcado and 'value="500"' in marcado
+    assert 'name="total_8"' in marcado
+    # El rival: sin magnitud no hay campo, porque cualquier número ahí estaría
+    # en una unidad y se sumaría en otra.
+    assert 'name="total_9"' not in marcado, "dibujó campo para el que no tiene magnitud"
+    assert "no se puede cargar" in marcado
+
+
+def test_en_modo_AUTOMATICO_el_guardado_NO_TOCA_los_renglones():
+    """Pasar un rato a automático no puede borrar lo que se tipeó o se leyó de
+    un archivo: re-tipear molesta, releer un archivo cuesta una lectura con IA
+    y otra revisión."""
+    ctx = _con_catalogo()
+    ctx.append(patch("app.main.guardar_carga_de_compra", return_value=3))
+    ctx.append(patch("app.main.guardar_renglones_de_carga"))
+    _, abiertos = _entrar(ctx, "post", f"/compras/carga/1/{EL_27.isoformat()}",
+                          data={"modo": "automatico", "total_7": "500"})
+    assert abiertos[-1].call_count == 0
+
+
+def test_en_modo_A_MANO_los_totales_llegan_y_el_VACIO_no_se_guarda_en_cero():
+    ctx = _con_catalogo()
+    ctx.append(patch("app.main.guardar_carga_de_compra", return_value=3))
+    ctx.append(patch("app.main.guardar_renglones_de_carga"))
+    respuesta, abiertos = _entrar(
+        ctx, "post", f"/compras/carga/1/{EL_27.isoformat()}",
+        data={"modo": "manual", "total_7": "500", "total_8": "", "total_9": "0"})
+    guardar_renglones = abiertos[-1]
+    assert respuesta.status_code == 303, "dibujó en vez de redirigir"
+    assert guardar_renglones.call_args.args[1] == {7: 500.0}
+
+
+def test_borrar_una_carga_QUE_UN_LISTADO_USO_avisa_en_vez_de_tirar_500():
+    """La base la frena y el código traduce: un 500 le dice al comprador que
+    el sistema se rompió, cuando lo que pasó es que la carga está en uso."""
+    ctx = _con_catalogo()
+    ctx.append(patch("app.main.borrar_carga_de_compra",
+                     side_effect=Exception("listados_compra_cargas_carga_id_fkey")))
+    respuesta, _ = _entrar(ctx, "post", f"/compras/carga/1/{EL_27.isoformat()}/borrar")
+    assert respuesta.status_code == 303
+    assert "no+se+puede+borrar" in respuesta.headers["location"]
+
+
+def test_la_lista_de_entrada_MARCA_la_carga_que_ya_se_uso():
+    """El aviso, no una traba: se puede sumar de nuevo y decide el comprador."""
+    usada = {"id": 3, "cliente_id": 1, "cliente_nombre": "EJEMPLO Día", "fecha": EL_27,
+             "modo": "manual", "promedio_anterior_a": HOY, "renglones": 2,
+             "usada_en_otros": 1, "ultimo_listado": date(2026, 9, 26)}
+    ctx = _con_catalogo(**{"app.main.listar_cargas_desde": [usada]})
+    respuesta, _ = _entrar(ctx, "get", "/compras/carga")
+    marcado = respuesta.text.split("</style>")[-1]
+    assert respuesta.status_code == 200
+    assert "ya se usó en el listado del 26/09" in marcado
+    assert f'href="/compras/carga/1/{EL_27.isoformat()}"' in marcado
+
+
+# --- EL LARGO DE LOS NOMBRES, que no lo controlamos --------------------------
+
+
+def _medir(html):
+    # pytest.importorskip y no un try: sin playwright estos dos se SALTEAN en
+    # vez de fallar, y sus llamadores no tienen de qué acordarse.
+    pytest.importorskip("playwright", reason="la medición de layout necesita un navegador")
+    from scripts.medir_layout import medir_sync
+
+    return medir_sync(html, ancho=390, selector_filas=".tarjeta")
+
+
+def _pantalla_de_carga(nombre):
+    ctx = _con_catalogo(**{
+        "app.main.carga_de_compra": _carga(renglones={7: 500.0}),
+        "app.main.listar_articulos": [dict(_ARTICULOS[0], nombre=nombre)],
+        "app.main.listar_fichas_de_todos_los_clientes": [_FICHAS[0]],
+        "app.main.listar_clientes": [{"id": 1, "nombre": nombre}],
+    })
+    respuesta, _ = _entrar(ctx, "get", f"/compras/carga/1/{EL_27.isoformat()}")
+    return respuesta
+
+
+@pytest.mark.parametrize("nombre", [
+    "Tomate Perita",                          # el caso cómodo
+    "Zapallitoredondodeltronco" * 3,          # 75 caracteres SIN UN ESPACIO
+])
+def test_la_carga_no_se_ARRASTRA_de_costado_a_390px(nombre):
+    """VA EL PAR COMPLETO —el nombre normal y el impartible— porque un arreglo
+    que rompa el caso cómodo para aguantar el raro pasaría el primero sin que
+    nada caiga.
+
+    Y una palabra sin espacios NO ENVUELVE: se desborda. Por eso lo que se
+    mira es el desborde y no el quiebre — un detector de quiebre solo la
+    habría dado por buena.
+
+    Y EL DESBORDE SE LEE COMO LO LEE `imprimir`, con las dos claves: cuando
+    el selector de filas no encuentra ninguna, `medir` devuelve `desborde: 0`
+    LITERAL y el número real viaja en `desborde_pagina`. O sea que leer una
+    sola clave da un cero prolijo sobre una pantalla que nunca se midió
+    (corolario 47, adentro del resultado). Por eso van también los dos
+    denominadores: `filas` dice que el selector encontró algo y `pares` que
+    hubo qué comparar.
+    """
+    respuesta = _pantalla_de_carga(nombre)
+    assert respuesta.status_code == 200, "se midió otra pantalla"
+    medicion = _medir(respuesta.text)
+    # Los denominadores: sin esto, "no desborda" y "no se miró nada" se
+    # imprimen igual (corolario 45).
+    assert medicion["filas"] > 0 and medicion["pares"] > 0, "no se midió nada"
+    desborde = medicion.get("desborde_pagina", medicion["desborde"])
+    assert desborde == 0, (
+        f"la pantalla se arrastra {desborde}px con el nombre «{nombre[:20]}…»"
+    )
+    assert medicion["solapes"] == [], f"hay cajas que se pisan: {medicion['solapes']}"

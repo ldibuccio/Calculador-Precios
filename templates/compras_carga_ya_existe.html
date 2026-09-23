@@ -1,0 +1,54 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Ya hay una carga</title>
+<style>
+  :root { font-family: -apple-system, system-ui, sans-serif; }
+  body { margin: 0; padding: 1rem; background: #f5f5f5; color: #222; }
+  .tarjeta { background: #fff; border-radius: 10px; padding: 1rem; margin-bottom: 0.75rem;
+             box-shadow: 0 1px 3px rgba(0,0,0,0.08); border-left: 5px solid #f97316; }
+  .art { font-weight: 800; font-size: 1.05rem; overflow-wrap: anywhere; }
+  .ayuda { font-size: 0.92rem; color: #555; margin: 0.5rem 0 0; }
+  .opciones { display: flex; flex-direction: column; gap: 0.6rem; margin-top: 1rem; }
+  .opciones a, .opciones button { min-height: 52px; display: flex; align-items: center;
+    justify-content: center; font-size: 1rem; font-weight: 800; border-radius: 10px;
+    text-decoration: none; border: 0; }
+  .editar { background: #16a34a; color: #fff; }
+  .cero { background: #fff; color: #b91c1c; border: 2px solid #b91c1c; }
+</style>
+</head>
+<body>
+  {% set barra_titulo = "Ya hay una carga" %}
+  {% set barra_sector = "compras" %}
+  {% include "_barra_navegacion.html" %}
+
+  <div class="tarjeta">
+    <div class="art">Ya cargaste {{ cliente_nombre }} para el {{ fecha_mostrar }}</div>
+    {# Las dos salidas son legítimas y las dos borran trabajo si se eligen sin
+       querer, así que el sistema pregunta en vez de elegir. Y lo que las
+       separa se DICE: editar conserva el ancla del promedio, empezar de cero
+       la mueve a hoy. #}
+    <p class="ayuda">
+      {% if carga.modo == 'manual' %}
+        Tiene {{ carga.renglones|length }} artículo{{ '' if carga.renglones|length == 1 else 's' }} cargado{{ '' if carga.renglones|length == 1 else 's' }} a mano.
+      {% else %}
+        Sale del promedio de los últimos 6 pedidos anteriores al {{ carga.promedio_anterior_a.strftime("%d/%m") }}.
+      {% endif %}
+    </p>
+    <p class="ayuda">
+      <b>Editarla</b> deja el promedio contado desde el {{ carga.promedio_anterior_a.strftime("%d/%m") }}, que es cuando la cargaste.
+      <b>Empezar de cero</b> lo mueve a hoy y borra lo que tenga adentro.
+    </p>
+    <div class="opciones">
+      <a class="editar" href="/compras/carga/{{ carga.cliente_id }}/{{ carga.fecha.isoformat() }}">Editar la que está</a>
+      <form method="post" action="/compras/carga/{{ carga.cliente_id }}/{{ carga.fecha.isoformat() }}/borrar">
+        <button class="cero" type="submit" style="width:100%"
+                onclick="return confirm('Se borra lo que tenga adentro y el promedio pasa a contarse desde hoy.')">Borrar y empezar de cero</button>
+      </form>
+    </div>
+  </div>
+{% include "_pie_version.html" %}
+</body>
+</html>

@@ -197,6 +197,10 @@ def siembra():
       from proveedores pr, articulos a limit 1;
     insert into fichas_logistica (articulo_id, cliente_id, unidad_venta)
       select a.id, c.id, 'kilo' from articulos a, clientes c limit 1;
+    insert into cargas_compra (cliente_id, fecha, modo, promedio_anterior_a)
+      select id, current_date, 'manual', current_date from clientes limit 1;
+    insert into cargas_compra_renglones (carga_id, articulo_id, total)
+      select ca.id, a.id, 100 from cargas_compra ca, articulos a limit 1;
     insert into colegas (nombre, nombre_normalizado) values ('EJEMPLO Colega', 'ejemplo colega');
     insert into vacios_deposito_devoluciones (proveedor_id, compra_id, cantidad, stock_sistema)
       select pr.id, co.id, 1, 1 from proveedores pr, compras co limit 1;

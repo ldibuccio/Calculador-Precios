@@ -1,0 +1,88 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Cargar lo que hay que comprar</title>
+<style>
+  :root { font-family: -apple-system, system-ui, sans-serif; }
+  body { margin: 0; padding: 1rem; background: #f5f5f5; color: #222; }
+  .tarjeta { background: #fff; border-radius: 10px; padding: 1rem; margin-bottom: 0.75rem;
+             box-shadow: 0 1px 3px rgba(0,0,0,0.08); }
+  .art { font-weight: 800; font-size: 1.05rem; overflow-wrap: anywhere; }
+  .campo { display: flex; flex-direction: column; gap: 0.3rem; margin-bottom: 0.75rem; }
+  .campo label { font-size: 0.9rem; color: #555; font-weight: 700; }
+  /* 44px es el mínimo tocable con el pulgar: esto se carga de noche, con el
+     celular en una mano. */
+  .campo select, .campo input { min-height: 44px; font-size: 1.05rem; padding: 0 0.5rem;
+                                border: 2px solid #2563eb; border-radius: 8px; }
+  /* Los dos modos se apilan en el ancho de un celular en vez de desbordarse. */
+  .modos { display: flex; flex-wrap: wrap; gap: 0.5rem; }
+  .modos button { flex: 1 1 10rem; min-height: 52px; font-size: 1rem; font-weight: 800;
+                  color: #fff; background: #2563eb; border: 0; border-radius: 10px; }
+  .modos button.mano { background: #7c3aed; }
+  .fila-carga { display: flex; align-items: center; gap: 0.5rem; padding: 0.5rem 0;
+                border-bottom: 1px solid #eee; flex-wrap: wrap; }
+  .fila-carga a { flex: 1 1 10rem; min-width: 0; min-height: 44px; display: flex;
+                  align-items: center; color: #222; text-decoration: none;
+                  font-weight: 700; overflow-wrap: anywhere; }
+  .chip { font-size: 0.78rem; font-weight: 800; border-radius: 999px; padding: 0.2rem 0.55rem; }
+  .chip-modo { background: #e0e7ff; color: #3730a3; }
+  .chip-usada { background: #fef3c7; color: #92400e; }
+  .cuando { font-size: 0.85rem; color: #555; }
+  .vacio { color: #666; font-size: 0.95rem; }
+  .aviso { background: #fff7ed; border-left: 5px solid #f97316; }
+</style>
+</head>
+<body>
+  {% set barra_titulo = "Cargar lo que hay que comprar" %}
+  {% set barra_sector = "compras" %}
+  {% include "_barra_navegacion.html" %}
+
+  {% if aviso %}<div class="tarjeta aviso"><p class="art">{{ aviso }}</p></div>{% endif %}
+
+  <form method="post" action="/compras/carga">
+  <div class="tarjeta">
+    <div class="art">Para quién y para cuándo</div>
+    <div class="campo">
+      <label for="cliente_id">Cliente</label>
+      <select id="cliente_id" name="cliente_id" required>
+        <option value="">Elegí un cliente</option>
+        {% for c in clientes %}<option value="{{ c.id }}">{{ c.nombre }}</option>{% endfor %}
+      </select>
+    </div>
+    <div class="campo">
+      <label for="fecha">Fecha de compra</label>
+      {# El default PROPONE hoy y no lo impone: se trabaja de noche, así que a
+         las 23 se elige mañana. Por eso no hay hora de corte. #}
+      <input id="fecha" name="fecha" type="date" value="{{ hoy }}">
+    </div>
+    <div class="modos">
+      <button type="submit" name="modo" value="automatico">Del promedio</button>
+      <button class="mano" type="submit" name="modo" value="manual">A mano o por archivo</button>
+    </div>
+  </div>
+  </form>
+
+  <div class="tarjeta">
+    <div class="art">Cargas de ayer en adelante</div>
+    {% if not cargas %}
+      <p class="vacio">Todavía no hay ninguna carga. Elegí un cliente arriba y empezá.</p>
+    {% endif %}
+    {% for c in cargas %}
+      <div class="fila-carga">
+        <a href="/compras/carga/{{ c.cliente_id }}/{{ c.fecha.isoformat() }}">{{ c.cliente_nombre }}</a>
+        <span class="cuando">{{ c.fecha.strftime("%d/%m") }}</span>
+        <span class="chip chip-modo">{% if c.modo == 'manual' %}{{ c.renglones }} a mano{% else %}del promedio{% endif %}</span>
+        {# El aviso, no una traba: una carga ya usada se puede sumar de nuevo
+           —capaz no se llegó a comprar, o se la quiere de plantilla— y decide
+           el comprador. El conteo va al lado porque puede estar en varios. #}
+        {% if c.usada_en_otros %}
+          <span class="chip chip-usada">ya se usó en el listado del {{ c.ultimo_listado.strftime("%d/%m") }}{% if c.usada_en_otros > 1 %} y en {{ c.usada_en_otros - 1 }} más{% endif %}</span>
+        {% endif %}
+      </div>
+    {% endfor %}
+  </div>
+{% include "_pie_version.html" %}
+</body>
+</html>

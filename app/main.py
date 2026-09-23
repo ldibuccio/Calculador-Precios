@@ -38,6 +38,7 @@ from app.alertas import (
     recalcular,
 )
 from app.costeo import (
+    MAGNITUD_CONTEO,
     MAGNITUD_KILOS,
     VENTANA_INCIDENCIA_DIAS,
     agregar_incidencia,
@@ -46,6 +47,7 @@ from app.costeo import (
     calcular_listados_para_negociar_precios,
     calcular_objetivos_de_compra,
     magnitud_de_la_ficha,
+    magnitud_del_articulo,
 )
 # LAS TRES FUNCIONES DEL MOTOR, importadas directo y sin envolver. El
 # Análisis de Artículo no calcula ninguna rentabilidad propia: elige a cuál
@@ -68,9 +70,13 @@ from core.motor_costeo import (
 import psycopg2
 
 from app.db import (
+    borrar_carga_de_compra,
+    carga_de_compra,
     borrador_de_compra,
     cerrar_borrador_de_compra,
     compras_de_hoy_por_articulo,
+    guardar_carga_de_compra,
+    guardar_renglones_de_carga,
     guardar_borrador_de_compra,
     renglones_de_los_ultimos_pedidos,
     actualizar_articulo,
@@ -283,6 +289,7 @@ from app.db import (
     ValeNoCaducable,
     contar_fichas_por_articulo,
     listar_conceptos_vigentes_por_cliente,
+    listar_cargas_desde,
     listar_clientes,
     listar_clientes_puesto,
     listar_compras_pendientes_recepcion,
@@ -3473,6 +3480,240 @@ def _contexto_de_que_comprar(request: Request, aviso: str | None = None):
         margen=borrador["margen"], manual=manual, kilajes=borrador["kilajes"],
     )
     return contexto
+
+
+# --------------------------------------------------------------------------
+# PASO 1 de "Qué comprar": cargar lo que hay que comprar para UN cliente
+# --------------------------------------------------------------------------
+#
+# LA CARGA ES CONTRA ARTÍCULOS DE COMPRA y no contra las fichas del cliente
+# (dueño, 22/09): se compra tomate, no "el tomate de Día", y cada cliente
+# arma después su ficha con eso. Lo que la ficha sigue decidiendo es la
+# UNIDAD en que se tipea el total, porque la fila del Paso 2 suma esto con
+# el promedio —que sale de renglones de pedido, o sea de fichas— y las dos
+# mitades tienen que estar en la misma magnitud o la suma no dice nada.
+
+
+def _unidad_de_cada_articulo(articulos: list[dict], fichas: list[dict]) -> dict:
+    """{articulo_id: 'kilo'|'unidad'|'cubeta'|None} — en qué unidad se tipea.
+
+    Es el único lugar donde se cruzan las dos tablas de unidades que este
+    sistema tiene: `magnitud_del_articulo` devuelve cuál de las DOS
+    magnitudes de la compra es la de la fila, y acá se traduce a la palabra
+    que el rótulo muestra. Escrito en cada pantalla que lo necesite serían
+    dos traducciones que se separan, y la que se separe no falla: imprime
+    un número sin unidad o con la de al lado.
+
+    `None` es el artículo cuyas fichas piden una unidad que él no puede
+    declarar —lo que la alerta `unidades_que_difieren` señala—. Ese no se
+    puede cargar, y la pantalla lo dice en vez de proponer un campo en el
+    que cualquier número va a estar mal.
+    """
+    fichas_por_articulo: dict = {}
+    for ficha in fichas:
+        fichas_por_articulo.setdefault(ficha["articulo_id"], []).append(ficha)
+
+    unidades = {}
+    for articulo in articulos:
+        magnitud = magnitud_del_articulo(fichas_por_articulo.get(articulo["id"], []))
+        if magnitud == MAGNITUD_KILOS:
+            unidades[articulo["id"]] = "kilo"
+        elif magnitud == MAGNITUD_CONTEO:
+            unidades[articulo["id"]] = articulo.get("unidad_conteo")
+        else:
+            unidades[articulo["id"]] = None
+    return unidades
+
+
+def _articulos_para_cargar(guardado: dict | None = None) -> list[dict]:
+    """El catálogo de compra con su unidad y lo ya cargado adentro.
+
+    Una sola lectura de fichas para todos los artículos, no una por
+    artículo: es la misma consulta que usa el desglose de Stock del
+    Depósito.
+    """
+    articulos = listar_articulos()
+    unidades = _unidad_de_cada_articulo(articulos, listar_fichas_de_todos_los_clientes())
+    guardado = guardado or {}
+    return [
+        {
+            "articulo_id": a["id"],
+            "nombre": a["nombre"],
+            "unidad": unidades.get(a["id"]),
+            "sufijo": SUFIJOS_FICHA_REPROCESO.get(unidades.get(a["id"]), ""),
+            "total": guardado.get(a["id"]),
+        }
+        for a in articulos
+    ]
+
+
+def _fecha_de_carga(texto: str | None):
+    """La fecha de compra que se eligió, o hoy. NUNCA la del reloj a la fuerza.
+
+    Se trabaja de noche, así que el día del reloj no sirve como dato: a las
+    23 se carga para mañana y se elige mañana. `hoy` es solo lo que el campo
+    PROPONE — el que decide es el que carga, y por eso no hay hora de corte
+    (dueño, 22/09: con "desde ayer en adelante" en el Paso 2 no hace falta
+    decidir ninguna).
+    """
+    if texto:
+        try:
+            return date.fromisoformat(texto)
+        except ValueError:
+            pass
+    return _hoy_argentina()
+
+
+def _contexto_de_carga(carga: dict, aviso: str | None = None) -> dict:
+    """La pantalla de UNA carga, en cualquiera de sus dos modos."""
+    cliente = next((c for c in listar_clientes() if c["id"] == carga["cliente_id"]), None)
+    return {
+        "barra_sector": "compras",
+        # NO se llama igual que la lista de la que se entra: son dos pantallas
+        # y dos cosas con el mismo nombre solo se cobran en la próxima lectura.
+        "barra_titulo": "Lo que pide un cliente",
+        "carga": carga,
+        "cliente_nombre": cliente["nombre"] if cliente else "",
+        "fecha_mostrar": carga["fecha"].strftime("%d/%m/%Y"),
+        "articulos": _articulos_para_cargar(carga["renglones"]),
+        "aviso": aviso,
+    }
+
+
+@app.get("/compras/carga")
+def ver_cargas_de_compra(request: Request, aviso: str | None = None):
+    """Paso 1: las cargas de los próximos días, y el formulario para una nueva.
+
+    LISTA DESDE AYER, igual que el Paso 2 y por la misma razón: se trabaja de
+    noche y esconder lo de ayer a medianoche deja al comprador sin lo que
+    está cargando.
+    """
+    hoy = _hoy_argentina()
+    contexto = {
+        "barra_sector": "compras", "barra_titulo": "Cargar lo que hay que comprar",
+        "clientes": [], "cargas": [], "hoy": hoy.isoformat(), "aviso": aviso,
+    }
+    try:
+        contexto["clientes"] = listar_clientes()
+        contexto["cargas"] = listar_cargas_desde(hoy - timedelta(days=1))
+    except Exception:
+        logger.exception("No se pudieron leer las cargas de compra")
+        contexto["aviso"] = aviso or "No se pudieron leer las cargas. Probá de nuevo."
+    return templates.TemplateResponse(request, "compras_cargas.html", contexto)
+
+
+@app.post("/compras/carga")
+async def empezar_carga_de_compra(request: Request):
+    """Abre la carga de ese cliente para esa fecha. Si ya existe, PREGUNTA.
+
+    Lo pidió el dueño así (22/09): entrar de nuevo a Día para el mismo día
+    no puede crear una segunda que sume doble, y tampoco abrir la vieja en
+    silencio — las dos salidas son legítimas y las dos borran trabajo si se
+    eligen sin querer. Editarla conserva el ancla del promedio; borrarla y
+    empezar de cero la mueve al día de hoy, que es lo que las distingue.
+
+    LA BASE TAMBIÉN LO IMPIDE, y por eso esta pregunta no es la guarda: el
+    unique (cliente_id, fecha) rechaza la segunda carga. Acá se pregunta
+    para que el comprador elija, no para evitar el duplicado.
+    """
+    formulario = await request.form()
+    try:
+        cliente_id = int(formulario.get("cliente_id") or 0)
+    except ValueError:
+        cliente_id = 0
+    fecha = _fecha_de_carga(str(formulario.get("fecha") or ""))
+    modo = "manual" if formulario.get("modo") == "manual" else "automatico"
+    if not cliente_id:
+        return RedirectResponse("/compras/carga?aviso=Elegí+un+cliente", status_code=303)
+
+    try:
+        ya_esta = carga_de_compra(cliente_id, fecha)
+        if ya_esta is not None:
+            cliente = next((c for c in listar_clientes() if c["id"] == cliente_id), None)
+            return templates.TemplateResponse(
+                request, "compras_carga_ya_existe.html",
+                {"barra_sector": "compras", "barra_titulo": "Ya hay una carga",
+                 "carga": ya_esta, "modo_pedido": modo,
+                 "cliente_nombre": cliente["nombre"] if cliente else "",
+                 "fecha_mostrar": fecha.strftime("%d/%m/%Y")},
+            )
+        guardar_carga_de_compra(cliente_id, fecha, modo, _hoy_argentina())
+    except Exception:
+        logger.exception("No se pudo abrir la carga de compra")
+        return RedirectResponse("/compras/carga?aviso=No+se+pudo+abrir+la+carga",
+                                status_code=303)
+    return RedirectResponse(f"/compras/carga/{cliente_id}/{fecha.isoformat()}",
+                            status_code=303)
+
+
+@app.get("/compras/carga/{cliente_id}/{fecha}")
+def ver_carga_de_compra(request: Request, cliente_id: int, fecha: str,
+                        aviso: str | None = None):
+    """Una carga: lo que ese cliente pide para esa fecha."""
+    try:
+        carga = carga_de_compra(cliente_id, _fecha_de_carga(fecha))
+    except Exception:
+        logger.exception("No se pudo leer la carga de compra")
+        return RedirectResponse("/compras/carga?aviso=No+se+pudo+leer+la+carga",
+                                status_code=303)
+    if carga is None:
+        return RedirectResponse("/compras/carga?aviso=Esa+carga+ya+no+está",
+                                status_code=303)
+    return templates.TemplateResponse(
+        request, "compras_carga.html", _contexto_de_carga(carga, aviso)
+    )
+
+
+@app.post("/compras/carga/{cliente_id}/{fecha}")
+async def guardar_carga_de_compra_ruta(request: Request, cliente_id: int, fecha: str):
+    """Guarda el modo y, si es a mano, los totales. Siempre redirige.
+
+    EL MODO Y LOS RENGLONES SE GUARDAN POR SEPARADO a propósito: pasar un
+    rato a automático no puede borrar lo que se tipeó o se leyó de un
+    archivo. Con el archivo adentro eso dejó de ser barato — re-tipear
+    molesta, releer un archivo cuesta una lectura con IA y otra revisión.
+    """
+    formulario = await request.form()
+    fecha_valor = _fecha_de_carga(fecha)
+    modo = "manual" if formulario.get("modo") == "manual" else "automatico"
+    volver = f"/compras/carga/{cliente_id}/{fecha_valor.isoformat()}"
+
+    renglones = {}
+    for clave, valor in formulario.multi_items():
+        if not clave.startswith("total_") or not clave[6:].isdigit():
+            continue
+        numero = _numero_del_formulario(valor)
+        if numero is not None and numero > 0:
+            renglones[int(clave[6:])] = numero
+
+    try:
+        carga_id = guardar_carga_de_compra(cliente_id, fecha_valor, modo, _hoy_argentina())
+        if modo == "manual":
+            guardar_renglones_de_carga(carga_id, renglones)
+    except Exception:
+        logger.exception("No se pudo guardar la carga de compra")
+        return RedirectResponse(f"{volver}?aviso=No+se+pudo+guardar", status_code=303)
+    return RedirectResponse("/compras/carga?aviso=Carga+guardada", status_code=303)
+
+
+@app.post("/compras/carga/{cliente_id}/{fecha}/borrar")
+def borrar_carga_de_compra_ruta(request: Request, cliente_id: int, fecha: str):
+    """Borra la carga entera. La base la frena si un listado ya la usó.
+
+    Y ESE RECHAZO SE TRADUCE, no se traga: borrar una carga que un listado
+    ya armó cambiaría en silencio lo que ese listado dice que se salió a
+    comprar, así que la FK no va en cascada y el mensaje dice por qué.
+    """
+    fecha_valor = _fecha_de_carga(fecha)
+    try:
+        borrar_carga_de_compra(cliente_id, fecha_valor)
+    except Exception:
+        logger.exception("No se pudo borrar la carga de compra")
+        return RedirectResponse(
+            "/compras/carga?aviso=Esa+carga+ya+la+usó+un+listado:+no+se+puede+borrar",
+            status_code=303,
+        )
+    return RedirectResponse("/compras/carga?aviso=Carga+borrada", status_code=303)
 
 
 @app.get("/compras/que-comprar")
