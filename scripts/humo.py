@@ -52,6 +52,7 @@ NO_SE_ABREN = {
     "/compras/{compra_id}/foto": "sirve la foto desde el Storage, no hay bucket local",
     "/compras/{compra_id}/fotos/{foto_id}/ver": "idem",
     "/compras/vacios/devolucion/{devolucion_id}/foto": "idem",
+    "/administracion/vacios/devolucion/{devolucion_id}/foto": "idem",
     "/deposito/pedido/{pedido_id}/fotos/{foto_id}/ver": "idem",
     "/deposito/recepcion/{compra_id}/foto-balanza/ver": "idem",
     # El mail necesita una casilla configurada con su credencial, que por

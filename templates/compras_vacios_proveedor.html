@@ -58,9 +58,9 @@
 </style>
 </head>
 <body>
-{% set barra_sector = "compras" %}
+{% set barra_sector = camino.sector %}
 {% set barra_titulo = p.nombre %}
-{% set barra_atras = "/compras/vacios" %}
+{% set barra_atras = camino.base ~ "/vacios" %}
 {% include "_barra_navegacion.html" %}
 
 {% if error %}<div class="error">{{ error }}</div>{% endif %}
@@ -79,7 +79,7 @@
     <div class="stock sin-arrancar">La cuenta de este proveedor todavía no arrancó.</div>
     <div class="hueco">
       El conteo inicial se carga desde
-      <a href="/compras/vacios">Vacíos del depósito</a>. Hasta que esté, lo que
+      <a href="{{ camino.base }}/vacios">Vacíos del depósito</a>. Hasta que esté, lo que
       se cargue acá queda guardado y no se ve en ningún stock.
     </div>
   {% endif %}
@@ -87,7 +87,7 @@
 
 <div class="tarjeta">
   <h2>¿En qué cajón entrega?</h2>
-  <form method="post" action="/compras/vacios/{{ p.id }}/cajon">
+  <form method="post" action="{{ camino.base }}/vacios/{{ p.id }}/cajon">
     <div class="fila">
       <div class="campo">
         <label for="tipo_cajon_id">Cajón</label>
@@ -111,7 +111,7 @@
 <div class="tarjeta">
   <h2>Devolverle cajones</h2>
   {% if compras %}
-  <form method="post" action="/compras/vacios/{{ p.id }}/devolucion" enctype="multipart/form-data">
+  <form method="post" action="{{ camino.base }}/vacios/{{ p.id }}/devolucion" enctype="multipart/form-data">
     <div class="fila">
       <div class="campo">
         <label for="compra_id">¿Contra qué compra va el vale?</label>
@@ -163,9 +163,9 @@
     {% if not d.anulada %}
     <div class="acciones">
       {% if d.foto_ruta %}
-      <a href="/compras/vacios/devolucion/{{ d.id }}/foto?proveedor_id={{ p.id }}">Ver el vale</a>
+      <a href="{{ camino.base }}/vacios/devolucion/{{ d.id }}/foto?proveedor_id={{ p.id }}">Ver el vale</a>
       {% endif %}
-      <form method="post" action="/compras/vacios/devolucion/{{ d.id }}/anular">
+      <form method="post" action="{{ camino.base }}/vacios/devolucion/{{ d.id }}/anular">
         <input type="hidden" name="proveedor_id" value="{{ p.id }}">
         <button class="anular" type="submit">Anular</button>
       </form>

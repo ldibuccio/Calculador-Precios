@@ -68,9 +68,9 @@
 </head>
 <body>
 
-{% set barra_sector = "compras" %}
+{% set barra_sector = camino.sector %}
 {% set barra_titulo = "Vacíos del depósito" %}
-{% set barra_atras = "/compras" %}
+{% set barra_atras = camino.atras %}
 {% include "_barra_navegacion.html" %}
 
 {% if error %}<div class="error">{{ error }}</div>{% endif %}
@@ -78,7 +78,7 @@
 
 <div class="tarjeta">
   <h2>Arrancar la cuenta de un proveedor</h2>
-  <form method="post" action="/compras/vacios/conteo">
+  <form method="post" action="{{ camino.base }}/vacios/conteo">
     <div class="fila">
       <div class="campo">
         <label for="proveedor_id">¿De qué proveedor contaste los cajones?</label>
@@ -151,7 +151,7 @@
     </div>
     {% endif %}
   {% endif %}
-  <a class="ver" href="/compras/vacios/{{ p.id }}">Ver y devolver cajones</a>
+  <a class="ver" href="{{ camino.base }}/vacios/{{ p.id }}">Ver y devolver cajones</a>
 </div>
 {% else %}
 <div class="tarjeta vacio">
