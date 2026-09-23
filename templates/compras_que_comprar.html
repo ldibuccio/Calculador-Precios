@@ -22,29 +22,23 @@
      en el Mercado con el celular en una mano. */
   .kilaje { width: 5.5rem; min-height: 44px; font-size: 1.05rem; padding: 0.4rem;
             border: 2px solid #2563eb; border-radius: 8px; text-align: center; }
-  .margen { display: flex; align-items: center; gap: 0.5rem; margin: 0.75rem 0;
-            flex-wrap: wrap; font-size: 0.95rem; }
-  .margen input { width: 4.5rem; min-height: 44px; font-size: 1.05rem; padding: 0.4rem;
-                  border: 2px solid #2563eb; border-radius: 8px; text-align: center; }
-  .elegir { display: flex; flex-wrap: wrap; gap: 0.5rem; margin: 0.75rem 0; }
-  .elegir label { display: flex; align-items: center; gap: 0.4rem; min-height: 44px;
-                  background: #fff; border-radius: 8px; padding: 0 0.75rem; font-size: 0.95rem; }
-  .elegir input { width: 22px; height: 22px; }
-  .boton-ver { min-height: 44px; font-size: 1rem; font-weight: 700; color: #fff;
-               background: #2563eb; border: 0; border-radius: 8px; padding: 0 1.25rem; }
+  .elegir { display: flex; flex-direction: column; gap: 0.5rem; margin: 0.75rem 0; }
+  .elegir label { display: flex; align-items: flex-start; gap: 0.6rem; min-height: 44px;
+                  background: #f8fafc; border: 1px solid #e2e8f0; border-radius: 8px;
+                  padding: 0.6rem 0.75rem; font-size: 0.95rem; }
+  .elegir input { width: 22px; height: 22px; flex: 0 0 auto; margin-top: 0.1rem; }
+  .elegir .que { flex: 1 1 auto; min-width: 0; overflow-wrap: anywhere; }
+  .elegir .como { display: block; font-size: 0.85rem; color: #555; }
+  /* EL AVISO, no una traba: una carga ya usada se puede volver a sumar. */
+  .ya-usada { display: block; font-size: 0.85rem; color: #92400e; font-weight: 700; }
   .vacio { color: #666; font-size: 0.95rem; }
-  .modo { display: flex; gap: 0.4rem; align-items: center; font-size: 0.8rem; color: #555; }
-  .modo select { min-height: 44px; font-size: 0.95rem; border-radius: 8px; padding: 0 0.4rem; }
-  .mano-fila { display: flex; align-items: center; gap: 0.5rem; padding: 0.35rem 0;
-               border-bottom: 1px solid #eee; }
-  .mano-fila span { flex: 1 1 auto; min-width: 0; overflow-wrap: anywhere; font-size: 0.95rem; }
-  .mano-fila input { width: 5.5rem; min-height: 44px; font-size: 1.05rem; padding: 0.4rem;
-                     border: 2px solid #2563eb; border-radius: 8px; text-align: center; }
+  .ir-paso-1 { display: inline-flex; align-items: center; min-height: 44px; font-weight: 700;
+               color: #2563eb; }
+  .de-quien { font-size: 0.8rem; color: #555; margin-top: 0.35rem; overflow-wrap: anywhere; }
   .guardar { min-height: 52px; width: 100%; font-size: 1.1rem; font-weight: 800; color: #fff;
              background: #16a34a; border: 0; border-radius: 10px; margin-bottom: 0.75rem; }
   .cerrar { min-height: 44px; width: 100%; font-size: 0.95rem; font-weight: 700; color: #444;
             background: #fff; border: 2px solid #ccc; border-radius: 8px; }
-  .a-mano { font-size: 0.8rem; color: #2563eb; font-weight: 700; }
 </style>
 </head>
 <body>
@@ -56,46 +50,32 @@
 
   <form method="post" action="/compras/que-comprar">
   <div class="tarjeta">
-    <div class="art">Para qué clientes</div>
+    <div class="art">Qué cargas entran</div>
+    {# SE ELIGEN CARGAS, no clientes: cada una ya trae su cliente, su fecha, su
+       modo y su margen. El listado no tiene margen propio — dos que se
+       multiplican son invisibles (20% y 10% son 32%). #}
+    {% if cargas %}
     <div class="elegir">
-      {% for c in clientes %}
-        <label><input type="checkbox" name="cliente" value="{{ c.id }}"
-                      {% if c.id in elegidos %}checked{% endif %}>{{ c.nombre }}
-          <span class="modo">
-            <select name="modo_{{ c.id }}" aria-label="Cómo se calcula lo de {{ c.nombre }}">
-              <option value="automatico" {% if modos.get(c.id) != 'manual' %}selected{% endif %}>de sus pedidos</option>
-              <option value="manual" {% if modos.get(c.id) == 'manual' %}selected{% endif %}>a mano</option>
-            </select>
+      {% for c in cargas %}
+        <label><input type="checkbox" name="carga" value="{{ c.id }}"
+                      {% if c.id in elegidas %}checked{% endif %}>
+          <span class="que"><b>{{ c.cliente_nombre }}</b> · {{ c.fecha.strftime("%d/%m") }}
+            <span class="como">{% if c.modo == 'manual' %}a mano{% else %}del promedio, {{ c.margen_porcentaje|sin_decimales }}% más{% endif %}</span>
+            {% if c.usada_en_otros %}
+              <span class="ya-usada">Ya se usó en el listado del {{ c.ultimo_listado.strftime("%d/%m") }}{% if c.usada_en_otros > 1 %} (y {{ c.usada_en_otros - 1 }} más){% endif %}</span>
+            {% endif %}
           </span>
         </label>
       {% endfor %}
     </div>
-    <div class="margen">
-      <label for="margen">Comprar un</label>
-      <input id="margen" name="margen" type="number" inputmode="decimal" step="1" min="0"
-             value="{{ margen|sin_decimales }}" aria-label="Margen en por ciento">
-      <label for="margen">% más de lo que piden</label>
-    </div>
+    {% else %}
+      <p class="vacio">No hay cargas desde ayer.</p>
+    {% endif %}
+    <a class="ir-paso-1" href="/compras/carga">Cargar lo que pide un cliente →</a>
   </div>
 
-  {% for bloque in a_mano %}
-  <div class="tarjeta">
-    <div class="art">Lo que pide {{ bloque.nombre }}, a mano</div>
-    <p class="vacio">Poné el total del día de lo que te pidan. Lo que dejes vacío no se pide.</p>
-    {% for a in bloque.articulos %}
-      <label class="mano-fila">
-        <span>{{ a.nombre }}{% if a.sufijo %} <b>({{ a.sufijo }})</b>{% endif %}</span>
-        <input name="manual_{{ bloque.cliente_id }}_{{ a.articulo_id }}" type="number"
-               inputmode="decimal" step="0.1" min="0"
-               value="{{ a.total|sin_decimales if a.total is not none else '' }}"
-               aria-label="Total de {{ a.nombre }} para {{ bloque.nombre }}">
-      </label>
-    {% endfor %}
-  </div>
-  {% endfor %}
-
-  {% if elegidos and not filas %}
-    <div class="tarjeta"><p class="vacio">Esos clientes no pidieron nada en sus últimos pedidos.</p></div>
+  {% if elegidas and not filas %}
+    <div class="tarjeta"><p class="vacio">Esas cargas no piden nada.</p></div>
   {% endif %}
 
   {% for f in filas %}
@@ -104,10 +84,9 @@
        data-ya-tengo="{{ f.ya_tengo if f.ya_tengo is not none else '' }}">
     <div class="art">{{ f.nombre }}</div>
     <div class="renglon">
-      <span class="dato">Piden por día
-        <b>{% if f.pide is not none %}{{ f.pide|sin_decimales }} {{ f.sufijo }}{% if f.a_mano %}
-             <span class="a-mano">({{ f.a_mano|sin_decimales }} a mano)</span>{% endif %}
-           {%- else %}<span class="hueco">sin ficha</span>{% endif %}</b></span>
+      <span class="dato">Piden
+        <b>{% if f.pide is not none %}{{ f.pide|sin_decimales }} {{ f.sufijo }}
+           {%- else %}<span class="hueco">no se sabe la unidad</span>{% endif %}</b></span>
       <span class="dato">En el piso
         <b>{% if f.en_piso is not none %}{{ f.en_piso|sin_decimales }} {{ f.sufijo }}{% else %}<span class="hueco">no se puede saber</span>{% endif %}</b></span>
       <span class="dato">Compré hoy
@@ -123,6 +102,9 @@
            {%- elif f.falta is not none %}<span class="hueco">poné el kilaje</span>
            {%- else %}<span class="hueco">—</span>{% endif %}</b></span>
     </div>
+    {# DE QUIÉN SALE: un total que junta tres cargas y no lo dice se lee como
+       el pedido de un solo cliente. #}
+    <div class="de-quien">{% for etiqueta, total in f.de_quien %}{{ etiqueta }} {{ total|sin_decimales }}{% if not loop.last %} · {% endif %}{% endfor %}</div>
   </div>
   {% endfor %}
 
@@ -134,26 +116,19 @@
   </form>
 
 <script>
-// RECALCULA AL TOQUE, sin ir al server: parado en el Mercado no se espera una
-// recarga. El margen mueve TODAS las filas, asi que la resta no puede venir
-// hecha desde el server como antes — se rehace acá con los dos numeros que la
-// tarjeta trae: lo que piden (data-pide) y lo que ya tengo (data-ya-tengo).
+// RECALCULA AL TOQUE al mover el kilaje, sin ir al server: parado en el
+// Mercado no se espera una recarga. La resta se rehace con los dos numeros
+// que la tarjeta trae: lo que piden (data-pide, ya con el margen de cada
+// carga adentro) y lo que ya tengo (data-ya-tengo).
 //
-// LA CUENTA QUEDA ESCRITA DOS VECES —acá y en `falta_por_comprar` +
+// NO HAY MARGEN ACA desde el 23/09: vive en cada carga. Uno aca se
+// multiplicaria con aquel, y 20% y 10% son 32% sin que nadie lo vea.
+//
+// LA CUENTA QUEDA ESCRITA DOS VECES —aca y en `falta_por_comprar` +
 // `cajones_que_faltan`— y es el precio de que sea instantanea. Lo que hace
 // visible una separacion es que el primer dibujo SALE DEL SERVER: si las dos
 // no dicen lo mismo, el numero salta al primer tecleo sin que cambie ningun
 // dato, que es un sintoma que se ve.
-function margenActual() {
-  var campo = document.getElementById("margen");
-  if (!campo) { return 0; }
-  var m = parseFloat(String(campo.value).replace(",", "."));
-  // Lo que no se puede leer vuelve a lo que el server puso, igual que
-  // `margen_valido`. Se lee del `defaultValue` y no de una constante escrita
-  // acá: el valor de arranque vive UNA vez, en core/que_comprar.py.
-  if (isNaN(m) || m < 0) { m = parseFloat(campo.defaultValue); }
-  return isNaN(m) ? 0 : m;
-}
 function recalcular(tarjeta) {
   var destino = tarjeta.querySelector(".falta");
   var campo = tarjeta.querySelector(".kilaje");
@@ -162,7 +137,7 @@ function recalcular(tarjeta) {
   var yaTengo = parseFloat(tarjeta.dataset.yaTengo);
   // Un hueco se queda como lo dejo el server, que ya dice POR QUE falta.
   if (isNaN(pide) || isNaN(yaTengo)) { return; }
-  var falta = Math.max(pide * (1 + margenActual() / 100) - yaTengo, 0);
+  var falta = Math.max(pide - yaTengo, 0);
   if (falta === 0) { destino.innerHTML = '<span class="ok">OK</span>'; return; }
   var kilaje = parseFloat(String(campo.value).replace(",", "."));
   if (isNaN(kilaje) || kilaje <= 0) {
@@ -175,12 +150,7 @@ function recalcular(tarjeta) {
 }
 document.addEventListener("input", function (evento) {
   var campo = evento.target;
-  if (!campo.classList) { return; }
-  if (campo.id === "margen") {
-    Array.from(document.querySelectorAll("[data-articulo]")).forEach(recalcular);
-    return;
-  }
-  if (!campo.classList.contains("kilaje")) { return; }
+  if (!campo.classList || !campo.classList.contains("kilaje")) { return; }
   var tarjeta = campo.closest("[data-articulo]");
   if (tarjeta) { recalcular(tarjeta); }
 });

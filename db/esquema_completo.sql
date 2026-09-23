@@ -534,28 +534,14 @@ create table listados_compra (
     fecha              date not null,
     estado             text not null constraint listados_compra_estado_check
                         check (estado in ('borrador', 'cerrado')),
-    margen_porcentaje  numeric not null constraint listados_compra_margen_check
-                        check (margen_porcentaje >= 0),
     creado_en          timestamptz not null default now(),
     actualizado_en     timestamptz not null default now()
 );
 
-comment on table listados_compra is 'Cabecera de un "Que comprar hoy". borrador = se sigue editando parado en el Mercado; cerrado = queda como historial de lo que se salio a comprar ese dia.';
-comment on column listados_compra.margen_porcentaje is 'Cuanto se compra de mas, en por ciento, SOBRE LO QUE PIDEN y no sobre el faltante: el margen existe porque lo que se va a vender es incierto, y el piso esta contado. SIN DEFAULT a proposito: el valor de arranque lo propone la pantalla (MARGEN_SUGERIDO, core/que_comprar.py) y dos defaults que no coinciden es como se separan dos reglas. 0 significa sin margen.';
+comment on table listados_compra is 'Cabecera de un "Que comprar hoy". borrador = se sigue editando parado en el Mercado; cerrado = queda como historial de lo que se salio a comprar ese dia. Arma CARGAS (listados_compra_cargas) y NO TIENE MARGEN propio desde el 23/09: vive en cada carga, y dos que se multiplican son invisibles (20% y 10% son 32%).';
 
 create unique index listados_compra_un_borrador_por_dia_idx
     on listados_compra (fecha) where estado = 'borrador';
-
-create table listados_compra_clientes (
-    listado_id  bigint not null references listados_compra (id) on delete cascade,
-    cliente_id  bigint not null references clientes (id),
-    modo        text not null constraint listados_compra_clientes_modo_check
-                  check (modo in ('automatico', 'manual')),
-    primary key (listado_id, cliente_id)
-);
-
-comment on table listados_compra_clientes is 'Que clientes alimentan este listado y de que forma. La fila se borra con el listado (cascade) porque sin el no dice nada; el cliente NO se borra en cascada a proposito: borrar un cliente no puede vaciar un listado viejo en silencio.';
-comment on column listados_compra_clientes.modo is 'automatico = lo que ese cliente pide sale del promedio de sus ultimos 6 pedidos vigentes. manual = sale de lo que el comprador tipea en listados_compra_manual. Es por CLIENTE y no por listado: un listado puede tener a Dia en automatico y a Tailem a mano, y los dos suman en la misma fila del articulo.';
 
 create table listados_compra_kilaje (
     listado_id   bigint not null references listados_compra (id) on delete cascade,
@@ -567,21 +553,6 @@ create table listados_compra_kilaje (
 
 comment on table listados_compra_kilaje is 'Lo que trae un cajon de ese articulo EN EL MERCADO, en la magnitud de la fila, tal como lo dejo el comprador. Se guarda por listado y no en articulos: el mango viene en 40, 12 y 10 y no hay valor dominante, asi que lo de hoy no es una correccion de la referencia del articulo.';
 comment on column listados_compra_kilaje.kilaje is 'En la magnitud de la fila (la unidad_venta de las fichas de ese articulo), no siempre en kilos. Solo se escribe la fila que el comprador TOCO: la que no esta usa articulos.contenido_referencia, y asi se distingue "lo dejo como venia" de "puso ese numero".';
-
-create table listados_compra_manual (
-    listado_id   bigint not null,
-    cliente_id   bigint not null,
-    articulo_id  bigint not null references articulos (id),
-    total        numeric not null constraint listados_compra_manual_total_check
-                   check (total > 0),
-    primary key (listado_id, cliente_id, articulo_id),
-    foreign key (listado_id, cliente_id)
-        references listados_compra_clientes (listado_id, cliente_id) on delete cascade
-);
-
-comment on table listados_compra_manual is 'Lo que un cliente en modo manual pide de un articulo, tipeado por el comprador. La FK va contra listados_compra_clientes y no contra listados_compra: una linea a mano de un cliente que no esta en el listado no puede existir, y destildarlo se la lleva. La base NO exige que ese cliente este hoy en modo manual, y es a proposito: pasarlo a automatico un rato no le tiene que borrar lo que tipeo. Quien decide cual se lee es el modo, no la existencia de la fila.';
-comment on column listados_compra_manual.total is 'EL TOTAL EN LA MAGNITUD DE LA FILA, y nada mas. Los cajones NO se guardan: salen de dividirlo por listados_compra_kilaje, igual que en la fila automatica. Guardarlos seria una segunda verdad que deja de coincidir en cuanto alguien edita el kilaje.';
-
 
 create table cargas_compra (
     id                   bigint generated always as identity primary key,
@@ -600,7 +571,7 @@ create table cargas_compra (
 comment on table cargas_compra is 'Lo que hay que comprar para UN cliente para UNA fecha (Paso 1). Vive sola y no cuelga de ningun listado: el Paso 2 arma un listado eligiendo varias cargas, y puede tomar dos fechas de un cliente y una de otro. El unique (cliente_id, fecha) impide que entrar de nuevo a Dia para el mismo dia sume doble: si ya existe, se edita o se borra y se empieza de cero.';
 comment on column cargas_compra.fecha is 'LA FECHA DE COMPRA que eligio el comprador, NO el dia en que cargo. Se trabaja de noche y el dia del reloj no sirve: a las 23 se carga para manana y se elige manana.';
 comment on column cargas_compra.promedio_anterior_a is 'EL ANCLA DEL PROMEDIO, y el nombre dice el operador: se miran los pedidos con fecha_operacion < este valor, nunca <=. Es el dia en que se CARGO y no la fecha de compra (dueno, 22/09): si cargo hoy para el 27, mira los 6 anteriores a hoy. Se guarda en vez de sacarlo de now() porque el listado se arma dias despues: ahi "el dia en que cargo" seria otro y la ventana se correria sola. Editar la carga NO lo mueve; borrarla y empezar de cero SI, porque es una carga nueva.';
-comment on column cargas_compra.margen_porcentaje is 'Cuanto se compra de mas para ESTE cliente, en por ciento, SOBRE LO QUE PIDE y no sobre el faltante: el margen existe porque lo que se va a vender es incierto, y el piso esta contado. Es por CARGA y no por listado (dueno, 23/09): cuanto inflar lo de Dia es un hecho sobre Dia, y dos margenes que se multiplican son invisibles — 20% y 10% son 32% y nadie hace esa cuenta de cabeza. SIN DEFAULT EN LA BASE a proposito: el valor de arranque lo propone la pantalla (MARGEN_SUGERIDO, core/que_comprar.py) y dos defaults que no coinciden es como se separan dos reglas. 0 significa sin margen, y es distinto de vacio.';
+comment on column cargas_compra.margen_porcentaje is 'Cuanto se compra de mas para ESTE cliente, en por ciento, SOBRE LO QUE PIDE y no sobre el faltante: el margen existe porque lo que se va a vender es incierto, y el piso esta contado. SOLO SE APLICA A LO QUE EL PROMEDIO PROPONE (dueno, 23/09): lo corregido y todo lo de a mano ya es lo que se compra y entra tal cual; por eso la pantalla no muestra el campo en modo manual. Es por CARGA y no por listado (dueno, 23/09): cuanto inflar lo de Dia es un hecho sobre Dia, y dos margenes que se multiplican son invisibles — 20% y 10% son 32% y nadie hace esa cuenta de cabeza. SIN DEFAULT EN LA BASE a proposito: el valor de arranque lo propone la pantalla (MARGEN_SUGERIDO, core/que_comprar.py) y dos defaults que no coinciden es como se separan dos reglas. 0 significa sin margen, y es distinto de vacio.';
 comment on column cargas_compra.modo is 'automatico = sale del promedio de los ultimos 6 pedidos vigentes anteriores a promedio_anterior_a. manual = sale de cargas_compra_renglones. SUBIR UN ARCHIVO NO ES UN TERCER MODO: se lee, se revisa, y queda como renglones manuales; el archivo no se guarda (dueno, 22/09) porque lo que vale es lo revisado. Un tercer valor obligaria a escribir modo in (manual, archivo) en cada lector, y el que se lo olvide no falla: muestra la carga vacia.';
 
 create table cargas_compra_renglones (

@@ -151,250 +151,152 @@ def test_sin_kilaje_no_hay_cajones_que_decir():
     assert promedio_de_un_dia(None) is None
 
 
+# --- LO QUE PIDE UNA CARGA: la regla de las dos pantallas --------------------
+
+from core.que_comprar import lo_que_pide_la_carga  # noqa: E402
+
+
+def test_el_margen_de_la_carga_va_SOLO_sobre_lo_PROPUESTO():
+    """Decisión del dueño (23/09): lo corregido y lo tipeado ya es lo que se
+    compra, y entra tal cual.
+
+    El rival es inflar todo: lo corregido se corrige MIRANDO la propuesta que
+    ya tiene el margen, así que inflarlo de nuevo le cobra el margen dos
+    veces. Con 10%: el tomate propuesto 100 va a 110, la lima corregida a 50
+    se queda en 50 — el rival diría 55.
+    """
+    pide = lo_que_pide_la_carga({2: 50.0}, {1: 100.0, 2: 80.0}, 10)
+    assert pide == {1: pytest.approx(110.0), 2: 50.0}
+    assert pide[2] != pytest.approx(55.0)
+
+
+def test_lo_GUARDADO_le_gana_a_lo_propuesto_y_lo_que_no_se_toco_se_propone():
+    """Es la distinción que hace que "del promedio" signifique algo: lo que
+    no se tocó se vuelve a calcular, lo corregido queda fijo."""
+    pide = lo_que_pide_la_carga({1: 7.0}, {1: 100.0, 3: 20.0}, 0)
+    assert pide == {1: 7.0, 3: 20.0}
+
+
+def test_A_MANO_no_tiene_propuesta_y_el_margen_no_mueve_nada():
+    """En "a mano" el que llama pasa la propuesta vacía: lo tipeado entra tal
+    cual con cualquier margen. Por eso la pantalla de la carga no muestra el
+    campo en ese modo."""
+    assert lo_que_pide_la_carga({1: 500.0}, {}, 0) == lo_que_pide_la_carga({1: 500.0}, {}, 35)
+
+
 # --- El armado de las filas, llamado DIRECTO ---------------------------------
 #
-# Sin mocks: `_filas_de_que_comprar` es pura y recibe lo que las tres
-# consultas devuelven. Parchearla para probarla seria tapar exactamente la
-# linea que se quiere mirar.
+# Sin mocks: `_filas_de_que_comprar` es pura y recibe lo que las consultas
+# devuelven. Parchearla para probarla seria tapar exactamente la linea que se
+# quiere mirar.
 
-from app.main import _filas_de_que_comprar, _lineas_a_mano  # noqa: E402
+from app.main import _filas_de_que_comprar  # noqa: E402
 
-
-def _renglon(cliente_id, nombre="TOMATE", bultos=60, contenido=16, pedidos=6, unidad="kilo"):
-    return {
-        "cliente_id": cliente_id, "articulo_id": 1, "articulo_nombre": nombre,
-        "unidad_conteo": None, "contenido_referencia": 18, "ficha_id": cliente_id,
-        "contenido_caja": contenido, "unidad_venta": unidad,
-        "bultos": bultos, "pedidos_del_cliente": pedidos,
-    }
+ARTICULOS = {1: {"id": 1, "nombre": "TOMATE", "contenido_referencia": 18},
+             9: {"id": 9, "nombre": "BANANA", "contenido_referencia": 20}}
+UNIDADES = {1: "kilo", 9: "kilo"}
+PISO_VACIO = {1: {"magnitud": 0.0, "sueltos": 0, "cajas": 0},
+              9: {"magnitud": 0.0, "sueltos": 0, "cajas": 0}}
 
 
-def test_la_fila_SUMA_el_mismo_articulo_entre_clientes_distintos():
-    """Es el corazon del diseno: nadie suma Mango con Cherry, pero el tomate
-    de Dia y el de Tailem son la misma fila.
+def _aporte(etiqueta, **pide):
+    return {"etiqueta": etiqueta, "pide": {int(k[1:]): v for k, v in pide.items()}}
 
-    Dia: 60 bultos x 16 / 6 pedidos = 160 por dia.
-    Tailem: 30 bultos x 16 / 6 = 80 por dia. La fila pide 240.
-    """
+
+def test_la_fila_SUMA_el_mismo_articulo_entre_CARGAS():
+    """Dos fechas de Día y una de Tailem son una sola fila de tomate: el
+    listado toma cargas, no clientes, y la misma estructura vieja no podía
+    decir "dos días de Día"."""
     filas = _filas_de_que_comprar(
-        [_renglon(1, bultos=60), _renglon(2, bultos=30)],
-        piso={1: {"magnitud": 40.0, "sueltos": 2, "cajas": 0}},
+        [_aporte("Dia 26/09", a1=160.0), _aporte("Dia 27/09", a1=100.0),
+         _aporte("Tailem 26/09", a1=40.0)],
+        ARTICULOS, UNIDADES, piso={1: {"magnitud": 40.0, "sueltos": 2, "cajas": 0}},
         comprado={},
-        margen=0,
-        manual=[],
     )
     assert len(filas) == 1
-    assert filas[0]["pide"] == 240.0
-    assert filas[0]["falta"] == 200.0
+    assert filas[0]["pide"] == 300.0
+    assert filas[0]["falta"] == 260.0
 
 
-def test_cada_cliente_se_divide_por_SU_propio_numero_de_pedidos():
-    """Uno con 3 pedidos en su historia no se divide por 6.
+def test_el_listado_NO_aplica_margen_propio():
+    """El margen ya viene adentro de cada aporte. Aplicarlo de nuevo acá es
+    la multiplicación que el dueño pidió que no exista: 20% y 10% son 32%.
 
-    Sumar primero y dividir despues daria (60x16 + 30x16)/6 = 240. Con el
-    divisor por cliente: 160 + 160 = 320.
+    Sin parámetro `margen` en la firma, no hay forma de que un llamador lo
+    pase — y la fila pide exactamente la suma de lo que las cargas mostraron.
     """
-    filas = _filas_de_que_comprar(
-        [_renglon(1, bultos=60, pedidos=6), _renglon(2, bultos=30, pedidos=3)],
-        piso={1: {"magnitud": 0.0, "sueltos": 0, "cajas": 0}},
-        comprado={},
-        margen=0,
-        manual=[],
-    )
-    assert filas[0]["pide"] == 320.0
-    assert filas[0]["pide"] != 240.0
+    import inspect
+    assert "margen" not in inspect.signature(_filas_de_que_comprar).parameters
+    filas = _filas_de_que_comprar([_aporte("Dia 26/09", a1=110.0)], ARTICULOS, UNIDADES,
+                                  piso=PISO_VACIO, comprado={})
+    assert filas[0]["pide"] == 110.0
 
 
-def test_UN_cliente_sin_contenido_de_caja_deja_la_fila_ENTERA_sin_numero():
-    """Mostrar la suma de los demas diria que ese cliente no pide nada."""
+def test_la_fila_dice_DE_QUIEN_sale_cada_parte():
+    """Un total que junta tres cargas y no lo dice se lee como el pedido de
+    un solo cliente."""
     filas = _filas_de_que_comprar(
-        [_renglon(1, bultos=60), _renglon(2, bultos=30, contenido=None)],
-        piso={1: {"magnitud": 40.0, "sueltos": 2, "cajas": 0}},
-        comprado={},
-        margen=0,
-        manual=[],
-    )
-    assert filas[0]["pide"] is None
-    assert filas[0]["falta"] is None
-    assert filas[0]["cajones"] is None
+        [_aporte("Dia 26/09", a1=160.0), _aporte("Tailem 26/09", a1=40.0)],
+        ARTICULOS, UNIDADES, piso=PISO_VACIO, comprado={})
+    assert filas[0]["de_quien"] == [("Dia 26/09", 160.0), ("Tailem 26/09", 40.0)]
+
+
+def test_un_articulo_SIN_UNIDAD_deja_la_fila_sin_numero():
+    """Su total está en una unidad y el piso se mediría en otra: la suma no
+    descuadra nada y está mal. Un hueco visible es información."""
+    filas = _filas_de_que_comprar([_aporte("Dia 26/09", a1=160.0)], ARTICULOS, {1: None},
+                                  piso=PISO_VACIO, comprado={})
+    assert filas[0]["pide"] is None and filas[0]["falta"] is None
 
 
 def test_un_piso_que_NO_CIERRA_deja_la_fila_sin_numero_y_no_en_cero():
     """Un cero diria "no hay nada en el piso" y haria comprar de mas."""
     filas = _filas_de_que_comprar(
-        [_renglon(1)],
-        piso={1: {"magnitud": None, "sueltos": 5, "cajas": 0}},
-        comprado={},
-        margen=0,
-        manual=[],
-    )
+        [_aporte("Dia", a1=160.0)], ARTICULOS, UNIDADES,
+        piso={1: {"magnitud": None, "sueltos": 5, "cajas": 0}}, comprado={})
     assert filas[0]["en_piso"] is None
     assert filas[0]["falta"] is None
+    assert filas[0]["ya_tengo"] is None
 
 
 def test_sin_compras_de_hoy_el_aporte_es_CERO_y_no_un_hueco():
     """Que no haya comprado nada es un hecho, no un dato que falte."""
-    filas = _filas_de_que_comprar(
-        [_renglon(1)], piso={1: {"magnitud": 0.0, "sueltos": 0, "cajas": 0}}, comprado={},
-        margen=0,
-        manual=[],
-    )
+    filas = _filas_de_que_comprar([_aporte("Dia", a1=160.0)], ARTICULOS, UNIDADES,
+                                  piso=PISO_VACIO, comprado={})
     assert filas[0]["comprado"] == 0.0
     assert filas[0]["falta"] == 160.0
 
 
-def test_el_MARGEN_de_la_pantalla_llega_hasta_la_FILA():
-    """Sin esto el campo se mueve y los números no, que es peor que no tenerlo.
-
-    Piden 240 por día y hay 40 en el piso. Sin margen faltan 200; al 10% el
-    objetivo es 264 y faltan 224. En cajones de 18: 12 contra 13.
-    """
-    fixture = ([_renglon(1, bultos=60), _renglon(2, bultos=30)],)
-    piso = {1: {"magnitud": 40.0, "sueltos": 2, "cajas": 0}}
-
-    sin_margen = _filas_de_que_comprar(*fixture, piso=piso, comprado={}, margen=0, manual=[])
-    con_10 = _filas_de_que_comprar(*fixture, piso=piso, comprado={}, margen=10, manual=[])
-
-    # Lo que PIDEN no lo mueve el margen: es el dato del cliente, no una meta.
-    assert sin_margen[0]["pide"] == con_10[0]["pide"] == 240.0
-    assert sin_margen[0]["falta"] == 200.0
-    assert con_10[0]["falta"] == 224.0
-    assert sin_margen[0]["cajones"] == 12
-    assert con_10[0]["cajones"] == 13
-
-
 def test_la_fila_lleva_YA_TENGO_sumado_para_que_el_navegador_no_lo_arme():
-    """El JS rehace la resta al mover el margen, y necesita UN número.
-
-    Sumar el piso y lo comprado en el navegador sería la única parte de la
-    cuenta que necesita saber de fichas y de lotes, escrita dos veces.
-    """
+    """El JS rehace la resta al mover el kilaje, y necesita UN número."""
     filas = _filas_de_que_comprar(
-        [_renglon(1, bultos=60)],
+        [_aporte("Dia", a1=160.0)], ARTICULOS, UNIDADES,
         piso={1: {"magnitud": 40.0, "sueltos": 2, "cajas": 0}},
-        comprado={1: {"cajones": 2.0, "kilos": 32.0, "conteo": None}},
-        margen=0,
-        manual=[],
-    )
+        comprado={1: {"cajones": 2.0, "kilos": 32.0, "conteo": None}})
     assert filas[0]["ya_tengo"] == 72.0
     assert filas[0]["falta"] == 160.0 - 72.0
 
 
-def test_un_hueco_en_el_piso_deja_YA_TENGO_en_None_y_no_en_lo_comprado_solo():
-    """Un 32 ahí diría "tengo 32" cuando lo que pasa es que no se sabe."""
+def test_lo_comprado_se_lee_en_la_MAGNITUD_de_la_fila():
+    """Un artículo que se cuenta resta lo CONTADO, no los kilos. El rival
+    —restar siempre kilos— da otro número y plausible."""
     filas = _filas_de_que_comprar(
-        [_renglon(1)],
-        piso={1: {"magnitud": None, "sueltos": 5, "cajas": 0}},
-        comprado={1: {"cajones": 2.0, "kilos": 32.0, "conteo": None}},
-        margen=0,
-        manual=[],
-    )
-    assert filas[0]["ya_tengo"] is None
-
-
-# --- LO MANUAL: la segunda fuente de la misma fila ----------------------------
-
-
-def _a_mano(cliente_id, articulo_id=1, nombre="TOMATE", total=500, unidad="kilo"):
-    return {"cliente_id": cliente_id, "articulo_id": articulo_id, "articulo_nombre": nombre,
-            "unidad_conteo": None, "contenido_referencia": 20, "contenido_caja": 16,
-            "unidad_venta": unidad, "total": total}
-
-
-def test_LO_TIPEADO_NO_SE_DIVIDE_por_los_seis_pedidos():
-    """El rival parte 500 en seis y da 83, que es la sexta parte de lo que va.
-
-    Es el ejemplo del dueño: "me piden 500 kilos de banana, la caja tiene 20
-    → 25 cajas". Pasar el total por `promedio_de_un_dia` daria 5 cajas y lo
-    dejaria sin mercaderia — y es la direccion cara, porque quedarse corto
-    es peor que sobrar un cajon.
-    """
-    filas = _filas_de_que_comprar(
-        [], piso={1: {"magnitud": 0.0, "sueltos": 0, "cajas": 0}}, comprado={},
-        margen=0, manual=[_a_mano(2, total=500)], kilajes={1: 20.0},
-    )
-    assert filas[0]["pide"] == 500.0
-    assert filas[0]["cajones"] == 25
-    # El rival, escrito para que se vea que NO es el que va:
-    assert promedio_de_un_dia(500.0) != 500.0
-
-
-def test_lo_AUTOMATICO_y_lo_MANUAL_suman_en_la_MISMA_fila():
-    """Un articulo puede venir de las dos fuentes, y es UNA fila.
-
-    Dia automatico: 60 bultos x 16 / 6 = 160 por dia.
-    Tailem a mano: 40. La fila pide 200 y dice que 40 salieron del dedo.
-    """
-    filas = _filas_de_que_comprar(
-        [_renglon(1, bultos=60)],
-        piso={1: {"magnitud": 0.0, "sueltos": 0, "cajas": 0}}, comprado={},
-        margen=0, manual=[_a_mano(2, total=40)],
-    )
-    assert len(filas) == 1
-    assert filas[0]["pide"] == 200.0
-    # De donde sale se MUESTRA: un total que incluye lo tipeado y no lo dice
-    # se lee como un dato del cliente.
-    assert filas[0]["a_mano"] == 40.0
-
-
-def test_un_articulo_que_SOLO_viene_a_mano_igual_tiene_su_fila():
-    """Es el caso del ejemplo: nadie lo pidio por mail y hay que comprarlo."""
-    filas = _filas_de_que_comprar(
-        [], piso={}, comprado={}, margen=0,
-        manual=[_a_mano(2, articulo_id=9, nombre="BANANA", total=500)],
-    )
-    assert [f["nombre"] for f in filas] == ["BANANA"]
-    assert filas[0]["pide"] == 500.0
-    # Sin piso conocido no hay faltante que decir: un cero diria "no hay nada".
-    assert filas[0]["en_piso"] is None and filas[0]["falta"] is None
-
-
-def test_el_margen_tambien_se_aplica_a_lo_tipeado():
-    """El margen es sobre LO QUE PIDEN, y lo tipeado es lo que piden.
-
-    Dejarlo afuera lo trataria como un dato mas seguro que el promedio, y es
-    al reves: es una estimacion del que compra.
-    """
-    sin_margen = _filas_de_que_comprar(
-        [], piso={1: {"magnitud": 0.0, "sueltos": 0, "cajas": 0}}, comprado={},
-        margen=0, manual=[_a_mano(2, total=500)], kilajes={1: 20.0})
-    con_10 = _filas_de_que_comprar(
-        [], piso={1: {"magnitud": 0.0, "sueltos": 0, "cajas": 0}}, comprado={},
-        margen=10, manual=[_a_mano(2, total=500)], kilajes={1: 20.0})
-    assert sin_margen[0]["cajones"] == 25
-    assert con_10[0]["cajones"] == 28   # 550 / 20 = 27,5 -> techo 28
+        [_aporte("Dia", a1=100.0)], ARTICULOS, {1: "unidad"}, piso=PISO_VACIO,
+        comprado={1: {"cajones": 1.0, "kilos": 16.0, "conteo": 40.0}})
+    assert filas[0]["comprado"] == 40.0
+    assert filas[0]["falta"] == 60.0
 
 
 def test_el_KILAJE_GUARDADO_le_gana_a_la_referencia_del_articulo():
-    """Y solo esta el del articulo que el comprador TOCO.
-
-    El rival es leer siempre `contenido_referencia`: la fila volveria a 18
-    despues de guardar, y el que la editó no tendria como saber por que.
-    """
-    sin_guardar = _filas_de_que_comprar(
-        [_renglon(1, bultos=60)], piso={1: {"magnitud": 0.0, "sueltos": 0, "cajas": 0}},
-        comprado={}, margen=0, manual=[])
-    guardado = _filas_de_que_comprar(
-        [_renglon(1, bultos=60)], piso={1: {"magnitud": 0.0, "sueltos": 0, "cajas": 0}},
-        comprado={}, margen=0, manual=[], kilajes={1: 10.0})
+    """Y solo esta el del articulo que el comprador TOCO."""
+    sin_guardar = _filas_de_que_comprar([_aporte("Dia", a1=160.0)], ARTICULOS, UNIDADES,
+                                        piso=PISO_VACIO, comprado={})
+    guardado = _filas_de_que_comprar([_aporte("Dia", a1=160.0)], ARTICULOS, UNIDADES,
+                                     piso=PISO_VACIO, comprado={}, kilajes={1: 10.0})
     assert sin_guardar[0]["kilaje"] == 18.0   # la referencia del articulo
     assert guardado[0]["kilaje"] == 10.0
     assert guardado[0]["cajones"] == 16       # 160 / 10
     assert sin_guardar[0]["cajones"] == 9     # 160 / 18 = 8,9 -> techo 9
-
-
-def test_una_linea_a_mano_SIN_FICHA_se_saltea_y_no_se_le_inventa_unidad():
-    """"500" sin ficha es un numero del que no se sabe si son kilos o unidades.
-
-    El factor de conversion no existe en este sistema y no va a existir, asi
-    que no hay con que adivinarlo. Saltearla es peor que nada solo si uno
-    cree que un numero sin unidad sirve.
-    """
-    fichas = {2: {1: {"articulo_id": 1, "articulo_nombre": "TOMATE",
-                      "unidad_venta": "kilo", "unidad_conteo": None,
-                      "contenido_caja": 16, "contenido_referencia": 18}}}
-    lineas = _lineas_a_mano(fichas, {(2, 1): 500.0, (2, 99): 300.0, (7, 1): 100.0})
-    assert [(l["cliente_id"], l["articulo_id"], l["total"]) for l in lineas] == [(2, 1, 500.0)]
 
 
 # --- EL GUARDADO: el POST y lo que llega a la base ----------------------------
@@ -417,49 +319,31 @@ def _postear(datos):
     return respuesta, guardar
 
 
-def test_el_POST_guarda_y_REDIRIGE_en_vez_de_dibujar():
+def test_el_POST_guarda_las_CARGAS_tildadas_y_REDIRIGE():
     """POST-redirect-GET: recargar despues de guardar no vuelve a guardar."""
-    respuesta, guardar = _postear({"accion": "guardar", "cliente": ["1"], "margen": "12"})
+    respuesta, guardar = _postear({"accion": "guardar", "carga": ["3", "5"]})
     assert respuesta.status_code == 303
     assert respuesta.headers["location"] == "/compras/que-comprar"
-    assert guardar.call_args.args[1] == 12.0
+    assert guardar.call_args.args[1] == {3, 5}
 
 
-def test_el_MODO_de_cada_cliente_viaja_y_el_default_es_automatico():
-    """Un `modo_` que no llego no puede dejar al cliente sin modo: el CHECK
-    de la base lo rechazaria y el guardado entero se caeria por un campo que
-    el comprador no vio."""
-    _, guardar = _postear({"accion": "guardar", "cliente": ["1", "2"],
-                           "modo_2": "manual", "margen": "0"})
-    assert guardar.call_args.args[2] == {1: "automatico", 2: "manual"}
+def test_el_POST_ignora_un_MARGEN_que_llegue():
+    """El margen se fue del listado. Uno que llegue por un formulario viejo o
+    armado a mano no puede colarse en ningún lado."""
+    _, guardar = _postear({"accion": "guardar", "carga": ["3"], "margen": "20"})
+    assert len(guardar.call_args.args) == 3
+    assert 20.0 not in guardar.call_args.args
 
 
-def test_una_linea_a_mano_de_un_cliente_DESTILDADO_no_se_guarda():
-    """La FK la rechazaria, y rebotar el guardado entero por un campo que el
-    comprador ya no ve seria trabarlo por nada.
-
-    El rival: guardar todo lo que venga en el formulario. El navegador manda
-    los campos del bloque aunque el tilde se haya sacado en la misma pantalla.
-    """
-    _, guardar = _postear({"accion": "guardar", "cliente": ["1"], "modo_1": "manual",
-                           "margen": "0", "manual_1_5": "500", "manual_9_5": "300"})
-    assert guardar.call_args.args[4] == {(1, 5): 500.0}
-
-
-def test_un_kilaje_o_un_total_VACIO_no_se_guarda_en_cero():
-    """Los CHECK de la base son `> 0`, y un cero ahi tampoco significa nada:
-    un cajon de cero kilos no existe y un pedido de cero no es un pedido."""
-    _, guardar = _postear({"accion": "guardar", "cliente": ["1"], "modo_1": "manual",
-                           "margen": "0", "kilaje_1": "", "kilaje_2": "0",
-                           "kilaje_3": "18,5", "manual_1_7": "", "manual_1_8": "0"})
-    assert guardar.call_args.args[3] == {3: 18.5}   # la coma del celular entra
-    assert guardar.call_args.args[4] == {}
+def test_un_kilaje_VACIO_o_en_cero_no_se_guarda():
+    """El CHECK de la base es `> 0`, y un cajon de cero kilos no existe."""
+    _, guardar = _postear({"accion": "guardar", "carga": ["3"],
+                           "kilaje_1": "", "kilaje_2": "0", "kilaje_3": "18,5"})
+    assert guardar.call_args.args[2] == {3: 18.5}   # la coma del celular entra
 
 
 def test_CERRAR_no_guarda_nada_y_es_otra_accion():
-    """El rival: cerrar guardando lo que haya en pantalla. Cerrar es un
-    estado del listado, no una forma de guardar — y mezclarlas haria que
-    apretar Cerrar por error pise lo que estaba."""
+    """El rival: cerrar guardando lo que haya en pantalla."""
     import os
     with patch.dict(os.environ, {"CLAVE_COMPRAS": "compras-secreta"}), \
          patch("app.main.guardar_borrador_de_compra") as guardar, \
@@ -470,7 +354,7 @@ def test_CERRAR_no_guarda_nada_y_es_otra_accion():
     assert cerrar.called and not guardar.called
 
 
-# --- EL GUARDADO CONTRA LA BASE: el orden que la FK exige ---------------------
+# --- EL GUARDADO CONTRA LA BASE ----------------------------------------------
 
 
 def _cuerpo(funcion):
@@ -478,75 +362,97 @@ def _cuerpo(funcion):
     return inspect.getsource(funcion)
 
 
-def test_las_TRES_tablas_hijas_se_REEMPLAZAN_y_no_se_mezclan():
-    """Destildar un cliente, borrar un kilaje o sacar una linea a mano son
-    operaciones que un `upsert` no puede expresar: lo que ya no esta tiene
-    que IRSE. Sin el borrado, la pantalla sigue mostrando lo que el
-    comprador saco y no hay nada que se vea raro.
-    """
+def test_las_DOS_tablas_hijas_se_REEMPLAZAN_y_no_se_mezclan():
+    """Destildar una carga o borrar un kilaje son operaciones que un
+    `upsert` no puede expresar: lo que ya no esta tiene que IRSE."""
     from app.db import guardar_borrador_de_compra
     cuerpo = _cuerpo(guardar_borrador_de_compra)
-    for tabla in ("listados_compra_manual", "listados_compra_kilaje", "listados_compra_clientes"):
+    for tabla in ("listados_compra_kilaje", "listados_compra_cargas"):
         assert f"DELETE FROM {tabla} WHERE listado_id" in cuerpo
 
 
-def test_el_BORRADO_va_en_el_orden_que_la_FK_EXIGE_y_no_en_el_que_se_lee_mejor():
-    """Las lineas a mano cuelgan de listados_compra_clientes. Borrar los
-    clientes primero rebota contra la foreign key — que es exactamente lo
-    que esa guarda existe para impedir.
-
-    Es un test de TEXTO porque el orden no se ve en el resultado: con la
-    base mockeada las dos versiones "andan", y contra la base de verdad la
-    equivocada revienta en el unico momento en que alguien guarda.
-    """
-    from app.db import guardar_borrador_de_compra
-    cuerpo = _cuerpo(guardar_borrador_de_compra)
-    assert (cuerpo.index("DELETE FROM listados_compra_manual")
-            < cuerpo.index("DELETE FROM listados_compra_clientes"))
-    # Y al ESCRIBIR es al reves: los clientes primero, o la FK rechaza lo manual.
-    assert (cuerpo.index("INSERT INTO listados_compra_clientes")
-            < cuerpo.index("INSERT INTO listados_compra_manual"))
+def test_el_borrador_ya_no_nombra_las_tablas_VIEJAS_ni_el_margen():
+    """Las dos tablas viejas se dropean DESPUÉS del deploy: un lector que las
+    siga nombrando revienta ese día, no antes. Y el margen del listado se va
+    en el mismo bloque."""
+    from app.db import borrador_de_compra, guardar_borrador_de_compra
+    for funcion in (borrador_de_compra, guardar_borrador_de_compra):
+        cuerpo = _cuerpo(funcion).split('"""', 2)[-1]   # sin el docstring
+        assert "listados_compra_clientes" not in cuerpo
+        assert "listados_compra_manual" not in cuerpo
+        assert "margen_porcentaje" not in cuerpo
 
 
 def test_el_borrador_se_lee_SOLO_el_que_esta_en_BORRADOR():
-    """Un listado cerrado es historial. Sin el filtro, la pantalla abriria el
-    de ayer y el comprador editaria lo que ya compro."""
+    """Un listado cerrado es historial."""
     from app.db import borrador_de_compra, cerrar_borrador_de_compra
     assert "estado = 'borrador'" in _cuerpo(borrador_de_compra)
     assert "estado = 'borrador'" in _cuerpo(cerrar_borrador_de_compra)
 
 
-def test_el_campo_del_KILAJE_lleva_su_NAME_o_lo_editado_no_LLEGA_a_guardarse():
-    """El agujero que encontro el canario: sin `name`, el input recalcula en
-    pantalla —el JS lo lee por clase— y el navegador NO LO MANDA. El
-    comprador ajusta el kilaje parado en el Mercado, aprieta Guardar, y se
-    pierde sin que nada se vea mal.
-
-    Ningun test de la cuenta lo puede ver: la fila sale bien, el numero de
-    cajones sale bien, y lo que falta esta del lado del formulario.
-
-    Y EL NUMERO DEL NAME TIENE QUE SER EL DEL ARTICULO DE ESA TARJETA: un
-    `name` fijo guardaria el kilaje de un articulo en la fila de otro, que
-    es peor que perderlo.
-    """
-    import re
+def _render(contexto):
     import os
-    filas = [
-        {"articulo_id": 3, "nombre": "TOMATE", "sufijo": "k", "pide": 240.0, "a_mano": None,
-         "ya_tengo": 40.0, "en_piso": 40.0, "sueltos": 2, "cajas": 0, "comprado_cajones": 0.0,
-         "comprado": 0.0, "kilaje": 18.0, "falta": 200.0, "cajones": 12},
-        {"articulo_id": 8, "nombre": "ZAPALLITO", "sufijo": "k", "pide": 60.0, "a_mano": None,
-         "ya_tengo": 0.0, "en_piso": 0.0, "sueltos": 0, "cajas": 0, "comprado_cajones": 0.0,
-         "comprado": 0.0, "kilaje": 16.0, "falta": 60.0, "cajones": 4},
-    ]
-    contexto = {"barra_sector": "compras", "barra_titulo": "Qué comprar hoy",
-                "elegidos": [1], "modos": {1: "automatico"}, "margen": 10, "clientes": [],
-                "filas": filas, "a_mano": [], "aviso": None, "hay_borrador": True}
     with patch.dict(os.environ, {"CLAVE_COMPRAS": "compras-secreta"}), \
          patch("app.main._contexto_de_que_comprar", return_value=contexto):
-        marcado = _cliente.get("/compras/que-comprar").text.split("</style>")[-1]
+        return _cliente.get("/compras/que-comprar").text
 
+
+def _fila(articulo_id, nombre):
+    return {"articulo_id": articulo_id, "nombre": nombre, "sufijo": "k", "pide": 240.0,
+            "de_quien": [("Dia 26/09", 240.0)], "ya_tengo": 40.0, "en_piso": 40.0,
+            "sueltos": 2, "cajas": 0, "comprado_cajones": 0.0, "comprado": 0.0,
+            "kilaje": 18.0, "falta": 200.0, "cajones": 12}
+
+
+def _contexto(filas=(), cargas=(), elegidas=()):
+    return {"barra_sector": "compras", "barra_titulo": "Qué comprar hoy",
+            "cargas": list(cargas), "elegidas": set(elegidas), "filas": list(filas),
+            "aviso": None, "hay_borrador": True}
+
+
+def test_el_campo_del_KILAJE_lleva_su_NAME_o_lo_editado_no_LLEGA_a_guardarse():
+    """Sin `name`, el input recalcula en pantalla y el navegador NO LO MANDA.
+    Y el número del name tiene que ser el del artículo de ESA tarjeta."""
+    import re
+    marcado = _render(_contexto([_fila(3, "TOMATE"), _fila(8, "ZAPALLITO")])).split("</style>")[-1]
     tarjetas = re.findall(r'data-articulo="(\d+)"(.*?)(?=data-articulo="|\Z)', marcado, re.S)
     assert len(tarjetas) == 2                      # el denominador: se miraron las dos
     for articulo_id, tarjeta in tarjetas:
         assert f'name="kilaje_{articulo_id}"' in tarjeta
+
+
+def test_la_pantalla_NO_tiene_margen_y_el_JS_no_lo_aplica():
+    """La jerga que NO puede aparecer: si el campo quedó, el comprador lo
+    mueve y cree que infla algo; si el JS quedó, el número salta al primer
+    tecleo con un margen que el server no aplicó."""
+    texto = _render(_contexto([_fila(3, "TOMATE")]))
+    marcado = texto.split("</style>")[-1]
+    script = texto.split("<script>")[-1]
+    assert 'name="margen"' not in marcado
+    assert "% más de lo que piden" not in marcado
+    assert "margenActual" not in script
+    assert "Math.max(pide - yaTengo, 0)" in script
+    assert "Math.ceil(falta / kilaje)" in script
+
+
+def test_cada_CARGA_se_ofrece_con_su_tilde_y_el_aviso_de_YA_USADA():
+    """El aviso no es una traba: la carga ya usada se ofrece igual. Y el
+    conteo va al lado, porque "el del 26/09" solo no dice que hay más."""
+    import re
+    from datetime import date
+    cargas = [
+        {"id": 3, "cliente_nombre": "EJEMPLO Uno", "fecha": date(2026, 9, 26),
+         "modo": "automatico", "margen_porcentaje": 10, "usada_en_otros": 2,
+         "ultimo_listado": date(2026, 9, 25)},
+        {"id": 5, "cliente_nombre": "EJEMPLO Dos", "fecha": date(2026, 9, 27),
+         "modo": "manual", "margen_porcentaje": 0, "usada_en_otros": 0,
+         "ultimo_listado": None},
+    ]
+    marcado = _render(_contexto(cargas=cargas, elegidas={3})).split("</style>")[-1]
+    etiquetas = re.findall(r"<label>(.*?)</label>", marcado, re.S)
+    assert len(etiquetas) == 2
+    assert 'value="3"' in etiquetas[0] and "checked" in etiquetas[0]
+    assert "Ya se usó en el listado del 25/09 (y 1 más)" in etiquetas[0]
+    assert 'value="5"' in etiquetas[1] and "checked" not in etiquetas[1]
+    assert "Ya se usó" not in etiquetas[1]
+    assert "a mano" in etiquetas[1]

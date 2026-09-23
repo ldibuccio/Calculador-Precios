@@ -215,6 +215,15 @@ def siembra():
       select id, current_date, 'automatico', current_date, 10 from clientes limit 1;
     insert into cargas_compra_renglones (carga_id, articulo_id, total)
       select ca.id, a.id, 100 from cargas_compra ca, articulos a limit 1;
+    -- EL PASO 2 CON UNA CARGA ADENTRO. Sin borrador la pantalla corta antes de
+    -- leer cargas, piso y compras, y el humo solo ve el caso vacío. Dos
+    -- borradores y no uno porque el "hoy" de la pantalla es el ARGENTINO y el
+    -- de la base es UTC: desde las 21h difieren, y con uno solo el humo mira
+    -- la mitad del día el caso vacío sin decirlo.
+    insert into listados_compra (fecha, estado)
+      select d, 'borrador' from (values (current_date), (current_date - 1)) v(d);
+    insert into listados_compra_cargas (listado_id, carga_id)
+      select l.id, ca.id from listados_compra l, cargas_compra ca;
     insert into colegas (nombre, nombre_normalizado) values ('EJEMPLO Colega', 'ejemplo colega');
     insert into vacios_deposito_devoluciones (proveedor_id, compra_id, cantidad, stock_sistema)
       select pr.id, co.id, 1, 1 from proveedores pr, compras co limit 1;

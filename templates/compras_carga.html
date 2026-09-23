@@ -72,13 +72,20 @@
     </div>
     {# EL MARGEN ES DE ESTA CARGA, o sea de este cliente. No hay otro en el
        listado: dos que se multiplican son invisibles —20% y 10% son 32%— y
-       nadie hace esa cuenta con el pulgar. #}
+       nadie hace esa cuenta con el pulgar.
+
+       Y VA SOLO EN "DEL PROMEDIO" (dueño, 23/09): el margen se aplica solo a
+       lo que el promedio PROPONE. Lo que se tipea a mano ya es lo que se
+       compra, así que en ese modo el campo no movería nada — y un campo sin
+       consecuencia es peor que ninguno: invita a creer que hizo algo. #}
+    {% if carga.modo != 'manual' %}
     <div class="margen">
       <label for="margen">Comprar un</label>
       <input id="margen" name="margen" type="number" inputmode="decimal" step="1" min="0"
              value="{{ carga.margen|sin_decimales }}" aria-label="Margen en por ciento">
       <label for="margen">% más de lo que pide</label>
     </div>
+    {% endif %}
     <p class="ayuda">
       Del promedio: los últimos 6 pedidos anteriores al
       <b>{{ carga.promedio_anterior_a.strftime("%d/%m/%Y") }}</b>, que es el día en que se abrió

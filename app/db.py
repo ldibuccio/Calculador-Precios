@@ -9590,23 +9590,24 @@ def renglones_de_los_ultimos_pedidos(cliente_ids: list[int], anterior_a, pedidos
 
 
 def borrador_de_compra(fecha) -> dict | None:
-    """El borrador de "Qué comprar hoy" de esa fecha, con todo lo que se le editó.
+    """El borrador de "Qué comprar hoy" de esa fecha: qué cargas arma y los kilajes tocados.
 
     Devuelve `None` cuando no hay ninguno, que es distinto de un borrador
-    vacío: uno recién abierto tiene su margen y sus clientes; el `None`
-    dice que hoy todavía no se armó ninguno y hay que proponer el margen
-    sugerido.
+    vacío: el `None` dice que hoy todavía no se armó ninguno, y la pantalla
+    no ofrece cerrar algo que no existe.
 
-    VIENE ENTERO EN UNA LECTURA —cabecera, clientes, kilajes y lo cargado a
-    mano— porque las cuatro se usan juntas en el mismo render y separarlas
-    son cuatro viajes para armar una sola pantalla.
+    NO TRAE MARGEN, a propósito (dueño, 23/09): el margen vive en cada
+    carga. Un segundo margen acá se multiplica con el de la carga —20% y 10%
+    son 32%— y nadie hace esa cuenta con el pulgar. No existe "los dos, pero
+    uno casi siempre en cero": el día que alguien toque el apagado, vuelve la
+    multiplicación y vuelve invisible.
     """
     conexion = obtener_conexion()
     try:
         with conexion.cursor() as cursor:
             cursor.execute(
                 """
-                SELECT id, fecha, estado, margen_porcentaje
+                SELECT id, fecha, estado
                 FROM listados_compra
                 WHERE fecha = %s AND estado = 'borrador'
                 """,
@@ -9618,10 +9619,10 @@ def borrador_de_compra(fecha) -> dict | None:
             listado_id = cabecera[0]
 
             cursor.execute(
-                "SELECT cliente_id, modo FROM listados_compra_clientes WHERE listado_id = %s",
+                "SELECT carga_id FROM listados_compra_cargas WHERE listado_id = %s",
                 (listado_id,),
             )
-            clientes = {int(f[0]): f[1] for f in cursor.fetchall()}
+            cargas = {int(f[0]) for f in cursor.fetchall()}
 
             cursor.execute(
                 "SELECT articulo_id, kilaje FROM listados_compra_kilaje WHERE listado_id = %s",
@@ -9629,45 +9630,28 @@ def borrador_de_compra(fecha) -> dict | None:
             )
             kilajes = {int(f[0]): float(f[1]) for f in cursor.fetchall()}
 
-            cursor.execute(
-                """
-                SELECT cliente_id, articulo_id, total
-                FROM listados_compra_manual WHERE listado_id = %s
-                """,
-                (listado_id,),
-            )
-            manual = {(int(f[0]), int(f[1])): float(f[2]) for f in cursor.fetchall()}
-
             return {
                 "id": listado_id,
                 "fecha": cabecera[1],
                 "estado": cabecera[2],
-                "margen": float(cabecera[3]),
-                "clientes": clientes,
+                "cargas": cargas,
                 "kilajes": kilajes,
-                "manual": manual,
             }
     finally:
         conexion.close()
 
 
-def guardar_borrador_de_compra(fecha, margen, clientes: dict, kilajes: dict, manual: dict) -> int:
+def guardar_borrador_de_compra(fecha, cargas: set, kilajes: dict) -> int:
     """Guarda el borrador de esa fecha entero, y devuelve su id.
 
-    TODO EN UNA TRANSACCIÓN Y BORRANDO ANTES DE ESCRIBIR. Las tres tablas
-    hijas se reemplazan, no se mezclan: destildar un cliente, borrar un
-    kilaje o sacar una línea a mano son operaciones que un `upsert` no puede
-    expresar —lo que ya no está tiene que irse— y un borrado parcial dejaría
-    la pantalla mostrando algo que el comprador sacó.
+    TODO EN UNA TRANSACCIÓN Y BORRANDO ANTES DE ESCRIBIR. Las dos tablas
+    hijas se reemplazan, no se mezclan: destildar una carga o borrar un
+    kilaje son operaciones que un `upsert` no puede expresar —lo que ya no
+    está tiene que irse— y un borrado parcial dejaría la pantalla mostrando
+    algo que el comprador sacó.
 
-    Y EL ORDEN LO DECIDE LA FK: las líneas a mano cuelgan de
-    listados_compra_clientes, así que los clientes se borran DESPUÉS de lo
-    manual y se escriben ANTES. Escribir lo manual primero rebota contra la
-    foreign key, que es exactamente lo que esa guarda existe para impedir.
-
-    `clientes` es {cliente_id: modo}, `kilajes` {articulo_id: kilaje} y
-    `manual` {(cliente_id, articulo_id): total}. Los tres son lo que quedó,
-    no lo que cambió.
+    `cargas` es el conjunto de ids tildados y `kilajes` {articulo_id: kilaje}.
+    Los dos son lo que quedó, no lo que cambió.
     """
     conexion = obtener_conexion()
     try:
@@ -9683,41 +9667,31 @@ def guardar_borrador_de_compra(fecha, margen, clientes: dict, kilajes: dict, man
             if fila is None:
                 cursor.execute(
                     """
-                    INSERT INTO listados_compra (fecha, estado, margen_porcentaje)
-                    VALUES (%s, 'borrador', %s) RETURNING id
+                    INSERT INTO listados_compra (fecha, estado)
+                    VALUES (%s, 'borrador') RETURNING id
                     """,
-                    (fecha, margen),
+                    (fecha,),
                 )
                 listado_id = cursor.fetchone()[0]
             else:
                 listado_id = fila[0]
                 cursor.execute(
-                    """
-                    UPDATE listados_compra
-                       SET margen_porcentaje = %s, actualizado_en = now()
-                     WHERE id = %s
-                    """,
-                    (margen, listado_id),
+                    "UPDATE listados_compra SET actualizado_en = now() WHERE id = %s",
+                    (listado_id,),
                 )
 
-            cursor.execute("DELETE FROM listados_compra_manual WHERE listado_id = %s", (listado_id,))
             cursor.execute("DELETE FROM listados_compra_kilaje WHERE listado_id = %s", (listado_id,))
-            cursor.execute("DELETE FROM listados_compra_clientes WHERE listado_id = %s", (listado_id,))
+            cursor.execute("DELETE FROM listados_compra_cargas WHERE listado_id = %s", (listado_id,))
 
-            for cliente_id, modo in clientes.items():
+            for carga_id in sorted(cargas):
                 cursor.execute(
-                    "INSERT INTO listados_compra_clientes VALUES (%s, %s, %s)",
-                    (listado_id, cliente_id, modo),
+                    "INSERT INTO listados_compra_cargas VALUES (%s, %s)",
+                    (listado_id, carga_id),
                 )
             for articulo_id, kilaje in kilajes.items():
                 cursor.execute(
                     "INSERT INTO listados_compra_kilaje VALUES (%s, %s, %s)",
                     (listado_id, articulo_id, kilaje),
-                )
-            for (cliente_id, articulo_id), total in manual.items():
-                cursor.execute(
-                    "INSERT INTO listados_compra_manual VALUES (%s, %s, %s, %s)",
-                    (listado_id, cliente_id, articulo_id, total),
                 )
             conexion.commit()
             return listado_id
@@ -9798,6 +9772,53 @@ def carga_de_compra(cliente_id: int, fecha) -> dict | None:
                 "margen": float(cabecera[5]),
                 "renglones": renglones,
             }
+    finally:
+        conexion.close()
+
+
+def cargas_con_renglones(carga_ids) -> list[dict]:
+    """Las cargas de esos ids, cada una con sus renglones guardados.
+
+    Es la lectura del Paso 2: el listado suma cargas, y cada una trae lo
+    mismo que `carga_de_compra` —cliente, modo, ancla, margen y renglones—
+    para que lo que se sume sea exactamente lo que la carga mostró.
+
+    DOS CONSULTAS PARA TODAS y no dos por carga: un listado arma varias.
+    """
+    ids = sorted({int(i) for i in carga_ids})
+    if not ids:
+        return []
+    conexion = obtener_conexion()
+    try:
+        with conexion.cursor() as cursor:
+            cursor.execute(
+                """
+                SELECT c.id, c.cliente_id, cl.nombre, c.fecha, c.modo,
+                       c.promedio_anterior_a, c.margen_porcentaje
+                FROM cargas_compra c
+                JOIN clientes cl ON cl.id = c.cliente_id
+                WHERE c.id = ANY(%s)
+                ORDER BY c.fecha, cl.nombre
+                """,
+                (ids,),
+            )
+            cargas = [
+                {"id": int(f[0]), "cliente_id": int(f[1]), "cliente_nombre": f[2],
+                 "fecha": f[3], "modo": f[4], "promedio_anterior_a": f[5],
+                 "margen": float(f[6]), "renglones": {}}
+                for f in cursor.fetchall()
+            ]
+            por_id = {c["id"]: c for c in cargas}
+            cursor.execute(
+                """
+                SELECT carga_id, articulo_id, total FROM cargas_compra_renglones
+                WHERE carga_id = ANY(%s)
+                """,
+                (ids,),
+            )
+            for carga_id, articulo_id, total in cursor.fetchall():
+                por_id[int(carga_id)]["renglones"][int(articulo_id)] = float(total)
+            return cargas
     finally:
         conexion.close()
 
@@ -9917,6 +9938,12 @@ def listar_cargas_desde(desde, excepto_listado_id: int | None = None) -> list[di
     el cartel pasaría a estar siempre puesto, que es como se aprende a no
     leerlo. El conteo va al lado de la fecha porque una carga puede estar en
     varios y "el del 26/09" sola no lo dice.
+
+    LAS QUE ESE LISTADO YA TIENE ENTRAN AUNQUE SEAN MÁS VIEJAS que `desde`.
+    La pantalla guarda lo que viene tildado en el formulario, así que una
+    carga del listado que no se dibuja se DESTILDA sola al primer Guardar,
+    sin que el comprador la haya tocado. Con `excepto_listado_id` en None el
+    `IN` no encuentra nada y la lista es la de siempre.
     """
     conexion = obtener_conexion()
     try:
@@ -9937,9 +9964,11 @@ def listar_cargas_desde(desde, excepto_listado_id: int | None = None) -> list[di
                 FROM cargas_compra c
                 JOIN clientes cl ON cl.id = c.cliente_id
                 WHERE c.fecha >= %s
+                   OR c.id IN (SELECT lc.carga_id FROM listados_compra_cargas lc
+                                WHERE lc.listado_id = %s)
                 ORDER BY c.fecha, cl.nombre
                 """,
-                (excepto_listado_id, excepto_listado_id, desde),
+                (excepto_listado_id, excepto_listado_id, desde, excepto_listado_id),
             )
             columnas = [c[0] for c in cursor.description]
             return [dict(zip(columnas, fila)) for fila in cursor.fetchall()]
