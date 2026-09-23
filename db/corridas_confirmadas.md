@@ -256,3 +256,17 @@ PALMALA   columna 1 · guarda 1 · mayor a cero 1 · 0 renglones · último pedi
 columnas de la migración dan lo mismo por diseño y el último pedido coincide.
 La columna nace en NULL en todos los renglones que ya estaban, que es "proponé
 el bulto de la ficha": lo mismo que mostraban hasta hoy.
+
+## 23/09 — `listados_compra_7_foto_del_stock`
+
+`db/listados_compra_7_foto_del_stock.sql`, con su verificación corrida aparte.
+
+```
+FRUTAMAX  columna 1 · foto 1 · foto_cajas 1 · fk no action 1 · 1 listado  · último pedido 23/09
+PALMALA   columna 1 · foto 1 · foto_cajas 1 · fk no action 1 · 0 listados · último pedido 23/09
+```
+
+**Lo que identifica la base son los listados** —1 contra 0—. Antes se corrió
+`db/listados_compra_6_cuantos_abiertos.sql`: Frutamax 1 abierto (23/09, con
+cargas), Palmala 0. Con uno solo abierto, el bloque 8 (un solo listado
+abierto, sin fecha) no tiene que decidir nada sobre listados viejos.

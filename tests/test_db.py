@@ -3271,10 +3271,11 @@ def test_una_ficha_con_guias_R_NO_se_borra_y_lo_dice_con_el_numero():
 
 
 def test_una_ficha_sin_guias_R_se_borra_como_siempre():
-    # TRES conteos: guías R, compras que la marcan como "viene armada", y
-    # precios cargados. Los tres en cero es el caso feliz, y es el único
-    # que distingue una guarda que funciona de una que siempre frena.
-    conexion, cursor = _conexion_falsa(filas_fetchone=[(0,), (0,), (0,), None])
+    # CUATRO conteos: guías R, compras que la marcan como "viene armada",
+    # precios cargados y la foto de un listado de compra. Los cuatro en cero
+    # es el caso feliz, y es el único que distingue una guarda que funciona
+    # de una que siempre frena.
+    conexion, cursor = _conexion_falsa(filas_fetchone=[(0,), (0,), (0,), (0,), None])
 
     with patch("app.db.obtener_conexion", return_value=conexion):
         eliminar_ficha(901)
@@ -3657,10 +3658,10 @@ def test_actualizar_ficha_inexistente_no_escribe_bitacora():
 
 
 def test_eliminar_ficha_deja_el_estado_final_en_la_bitacora():
-    # Los tres primeros fetchone son las guardas (guías R, compras armadas,
-    # precios): en cero, sigue de largo y borra como siempre.
+    # Los cuatro primeros fetchone son las guardas (guías R, compras armadas,
+    # precios, foto de un listado): en cero, sigue de largo y borra.
     conexion, cursor = _conexion_falsa(
-        [(0,), (0,), (0,), (1, 5, 100, 6, "kilo", False, "BERENJENA", None)]
+        [(0,), (0,), (0,), (0,), (1, 5, 100, 6, "kilo", False, "BERENJENA", None)]
     )
 
     with patch("app.db.obtener_conexion", return_value=conexion):
@@ -3683,6 +3684,7 @@ def test_cambiar_articulo_de_ficha_es_borrado_mas_alta_con_el_alias_de_la_pantal
     conexion, cursor = _conexion_falsa(
         [
             (0,),  # la guarda de precios: sin precios, sigue de largo
+            (0,),  # la guarda de la foto de un listado de compra: tampoco
             (1, 4, 100, 6, "kilo", False, "ANANA", "90137"),  # DELETE RETURNING (ficha vieja)
             (33,),  # RETURNING id de la ficha nueva
         ]
@@ -3695,18 +3697,20 @@ def test_cambiar_articulo_de_ficha_es_borrado_mas_alta_con_el_alias_de_la_pantal
         ficha_nueva_id = cambiar_articulo_de_ficha(10, 5, "ANCO", "90200")
 
     assert ficha_nueva_id == 33
-    # La guarda de precios + 4 pasos en UNA transacción: delete + foto
-    # borrado + insert + foto alta.
-    assert cursor.execute.call_count == 5
+    # Las DOS guardas + 4 pasos en UNA transacción: delete + foto borrado +
+    # insert + foto alta. Los índices de abajo cuentan desde el final a
+    # propósito: una guarda nueva entra ARRIBA, y contar desde el principio
+    # rompe este test por algo que no es suyo (corolario 96).
+    assert cursor.execute.call_count == 6
     # La foto del borrado conserva el alias VIEJO (es el estado que se cerró).
-    _, parametros_borrado = cursor.execute.call_args_list[2].args
+    _, parametros_borrado = cursor.execute.call_args_list[-3].args
     assert parametros_borrado == (10, 1, 4, 100, 6, "kilo", False, "ANANA", "90137", "borrado")
-    consulta_insert, parametros_insert = cursor.execute.call_args_list[3].args
+    consulta_insert, parametros_insert = cursor.execute.call_args_list[-2].args
     assert "INSERT INTO fichas_logistica" in consulta_insert
     # La ficha nueva apunta al artículo nuevo, conserva envase/contenido/
     # unidad, y lleva el alias que vino de la pantalla.
     assert parametros_insert == (5, 1, 100, 6, "kilo", False, "ANCO", "90200")
-    _, parametros_alta = cursor.execute.call_args_list[4].args
+    _, parametros_alta = cursor.execute.call_args_list[-1].args
     assert parametros_alta == (33, 1, 5, 100, 6, "kilo", False, "ANCO", "90200", "alta")
     conexion.commit.assert_called_once()
 
@@ -3714,13 +3718,13 @@ def test_cambiar_articulo_de_ficha_es_borrado_mas_alta_con_el_alias_de_la_pantal
 def test_cambiar_articulo_de_ficha_inexistente_devuelve_none_sin_escribir():
     # Una ficha que no existe no tiene precios, así que la guarda la deja
     # pasar y el DELETE no encuentra nada.
-    conexion, cursor = _conexion_falsa([(0,), None])
+    conexion, cursor = _conexion_falsa([(0,), (0,), None])
 
     with patch("app.db.obtener_conexion", return_value=conexion):
         resultado = cambiar_articulo_de_ficha(999, 5, None, None)
 
     assert resultado is None
-    assert cursor.execute.call_count == 2
+    assert cursor.execute.call_count == 3
 
 
 def test_listar_historial_fichas_va_de_lo_mas_nuevo_a_lo_mas_viejo():
@@ -8812,8 +8816,8 @@ def test_la_guarda_de_la_ficha_NO_cuenta_las_compras_RECHAZADAS():
 
     El filtro va en la consulta y no en Python — la regla la decide la base.
     """
-    # Tres conteos: guías R, compras armadas y precios.
-    conexion, cursor = _conexion_falsa(filas_fetchone=[(0,), (0,), (0,), None])
+    # Cuatro conteos: guías R, compras armadas, precios y la foto de un listado.
+    conexion, cursor = _conexion_falsa(filas_fetchone=[(0,), (0,), (0,), (0,), None])
 
     with patch("app.db.obtener_conexion", return_value=conexion):
         eliminar_ficha(901)

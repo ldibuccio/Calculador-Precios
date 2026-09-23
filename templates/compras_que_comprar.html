@@ -45,6 +45,11 @@
   .de-quien { font-size: 0.8rem; color: #555; margin-top: 0.35rem; overflow-wrap: anywhere; }
   .guardar { min-height: 52px; width: 100%; font-size: 1.1rem; font-weight: 800; color: #fff;
              background: #16a34a; border: 0; border-radius: 10px; margin-bottom: 0.75rem; }
+  .salgo { min-height: 52px; width: 100%; font-size: 1.1rem; font-weight: 800; color: #fff;
+           background: #2563eb; border: 0; border-radius: 10px; margin-bottom: 0.4rem; }
+  .salgo-ayuda { font-size: 0.85rem; color: #555; margin: 0 0 0.75rem; }
+  .salida { font-size: 0.95rem; }
+  .viejas { margin: 0.4rem 0 0; padding-left: 1.1rem; font-size: 0.9rem; overflow-wrap: anywhere; }
   .cerrar { min-height: 44px; width: 100%; font-size: 0.95rem; font-weight: 700; color: #444;
             background: #fff; border: 2px solid #ccc; border-radius: 8px; }
 </style>
@@ -91,22 +96,51 @@
     <div class="tarjeta"><p class="vacio">Esas cargas no piden nada.</p></div>
   {% endif %}
 
-  {% if filas %}
-    <div class="tarjeta"><p class="vacio">El stock es el del <b>cierre del
-      {{ stock_al.strftime("%d/%m") }}</b>: lo que había antes de salir a comprar. Lo
-      que compres hoy entra por "Compré hoy" y no mueve el stock.</p></div>
+  {# EL PUNTO DE PARTIDA DICE DE CUÁNDO ES: un stock congelado que no lo
+     dice se lee como el de ahora, y uno de ahora se lee como congelado. #}
+  {% if hay_borrador %}
+    <div class="tarjeta salida">
+    {% if salio_el %}
+      <p>Saliste a comprar el <b>{{ salio_el.strftime("%d/%m a las %H:%M") }}</b>.
+         El stock es el de ese momento, y «Compré» es lo que cargaste desde entonces.</p>
+    {% else %}
+      <p><b>Todavía no saliste a comprar.</b> El stock es el de ahora: cuando
+         aprietes «Salgo a comprar» queda fijo, y desde ahí lo que cargues entra
+         por «Compré».</p>
+    {% endif %}
+    <p class="vacio">«En camino» es lo que se cargó en los 3 días antes de salir
+      y todavía no había llegado: se suma a lo que tenés.</p>
+    </div>
+  {% endif %}
+
+  {# LAS VIEJAS NO SE SUMAN Y SE AVISAN: una compra de hace dos semanas que no
+     llegó es un error de carga o algo que no vino, y sumarla haría comprar de
+     menos. Quien sabe cuál de las dos es, es el comprador. #}
+  {% if viejas %}
+    <div class="tarjeta aviso-viejas">
+      <p class="hueco">Hay compras cargadas hace más de 3 días que no llegaron.
+        No se cuentan: si alguna está por llegar, comprá de menos a mano.</p>
+      <ul class="viejas">
+        {% for v in viejas %}
+          <li><b>{{ v.nombre }}</b>: {{ v.compras }} {{ "compra" if v.compras == 1 else "compras" }},
+            {{ v.cajones|sin_decimales }} cj{% if v.desde %}, desde el {{ v.desde.strftime("%d/%m") }}{% endif %}</li>
+        {% endfor %}
+      </ul>
+      <a class="ir-paso-1" href="/compras/pendientes">Revisarlas en Compras pendientes →</a>
+    </div>
   {% endif %}
 
   {% for f in filas %}
   <div class="tarjeta" data-articulo="{{ f.articulo_id }}"
        data-pide="{{ f.pide if f.pide is not none else '' }}"
        data-en-piso="{{ f.en_piso if f.en_piso is not none else '' }}"
+       data-de-partida="{{ f.de_partida if f.de_partida is not none else '' }}"
        data-ya-tengo="{{ f.ya_tengo if f.ya_tengo is not none else '' }}">
     <div class="art">{{ f.nombre }}</div>
     {# EN ESTE ORDEN Y NO OTRO (dueño, 23/09): piden kg · kg por bulto · piden
-       bultos · stock · a comprar hoy · compré hoy · falta comprar. El "por
-       bulto" va entre los dos "piden" porque es lo que dice de dónde salen
-       los bultos. #}
+       bultos · stock · en camino · a comprar hoy · compré · falta comprar. El
+       "por bulto" va entre los dos "piden" porque es lo que dice de dónde
+       salen los bultos, y "en camino" al lado del stock porque se le suma. #}
     <div class="renglon">
       <span class="dato dato-pide">Piden {{ f.palabra }} totales
         <b>{% if f.pide is not none %}{{ f.pide|sin_decimales }} {{ f.sufijo }}
@@ -123,11 +157,14 @@
            {%- elif f.stock_bultos is not none %}{{ f.stock_bultos|numero }} blt
            {%- else %}{{ f.en_piso|sin_decimales }} {{ f.sufijo }}{% endif %}</b>
         {% if f.en_piso is not none and f.stock_bultos is not none %}<small class="stock-magnitud">{{ f.en_piso|sin_decimales }} {{ f.sufijo }}</small>{% endif %}</span>
+      <span class="dato dato-en-camino">En camino
+        <b class="en-camino">{% if f.en_camino is none %}<span class="hueco">no se sabe la unidad</span>
+           {%- else %}{{ f.en_camino_cajones|sin_decimales }} cj{% endif %}</b></span>
       <span class="dato dato-a-comprar">A comprar hoy
-        <b class="a-comprar">{% if f.pide is not none and f.en_piso is not none and f.a_comprar is not none %}{% if f.a_comprar == 0 %}<span class="ok">OK</span>{% else %}{{ f.a_comprar }} cj{% endif %}
-           {%- elif f.pide is not none and f.en_piso is not none %}<span class="hueco">poné el por bulto</span>
+        <b class="a-comprar">{% if f.pide is not none and f.de_partida is not none and f.a_comprar is not none %}{% if f.a_comprar == 0 %}<span class="ok">OK</span>{% else %}{{ f.a_comprar }} cj{% endif %}
+           {%- elif f.pide is not none and f.de_partida is not none %}<span class="hueco">poné el por bulto</span>
            {%- else %}<span class="hueco">—</span>{% endif %}</b></span>
-      <span class="dato dato-compre">Compré hoy
+      <span class="dato dato-compre">Compré
         <b>{{ f.comprado_cajones|sin_decimales }} cj</b></span>
       <span class="dato dato-falta">Falta comprar
         <b class="falta">{% if f.falta is not none and f.falta == 0 %}<span class="ok">OK</span>
@@ -142,9 +179,17 @@
   {% endfor %}
 
   <button class="guardar" type="submit" name="accion" value="guardar">Guardar</button>
+  {# SALIR NO SE REPITE: una segunda foto movería el punto de partida y lo
+     comprado entre medio pasaría de "Compré" al stock. Para empezar de nuevo
+     se cierra el listado. #}
+  {% if not salio_el %}
+    <button class="salgo" type="submit" name="accion" value="salgo">Salgo a comprar</button>
+    <p class="salgo-ayuda">Guarda el listado y deja fijo el stock de este momento.
+      Apretalo cuando salís, no cuando armás la lista.</p>
+  {% endif %}
   {% if hay_borrador %}
     <button class="cerrar" type="submit" name="accion" value="cerrar"
-            onclick="return confirm('Cerrar el listado de hoy. Queda como historial y se empieza uno nuevo.')">Ya compré: cerrar el listado</button>
+            onclick="return confirm('Cerrar el listado. Queda como historial, con su foto, y se empieza uno nuevo.')">Ya compré: cerrar el listado</button>
   {% endif %}
   </form>
 
@@ -152,7 +197,8 @@
 // RECALCULA AL TOQUE al mover el kilaje, sin ir al server: parado en el
 // Mercado no se espera una recarga. La resta se rehace con los dos numeros
 // que la tarjeta trae: lo que piden (data-pide, ya con el margen de cada
-// carga adentro) y lo que ya tengo (data-ya-tengo).
+// carga adentro), el punto de partida (data-de-partida: la foto mas lo en
+// camino) y lo que ya tengo (data-ya-tengo: eso mas lo comprado).
 //
 // NO HAY MARGEN ACA desde el 23/09: vive en cada carga. Uno aca se
 // multiplicaria con aquel, y 20% y 10% son 32% sin que nadie lo vea.
@@ -178,6 +224,7 @@ function recalcular(tarjeta) {
   if (!campo) { return; }
   var pide = parseFloat(tarjeta.dataset.pide);
   var enPiso = parseFloat(tarjeta.dataset.enPiso);
+  var dePartida = parseFloat(tarjeta.dataset.dePartida);
   var yaTengo = parseFloat(tarjeta.dataset.yaTengo);
   var kilaje = parseFloat(String(campo.value).replace(",", "."));
   var hayKilaje = !isNaN(kilaje) && kilaje > 0;
@@ -189,9 +236,9 @@ function recalcular(tarjeta) {
     stock.textContent = unDecimal(enPiso / kilaje) + " blt";
   }
   // Un hueco se queda como lo dejo el server, que ya dice POR QUE falta.
-  if (isNaN(pide) || isNaN(enPiso) || isNaN(yaTengo)) { return; }
+  if (isNaN(pide) || isNaN(dePartida) || isNaN(yaTengo)) { return; }
   var aComprar = tarjeta.querySelector(".a-comprar");
-  if (aComprar) { aComprar.innerHTML = cajonesDe(Math.max(pide - enPiso, 0), kilaje); }
+  if (aComprar) { aComprar.innerHTML = cajonesDe(Math.max(pide - dePartida, 0), kilaje); }
   var destino = tarjeta.querySelector(".falta");
   var falta = Math.max(pide - yaTengo, 0);
   if (destino) {

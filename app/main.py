@@ -75,10 +75,12 @@ from app.db import (
     cargas_con_renglones,
     borrador_de_compra,
     cerrar_borrador_de_compra,
-    compras_de_hoy_por_articulo,
+    compras_alrededor_de_la_salida,
     guardar_carga_de_compra,
     guardar_renglones_de_carga,
     guardar_borrador_de_compra,
+    foto_del_listado,
+    salir_a_comprar,
     renglones_de_los_ultimos_pedidos,
     actualizar_articulo,
     actualizar_cantidad_compra,
@@ -3158,7 +3160,7 @@ def exportar_listado_compras_excel(fecha_desde: str = "", fecha_hasta: str = "",
 
 def _filas_de_que_comprar(
     aportes: list[dict], articulos: dict, unidades: dict, piso: dict, comprado: dict,
-    *, kilajes: dict | None = None,
+    *, kilajes: dict | None = None, en_camino: dict | None = None,
 ) -> list[dict]:
     """Una fila por artículo: lo que piden las cargas tildadas juntas, el piso y lo comprado.
 
@@ -3179,8 +3181,15 @@ def _filas_de_que_comprar(
 
     DE QUIÉN SALE SE MUESTRA (`de_quien`): un total que junta tres cargas y
     no lo dice se lee como un dato de un solo cliente.
+
+    EL PUNTO DE PARTIDA ES LA FOTO MÁS LO EN CAMINO (dueño, 23/09): lo que
+    se cargó en los días antes de salir y todavía no había llegado no está
+    en el piso y tampoco hay que volver a comprarlo. Se suma a la foto para
+    "A comprar" y se muestra en su propia columna, porque un stock que
+    incluye cosas que no están en el galpón se lee como que están.
     """
     kilajes = kilajes or {}
+    en_camino = en_camino or {}
     por_articulo: dict = {}
     for aporte in aportes:
         for articulo_id, total in aporte["pide"].items():
@@ -3203,27 +3212,31 @@ def _filas_de_que_comprar(
         # comprado nada es un hecho, no un dato que falte.
         if not lo_comprado:
             comprado_magnitud = 0.0
+        # EN CAMINO, con la misma regla: sin compras sin llegar es CERO.
+        lo_en_camino = en_camino.get(articulo_id) or {}
+        en_camino_magnitud = (
+            lo_en_camino.get("kilos") if unidad == "kilo" else lo_en_camino.get("conteo")
+        ) if lo_en_camino else 0.0
+        de_partida = _sumar_o_nada(del_piso.get("magnitud"), en_camino_magnitud)
 
         # EL KILAJE GUARDADO LE GANA A LA REFERENCIA, y solo está el del
         # artículo que el comprador TOCÓ: así se distingue "lo dejó como
         # venía" de "puso ese número".
         kilaje = kilajes.get(articulo_id, articulo.get("contenido_referencia"))
         kilaje = float(kilaje) if kilaje is not None else None
-        falta = falta_por_comprar(pide, del_piso.get("magnitud"), comprado_magnitud)
+        falta = falta_por_comprar(pide, de_partida, comprado_magnitud)
         # A COMPRAR HOY ES LO QUE HABIA QUE SALIR A BUSCAR antes de comprar
-        # nada: lo que piden menos el stock del cierre de ayer. Con la misma
+        # nada: lo que piden menos el punto de partida (la foto al salir más
+        # lo que venía en camino). Con la misma
         # `falta_por_comprar` y lo comprado en CERO, no con una resta propia:
         # escrita dos veces, "A comprar" y "Falta" podrían restar distinto y
         # la diferencia entre las dos no sería lo que se compró (dueño, 23/09:
         # "a comprar hoy sale de restarle el stock a lo que piden").
-        a_comprar = cajones_que_faltan(
-            falta_por_comprar(pide, del_piso.get("magnitud"), 0.0), kilaje)
+        a_comprar = cajones_que_faltan(falta_por_comprar(pide, de_partida, 0.0), kilaje)
         # LO QUE YA TENGO, sumado acá y no en el navegador: es la única parte
         # de la cuenta que necesita saber de fichas y de lotes, y el JS la
         # recibe hecha para poder recalcular al mover el kilaje.
-        ya_tengo = None
-        if del_piso.get("magnitud") is not None and comprado_magnitud is not None:
-            ya_tengo = float(del_piso["magnitud"]) + float(comprado_magnitud)
+        ya_tengo = _sumar_o_nada(de_partida, comprado_magnitud)
         filas.append(
             {
                 "articulo_id": articulo_id,
@@ -3237,6 +3250,9 @@ def _filas_de_que_comprar(
                 "cajas": del_piso.get("cajas"),
                 "comprado_cajones": lo_comprado.get("cajones", 0.0),
                 "comprado": comprado_magnitud,
+                "de_partida": de_partida,
+                "en_camino": en_camino_magnitud,
+                "en_camino_cajones": lo_en_camino.get("cajones", 0.0),
                 "kilaje": kilaje,
                 "falta": falta,
                 "cajones": cajones_que_faltan(falta, kilaje),
@@ -3260,6 +3276,13 @@ def _filas_de_que_comprar(
 PALABRA_DE_LA_UNIDAD = {"kilo": "kg", "unidad": "unidades", "cubeta": "cubetas"}
 
 
+def _sumar_o_nada(*valores):
+    """La suma, o None si alguno falta: un término que no se sabe no es cero."""
+    if any(v is None for v in valores):
+        return None
+    return sum(float(v) for v in valores)
+
+
 def _en_bultos(magnitud, kilaje):
     """Una magnitud pasada a bultos del Mercado, con un decimal. None si falta algo."""
     if magnitud is None or not kilaje:
@@ -3268,7 +3291,19 @@ def _en_bultos(magnitud, kilaje):
 
 
 def _piso_en_magnitud(articulo_ids: list[int], fichas_tildadas: list[dict], al_cierre_de):
-    """Cuánto hay en el piso de cada artículo, EN LA MAGNITUD de su fila.
+    """Cuánto hay en el piso de cada artículo AL CIERRE DE `al_cierre_de`, EN LA MAGNITUD de su fila.
+
+    Es la foto en vivo (`_foto_del_stock`) leída con las fichas tildadas
+    (`_piso_de_la_foto`). Las dos mitades están separadas porque la foto se
+    GUARDA al salir a comprar y se vuelve a leer después: la misma lectura
+    tiene que servir para la foto de ahora y para la de las 22 de anoche.
+    """
+    return _piso_de_la_foto(_foto_del_stock(articulo_ids, al_cierre_de),
+                            articulo_ids, fichas_tildadas)
+
+
+def _foto_del_stock(articulo_ids: list[int], al_cierre_de) -> dict:
+    """{"sueltos": {articulo_id: (bultos, magnitud)}, "cajas": {ficha_id: (articulo_id, cajas, magnitud)}}.
 
     Dos pilas y dos conversiones distintas, que es lo que obliga a hacerlo
     acá y no en una consulta:
@@ -3277,48 +3312,77 @@ def _piso_en_magnitud(articulo_ids: list[int], fichas_tildadas: list[dict], al_c
         viene en cajones de 5, de 10 y de 15 mezclados bajo el mismo
         artículo, así que un contenido por artículo sería una invención.
       - las CAJAS ya armadas tienen UN contenido por ficha
-        (`fichas_logistica.contenido_caja`), y solo cuentan las de los
-        clientes TILDADOS: una caja de Día no le sirve al pedido de Coto.
+        (`fichas_logistica.contenido_caja`).
+
+    LAS CAJAS VAN POR FICHA Y TODAS, no solo las de los clientes tildados:
+    la foto se guarda al salir, y un cliente se puede tildar después. Cuáles
+    cuentan lo decide `_piso_de_la_foto`, al leerla.
 
     LA SEGUNDA NO JUEGA y no hay que excluirla: es un pool aparte y ninguna
     de estas dos cuentas lo toca.
 
-    DEVUELVE None CUANDO NO SE PUEDE SABER, y eso es lo importante. Si algún
-    lote suelto no declara su contenido —un ajuste, el stock inicial— la
-    suma de las pilas no cierra contra los bultos que hay, y ahí la fila
-    queda sin número. Un cero diría "no hay nada en el piso" y haría comprar
-    de más, que es el peor final posible para esta pantalla.
+    UNA MAGNITUD EN None ES "NO SE PUEDE SABER", y eso es lo importante. Si
+    algún lote suelto no declara su contenido —un ajuste, el stock inicial—
+    la suma de las pilas no cierra contra los bultos que hay. Un cero diría
+    "no hay nada en el piso" y haría comprar de más, que es el peor final
+    posible para esta pantalla.
     """
     # UNA consulta para todos los artículos, no una por artículo: es la
     # misma que usan Stock del Depósito, Guías R y Rentabilidad Real.
     movimientos = entradas_y_salidas_stock_articulos(articulo_ids)
     cajas = cajas_armadas_por_ficha(al_cierre_de)
     stock = {f["articulo_id"]: float(f["stock"] or 0) for f in stock_deposito_por_articulo(al_cierre_de)}
+    contenido = {f["id"]: f.get("contenido_caja") for f in listar_fichas_de_todos_los_clientes()}
+    ids = set(articulo_ids)
 
-    fichas_por_articulo = {}
-    for ficha in fichas_tildadas:
-        fichas_por_articulo.setdefault(ficha["articulo_id"], []).append(ficha)
+    foto_cajas = {}
+    for (articulo_id, ficha_id), bultos in cajas.items():
+        if articulo_id not in ids:
+            continue
+        bultos = float(bultos or 0)
+        por_caja = contenido.get(ficha_id)
+        foto_cajas[ficha_id] = (
+            articulo_id, bultos, bultos * float(por_caja) if por_caja is not None else None)
 
-    piso = {}
+    foto_sueltos = {}
     for articulo_id in articulo_ids:
-        # Las cajas de las fichas tildadas, cada una por SU contenido.
-        en_cajas_magnitud, en_cajas_bultos, falta_contenido = 0.0, 0.0, False
-        for ficha in fichas_por_articulo.get(articulo_id, []):
-            bultos = float(cajas.get((articulo_id, ficha["id"]), 0) or 0)
-            en_cajas_bultos += bultos
-            if ficha.get("contenido_caja") is None:
-                falta_contenido = falta_contenido or bultos > 0
-            else:
-                en_cajas_magnitud += bultos * float(ficha["contenido_caja"])
-
         # Los sueltos salen por RESTA, igual que en el Cotejo: el total del
         # artículo menos TODAS las cajas en fichas (no solo las tildadas).
-        todas_las_cajas = sum(
-            float(v or 0) for (a, _f), v in cajas.items() if a == articulo_id
-        )
+        todas_las_cajas = sum(float(v or 0) for (a, _f), v in cajas.items() if a == articulo_id)
         sueltos = max(stock.get(articulo_id, 0.0) - todas_las_cajas, 0.0)
+        foto_sueltos[articulo_id] = (
+            sueltos, _sueltos_en_magnitud(articulo_id, movimientos, sueltos, al_cierre_de))
+    return {"sueltos": foto_sueltos, "cajas": foto_cajas}
 
-        sueltos_magnitud = _sueltos_en_magnitud(articulo_id, movimientos, sueltos, al_cierre_de)
+
+def _piso_de_la_foto(foto: dict, articulo_ids: list[int], fichas_tildadas: list[dict]) -> dict:
+    """{articulo_id: {magnitud, sueltos, cajas}} — la foto leída con las fichas de los clientes TILDADOS.
+
+    Solo cuentan las cajas de esas fichas: una caja de Día no le sirve al
+    pedido de Coto. Y una caja SIN contenido deja la fila sin número, igual
+    que un suelto cuyas pilas no cierran.
+
+    UN ARTÍCULO QUE NO ESTÁ EN LA FOTO QUEDA SIN NÚMERO y no en cero: la foto
+    guardada tiene todo el catálogo, así que el que falta se creó después de
+    salir, y de él no se sabe qué había.
+    """
+    tildadas = {f["id"] for f in fichas_tildadas}
+    piso = {}
+    for articulo_id in articulo_ids:
+        en_cajas_magnitud, en_cajas_bultos, falta_contenido = 0.0, 0.0, False
+        for ficha_id, (de_articulo, bultos, magnitud) in foto["cajas"].items():
+            if de_articulo != articulo_id or ficha_id not in tildadas:
+                continue
+            en_cajas_bultos += bultos
+            if magnitud is None:
+                falta_contenido = falta_contenido or bultos > 0
+            else:
+                en_cajas_magnitud += magnitud
+
+        if articulo_id not in foto["sueltos"]:
+            piso[articulo_id] = {"magnitud": None, "sueltos": None, "cajas": en_cajas_bultos}
+            continue
+        sueltos, sueltos_magnitud = foto["sueltos"][articulo_id]
         if sueltos_magnitud is None or falta_contenido:
             piso[articulo_id] = {"magnitud": None, "sueltos": sueltos, "cajas": en_cajas_bultos}
             continue
@@ -3409,30 +3473,42 @@ def _cargas_por_cliente(cargas: list[dict]) -> list[dict]:
 
 
 def _contexto_de_que_comprar(request: Request, aviso: str | None = None):
-    """El Paso 2: qué cargas arma el listado de hoy, y la planilla que sale de sumarlas.
+    """El Paso 2: qué cargas arma el listado abierto, y la planilla que sale de sumarlas.
 
     Hasta el 23/09 esta pantalla elegía CLIENTES con un modo y un margen
     global. Desde el Paso 1 lo que se elige son CARGAS —un cliente para una
     fecha, con su modo y su margen adentro— así que el listado puede tomar
     dos días de Día y uno de Tailem, que la estructura vieja no podía decir.
 
-    LAS CARGAS SE OFRECEN DESDE AYER, igual que en el Paso 1 y por la misma
-    razón: se trabaja de noche. Y una carga que ya usó OTRO listado se
-    ofrece igual, con el aviso al lado: capaz no se llegó a comprar, o se la
-    quiere de plantilla. Decide el comprador.
+    EL LISTADO ESTÁ ATADO AL MOMENTO DE SALIR, NO AL RELOJ (dueño, 23/09).
+    Hasta que se aprieta "Salgo a comprar" la pantalla muestra el stock de
+    AHORA —lo que la foto sería si se sacara ya— y nada comprado. Desde que
+    se aprieta:
 
-    UN BORRADOR QUE NO EXISTE NO ES UN BORRADOR VACÍO: sin ninguno no hay
-    nada que cerrar, y la pantalla no lo ofrece.
+      - el STOCK es la foto de ese instante, guardada;
+      - COMPRÉ es lo cargado desde ese instante, llegado o no;
+      - EN CAMINO es lo cargado en los tres días antes que no había llegado,
+        y se suma al punto de partida;
+      - las compras sin llegar MÁS VIEJAS no se suman: van a un aviso.
+
+    Así nada entra dos veces: una compra está en la foto, en camino o en
+    Compré, según cuándo se cargó y cuándo llegó.
+
+    LAS CARGAS SE OFRECEN DESDE AYER —y desde el día anterior a abrir el
+    listado, si se abrió antes—: una carga tildada que dejara de ofrecerse
+    se perdería en el próximo Guardar, porque el guardado reemplaza.
     """
     hoy = datetime.now(ARGENTINA).date()
-    cierre_de_ayer = hoy - timedelta(days=1)
     contexto = {"barra_sector": "compras", "barra_titulo": "Qué comprar hoy",
                 "clientes": [], "elegidas": set(), "filas": [], "aviso": aviso,
-                "hay_borrador": False, "stock_al": cierre_de_ayer}
+                "hay_borrador": False, "salio_el": None, "viejas": []}
     try:
-        borrador = borrador_de_compra(hoy)
+        borrador = borrador_de_compra()
+        desde = hoy - timedelta(days=1)
+        if borrador:
+            desde = min(desde, borrador["fecha"] - timedelta(days=1))
         contexto["clientes"] = _cargas_por_cliente(listar_cargas_desde(
-            hoy - timedelta(days=1), borrador["id"] if borrador else None))
+            desde, borrador["id"] if borrador else None))
     except Exception:
         logger.exception("No se pudo leer el borrador de Qué comprar hoy")
         contexto["aviso"] = aviso or "No se pudieron leer las cargas. Probá de nuevo."
@@ -3441,6 +3517,9 @@ def _contexto_de_que_comprar(request: Request, aviso: str | None = None):
     if borrador is None:
         return contexto
     contexto["hay_borrador"] = True
+    salida = borrador.get("generado_el")
+    if salida is not None:
+        contexto["salio_el"] = salida.astimezone(ARGENTINA)
     contexto["elegidas"] = set(borrador["cargas"])
     if not borrador["cargas"]:
         return contexto
@@ -3465,21 +3544,32 @@ def _contexto_de_que_comprar(request: Request, aviso: str | None = None):
         clientes = sorted({carga["cliente_id"] for carga in cargas})
         fichas = [f for c in clientes for f in listar_fichas_por_cliente(c)]
         ids = sorted({a for aporte in aportes for a in aporte["pide"]})
-        # EL STOCK ES EL DEL CIERRE DE AYER, congelado (dueño, 23/09): "es lo
-        # que tengo antes de salir a comprar, mi punto de partida". Hasta el
-        # 23/09 era el de HOY, en vivo, y eso contaba dos veces lo comprado:
-        # una compra de hoy que ya se recepcionó sumaba al stock Y a "Compré
-        # hoy", así que el faltante bajaba el doble mientras se compraba. Lo
-        # de hoy entra por UN solo lado, que es "Compré hoy".
-        piso = _piso_en_magnitud(ids, fichas, cierre_de_ayer) if ids else {}
-        comprado = compras_de_hoy_por_articulo()
+        # LA FOTO GUARDADA SI YA SALIÓ; SI NO, LA DE AHORA. La de ahora es al
+        # cierre de HOY porque el stock se cuenta por día: incluye lo que ya
+        # se recepcionó hoy, y eso mismo queda afuera de "en camino".
+        foto = foto_del_listado(borrador["id"]) if salida else _foto_del_stock(ids, hoy)
+        piso = _piso_de_la_foto(foto, ids, fichas) if ids else {}
+        compras = compras_alrededor_de_la_salida(salida)
     except Exception:
         logger.exception("No se pudo armar Qué comprar hoy")
         contexto["aviso"] = aviso or "No se pudo leer lo que hace falta comprar. Probá de nuevo."
         return contexto
 
     contexto["filas"] = _filas_de_que_comprar(
-        aportes, articulos, unidades, piso, comprado, kilajes=borrador["kilajes"],
+        aportes, articulos, unidades, piso, compras["compre"],
+        kilajes=borrador["kilajes"], en_camino=compras["en_camino"],
+    )
+    # LAS VIEJAS, SOLO DE LOS ARTÍCULOS DEL LISTADO: son las que pueden
+    # cambiar lo que se sale a comprar. Una compra de pera colgada no le dice
+    # nada a quien compra tomate.
+    contexto["viejas"] = sorted(
+        (
+            {"nombre": articulos.get(a, {}).get("nombre", ""), "compras": v["compras"],
+             "cajones": v["cajones"],
+             "desde": v["desde"].astimezone(ARGENTINA).date() if v["desde"] else None}
+            for a, v in compras["viejas"].items() if a in ids
+        ),
+        key=lambda v: v["nombre"],
     )
     return contexto
 
@@ -4208,31 +4298,50 @@ def ver_que_comprar(request: Request):
 
     LEE EL BORRADOR DE HOY y no la URL: la pantalla se abre como se dejó.
     """
+    # EL ERROR DEL POST SE DICE: hasta el 23/09 el `?error=` se escribía y
+    # nadie lo leía, así que un guardado que fallaba volvía a la pantalla como
+    # si hubiera salido bien. Con "Salgo a comprar" eso es caro: el comprador
+    # se va al Mercado creyendo que el stock quedó congelado.
+    error = request.query_params.get("error")
     return templates.TemplateResponse(
-        request, "compras_que_comprar.html", _contexto_de_que_comprar(request)
+        request, "compras_que_comprar.html",
+        _contexto_de_que_comprar(request, ERRORES_DE_QUE_COMPRAR.get(error)),
     )
+
+
+ERRORES_DE_QUE_COMPRAR = {
+    "guardar": "No se pudo guardar el listado. Probá de nuevo.",
+    "cerrar": "No se pudo cerrar el listado. Probá de nuevo.",
+    "salgo": "Se guardó el listado pero NO se pudo sacar la foto del stock. "
+             "Apretá «Salgo a comprar» de nuevo antes de salir.",
+}
 
 
 @app.post("/compras/que-comprar")
 async def guardar_que_comprar(request: Request):
-    """Guarda el borrador entero, o lo cierra. Siempre redirige (POST-redirect-GET).
+    """Guarda el listado abierto entero, sale a comprar, o lo cierra. Siempre redirige.
 
     LAS DOS COSAS QUE SE EDITAN VIAJAN JUNTAS —qué cargas y los kilajes—
     porque se guardan reemplazando: destildar una carga tiene que sacarla, y
     eso un guardado parcial no lo puede expresar.
 
+    "SALGO A COMPRAR" GUARDA PRIMERO y después saca la foto: el que tildó una
+    carga y apretó directo el botón de salir no puede perder el tilde, y la
+    foto tiene que ser de un listado que existe.
+
     NO HAY MARGEN ACÁ, y no es un olvido: vive en cada carga (23/09).
 
-    EL FORMULARIO ES LA PANTALLA ENTERA, con un solo botón. Parado en el
-    Mercado, ajustar un kilaje y que se pierda por no haber apretado otro
-    botón es peor que un viaje de más.
+    EL FORMULARIO ES LA PANTALLA ENTERA. Parado en el Mercado, ajustar un
+    kilaje y que se pierda por no haber apretado otro botón es peor que un
+    viaje de más.
     """
     formulario = await request.form()
     hoy = datetime.now(ARGENTINA).date()
+    accion = formulario.get("accion")
 
-    if formulario.get("accion") == "cerrar":
+    if accion == "cerrar":
         try:
-            cerrar_borrador_de_compra(hoy)
+            cerrar_borrador_de_compra()
         except Exception:
             logger.exception("No se pudo cerrar el listado de compra")
             return RedirectResponse("/compras/que-comprar?error=cerrar", status_code=303)
@@ -4248,10 +4357,21 @@ async def guardar_que_comprar(request: Request):
             kilajes[int(clave[7:])] = numero
 
     try:
-        guardar_borrador_de_compra(hoy, cargas, kilajes)
+        listado_id = guardar_borrador_de_compra(hoy, cargas, kilajes)
     except Exception:
         logger.exception("No se pudo guardar el borrador de Qué comprar hoy")
         return RedirectResponse("/compras/que-comprar?error=guardar", status_code=303)
+
+    if accion == "salgo":
+        try:
+            # LA FOTO ES DE TODO EL CATÁLOGO y no de lo tildado: se puede
+            # tildar otra carga después de salir, y de un artículo que no
+            # está en la foto no se sabe qué había.
+            foto = _foto_del_stock(sorted(a["id"] for a in listar_articulos()), hoy)
+            salir_a_comprar(listado_id, foto["sueltos"], foto["cajas"])
+        except Exception:
+            logger.exception("No se pudo sacar la foto del stock al salir a comprar")
+            return RedirectResponse("/compras/que-comprar?error=salgo", status_code=303)
     return RedirectResponse("/compras/que-comprar", status_code=303)
 
 
