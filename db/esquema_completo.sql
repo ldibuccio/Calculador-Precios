@@ -171,9 +171,15 @@ create table envases (
     -- Debajo de este número, la alerta de Compras avisa que hay que reponer.
     -- NULL = este envase no se vigila. Ver db/envases_1_*.sql.
     umbral_reposicion integer,
+    -- Cuantas cajas entran en un pallet. Ver db/pallet_1_cajas_por_pallet.sql.
+    cajas_por_pallet integer,
     constraint envases_umbral_no_negativo
-        check (umbral_reposicion is null or umbral_reposicion >= 0)
+        check (umbral_reposicion is null or umbral_reposicion >= 0),
+    constraint envases_cajas_por_pallet_positivo
+        check (cajas_por_pallet is null or cajas_por_pallet > 0)
 );
+
+comment on column envases.cajas_por_pallet is 'Cuantas cajas de ESTE envase entran en un pallet. Se carga una vez (dueno, 23/09) y la pantalla de Cajas muestra el stock como pallets mas cajas sueltas. NULL = no se cargo: ese envase se sigue mostrando solo en cajas.';
 
 comment on table envases is 'Catálogo único de envases, compartido entre todos los clientes: cada ficha logística elige el que corresponda. Un envase exclusivo de un cliente se distingue por el nombre (ver envases_sin_cliente.sql).';
 
@@ -588,6 +594,9 @@ create table cargas_compra (
     margen_porcentaje    numeric not null constraint cargas_compra_margen_check
                              check (margen_porcentaje >= 0),
     promedio_anterior_a  date not null,
+    -- NULLABLE hasta que corra db/cargas_compra_dias_2.sql (después del deploy).
+    dias                 integer constraint cargas_compra_dias_check
+                             check (dias is null or dias >= 1),
     creado_en            timestamptz not null default now(),
     actualizado_en       timestamptz not null default now(),
     unique (cliente_id, fecha)
@@ -597,6 +606,7 @@ comment on table cargas_compra is 'Lo que hay que comprar para UN cliente para U
 comment on column cargas_compra.fecha is 'LA FECHA DE COMPRA que eligio el comprador, NO el dia en que cargo. Se trabaja de noche y el dia del reloj no sirve: a las 23 se carga para manana y se elige manana.';
 comment on column cargas_compra.promedio_anterior_a is 'EL ANCLA DEL PROMEDIO, y el nombre dice el operador: se miran los pedidos con fecha_operacion < este valor, nunca <=. Es el dia en que se CARGO y no la fecha de compra (dueno, 22/09): si cargo hoy para el 27, mira los 6 anteriores a hoy. Se guarda en vez de sacarlo de now() porque el listado se arma dias despues: ahi "el dia en que cargo" seria otro y la ventana se correria sola. Editar la carga NO lo mueve; borrarla y empezar de cero SI, porque es una carga nueva.';
 comment on column cargas_compra.margen_porcentaje is 'Cuanto se compra de mas para ESTE cliente, en por ciento, SOBRE LO QUE PIDE y no sobre el faltante: el margen existe porque lo que se va a vender es incierto, y el piso esta contado. SOLO SE APLICA A LO QUE EL PROMEDIO PROPONE (dueno, 23/09): lo corregido y todo lo de a mano ya es lo que se compra y entra tal cual; por eso la pantalla no muestra el campo en modo manual. Es por CARGA y no por listado (dueno, 23/09): cuanto inflar lo de Dia es un hecho sobre Dia, y dos margenes que se multiplican son invisibles — 20% y 10% son 32% y nadie hace esa cuenta de cabeza. SIN DEFAULT EN LA BASE a proposito: el valor de arranque lo propone la pantalla (MARGEN_SUGERIDO, core/que_comprar.py) y dos defaults que no coinciden es como se separan dos reglas. 0 significa sin margen, y es distinto de vacio.';
+comment on column cargas_compra.dias is 'PARA CUANTOS DIAS es la compra (dueno, 23/09): multiplica el promedio diario. Igual que el margen, SOLO sobre lo que el promedio propone: lo corregido y lo de a mano ya es lo que se compra. Las cargas anteriores quedaron en 1 porque se cargaron para un dia.';
 comment on column cargas_compra.modo is 'automatico = sale del promedio de los ultimos 6 pedidos vigentes anteriores a promedio_anterior_a. manual = sale de cargas_compra_renglones. SUBIR UN ARCHIVO NO ES UN TERCER MODO: se lee, se revisa, y queda como renglones manuales; el archivo no se guarda (dueno, 22/09) porque lo que vale es lo revisado. Un tercer valor obligaria a escribir modo in (manual, archivo) en cada lector, y el que se lo olvide no falla: muestra la carga vacia.';
 
 create table cargas_compra_renglones (

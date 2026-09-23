@@ -131,6 +131,15 @@
     font-weight: 600;
     cursor: pointer;
   }
+  /* El select a lo ancho y alto como el boton: un nombre de proveedor largo
+     no puede empujar la pagina de costado en 390px. */
+  .selector-proveedor {
+    width: 100%;
+    min-height: 44px;
+    font-size: 1rem;
+    margin-bottom: 0.6rem;
+    max-width: 100%;
+  }
   .desmarcada {
     border: 1px solid #2e7d32;
     background: #f1f8f2;
@@ -160,6 +169,10 @@
 
   {% if error %}
   <div class="error">{{ error }}</div>
+  {% endif %}
+
+  {% if proveedor_cambiado %}
+  <div class="desmarcada">Listo: el proveedor quedó cambiado.</div>
   {% endif %}
 
   {% if desmarcada %}
@@ -234,6 +247,30 @@
     {% endif %}
   </div>
   {% endif %}
+
+  {# CAMBIAR EL PROVEEDOR (dueño, 23/09). Mismo criterio que los dos bloques
+     de arriba: el selector solo aparece donde la escritura ACEPTA, y con un
+     freno se dice cuál. Los frenos salen de la MISMA función que usa el POST. #}
+  <div class="marca-armada">
+    <h3>Cambiar el proveedor</h3>
+    {% if frenos_proveedor %}
+    <p><strong>No se puede cambiar:</strong> esta compra {{ frenos_proveedor | join("; ") }}.
+      Ahí el proveedor viejo ya quedó escrito. Anulá eso primero.</p>
+    {% else %}
+    <p>Si la cargaron con el proveedor equivocado. La compra pasa a la guía de
+      ese proveedor ese día.</p>
+    <form method="post" action="/gerencia/compras/{{ compra.id }}/cambiar-proveedor"
+          onsubmit="return confirm('¿Cambiar el proveedor de esta compra?');">
+      <select name="proveedor_id" id="proveedor_id" class="selector-proveedor" required>
+        <option value="">Elegí el proveedor</option>
+        {% for p in proveedores if p.id != compra.proveedor_id %}
+        <option value="{{ p.id }}">{{ p.nombre }} ({{ p.codigo_puesto }})</option>
+        {% endfor %}
+      </select>
+      <button type="submit">Cambiar el proveedor</button>
+    </form>
+    {% endif %}
+  </div>
 
   <div class="tarjeta">
     <h2>{{ compra.proveedor_nombre }} ({{ compra.proveedor_codigo_puesto }})</h2>

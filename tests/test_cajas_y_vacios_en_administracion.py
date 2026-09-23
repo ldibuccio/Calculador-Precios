@@ -50,6 +50,7 @@ UN_ENVASE = [{
     "id": 1, "nombre": "Caja EJEMPLO Grande", "umbral_reposicion": 50,
     "desde": date(2026, 9, 10), "contadas": 100, "declaradas": -70, "por_guias": -20,
     "stock": 10, "esperando_mov": 0, "esperando_guias": 0, "esperando_desde": None,
+    "cajas_por_pallet": 4,
 }, {
     # UNO SIN ARRANCAR, a propósito: el formulario del conteo inicial solo se
     # dibuja si hay alguno, y sin él la pantalla tiene tres formularios y el
@@ -57,6 +58,7 @@ UN_ENVASE = [{
     "id": 2, "nombre": "Caja EJEMPLO Chica", "umbral_reposicion": None,
     "desde": None, "contadas": None, "declaradas": 0, "por_guias": 0, "stock": None,
     "esperando_mov": 0, "esperando_guias": 0, "esperando_desde": None,
+    "cajas_por_pallet": None,
 }]
 UNA_CUENTA = [{
     "colega_id": 3, "colega": "Colega EJEMPLO Uno", "movimientos": 1,
@@ -153,7 +155,8 @@ def test_los_FORMULARIOS_de_cada_pantalla_mandan_a_SU_sector():
     (corolario 60): si un formulario vuelve a Compras y si uno desaparece.
     """
     decididos = {
-        "/cajas": {"/administracion/cajas/umbral", "/administracion/cajas/conteo-inicial",
+        "/cajas": {"/administracion/cajas/umbral", "/administracion/cajas/pallet",
+                   "/administracion/cajas/conteo-inicial",
                    "/administracion/cajas/movimiento", "/administracion/cajas/colegas"},
         "/vacios": {"/administracion/vacios/conteo"},
         "/vacios/7": {"/administracion/vacios/7/cajon", "/administracion/vacios/7/devolucion",
@@ -181,6 +184,7 @@ def test_los_FORMULARIOS_de_cada_pantalla_mandan_a_SU_sector():
      "crear_movimiento_envase", "/cajas?"),
     ("/cajas/colegas", {"nombre": "Colega EJEMPLO Dos"}, "obtener_o_crear_colega", "/cajas?"),
     ("/cajas/umbral", {"envase_id": "1", "umbral": "30"}, "guardar_umbral_de_envase", "/cajas?"),
+    ("/cajas/pallet", {"envase_id": "1", "cajas": "60"}, "guardar_cajas_por_pallet", "/cajas?"),
     ("/vacios/conteo", {"proveedor_id": "7", "cantidad": "0", "fecha": "2026-09-20"},
      "crear_conteo_vacios_deposito", "/vacios?"),
     ("/vacios/7/cajon", {"tipo_cajon_id": "4"}, "asignar_tipo_cajon", "/vacios/7?"),
@@ -271,4 +275,44 @@ def test_los_EXPORTES_del_stock_de_vacios_dicen_lo_MISMO_que_la_pantalla():
     assert filas[0] == ("Puesto EJEMPLO", "Cajón de ejemplo", 35)
     assert filas[1] == (None, "Total", 35)
     assert any("1 proveedor(es) con cajones sin conteo" in str(f[0]) for f in filas)
+
+
+# CAJAS POR PALLET (23/09): el mismo stock partido en pallets y sueltas.
+def test_en_pallets_parte_el_stock_y_NO_parte_lo_que_no_puede():
+    from core.envases import en_pallets
+    assert en_pallets(130, 60) == (2, 10)
+    assert en_pallets(120, 60) == (2, 0)
+    # Sin el número, sin stock, o NEGATIVO: no hay pallets que decir.
+    assert en_pallets(130, None) is None
+    assert en_pallets(None, 60) is None
+    assert en_pallets(-20, 60) is None
+
+
+def test_la_tarjeta_dice_PALLETS_Y_SUELTAS_y_la_que_no_tiene_el_numero_NO():
+    """10 cajas de 4 por pallet = 2 pallets y 2 sueltas. La chica no tiene el
+    número cargado, así que se lee solo en cajas."""
+    with _con_datos():
+        marcado = cliente.get("/administracion/cajas").text.split("</style>")[-1]
+    assert marcado.count('class="pallets"') == 1
+    assert "2 pallets y 2 sueltas" in " ".join(marcado.split())
+    assert 'action="/administracion/cajas/pallet"' in marcado
+
+
+@pytest.mark.parametrize("valor", ["0", "abc", "-3"])
+def test_cajas_por_pallet_que_no_son_un_entero_positivo_REBOTAN(valor):
+    with _con_datos(), patch("app.main.guardar_cajas_por_pallet") as guardar:
+        respuesta = cliente.post("/administracion/cajas/pallet",
+                                 data={"envase_id": "1", "cajas": valor},
+                                 follow_redirects=False)
+    assert respuesta.status_code == 400
+    guardar.assert_not_called()
+
+
+def test_cajas_por_pallet_VACIO_borra_el_numero():
+    with _con_datos(), patch("app.main.guardar_cajas_por_pallet") as guardar:
+        respuesta = cliente.post("/administracion/cajas/pallet",
+                                 data={"envase_id": "1", "cajas": ""},
+                                 follow_redirects=False)
+    assert respuesta.status_code == 303
+    guardar.assert_called_once_with(1, None)
 

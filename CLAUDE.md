@@ -10360,6 +10360,9 @@ este archivo guarda.
 5. **Cargas desde ayer en adelante**; una ya usada se muestra marcada y se
    puede volver a sumar.
 6. **El kilaje del Mercado vive en el Paso 2 y es editable.**
+   **Y los DÍAS de la carga (23/09) van igual que el margen**: multiplican
+   SOLO lo que el promedio propone, en días enteros, y viven en la misma
+   regla (`lo_que_pide_la_carga`). Lo tipeado ya es lo que se compra.
 7. **El listado está atado al momento de SALIR, no al reloj.** El botón
    "Salgo a comprar" guarda la foto del stock; "Compré" es lo cargado desde
    ahí, "En camino" lo cargado en los 3 días antes que no había llegado, y las
