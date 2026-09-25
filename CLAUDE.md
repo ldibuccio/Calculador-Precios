@@ -2826,6 +2826,14 @@ porque son dos hechos distintos del galpón y el que lee el resultado quiere
 saber cuál pesa más. Juntarlas en un total sería perder eso; calcularlas con
 dos reglas sería la regla escrita dos veces.
 
+**Y desde el 25/09 hay un TERCER renglón, CAJAS ROTAS, que suma al mismo
+total** (dueño: *"es plata perdida igual que la mercadería"*). No es la tercera
+forma de la misma cuenta: son cajas VACÍAS dadas de baja en Cajas (origen
+`merma` de `movimientos_envase`), sin artículo ni mercadería, así que su
+desglose es por tipo de caja. Se valúan al costo de la caja vigente el día de
+la rotura, con el MISMO fragmento que las otras cuentas de plata de cajas
+(`_SQL_COSTO_DEL_ENVASE_A_LA_FECHA`).
+
 ### La mercadería sale del REJUEGO, y la preferencia es lo que la ata a la caja
 
 Una caja de Día armada que se tira **no se costea contra el cajón más viejo

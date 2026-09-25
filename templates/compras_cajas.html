@@ -331,6 +331,9 @@
           <select id="mv-origen" name="origen">
             <option value="compra">Compré cajas</option>
             <option value="prestamo_al_puesto">Le mandé cajas vacías al puesto</option>
+            {# CAJAS ROTAS (dueño, 25/09): se dan de baja y es plata perdida —va a
+               Gerencia, Pérdidas—. Resta siempre: el signo lo pone el server. #}
+            <option value="merma">Se rompieron cajas</option>
             {# LAS OPCIONES DE COLEGA SALEN DEL MAPA, no escritas a mano: el mapa
                está atado al CHECK por un test, así que la pantalla no puede
                quedarse atrás de lo que la base acepta. `data-colega` lo marca

@@ -6175,7 +6175,9 @@ def _guardar_movimiento_de_envase(request: Request, envase_id: str, cantidad: st
     # origen no hay una segunda tabla que se olvide de acompañarlo.
     if origen in ORIGENES_DE_COLEGA:
         valor = ORIGENES_DE_COLEGA[origen]["piso"] * abs(valor)
-    elif origen == "prestamo_al_puesto":
+    elif origen in ("prestamo_al_puesto", "merma"):
+        # Las cajas ROTAS salen del piso igual que las que se mandan al puesto:
+        # la pregunta es "cuántas se rompieron", no "cuántas resto".
         valor = -abs(valor)
     elif origen in ("compra", "conteo_inicial"):
         valor = abs(valor)
@@ -16825,6 +16827,10 @@ def ver_perdidas(
     que sumar de cabeza: una caja de Día armada que se tira pierde los kilos
     que tenía MÁS la caja, y eso es UN número. Los bultos sueltos pierden
     solo los kilos, así que su columna de caja va en cero — y se ve.
+
+    Y LAS CAJAS ROTAS SON UN TERCER RENGLÓN (25/09) que suma al mismo total:
+    cajas vacías dadas de baja en Cajas, sin artículo, desglosadas por tipo
+    de caja.
 
     ES UNA PANTALLA DE MIRAR, no de trabajar: no escribe nada y no propone
     ninguna acción. Va a ser una línea del estado de resultados.
