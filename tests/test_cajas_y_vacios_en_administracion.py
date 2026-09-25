@@ -367,3 +367,25 @@ def test_cajas_por_pallet_VACIO_borra_el_numero():
     assert respuesta.status_code == 303
     guardar.assert_called_once_with(1, None)
 
+
+
+# LOS CAJONES SON ENTEROS (dueño, 25/09): "no existe medio cajón". La suma sale
+# de `compras.cantidad_cajones_real`, que es numeric, así que la base devuelve
+# Decimal('658.0') y la pantalla lo imprimía así. El fixture lo trae COMO LO
+# DEVUELVE LA BASE — con un int el test pasaría con el bug puesto.
+@pytest.mark.parametrize("ruta, esperado", [
+    ("/vacios", "658 cajones"),
+    ("/vacios/7", "658 cajones"),
+    ("/vacios/stock", '<span class="cantidad">658</span>'),
+])
+def test_los_cajones_de_VACIOS_se_leen_ENTEROS_aunque_la_base_devuelva_658_0(ruta, esperado):
+    from decimal import Decimal
+    proveedor = dict(UN_PROVEEDOR[0], stock=Decimal("658.0"), contados=Decimal("600.0"),
+                     recibidos=Decimal("70.0"), devueltos=Decimal("12.0"))
+    with _con_datos(), patch("app.main.stock_de_vacios_deposito", return_value=[proveedor]):
+        respuesta = cliente.get(f"/administracion{ruta}")
+    assert respuesta.status_code == 200
+    marcado = respuesta.text.split("</style>")[-1]
+    assert esperado in marcado
+    for crudo in ("658.0", "600.0", "70.0", "12.0"):
+        assert crudo not in marcado, crudo

@@ -131,11 +131,11 @@
     {% endif %}
   </div>
   {% if p.desde %}
-    <div class="stock">{{ p.stock }} cajones</div>
+    <div class="stock">{{ p.stock|numero }} cajones</div>
     <div class="patas">
-      <span>contados {{ p.contados }}</span>
-      <span>recibidos +{{ p.recibidos }}</span>
-      <span>devueltos −{{ p.devueltos }}</span>
+      <span>contados {{ p.contados|numero }}</span>
+      <span>recibidos +{{ p.recibidos|numero }}</span>
+      <span>devueltos −{{ p.devueltos|numero }}</span>
       <span>desde {{ p.desde.strftime('%d/%m/%Y') }}</span>
     </div>
   {% else %}

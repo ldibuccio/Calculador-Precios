@@ -47,7 +47,7 @@
       <span class="nombre">{{ p.nombre }}</span>
       <span class="tipo">{{ p.tipo_cajon or "sin declarar en qué cajón entrega" }}</span>
     </div>
-    <span class="cantidad">{{ p.stock }}</span>
+    <span class="cantidad">{{ p.stock|numero }}</span>
   </div>
   {% else %}
   <p class="vacio">Ningún proveedor tiene la cuenta arrancada todavía.</p>
