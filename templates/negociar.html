@@ -170,6 +170,7 @@
   {% set barra_sector = "comercial" %}
   {% set barra_titulo = "Márgenes por Artículo" %}
   {% set barra_atras = "/precios" %}
+  {% from "_info.html" import info %}
   {% include "_barra_navegacion.html" %}
 
   <div class="tarjeta">
@@ -203,14 +204,13 @@
      Sin facturación legible no hay pesos: se dice, no se inventa un número. #}
   {% if todos %}
   <div class="tarjeta" id="promedio-ponderado">
-    <div class="promedio-rotulo">Utilidad promedio, pesada por lo que se vende</div>
+    <div class="promedio-rotulo">Utilidad promedio, pesada por lo que se vende{% if not incidencia_sin_datos %} {% call info("¿Cómo se calcula el promedio?") %}Precios vigentes contra costos actuales, pesado por lo facturado en los últimos {{ incidencia_dias }} días. El que no facturó no pesa.{% endcall %}{% endif %}</div>
     {% if incidencia_sin_datos %}
     <div class="promedio-valor-fijo">—</div>
     <p class="promedio-nota">No se pudo leer la facturación: sin ella no hay con qué pesar.</p>
     {% else %}
     <div class="promedio-valor">—</div>
     <p class="promedio-detalle"></p>
-    <p class="promedio-nota">Precios vigentes contra costos actuales, pesado por lo facturado en los últimos {{ incidencia_dias }} días. El que no facturó no pesa.</p>
     {% endif %}
   </div>
   {% endif %}

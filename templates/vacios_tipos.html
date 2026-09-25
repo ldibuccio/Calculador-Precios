@@ -37,7 +37,6 @@
     font-size: 0.95rem;
     font-weight: 600;
   }
-  .ayuda { color: #888; font-size: 0.85rem; margin: 0 0 0.75rem; }
   form label {
     display: block;
     font-size: 0.9rem;
@@ -221,6 +220,7 @@
   {% set barra_sector = "puesto" %}
   {% set barra_titulo = "Tipos de Envase" %}
   {% set barra_atras = "/puesto/envases" %}
+  {% from "_info.html" import info %}
   {% include "_barra_navegacion.html" %}
 
   {% if error %}
@@ -255,8 +255,7 @@
   {% endif %}
 
   <div class="tarjeta">
-    <h2>Cargar tipo de envase</h2>
-    <p class="ayuda">Un proveedor sin tipos cargados no aparece en Recibir ni en Devolver: cargarle su primer tipo acá es lo que lo habilita para Vacíos. Si el proveedor todavía no existe, cargalo primero en Proveedores del Puesto. La seña se puede dejar para después.</p>
+    <h2>Cargar tipo de envase {% call info("Para qué cargar un tipo") %}Un proveedor sin tipos cargados no aparece en Recibir ni en Devolver: cargarle su primer tipo acá es lo que lo habilita para Vacíos. Si el proveedor todavía no existe, cargalo primero en Proveedores del Puesto. La seña se puede dejar para después.{% endcall %}</h2>
     <form method="post" action="/puesto/envases/tipos/nuevo">
       <label for="proveedor_id">Proveedor *</label>
       <select id="proveedor_id" name="proveedor_id" required>
@@ -283,8 +282,7 @@
   </div>
 
   <div class="tarjeta">
-    <h2>Tipos cargados</h2>
-    <p class="ayuda">Editar corrige el nombre y carga la seña. La seña vale por la fecha en que se RECIBIERON los cajones, no por la fecha en que se pagan, y el valor anterior no se borra: queda tachado en el historial.</p>
+    <h2>Tipos cargados {% call info("Qué hace Editar") %}Editar corrige el nombre y carga la seña. La seña vale por la fecha en que se RECIBIERON los cajones, no por la fecha en que se pagan, y el valor anterior no se borra: queda tachado en el historial.{% endcall %}</h2>
     {% if tipos %}
       {% for t in tipos %}
       {% set valor = valores.get(t.id) %}

@@ -226,8 +226,9 @@
   {% set barra_sector = "compras" %}
   {% set barra_titulo = "Cargar listado de compras" %}
   {% set barra_atras = "/compras" %}
+  {% from "_info.html" import info %}
   {% include "_barra_navegacion.html" %}
-  <p class="ayuda">Tocá el botón: se abre la cámara o la galería del celular. En cuanto elijas la foto de la planilla, el sistema la lee entera y agrupa los renglones por proveedor. Después revisás y guardás de a un proveedor por vez, como en Múltiples comandas.</p>
+  <p class="ayuda">¿Cómo se carga? {% call info("Cómo se carga") %}Tocá el botón: se abre la cámara o la galería del celular. En cuanto elijas la foto de la planilla, el sistema la lee entera y agrupa los renglones por proveedor. Después revisás y guardás de a un proveedor por vez, como en Múltiples comandas.{% endcall %}</p>
 
   <div id="seccion-elegir-foto" class="tarjeta">
     <input type="file" id="input-foto-listado" accept="image/*" class="input-foto-oculto">

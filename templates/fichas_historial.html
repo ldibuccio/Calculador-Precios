@@ -44,11 +44,6 @@
   .fecha { color: #666; font-size: 0.82rem; margin-bottom: 0.4rem; }
   .detalle { color: #444; font-size: 0.88rem; line-height: 1.45; }
   .vacio { color: #888; font-style: italic; font-size: 0.9rem; }
-  .nota {
-    color: #888;
-    font-size: 0.82rem;
-    margin: 0 0 0.75rem;
-  }
   .volver {
     display: block;
     margin-top: 0.75rem;
@@ -63,13 +58,13 @@
   {% set barra_sector = "comercial" %}
   {% set barra_titulo = "Historial de fichas" %}
   {% set barra_atras = "/fichas" %}
+  {% from "_info.html" import info %}
   {% include "_barra_navegacion.html" %}
 
   <div class="tarjeta">
-    <h2>{{ cliente_nombre }}</h2>
-    <p class="nota">Cada alta, edición y borrado de una ficha, de lo más nuevo a lo más viejo.
+    <h2>{{ cliente_nombre }} {% call info("Qué muestra este historial") %}Cada alta, edición y borrado de una ficha, de lo más nuevo a lo más viejo.
       Un cambio de artículo se ve como un borrado y un alta con la misma fecha.
-      "Foto inicial" es el estado que tenía la ficha cuando arrancó este historial.</p>
+      "Foto inicial" es el estado que tenía la ficha cuando arrancó este historial.{% endcall %}</h2>
     {% if not historial %}
     <p class="vacio">Este cliente todavía no tiene movimientos de fichas registrados.</p>
     {% endif %}

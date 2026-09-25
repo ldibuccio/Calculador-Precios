@@ -40,6 +40,7 @@
   {% set barra_sector = camino.sector %}
   {% set barra_titulo = "Movimientos de cajas" %}
   {% set barra_atras = camino.base ~ "/cajas" %}
+  {% from "_info.html" import info %}
   {% include "_barra_navegacion.html" %}
 
   {% if error %}<div class="error">{{ error }}</div>{% endif %}
@@ -78,8 +79,8 @@
     <p class="ayuda">No hubo movimientos de cajas entre esas fechas.</p>
     {% endfor %}
     <p class="ayuda">El más nuevo arriba. En verde lo que entró al piso y en
-      rojo lo que salió. Las guías R están porque son lo que más cajas mueve:
-      sin ellas la lista no explica el stock.</p>
+      rojo lo que salió. {% call info("¿Por qué están las guías R?") %}Las guías R están porque son lo que más cajas mueve:
+      sin ellas la lista no explica el stock.{% endcall %}</p>
   </div>
 
 {% include "_pie_version.html" %}

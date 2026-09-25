@@ -227,6 +227,7 @@
   {% set barra_sector = "administracion" %}
   {% set barra_titulo = "Ingresos a Depósito" %}
   {% set barra_atras = "/administracion" %}
+  {% from "_info.html" import info %}
   {% include "_barra_navegacion.html" %}
 
   <div class="tarjeta">
@@ -281,7 +282,7 @@
   <div class="error">{{ aviso_tope }}</div>
   {% endif %}
 
-  <p class="ayuda">Lo que realmente entró al depósito (cantidades REALES que pesó/contó Depósito, no las del comprador), agrupado por proveedor para facturar. El total de cada renglón es lo que hay que depositarle: la mercadería más la seña de sus cajones — así se concilia contra la cuenta del proveedor. Las fechas filtran por el día de la recepción.</p>
+  <p class="ayuda">¿Qué muestra esta lista? {% call info("Qué muestra esta lista") %}Lo que realmente entró al depósito (cantidades REALES que pesó/contó Depósito, no las del comprador), agrupado por proveedor para facturar. El total de cada renglón es lo que hay que depositarle: la mercadería más la seña de sus cajones — así se concilia contra la cuenta del proveedor. Las fechas filtran por el día de la recepción.{% endcall %}</p>
 
   {% if grupos %}
     {% for g in grupos %}

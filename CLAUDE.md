@@ -117,10 +117,19 @@ el listener va en `document` para que ande también en lo que llega por
   queda a la vista y el porqué va a la "i". Por ejemplo, en el Cotejo quedan a
   la vista el signo de la diferencia y el "no se corrige ajustando".
 
-**Hecho el 25/09 en tres pantallas**: Rentabilidad Real, Casilla de pedidos y
-Cotejo de stock. **Las otras quedan a la espera** de que el dueño las mire en
-el celular. Los tests están en `tests/test_info.py` y el del navegador mide
-el efecto, no el atributo.
+**Hecho el 25/09 en todas las pantallas que tenían ayudas**: 56 llevan la
+"i" (primero tres, y el mismo día las demás, con el visto bueno del dueño en el
+celular). Las que no aparecen en esa lista no tenían nada que explicar: sus
+ayudas eran de un renglón, datos o avisos. Una excepción que va a la vista a
+propósito: en Plata de cajas, "ese envase ya se cobra", porque sin esa frase
+el total se resta de otro lado y el envase se cuenta dos veces.
+
+Lo cuida `tests/test_info.py` en tres direcciones. **Qué pantallas tienen la
+"i"**: el conjunto ENCONTRADO contra el DECIDIDO. **Cada una la importa una
+vez**, sin bloques adentro del texto y nunca dentro de un `<script>`. **Los
+avisos de la lista siguen a la vista**: si uno termina adentro de un `call
+info`, el test cae. El test del navegador mide el efecto y no el atributo, y
+también mide que tocar una "i" colgada de un `<label>` no tilde el campo.
 
 ## SQL para el editor de Supabase (obligatorio)
 

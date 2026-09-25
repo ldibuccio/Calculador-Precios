@@ -36,7 +36,6 @@
     margin-bottom: 1rem;
     font-size: 0.95rem;
   }
-  .ayuda { color: #888; font-size: 0.85rem; margin: 0.25rem 0 0.5rem; }
   label {
     display: block;
     margin-top: 0.6rem;
@@ -97,6 +96,7 @@
   {% set barra_sector = "gerencia" %}
   {% set barra_titulo = "Índices de Inflación" %}
   {% set barra_atras = "/gerencia/costos-fijos" %}
+  {% from "_info.html" import info %}
   {% include "_barra_navegacion.html" %}
 
   {% if aviso %}
@@ -107,8 +107,7 @@
   {% endif %}
 
   <div class="tarjeta">
-    <h2>Cargar o corregir un mes</h2>
-    <p class="ayuda">El % de un mes es la inflación DE ese mes (puede ser negativo). Es un parámetro editable: corregir un mes pasado recalcula los meses que lo usan. Si falta el índice de un mes, el sistema avisa y no calcula — jamás inventa.</p>
+    <h2>Cargar o corregir un mes {% call info("Qué es el % de un mes") %}El % de un mes es la inflación DE ese mes (puede ser negativo). Es un parámetro editable: corregir un mes pasado recalcula los meses que lo usan. Si falta el índice de un mes, el sistema avisa y no calcula — jamás inventa.{% endcall %}</h2>
     <form method="post" action="/gerencia/costos-fijos/indices">
       <label for="mes">Mes</label>
       <input type="month" id="mes" name="mes" value="{{ mes_actual }}" required>

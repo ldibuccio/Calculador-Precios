@@ -91,6 +91,7 @@
   {% set barra_sector = "puesto" %}
   {% set barra_titulo = "Ajustar Stock" %}
   {% set barra_atras = "/puesto/envases" %}
+  {% from "_info.html" import info %}
   {% include "_barra_navegacion.html" %}
 
   {% if error %}
@@ -105,7 +106,7 @@
   <div class="aviso-conteo">{{ precarga.aviso_conteo }}</div>
   {% endif %}
 
-  <p class="ayuda">Corrección del stock del sistema: positivo suma, negativo resta. Queda registrado como un movimiento más — no pisa nada ni se borra.</p>
+  <p class="ayuda">Corrección del stock del sistema: positivo suma, negativo resta. {% call info("¿Qué queda registrado?") %}Queda registrado como un movimiento más — no pisa nada ni se borra.{% endcall %}</p>
 
   <div class="tarjeta">
     {% if not tipos %}

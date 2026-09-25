@@ -57,7 +57,6 @@
     text-align: center;
   }
   .porciones a.elegida { background: #1d4ed8; border-color: #1d4ed8; color: #fff; }
-  .ayuda { color: #888; font-size: 0.85rem; margin: 0.5rem 0 0; line-height: 1.45; }
   .aviso {
     background: #fffbeb;
     border: 1px solid #fde68a;
@@ -115,6 +114,7 @@
   {% set barra_sector = "administracion" %}
   {% set barra_titulo = "Evolución" %}
   {% set barra_atras = "/administracion/stock/remanente" %}
+  {% from "_info.html" import info %}
   {% include "_barra_navegacion.html" %}
 
   {% if aviso %}<div class="aviso">{{ aviso }}</div>{% endif %}
@@ -132,7 +132,10 @@
       <label for="hasta">Hasta el día</label>
       <input type="date" id="hasta" name="hasta" value="{{ fin.isoformat() }}">
 
-      <label for="dias">Cuántos días (máximo {{ tope }})</label>
+      <label for="dias">Cuántos días (máximo {{ tope }}) {% call info("Por qué hay un máximo de días") %}Cada día se calcula con la misma cuenta que dibuja el Stock del Depósito, así que
+      <strong>el saldo de cierre de un día es exactamente el de arranque del siguiente</strong>.
+      Por eso el máximo es {{ tope }} días: no es un recorte de la información, es lo que
+      cuesta calcularla bien.{% endcall %}</label>
       <input type="number" id="dias" name="dias" min="1" max="{{ tope }}" step="1"
              inputmode="numeric" value="{{ dias }}">
 
@@ -141,10 +144,6 @@
     {# EL TOPE ES EL DISEÑO Y SE DICE POR QUÉ: cada día son seis consultas y
        la pantalla las encadena. Un tope sin explicación se lee como que
        falta algo. #}
-    <p class="ayuda">Cada día se calcula con la misma cuenta que dibuja el Stock del Depósito, así que
-      <strong>el saldo de cierre de un día es exactamente el de arranque del siguiente</strong>.
-      Por eso el máximo es {{ tope }} días: no es un recorte de la información, es lo que
-      cuesta calcularla bien.</p>
   </div>
 
   {% if not articulo_id %}

@@ -215,8 +215,9 @@
   {% set barra_sector = "compras" %}
   {% set barra_titulo = "Cargar varias comandas por foto" %}
   {% set barra_atras = "/compras" %}
+  {% from "_info.html" import info %}
   {% include "_barra_navegacion.html" %}
-  <p class="ayuda">Tocá el botón: se abre la cámara o la galería del celular, elegí ahí todas las fotos de comandas que quieras cargar. En cuanto las elijas arranca a leerlas sola, de a poco en el fondo; revisalas y guardalas de a una, y al guardar una pasa automáticamente a la siguiente.</p>
+  <p class="ayuda">¿Cómo se cargan? {% call info("Cómo se cargan") %}Tocá el botón: se abre la cámara o la galería del celular, elegí ahí todas las fotos de comandas que quieras cargar. En cuanto las elijas arranca a leerlas sola, de a poco en el fondo; revisalas y guardalas de a una, y al guardar una pasa automáticamente a la siguiente.{% endcall %}</p>
 
   <div id="seccion-elegir-fotos" class="tarjeta">
     <input type="file" id="input-fotos" accept="image/*" multiple class="input-foto-oculto">

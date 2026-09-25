@@ -86,9 +86,10 @@
   {% set barra_sector = "puesto" %}
   {% set barra_titulo = "Cotejo" %}
   {% set barra_atras = "/puesto/envases" %}
+  {% from "_info.html" import info %}
   {% include "_barra_navegacion.html" %}
 
-  <p class="ayuda">Cada tarjeta compara el último conteo físico contra lo que el sistema decía EN ese momento (la foto se guarda al contar, así la comparación cierra aunque después haya movimientos). En rojo queda solo lo que se puede resolver hoy: apenas el stock coincide con lo contado, la tarjeta se pone en verde.</p>
+  <p class="ayuda">¿Qué compara cada tarjeta? {% call info("Qué compara cada tarjeta") %}Cada tarjeta compara el último conteo físico contra lo que el sistema decía EN ese momento (la foto se guarda al contar, así la comparación cierra aunque después haya movimientos). En rojo queda solo lo que se puede resolver hoy: apenas el stock coincide con lo contado, la tarjeta se pone en verde.{% endcall %}</p>
 
   {% if filas %}
     {% for f in filas %}

@@ -270,6 +270,7 @@
   {% set barra_sector = "administracion" %}
   {% set barra_titulo = "Guías R" %}
   {% set barra_atras = "/administracion" %}
+  {% from "_info.html" import info %}
   {% include "_barra_navegacion.html" %}
 
   {% if error %}
@@ -327,7 +328,7 @@
       El rango y el artículo no se están aplicando.
       <a href="/administracion/stock/guias-r">Volver a la lista</a></p>
     {% endif %}
-    <p class="ayuda">El costo del reproceso vive acá y <strong>no toca la cotización</strong> (que usa el costo de compra de la mañana). Todo el costo va a la primera; segunda y merma valen cero. Corregir una guía es anularla y cargarla de nuevo.</p>
+    <p class="ayuda">Corregir una guía es anularla y cargarla de nuevo. {% call info("¿Cómo se costea una guía R?") %}El costo del reproceso vive acá y <strong>no toca la cotización</strong> (que usa el costo de compra de la mañana). Todo el costo va a la primera; segunda y merma valen cero.{% endcall %}</p>
   </div>
 
   {# El número que NO va al banner de alertas: guías que nadie va a poder

@@ -159,6 +159,7 @@
   {% set barra_sector = "comercial" %}
   {% set barra_titulo = "Lista de Precios" %}
   {% set barra_atras = "/precios" %}
+  {% from "_info.html" import info %}
   {% include "_barra_navegacion.html" %}
 
   <div class="tarjeta">
@@ -248,9 +249,8 @@
      commit que la vuelve falsa. Dicho como condición, vale antes y después. #}
   {% if ficha_id and ficha_nombre_actual %}
   <div class="tarjeta">
-    <h2>Historial de {{ ficha_nombre_actual }}</h2>
+    <h2>Historial de {{ ficha_nombre_actual }}{% if historial %} {% call info("Cómo se lee el historial") %}Una fila por carga. <strong>Desde</strong> es a partir de cuándo rige ese precio; <strong>cargado</strong> es cuándo se escribió. Si no coinciden, el precio se cargó después de haber empezado a regir.{% endcall %}{% endif %}</h2>
     {% if historial %}
-    <p class="ayuda">Una fila por carga. <strong>Desde</strong> es a partir de cuándo rige ese precio; <strong>cargado</strong> es cuándo se escribió. Si no coinciden, el precio se cargó después de haber empezado a regir.</p>
     {% for h in historial %}
     <div class="fila-historial">
       <div class="renglon">

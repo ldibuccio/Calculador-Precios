@@ -196,3 +196,130 @@ def test_las_TRES_pantallas_no_desbordan_ni_se_pisan_a_390(pantalla):
     assert medicion["pares"] > 0, medicion
     assert medicion["desborde_pagina"] == 0, medicion
     assert medicion["solapes"] == [], medicion
+
+
+# ---------------------------------------------------------------------------
+# EL BARRIDO de todas las pantallas (25/09). El conjunto ENCONTRADO contra el
+# DECIDIDO (corolario 60): falla cuando aparece una pantalla con "i" que nadie
+# decidió y cuando una de la lista la pierde.
+# ---------------------------------------------------------------------------
+
+PANTALLAS_CON_I = {
+    "_cuadro_negociacion.html", "administracion_extracto_porcion.html",
+    "administracion_ingresos.html", "administracion_stock_evolucion.html",
+    "administracion_stock_remanente.html", "alertas_sector.html",
+    "cliente_formulario.html", "compra_detalle.html", "compra_editar_gerencia.html",
+    "compra_form.html", "compra_fotos_multiples.html", "compra_leer_foto.html",
+    "compra_listado.html", "compra_manual.html", "compra_proveedor_form.html",
+    "compras_cajas.html", "compras_cajas_colega.html", "compras_cajas_movimientos.html",
+    "compras_carga.html", "compras_proveedores.html", "compras_vacios_cotejo.html",
+    "compras_vacios_proveedor.html", "deposito_ingresar.html", "deposito_pedido_buscar.html",
+    "deposito_pedido_cargar.html", "deposito_stock_ajustar.html",
+    "deposito_stock_articulo.html", "deposito_stock_cotejo.html",
+    "deposito_stock_guias_r.html", "deposito_stock_merma.html",
+    "deposito_stock_movimientos.html", "deposito_stock_reingreso.html",
+    "deposito_stock_reproceso.html", "envases.html", "ficha_form.html",
+    "fichas_historial.html", "gerencia_costos_fijos_cargar.html",
+    "gerencia_costos_fijos_indices.html", "gerencia_costos_fijos_plan.html",
+    "gerencia_ingreso_retroactivo.html", "gerencia_perdidas.html",
+    "gerencia_rentabilidad.html", "gerencia_rentabilidad_real.html", "negociar.html",
+    "precios_cargar_foto.html", "precios_consulta.html", "precios_vigencias.html",
+    "sistema_casilla_pedidos.html", "vacios_ajustar.html", "vacios_clientes.html",
+    "vacios_cotejo.html", "vacios_movimientos.html", "vacios_pendientes.html",
+    "vacios_proveedores.html", "vacios_stock.html", "vacios_tipos.html",
+}
+
+# Los que SE VEN aunque estén en una pantalla que ganó la "i": avisos que
+# cambian lo que el operario hace (la lista del dueño, en CLAUDE.md). Si uno
+# termina adentro de un `call info`, deja de verse, y eso es lo que se prohíbe.
+QUEDAN_A_LA_VISTA = [
+    ("ficha_form.html", "esto cierra la ficha y abre una nueva"),
+    ("ficha_form.html", "probablemente haya que cambiar este alias"),
+    ("compra_editar_gerencia.html", "primero: con una compra recepcionada"),
+    ("compra_editar_gerencia.html", "Tiene que ser posterior al corte"),
+    ("vacios_tipos.html", "La fecha que elegiste es anterior"),
+    ("administracion_stock_inicial.html", "queda sin costear para siempre"),
+    ("administracion_stock_inicial.html", "Una caja armada siempre es de alguna ficha"),
+    ("deposito_stock_reingreso.html", "Si el camión volvió ayer"),
+    ("deposito_stock_reingreso.html", "El pedido es del"),
+    ("deposito_stock_fisico.html", "aunque te parezca que está mal"),
+    ("vacios_stock_fisico.html", "Contá los cajones que hay físicamente"),
+    ("compras_cajas.html", "Contalas a la mañana"),
+    ("compra_vino_armada.html", "Se carga la guía R de una vez"),
+    ("deposito_stock_cotejo.html", "no ajustes el stock"),
+    # y los dos "no se suma" que son reglas del dueño
+    ("gerencia_perdidas.html", "<strong>no se suma</strong> con la de"),
+    ("gerencia_cajas_perdidas.html", "<strong>ya se cobra</strong>"),
+]
+
+
+def _fuente(nombre):
+    import re
+    texto = ENTORNO.loader.get_source(ENTORNO, nombre)[0]
+    return re.sub(r"\{#.*?#\}", "", texto, flags=re.S)
+
+
+def _cuerpos_de_la_i(fuente):
+    import re
+    return re.findall(r'\{% call info\("[^"]*"\) %\}(.*?)\{% endcall %\}', fuente, re.S)
+
+
+def test_las_pantallas_con_i_son_EXACTAMENTE_las_decididas():
+    encontradas = {
+        n for n in os.listdir(os.path.join(RAIZ, "templates"))
+        if n.endswith(".html") and n != "_info.html" and "call info(" in _fuente(n)
+    }
+    assert encontradas - PANTALLAS_CON_I == set(), "con i y sin decidir"
+    assert PANTALLAS_CON_I - encontradas == set(), "decididas y sin i"
+
+
+@pytest.mark.parametrize("nombre", sorted(PANTALLAS_CON_I))
+def test_cada_pantalla_importa_la_i_UNA_vez_y_su_texto_es_de_LINEA(nombre):
+    import re
+    fuente = _fuente(nombre)
+    assert fuente.count('{% from "_info.html" import info %}') == 1
+    # el import va antes del primer uso: si no, la plantilla no compila
+    assert fuente.index("import info") < fuente.index("call info(")
+    for cuerpo in _cuerpos_de_la_i(fuente):
+        # el texto vive en un <span>: un bloque adentro lo rompe el navegador
+        assert not re.search(r"<(p|div|ul|ol|li|table|h\d|form|section)\b", cuerpo), cuerpo[:80]
+    # y nunca adentro de un <script>, donde la macro no se ejecuta
+    for script in re.findall(r"<script.*?</script>", fuente, re.S):
+        assert "call info(" not in script
+
+
+@pytest.mark.parametrize("nombre,frase", QUEDAN_A_LA_VISTA)
+def test_los_AVISOS_que_cambian_lo_que_se_hace_siguen_a_la_vista(nombre, frase):
+    fuente = _fuente(nombre)
+    assert frase in fuente, "el aviso ya no está en la pantalla"
+    assert all(frase not in cuerpo for cuerpo in _cuerpos_de_la_i(fuente)), \
+        "el aviso quedó escondido en la i"
+
+
+def test_la_i_adentro_de_un_LABEL_no_toca_el_campo():
+    """Siete pantallas cuelgan la i de un <label>. Tocarla no puede tildar el
+    campo que el label envuelve: un botón es contenido interactivo y el label
+    no se activa, y el listener además hace preventDefault. Se mide, no se lee."""
+    pytest.importorskip("playwright", reason="lo que pasa al tocar lo decide el navegador")
+    from playwright.sync_api import sync_playwright
+    from scripts.medir_layout import CHROMIUM
+
+    html = _pagina_con_barra().replace(
+        "</body>",
+        '<label id="rot"><input type="checkbox" id="tilde"> Tildar '
+        '<button type="button" class="info-boton" data-info data-info-titulo="EJEMPLO">i</button>'
+        '<span class="info-texto">EJEMPLO</span></label></body>', 1)
+    with sync_playwright() as p:
+        navegador = p.chromium.launch(executable_path=CHROMIUM)
+        pagina = navegador.new_page(viewport={"width": 390, "height": 844})
+        pagina.set_content(html)
+        pagina.click("#rot [data-info]")
+        tras_la_i = pagina.evaluate("""() => ({tilde: document.getElementById('tilde').checked,
+            abierto: document.querySelector('dialog.info-dialogo').open})""")
+        pagina.click("button.info-cerrar")
+        pagina.click("#rot", position={"x": 5, "y": 5})
+        tras_el_rotulo = pagina.evaluate("() => document.getElementById('tilde').checked")
+        navegador.close()
+    assert tras_la_i == {"tilde": False, "abierto": True}, tras_la_i
+    # el control: el rótulo mismo sí tilda, o el caso de arriba no probaba nada
+    assert tras_el_rotulo is True

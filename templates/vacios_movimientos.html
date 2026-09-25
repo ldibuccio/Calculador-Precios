@@ -183,6 +183,7 @@
   {% set barra_sector = "puesto" %}
   {% set barra_titulo = "Movimientos" %}
   {% set barra_atras = "/puesto/envases" %}
+  {% from "_info.html" import info %}
   {% include "_barra_navegacion.html" %}
 
   <div class="tarjeta">
@@ -208,7 +209,7 @@
     {% endif %}
   </div>
 
-  <p class="ayuda">Para corregir un movimiento viejo mal cargado: anulalo acá (queda el registro, tachado) y cargalo de nuevo bien desde Recibir o Devolver. El stock excluye lo anulado.</p>
+  <p class="ayuda">Para corregir un movimiento viejo mal cargado: anulalo acá y cargalo de nuevo bien desde Recibir o Devolver. {% call info("¿Qué pasa con lo anulado?") %}Queda el registro, tachado. El stock excluye lo anulado.{% endcall %}</p>
 
   <!-- Salidas ANTES que Entradas a propósito: hay muchas menos (un camión
        cada tanto contra clientes todo el día) y abajo se perderían entre

@@ -105,6 +105,7 @@
   {% set barra_sector = "administracion" %}
   {% set barra_titulo = "Movimientos de Stock" %}
   {% set barra_atras = "/administracion" %}
+  {% from "_info.html" import info %}
   {% include "_barra_navegacion.html" %}
 
   <div class="tarjeta">
@@ -207,7 +208,7 @@
     {% else %}
     <p class="vacio">Sin movimientos en este rango.</p>
     {% endif %}
-    <p class="ayuda">Solo los movimientos cargados a mano (ajustes, mermas, reingresos y salidas de segunda: remito y merma) — las compras y los armados se corrigen en sus pantallas. Corregir acá es <strong>anular y cargar de nuevo</strong>: nunca se edita ni se borra, y el stock y el FIFO se reacomodan solos.</p>
+    <p class="ayuda">Las compras y los armados se corrigen en sus pantallas. Corregir acá es <strong>anular y cargar de nuevo</strong>. {% call info("Qué se corrige acá") %}Solo los movimientos cargados a mano (ajustes, mermas, reingresos y salidas de segunda: remito y merma). Nunca se edita ni se borra, y el stock y el FIFO se reacomodan solos.{% endcall %}</p>
   </div>
 {% include "_pie_version.html" %}
 </body>

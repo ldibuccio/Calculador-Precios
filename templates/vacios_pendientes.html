@@ -126,6 +126,7 @@
   {% set barra_sector = "puesto" %}
   {% set barra_titulo = "Pendientes de Pago" %}
   {% set barra_atras = "/puesto/envases" %}
+  {% from "_info.html" import info %}
   {% include "_barra_navegacion.html" %}
 
   {% if error %}
@@ -134,7 +135,7 @@
 
   <div class="tarjeta">
     <h2>Señas pendientes ({{ pendientes|length }})</h2>
-    <p class="ayuda">Cada pendiente se cierra de una de tres formas: se pagó, se hizo vale, o se anuló (no se paga). Queda registrado cuál fue y cuándo. Anular la seña no toca los cajones del stock. El monto sale del valor que regía el día que se recibieron los cajones; si el tipo no tiene valor cargado, lo dice y no muestra ningún número.</p>
+    <p class="ayuda">Anular la seña no toca los cajones del stock. {% call info("Cómo se cierra un pendiente") %}Cada pendiente se cierra de una de tres formas: se pagó, se hizo vale, o se anuló (no se paga). Queda registrado cuál fue y cuándo. El monto sale del valor que regía el día que se recibieron los cajones; si el tipo no tiene valor cargado, lo dice y no muestra ningún número.{% endcall %}</p>
     {% if pendientes %}
       {% for p in pendientes %}
       <div class="renglon">

@@ -188,6 +188,7 @@
   {% set barra_sector = "deposito" %}
   {% set barra_titulo = "Reproceso" %}
   {% set barra_atras = "/deposito" %}
+  {% from "_info.html" import info %}
   {% include "_barra_navegacion.html" %}
 
   {% if aviso %}
@@ -362,7 +363,7 @@
         <a class="boton-cancelar" href="/deposito">Cancelar</a>
       </div>
     </form>
-    <p class="ayuda">No hace falta que las cantidades cierren entre sí: un cajón grande puede dar varias cajas chicas. De dónde sale lo propone el sistema, del lote más viejo primero, y lo podés cambiar antes de guardar. Si te equivocaste, se anula desde Guías R y se carga de nuevo.</p>
+    <p class="ayuda">Si te equivocaste, se anula desde Guías R y se carga de nuevo. {% call info("Cómo se cuentan los cajones y las cajas") %}No hace falta que las cantidades cierren entre sí: un cajón grande puede dar varias cajas chicas. De dónde sale lo propone el sistema, del lote más viejo primero, y lo podés cambiar antes de guardar.{% endcall %}</p>
   </div>
 
   <script>

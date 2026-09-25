@@ -76,6 +76,7 @@
   {% set barra_sector = "deposito" %}
   {% set barra_titulo = "Cargar Pedido" %}
   {% set barra_atras = "/deposito/pedido" %}
+  {% from "_info.html" import info %}
   {% include "_barra_navegacion.html" %}
 
   {% if error %}
@@ -97,11 +98,11 @@
 
       <label for="imagenes">Capturas del mail (lo más fácil desde el celular)</label>
       <input type="file" id="imagenes" name="imagenes" accept="image/*" multiple>
-      <p class="ayuda">Si el mail es largo, sacale varias capturas seguidas y subilas todas juntas: se leen como un solo pedido. Las capturas quedan además como respaldo del pedido.</p>
+      <p class="ayuda">Si el mail es largo, sacale varias capturas seguidas y subilas todas juntas: se leen como un solo pedido. {% call info("¿Se guardan las capturas?") %}Las capturas quedan además como respaldo del pedido.{% endcall %}</p>
 
       <label for="texto">… o pegá el texto del mail</label>
       <textarea id="texto" name="texto" placeholder="Si preferís, pegá acá el cuerpo del mail tal cual llegó (con los dos bloques si vienen juntos: el sistema se queda con el de esta empresa)."></textarea>
-      <p class="ayuda">La IA lo lee y antes de guardar vas a ver la revisión: los renglones que no matchean van arriba, marcados, y no se pierde ninguno.</p>
+      <p class="ayuda">¿Qué pasa después? {% call info("Qué pasa después") %}La IA lo lee y antes de guardar vas a ver la revisión: los renglones que no matchean van arriba, marcados, y no se pierde ninguno.{% endcall %}</p>
       <button type="submit">Leer pedido</button>
       <p class="leyendo" id="leyendo">Leyendo el pedido…</p>
     </form>

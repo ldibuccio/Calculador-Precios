@@ -29,10 +29,10 @@
 {% set barra_sector = camino.sector %}
 {% set barra_titulo = "Cotejo de vacíos" %}
 {% set barra_atras = camino.base ~ "/vacios" %}
+{% from "_info.html" import info %}
 {% include "_barra_navegacion.html" %}
 
-<p class="ayuda">El último conteo de cada marca contra lo que el sistema dice <strong>hoy</strong>.
-  Diferencia = sistema − contado: positiva, el sistema dice que hay más de los que hay.</p>
+<p class="ayuda"><strong>Diferencia = sistema − contado</strong>: <strong>positiva, el sistema dice que hay más de los que hay</strong>. {% call info("Cómo se compara") %}El último conteo de cada marca contra lo que el sistema dice <strong>hoy</strong>.{% endcall %}</p>
 
 {% for f in filas %}
 <div class="tarjeta" data-pila="{{ f.proveedor_id }}-{{ f.marca_id or '' }}">

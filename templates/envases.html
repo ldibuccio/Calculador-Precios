@@ -162,17 +162,18 @@
   {% set barra_sector = "comercial" %}
   {% set barra_titulo = "Envases" %}
   {% set barra_atras = "/comercial" %}
+  {% from "_info.html" import info %}
   {% include "_barra_navegacion.html" %}
 
   {% if aviso %}<div class="aviso">{{ aviso }}</div>{% endif %}
   {% if error %}<div class="error">{{ error }}</div>{% endif %}
 
-  <p class="ayuda">
+  <p class="ayuda">¿Qué es este catálogo? {% call info("El catálogo de envases") %}
     Catálogo único de envases, compartido entre todos los clientes: cada ficha
     logística elige el que corresponda. Los cambios de costo nunca pisan el
     historial: cada costo nuevo rige desde hoy y los cálculos pasados siguen
     usando el costo que regía en su momento.
-  </p>
+  {% endcall %}</p>
 
   {% if not envases %}
   <p class="vacio">No hay envases cargados todavía.</p>

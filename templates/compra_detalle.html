@@ -138,18 +138,13 @@
     font-size: 0.85rem;
     line-height: 1.35;
   }
-  .nota-devolucion {
-    margin: 0.7rem 0 0;
-    color: #666;
-    font-size: 0.82rem;
-    line-height: 1.4;
-  }
 </style>
 </head>
 <body>
   {% set barra_sector = "compras" %}
   {% set barra_titulo = "Detalle" %}
   {% set barra_atras = "/compras/buscar" %}
+  {% from "_info.html" import info %}
   {% include "_barra_navegacion.html" %}
 
   {% if aviso %}
@@ -317,7 +312,10 @@
      unidades y daría un porcentaje que no significa nada. #}
   {% if devoluciones %}
   <div class="tarjeta">
-    <h3>Volvió de un cliente y se le devolvió al proveedor</h3>
+    <h3>Volvió de un cliente y se le devolvió al proveedor {% call info("¿Qué son estos bultos?") %}Son bultos ya armados que salieron a un cliente y volvieron: no se suman al rechazo del
+      recibo, que son cajones que nunca entraron. Salieron del stock y no fueron al pool de segunda, así que
+      no cuentan como venta ni como pérdida. El descuento del pago se arregla afuera del sistema — esto es el
+      papel para reclamarlo.{% endcall %}</h3>
     <div class="dato">
       <span class="etiqueta">Bultos devueltos</span>
       <span class="valor">{{ bultos_devueltos|numero }}</span>
@@ -330,10 +328,6 @@
       </li>
       {% endfor %}
     </ul>
-    <p class="nota-devolucion">Son bultos ya armados que salieron a un cliente y volvieron: no se suman al rechazo del
-      recibo, que son cajones que nunca entraron. Salieron del stock y no fueron al pool de segunda, así que
-      no cuentan como venta ni como pérdida. El descuento del pago se arregla afuera del sistema — esto es el
-      papel para reclamarlo.</p>
   </div>
   {% endif %}
 

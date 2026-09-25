@@ -140,6 +140,7 @@
   {% set barra_sector = camino.sector %}
   {% set barra_titulo = "Cajas" %}
   {% set barra_atras = camino.atras %}
+  {% from "_info.html" import info %}
   {% include "_barra_navegacion.html" %}
 
   {% if error %}<div class="error">{{ error }}</div>{% endif %}
@@ -377,7 +378,9 @@
      mirar si alcanzan las cajas, la otra al ir a golpearle la puerta a
      alguien—. #}
   <div class="tarjeta">
-    <h2>Cuentas con colegas</h2>
+    <h2>Cuentas con colegas {% call info("Por qué el neto no se suma") %}El neto va por tipo de caja y no se suma entre tipos: te
+      puede deber Grandes mientras vos le debés Chicas, y sumarlas diría que
+      están a mano.{% endcall %}</h2>
     {% for c in cuentas %}
     <a class="colega-fila" href="{{ camino.base }}/cajas/colega/{{ c.colega_id }}">
       <span class="cuerpo">
@@ -407,9 +410,6 @@
       </div>
       <button type="submit">Guardar</button>
     </form>
-    <p class="ayuda">El neto va por tipo de caja y no se suma entre tipos: te
-      puede deber Grandes mientras vos le debés Chicas, y sumarlas diría que
-      están a mano.</p>
   </div>
 <script>
   // El campo del colega solo aparece cuando el movimiento es con un colega.

@@ -173,6 +173,7 @@
   {% set barra_sector = "deposito" %}
   {% set barra_titulo = "Merma" %}
   {% set barra_atras = "/deposito" %}
+  {% from "_info.html" import info %}
   {% include "_barra_navegacion.html" %}
 
   {% if aviso %}
@@ -298,10 +299,11 @@
        desde el 10/09 es cierto SOLO para los sueltos. Es la rama que afirma
        algo — el día que se agrega un camino que puede caer en ella, hay que
        releer lo que dice. Ahora habla de cada porción por su nombre. #}
-    <p class="ayuda"><strong>Bultos sueltos</strong>: salen del stock del artículo, y del lote
+    <p class="ayuda">Si te equivocaste, se anula desde Movimientos y se carga de nuevo.
+      {% call info("¿De dónde sale lo que se tira?") %}<strong>Bultos sueltos</strong>: salen del stock del artículo, y del lote
       que elijas o del más viejo si no elegís. <strong>Cajas de una ficha</strong>: salen de esa
       ficha, no de la pila suelta. <strong>Segunda</strong>: sale del pool y no mueve plata — la
-      segunda no lleva costo. Si te equivocaste, se anula desde Movimientos y se carga de nuevo.</p>
+      segunda no lleva costo.{% endcall %}</p>
     {% else %}
     <p class="ayuda">Elegí el artículo y después cargás cuántos bultos se tiraron.</p>
     {% endif %}

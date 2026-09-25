@@ -74,6 +74,7 @@
 {% set barra_sector = camino.sector %}
 {% set barra_titulo = p.nombre %}
 {% set barra_atras = camino.base ~ "/vacios" %}
+{% from "_info.html" import info %}
 {% include "_barra_navegacion.html" %}
 
 {% if error %}<div class="error">{{ error }}</div>{% endif %}
@@ -153,7 +154,11 @@
         <input id="cantidad" name="cantidad" type="number" min="1" step="1" required>
       </div>
       <div class="campo">
-        <label for="importe">Importe del vale</label>
+        <label for="importe">Importe del vale {% call info("De dónde sale el importe") %}
+      El importe se completa con la seña por cajón de la última recepción de esos
+      cajones, por la cantidad; se puede cambiar. <strong>No se le descuenta a la
+      compra</strong>: es plata de envase y va por su lado.
+    {% endcall %}</label>
         <input id="importe" name="importe" type="text" inputmode="decimal">
       </div>
       <div class="campo">
@@ -164,11 +169,6 @@
     </div>
     <p class="obligatoria"><strong>Sin la foto del vale no es una devolución.</strong>
       Si no hay vale, es un ajuste{% if not es_administracion %} y se carga en Administración{% endif %}.</p>
-    <p class="ayuda">
-      El importe se completa con la seña por cajón de la última recepción de esos
-      cajones, por la cantidad; se puede cambiar. <strong>No se le descuenta a la
-      compra</strong>: es plata de envase y va por su lado.
-    </p>
   </form>
 </div>
 
