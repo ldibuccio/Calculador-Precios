@@ -157,6 +157,12 @@
     cursor: pointer;
   }
   .campo-buscar-todos .boton-limpiar-busqueda.visible { display: flex; }
+  #promedio-ponderado .promedio-rotulo { font-size: 0.95rem; color: #555; }
+  #promedio-ponderado .promedio-valor,
+  #promedio-ponderado .promedio-valor-fijo { font-size: 2rem; font-weight: 700; margin: 0.2rem 0; }
+  #promedio-ponderado .promedio-detalle,
+  #promedio-ponderado .promedio-nota { margin: 0.3rem 0 0; font-size: 0.9rem; overflow-wrap: anywhere; }
+  #promedio-ponderado .promedio-nota { color: #666; }
 </style>
 {% include "_estilo_cuadro_negociacion.html" %}
 </head>
@@ -190,6 +196,24 @@
     <p class="vacio">Elegí un cliente para ver su cuadro de negociación.</p>
   </div>
   {% else %}
+  {# EL PROMEDIO PONDERADO, arriba de todo (dueño, 25/09): la foto de cómo
+     está este cliente hoy — precios vigentes contra costos actuales, pesado
+     por lo que cada artículo facturó. Lo llena el script del cuadro con las
+     filas de "Todos" a la vista, y lo recalcula cuando el buscador filtra.
+     Sin facturación legible no hay pesos: se dice, no se inventa un número. #}
+  {% if todos %}
+  <div class="tarjeta" id="promedio-ponderado">
+    <div class="promedio-rotulo">Utilidad promedio, pesada por lo que se vende</div>
+    {% if incidencia_sin_datos %}
+    <div class="promedio-valor-fijo">—</div>
+    <p class="promedio-nota">No se pudo leer la facturación: sin ella no hay con qué pesar.</p>
+    {% else %}
+    <div class="promedio-valor">—</div>
+    <p class="promedio-detalle"></p>
+    <p class="promedio-nota">Precios vigentes contra costos actuales, pesado por lo facturado en los últimos {{ incidencia_dias }} días. El que no facturó no pesa.</p>
+    {% endif %}
+  </div>
+  {% endif %}
   {% include "_cuadro_negociacion.html" %}
   {% endif %}
 {% include "_pie_version.html" %}

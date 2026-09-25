@@ -8840,7 +8840,7 @@ def test_ver_negociar_todos_los_articulos_utilidad_ok_sin_color_de_alerta():
 
     bloque_todos = re.search(r"<h2>Todos los artículos.*", respuesta.text, re.S).group(0)
     fila_tomate = re.search(
-        r'<tr>\s*<td>\s*<span class="nombre-articulo">Tomate Cherry</span>.*?</tr>', bloque_todos, re.S
+        r'<tr\b[^>]*>\s*<td>\s*<span class="nombre-articulo">Tomate Cherry</span>.*?</tr>', bloque_todos, re.S
     ).group(0)
     # Tomate Cherry (30%, por encima del objetivo de 20%) no lleva ninguna
     # de las clases de alerta — solo Mango y Palta, que sí están mal.
