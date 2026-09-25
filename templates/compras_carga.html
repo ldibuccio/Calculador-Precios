@@ -152,7 +152,9 @@
           {% endif %}
           {# TRES NÚMEROS Y UNO SE DEDUCE (dueño, 23/09): se carga cualquiera y
              los otros dos se ajustan. El que MANDA al guardar es el total —es
-             lo que el listado suma— y el por bulto se guarda con él. #}
+             lo que el listado suma— y el por bulto se guarda con él.
+             EL ORDEN ES DEL DUEÑO (25/09) y es el mismo del Paso 2: total, por
+             bulto, bultos. Lo cuida un test que lee las clases en orden. #}
           <div class="tres">
             <label class="campo">{{ a.palabra|capitalize }} en total
               <input name="total_{{ a.articulo_id }}" class="c-total"
@@ -160,16 +162,16 @@
                      value="{{ a.total|numero if a.total is not none else '' }}"
                      data-base="{{ a.crudo|numero if a.crudo is not none else '' }}"
                      aria-label="{{ a.palabra|capitalize }} en total de {{ a.nombre }}"></label>
-            <label class="campo">Bultos
-              <input name="bultos_{{ a.articulo_id }}" class="c-bultos"
-                     type="number" inputmode="decimal" step="any" min="0"
-                     value="{{ a.bultos|numero if a.bultos is not none else '' }}"
-                     aria-label="Bultos de {{ a.nombre }}"></label>
             <label class="campo">{{ a.palabra|capitalize }} por bulto
               <input name="por_bulto_{{ a.articulo_id }}" class="c-por-bulto"
                      type="number" inputmode="decimal" step="any" min="0"
                      value="{{ a.contenido|numero if a.contenido else '' }}"
                      aria-label="{{ a.palabra|capitalize }} por bulto de {{ a.nombre }}"></label>
+            <label class="campo">Bultos
+              <input name="bultos_{{ a.articulo_id }}" class="c-bultos"
+                     type="number" inputmode="decimal" step="any" min="0"
+                     value="{{ a.bultos|numero if a.bultos is not none else '' }}"
+                     aria-label="Bultos de {{ a.nombre }}"></label>
           </div>
           {# DE DÓNDE SALE EL POR BULTO, que es el número que decide los bultos:
              "hoy no sé de dónde sale el número que veo" (dueño, 23/09). #}

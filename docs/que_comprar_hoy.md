@@ -156,6 +156,10 @@ el total. Cada campo lleva su rótulo con la unidad ("Kg en total", "Kg por
 bulto"), y abajo una línea dice de dónde sale el por bulto: *de la ficha de
 Día*, *lo pusiste vos (la ficha dice 10)*, o *sin ficha: poné cuánto trae*.
 
+**El orden de los tres es del dueño (25/09)**: kilos totales, kilos por bulto,
+y último los bultos — el mismo que el Paso 2. Lo cuida
+`test_los_TRES_campos_van_en_el_ORDEN_del_dueño_igual_que_el_Paso_2`.
+
 - **Se guardan dos: el total y el por bulto** (`cargas_compra_renglones.
   contenido_por_bulto`, migrada el 23/09). Los bultos salen de dividir.
 - **El total manda** al guardar. Sin total, `bultos × por bulto`, que es el
