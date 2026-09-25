@@ -159,6 +159,7 @@
   {% set barra_sector = "sistema" %}
   {% set barra_titulo = "Casilla de Pedidos" %}
   {% set barra_atras = "/sistema" %}
+  {% from "_info.html" import info %}
   {% include "_barra_navegacion.html" %}
 
   {% if error %}
@@ -170,8 +171,7 @@
   {% endif %}
 
   <div class="tarjeta">
-    <h2>Cómo funciona</h2>
-    <p class="sub" style="margin-bottom: 0.25rem;">El sistema mira el buzón en <strong>solo lectura estricta</strong>: nunca borra, nunca mueve, nunca marca como leído, nunca responde. Solo correos posteriores a la fecha de activación; entra el que contiene el asunto configurado (sin mayúsculas ni acentos) y, si además hay remitentes permitidos, solo de esos. Del resto no se baja el cuerpo.</p>
+    <h2>Cómo funciona {% call info("Qué correos mira el sistema") %}El sistema mira el buzón en <strong>solo lectura estricta</strong>: nunca borra, nunca mueve, nunca marca como leído, nunca responde. Solo correos posteriores a la fecha de activación; entra el que contiene el asunto configurado (sin mayúsculas ni acentos) y, si además hay remitentes permitidos, solo de esos. Del resto no se baja el cuerpo.{% endcall %}</h2>
     {% if clave_configurada %}
     <div class="estado-clave ok">La clave de la casilla está configurada en Railway ({{ clave_env_var }}).</div>
     {% else %}
@@ -261,7 +261,7 @@
       <button type="submit" class="boton boton-secundario">Prender auto-confirmar (hoy: apagado)</button>
       {% endif %}
     </form>
-    <p class="sub" style="margin-top: 0.4rem;">Auto-confirmar: en la revisión automática (en el horario configurado arriba), confirma solo el pedido leído por estructura (sin IA), con la fecha sacada del asunto, todos los renglones identificados y sin reemplazar a ningún pedido ya cargado. Todo lo demás queda pendiente igual. El total declarado del mail NO se controla: Día se equivoca sumando y no traba nada.</p>
+    <p class="sub" style="margin-top: 0.4rem;">¿Qué confirma solo? {% call info("Auto-confirmar") %}En la revisión automática (en el horario configurado arriba), confirma solo el pedido leído por estructura (sin IA), con la fecha sacada del asunto, todos los renglones identificados y sin reemplazar a ningún pedido ya cargado. Todo lo demás queda pendiente igual. El total declarado del mail NO se controla: Día se equivoca sumando y no traba nada.{% endcall %}</p>
 
     <details>
       <summary>Cambiar horario de revisión automática</summary>
@@ -337,8 +337,7 @@
   {% endif %}
 
   <div class="tarjeta">
-    <h2>Mails registrados</h2>
-    <p class="sub">Los pendientes van arriba: cada uno es un borrador de pedido para revisar y confirmar. Nada se confirma solo.</p>
+    <h2>Mails registrados {% call info("Los mails registrados") %}Los pendientes van arriba: cada uno es un borrador de pedido para revisar y confirmar. Nada se confirma solo.{% endcall %}</h2>
     {% if mails %}
       {% for m in mails %}
       <div class="mail">

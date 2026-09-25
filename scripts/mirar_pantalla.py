@@ -36,8 +36,17 @@ from humo import _pedir, concretar, hay_postgres, levantar  # noqa: E402
 VISIBLES = re.compile(r"<(script|style|template)\b.*?</\1>", re.S | re.I)
 
 
+# El texto de una "i" (templates/_info.html) está en el DOM y NO se ve: lo
+# esconde el CSS de la barra. Sin sacarlo, esto lo imprimía como visible y la
+# pantalla se leía igual de cargada que antes de la "i". Queda "[i]" en su
+# lugar, que es lo que el operario tiene adelante.
+TEXTO_DE_LA_I = re.compile(r'<span class="info-texto">.*?</span>', re.S)
+
+
 def texto_visible(html):
-    cuerpo = VISIBLES.sub(" ", html)
+    cuerpo = TEXTO_DE_LA_I.sub(" ", html)
+    cuerpo = re.sub(r'(<button[^>]*\bdata-info\b[^>]*>)i(</button>)', r"\1[i]\2", cuerpo)
+    cuerpo = VISIBLES.sub(" ", cuerpo)
     cuerpo = re.sub(r"<!--.*?-->", " ", cuerpo, flags=re.S)
     cuerpo = re.sub(r"<br\s*/?>|</(p|div|li|h[1-6]|tr|form|a|button)>", "\n", cuerpo, flags=re.I)
     cuerpo = re.sub(r"<[^>]+>", " ", cuerpo)

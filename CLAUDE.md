@@ -90,6 +90,38 @@ tácito entre dos lugares — corolario 21 en una frase: el día que aparezca un
 conteo masculino hay dónde ponerlo, en vez de que el texto salga mal y nadie
 lo note porque nadie relee un rótulo.
 
+## Lo que se ve y lo que va a la "i" (25/09, del dueño)
+
+Vale para toda pantalla, igual que el mobile-first:
+
+> **Si leerlo cambia lo que el operario hace EN ESE MOMENTO, se ve. Si
+> explica CÓMO FUNCIONA, va a la "i".**
+
+La "i" es `templates/_info.html`:
+`{% call info("título") %}texto, puede llevar <strong>{% endcall %}`, pegada
+al rótulo o al título que explica, en el mismo renglón. Es un botón de 44px.
+El diálogo, su CSS y el listener están UNA vez en `_barra_navegacion.html`, y
+el listener va en `document` para que ande también en lo que llega por
+`innerHTML` (corolario 83). El texto queda en el DOM, escondido.
+
+- **Quedan a la vista**: las paredes, los "Ojo", los "esto no se deshace",
+  las consecuencias y los modales. También 14 avisos que tienen clase de
+  ayuda pero cambian lo que se hace: el cierre de la ficha, el alias, "Ver qué
+  pasa" y el corte al mover de fecha, la fecha anterior en tipos de envase,
+  los dos del stock inicial, los dos del reingreso, "contá lo que hay en el
+  piso" en los dos conteos, "contalas a la mañana" en Cajas, la guía R de
+  "vino armada" y el "Revisá la guía R, no ajustes el stock" del Cotejo.
+- **Los de UN renglón quedan como están.** La "i" pide un toque para leer lo
+  que ya ocupa 20px.
+- **Una ayuda que mezcla las dos cosas se parte**: lo que cambia la acción
+  queda a la vista y el porqué va a la "i". Por ejemplo, en el Cotejo quedan a
+  la vista el signo de la diferencia y el "no se corrige ajustando".
+
+**Hecho el 25/09 en tres pantallas**: Rentabilidad Real, Casilla de pedidos y
+Cotejo de stock. **Las otras quedan a la espera** de que el dueño las mire en
+el celular. Los tests están en `tests/test_info.py` y el del navegador mide
+el efecto, no el atributo.
+
 ## SQL para el editor de Supabase (obligatorio)
 
 Todo el SQL de este proyecto se corre a mano, pegado en el editor SQL de
