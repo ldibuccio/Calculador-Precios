@@ -27174,8 +27174,8 @@ def test_deposito_ordena_los_botones_como_pasan_las_cosas():
         # UN solo botón de Pedidos, y NOMBRA EL TRABAJO y no el paso: entra a
         # Corregir lo que pidieron, que es lo que se mira antes de empezar, y
         # desde ahí está el botón a armar. El rótulo lo puso el dueño el
-        # 20/09 sabiendo que se parece al link de adentro.
-        ('/deposito/pedido', "Armar el Pedido"),
+        # 20/09; desde el 25/09 dice "Pedidos".
+        ('/deposito/pedido', "Pedidos"),
         ('/deposito/stock/fisico', "Contar el stock"),
         ('/deposito/stock/remito-segunda', "Remitir la segunda"),
     ]

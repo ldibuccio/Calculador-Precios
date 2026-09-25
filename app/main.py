@@ -10542,9 +10542,8 @@ def ver_deposito(request: Request, aviso: str | None = None):
 
     Los rótulos hacen la PREGUNTA del galpón y no nombran el mecanismo:
     "Cargar lo que llegó sin guía" y no "Ingresar Mercadería", porque el
-    depósito no compra; y "Revisar el pedido" / "Armar el pedido", que antes
-    eran "Pedido" y "Armar Pedido" — el mismo sustantivo con un verbo
-    adelante, imposible de distinguir desde el botón.
+    depósito no compra. Pedidos es UN solo botón, "Pedidos" (dueño, 25/09):
+    entra a Corregir lo que pidieron y desde ahí se arma.
     """
     return templates.TemplateResponse(
         request, "deposito.html", {"aviso": aviso, "banner": _banner_alertas("deposito")}
