@@ -1,3 +1,6 @@
+-- RETIRADA el 25/09: media la regla sin ningun corte (daba 8.209 contra
+-- 1.758) y ese enfoque se descarto. El corte es la foto del 25/09: ver
+-- db/vacios_foto_1_el_corte_de_hoy.sql. No se vuelve a correr.
 with base as (
   select distinct on (proveedor_id) proveedor_id, cantidad, fecha
     from conteos_vacios_deposito order by proveedor_id, fecha, id

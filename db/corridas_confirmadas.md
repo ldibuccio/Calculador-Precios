@@ -346,3 +346,17 @@ PALMALA   origen con merma 1 · signo con merma 1 ·  0 movimientos · sin movim
 **Lo que identifica la base son los movimientos de cajas** —11 contra 0—.
 `db/esquema_completo.sql` ganó el origen `merma` en el mismo commit que la
 construyó.
+
+## 25/09 — `vacios_foto_1_el_corte_de_hoy`
+
+`db/vacios_foto_1_el_corte_de_hoy.sql`, con `db/vacios_foto_2_verificacion.sql` corrida aparte.
+
+```
+FRUTAMAX  tabla 1 · 42 fotos de 42 proveedores · 1 fecha · FOTO total 1.758 · 0 negativas · 24 en cero con recepciones · última recepción 25/09
+PALMALA   tabla 1 · 44 fotos de 44 proveedores · 1 fecha · FOTO total 0     · 0 negativas · 35 en cero con recepciones
+```
+
+**Lo que identifica la base son los proveedores** —42 contra 44—. El 1.758 de
+Frutamax coincide clavado con lo que mostraba la pantalla ese día. Los que
+quedaron en cero con recepciones son los que nunca se contaron: se arreglan
+con un ajuste cuando aparezcan (decisión del dueño).

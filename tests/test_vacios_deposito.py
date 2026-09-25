@@ -1,9 +1,15 @@
-"""Los VACÍOS DEL DEPÓSITO: los cajones del proveedor de COMPRAS.
+"""Los VACÍOS DEL DEPÓSITO: los cajones del proveedor de COMPRAS, por PILA.
 
 NO ES EL CIRCUITO DEL PUESTO, que vive en tests/test_app.py y en otras tablas
 enteras. Acá el cajón llega CON la mercadería y se le devuelve al proveedor
 que la vendió; allá un cliente del puesto lo trae y un proveedor del puesto lo
 retira. No comparten una sola tabla.
+
+DESDE EL 25/09 la cuenta es por PILA —proveedor y marca de cajón— y arranca
+de una FOTO: el stock que el sistema mostraba ese día. Lo que la cuenta hace
+con números se prueba CONTRA POSTGRES en
+`tests/test_vacios_pilas_contra_la_base.py`; acá va lo que un mock SÍ puede
+ver: el texto de la consulta, lo que se escribe, y las pantallas.
 """
 
 import ast
@@ -17,53 +23,53 @@ import pytest
 from fastapi.testclient import TestClient
 
 from app.db import (
-    COLUMNAS_STOCK_DE_VACIOS_DEPOSITO,
-    COMPARADOR_DESDE_EL_CONTEO,
-    _SQL_STOCK_DE_VACIOS_DEPOSITO,
+    COLUMNAS_PILAS_DE_VACIOS,
+    _SQL_PILAS_DE_VACIOS,
+    anular_ajuste_vacios_deposito,
     anular_devolucion_vacios,
     crear_devolucion_vacios,
 )
-from app.main import app
+from app.main import PUERTA_ADMINISTRACION, app
 
 cliente = TestClient(app, base_url="https://testserver")
 
 
 @pytest.fixture(autouse=True)
 def _puerta_de_compras_abierta():
-    """Vacíos vive bajo `/compras`, y todo POST ahí tiene el default duro.
-
-    Sin `CLAVE_COMPRAS` cargada un POST no pasa: contesta 503 nombrando la
-    variable. Estos tests prueban LAS PANTALLAS, así que la cruzan como la
-    cruza una persona, con la clave y su cookie.
+    """Vacíos vive bajo `/compras` y `/administracion`, y los dos tienen puerta.
 
     ES UNA SEGUNDA COPIA de la fixture de `tests/test_app.py` y no se puede
     compartir: cada módulo tiene su propio `cliente`, y una fixture le pone
-    la cookie a UNO. Lo que sí se comparte es de dónde sale la firma —
-    `PUERTA_COMPRAS`— así que el día que la puerta cambie, cambian las dos.
+    la cookie a UNO. Lo que sí se comparte es de dónde sale la firma.
     """
     from app.main import PUERTA_COMPRAS
 
-    with patch.dict(os.environ, {"CLAVE_COMPRAS": "compras-secreta"}):
+    with patch.dict(os.environ, {"CLAVE_COMPRAS": "compras-secreta",
+                                 "CLAVE_ADMINISTRACION": "admin-secreta"}):
         cliente.cookies.set(PUERTA_COMPRAS.cookie, PUERTA_COMPRAS.firma("compras-secreta"))
+        cliente.cookies.set(PUERTA_ADMINISTRACION.cookie,
+                            PUERTA_ADMINISTRACION.firma("admin-secreta"))
         try:
             yield
         finally:
             cliente.cookies.delete(PUERTA_COMPRAS.cookie)
+            cliente.cookies.delete(PUERTA_ADMINISTRACION.cookie)
+
+
 FUENTE_DB = io.open("app/db.py", encoding="utf-8").read()
 
-UN_PROVEEDOR_CONTADO = [{
-    "id": 7, "nombre": "Puesto EJEMPLO", "tipo_cajon": "Cajón de ejemplo",
-    "desde": date(2026, 9, 17), "contados": 30, "recibidos": 10, "devueltos": 5,
-    "stock": 35, "esperando_recepciones": 0, "esperando_devoluciones": 0,
-    "esperando_desde": None,
-}]
 
-UN_PROVEEDOR_SIN_CONTEO = [{
-    "id": 9, "nombre": "Puesto DE EJEMPLO DOS", "tipo_cajon": None,
-    "desde": None, "contados": None, "recibidos": 0, "devueltos": 0,
-    "stock": None, "esperando_recepciones": 4, "esperando_devoluciones": 1,
-    "esperando_desde": date(2026, 9, 11),
+def _pila(marca_id, marca, stock):
+    return {"proveedor_id": 7, "proveedor": "Puesto EJEMPLO", "tipo_cajon": "Cajón de ejemplo",
+            "marca_id": marca_id, "marca": marca, "foto": 0, "recibidos": 0,
+            "devueltos": 0, "ajustes": 0, "asignados": 0, "stock": stock}
+
+
+UN_PROVEEDOR = [{
+    "id": 7, "nombre": "Puesto EJEMPLO", "tipo_cajon": "Cajón de ejemplo", "stock": 35,
+    "pilas": [_pila(None, None, 12), _pila(71, "EJ Roja", 23)],
 }]
+MARCAS = [{"id": 71, "nombre": "EJ Roja"}, {"id": 72, "nombre": "EJ Azul"}]
 
 
 def _conexion_falsa(filas_fetchone=None, filas_fetchall=None):
@@ -79,149 +85,97 @@ def _conexion_falsa(filas_fetchone=None, filas_fetchall=None):
     return conexion, cursor
 
 
+def _parches_del_detalle(proveedores=UN_PROVEEDOR, marcas=MARCAS, devoluciones=(),
+                         movimientos=(), senas=None, tipos=()):
+    return [
+        patch("app.main.stock_de_vacios_deposito", return_value=list(proveedores)),
+        patch("app.main.proveedor_para_vacios", return_value=None),
+        patch("app.main.listar_marcas_vacio", return_value=list(marcas)),
+        patch("app.main.listar_devoluciones_vacios", return_value=list(devoluciones)),
+        patch("app.main.listar_ajustes_y_asignaciones_vacios", return_value=list(movimientos)),
+        patch("app.main.sena_por_cajon_de_la_ultima_recepcion", return_value=senas or {}),
+        patch("app.main.listar_tipos_cajon", return_value=list(tipos)),
+    ]
+
+
+def _con(parches):
+    from contextlib import ExitStack
+    pila = ExitStack()
+    for parche in parches:
+        pila.enter_context(parche)
+    return pila
+
+
 # ---------------------------------------------------------------------------
-# La cuenta derivada
+# La cuenta derivada: el TEXTO (los números van contra Postgres)
 # ---------------------------------------------------------------------------
-
-def test_lo_que_ESPERA_AL_CONTEO_se_cuenta_SIN_PASAR_POR_base():
-    """Las dos CTE de "esperando" NO pueden entrar por `base`, o dan cero siempre.
-
-    Las patas del stock entran por `base` —el conteo que arrancó la cuenta— y
-    un proveedor sin conteo no produce ni una fila: sus recepciones existen,
-    están bien cargadas, y no se ven en ningún lado. Esa es exactamente la
-    ausencia de filas del backfill: "acá no hay nada" y "acá hay cosas que no
-    te puedo mostrar" se dibujan igual.
-
-    Copiarles el `JOIN base` a estas dos —que es lo natural, están escritas al
-    lado de las otras— daría CERO justo en el único caso que les importa. Un
-    cero que no puede dar otra cosa, adentro del arreglo escrito para eso.
-    """
-    for nombre in ("esperando_recep", "esperando_dev"):
-        cuerpo = re.search(rf"{nombre} AS \((.*?)\n    \)",
-                           _SQL_STOCK_DE_VACIOS_DEPOSITO, re.S)
-        assert cuerpo, f"no encontré la CTE {nombre}"
-        assert "base" not in cuerpo.group(1), (
-            f"{nombre} pasa por `base`: va a contar cero justo para el proveedor "
-            "que todavía no tiene conteo, que es el único al que le importa"
-        )
-
-
-def test_las_dos_cosas_que_esperan_van_SEPARADAS_y_no_sumadas():
-    """Se cargan en pantallas distintas, así que un solo número manda a buscar mal.
-
-    El que lee "5 esperando" y abre la lista de devoluciones encuentra una,
-    porque las otras cuatro son recepciones y no se cargan por ahí. Un solo
-    número obligaría a que la pantalla mienta o a que el operario adivine.
-    """
-    assert "esperando_recepciones" in COLUMNAS_STOCK_DE_VACIOS_DEPOSITO
-    assert "esperando_devoluciones" in COLUMNAS_STOCK_DE_VACIOS_DEPOSITO
-
-
-def test_el_contador_de_lo_que_espera_se_APAGA_cuando_el_conteo_existe():
-    """En cero con conteo puesto, o la columna significa dos cosas según otra columna.
-
-    Sin el `CASE`, un proveedor con la cuenta andando devolvería sus
-    recepciones como "esperando" y habría que mirar `desde` al lado para
-    saber si el número significa algo.
-    """
-    # EL ANCLA TERMINA EN `END AS <columna>` y no en "hasta la próxima coma":
-    # el `COALESCE(er.recepciones, 0)` de adentro tiene una, así que `[^,]*`
-    # no llega. El test falló apenas se escribió y el equivocado era el ancla,
-    # no el código — la señal de siempre: antes de aflojar el assert, mirar
-    # QUÉ fragmento matcheó.
-    for columna in ("esperando_recepciones", "esperando_devoluciones", "esperando_desde"):
-        assert re.search(rf"CASE WHEN b\.proveedor_id IS NULL THEN.*?END\s*\n?\s*AS {columna}",
-                         _SQL_STOCK_DE_VACIOS_DEPOSITO, re.S), columna
-
-
-def test_el_comparador_del_conteo_NO_ES_PROPIO_sino_el_MISMO_de_las_cajas():
-    """Dos constantes para la misma pregunta es como la asimetría del corte apareció ocho veces.
-
-    La pregunta es una sola —¿lo del día del conteo ya está adentro de lo
-    contado?— y escribirla dos veces deja dos reglas que se separan sin que
-    nadie lo note. Por eso la consulta lleva un `{comp}` y lo formatea con
-    `COMPARADOR_DESDE_EL_CONTEO`, que es el de la cuenta de cajas.
-
-    EL TEST PREGUNTA POR LA AUSENCIA, que es la mitad que impide volver: con
-    solo afirmar que se usa el bueno, una segunda constante escrita al lado
-    pasa igual.
-    """
-    assert "{comp}" in _SQL_STOCK_DE_VACIOS_DEPOSITO
-    cuerpo = ast.parse(FUENTE_DB)
-    constantes = {
-        objetivo.id
-        for nodo in ast.walk(cuerpo)
-        if isinstance(nodo, ast.Assign)
-        for objetivo in nodo.targets
-        if isinstance(objetivo, ast.Name) and "COMPARADOR" in objetivo.id
-    }
-    assert constantes == {"COMPARADOR_DESDE_EL_CONTEO"}, (
-        f"apareció un segundo comparador del conteo: {sorted(constantes)}. "
-        "Es la misma pregunta escrita dos veces."
-    )
-
 
 def test_los_NOMBRES_de_las_columnas_son_los_que_la_consulta_DEVUELVE():
-    """La tupla y el SELECT tienen que coincidir, o el que lee por índice lee otra cosa.
+    """La tupla y el SELECT final tienen que coincidir, en orden.
 
     En la cuenta de cajas esto reventó TODO guardado: la consulta perdió una
-    columna, un lector quedó en `fila[8]`, y como un índice no nombra ninguna
-    columna el `grep` del campo sacado no lo encontró nunca.
+    columna, un lector quedó en `fila[8]`, y un índice no nombra ninguna
+    columna — el `grep` del campo sacado no lo encuentra nunca.
     """
-    seleccion = _SQL_STOCK_DE_VACIOS_DEPOSITO.rsplit("SELECT", 1)[1].split("FROM")[0]
+    seleccion = _SQL_PILAS_DE_VACIOS.rsplit("SELECT", 1)[1].split("FROM")[0]
     alias = re.findall(r"AS (\w+)", seleccion)
-    # Los tres primeros salen sin alias (p.id, p.nombre viene con alias, ...),
-    # así que se cuenta lo que el SELECT produce contra lo DECIDIDO.
-    for columna in COLUMNAS_STOCK_DE_VACIOS_DEPOSITO:
-        assert columna in seleccion, f"{columna} no está en el SELECT"
-    assert len(COLUMNAS_STOCK_DE_VACIOS_DEPOSITO) == 11
-    for columna in alias:
-        assert columna in COLUMNAS_STOCK_DE_VACIOS_DEPOSITO, (
-            f"el SELECT devuelve `{columna}` y la tupla de nombres no lo tiene"
-        )
+    assert tuple(alias) == COLUMNAS_PILAS_DE_VACIOS
 
 
-def test_la_fecha_de_la_recepcion_se_lee_EN_HORA_ARGENTINA():
-    """`procesada_el` es timestamptz: sin la zona, la recepción de las 23 es del día siguiente.
-
-    Medido con el caso plantado: una recepción del 17/09 a las 23:00
-    argentinas, contra un conteo fechado el 18, suma 0 con la zona puesta y 7
-    sin ella. Es la novena vez que algo de zona horaria aparece en este
-    proyecto.
-    """
-    # CON EL CONTEO AL LADO, y no `in`: cada fecha se convierte DOS veces —una
-    # en la pata del stock y otra en la de lo que espera— así que un `in`
-    # pelado pasa en verde con una de las dos sacada. Lo destapó el canario,
-    # que reportó "NO APLICA 2 veces" al intentar romper una sola: el aviso de
-    # que el texto no dice lo que yo creía.
-    for columna, veces in (("co.procesada_el", 2), ("d.creado_en", 2)):
-        fragmento = f"({columna} AT TIME ZONE 'America/Argentina/Buenos_Aires')::date"
-        assert _SQL_STOCK_DE_VACIOS_DEPOSITO.count(fragmento) == veces, (
-            f"{columna} se convierte a hora argentina "
-            f"{_SQL_STOCK_DE_VACIOS_DEPOSITO.count(fragmento)} veces y tiene que ser {veces}: "
-            "una en la pata del stock y otra en la de lo que espera al conteo"
-        )
-
-
-def test_las_entradas_SALEN_DE_LAS_RECEPCIONES_y_no_de_una_tabla_propia():
-    """No hay tabla de entradas, y eso es la decisión que sostiene el módulo.
-
-    Un campo cuya única consecuencia fuera que este stock quede bien es
-    exactamente el que se deja de llenar en dos semanas. Derivarlo de algo
-    que alguien ya carga porque necesita otra cosa es lo único que lo hace
-    inmune.
-    """
-    assert "FROM compras co" in _SQL_STOCK_DE_VACIOS_DEPOSITO
-    assert "co.estado = 'recepcionado'" in _SQL_STOCK_DE_VACIOS_DEPOSITO
+def test_las_entradas_son_las_recepciones_CON_SENA_y_nada_mas():
+    """Sin seña no hay cajón que devolver (dueño, 25/09); pendiente no llegó."""
+    assert "co.estado = 'recepcionado'" in _SQL_PILAS_DE_VACIOS
+    assert "COALESCE(co.sena, 0) > 0" in _SQL_PILAS_DE_VACIOS
     assert "vacios_deposito_entradas" not in FUENTE_DB, (
-        "apareció una tabla de entradas: las entradas se derivan de las recepciones"
-    )
+        "apareció una tabla de entradas: las entradas se derivan de las recepciones")
 
 
-def test_se_cuenta_lo_ACEPTADO_y_no_lo_que_vino_en_el_remito():
-    """Lo rechazado vuelve con la mercadería en el cajón del proveedor: nunca se quedó."""
-    assert "COALESCE(co.cantidad_cajones_real, co.cantidad_cajones)" \
-        in _SQL_STOCK_DE_VACIOS_DEPOSITO
+def test_el_corte_compara_contra_el_INSTANTE_de_la_foto_y_no_contra_su_dia():
+    """Con la fecha, lo recibido el 25/09 después de sacar la foto se perdía.
+
+    Encontrado corriendo la cuenta contra Postgres, no leyéndola: la foto es
+    de las 14, la recepción de las 16 del mismo día, y `procesada_el::date >
+    f.fecha` la descartaba. Se compara contra `f.creado_en`, en las DOS patas
+    que la foto ya incluye.
+    """
+    assert "co.procesada_el > f.creado_en" in _SQL_PILAS_DE_VACIOS
+    assert "d.creado_en > f.creado_en" in _SQL_PILAS_DE_VACIOS
+    assert "f.fecha" not in _SQL_PILAS_DE_VACIOS
+
+
+def test_las_ANULADAS_no_cuentan_en_ninguna_de_las_tres_tablas_que_se_anulan():
+    """Calificado por ALIAS (corolario 4): son tres tablas con la misma columna."""
+    # CON EL CONTEO: la asignación entra dos veces (sale de una pila y entra
+    # en otra), y un `in` pasa con una de las dos patas sin el filtro.
+    for alias, veces in (("d", 1), ("a", 1), ("s", 2)):
+        assert _SQL_PILAS_DE_VACIOS.count(f"{alias}.anulado_el IS NULL") == veces, alias
+
+
+def test_la_ASIGNACION_resta_de_una_pila_y_suma_en_la_otra():
+    """Una pata sola —o las dos con el mismo signo— cambia el total de un movimiento
+    que por definición no lo cambia."""
+    assert "s.marca_desde_id, 0, 0, 0, 0, -s.cantidad" in _SQL_PILAS_DE_VACIOS
+    assert "s.marca_hasta_id, 0, 0, 0, 0, s.cantidad" in _SQL_PILAS_DE_VACIOS
+
+
+def test_la_pila_se_lee_con_el_PROVEEDOR_BLOQUEADO_y_con_LA_MISMA_consulta():
+    """Dos devoluciones a la vez no pueden leer el mismo stock y sacar de más.
+
+    Y la cuenta no se escribe dos veces: el freno filtra la consulta de la
+    pantalla, no una segunda versión.
+    """
+    cuerpo = ast.parse(FUENTE_DB)
+    funcion = next(n for n in ast.walk(cuerpo)
+                   if isinstance(n, ast.FunctionDef) and n.name == "_stock_de_la_pila")
+    texto = ast.unparse(funcion)
+    assert "FOR UPDATE" in texto
+    assert "_SQL_PILAS_DE_VACIOS" in texto
+    for escritor in ("crear_devolucion_vacios", "crear_asignacion_vacios"):
+        nodo = next(n for n in ast.walk(cuerpo)
+                    if isinstance(n, ast.FunctionDef) and n.name == escritor)
+        llamadas = {c.func.id for c in ast.walk(nodo)
+                    if isinstance(c, ast.Call) and isinstance(c.func, ast.Name)}
+        assert "_stock_de_la_pila" in llamadas, escritor
 
 
 # ---------------------------------------------------------------------------
@@ -229,163 +183,296 @@ def test_se_cuenta_lo_ACEPTADO_y_no_lo_que_vino_en_el_remito():
 # ---------------------------------------------------------------------------
 
 def test_el_INSERT_de_la_devolucion_guarda_la_ESTRUCTURA_ENTERA():
-    """La tupla completa y no tres campos de seis.
-
-    Un test que compara un subconjunto no protege los que no mira: así
-    `pedidos_renglones.ficha_id` pasó nueve días guardándose en NULL sin un
-    solo error. Que este test falle el día que alguien agregue una columna es
-    su función, no una molestia.
-    """
-    conexion, cursor = _conexion_falsa(filas_fetchone=[(88,)], filas_fetchall=[])
-
-    with patch("app.db.obtener_conexion", return_value=conexion):
+    """La tupla completa, y `stock_sistema` es lo que la pila tenía al devolver."""
+    conexion, cursor = _conexion_falsa(filas_fetchone=[(88,)])
+    with patch("app.db.obtener_conexion", return_value=conexion), \
+         patch("app.db._stock_de_la_pila", return_value=30):
         devolucion_id = crear_devolucion_vacios(
-            7, 55, 12, importe=5000.0, foto_ruta="vacios/2026-09-18/v.jpg")
+            7, 71, 12, foto_ruta="vacios/2026-09-25/v.jpg", importe=5000.0)
 
     assert devolucion_id == 88
     insert = next(ll for ll in cursor.execute.call_args_list
                   if "INSERT INTO vacios_deposito_devoluciones" in ll.args[0])
-    assert insert.args[1] == (7, 55, 12, 5000.0, "vacios/2026-09-18/v.jpg", 0)
-    for columna in ("proveedor_id", "compra_id", "cantidad", "importe",
+    assert insert.args[1] == (7, 71, 12, 5000.0, "vacios/2026-09-25/v.jpg", 30)
+    for columna in ("proveedor_id", "marca_vacio_id", "cantidad", "importe",
                     "foto_ruta", "stock_sistema"):
         assert columna in insert.args[0], columna
+    assert "compra_id" not in insert.args[0], "la devolución ya no va contra una compra"
+
+
+def test_devolver_MAS_de_lo_que_hay_NO_escribe_nada():
+    conexion, cursor = _conexion_falsa(filas_fetchone=[("EJ Roja",)])
+    with patch("app.db.obtener_conexion", return_value=conexion), \
+         patch("app.db._stock_de_la_pila", return_value=3):
+        with pytest.raises(ValueError, match="hay 3 cajones: no se pueden devolver 4"):
+            crear_devolucion_vacios(7, 71, 4, foto_ruta="v.jpg")
+    assert not any("INSERT" in ll.args[0] for ll in cursor.execute.call_args_list)
+    conexion.commit.assert_not_called()
+
+
+def test_sin_FOTO_no_llega_ni_a_abrir_la_base():
+    """La guarda va donde se ESCRIBE, antes que nada: un POST armado a mano no la saltea."""
+    with patch("app.db.obtener_conexion") as abrir:
+        with pytest.raises(ValueError, match="ajuste"):
+            crear_devolucion_vacios(7, None, 1, foto_ruta="   ")
+    abrir.assert_not_called()
 
 
 def test_el_vale_NO_TOCA_compras_importe_ni_el_costeo():
-    """El descuento vive SOLO en la fila de la devolución. Es plata de envase.
-
-    EL TEST PREGUNTA POR LA AUSENCIA porque es lo único que impide volver:
-    afirmar que el INSERT escribe `importe` pasa igual con un UPDATE a
-    `compras` escrito tres líneas más abajo.
-    """
+    """El descuento vive SOLO en la fila de la devolución. Es plata de envase."""
     cuerpo = ast.parse(FUENTE_DB)
     funcion = next(n for n in ast.walk(cuerpo)
                    if isinstance(n, ast.FunctionDef) and n.name == "crear_devolucion_vacios")
-    texto = ast.unparse(funcion)
-    sentencias = [s.strip() for s in texto.split(";")]
-    escrituras = [s for s in sentencias
-                  if s.upper().lstrip("'\" \n").startswith(("UPDATE", "INSERT"))]
-    for escritura in escrituras:
-        assert "compras" not in escritura.split("\n")[0].lower() or \
-            "vacios_deposito" in escritura.lower(), (
-            "la devolución escribe sobre compras: el importe del vale no toca "
-            "compras.importe ni el costeo"
-        )
-    assert "UPDATE compras" not in texto
+    assert "UPDATE compras" not in ast.unparse(funcion)
 
 
 def test_anular_pregunta_la_EXISTENCIA_con_un_select_SIN_AGREGADO():
-    """Con un `count(*)` la guarda no se dispara nunca: la fila vuelve con 0.
-
-    Es el mismo hecho que en plpgsql hace que `if not found` después de un
-    agregado no salte jamás, y en Python que `fetchone() is None` no sea
-    None. Anular un id inexistente saldría sin hacer nada, y anular uno YA
-    anulado pisaría su fecha original — que es peor que no anular.
-    """
+    """Con un `count(*)` la guarda no se dispara nunca: la fila vuelve con 0."""
     conexion, cursor = _conexion_falsa(filas_fetchone=[None])
     with patch("app.db.obtener_conexion", return_value=conexion):
-        try:
+        with pytest.raises(ValueError, match="no existe"):
             anular_devolucion_vacios(9999)
-            assert False, "no rebotó con un id que no existe"
-        except ValueError as invalido:
-            assert "no existe" in str(invalido)
-
     consulta = cursor.execute.call_args_list[0].args[0]
     assert "SELECT anulado_el" in consulta
     for agregado in ("count(", "COUNT(", "sum(", "SUM("):
-        assert agregado not in consulta, (
-            "la guarda se apoya en un agregado: no puede distinguir "
-            "'no hay' de 'hay cero'"
-        )
+        assert agregado not in consulta
 
 
-def test_anular_dos_veces_NO_PISA_la_fecha_original():
-    conexion, cursor = _conexion_falsa(filas_fetchone=[("2026-09-18",)])
-    with patch("app.db.obtener_conexion", return_value=conexion):
-        try:
-            anular_devolucion_vacios(5)
-            assert False, "no rebotó con una devolución ya anulada"
-        except ValueError as invalido:
-            assert "ya estaba anulada" in str(invalido)
-    assert not any("UPDATE" in ll.args[0] for ll in cursor.execute.call_args_list)
+def test_anular_dos_veces_NO_PISA_la_fecha_original_y_el_genero_viaja():
+    """"Ese ajuste ya estaba anulada" salía igual de prolijo que la frase buena."""
+    for anular, frase in ((anular_devolucion_vacios, "Esa devolución ya estaba anulada"),
+                          (anular_ajuste_vacios_deposito, "Ese ajuste ya estaba anulado")):
+        conexion, cursor = _conexion_falsa(filas_fetchone=[("2026-09-18",)])
+        with patch("app.db.obtener_conexion", return_value=conexion):
+            with pytest.raises(ValueError) as invalido:
+                anular(5)
+        assert str(invalido.value) == frase + "."
+        assert not any("UPDATE" in ll.args[0] for ll in cursor.execute.call_args_list)
 
 
 # ---------------------------------------------------------------------------
-# La pantalla
+# Las rutas
 # ---------------------------------------------------------------------------
 
-def test_sin_conteo_la_pantalla_DICE_QUE_NO_ARRANCO_y_nombra_lo_que_no_se_ve():
-    """"No hay nada" y "hay cosas que no te puedo mostrar" no se pueden dibujar igual.
+def _foto():
+    import base64
+    # un JPEG de 1x1 de verdad: `_comprimir_foto_jpeg` lo tiene que poder abrir
+    return ("vale.jpg", base64.b64decode(
+        "/9j/4AAQSkZJRgABAQEASABIAAD/2wBDAP//////////////////////////////////////////////"
+        "////////////////////////////////////////////wAALCAABAAEBAREA/8QAFAABAAAAAAAAAAAA"
+        "AAAAAAAAA//EABQQAQAAAAAAAAAAAAAAAAAAAAD/2gAIAQEAAD8AN//Z"), "image/jpeg")
 
-    Y el aviso nombra LA FECHA, porque "fechá el conteo antes" sin un día al
-    lado no se puede obedecer.
+
+def test_la_DEVOLUCION_sin_foto_rebota_400_y_no_escribe():
+    with _con(_parches_del_detalle()), \
+         patch("app.main.crear_devolucion_vacios") as crear, \
+         patch("app.main.subir_foto_comanda") as subir:
+        respuesta = cliente.post("/compras/vacios/7/devolucion",
+                                 data={"marca_vacio_id": "71", "cantidad": "3"})
+    assert respuesta.status_code == 400
+    assert "Sin la foto del vale no es una devolución" in respuesta.text
+    crear.assert_not_called()
+    subir.assert_not_called()
+
+
+def test_la_DEVOLUCION_con_foto_escribe_la_PILA_elegida_y_la_ruta_subida():
+    with _con(_parches_del_detalle()), \
+         patch("app.main._comprimir_foto_jpeg", return_value=b"jpg"), \
+         patch("app.main.subir_foto_comanda", return_value="vacios/v.jpg"), \
+         patch("app.main.crear_devolucion_vacios", return_value=1) as crear:
+        respuesta = cliente.post("/compras/vacios/7/devolucion",
+                                 data={"marca_vacio_id": "", "cantidad": "3", "importe": "2.400"},
+                                 files={"foto": _foto()}, follow_redirects=False)
+    assert respuesta.status_code == 303
+    assert respuesta.headers["location"].startswith("/compras/vacios/7?")
+    crear.assert_called_once_with(7, None, 3, foto_ruta="vacios/v.jpg", importe=2400.0)
+
+
+def test_si_la_foto_NO_SE_SUBE_no_se_guarda_nada_y_lo_dice():
+    with _con(_parches_del_detalle()), \
+         patch("app.main._comprimir_foto_jpeg", return_value=b"jpg"), \
+         patch("app.main.subir_foto_comanda", side_effect=RuntimeError("storage caído")), \
+         patch("app.main.crear_devolucion_vacios") as crear:
+        respuesta = cliente.post("/compras/vacios/7/devolucion",
+                                 data={"marca_vacio_id": "71", "cantidad": "3"},
+                                 files={"foto": _foto()})
+    assert respuesta.status_code == 502
+    assert "No se guardó nada" in respuesta.text
+    crear.assert_not_called()
+
+
+def test_el_FRENO_de_la_pila_se_ve_en_la_pantalla_con_el_numero():
+    with _con(_parches_del_detalle()), \
+         patch("app.main._comprimir_foto_jpeg", return_value=b"jpg"), \
+         patch("app.main.subir_foto_comanda", return_value="vacios/v.jpg"), \
+         patch("app.main.crear_devolucion_vacios",
+               side_effect=ValueError("En la pila EJ Roja hay 23 cajones: no se pueden devolver 40.")):
+        respuesta = cliente.post("/compras/vacios/7/devolucion",
+                                 data={"marca_vacio_id": "71", "cantidad": "40"},
+                                 files={"foto": _foto()})
+    assert respuesta.status_code == 400
+    assert "hay 23 cajones: no se pueden devolver 40" in respuesta.text
+
+
+def test_AJUSTE_y_ASIGNACION_existen_SOLO_bajo_administracion():
+    """Decisión del dueño: los cierra la puerta de Administración, por prefijo.
+
+    ENCONTRADO contra DECIDIDO: se barren las rutas de la app y no una lista
+    escrita a mano, así que una tercera puerta bajo /compras falla acá.
     """
-    with patch("app.main.stock_de_vacios_deposito", return_value=UN_PROVEEDOR_SIN_CONTEO):
-        respuesta = cliente.get("/compras/vacios")
+    rutas = {r.path for r in app.routes if hasattr(r, "path")}
+    encontradas = {r for r in rutas if re.search(r"^/(compras|administracion)/vacios/.*(ajuste|asignacion|movimiento)", r)}
+    assert encontradas == {
+        "/administracion/vacios/{proveedor_id}/ajuste",
+        "/administracion/vacios/{proveedor_id}/asignacion",
+        "/administracion/vacios/movimiento/{tipo}/{movimiento_id}/anular",
+    }
 
+
+def test_el_AJUSTE_lleva_el_signo_del_SENTIDO_y_no_uno_tipeado():
+    for sentido, esperado in (("sobran", 4), ("faltan", -4)):
+        with _con(_parches_del_detalle()), \
+             patch("app.main.crear_ajuste_vacios_deposito") as crear:
+            respuesta = cliente.post("/administracion/vacios/7/ajuste", data={
+                "marca_vacio_id": "71", "sentido": sentido, "cantidad": "4",
+                "motivo": "EJ se contaron"}, follow_redirects=False)
+        assert respuesta.status_code == 303
+        crear.assert_called_once_with(7, 71, esperado, "EJ se contaron")
+
+
+def test_el_AJUSTE_sin_sentido_rebota_y_no_escribe():
+    with _con(_parches_del_detalle()), \
+         patch("app.main.crear_ajuste_vacios_deposito") as crear:
+        respuesta = cliente.post("/administracion/vacios/7/ajuste", data={
+            "marca_vacio_id": "71", "sentido": "", "cantidad": "4", "motivo": "x"})
+    assert respuesta.status_code == 400
+    crear.assert_not_called()
+
+
+def test_la_ASIGNACION_pasa_de_la_pila_elegida_a_la_marca_elegida():
+    with _con(_parches_del_detalle()), \
+         patch("app.main.crear_asignacion_vacios") as crear:
+        respuesta = cliente.post("/administracion/vacios/7/asignacion", data={
+            "marca_desde_id": "", "marca_hasta_id": "72", "cantidad": "5"},
+            follow_redirects=False)
+    assert respuesta.status_code == 303
+    crear.assert_called_once_with(7, None, 72, 5)
+
+
+def test_el_CONTEO_va_al_COTEJO_y_no_arranca_ninguna_cuenta():
+    with patch("app.main.crear_conteo_vacios_deposito") as crear:
+        respuesta = cliente.post("/compras/vacios/conteo", data={
+            "proveedor_id": "7", "marca_vacio_id": "71", "cantidad": "0",
+            "fecha": "2026-09-25"}, follow_redirects=False)
+    assert respuesta.status_code == 303
+    assert respuesta.headers["location"] == "/compras/vacios/cotejo"
+    # CERO VALE: contar cero es contar.
+    crear.assert_called_once_with(7, 71, 0, date(2026, 9, 25))
+
+
+# ---------------------------------------------------------------------------
+# Las pantallas
+# ---------------------------------------------------------------------------
+
+def _indice(proveedores=UN_PROVEEDOR):
+    with patch("app.main.stock_de_vacios_deposito", return_value=proveedores), \
+         patch("app.main.listar_proveedores",
+               return_value=[{"id": 7, "nombre": "Puesto EJEMPLO"}]), \
+         patch("app.main.listar_marcas_vacio_por_proveedor", return_value={7: MARCAS}):
+        return cliente.get("/compras/vacios")
+
+
+def test_el_indice_muestra_el_total_y_CADA_PILA_con_su_marca():
+    respuesta = _indice()
     assert respuesta.status_code == 200
-    marcado = respuesta.text.split("</style>")[-1]
-    assert "todavía no arrancó" in marcado
-    assert "4 recepciones" in marcado
-    assert "1 devolución" in marcado
-    assert "11/09/2026" in marcado
-    # Y NO muestra un cero, que es lo que el hueco viene a impedir.
-    assert "0 cajones" not in marcado
-
-
-def test_la_pantalla_explica_LOS_TRES_CASOS_de_la_fecha_del_conteo():
-    """El caso que se equivoca suma dos veces, no descuadra nada y no avisa nunca.
-
-    Por eso la regla va en la pantalla —el que arranca la cuenta está acá y no
-    va a ir a buscar nada— y con el cuerpo del texto, no en letra chica.
-    """
-    with patch("app.main.stock_de_vacios_deposito", return_value=UN_PROVEEDOR_SIN_CONTEO):
-        respuesta = cliente.get("/compras/vacios")
-
-    marcado = respuesta.text.split("</style>")[-1]
-    assert "Contá a la mañana" in marcado
-    assert "Contar cero es contar" in marcado
-    assert "dos veces" in marcado
-
-
-def test_con_conteo_la_pantalla_muestra_el_stock_y_SUS_PATAS():
-    """El número solo no se puede leer: sin las patas, nadie puede verificarlo."""
-    with patch("app.main.stock_de_vacios_deposito", return_value=UN_PROVEEDOR_CONTADO):
-        respuesta = cliente.get("/compras/vacios")
-
     marcado = respuesta.text.split("</style>")[-1]
     assert "35 cajones" in marcado
-    assert "contados 30" in marcado
-    assert "recibidos +10" in marcado
-    assert "devueltos −5" in marcado
+    assert "sin asignar" in marcado
+    assert "EJ Roja" in marcado
+    # y la cuenta vieja no quedó dibujada en ningún lado
+    for jerga in ("todavía no arrancó", "Contá a la mañana", "recibidos +"):
+        assert jerga not in marcado, jerga
 
 
-def test_el_detalle_ofrece_SOLO_compras_recepcionadas():
-    """Un vale contra una compra que no llegó describe cajones que no están.
-
-    La pantalla no ofrece lo que la escritura después rechazaría: un callejón
-    —apretar y comerse un error por algo que la pantalla propuso— es peor que
-    no ofrecer nada.
-    """
-    cuerpo = ast.parse(FUENTE_DB)
-    funcion = next(n for n in ast.walk(cuerpo)
-                   if isinstance(n, ast.FunctionDef) and n.name == "compras_para_vale_de_vacios")
-    assert "c.estado = 'recepcionado'" in ast.unparse(funcion)
+def test_el_conteo_OFRECE_solo_proveedores_y_marcas_cargados():
+    """Dueño, 25/09: solo lo cargado. Por eso son selectores y no texto libre."""
+    marcado = _indice().text.split("</style>")[-1]
+    assert '<select id="proveedor_id" name="proveedor_id" required>' in marcado
+    assert '<select id="marca_vacio_id" name="marca_vacio_id">' in marcado
+    assert 'name="proveedor_nuevo"' not in marcado and 'name="marca_nueva"' not in marcado
 
 
-def test_el_detalle_dice_que_el_importe_NO_se_le_descuenta_a_la_compra():
-    """La pantalla lo dice porque el que carga el vale es el que se lo pregunta."""
-    with patch("app.main.stock_de_vacios_deposito", return_value=UN_PROVEEDOR_CONTADO), \
-         patch("app.main.compras_para_vale_de_vacios",
-               return_value=[{"id": 1, "fecha": date(2026, 9, 17),
-                              "articulo": "Tomate EJEMPLO", "cajones": 30}]), \
-         patch("app.main.listar_devoluciones_vacios", return_value=[]), \
-         patch("app.main.listar_tipos_cajon", return_value=[]):
+def test_el_detalle_en_COMPRAS_no_ofrece_ajuste_ni_asignacion():
+    with _con(_parches_del_detalle(movimientos=[{
+            "tipo": "ajuste", "id": 3, "cantidad": 2, "marca": "EJ Roja",
+            "marca_hasta": None, "motivo": "EJ aparecieron",
+            "fecha": date(2026, 9, 25), "anulada": False}])):
         respuesta = cliente.get("/compras/vacios/7")
-
     assert respuesta.status_code == 200
     marcado = respuesta.text.split("</style>")[-1]
-    assert "no se le descuenta a la compra" in marcado
+    assert "/ajuste" not in marcado and "/asignacion" not in marcado
+    assert "/movimiento/" not in marcado, "anular un ajuste tampoco es de Compras"
+    # el movimiento SÍ se ve: esconderlo dejaría el número sin explicar
+    assert "EJ aparecieron" in marcado
+    assert "se carga en Administración" in marcado
+
+
+def test_el_detalle_en_ADMINISTRACION_ofrece_ajuste_asignacion_y_anular():
+    with _con(_parches_del_detalle(movimientos=[{
+            "tipo": "asignacion", "id": 3, "cantidad": 2, "marca": None,
+            "marca_hasta": "EJ Roja", "motivo": None,
+            "fecha": date(2026, 9, 25), "anulada": False}])):
+        respuesta = cliente.get("/administracion/vacios/7")
+    marcado = respuesta.text.split("</style>")[-1]
+    assert 'action="/administracion/vacios/7/ajuste"' in marcado
+    assert 'action="/administracion/vacios/7/asignacion"' in marcado
+    assert 'action="/administracion/vacios/movimiento/asignacion/3/anular"' in marcado
+    assert "/compras/" not in marcado
+
+
+def test_el_vale_se_PRECARGA_con_la_sena_de_CADA_pila():
+    with _con(_parches_del_detalle(senas={None: 300.0, 71: 800.0})):
+        respuesta = cliente.get("/compras/vacios/7")
+    marcado = respuesta.text.split("</style>")[-1]
+    opciones = re.findall(r'<option value="(\d*)"\s+data-sena="([^"]*)"', marcado)
+    # LAS TRES pilas, la azul en cero y sin seña: devolver de ahí lo frena el
+    # server con el número, que es más claro que una opción que falta.
+    assert opciones == [("", "300.0"), ("71", "800.0"), ("72", "")]
+    assert "No se le descuenta a la" in marcado
+
+
+def test_la_foto_del_vale_es_REQUIRED_en_el_formulario():
+    with _con(_parches_del_detalle()):
+        marcado = cliente.get("/compras/vacios/7").text.split("</style>")[-1]
+    assert re.search(r'<input id="foto" name="foto" type="file"[^>]*required', marcado)
+
+
+def test_un_proveedor_EN_CERO_se_abre_igual_para_cargarle_marcas():
+    parches = _parches_del_detalle(proveedores=[], marcas=[])
+    parches[1] = patch("app.main.proveedor_para_vacios", return_value={
+        "id": 9, "nombre": "Puesto EJEMPLO DOS", "tipo_cajon": None, "stock": 0, "pilas": []})
+    with _con(parches):
+        respuesta = cliente.get("/compras/vacios/9")
+    assert respuesta.status_code == 200
+    assert 'action="/compras/vacios/9/marca"' in respuesta.text
+
+
+def test_un_proveedor_que_NO_existe_da_404():
+    with _con(_parches_del_detalle(proveedores=[])):
+        respuesta = cliente.get("/compras/vacios/999")
+    assert respuesta.status_code == 404
+
+
+def test_el_COTEJO_dice_la_diferencia_y_cierra_en_cero():
+    filas = [{"proveedor_id": 7, "proveedor": "Puesto EJEMPLO", "marca": "EJ Roja",
+              "contado": 20, "fecha": date(2026, 9, 25), "sistema": 23, "diferencia": 3},
+             {"proveedor_id": 7, "proveedor": "Puesto EJEMPLO", "marca": None,
+              "contado": 12, "fecha": date(2026, 9, 25), "sistema": 12, "diferencia": 0}]
+    with patch("app.main.cotejo_de_vacios_deposito", return_value=filas):
+        respuesta = cliente.get("/compras/vacios/cotejo")
+    assert respuesta.status_code == 200
+    marcado = respuesta.text.split("</style>")[-1]
+    assert "EJ Roja" in marcado and "cierra" in marcado
 
 
 def test_la_pantalla_esta_LINKEADA_desde_el_hub_de_compras():
@@ -395,7 +482,6 @@ def test_la_pantalla_esta_LINKEADA_desde_el_hub_de_compras():
 
 
 def test_el_boton_NO_se_llama_solo_Vacios_porque_el_del_puesto_ya_se_llama_asi():
-    """Dos botones con el mismo nombre en un sistema donde los dos existen."""
     hub = io.open("templates/compras.html", encoding="utf-8").read()
     etiqueta = re.search(r'href="/compras/vacios">([^<]+)<', hub)
     assert etiqueta, "no encontré el botón"
@@ -411,74 +497,51 @@ UN_NOMBRE_QUE_NO_SE_PUEDE_PARTIR = "PUESTODEEJEMPLOSINUNSOLOESPACIOPARAPARTIRLO"
 
 
 def _medir(html, **opciones):
-    # LA GUARDA VA DONDE SE ABRE EL NAVEGADOR, no en cada test: hasta el
-    # 19/09 no estaba y los dos de abajo FALLABAN sin playwright en vez de
-    # saltearse. Sus llamadores no tienen de qué acordarse.
     pytest.importorskip("playwright", reason="la medición de layout necesita un navegador")
-
     from scripts.medir_layout import medir_sync
-
     return medir_sync(html, ancho=390, selector_filas=".tarjeta", **opciones)
 
 
 def _pantallas_de_vacios(nombre):
-    """Las dos pantallas con el nombre que se le pase, en los TRES lugares.
-
-    RECIBE EL NOMBRE porque es lo único que acá lo escribe una persona: el
-    proveedor, el tipo de cajón y el artículo contra el que va el vale. El
-    largo de los nombres no lo controlamos, y un diseño que solo entra con
-    los de hoy se rompe el día que alguien cargue uno largo.
-    """
-    proveedores = [dict(UN_PROVEEDOR_CONTADO[0], nombre=nombre, tipo_cajon=nombre)]
+    """Las dos pantallas con el nombre en TODOS los lugares que tipea una persona:
+    el proveedor, el tipo de cajón y la MARCA."""
+    pilas = [dict(_pila(None, None, 12), proveedor=nombre, tipo_cajon=nombre),
+             dict(_pila(71, nombre, 23), proveedor=nombre, tipo_cajon=nombre)]
+    proveedores = [dict(UN_PROVEEDOR[0], nombre=nombre, tipo_cajon=nombre, pilas=pilas)]
+    marcas = [{"id": 71, "nombre": nombre}]
     devoluciones = [{"id": 1, "cantidad": 25, "importe": 18500.0,
                      "foto_ruta": "2026-09-12/vale.jpg", "fecha": date(2026, 9, 12),
-                     "anulada": False, "compra_id": 501, "articulo": nombre,
-                     "fecha_compra": date(2026, 9, 12)}]
-    compras = [{"id": 501, "fecha": date(2026, 9, 12),
-                "articulo": nombre, "cajones": 40}]
+                     "anulada": False, "compra_id": None, "articulo": None,
+                     "fecha_compra": None, "marca": nombre}]
+    movimientos = [{"tipo": "ajuste", "id": 3, "cantidad": 2, "marca": nombre,
+                    "marca_hasta": None, "motivo": nombre,
+                    "fecha": date(2026, 9, 25), "anulada": False}]
 
-    with patch("app.main.stock_de_vacios_deposito", return_value=proveedores):
-        indice = cliente.get("/compras/vacios")
     with patch("app.main.stock_de_vacios_deposito", return_value=proveedores), \
-         patch("app.main.listar_devoluciones_vacios", return_value=devoluciones), \
-         patch("app.main.compras_para_vale_de_vacios", return_value=compras), \
-         patch("app.main.listar_tipos_cajon", return_value=[{"id": 1, "nombre": nombre}]):
-        detalle = cliente.get("/compras/vacios/7")
+         patch("app.main.listar_proveedores", return_value=[{"id": 7, "nombre": nombre}]), \
+         patch("app.main.listar_marcas_vacio_por_proveedor", return_value={7: marcas}):
+        indice = cliente.get("/compras/vacios")
+    with _con(_parches_del_detalle(proveedores=proveedores, marcas=marcas,
+                                   devoluciones=devoluciones, movimientos=movimientos,
+                                   tipos=[{"id": 1, "nombre": nombre}])):
+        detalle = cliente.get("/administracion/vacios/7")
 
     assert indice.status_code == 200 and detalle.status_code == 200
     return indice.text, detalle.text
 
 
 def test_las_DOS_pantallas_aguantan_un_nombre_QUE_NO_SE_PUEDE_PARTIR():
-    """Medido a 390px, y el desborde se lee de `desborde_pagina`.
-
-    En una pantalla de TARJETAS la clave `desborde` viene clavada en 0 y el
-    número real viaja en `desborde_pagina` (corolario 47 adentro del
-    resultado). Medido antes del arreglo: el índice desbordaba 384px y el
-    detalle 371px — la tarjeta entera se arrastraba de costado.
-
-    Y el del detalle NO estaba en la pantalla sino en la BARRA compartida:
-    su fallback es achicar y después envolver en dos líneas, y una palabra
-    sin espacios no tiene dónde envolver. Hasta el 18/09 ningún título de
-    barra venía de algo que tipea una persona.
-    """
+    """Medido a 390px, y el desborde se lee de `desborde_pagina` (corolario 53)."""
     for pantalla, html in zip(("índice", "detalle"),
                               _pantallas_de_vacios(UN_NOMBRE_QUE_NO_SE_PUEDE_PARTIR)):
         medicion = _medir(html)
         desborde = medicion.get("desborde_pagina", medicion["desborde"])
-        # El denominador al lado: sin él, "no se pisa nada" y "no se miró
-        # nada" son el mismo cero (corolarios 45 y 53).
         assert medicion["pares"] > 0, pantalla
         assert desborde == 0, f"{pantalla} desborda {desborde}px"
         assert medicion["solapes"] == [], f"{pantalla}: {medicion['solapes']}"
 
 
 def test_las_DOS_pantallas_con_nombres_NORMALES_tampoco_se_pisan():
-    """La otra mitad del par: que el caso cómodo también esté medido.
-
-    Sin él, un arreglo que rompiera el caso normal para aguantar el
-    impartible pasaría el test de arriba sin que nada cayera.
-    """
     for pantalla, html in zip(("índice", "detalle"),
                               _pantallas_de_vacios("Puesto EJEMPLO del Norte")):
         medicion = _medir(html)

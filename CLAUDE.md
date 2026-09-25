@@ -3617,7 +3617,7 @@ de bautizar y no en la próxima lectura.
 | de quién es el cajón | de un `proveedores_puesto` | de un `proveedores` de Compras |
 | cómo entra | un `clientes_puesto` lo trae, con seña o vale | **llega con la mercadería**, en la recepción |
 | cómo sale | el proveedor del puesto lo retira con el camión | se le devuelve al proveedor que lo vendió |
-| dónde vive | `vacios_recibidos` · `vacios_devueltos` · `conteos_vacios` · `ajustes_vacios` | `vacios_deposito_devoluciones` · `conteos_vacios_deposito` |
+| dónde vive | `vacios_recibidos` · `vacios_devueltos` · `conteos_vacios` · `ajustes_vacios` | `vacios_deposito_foto` · `vacios_deposito_devoluciones` · `vacios_deposito_ajustes` · `vacios_deposito_asignaciones` · `conteos_vacios_deposito` · `marcas_vacio` |
 | su catálogo | `tipos_envase_puesto` | `tipos_cajon` |
 
 **No comparten una sola tabla, y los dos "proveedor" son tablas distintas.**
@@ -3631,7 +3631,7 @@ parecido: `envases` es LA CAJA NUESTRA con su costo, la que se le factura al
 cliente. `tipos_cajon` es el cajón AJENO en el que llega la fruta. Uno se
 paga, el otro se devuelve.
 
-### El stock es por PROVEEDOR, y el tipo de cajón no es una segunda dimensión
+### El stock es por PROVEEDOR, y el tipo de cajón no es una segunda dimensión (la MARCA sí, desde el 25/09: ver abajo)
 
 Decisión del dueño: **un proveedor entrega siempre en el mismo tipo de
 cajón**, y se declara una vez en el alta. De ahí sale que
@@ -3735,9 +3735,46 @@ cosas que hasta hoy están separadas, y encima re-escribiría un número que ya
 se cargó en Administración.
 
 El neto, el día que haga falta, **se lee sumando las dos, no cambiando una**.
-Y se puede: la devolución guarda `compra_id`, así que la resta es un join y
-no una reconstrucción. Es el criterio de siempre —una cuenta se compone, no
-se pisa— dicho sobre plata en vez de sobre stock.
+Es el criterio de siempre —una cuenta se compone, no se pisa— dicho sobre
+plata en vez de sobre stock. (Esto decía que la resta era un join por
+`compra_id`. **Desde el 25/09 la devolución no va contra una compra**, así
+que ese join solo existe para las viejas.)
+
+### DESDE EL 25/09: una FOTO, PILAS por marca, y el conteo solo coteja
+
+Decisiones del dueño, y reemplazan el modelo del conteo inicial del 18/09
+entero. Lo que había —un conteo que ARRANCABA la cuenta, con su "todavía no
+arrancó", sus "esperando" y la regla de la fecha— **se fue**.
+
+- **El corte es la FOTO** (`vacios_deposito_foto`, una fila por proveedor,
+  corrida el 25/09 en las dos bases): el stock que el sistema mostraba ese
+  día. Frutamax dio 1.758 clavado contra la pantalla. De ahí en adelante:
+  **recepciones CON SEÑA suman, devoluciones restan**, y lo que no cierre se
+  arregla con un ajuste. El intento de reconstruir el pasado (arrancar el
+  18/09) se descartó: dejaba 16 de 35 proveedores negativos.
+- **La foto se compara por INSTANTE (`f.creado_en`), no por día.** Con la
+  fecha, lo recibido el 25/09 después de sacar la foto se perdía entero. Lo
+  encontró correr la cuenta contra Postgres, no leerla.
+- **El stock es por PILA: proveedor y marca de cajón** (`marcas_vacio`, que
+  se cargan en el detalle de Vacíos). La foto va a "sin asignar"; la marca se
+  la pone la recepción o una ASIGNACIÓN de Administración, que mueve de una
+  pila a otra sin cambiar el total. Las FK son compuestas `(marca, proveedor)`:
+  una marca de otro proveedor la rechaza la base.
+- **La devolución sale de una PILA, sin compra**, con la seña por cajón de
+  la última recepción de esa pila precargada y editable. **Sin foto del vale
+  no es una devolución: es un ajuste** (guarda en la ruta y en la escritura;
+  el CHECK de la base entra después del deploy, `vacios_marcas_5`). **No se
+  devuelve más de lo que dice el sistema**: el freno lee la pila con la fila
+  del proveedor bloqueada, y con LA MISMA consulta de la pantalla.
+- **Ajuste y asignación son SOLO de Administración**: no tienen ruta bajo
+  `/compras`, así que los cierra la puerta por prefijo.
+- **El conteo físico ya no arranca nada: va al COTEJO**, el último conteo de
+  cada pila contra lo que el sistema dice ahora. Solo ofrece proveedores y
+  marcas ya cargados.
+
+Los números van contra Postgres en `tests/test_vacios_pilas_contra_la_base.py`,
+con la foto EN MARZO a propósito (corolario 95) y un proveedor cuya recepción
+cae el mismo día que su foto, antes y después de la hora.
 
 ## El dato de uso decide qué MEJORAR, no qué SACAR
 
