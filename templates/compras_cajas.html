@@ -130,6 +130,10 @@
   .accion > summary::after { content: "▾"; margin-left: auto; }
   .accion[open] > summary::after { content: "▴"; }
   .accion .cuerpo-accion { padding: 0 1rem 1rem; }
+  .ver-movimientos { display: flex; align-items: center; min-height: 44px;
+                     padding: .85rem 1rem; font-weight: 600; color: #2563eb;
+                     text-decoration: none; }
+  .ver-movimientos span { margin-left: auto; font-size: 1.2rem; }
 </style>
 </head>
 <body>
@@ -250,6 +254,11 @@
   {% else %}
   <div class="tarjeta">No hay envases cargados. Se dan de alta con la ficha de un cliente.</div>
   {% endfor %}
+
+  {# VER LOS MOVIMIENTOS (dueño, 25/09): un link con la misma forma que las
+     dos acciones de abajo, y que se note que lleva a otro lado — un renglón
+     que no parece tocable es un camino que no existe (corolario 68). #}
+  <a class="accion ver-movimientos" href="{{ camino.base }}/cajas/movimientos">Ver los movimientos <span aria-hidden="true">›</span></a>
 
   {# LOS DOS BOTONES. Antes los dos formularios estaban repetidos adentro de
      CADA tarjeta —uno por tipo de caja— así que la pantalla crecía con el

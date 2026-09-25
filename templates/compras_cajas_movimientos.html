@@ -1,0 +1,87 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Movimientos de cajas</title>
+<style>
+  :root { font-family: -apple-system, system-ui, sans-serif; }
+  body { margin: 0; padding: 1rem; background: #f5f5f5; color: #222; }
+  h2 { font-size: 1.05rem; margin: 0 0 0.75rem; }
+  .tarjeta { background: #fff; border-radius: 10px; padding: 1rem;
+             margin-bottom: 1rem; box-shadow: 0 1px 3px rgba(0,0,0,.1); }
+  .error { background: #fee2e2; color: #991b1b; padding: .75rem 1rem;
+           border-radius: 8px; margin-bottom: 1rem; }
+  .ayuda { font-size: .82rem; color: #6b7280; margin: .35rem 0 0; }
+  .fila { display: flex; flex-wrap: wrap; gap: .5rem; align-items: flex-end; }
+  .campo { display: flex; flex-direction: column; flex: 1 1 8rem; min-width: 0; }
+  label { font-size: .85rem; margin-bottom: .2rem; }
+  input { font-size: 1rem; padding: .6rem; min-height: 44px;
+          border: 1px solid #cbd5e1; border-radius: 8px; min-width: 0; }
+  button { font-size: 1rem; padding: .7rem 1.1rem; min-height: 44px; border: 0;
+           border-radius: 8px; background: #2563eb; color: #fff;
+           font-weight: 600; flex: 1 1 8rem; }
+  /* Un renglón por movimiento, en dos líneas y sin tabla: qué pasó y cuántas
+     arriba, cuándo, qué caja y el detalle abajo. Entra en 390px sin scroll. */
+  .mov { padding: .55rem 0; border-bottom: 1px solid #f1f5f9; }
+  .mov:last-of-type { border-bottom: 0; }
+  .mov .arriba { display: flex; justify-content: space-between; gap: .5rem; }
+  .mov .que { font-weight: 600; overflow-wrap: anywhere; min-width: 0; }
+  .mov .cuantas { white-space: nowrap; font-variant-numeric: tabular-nums;
+                  font-weight: 700; }
+  .mov.salio .cuantas { color: #b91c1c; }
+  .mov.entro .cuantas { color: #166534; }
+  .mov.foto .cuantas { color: #374151; }
+  .mov .abajo { font-size: .82rem; color: #6b7280; margin-top: .15rem;
+                overflow-wrap: anywhere; }
+</style>
+</head>
+<body>
+  {% set barra_sector = camino.sector %}
+  {% set barra_titulo = "Movimientos de cajas" %}
+  {% set barra_atras = camino.base ~ "/cajas" %}
+  {% include "_barra_navegacion.html" %}
+
+  {% if error %}<div class="error">{{ error }}</div>{% endif %}
+
+  <form class="tarjeta fila" method="get" action="{{ camino.base }}/cajas/movimientos">
+    <div class="campo">
+      <label for="desde">Desde</label>
+      <input type="date" id="desde" name="desde" value="{{ desde.isoformat() }}">
+    </div>
+    <div class="campo">
+      <label for="hasta">Hasta</label>
+      <input type="date" id="hasta" name="hasta" value="{{ hasta.isoformat() }}">
+    </div>
+    <button type="submit">Ver</button>
+  </form>
+
+  <div class="tarjeta">
+    <h2>{{ movimientos|length }} movimiento{{ "" if movimientos|length == 1 else "s" }}
+      del {{ desde.strftime('%d/%m/%Y') }} al {{ hasta.strftime('%d/%m/%Y') }}</h2>
+    {% for m in movimientos %}
+    {# El conteo inicial no suma ni resta: es la foto que arranca la cuenta,
+       así que va sin signo y sin color de entrada o salida. #}
+    <div class="mov {% if m.origen == 'conteo_inicial' %}foto{% elif m.cajas < 0 %}salio{% else %}entro{% endif %}">
+      <div class="arriba">
+        <span class="que">{{ m.rotulo }}</span>
+        <span class="cuantas">{% if m.origen == 'conteo_inicial' %}{{ m.cajas }} contadas{% else %}{{ "%+d"|format(m.cajas) }}{% endif %}</span>
+      </div>
+      <div class="abajo">
+        {{ m.fecha.strftime('%d/%m/%Y') }} · {{ m.envase }}
+        {%- if m.guia_id %} · guía R {{ m.guia_id }} ({{ m.articulo }}){% endif %}
+        {%- if m.colega %} · {{ m.colega }}{% endif %}
+        {%- if m.motivo %} · {{ m.motivo }}{% endif %}
+      </div>
+    </div>
+    {% else %}
+    <p class="ayuda">No hubo movimientos de cajas entre esas fechas.</p>
+    {% endfor %}
+    <p class="ayuda">El más nuevo arriba. En verde lo que entró al piso y en
+      rojo lo que salió. Las guías R están porque son lo que más cajas mueve:
+      sin ellas la lista no explica el stock.</p>
+  </div>
+
+{% include "_pie_version.html" %}
+</body>
+</html>

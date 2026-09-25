@@ -12,8 +12,9 @@ from contextlib import contextmanager
 
 import psycopg2
 
-from core.envases import (como_queda_la_cuenta, efecto_en_la_cuenta,
-                          envase_derivado_de_la_ficha, hay_que_reponer)
+from core.envases import (cajas_que_mueve_la_guia, como_queda_la_cuenta,
+                          efecto_en_la_cuenta, envase_derivado_de_la_ficha,
+                          hay_que_reponer)
 from core.magnitudes import repartir_magnitudes
 from core.matcheo_comanda import normalizar_texto
 from core.vino_armada import motivo_para_no_marcar_armada, motivo_sin_lote_por_el_corte
@@ -14952,6 +14953,75 @@ def movimientos_de_colegas(colega_id: int | None = None) -> list[dict]:
                     for f in cursor.fetchall()]
     finally:
         conexion.close()
+
+
+# LOS MOVIMIENTOS DE CAJAS, para leerlos (dueño, 25/09: "hoy no tengo forma de
+# verlos"). Son DOS fuentes y las dos mueven el mismo stock: lo que DECLARA una
+# persona (movimientos_envase) y lo que arma una guía R en caja nuestra. Sin la
+# segunda la lista no explica el stock: las guías R son lo que más cajas mueve.
+_SQL_MOVIMIENTOS_DE_CAJAS = """
+    SELECT 'declarado' AS fuente, m.fecha_operacion, m.origen, e.nombre,
+           m.cantidad, co.nombre AS colega, m.motivo,
+           NULL::bigint AS guia_id, NULL::text AS articulo,
+           NULL::boolean AS lleva_caja, m.creado_en
+      FROM movimientos_envase m
+      JOIN envases e ON e.id = m.envase_id
+      LEFT JOIN colegas co ON co.id = m.colega_id
+     WHERE m.anulado_el IS NULL
+       AND m.fecha_operacion BETWEEN %(desde)s AND %(hasta)s
+    UNION ALL
+    SELECT 'guia', r.fecha_operacion, r.tipo, e.nombre,
+           r.bultos_primera, NULL, NULL,
+           r.id, a.nombre, r.lleva_caja_nuestra, r.creado_en
+      FROM reprocesos r
+      JOIN envases e ON e.id = r.envase_id
+      JOIN articulos a ON a.id = r.articulo_id
+     WHERE r.anulado_el IS NULL
+       AND r.lleva_caja_nuestra IS TRUE
+       AND r.fecha_operacion BETWEEN %(desde)s AND %(hasta)s
+     ORDER BY 2 DESC, 11 DESC
+"""
+
+
+def movimientos_de_cajas(desde, hasta) -> list[dict]:
+    """Todo lo que movió cajas nuestras entre dos fechas. El más nuevo primero.
+
+    `cajas` ES EL EFECTO SOBRE EL PISO, con signo, y en las dos fuentes sale de
+    la regla que ya existe: en lo declarado es `cantidad` tal cual (el signo lo
+    puso el server al guardar), y en una guía R lo da
+    `cajas_que_mueve_la_guia` — la MISMA función que documenta la pata `guias`
+    del stock. Una segunda cuenta del signo acá sería la tercera copia.
+
+    LA GUÍA 'inicial' NO ENTRA: la función le da cero, y un renglón que dice
+    "movió 0 cajas" no le sirve a nadie. Por eso se filtra por el resultado y
+    no por el tipo — así la lista y la función no pueden separarse.
+
+    `hasta` NO TIENE DEFAULT, por lo mismo que las otras cuentas de cajas: un
+    llamador que se lo olvide recibiría otra ventana y un número plausible.
+    """
+    conexion = obtener_conexion()
+    try:
+        with conexion.cursor() as cursor:
+            cursor.execute(_SQL_MOVIMIENTOS_DE_CAJAS, {"desde": desde, "hasta": hasta})
+            filas = cursor.fetchall()
+    finally:
+        conexion.close()
+
+    movimientos = []
+    for (fuente, fecha, origen, envase, cantidad, colega, motivo,
+         guia_id, articulo, lleva_caja, _creado) in filas:
+        if fuente == "guia":
+            cajas = cajas_que_mueve_la_guia(origen, cantidad, lleva_caja)
+            if not cajas:
+                continue
+        else:
+            cajas = cantidad
+        movimientos.append({
+            "fuente": fuente, "fecha": fecha, "origen": origen, "envase": envase,
+            "cajas": int(cajas), "colega": colega, "motivo": motivo,
+            "guia_id": guia_id, "articulo": articulo,
+        })
+    return movimientos
 
 
 def cuentas_de_colegas() -> list[dict]:

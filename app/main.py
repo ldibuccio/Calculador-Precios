@@ -56,6 +56,7 @@ from app.costeo import (
 # también es del motor y trae su propia guarda del cero.
 from core.envases import (
     ORIGENES_DE_COLEGA,
+    rotulo_de_movimiento_de_cajas,
     envase_derivado_de_la_ficha,
     envases_por_unidad_de_venta,
     en_pallets,
@@ -345,6 +346,7 @@ from app.db import (
     crear_movimiento_envase,
     guardar_umbral_de_envase,
     guardar_cajas_por_pallet,
+    movimientos_de_cajas,
     contar_envases_a_reponer,
     detallar_envases_a_reponer,
     listar_proveedores_puesto,
@@ -6243,6 +6245,50 @@ def ver_cuenta_de_colega(request: Request, colega_id: int):
     return templates.TemplateResponse(
         request, "compras_cajas_colega.html",
         {"cuenta": cuenta, "movimientos": movimientos,
+         "camino": _camino_de_cajas_y_vacios(request)},
+    )
+
+
+# Cuántos días mira la lista de movimientos de cajas si no se le pide otra cosa.
+VENTANA_MOVIMIENTOS_DE_CAJAS_DIAS = 30
+
+
+@app.get("/compras/cajas/movimientos")
+@app.get("/administracion/cajas/movimientos")
+def ver_movimientos_de_cajas(request: Request, desde: str = "", hasta: str = ""):
+    """Qué pasó con las cajas, cuándo, cuántas y de qué tipo, filtrado por fecha.
+
+    Del dueño (25/09): *"hoy no tengo forma de verlos"*. Junta las dos fuentes
+    que mueven el stock —lo declarado y las guías R— y el rótulo de cada una
+    sale de `rotulo_de_movimiento_de_cajas`, al lado del mapa de los colegas.
+
+    SIN FECHAS mira los últimos 30 días hasta hoy. Una fecha que no se entiende
+    no se reemplaza en silencio por la ventana de siempre: se dice, porque la
+    lista que vuelve se leería como la del período pedido.
+    """
+    hoy = _hoy_argentina()
+    error = None
+    try:
+        fin = date.fromisoformat(hasta) if hasta.strip() else hoy
+        inicio = (date.fromisoformat(desde) if desde.strip()
+                  else fin - timedelta(days=VENTANA_MOVIMIENTOS_DE_CAJAS_DIAS))
+    except ValueError:
+        error = "Alguna de las fechas no es válida: se muestran los últimos 30 días."
+        fin, inicio = hoy, hoy - timedelta(days=VENTANA_MOVIMIENTOS_DE_CAJAS_DIAS)
+    if inicio > fin:
+        error = "La fecha de inicio es posterior a la de fin: se dieron vuelta."
+        inicio, fin = fin, inicio
+
+    try:
+        movimientos = movimientos_de_cajas(inicio, fin)
+    except Exception as error_db:
+        raise HTTPException(status_code=500, detail=f"Error al conectar con la base de datos: {error_db}") from error_db
+    for movimiento in movimientos:
+        movimiento["rotulo"] = rotulo_de_movimiento_de_cajas(movimiento["fuente"], movimiento["origen"])
+
+    return templates.TemplateResponse(
+        request, "compras_cajas_movimientos.html",
+        {"movimientos": movimientos, "desde": inicio, "hasta": fin, "error": error,
          "camino": _camino_de_cajas_y_vacios(request)},
     )
 
