@@ -204,7 +204,11 @@
     </thead>
     <tbody id="tbody-todos-articulos">
       {% for a in todos %}
-      <tr>
+      {# LO QUE PESA Y LO QUE RINDE, en la fila: el promedio ponderado de
+         Márgenes por Artículo se calcula con las filas A LA VISTA, así que
+         el dato tiene que viajar con la fila que el buscador esconde. #}
+      <tr data-facturado="{{ a.facturado or 0 }}"
+          data-utilidad="{{ a.utilidad_aproximada if a.utilidad_aproximada is not none else '' }}">
         <td><span class="nombre-articulo">{{ a.articulo_nombre }}</span></td>
         <td class="col-venta">{% if a.incidencia is not none %}{{ a.incidencia|porcentaje }}{% else %}—{% endif %}</td>
         <td>{{ a.precio_vigente|moneda if a.precio_vigente is not none else "—" }}</td>
@@ -257,7 +261,59 @@
     if (campo.dataset.arriba === "si") {
       document.getElementById("secciones-antes-de-todos").hidden = !!filtro;
     }
+    recalcularPromedioPonderado(!!filtro);
   }
+
+  // EL PROMEDIO PONDERADO DE UTILIDAD (dueño, 25/09), escrito UNA sola vez:
+  // lo usa el primer dibujo y lo usa el buscador, así que la pantalla no
+  // puede mostrar un número al abrir y calcular otro al filtrar.
+  //
+  //   Σ(utilidad × facturado) / Σ(facturado), sobre las filas A LA VISTA.
+  //
+  // Solo pesan las que FACTURARON en la ventana: un artículo que no vendió
+  // pesa cero y no entra ni arriba ni abajo, así los pesos suman 100% entre
+  // los que sí. Uno que facturó y NO TIENE UTILIDAD (sin precio vigente, o
+  // sin costear) tampoco puede entrar —no hay qué multiplicar— y meterlo
+  // solo en el denominador arrastraría el promedio hacia cero con un número
+  // que no existe. Se deja afuera y SE DICE cuánta venta quedó sin pesar.
+  function recalcularPromedioPonderado(filtrado) {
+    const caja = document.getElementById("promedio-ponderado");
+    // El cuadro vive también en Cargar Precios, sin el número; y sin
+    // facturación legible la caja dice "—" fija y no tiene qué llenar.
+    if (!caja || !caja.querySelector(".promedio-valor")) return;
+    let suma = 0, pesos = 0, articulos = 0, afuera = 0, afueraPlata = 0;
+    document.querySelectorAll("#tbody-todos-articulos tr").forEach(function (fila) {
+      if (fila.style.display === "none") return;
+      const facturado = parseFloat(fila.dataset.facturado) || 0;
+      if (facturado <= 0) return;
+      if (fila.dataset.utilidad === "") { afuera++; afueraPlata += facturado; return; }
+      suma += parseFloat(fila.dataset.utilidad) * facturado;
+      pesos += facturado;
+      articulos++;
+    });
+    const valor = caja.querySelector(".promedio-valor");
+    const detalle = caja.querySelector(".promedio-detalle");
+    const plata = function (n) { return "$" + Math.round(n).toLocaleString("es-AR"); };
+    if (!pesos) {
+      valor.textContent = "—";
+      detalle.textContent = filtrado
+        ? "Ningún artículo de los que coinciden facturó con utilidad calculada en la ventana."
+        : "Ningún artículo facturó con utilidad calculada en la ventana.";
+      return;
+    }
+    const pct = suma / pesos * 100;
+    valor.textContent = pct.toFixed(1).replace(".", ",") + "%";
+    valor.classList.toggle("utilidad-negativa", pct < 0);
+    let texto = articulos + (articulos === 1 ? " artículo" : " artículos") +
+      ", pesados por lo que facturaron (" + plata(pesos) + ")" +
+      (filtrado ? ", solo los que coinciden con la búsqueda." : ".");
+    if (afuera) {
+      texto += " Quedan afuera " + afuera + (afuera === 1 ? " que facturó " : " que facturaron ") +
+        plata(afueraPlata) + " sin utilidad calculada (sin precio vigente o sin costear).";
+    }
+    detalle.textContent = texto;
+  }
+  document.addEventListener("DOMContentLoaded", function () { recalcularPromedioPonderado(false); });
 
   function limpiarBusquedaTodosArticulos() {
     const campo = document.getElementById("buscar-todos-articulos");
