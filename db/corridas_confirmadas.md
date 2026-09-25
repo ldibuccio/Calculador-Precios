@@ -360,3 +360,33 @@ PALMALA   tabla 1 · 44 fotos de 44 proveedores · 1 fecha · FOTO total 0     �
 Frutamax coincide clavado con lo que mostraba la pantalla ese día. Los que
 quedaron en cero con recepciones son los que nunca se contaron: se arreglan
 con un ajuste cuando aparezcan (decisión del dueño).
+
+## 25/09 — `guia_deposito_1_columna_y_unico` (fase 1)
+
+`db/guia_deposito_1_columna_y_unico.sql`, con `db/guia_deposito_4_verificacion.sql` corrida aparte.
+
+```
+FRUTAMAX  columna 1 · único nuevo 1 · únicos 2 · 15 mal ubicadas · 0 guías depósito · 0 con fotos · 15 ingresos directos
+PALMALA   columna 1 · único nuevo 1 · únicos 2 ·  9 mal ubicadas · 0 guías depósito · 0 con fotos ·  9 ingresos directos
+```
+
+**Lo que identifica la base son los ingresos directos** —15 contra 9—. Las
+"mal ubicadas" son exactamente los ingresos directos, que siguen en la guía
+del Puesto hasta que corran los bloques 2 y 3 (después del deploy). Resultado
+esperado de esa fase: `1 · 1 · 1 · 0`.
+
+## 25/09 — `vacios_marcas_1` a `4` (fase 1)
+
+`db/vacios_marcas_1_marcas_y_compras.sql`, `_2_devoluciones_y_conteos`,
+`_3_ajustes` y `_4_asignaciones`, con `db/vacios_marcas_6_verificacion.sql`
+corrida aparte.
+
+```
+FRUTAMAX  3 · 4 · 6 · 2 · YES · 13 devoluciones · 13 sin foto
+PALMALA   3 · 4 · 6 · 2 · YES ·  0 devoluciones ·  0 sin foto
+```
+
+**Lo que identifica la base son las devoluciones** —13 contra 0—. Las 13 sin
+foto de Frutamax son las viejas y quedan como están (dueño): el CHECK del
+bloque 5 entra `not valid`. Falta el bloque 5, después del deploy, y ahí la
+verificación tiene que dar `3 · 4 · 6 · 3 · YES`.
