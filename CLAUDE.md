@@ -3770,8 +3770,16 @@ arrancó", sus "esperando" y la regla de la fecha— **se fue**.
   ingreso directo no lleva seña, así que no tiene marca de vacío.
 - **La devolución sale de una PILA, sin compra**, con la seña por cajón de
   la última recepción de esa pila precargada y editable. **Sin foto del vale
-  no es una devolución: es un ajuste** (guarda en la ruta y en la escritura;
-  el CHECK de la base entra después del deploy, `vacios_marcas_5`). **No se
+  no es una devolución: es un ajuste** (guarda en la ruta, en la escritura y
+  en la base: `vacios_dev_con_foto`). **Las viejas —contra una COMPRA,
+  modelo anterior al 25/09— quedan eximidas por el propio CHECK**
+  (`compra_id is not null or foto`), y no por NOT VALID: `vacios_marcas_5`
+  corrió NOT VALID y con eso **las 13 viejas de Frutamax no se podían
+  anular**, porque NOT VALID exime a lo viejo solo del chequeo al crearse y
+  todo UPDATE posterior se chequea. Lo arregla `vacios_marcas_7`. **Y la
+  foto del vale NO VENCE**: la limpieza de fotos le ponía la ruta en NULL,
+  el CHECK lo rebota, y como es una transacción se caía la limpieza entera.
+  Salió de `listar_fotos_para_limpiar` y de `olvidar_foto_borrada`. **No se
   devuelve más de lo que dice el sistema**: el freno lee la pila con la fila
   del proveedor bloqueada, y con LA MISMA consulta de la pantalla.
 - **Ajuste y asignación son SOLO de Administración**: no tienen ruta bajo

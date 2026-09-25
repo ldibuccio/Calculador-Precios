@@ -148,8 +148,8 @@ def test_FRENA_si_tiene_un_VALE_de_vacios(galpon):
     d, sql, recepcionada, _, viejo, nuevo = galpon
     compra_id = recepcionada()
     (vid,), = sql("""INSERT INTO vacios_deposito_devoluciones
-                     (proveedor_id, compra_id, cantidad, stock_sistema)
-                     VALUES (%s,%s,3,10) RETURNING id""", (viejo, compra_id))
+                     (proveedor_id, compra_id, cantidad, stock_sistema, foto_ruta)
+                     VALUES (%s,%s,3,10,'vacios/EJEMPLO.jpg') RETURNING id""", (viejo, compra_id))
     _rebota_sin_tocar(d, sql, compra_id, nuevo, "vale de vacíos")
 
     sql("UPDATE vacios_deposito_devoluciones SET anulado_el = now() WHERE id=%s", (vid,))

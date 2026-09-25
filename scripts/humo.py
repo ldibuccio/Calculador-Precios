@@ -239,8 +239,8 @@ def siembra():
     insert into listados_compra_foto_cajas (listado_id, ficha_id, articulo_id, cajas, magnitud)
       select l.id, f.id, f.articulo_id, 1, null from listados_compra l, fichas_logistica f limit 1;
     insert into colegas (nombre, nombre_normalizado) values ('EJEMPLO Colega', 'ejemplo colega');
-    insert into vacios_deposito_devoluciones (proveedor_id, compra_id, cantidad, stock_sistema)
-      select pr.id, co.id, 1, 1 from proveedores pr, compras co limit 1;
+    insert into vacios_deposito_devoluciones (proveedor_id, compra_id, cantidad, stock_sistema, foto_ruta)
+      select pr.id, co.id, 1, 1, 'vacios/EJEMPLO.jpg' from proveedores pr, compras co limit 1;
     """
 
 
