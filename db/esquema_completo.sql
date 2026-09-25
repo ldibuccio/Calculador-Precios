@@ -349,10 +349,16 @@ create table guias_compra (
     fecha_operacion  date not null,
     proveedor_id     bigint not null references proveedores (id),
     creada_el        timestamptz not null default now(),
-    unique (fecha_operacion, proveedor_id)
+    de_deposito      boolean not null default false,
+    -- LOS DOS UNIQUE CONVIVEN hasta que el código pase a preguntar por el
+    -- nuevo: el de hoy hace ON CONFLICT (fecha_operacion, proveedor_id). El
+    -- viejo se va con guia_deposito_2, en el mismo commit que ese código.
+    unique (fecha_operacion, proveedor_id),
+    constraint guias_compra_dia_proveedor_origen unique (fecha_operacion, proveedor_id, de_deposito)
 );
 
 comment on table guias_compra is 'Una guía por proveedor por día de operación. El id es el número de guía (ej. 105).';
+comment on column guias_compra.de_deposito is 'true = la guía de los INGRESOS DIRECTOS de Depósito de ese proveedor ese día. Es otra guía que la de Compras: no comparte comanda ni fotos (dueño, 25/09). Ver db/guia_deposito_1_columna_y_unico.sql.';
 
 create table fotos_guia (
     id         bigint generated always as identity primary key,
@@ -412,6 +418,10 @@ create table compras (
     importe_origen             text,
     segunda_por_cajon          numeric,
     segunda_por_cajon_real     numeric,
+    -- La FK compuesta (marca_vacio_id, proveedor_id) va al final del archivo,
+    -- despues de crear marcas_vacio. Ver db/vacios_marcas_1_marcas_y_compras.sql.
+    marca_vacio_id             bigint,
+    marca                      text,
     constraint compras_tipo_retiro_check check (tipo_retiro in ('Clark', 'Carro', 'Pases', 'Cooperativa')),
     constraint compras_importe_origen_check check (importe_origen is null
         or importe_origen in ('alta', 'edicion', 'pendiente')),
@@ -798,7 +808,8 @@ comment on column ajustes_vacios.anulado_el is 'NULL = ajuste vigente. Igual que
 create table vacios_deposito_devoluciones (
     id             bigint generated always as identity primary key,
     proveedor_id   bigint  not null references proveedores (id),
-    compra_id      bigint  not null references compras (id),
+    compra_id      bigint  references compras (id),
+    marca_vacio_id bigint,
     cantidad       integer not null check (cantidad > 0),
     importe        numeric check (importe is null or importe >= 0),
     foto_ruta      text,
@@ -819,12 +830,78 @@ create table conteos_vacios_deposito (
     cantidad       integer not null check (cantidad >= 0),
     fecha          date    not null,
     stock_sistema  integer not null,
-    creado_en      timestamptz not null default now()
+    creado_en      timestamptz not null default now(),
+    marca_vacio_id bigint
 );
 
 comment on table conteos_vacios_deposito is 'Conteo físico de los cajones de un proveedor que hay en el galpón. El primero de cada proveedor es su BASE: antes de él no hay cuenta, y las recepciones anteriores a su fecha quedan absorbidas.';
 comment on column conteos_vacios_deposito.fecha is 'El día del conteo, que es lo que decide qué recepciones se suman y cuáles quedan absorbidas. Va aparte de creado_en porque se puede contar hoy y fechar ayer.';
 comment on column conteos_vacios_deposito.stock_sistema is 'Stock derivado EN el instante del conteo, guardado del lado del server: el que cuenta no lo ve. Si lo viera, transcribe en vez de contar.';
+
+-- LAS MARCAS DE LOS VACÍOS (dueño, 25/09). El stock de vacíos del depósito
+-- se lleva por proveedor y por marca. Las FK compuestas (marca, proveedor)
+-- hacen que la BASE rechace una marca de otro proveedor. Ver
+-- db/vacios_marcas_1..4.sql. El CHECK de la foto (vacios_marcas_5) entra
+-- acá en el mismo commit que el código que la exige: el de hoy todavía deja
+-- cargar una devolución sin foto.
+create table marcas_vacio (
+    id                 bigint generated always as identity primary key,
+    proveedor_id       bigint not null references proveedores (id),
+    nombre             text not null,
+    nombre_normalizado text not null,
+    activo             boolean not null default true,
+    creado_en          timestamptz not null default now(),
+    constraint marcas_vacio_nombre_unico unique (proveedor_id, nombre_normalizado),
+    constraint marcas_vacio_id_proveedor unique (id, proveedor_id)
+);
+
+comment on table marcas_vacio is 'Las marcas de los cajones de CADA proveedor de Compras. Se cargan en Vacíos y Recepción solo elige entre ellas.';
+comment on column compras.marca_vacio_id is 'La marca del cajón con que llegó esta compra con seña. NULL = sin asignar.';
+comment on column compras.marca is 'La marca de la MERCADERÍA (texto libre, lo carga Recepción). NULL = sin asignar.';
+comment on column vacios_deposito_devoluciones.marca_vacio_id is 'De qué pila salió la devolución. NULL = de los cajones sin asignar.';
+
+alter table compras add constraint compras_marca_vacio_del_proveedor
+    foreign key (marca_vacio_id, proveedor_id) references marcas_vacio (id, proveedor_id);
+alter table vacios_deposito_devoluciones add constraint vacios_dev_marca_del_proveedor
+    foreign key (marca_vacio_id, proveedor_id) references marcas_vacio (id, proveedor_id);
+alter table conteos_vacios_deposito add constraint vacios_conteo_marca_del_proveedor
+    foreign key (marca_vacio_id, proveedor_id) references marcas_vacio (id, proveedor_id);
+
+create table vacios_deposito_ajustes (
+    id              bigint generated always as identity primary key,
+    proveedor_id    bigint  not null references proveedores (id),
+    marca_vacio_id  bigint,
+    cantidad        integer not null,
+    motivo          text,
+    stock_sistema   integer not null,
+    creado_en       timestamptz not null default now(),
+    anulado_el      timestamptz,
+    constraint vacios_aj_marca_del_proveedor
+        foreign key (marca_vacio_id, proveedor_id) references marcas_vacio (id, proveedor_id),
+    constraint vacios_aj_cantidad_y_motivo
+        check (cantidad <> 0 and btrim(coalesce(motivo, '')) <> '')
+);
+
+comment on table vacios_deposito_ajustes is 'AJUSTE de stock de vacíos del depósito: el número no cierra y nadie sabe por qué. Con signo y motivo obligatorio. No es una devolución: una devolución lleva la foto del vale.';
+
+create table vacios_deposito_asignaciones (
+    id              bigint generated always as identity primary key,
+    proveedor_id    bigint  not null references proveedores (id),
+    marca_desde_id  bigint,
+    marca_hasta_id  bigint  not null,
+    cantidad        integer not null,
+    stock_sistema   integer not null,
+    creado_en       timestamptz not null default now(),
+    anulado_el      timestamptz,
+    constraint vacios_asig_desde_del_proveedor
+        foreign key (marca_desde_id, proveedor_id) references marcas_vacio (id, proveedor_id),
+    constraint vacios_asig_hasta_del_proveedor
+        foreign key (marca_hasta_id, proveedor_id) references marcas_vacio (id, proveedor_id),
+    constraint vacios_asig_cantidad_y_pilas
+        check (cantidad > 0 and marca_desde_id is distinct from marca_hasta_id)
+);
+
+comment on table vacios_deposito_asignaciones is 'Pasar N cajones de una pila (marca_desde NULL = sin asignar) a una marca, sin tocar ninguna recepción. Una fila con las dos puntas: anularla deshace las dos.';
 
 -- ----------------------------------------------------------------------------
 -- 12. ÍNDICES DE RENDIMIENTO
