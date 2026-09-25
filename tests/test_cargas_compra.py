@@ -797,6 +797,23 @@ def test_la_fila_DIBUJA_LOS_TRES_numeros_y_de_donde_sale_el_por_bulto():
     assert "Por bulto: el de la ficha de EJEMPLO Día" in corrido
 
 
+def test_los_TRES_campos_van_en_el_ORDEN_del_dueño_igual_que_el_Paso_2():
+    """Del dueño (25/09): kilos totales, kilos por bulto, y último los bultos —
+    el mismo orden que el Paso 2. Se lee por CLASE y en cada fila (no con un
+    `in`: la pantalla repite el bloque una vez por artículo)."""
+    import re
+    ctx = _con_catalogo(**{
+        "app.main.carga_de_compra": _carga(modo="automatico"),
+        "app.main.renglones_de_los_ultimos_pedidos": _RENGLONES_DE_PEDIDO,
+    })
+    respuesta, _ = _entrar(ctx, "get", f"/compras/carga/1/{EL_27.isoformat()}")
+    marcado = respuesta.text.split("</style>")[-1]
+    bloques = re.findall(r'<div class="tres">(.*?)</div>', marcado, re.S)
+    assert len(bloques) >= 1, "no se dibujó ninguna fila con los tres campos"
+    for bloque in bloques:
+        assert re.findall(r'class="c-([a-z-]+)"', bloque) == ["total", "por-bulto", "bultos"]
+
+
 def test_SIN_ficha_del_cliente_el_POR_BULTO_arranca_VACIO_y_lo_dice():
     """El rival. La carga va contra el catálogo de compra, así que un
     artículo que este cliente no tiene en ficha se carga igual — y ahí no hay
