@@ -11013,6 +11013,19 @@ def _renderizar_pantalla_recepcion(
     for compra in [c for g in guias for c in g["compras"]] + procesados_hoy:
         _agregar_segunda_por_cajon(compra)
 
+    # LAS MARCAS DE VACÍO de cada proveedor, para el selector de las compras
+    # con seña. Que no se puedan leer NO puede dejar sin recepcionar: sin la
+    # lista, los cajones quedan "sin asignar" y Administración se los asigna
+    # después — que es lo mismo que pasa si el proveedor no tiene marcas.
+    try:
+        marcas_por_proveedor = listar_marcas_vacio_por_proveedor()
+    except Exception:
+        logger.exception("No se pudieron leer las marcas de vacío para Recepción")
+        marcas_por_proveedor = {}
+    for compra in [c for g in guias for c in g["compras"]]:
+        compra["marcas_vacio"] = marcas_por_proveedor.get(compra.get("proveedor_id"), [])
+        compra["con_sena"] = (compra.get("sena") or 0) > 0
+
     return templates.TemplateResponse(
         request,
         "deposito_recepcion.html",
@@ -11154,6 +11167,24 @@ def ver_foto_de_balanza(compra_id: int):
     return RedirectResponse(url=url_firmada, status_code=307)
 
 
+def _marca_vacio_de_recepcion(valor: str) -> tuple[str | None, int | None]:
+    """(error, id) de la marca de vacío elegida al recibir. Vacío es "sin asignar".
+
+    Solo valida que sea un id: si es de ESTE proveedor lo decide la FK
+    compuesta de la base, y si la compra dejó seña, `_recepcionar_compra`.
+    """
+    valor = (valor or "").strip()
+    if not valor:
+        return None, None
+    try:
+        marca_id = int(valor)
+    except ValueError:
+        return "La marca del vacío no es válida: elegila de la lista.", None
+    if marca_id <= 0:
+        return "La marca del vacío no es válida: elegila de la lista.", None
+    return None, marca_id
+
+
 @app.post("/deposito/recepcion/{compra_id}/recepcionar")
 def recepcionar_compra_ruta(
     request: Request,
@@ -11161,24 +11192,31 @@ def recepcionar_compra_ruta(
     cantidad_cajones_real: str = Form(""),
     cantidad_total_real: str = Form(""),
     segunda_real: str = Form(""),
+    marca: str = Form(""),
+    marca_vacio_id: str = Form(""),
 ):
     error, cajones_valor = _validar_cantidad_cajones_real(cantidad_cajones_real)
     if not error:
         error, valor_real = _validar_valor_real_recepcion(cantidad_total_real)
     if not error:
         error, segunda_valor = _validar_segunda_real_recepcion(segunda_real)
+    if not error:
+        error, marca_vacio_valor = _marca_vacio_de_recepcion(marca_vacio_id)
 
     if error:
         return _renderizar_pantalla_recepcion(request, error=error, status_code=400)
 
     try:
         aviso_retiro, numero_guia = recepcionar_compra(
-            compra_id, cajones_valor, valor_real, segunda_real=segunda_valor
+            compra_id, cajones_valor, valor_real, segunda_real=segunda_valor,
+            marca=marca, marca_vacio_id=marca_vacio_valor,
         )
     except Exception as error_db:
         motivo = _error_de_la_guia_en_origen(error_db)
         if motivo:
             return _renderizar_pantalla_recepcion(request, error=motivo, status_code=400)
+        if isinstance(error_db, ValueError):
+            return _renderizar_pantalla_recepcion(request, error=str(error_db), status_code=400)
         return _renderizar_pantalla_recepcion(
             request, error=f"No se pudo recepcionar la compra: {error_db}", status_code=500
         )
@@ -11210,6 +11248,8 @@ def rechazo_parcial_compra_ruta(
     cantidad_total_real: str = Form(""),
     motivo_rechazo: str = Form(""),
     segunda_real: str = Form(""),
+    marca: str = Form(""),
+    marca_vacio_id: str = Form(""),
 ):
     """Llegó la carga pero Depósito devuelve parte al proveedor (ej. 2 de 10 por calidad).
 
@@ -11226,6 +11266,8 @@ def rechazo_parcial_compra_ruta(
         error, valor_real = _validar_valor_real_recepcion(cantidad_total_real)
     if not error:
         error, segunda_valor = _validar_segunda_real_recepcion(segunda_real)
+    if not error:
+        error, marca_vacio_valor = _marca_vacio_de_recepcion(marca_vacio_id)
 
     if error:
         return _renderizar_pantalla_recepcion(request, error=error, status_code=400)
@@ -11238,11 +11280,15 @@ def rechazo_parcial_compra_ruta(
             cantidad_cajones_rechazada=cajones_rechazados,
             motivo_rechazo=motivo_rechazo.strip() or None,
             segunda_real=segunda_valor,
+            marca=marca,
+            marca_vacio_id=marca_vacio_valor,
         )
     except Exception as error_db:
         motivo = _error_de_la_guia_en_origen(error_db)
         if motivo:
             return _renderizar_pantalla_recepcion(request, error=motivo, status_code=400)
+        if isinstance(error_db, ValueError):
+            return _renderizar_pantalla_recepcion(request, error=str(error_db), status_code=400)
         return _renderizar_pantalla_recepcion(
             request, error=f"No se pudo guardar el rechazo parcial: {error_db}", status_code=500
         )

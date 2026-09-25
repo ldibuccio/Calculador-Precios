@@ -6753,7 +6753,9 @@ def test_recepcionar_compra_guarda_los_reales_y_redirige():
 
     assert respuesta.status_code == 303
     assert respuesta.headers["location"] == "/deposito/recepcion?procesado=1"
-    mock_recepcionar.assert_called_once_with(1, 38.0, 760.0, segunda_real=None)
+    mock_recepcionar.assert_called_once_with(
+        1, 38.0, 760.0, segunda_real=None, marca="", marca_vacio_id=None
+    )
 
 
 def test_recepcionar_compra_con_aviso_de_retiro_lo_pasa_por_la_url():
@@ -6874,7 +6876,8 @@ def test_rechazo_parcial_guarda_los_aceptados_y_el_registro():
     assert respuesta.status_code == 303
     assert respuesta.headers["location"] == "/deposito/recepcion?procesado=1"
     mock_recepcionar.assert_called_once_with(
-        1, 8.0, 18.0, cantidad_cajones_rechazada=2.0, motivo_rechazo="podrido", segunda_real=None
+        1, 8.0, 18.0, cantidad_cajones_rechazada=2.0, motivo_rechazo="podrido", segunda_real=None,
+        marca="", marca_vacio_id=None,
     )
 
 
@@ -6893,7 +6896,8 @@ def test_rechazo_parcial_sin_motivo_guarda_none():
 
     assert respuesta.status_code == 303
     mock_recepcionar.assert_called_once_with(
-        1, 8.0, 18.0, cantidad_cajones_rechazada=2.0, motivo_rechazo=None, segunda_real=None
+        1, 8.0, 18.0, cantidad_cajones_rechazada=2.0, motivo_rechazo=None, segunda_real=None,
+        marca="", marca_vacio_id=None,
     )
 
 

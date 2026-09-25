@@ -263,6 +263,23 @@
       <span class="valor">{{ magnitudes_del_cajon(compra, real=true) }}</span>
     </div>
     {% endif %}
+    {# LAS DOS MARCAS que pone Depósito al recibir, solo en la recepcionada:
+       antes de recibir no hay nada que decir. "Sin asignar" se escribe y no
+       se esconde: una marca que falta se ve igual que una que nadie miró. La
+       del vacío, solo si la compra dejó seña — sin seña no hay cajones en
+       Vacíos. #}
+    {% if compra.estado == "recepcionado" %}
+    <div class="dato">
+      <span class="etiqueta">Marca de la mercadería</span>
+      <span class="valor">{{ compra.marca or "Sin asignar" }}</span>
+    </div>
+    {% if compra.sena %}
+    <div class="dato">
+      <span class="etiqueta">Marca de los cajones</span>
+      <span class="valor">{{ compra.marca_vacio or "Sin asignar" }}</span>
+    </div>
+    {% endif %}
+    {% endif %}
     {# DICE "AL RECIBIR", y eso es del 12/09: desde que existe la devolución
        del cliente, esta pantalla tiene DOS cosas que se le devuelven al
        proveedor y estaban las dos escritas igual, a centímetros una de otra.

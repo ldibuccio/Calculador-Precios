@@ -12,7 +12,10 @@
     background: #f5f5f5;
     color: #222;
   }
-  h2 { font-size: 1.4rem; font-weight: 800; margin: 0 0 0.15rem; }
+  /* El título es el NOMBRE DEL PROVEEDOR, que tipea una persona: sin
+     espacios no tiene dónde envolver y arrastraba la pantalla de costado
+     (416px medidos a 390). */
+  h2 { font-size: 1.4rem; font-weight: 800; margin: 0 0 0.15rem; overflow-wrap: anywhere; }
   .tarjeta {
     background: #fff;
     border-radius: 10px;
@@ -82,7 +85,7 @@
     color: #444;
     margin-bottom: 0.25rem;
   }
-  .campo-real input {
+  .campo-real input, .campo-real select {
     width: 100%;
     padding: 0.65rem;
     margin-bottom: 0.6rem;
@@ -92,6 +95,10 @@
     box-sizing: border-box;
     background: #fff;
   }
+  /* Las marcas son opcionales: van juntas y un escalón más chicas que lo
+     que se pesa, para que no compitan con los números. */
+  .marcas-recepcion { margin-top: 0.2rem; }
+  .marcas-recepcion .ayuda-marca { margin: -0.3rem 0 0.6rem; font-size: 0.8rem; color: #6b7280; }
   .acciones-renglon {
     display: flex;
     flex-wrap: wrap;
@@ -343,6 +350,35 @@
     {% endif %}
   </div>
 
+  {# LAS DOS MARCAS (dueño, 25/09), opcionales y en blanco = "sin asignar".
+     Un solo macro para los DOS formularios que recepcionan —Recibir y el
+     rechazo parcial—: escritas dos veces, la copia que se separe deja una de
+     las dos puertas guardando sin marca y no se nota.
+
+     La del VACÍO solo con seña: sin seña esos cajones no entran a Vacíos. Y
+     solo con las marcas cargadas para ESTE proveedor (las da de alta Vacíos);
+     si no tiene ninguna, se dice en vez de mostrar un selector vacío. #}
+  {% macro campos_de_marca(c, sufijo) %}
+  <div class="marcas-recepcion">
+    <label for="marca-{{ sufijo }}-{{ c.id }}">Marca de la mercadería (opcional)</label>
+    <input type="text" id="marca-{{ sufijo }}-{{ c.id }}" name="marca" maxlength="60"
+           placeholder="Ej: la marca de la manzana" autocomplete="off">
+    {% if c.con_sena %}
+    {% if c.marcas_vacio %}
+    <label for="marca-vacio-{{ sufijo }}-{{ c.id }}">Marca de los cajones (opcional)</label>
+    <select id="marca-vacio-{{ sufijo }}-{{ c.id }}" name="marca_vacio_id">
+      <option value="">Sin asignar</option>
+      {% for m in c.marcas_vacio %}
+      <option value="{{ m.id }}">{{ m.nombre }}</option>
+      {% endfor %}
+    </select>
+    {% else %}
+    <p class="ayuda-marca">Los cajones quedan sin asignar: este proveedor no tiene marcas cargadas en Vacíos.</p>
+    {% endif %}
+    {% endif %}
+  </div>
+  {% endmacro %}
+
   {% if guias %}
     {% for guia in guias %}
     <div class="tarjeta">
@@ -410,6 +446,7 @@
           <input type="number" id="{{ id_segunda }}" name="segunda_real" min="0" step="0.01" inputmode="decimal"
                  value="{{ c.segunda_por_cajon_estimada }}">
           {% endif %}
+          {{ campos_de_marca(c, "recibir") }}
         </form>
 
         {# La foto va ARRIBA de los botones: el orden de la pantalla es el
@@ -558,6 +595,8 @@
 
             <label for="motivo-{{ c.id }}">Motivo (opcional)</label>
             <input type="text" id="motivo-{{ c.id }}" name="motivo_rechazo" placeholder="Ej: podrido, golpeado">
+
+            {{ campos_de_marca(c, "parcial") }}
 
             <div class="acciones-renglon">
               <button type="submit" class="boton-advertencia">Guardar rechazo parcial</button>
