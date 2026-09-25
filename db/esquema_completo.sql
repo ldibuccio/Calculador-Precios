@@ -838,6 +838,18 @@ comment on table conteos_vacios_deposito is 'Conteo físico de los cajones de un
 comment on column conteos_vacios_deposito.fecha is 'El día del conteo, que es lo que decide qué recepciones se suman y cuáles quedan absorbidas. Va aparte de creado_en porque se puede contar hoy y fechar ayer.';
 comment on column conteos_vacios_deposito.stock_sistema is 'Stock derivado EN el instante del conteo, guardado del lado del server: el que cuenta no lo ve. Si lo viera, transcribe en vez de contar.';
 
+-- EL CORTE DE LOS VACÍOS DEL DEPÓSITO (dueño, 25/09): la foto de lo que el
+-- sistema mostraba ese día, una fila por proveedor. Desde ahí suma lo
+-- recibido con seña y resta lo devuelto. Ver db/vacios_foto_1_el_corte_de_hoy.sql.
+create table vacios_deposito_foto (
+    proveedor_id  bigint primary key references proveedores (id),
+    cantidad      integer not null,
+    fecha         date    not null,
+    creado_en     timestamptz not null default now()
+);
+
+comment on table vacios_deposito_foto is 'Stock de vacíos del depósito al cierre del 25/09, como lo mostraba el sistema. Desde ahí suma lo recibido con seña y resta lo devuelto.';
+
 -- LAS MARCAS DE LOS VACÍOS (dueño, 25/09). El stock de vacíos del depósito
 -- se lleva por proveedor y por marca. Las FK compuestas (marca, proveedor)
 -- hacen que la BASE rechace una marca de otro proveedor. Ver
