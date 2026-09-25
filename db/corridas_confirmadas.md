@@ -406,3 +406,28 @@ compras quedaron bien. `deposito_con_fotos` no dio 0 y se abrió
 cada foto antes de tocar nada. **Y el "tiene que dar 0" de la verificación
 era de más**: la pantalla Fotos de la guía de una compra de ingreso directo
 cuelga la foto de SU guía, que ahora es la de depósito, y eso es correcto.
+
+## 25/09 — `guia_deposito_5_fotos_en_guias_de_deposito` (solo lectura)
+
+La consulta de las fotos que quedaron en guías de depósito, en las dos bases.
+
+```
+FRUTAMAX  guía 190 · 26/08 · Dimimax  · COMANDA de Compras · compra 310 Berenjena · guía de compras ese día null · 0 borradas
+          guía 204 · 26/08 · 2 cabezas · SUBIDA desde la compra · compra 309 Morrón Rojo
+PALMALA   guía 144 · 27/08 · Saturno  · SUBIDA desde la compra · compra 144 Zapallito 1ra
+```
+
+**Dos de tres son del ingreso directo y están bien.** La guía 190 tiene una
+comanda de Compras colgada de una guía que quedó de depósito, sin guía de
+Compras ese día y sin compras borradas: o se colgó con "Terminar con la
+comanda" cuando la única guía del día era la del ingreso, o la compra que la
+trajo se movió de día o de proveedor (eso no deja rastro).
+
+**Decisión del dueño (25/09): se deja donde está.** Es una sola foto de un
+mes atrás, no mueve ningún número, y moverla pedía crear una guía que no
+existe. Lo único que hace es aparecer en el detalle de la compra 310. **Y ya
+no se puede repetir**: desde v991 la comanda de la carga manual solo se cuelga
+de la guía de Compras (`agregar_foto_guia_del_dia` pregunta `de_deposito =
+false`). Por eso `deposito_con_fotos` de Frutamax va a seguir dando 1 más las
+fotos que se suban desde una compra de ingreso directo — ninguna de las dos
+cosas es un error.
