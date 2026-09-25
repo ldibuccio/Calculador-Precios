@@ -203,6 +203,32 @@ ORIGENES_DE_COLEGA = {
 }
 
 
+
+# QUÉ PASÓ, en palabras del galpón, para la lista de movimientos de cajas.
+# Los cuatro de colega NO se repiten acá: salen de `ORIGENES_DE_COLEGA`, que es
+# donde viajan con su signo. Los de las guías R van con su propia clave
+# (`guia_<tipo>`) porque son otra fuente y otro hecho. Lo cuida un test que
+# compara estas claves contra el CHECK de la base, en las dos direcciones.
+ROTULOS_DE_MOVIMIENTO_DE_CAJAS = {
+    "conteo_inicial": "Conteo inicial",
+    "compra": "Compré cajas",
+    "prestamo_al_puesto": "Vacías al puesto",
+    "ajuste": "Corrección del stock",
+    **{clave: o["largo"] for clave, o in ORIGENES_DE_COLEGA.items()},
+    "guia_normal": "Se armaron en una guía R",
+    "guia_en_origen": "Volvieron armadas del puesto",
+}
+
+
+def rotulo_de_movimiento_de_cajas(fuente: str, origen: str) -> str:
+    """El rótulo de un renglón de la lista. Si no lo conoce, dice el origen crudo.
+
+    NO AFIRMA NADA QUE NO SEPA: un origen nuevo sin rótulo se muestra como
+    está en la base, en vez de caer en un `else` que lo haga pasar por otro.
+    """
+    clave = f"guia_{origen}" if fuente == "guia" else origen
+    return ROTULOS_DE_MOVIMIENTO_DE_CAJAS.get(clave, origen)
+
 def efecto_en_la_cuenta(cantidad) -> int:
     """Cuánto mueve este movimiento la cuenta con el colega. + me debe / - le debo.
 

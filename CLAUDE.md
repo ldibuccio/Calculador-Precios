@@ -7871,6 +7871,16 @@ Así que la función que se lee como la fuente de la verdad no toca un solo
 número del sistema, y sus tests —verdes, prolijos, con sus casos bien
 elegidos— **no prueban nada sobre lo que el operario ve.**
 
+**DEJÓ DE SER CIERTO EL 25/09, y para bien.** La lista de movimientos de
+cajas (`movimientos_de_cajas`, app/db.py) es su primer llamador real: el signo
+de cada guía R que se muestra sale de ella, y no de una tercera copia. Y lo que
+ata las dos escrituras ya no es solo un par de asserts de texto:
+`test_la_lista_SUMADA_desde_el_conteo_da_el_MISMO_stock_que_la_tarjeta` suma la
+lista, que pasa por la función, y la compara contra `stock_de_envases`, que pasa
+por el SQL. Si la función y la pata se separan, esos dos números se separan.
+El mecanismo del corolario no cambia: lo que se movió es el ESTADO que se
+anotó al lado para ilustrarlo.
+
 ### EL BUG QUE ESTE COROLARIO CONTABA NO EXISTÍA (16/09, unas horas después)
 
 **Se deja entero y corregido acá, porque el error de método es más caro que
