@@ -453,5 +453,22 @@ no tiene filas viejas.
 Vacíos: NOT VALID exime a lo viejo solo del chequeo al crearse, y todo UPDATE
 posterior se chequea — así que **las 13 viejas de Frutamax no se pueden
 anular** desde que corrió. Lo arregla `vacios_marcas_7_las_viejas_se_anulan`
-(pendiente de correr), que exime a las que van contra una compra y deja el
+(corrida el mismo 25/09, abajo), que exime a las que van contra una compra y deja el
 CHECK validado.
+
+## 25/09 — `vacios_marcas_7_las_viejas_se_anulan`
+
+El CHECK de la foto del vale, recreado para eximir a las devoluciones del
+modelo viejo (las que van contra una compra) y VALIDADO. Arregla la pared que
+dejó el NOT VALID de `vacios_marcas_5`. Verificación, en las dos bases:
+
+```
+FRUTAMAX  exime viejas 1 · validada 1 · 13 sin foto · 0 ofensores · 13 devoluciones
+PALMALA   exime viejas 1 · validada 1 ·  0 sin foto · 0 ofensores ·  0 devoluciones
+```
+
+`guarda_exime_viejas` y `guarda_validada` en 1 en las dos: el CHECK es el
+nuevo y está validado entero. Las 13 sin foto de Frutamax son las mismas 13
+viejas de `vacios_marcas_5`, todas contra una compra (`ofensores 0`), y ahora
+se pueden anular. **Palmala no vota** —solo confirma que el bloque no
+explota—. `db/esquema_completo.sql` ya tenía esta definición desde v997.

@@ -3808,7 +3808,7 @@ arrancó", sus "esperando" y la regla de la fecha— **se fue**.
   (`compra_id is not null or foto`), y no por NOT VALID: `vacios_marcas_5`
   corrió NOT VALID y con eso **las 13 viejas de Frutamax no se podían
   anular**, porque NOT VALID exime a lo viejo solo del chequeo al crearse y
-  todo UPDATE posterior se chequea. Lo arregla `vacios_marcas_7`. **Y la
+  todo UPDATE posterior se chequea. Lo arregla `vacios_marcas_7`, corrida el 25/09 en las dos. **Y la
   foto del vale NO VENCE**: la limpieza de fotos le ponía la ruta en NULL,
   el CHECK lo rebota, y como es una transacción se caía la limpieza entera.
   Salió de `listar_fotos_para_limpiar` y de `olvidar_foto_borrada`. **No se
