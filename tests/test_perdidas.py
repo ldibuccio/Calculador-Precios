@@ -45,6 +45,9 @@ PERDIDAS = {
         {"destino": "segunda", "articulo_id": 1, "articulo": "EJEMPLO Berenjena",
          **_renglon(3.0, 900.0, 3.0, 150.0)},
     ],
+    # LAS CAJAS ROTAS VIENEN SIEMPRE desde el 25/09, como en producción: un
+    # fixture sin ellas no se parece a lo que la cuenta devuelve (corolario 22).
+    "cajas_rotas": {"cajas": 0, "total": 0.0, "sin_costo": 0, "por_envase": []},
     "total": 3150.0,
     "bultos_sin_costo": 3.0,
 }

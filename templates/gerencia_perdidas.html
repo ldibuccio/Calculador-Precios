@@ -38,6 +38,7 @@
              font-size: .85rem; font-weight: 700; margin-bottom: .4rem; }
   .es-merma { background: #fee2e2; color: #991b1b; }
   .es-segunda { background: #fffbeb; color: #92400e; border: 1px solid #fcd34d; }
+  .es-rotas { background: #f1f5f9; color: #334155; border: 1px solid #cbd5e1; }
   .renglon { border-top: 1px solid #e5e7eb; padding: .7rem 0; }
   .renglon:first-of-type { border-top: 0; padding-top: 0; }
   .quien { font-size: 1rem; font-weight: 600; }
@@ -133,6 +134,31 @@
       </div>
     </div>
     {% endfor %}
+    {# CAJAS ROTAS (dueño, 25/09): cajas VACÍAS que se dieron de baja en Cajas.
+       Suman al total de arriba, porque son plata perdida igual que la
+       mercadería, y van en su propio renglón porque no son de ningún
+       artículo: su desglose es por tipo de caja. Se dibuja SIEMPRE, en cero
+       también, por lo mismo que los otros dos. #}
+    {% set rotas = resultado.cajas_rotas %}
+    <div class="renglon" data-destino="cajas_rotas">
+      <span class="destino es-rotas">Cajas rotas</span>
+      <div class="totales">
+        <span><span class="grande">{{ rotas.total|moneda }}</span></span>
+        <span><span class="unidad">{{ rotas.cajas }} caja{{ "s" if rotas.cajas != 1 }}</span></span>
+      </div>
+      {% if rotas.por_envase %}
+      <div class="patas">
+        {% for r in rotas.por_envase %}
+        <span>{{ r.envase }}: {{ r.cajas }} <span class="plata">{{ r.pesos|moneda }}</span></span>
+        {% endfor %}
+      </div>
+      {% endif %}
+      {% if rotas.sin_costo %}
+      <p class="aviso">{{ rotas.sin_costo }} caja{{ "s" if rotas.sin_costo != 1 }} rota{{ "s" if rotas.sin_costo != 1 }}
+        no tienen <strong>costo cargado</strong> a esa fecha: están contadas y
+        <strong>no suman pesos</strong>.</p>
+      {% endif %}
+    </div>
   </div>
 
   <div class="tarjeta">

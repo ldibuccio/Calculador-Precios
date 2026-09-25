@@ -214,6 +214,7 @@ ROTULOS_DE_MOVIMIENTO_DE_CAJAS = {
     "compra": "Compré cajas",
     "prestamo_al_puesto": "Vacías al puesto",
     "ajuste": "Corrección del stock",
+    "merma": "Cajas rotas",
     **{clave: o["largo"] for clave, o in ORIGENES_DE_COLEGA.items()},
     "guia_normal": "Se armaron en una guía R",
     "guia_en_origen": "Volvieron armadas del puesto",

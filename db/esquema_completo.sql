@@ -230,7 +230,7 @@ create table movimientos_envase (
     constraint movimientos_envase_origen_check
         check (origen in ('conteo_inicial', 'compra', 'prestamo_al_puesto', 'ajuste',
                           'colega_le_presto', 'colega_me_devuelve',
-                          'colega_me_presta', 'colega_le_devuelvo')),
+                          'colega_me_presta', 'colega_le_devuelvo', 'merma')),
     -- El signo va POR ORIGEN: una compra que reste o un préstamo que sume son
     -- la misma fila con el signo al revés, y sin esto entran sin que nada avise.
     constraint movimientos_envase_signo_segun_origen
@@ -238,7 +238,8 @@ create table movimientos_envase (
                  when origen = 'conteo_inicial' then cantidad >= 0
                  when origen in ('compra', 'colega_me_devuelve', 'colega_me_presta')
                    then cantidad > 0
-                 when origen in ('prestamo_al_puesto', 'colega_le_presto', 'colega_le_devuelvo')
+                 when origen in ('prestamo_al_puesto', 'colega_le_presto',
+                                 'colega_le_devuelvo', 'merma')
                    then cantidad < 0
                  else cantidad <> 0
                end),
@@ -255,7 +256,7 @@ create table movimientos_envase (
 );
 
 comment on table movimientos_envase is 'Movimientos de cajas nuestras que DECLARA una persona: el conteo físico inicial, la compra de cajas, el préstamo de vacías al puesto y el ajuste. En CAJAS (integer: no existe media caja). El stock es la suma de estos más lo derivado de las guías R y los reingresos.';
-comment on column movimientos_envase.origen is 'conteo_inicial (la foto que arranca la cuenta de ese envase, y desde cuya fecha se cuentan las guías R), compra (ingreso), prestamo_al_puesto (cajas vacías al puesto, siempre negativo), ajuste (corrección, con motivo obligatorio) y los cuatro de la cuenta con un colega: colega_le_presto, colega_me_devuelve, colega_me_presta y colega_le_devuelvo. El puesto y el colega NO son el mismo hecho: al puesto la caja vuelve sola con la guía R en_origen, y con un colega hay una cuenta que llevar.';
+comment on column movimientos_envase.origen is 'conteo_inicial (la foto que arranca la cuenta de ese envase, y desde cuya fecha se cuentan las guías R), compra (ingreso), prestamo_al_puesto (cajas vacías al puesto, siempre negativo), ajuste (corrección, con motivo obligatorio), merma (cajas ROTAS: siempre negativa, es pérdida y va a Gerencia → Pérdidas; db/cajas_rotas_1_merma.sql) y los cuatro de la cuenta con un colega: colega_le_presto, colega_me_devuelve, colega_me_presta y colega_le_devuelvo. El puesto y el colega NO son el mismo hecho: al puesto la caja vuelve sola con la guía R en_origen, y con un colega hay una cuenta que llevar.';
 comment on column movimientos_envase.cantidad is 'Cajas, con signo, y lo que el signo mide es EL EFECTO SOBRE EL PISO (por eso el stock físico no necesita ninguna pata para los colegas, y la alerta de reposición sigue mirando solo el piso: una caja que te deben no está en el piso). De ahí sale el neto de la cuenta sin ningún mapa de signos: neto = -sum(cantidad) sobre los cuatro orígenes de colega. INTEGER a propósito: los decimales de bultos_primera resultaron un fósil pre-corte y no hay razón para abrirles una puerta nueva.';
 comment on column movimientos_envase.stock_sistema is 'Foto del stock de ese envase SIN este movimiento. Igual que en ajustes_vacios: un ajuste que pudiera pisar el stock sin dejar rastro tapa cualquier faltante y se acaba el control cruzado.';
 comment on column movimientos_envase.anulado_el is 'NULL = movimiento vigente. Se anula, nunca se borra.';

@@ -333,3 +333,16 @@ PALMALA   tilde 1 · columna 1 · guarda 1 · 0 con tilde · 5 clientes · 0 ren
 ```
 
 **Lo que identifica la base son los clientes** —3 contra 5—.
+
+## 25/09 — `cajas_rotas_1_merma`
+
+`db/cajas_rotas_1_merma.sql`, con `db/cajas_rotas_2_verificacion.sql` corrida aparte.
+
+```
+FRUTAMAX  origen con merma 1 · signo con merma 1 · 11 movimientos · último 24/09
+PALMALA   origen con merma 1 · signo con merma 1 ·  0 movimientos · sin movimientos
+```
+
+**Lo que identifica la base son los movimientos de cajas** —11 contra 0—.
+`db/esquema_completo.sql` ganó el origen `merma` en el mismo commit que la
+construyó.

@@ -15500,8 +15500,36 @@ def cajas_perdidas_del_deposito_por_articulo(desde, hasta) -> dict:
         conexion.close()
 
 
+# LAS CAJAS ROTAS (dueño, 25/09): cajas vacías que vienen rotas y se dan de
+# baja como MERMA en Cajas. Son plata perdida y van a Pérdidas como un renglón
+# propio. La plata no vive en ninguna columna: se valúa en cada lectura al
+# costo de la caja vigente EL DÍA de la rotura, con el MISMO fragmento que las
+# otras dos cuentas de plata de cajas (`_SQL_COSTO_DEL_ENVASE_A_LA_FECHA`). El
+# `LATERAL (SELECT ev.envase_id) f` existe solo para darle a ese fragmento el
+# alias `f` que pide: escribir el costo de nuevo acá sería la tercera copia.
+_SQL_CAJAS_ROTAS = """
+    SELECT e.nombre,
+           SUM(-ev.cantidad)                                AS cajas,
+           SUM(-ev.cantidad * c.costo)                      AS pesos,
+           COALESCE(SUM(-ev.cantidad) FILTER (WHERE c.costo IS NULL), 0) AS sin_costo
+      FROM movimientos_envase ev
+      JOIN envases e ON e.id = ev.envase_id
+      JOIN LATERAL (SELECT ev.envase_id) f ON true
+      {costo_del_envase}
+     WHERE ev.anulado_el IS NULL
+       AND ev.origen = 'merma'
+       AND ev.fecha_operacion >= %s AND ev.fecha_operacion <= %s
+     GROUP BY e.nombre
+     ORDER BY 3 DESC NULLS LAST, 1
+"""
+
+
 def perdidas_por_periodo(desde, hasta) -> dict:
-    """La plata perdida en el período, partida en MERMAS y SEGUNDA.
+    """La plata perdida en el período: MERMAS, SEGUNDA y CAJAS ROTAS.
+
+    LAS CAJAS ROTAS (25/09) son el tercer renglón y suman al mismo total: son
+    cajas vacías que se dieron de baja en Cajas, sin artículo ni mercadería.
+    Se valúan con el mismo costo de caja a la fecha que las otras dos.
 
     LA REGLA ES UNA SOLA Y ES DEL DUEÑO (21/09): *"todo lo que se tira o
     pasa a segunda es plata perdida. Va a una cuenta de resultado negativo,
@@ -15575,6 +15603,16 @@ def perdidas_por_periodo(desde, hasta) -> dict:
                                      float(fila[3]) if fila[3] is not None else None)
                 for fila in cursor.fetchall()
             }
+            cursor.execute(
+                _SQL_CAJAS_ROTAS.format(costo_del_envase=_SQL_COSTO_DEL_ENVASE_A_LA_FECHA),
+                (desde, hasta),
+            )
+            rotas_por_envase = [
+                {"envase": f[0], "cajas": int(f[1] or 0),
+                 "pesos": float(f[2]) if f[2] is not None else 0.0,
+                 "sin_costo": int(f[3] or 0)}
+                for f in cursor.fetchall()
+            ]
     finally:
         conexion.close()
 
@@ -15621,6 +15659,19 @@ def perdidas_por_periodo(desde, hasta) -> dict:
     for fila in list(renglones.values()) + list(por_articulo_salida.values()):
         fila["total"] = fila["mercaderia"] + fila["caja_pesos"]
 
+    # LAS CAJAS ROTAS VAN APARTE DE `renglones` y SÍ suman al total: son plata
+    # perdida igual que la mercadería (dueño, 25/09). Aparte porque no son de
+    # ningún ARTÍCULO —son cajas vacías— así que no tienen mercadería, ni
+    # bultos, ni detalle por artículo; su desglose es por tipo de caja. Las
+    # que no tienen costo cargado a esa fecha suman cajas y no pesos, y se
+    # dicen, igual que los bultos sin costo.
+    cajas_rotas = {
+        "cajas": sum(r["cajas"] for r in rotas_por_envase),
+        "total": sum(r["pesos"] for r in rotas_por_envase),
+        "sin_costo": sum(r["sin_costo"] for r in rotas_por_envase),
+        "por_envase": rotas_por_envase,
+    }
+
     return {
         "desde": desde,
         "hasta": hasta,
@@ -15630,7 +15681,8 @@ def perdidas_por_periodo(desde, hasta) -> dict:
         # importan.
         "detalle": sorted(por_articulo_salida.values(),
                           key=lambda f: (-f["total"], f["articulo"])),
-        "total": sum(f["total"] for f in renglones.values()),
+        "cajas_rotas": cajas_rotas,
+        "total": sum(f["total"] for f in renglones.values()) + cajas_rotas["total"],
         "bultos_sin_costo": sum(f["bultos_sin_costo"] for f in renglones.values()),
     }
 
