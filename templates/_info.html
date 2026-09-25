@@ -1,0 +1,16 @@
+{# LA "i" DE INFORMACIÓN (25/09). Criterio del dueño, y es el que decide qué
+   va acá y qué no: si leerlo cambia lo que el operario hace EN ESE MOMENTO,
+   se ve; si explica CÓMO FUNCIONA, va a la "i".
+
+   Uso, con el texto como bloque para que pueda llevar <strong>:
+
+     {% from "_info.html" import info %}
+     {% call info("Cómo se calcula") %}La cuenta <strong>real</strong>…{% endcall %}
+
+   El texto queda en el DOM, escondido, al lado del botón. El diálogo, su CSS
+   y el listener viven UNA vez en _barra_navegacion.html: acá no hay <style>
+   a propósito (un partial con su propio <style> corre el último </style> del
+   documento y rompe el corte de la suite, corolario 50). #}
+{% macro info(titulo) -%}
+<button type="button" class="info-boton" data-info aria-label="Más información: {{ titulo }}" data-info-titulo="{{ titulo }}">i</button><span class="info-texto">{{ caller() }}</span>
+{%- endmacro %}

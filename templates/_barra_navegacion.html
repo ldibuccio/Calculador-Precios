@@ -147,6 +147,59 @@
     letter-spacing: 0.03em;
     pointer-events: none;
   }
+  /* LA "i" DE INFORMACIÓN (25/09): ver _info.html. Vive acá porque la barra
+     está en todas las pantallas que tienen ayuda, y así el CSS y el
+     listener son UNO. El selector lleva el atributo para ganarle a las
+     reglas globales de "button" (width 100%, margin-top) de cada pantalla.
+     44px de área tocable, como todo lo que se toca; el círculo visible es
+     más chico para no pesar al lado de un título. */
+  button.info-boton[data-info] {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 44px;
+    height: 44px;
+    min-width: 44px;
+    margin: -10px 0 -10px 0.1rem;
+    padding: 0;
+    border: none;
+    border-radius: 50%;
+    background: radial-gradient(circle closest-side, #dbeafe 58%, transparent 60%);
+    color: #1d4ed8;
+    font: italic 700 1rem Georgia, serif;
+    line-height: 1;
+    vertical-align: middle;
+    cursor: pointer;
+    flex-shrink: 0;
+  }
+  /* El texto queda en el DOM y NO se ve: con !important porque el [hidden]
+     del navegador lo pisa cualquier display de la pantalla (corolario 32). */
+  .info-texto { display: none !important; }
+  dialog.info-dialogo {
+    border: none;
+    border-radius: 12px;
+    padding: 0;
+    width: min(92vw, 34rem);
+    max-height: 80vh;
+    box-shadow: 0 10px 30px rgba(0, 0, 0, 0.3);
+  }
+  dialog.info-dialogo::backdrop { background: rgba(0, 0, 0, 0.45); }
+  .info-dialogo .info-adentro { padding: 1.1rem 1.1rem 1rem; }
+  .info-dialogo h2 { margin: 0 0 0.6rem; font-size: 1.05rem; }
+  .info-dialogo .info-cuerpo { font-size: 0.95rem; line-height: 1.45; color: #374151; overflow-wrap: anywhere; }
+  .info-dialogo button.info-cerrar {
+    display: block;
+    width: 100%;
+    min-height: 44px;
+    margin: 1rem 0 0;
+    border: none;
+    border-radius: 8px;
+    background: #1d4ed8;
+    color: #fff;
+    font-size: 1rem;
+    font-weight: 700;
+    cursor: pointer;
+  }
 </style>
 <script>
   // Auto-ajuste del título: cada pantalla tiene un nombre de largo
@@ -186,5 +239,50 @@
     }
     ajustarTitulo();
     window.addEventListener("resize", ajustarTitulo);
+  })();
+
+  // LA "i": un solo diálogo, creado la primera vez que se toca una, y un
+  // listener en document —no uno por botón— para que ande también con las
+  // que lleguen después por innerHTML (ver CLAUDE.md, el script que no corre).
+  (function () {
+    let dialogo = null;
+    function elDialogo() {
+      if (dialogo) return dialogo;
+      // Con createElement y NO con un innerHTML de etiquetas: este script
+      // está en TODAS las pantallas, y una etiqueta de título escrita como texto acá la
+      // cuentan como título los tests que leen el marcado. Y SIN NÚMEROS en
+      // estos comentarios: un assert numérico por la negativa sobre cualquier
+      // pantalla los encuentra, igual que al número del pie.
+      function nodo(etiqueta, clase, padre) {
+        const n = document.createElement(etiqueta);
+        if (clase) n.className = clase;
+        if (padre) padre.appendChild(n);
+        return n;
+      }
+      dialogo = nodo("dialog", "info-dialogo");
+      const adentro = nodo("div", "info-adentro", dialogo);
+      nodo("h2", "", adentro);
+      nodo("div", "info-cuerpo", adentro);
+      const cerrar = nodo("button", "info-cerrar", adentro);
+      cerrar.type = "button";
+      cerrar.textContent = "Entendido";
+      cerrar.addEventListener("click", function () { dialogo.close(); });
+      // Tocar afuera cierra: el click en el fondo le llega al <dialog> mismo,
+      // porque todo lo de adentro vive en .info-adentro.
+      dialogo.addEventListener("click", function (e) { if (e.target === dialogo) dialogo.close(); });
+      document.body.appendChild(dialogo);
+      return dialogo;
+    }
+    document.addEventListener("click", function (e) {
+      const boton = e.target.closest("[data-info]");
+      if (!boton) return;
+      e.preventDefault();
+      const texto = boton.nextElementSibling;
+      if (!texto || !texto.classList.contains("info-texto")) return;
+      const d = elDialogo();
+      d.querySelector("h2").textContent = boton.getAttribute("data-info-titulo") || "";
+      d.querySelector(".info-cuerpo").innerHTML = texto.innerHTML;
+      d.showModal();
+    });
   })();
 </script>

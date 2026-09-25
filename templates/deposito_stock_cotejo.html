@@ -90,9 +90,12 @@
   {% set barra_sector = "administracion" %}
   {% set barra_titulo = "Cotejo de Stock" %}
   {% set barra_atras = "/administracion" %}
+  {% from "_info.html" import info %}
   {% include "_barra_navegacion.html" %}
 
-  <p class="ayuda">Cada tarjeta compara el último conteo físico contra lo que el sistema dice <strong>hoy</strong>: eso es lo que dice si el desvío sigue existiendo. <strong>Diferencia = Sistema − Físico</strong>, así que un número en <strong>positivo es mercadería que falta</strong>. Un artículo puede tener varias tarjetas: sus bultos sueltos y las cajas de cada ficha se cuentan por separado.</p>
+  {# Lo que se lee para ENTENDER EL NÚMERO queda a la vista (el signo); cómo
+     se arma la comparación va a la "i". #}
+  <p class="ayuda"><strong>Diferencia = Sistema − Físico</strong>: en <strong>positivo es mercadería que falta</strong>. {% call info("Cómo se compara") %}Cada tarjeta compara el último conteo físico contra lo que el sistema dice <strong>hoy</strong>: eso es lo que dice si el desvío sigue existiendo. Un artículo puede tener varias tarjetas: sus bultos sueltos y las cajas de cada ficha se cuentan por separado.{% endcall %}</p>
 
   {% if filas %}
     {% for f in filas %}
@@ -201,10 +204,12 @@
          Tampoco lleva "Ajustar": un ajuste mueve el TOTAL del artículo y la
          segunda no está en el total. Hoy no hay pantalla que corrija el
          pool — se corrige en lo que lo alimenta, y eso es lo que dice. #}
-      <p class="ayuda-ficha">La segunda entra por el <strong>renglón de segunda de las guías R</strong> y
+      {# Partida en dos (25/09): QUÉ HACER queda a la vista —no ajustar, ir a
+         lo que alimenta el pool— y el porqué va a la "i". #}
+      <p class="ayuda-ficha">No se corrige ajustando el stock: se corrige en la guía R, el rechazo o el remito al Puesto. {% call info("Por qué no se ajusta la segunda") %}La segunda entra por el <strong>renglón de segunda de las guías R</strong> y
         por los <strong>rechazos que no vuelven al stock</strong>, y sale por el <strong>remito al
         Puesto</strong>. Un desvío acá se corrige en alguno de esos tres, no ajustando el stock:
-        el ajuste mueve el total del artículo, y la segunda no está en ese total.</p>
+        el ajuste mueve el total del artículo, y la segunda no está en ese total.{% endcall %}</p>
       {% elif f.dif_hoy not in (none, 0) and not f.opuestas and not f.deficit %}
       {# Una diferencia en una FICHA no se arregla con un ajuste de stock:
          el ajuste mueve el total del artículo, y acá el total puede estar

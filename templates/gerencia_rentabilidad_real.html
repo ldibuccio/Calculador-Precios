@@ -88,7 +88,6 @@
   .comparativa .etiqueta { display: block; color: #666; font-size: 0.78rem; }
   .comparativa .valor { display: block; font-size: 1.1rem; font-weight: 800; }
   .comparativa .valor.negativa { color: #dc2626; }
-  .comparativa .nota { color: #888; font-size: 0.82rem; margin: 0.5rem 0 0; }
   .total {
     background: #eff6ff;
     border: 1px solid #bfdbfe;
@@ -292,6 +291,7 @@
   {% set barra_sector = "gerencia" %}
   {% set barra_titulo = "Rentabilidad Real" %}
   {% set barra_atras = "/gerencia" %}
+  {% from "_info.html" import info %}
   {% include "_barra_navegacion.html" %}
 
 
@@ -340,7 +340,7 @@
     <a class="boton-exportar" href="/gerencia/rentabilidad-real/exportar-pdf?cliente_id={{ cliente_id }}&fecha_desde={{ fecha_desde }}&fecha_hasta={{ fecha_hasta }}&articulo_id={{ articulo_id if articulo_id is not none else '' }}&grupo={{ grupo or '' }}">Exportar PDF</a>
     <a class="boton-exportar" href="/gerencia/rentabilidad-real/exportar-excel?cliente_id={{ cliente_id }}&fecha_desde={{ fecha_desde }}&fecha_hasta={{ fecha_hasta }}&articulo_id={{ articulo_id if articulo_id is not none else '' }}&grupo={{ grupo or '' }}">Exportar Excel</a>
     {% endif %}
-    <p class="ayuda">La cuenta <strong>real</strong>: venta = lo <strong>enviado</strong> × precio de lista vigente con las tasas del cliente; mercadería al <strong>costo FIFO del lote que salió</strong> (compras a su importe, guías R a su costo de primera); menos el <strong>envase</strong> y las <strong>mermas</strong> del período a su costo, abiertas en <strong>cruda</strong> (cajones de compra) y <strong>ya trabajada</strong> (guías R y rechazos que volvieron), para ver si se está tirando materia prima o trabajo. El reproceso es neutro (su costo viaja a la primera) y la segunda vale cero. Las <strong>devoluciones vinculadas a pedido restan su venta</strong> ("si le mandé 25 y me devolvió 5, vendí 20") al precio de la fecha del pedido de origen. La teórica sigue en su propia pantalla, intacta.</p>
+    <p class="ayuda">¿Cómo se calcula? {% call info("Cómo se calcula la rentabilidad real") %}La cuenta <strong>real</strong>: venta = lo <strong>enviado</strong> × precio de lista vigente con las tasas del cliente; mercadería al <strong>costo FIFO del lote que salió</strong> (compras a su importe, guías R a su costo de primera); menos el <strong>envase</strong> y las <strong>mermas</strong> del período a su costo, abiertas en <strong>cruda</strong> (cajones de compra) y <strong>ya trabajada</strong> (guías R y rechazos que volvieron), para ver si se está tirando materia prima o trabajo. El reproceso es neutro (su costo viaja a la primera) y la segunda vale cero. Las <strong>devoluciones vinculadas a pedido restan su venta</strong> ("si le mandé 25 y me devolvió 5, vendí 20") al precio de la fecha del pedido de origen. La teórica sigue en su propia pantalla, intacta.{% endcall %}</p>
   </div>
 
   {% if resultado %}
@@ -442,11 +442,10 @@
         {% if comparativa.real.utilidad_pct is not none %}<span class="etiqueta">{{ "%.1f"|format(comparativa.real.utilidad_pct) }}%</span>{% endif %}
       </div>
       <div class="celda">
-        <span class="etiqueta">Diferencia</span>
+        <span class="etiqueta">Diferencia {% call info("Qué es la diferencia") %}La diferencia es <strong>la lista de cosas a explicar</strong>: cuánto comieron la merma, el reproceso, los kilajes reales y lo que quedó afuera del cálculo. Las dos cuentas usan los mismos precios y costos anclados por fecha.{% endcall %}</span>
         <span class="valor {% if comparativa.diferencia < 0 %}negativa{% endif %}">{% if comparativa.diferencia > 0 %}+{% endif %}{{ comparativa.diferencia|moneda }}</span>
       </div>
     </div>
-    <p class="nota">La diferencia es <strong>la lista de cosas a explicar</strong>: cuánto comieron la merma, el reproceso, los kilajes reales y lo que quedó afuera del cálculo. Las dos cuentas usan los mismos precios y costos anclados por fecha.</p>
   </div>
   {% endif %}
 
