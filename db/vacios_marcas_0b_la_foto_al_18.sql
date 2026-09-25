@@ -1,3 +1,7 @@
+-- RETIRADA el 25/09: en Frutamax dio 16 fotos negativas de 35 (los 35 conteos
+-- son posteriores al 18/09 y hay movimientos de ese periodo sin registrar).
+-- El corte quedo en el 25/09 con la foto de lo que mostraba el sistema:
+-- ver db/vacios_foto_1_el_corte_de_hoy.sql. No se vuelve a correr.
 with k as (select date '2026-09-18' as d),
 base as (
   select distinct on (proveedor_id) proveedor_id, cantidad, fecha

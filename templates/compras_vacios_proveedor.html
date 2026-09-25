@@ -17,7 +17,6 @@
   .hueco { background: #fef3c7; color: #92400e; padding: .6rem .75rem;
            border-radius: 8px; margin: .5rem 0 0; font-size: .9rem; }
   .stock { font-size: 1.6rem; font-weight: 700; }
-  .stock.sin-arrancar { font-size: 1rem; font-weight: 500; color: #6b7280; }
   .patas { display: flex; flex-wrap: wrap; gap: .4rem .9rem;
            font-size: .85rem; color: #555; margin: .35rem 0 0; }
   .patas span { white-space: nowrap; }
@@ -55,6 +54,20 @@
                 border: 1px solid #cbd5e1; color: #1d4ed8; text-decoration: none; }
   .anular { background: #fff; color: #b91c1c; border: 1px solid #fecaca; }
   .vacio { color: #6b7280; font-size: .95rem; }
+  .pila { display: flex; justify-content: space-between; gap: .75rem;
+          padding: .3rem 0; border-top: 1px solid #f1f5f9; font-size: .95rem; }
+  .pila:first-child { border-top: 0; }
+  .pila-marca { overflow-wrap: anywhere; min-width: 0; }
+  .pila-marca.sin-asignar { color: #6b7280; font-style: italic; }
+  .pila-stock { font-weight: 600; white-space: nowrap; }
+  .marcas { display: flex; flex-wrap: wrap; gap: .4rem; margin: 0 0 .75rem; }
+  .marca { background: #eef2ff; color: #3730a3; border-radius: 999px;
+           padding: .2rem .7rem; font-size: .9rem; overflow-wrap: anywhere; }
+  /* LA FOTO ES OBLIGATORIA y se dice ARRIBA del botón, no en letra chica:
+     el que no tiene vale no tiene una devolución, tiene un ajuste. */
+  .obligatoria { background: #eff6ff; color: #1e3a8a; border-radius: 8px;
+                 padding: .6rem .75rem; margin: .6rem 0 0; font-size: .88rem; }
+  .solo-admin { border-left: 4px solid #7c3aed; }
 </style>
 </head>
 <body>
@@ -67,22 +80,15 @@
 {% if aviso %}<div class="aviso">{{ aviso }}</div>{% endif %}
 
 <div class="tarjeta">
-  {% if p.desde %}
-    <div class="stock">{{ p.stock|numero }} cajones</div>
-    <div class="patas">
-      <span>contados {{ p.contados|numero }}</span>
-      <span>recibidos +{{ p.recibidos|numero }}</span>
-      <span>devueltos −{{ p.devueltos|numero }}</span>
-      <span>desde {{ p.desde.strftime('%d/%m/%Y') }}</span>
-    </div>
+  <div class="stock">{{ p.stock|numero }} cajones</div>
+  {% for pila in p.pilas %}
+  <div class="pila">
+    <span class="pila-marca {% if not pila.marca %}sin-asignar{% endif %}">{{ pila.marca or "sin asignar" }}</span>
+    <span class="pila-stock">{{ pila.stock|numero }}</span>
+  </div>
   {% else %}
-    <div class="stock sin-arrancar">La cuenta de este proveedor todavía no arrancó.</div>
-    <div class="hueco">
-      El conteo inicial se carga desde
-      <a href="{{ camino.base }}/vacios">Vacíos del depósito</a>. Hasta que esté, lo que
-      se cargue acá queda guardado y no se ve en ningún stock.
-    </div>
-  {% endif %}
+  <p class="vacio">No tiene cajones en el galpón.</p>
+  {% endfor %}
 </div>
 
 <div class="tarjeta">
@@ -109,44 +115,61 @@
 </div>
 
 <div class="tarjeta">
+  <h2>Marcas de sus cajones</h2>
+  {% if marcas %}
+  <div class="marcas">
+    {% for m in marcas %}<span class="marca">{{ m.nombre }}</span>{% endfor %}
+  </div>
+  {% else %}
+  <p class="vacio">Todavía no tiene marcas: sus cajones van a "sin asignar".</p>
+  {% endif %}
+  <form method="post" action="{{ camino.base }}/vacios/{{ p.id }}/marca">
+    <div class="fila">
+      <div class="campo">
+        <label for="nombre_marca">Marca nueva</label>
+        <input id="nombre_marca" name="nombre" type="text" required placeholder="La del sello del cajón">
+      </div>
+      <button type="submit">Agregar marca</button>
+    </div>
+    <p class="ayuda">Recepción elige la marca del cajón entre éstas.</p>
+  </form>
+</div>
+
+<div class="tarjeta">
   <h2>Devolverle cajones</h2>
-  {% if compras %}
   <form method="post" action="{{ camino.base }}/vacios/{{ p.id }}/devolucion" enctype="multipart/form-data">
     <div class="fila">
       <div class="campo">
-        <label for="compra_id">¿Contra qué compra va el vale?</label>
-        <select id="compra_id" name="compra_id" required>
-          <option value="">Elegí la compra</option>
-          {% for c in compras %}
-          <option value="{{ c.id }}">{{ c.fecha.strftime('%d/%m') }} · {{ c.articulo }} · {{ c.cajones|int }} cajones</option>
+        <label for="marca_vacio_id">¿De qué cajones?</label>
+        <select id="marca_vacio_id" name="marca_vacio_id">
+          {% for pila in pilas_para_elegir %}
+          <option value="{{ pila.id if pila.id is not none else '' }}"
+                  data-sena="{{ pila.sena if pila.sena is not none else '' }}">{{ pila.nombre }} · hay {{ pila.stock|numero }}</option>
           {% endfor %}
         </select>
       </div>
       <div class="campo">
-        <label for="cantidad">¿Cuántos cajones le devolvés?</label>
+        <label for="cantidad">¿Cuántos le devolvés?</label>
         <input id="cantidad" name="cantidad" type="number" min="1" step="1" required>
       </div>
       <div class="campo">
-        <label for="importe">Importe del vale (opcional)</label>
-        <input id="importe" name="importe" type="text" inputmode="decimal" placeholder="5000">
+        <label for="importe">Importe del vale</label>
+        <input id="importe" name="importe" type="text" inputmode="decimal">
       </div>
       <div class="campo">
-        <label for="foto">Foto del vale (opcional)</label>
-        <input id="foto" name="foto" type="file" accept="image/*" capture="environment">
+        <label for="foto">Foto del vale</label>
+        <input id="foto" name="foto" type="file" accept="image/*" capture="environment" required>
       </div>
       <button type="submit">Guardar la devolución</button>
     </div>
+    <p class="obligatoria"><strong>Sin la foto del vale no es una devolución.</strong>
+      Si no hay vale, es un ajuste{% if not es_administracion %} y se carga en Administración{% endif %}.</p>
     <p class="ayuda">
-      El importe del vale <strong>no se le descuenta a la compra</strong>: es plata
-      de envase y va por su lado. El neto se lee sumando las dos.
+      El importe se completa con la seña por cajón de la última recepción de esos
+      cajones, por la cantidad; se puede cambiar. <strong>No se le descuenta a la
+      compra</strong>: es plata de envase y va por su lado.
     </p>
   </form>
-  {% else %}
-  <p class="vacio">
-    Este proveedor no tiene ninguna compra recepcionada, así que no hay contra
-    qué aplicar un vale todavía.
-  </p>
-  {% endif %}
 </div>
 
 <div class="tarjeta">
@@ -157,7 +180,8 @@
       <span class="vale-cantidad">{{ d.cantidad }} cajones</span>
       <span class="vale-dato">{{ d.fecha.strftime('%d/%m/%Y') }}</span>
       {% if d.importe is not none %}<span class="vale-dato">${{ '{:,.0f}'.format(d.importe).replace(',', '.') }}</span>{% endif %}
-      <span class="vale-dato">contra {{ d.articulo }} del {{ d.fecha_compra.strftime('%d/%m') }}</span>
+      <span class="vale-dato">{{ d.marca or "sin asignar" }}</span>
+      {% if d.compra_id %}<span class="vale-dato">contra {{ d.articulo }} del {{ d.fecha_compra.strftime('%d/%m') }}</span>{% endif %}
       {% if d.anulada %}<span class="etiqueta-anulada">anulada</span>{% endif %}
     </div>
     {% if not d.anulada %}
@@ -176,6 +200,123 @@
   <p class="vacio">Todavía no se le devolvió ningún cajón.</p>
   {% endfor %}
 </div>
+
+{% if es_administracion %}
+<div class="tarjeta solo-admin">
+  <h2>Ajustar el stock</h2>
+  <form method="post" action="/administracion/vacios/{{ p.id }}/ajuste">
+    <div class="fila">
+      <div class="campo">
+        <label for="ajuste_marca">¿Qué cajones?</label>
+        <select id="ajuste_marca" name="marca_vacio_id">
+          {% for pila in pilas_para_elegir %}
+          <option value="{{ pila.id if pila.id is not none else '' }}">{{ pila.nombre }} · hay {{ pila.stock|numero }}</option>
+          {% endfor %}
+        </select>
+      </div>
+      <div class="campo">
+        <label for="ajuste_sentido">¿Sobran o faltan?</label>
+        <select id="ajuste_sentido" name="sentido" required>
+          <option value="">Elegí</option>
+          <option value="sobran">Sobran: hay más de los que dice</option>
+          <option value="faltan">Faltan: hay menos de los que dice</option>
+        </select>
+      </div>
+      <div class="campo">
+        <label for="ajuste_cantidad">¿Cuántos?</label>
+        <input id="ajuste_cantidad" name="cantidad" type="number" min="1" step="1" required>
+      </div>
+      <div class="campo">
+        <label for="ajuste_motivo">¿Por qué?</label>
+        <input id="ajuste_motivo" name="motivo" type="text" required placeholder="Se contaron y había 12">
+      </div>
+      <button type="submit">Guardar el ajuste</button>
+    </div>
+  </form>
+</div>
+
+{% if marcas %}
+<div class="tarjeta solo-admin">
+  <h2>Asignarles una marca</h2>
+  <form method="post" action="/administracion/vacios/{{ p.id }}/asignacion">
+    <div class="fila">
+      <div class="campo">
+        <label for="asig_desde">¿De qué cajones salen?</label>
+        <select id="asig_desde" name="marca_desde_id">
+          {% for pila in pilas_para_elegir %}
+          <option value="{{ pila.id if pila.id is not none else '' }}">{{ pila.nombre }} · hay {{ pila.stock|numero }}</option>
+          {% endfor %}
+        </select>
+      </div>
+      <div class="campo">
+        <label for="asig_hasta">¿A qué marca pasan?</label>
+        <select id="asig_hasta" name="marca_hasta_id" required>
+          <option value="">Elegí la marca</option>
+          {% for m in marcas %}<option value="{{ m.id }}">{{ m.nombre }}</option>{% endfor %}
+        </select>
+      </div>
+      <div class="campo">
+        <label for="asig_cantidad">¿Cuántos?</label>
+        <input id="asig_cantidad" name="cantidad" type="number" min="1" step="1" required>
+      </div>
+      <button type="submit">Asignar</button>
+    </div>
+  </form>
+</div>
+{% endif %}
+{% endif %}
+
+{% if movimientos %}
+<div class="tarjeta">
+  <h2>Ajustes y asignaciones</h2>
+  {% for m in movimientos %}
+  <div class="vale {% if m.anulada %}anulada{% endif %}">
+    <div class="vale-cabeza">
+      {% if m.tipo == "ajuste" %}
+      <span class="vale-cantidad">{{ "+" if m.cantidad > 0 }}{{ m.cantidad }} cajones</span>
+      <span class="vale-dato">{{ m.marca or "sin asignar" }}</span>
+      <span class="vale-dato">{{ m.motivo }}</span>
+      {% else %}
+      <span class="vale-cantidad">{{ m.cantidad }} cajones</span>
+      <span class="vale-dato">de {{ m.marca or "sin asignar" }} a {{ m.marca_hasta }}</span>
+      {% endif %}
+      <span class="vale-dato">{{ m.fecha.strftime('%d/%m/%Y') }}</span>
+      {% if m.anulada %}<span class="etiqueta-anulada">{{ "anulado" if m.tipo == "ajuste" else "anulada" }}</span>{% endif %}
+    </div>
+    {% if es_administracion and not m.anulada %}
+    <div class="acciones">
+      <form method="post" action="/administracion/vacios/movimiento/{{ m.tipo }}/{{ m.id }}/anular">
+        <input type="hidden" name="proveedor_id" value="{{ p.id }}">
+        <button class="anular" type="submit">Anular</button>
+      </form>
+    </div>
+    {% endif %}
+  </div>
+  {% endfor %}
+</div>
+{% endif %}
+
+<script>
+  // EL IMPORTE SE PRECARGA con la seña por cajón de la última recepción de
+  // esa pila, por la cantidad (dueño, 25/09). Si la persona lo toca, se deja
+  // de pisar: lo que tipeó gana.
+  (function () {
+    var pila = document.getElementById("marca_vacio_id");
+    var cantidad = document.getElementById("cantidad");
+    var importe = document.getElementById("importe");
+    if (!pila || !cantidad || !importe) return;
+    var tocado = false;
+    importe.addEventListener("input", function () { tocado = true; });
+    function precargar() {
+      if (tocado) return;
+      var sena = parseFloat(pila.options[pila.selectedIndex].getAttribute("data-sena"));
+      var n = parseInt(cantidad.value, 10);
+      importe.value = (sena > 0 && n > 0) ? String(Math.round(sena * n)) : "";
+    }
+    pila.addEventListener("change", precargar);
+    cantidad.addEventListener("input", precargar);
+  })();
+</script>
 
 {% include "_pie_version.html" %}
 

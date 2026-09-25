@@ -15792,246 +15792,308 @@ def detallar_envases_a_reponer() -> dict:
 # llega la fruta. Uno se paga, el otro se devuelve.
 # ============================================================================
 
-# LAS COLUMNAS EN UN SOLO LUGAR Y EN ORDEN, por lo mismo que en el stock de
-# cajas: hay dos lectores y el que direccione por índice no nombra ninguna
-# columna, así que el día que la consulta gane o pierda una el `grep` del
-# campo no lo encuentra. Ahí eso reventó TODO guardado con un
-# "tuple index out of range" y ningún test en rojo.
-COLUMNAS_STOCK_DE_VACIOS_DEPOSITO = (
-    "id", "nombre", "tipo_cajon", "desde",
-    "contados", "recibidos", "devueltos", "stock",
-    "esperando_recepciones", "esperando_devoluciones", "esperando_desde",
+# EL STOCK DE VACÍOS DEL DEPÓSITO SE LLEVA POR PILA: proveedor y marca del
+# cajón (dueño, 25/09). La marca en NULL es "sin asignar", y es una pila más:
+# ahí cae la foto del corte y todo lo que llegó sin marca.
+#
+# LA CUENTA, y es la única que existe (el índice, el detalle, la lista para
+# Excel y las guardas de escritura la leen de acá):
+#
+#     foto del 25/09  (vacios_deposito_foto, siempre a "sin asignar")
+#   + recibido CON SEÑA después de la foto
+#   − devuelto después de la foto
+#   ± ajustes          (Administración, con motivo)
+#   ± asignaciones     (Administración: de una pila a una marca)
+#
+# EL ARRANQUE SE FUE: los conteos ya no abren la cuenta, sirven para el
+# cotejo. Un proveedor sin foto (dado de alta después del corte) suma todo lo
+# suyo, que por construcción es posterior.
+#
+# DESPUÉS DE LA FOTO QUIERE DECIR DESPUÉS DEL INSTANTE EN QUE SE SACÓ
+# (`creado_en`), NO del día. La foto se sacó el 25/09 a la tarde con lo que
+# había en ese momento; comparando por día, una devolución cargada esa misma
+# tarde, después de la foto, no habría contado nunca. Lo destapó el test
+# corriendo el 25/09 (corolario 95: la fecha fija del test ERA hoy).
+#
+# SOLO LO QUE VINO CON SEÑA: una compra sin seña no deja cajón que devolver
+# (decisión del dueño, 25/09). `COALESCE(sena, 0) > 0`.
+COLUMNAS_PILAS_DE_VACIOS = (
+    "proveedor_id", "proveedor", "tipo_cajon", "marca_id", "marca",
+    "foto", "recibidos", "devueltos", "ajustes", "asignados", "stock",
 )
 
-# EL COMPARADOR NO ES PROPIO: es el MISMO de la cuenta de cajas
-# (`COMPARADOR_DESDE_EL_CONTEO`), y se importa en vez de copiarse. Es la
-# misma pregunta —¿lo del día del conteo ya está adentro de lo contado?— y
-# escribirla dos veces es exactamente como la asimetría del día del corte
-# apareció ocho veces en siete lugares que no se nombraban entre sí.
-#
-# Lo que la decide no es este archivo sino la PANTALLA, que le dice al que
-# arranca la cuenta los tres casos: contar lo que ya llegó y fechar hoy,
-# fechar ANTES para que una recepción vieja se sume, y nunca las dos cosas
-# juntas. Ver el corolario 77 en CLAUDE.md.
-_SQL_STOCK_DE_VACIOS_DEPOSITO = """
-    WITH base AS (
-        -- EL MÁS VIEJO, no el último. Un conteo posterior que re-basara la
-        -- cuenta sería un ajuste disfrazado: pisaría el stock sin dejar
-        -- rastro, que es justo lo que `ajustes_vacios` del puesto se niega
-        -- a hacer con todas las letras. Acá el conteo ARRANCA la cuenta una
-        -- vez y después el stock se deriva.
-        SELECT DISTINCT ON (c.proveedor_id)
-               c.proveedor_id, c.cantidad, c.fecha
-          FROM conteos_vacios_deposito c
-         ORDER BY c.proveedor_id, c.fecha ASC, c.id ASC
-    ),
-    -- LAS ENTRADAS NO SE CARGAN: SON LAS RECEPCIONES. No hay tabla de
-    -- entradas ni campo que alguien tenga que acordarse de llenar — el dato
-    -- ya lo carga Depósito porque necesita otra cosa. Un campo cuya única
-    -- consecuencia fuera que este stock quede bien es exactamente el que se
-    -- deja de llenar en dos semanas.
-    --
-    -- `cantidad_cajones_real` es lo ACEPTADO. Lo que se rechaza vuelve con
-    -- la mercadería en el cajón del proveedor, así que esos cajones nunca
-    -- se quedaron y no hay nada que devolver por ellos.
-    recibidos AS (
-        SELECT co.proveedor_id,
-               SUM(COALESCE(co.cantidad_cajones_real, co.cantidad_cajones)) AS cajones
+_SQL_PILAS_DE_VACIOS = """
+    WITH mov AS (
+        SELECT f.proveedor_id, NULL::bigint AS marca_id,
+               f.cantidad AS foto, 0 AS recibidos, 0 AS devueltos,
+               0 AS ajustes, 0 AS asignados
+          FROM vacios_deposito_foto f
+        UNION ALL
+        SELECT co.proveedor_id, co.marca_vacio_id,
+               0, COALESCE(co.cantidad_cajones_real, co.cantidad_cajones), 0, 0, 0
           FROM compras co
-          JOIN base b ON b.proveedor_id = co.proveedor_id
+          LEFT JOIN vacios_deposito_foto f ON f.proveedor_id = co.proveedor_id
          WHERE co.estado = 'recepcionado'
            AND co.procesada_el IS NOT NULL
-           AND (co.procesada_el AT TIME ZONE 'America/Argentina/Buenos_Aires')::date
-               {comp} b.fecha
-         GROUP BY co.proveedor_id
-    ),
-    devueltos AS (
-        SELECT d.proveedor_id, SUM(d.cantidad) AS cajones
+           AND COALESCE(co.sena, 0) > 0
+           AND (f.creado_en IS NULL OR co.procesada_el > f.creado_en)
+        UNION ALL
+        SELECT d.proveedor_id, d.marca_vacio_id, 0, 0, d.cantidad, 0, 0
           FROM vacios_deposito_devoluciones d
-          JOIN base b ON b.proveedor_id = d.proveedor_id
+          LEFT JOIN vacios_deposito_foto f ON f.proveedor_id = d.proveedor_id
          WHERE d.anulado_el IS NULL
-           AND (d.creado_en AT TIME ZONE 'America/Argentina/Buenos_Aires')::date
-               {comp} b.fecha
-         GROUP BY d.proveedor_id
-    ),
-    -- LO QUE ESPERA AL CONTEO, Y NO PASA POR `base` A PROPÓSITO. Las dos
-    -- patas de arriba entran por `base`, así que un proveedor sin conteo no
-    -- produce ni una fila: sus recepciones existen, están bien cargadas, y
-    -- no se ven en ningún lado. El que entra y lee "la cuenta no arrancó" no
-    -- tiene forma de saber que hay cuarenta cajones invisibles.
-    --
-    -- Copiarles el `JOIN base` a estas dos daría CERO justo en el único caso
-    -- que les importa — un cero que no puede dar otra cosa, adentro del
-    -- arreglo escrito para eso. Lo cuida el test que lee el cuerpo de las
-    -- dos CTE y exige que la palabra `base` no esté.
-    --
-    -- Y VAN SEPARADAS: se cargan en pantallas distintas. Un solo "5
-    -- esperando" manda a buscar entre las devoluciones una recepción que
-    -- nunca estuvo ahí.
-    esperando_recep AS (
-        SELECT co.proveedor_id,
-               COUNT(*) AS recepciones,
-               MIN((co.procesada_el AT TIME ZONE 'America/Argentina/Buenos_Aires')::date) AS desde
-          FROM compras co
-         WHERE co.estado = 'recepcionado'
-           AND co.procesada_el IS NOT NULL
-         GROUP BY co.proveedor_id
-    ),
-    esperando_dev AS (
-        SELECT d.proveedor_id,
-               COUNT(*) AS devoluciones,
-               MIN((d.creado_en AT TIME ZONE 'America/Argentina/Buenos_Aires')::date) AS desde
-          FROM vacios_deposito_devoluciones d
-         WHERE d.anulado_el IS NULL
-         GROUP BY d.proveedor_id
+           AND (f.creado_en IS NULL OR d.creado_en > f.creado_en)
+        UNION ALL
+        SELECT a.proveedor_id, a.marca_vacio_id, 0, 0, 0, a.cantidad, 0
+          FROM vacios_deposito_ajustes a
+         WHERE a.anulado_el IS NULL
+        UNION ALL
+        SELECT s.proveedor_id, s.marca_desde_id, 0, 0, 0, 0, -s.cantidad
+          FROM vacios_deposito_asignaciones s
+         WHERE s.anulado_el IS NULL
+        UNION ALL
+        SELECT s.proveedor_id, s.marca_hasta_id, 0, 0, 0, 0, s.cantidad
+          FROM vacios_deposito_asignaciones s
+         WHERE s.anulado_el IS NULL
     )
-    SELECT p.id, p.nombre, tc.nombre AS tipo_cajon,
-           b.fecha AS desde,
-           b.cantidad AS contados,
-           COALESCE(r.cajones, 0) AS recibidos,
-           COALESCE(v.cajones, 0) AS devueltos,
-           b.cantidad + COALESCE(r.cajones, 0) - COALESCE(v.cajones, 0) AS stock,
-           -- EN CERO CUANDO EL CONTEO SÍ ESTÁ, para que la columna signifique
-           -- UNA sola cosa: cuántos movimientos son invisibles por falta de
-           -- conteo. Una columna que significa dos cosas según otra columna
-           -- no es una columna, son dos.
-           CASE WHEN b.proveedor_id IS NULL THEN COALESCE(er.recepciones, 0) ELSE 0 END
-               AS esperando_recepciones,
-           CASE WHEN b.proveedor_id IS NULL THEN COALESCE(ed.devoluciones, 0) ELSE 0 END
-               AS esperando_devoluciones,
-           CASE WHEN b.proveedor_id IS NULL THEN LEAST(er.desde, ed.desde) END
-               AS esperando_desde
-      FROM proveedores p
+    SELECT p.id AS proveedor_id, p.nombre AS proveedor, tc.nombre AS tipo_cajon,
+           m.marca_id AS marca_id, mv.nombre AS marca,
+           SUM(m.foto) AS foto, SUM(m.recibidos) AS recibidos,
+           SUM(m.devueltos) AS devueltos, SUM(m.ajustes) AS ajustes,
+           SUM(m.asignados) AS asignados,
+           SUM(m.foto) + SUM(m.recibidos) - SUM(m.devueltos)
+             + SUM(m.ajustes) + SUM(m.asignados) AS stock
+      FROM mov m
+      JOIN proveedores p       ON p.id = m.proveedor_id
       LEFT JOIN tipos_cajon tc ON tc.id = p.tipo_cajon_id
-      LEFT JOIN base b         ON b.proveedor_id = p.id
-      LEFT JOIN recibidos r    ON r.proveedor_id = p.id
-      LEFT JOIN devueltos v    ON v.proveedor_id = p.id
-      LEFT JOIN esperando_recep er ON er.proveedor_id = p.id
-      LEFT JOIN esperando_dev ed   ON ed.proveedor_id = p.id
+      LEFT JOIN marcas_vacio mv ON mv.id = m.marca_id
      WHERE p.activo = true
-       AND (b.proveedor_id IS NOT NULL
-            OR er.proveedor_id IS NOT NULL
-            OR ed.proveedor_id IS NOT NULL)
-     ORDER BY (b.proveedor_id IS NULL), 8 DESC NULLS LAST, p.nombre
+     GROUP BY p.id, p.nombre, tc.nombre, m.marca_id, mv.nombre
 """
 
 
+def _pila_con_nombres(fila) -> dict:
+    pila = dict(zip(COLUMNAS_PILAS_DE_VACIOS, fila))
+    for clave in ("foto", "recibidos", "devueltos", "ajustes", "asignados", "stock"):
+        pila[clave] = int(pila[clave] or 0)
+    return pila
+
+
+def _pila_se_muestra(pila: dict) -> bool:
+    """Una pila en CERO que nunca se movió no se muestra; una que se movió, sí.
+
+    Es la foto de los 42 proveedores: la mayoría entró en cero, y cuarenta
+    tarjetas vacías serían una lista que nadie lee en el celular. Pero una
+    pila que llegó a cero porque se devolvió todo SÍ se muestra — ahí el cero
+    es un dato, no un hueco.
+    """
+    return bool(pila["stock"] or pila["recibidos"] or pila["devueltos"]
+                or pila["ajustes"] or pila["asignados"])
+
+
 def stock_de_vacios_deposito() -> list[dict]:
-    """Los cajones de cada proveedor que hay en el galpón. DERIVADO, una fila por proveedor.
+    """Los cajones de cada proveedor que hay en el galpón, con sus PILAS por marca.
+
+    DERIVADO, una fila por proveedor: `stock` es la suma de sus pilas y
+    `pilas` las trae abiertas (marca `None` = "sin asignar", primero).
 
     NO HAY UNA COLUMNA CON EL STOCK y no la va a haber: se recalcula en cada
-    lectura sumando el conteo que arrancó la cuenta, las recepciones
-    posteriores y las devoluciones. De ahí sale, gratis, que anular una
-    devolución corrija el stock sola — no hay un segundo lugar que alguien
-    tenga que acordarse de mantener al día.
+    lectura. De ahí sale, gratis, que anular una devolución, un ajuste o una
+    asignación corrija el stock solo.
+    """
+    conexion = obtener_conexion()
+    try:
+        with conexion.cursor() as cursor:
+            cursor.execute(_SQL_PILAS_DE_VACIOS)
+            filas = cursor.fetchall()
+    finally:
+        conexion.close()
 
-    SOLO APARECEN LOS PROVEEDORES QUE TIENEN ALGO: un conteo, una recepción
-    o una devolución. Los cuarenta y pico del catálogo enteros serían una
-    lista que nadie lee en el celular, y el que no tiene nada no tiene nada
-    que mirar.
+    proveedores: dict[int, dict] = {}
+    for fila in filas:
+        pila = _pila_con_nombres(fila)
+        if not _pila_se_muestra(pila):
+            continue
+        p = proveedores.setdefault(pila["proveedor_id"], {
+            "id": pila["proveedor_id"], "nombre": pila["proveedor"],
+            "tipo_cajon": pila["tipo_cajon"], "stock": 0, "pilas": [],
+        })
+        p["stock"] += pila["stock"]
+        p["pilas"].append(pila)
+    for p in proveedores.values():
+        p["pilas"].sort(key=lambda x: (x["marca_id"] is not None, (x["marca"] or "").lower()))
+    return sorted(proveedores.values(), key=lambda x: (-x["stock"], x["nombre"].lower()))
 
-    Y con cada fila vienen `esperando_recepciones`, `esperando_devoluciones`
-    y `esperando_desde`: cuántos movimientos ya cargados NO se están
-    contando porque ese proveedor todavía no tiene conteo. Sin eso, "la
-    cuenta no arrancó" y "hay cuarenta cajones que no te puedo mostrar" se
-    dibujan exactamente igual.
+
+def proveedor_para_vacios(proveedor_id: int) -> dict | None:
+    """Un proveedor ACTIVO con su tipo de cajón, tenga o no cajones en el galpón.
+
+    El detalle de Vacíos se abre también para uno en cero: es donde se le
+    cargan las marcas antes de la primera recepción que las necesite.
     """
     conexion = obtener_conexion()
     try:
         with conexion.cursor() as cursor:
             cursor.execute(
-                _SQL_STOCK_DE_VACIOS_DEPOSITO.format(comp=COMPARADOR_DESDE_EL_CONTEO)
+                "SELECT p.id, p.nombre, tc.nombre FROM proveedores p "
+                "LEFT JOIN tipos_cajon tc ON tc.id = p.tipo_cajon_id "
+                "WHERE p.id = %s AND p.activo = true",
+                (proveedor_id,),
+            )
+            fila = cursor.fetchone()
+    finally:
+        conexion.close()
+    if fila is None:
+        return None
+    return {"id": fila[0], "nombre": fila[1], "tipo_cajon": fila[2], "stock": 0, "pilas": []}
+
+
+def _stock_de_la_pila(cursor, proveedor_id: int, marca_id: int | None) -> int:
+    """El stock de UNA pila, leído con el cursor que va a escribir.
+
+    LA MISMA CONSULTA que la pantalla, filtrada: no una segunda versión de la
+    cuenta. Y bloquea la fila del PROVEEDOR antes de leer, así dos cargas
+    simultáneas contra la misma pila no leen las dos el mismo stock y
+    devuelven entre las dos más de lo que hay.
+    """
+    cursor.execute("SELECT id FROM proveedores WHERE id = %s FOR UPDATE", (proveedor_id,))
+    cursor.execute(
+        f"SELECT * FROM ({_SQL_PILAS_DE_VACIOS}) pilas "
+        "WHERE pilas.proveedor_id = %s AND pilas.marca_id IS NOT DISTINCT FROM %s",
+        (proveedor_id, marca_id),
+    )
+    fila = cursor.fetchone()
+    return _pila_con_nombres(fila)["stock"] if fila else 0
+
+
+def _nombre_de_la_pila(marca: str | None) -> str:
+    return marca or "sin asignar"
+
+
+def listar_marcas_vacio(proveedor_id: int) -> list[dict]:
+    """Las marcas de cajón de un proveedor, activas, por nombre."""
+    conexion = obtener_conexion()
+    try:
+        with conexion.cursor() as cursor:
+            cursor.execute(
+                "SELECT id, nombre FROM marcas_vacio "
+                "WHERE proveedor_id = %s AND activo = true ORDER BY lower(nombre)",
+                (proveedor_id,),
             )
             filas = cursor.fetchall()
     finally:
         conexion.close()
-    return [dict(zip(COLUMNAS_STOCK_DE_VACIOS_DEPOSITO, f)) for f in filas]
+    return [{"id": f[0], "nombre": f[1]} for f in filas]
 
 
-def _stock_de_vacios_en_la_misma_transaccion(cursor, proveedor_id: int) -> int:
-    """El stock derivado de ESE proveedor, leído con el cursor que va a escribir.
-
-    LA FOTO LA SACA EL SERVER Y NO LA RUTA, y es lo único que después permite
-    reconstruir contra qué se cargó una devolución. Calculada en la ruta y
-    pasada como argumento, dos cargas simultáneas guardarían la misma foto.
-
-    POR NOMBRE Y NO POR ÍNDICE: acá es donde en la cuenta de cajas vivía un
-    `fila[8]` que dejó de existir el día que la consulta perdió una columna
-    — y siguió pareciendo correcto, porque un lector por índice no nombra
-    ninguna columna.
-    """
-    cursor.execute(
-        _SQL_STOCK_DE_VACIOS_DEPOSITO.format(comp=COMPARADOR_DESDE_EL_CONTEO)
-    )
-    for fila in cursor.fetchall():
-        proveedor = dict(zip(COLUMNAS_STOCK_DE_VACIOS_DEPOSITO, fila))
-        if proveedor["id"] == proveedor_id and proveedor["stock"] is not None:
-            return int(proveedor["stock"])
-    return 0
-
-
-def crear_conteo_vacios_deposito(proveedor_id: int, cantidad: int, fecha) -> int:
-    """Arranca (o registra) el conteo físico de los cajones de un proveedor. Devuelve su id.
-
-    DECIDE LA BASE Y ACÁ SE TRADUCE EL ERROR: que la cantidad no sea negativa
-    lo rechaza el CHECK de `conteos_vacios_deposito`. No se pre-chequea — un
-    pre-chequeo en Python es una segunda copia de la regla, y el día que se
-    separen la que rechaza deja de ser la que el código cree que rechaza.
-
-    CERO ES UNA CANTIDAD VÁLIDA, y no es un descuido del CHECK: contar cero
-    es contar. Es además el camino para que una recepción ya cargada SE SUME
-    —conteo en cero, fechado antes de esa recepción— que es uno de los tres
-    casos que la pantalla explica.
-    """
+def listar_marcas_vacio_por_proveedor() -> dict[int, list[dict]]:
+    """Todas las marcas activas, agrupadas por proveedor: para los selectores que
+    cambian de lista según el proveedor elegido (el conteo, el ajuste)."""
     conexion = obtener_conexion()
     try:
         with conexion.cursor() as cursor:
-            antes = _stock_de_vacios_en_la_misma_transaccion(cursor, proveedor_id)
             cursor.execute(
-                """
-                INSERT INTO conteos_vacios_deposito
-                    (proveedor_id, cantidad, fecha, stock_sistema)
-                VALUES (%s, %s, %s, %s)
-                RETURNING id
-                """,
-                (proveedor_id, cantidad, fecha, antes),
+                "SELECT proveedor_id, id, nombre FROM marcas_vacio "
+                "WHERE activo = true ORDER BY proveedor_id, lower(nombre)"
             )
-            conteo_id = cursor.fetchone()[0]
+            filas = cursor.fetchall()
+    finally:
+        conexion.close()
+    marcas: dict[int, list[dict]] = {}
+    for proveedor_id, marca_id, nombre in filas:
+        marcas.setdefault(proveedor_id, []).append({"id": marca_id, "nombre": nombre})
+    return marcas
+
+
+def crear_marca_vacio(proveedor_id: int, nombre: str) -> int:
+    """Agrega una marca de cajón a un proveedor. Devuelve su id.
+
+    Mismo criterio que `crear_tipo_cajon`: el plegado vive en
+    `normalizar_texto` y la base hace cumplir la unicidad POR PROVEEDOR
+    (`marcas_vacio_nombre_unico`). No se pre-pregunta: se inserta y se
+    traduce la violación.
+    """
+    normalizado = normalizar_texto(nombre)
+    if not normalizado:
+        raise ValueError("Poné un nombre para la marca.")
+    conexion = obtener_conexion()
+    try:
+        with conexion.cursor() as cursor:
+            try:
+                cursor.execute(
+                    "INSERT INTO marcas_vacio (proveedor_id, nombre, nombre_normalizado) "
+                    "VALUES (%s, %s, %s) RETURNING id",
+                    (proveedor_id, " ".join(nombre.split()), normalizado),
+                )
+            except psycopg2.errors.UniqueViolation:
+                conexion.rollback()
+                with conexion.cursor() as buscador:
+                    buscador.execute(
+                        "SELECT nombre FROM marcas_vacio "
+                        "WHERE proveedor_id = %s AND nombre_normalizado = %s",
+                        (proveedor_id, normalizado),
+                    )
+                    fila = buscador.fetchone()
+                if fila is None:
+                    raise ValueError(
+                        "La base rechazó la marca por repetida y no encuentro cuál es: "
+                        "el plegado de Python y el de la base dejaron de coincidir."
+                    )
+                raise ValueError(f"Esa marca ya está cargada como «{fila[0]}».")
+            marca_id = cursor.fetchone()[0]
         conexion.commit()
-        return conteo_id
+        return marca_id
     finally:
         conexion.close()
 
 
-def crear_devolucion_vacios(proveedor_id: int, compra_id: int, cantidad: int,
-                            importe: float | None = None,
-                            foto_ruta: str | None = None) -> int:
-    """Le devuelve al proveedor SUS cajones vacíos, contra una compra concreta. Devuelve su id.
+def _traducir_marca_ajena(error) -> ValueError:
+    """Las FK compuestas (marca, proveedor) rechazan una marca de OTRO proveedor.
+    Decide la base; acá se dice en castellano."""
+    return ValueError("Esa marca no es de este proveedor.")
 
-    `compra_id` ES OBLIGATORIO y viaja hasta el INSERT: el vale no es una
-    cuenta corriente contra el proveedor, vive pegado a la compra contra la
-    que se entregó. Lo ata el NOT NULL de la base.
 
-    EL IMPORTE NO TOCA `compras.importe` NI EL COSTEO, y es una decisión del
-    dueño, no un pendiente: es plata de ENVASE y no de mercadería, y el
-    sistema ya trata al envase por su lado. Meterlo adentro del importe de la
-    compra mezclaría dos cosas que hoy están separadas y re-escribiría un
-    número que ya se cargó en Administración. El neto se lee SUMANDO las dos
-    —la devolución guarda `compra_id`, así que es un join— no cambiando una.
+def crear_devolucion_vacios(proveedor_id: int, marca_vacio_id: int | None, cantidad: int,
+                            foto_ruta: str, importe: float | None = None) -> int:
+    """Le devuelve al proveedor cajones de UNA PILA. Devuelve su id.
+
+    SIN COMPRA (dueño, 25/09): la devolución sale de una pila —proveedor y
+    marca, o "sin asignar"—, no de una compra.
+
+    SIN FOTO NO ES UNA DEVOLUCIÓN: es un ajuste. La foto del vale es
+    obligatoria y la guarda va ACÁ, donde se escribe; la base la hace cumplir
+    también (`vacios_dev_con_foto`).
+
+    NO SE DEVUELVE MÁS DE LO QUE DICE EL SISTEMA (dueño, 25/09): la pila se
+    lee con la fila del proveedor bloqueada y en la misma transacción.
+
+    EL IMPORTE NO TOCA `compras.importe` NI EL COSTEO: es plata de envase.
     """
+    if not (foto_ruta or "").strip():
+        raise ValueError("Sin la foto del vale no es una devolución: cargalo como ajuste.")
     conexion = obtener_conexion()
     try:
         with conexion.cursor() as cursor:
-            antes = _stock_de_vacios_en_la_misma_transaccion(cursor, proveedor_id)
-            cursor.execute(
-                """
-                INSERT INTO vacios_deposito_devoluciones
-                    (proveedor_id, compra_id, cantidad, importe, foto_ruta, stock_sistema)
-                VALUES (%s, %s, %s, %s, %s, %s)
-                RETURNING id
-                """,
-                (proveedor_id, compra_id, cantidad, importe, foto_ruta, antes),
-            )
+            hay = _stock_de_la_pila(cursor, proveedor_id, marca_vacio_id)
+            if cantidad > hay:
+                conexion.rollback()
+                raise ValueError(
+                    f"En la pila {_nombre_de_la_pila(_marca_nombre(cursor, marca_vacio_id))} "
+                    f"hay {hay} cajones: no se pueden devolver {cantidad}."
+                )
+            try:
+                cursor.execute(
+                    """
+                    INSERT INTO vacios_deposito_devoluciones
+                        (proveedor_id, marca_vacio_id, cantidad, importe, foto_ruta, stock_sistema)
+                    VALUES (%s, %s, %s, %s, %s, %s)
+                    RETURNING id
+                    """,
+                    (proveedor_id, marca_vacio_id, cantidad, importe, foto_ruta, hay),
+                )
+            except psycopg2.errors.ForeignKeyViolation as error:
+                conexion.rollback()
+                raise _traducir_marca_ajena(error) from error
             devolucion_id = cursor.fetchone()[0]
         conexion.commit()
         return devolucion_id
@@ -16039,34 +16101,63 @@ def crear_devolucion_vacios(proveedor_id: int, compra_id: int, cantidad: int,
         conexion.close()
 
 
-def anular_devolucion_vacios(devolucion_id: int) -> None:
-    """Anula una devolución. NUNCA la borra: el registro queda como corrección.
+def _marca_nombre(cursor, marca_id: int | None) -> str | None:
+    if marca_id is None:
+        return None
+    cursor.execute("SELECT nombre FROM marcas_vacio WHERE id = %s", (marca_id,))
+    fila = cursor.fetchone()
+    return fila[0] if fila else None
 
-    LA EXISTENCIA SE PREGUNTA CON UN SELECT SIN AGREGADO, que es lo único que
-    puede contestar "no hay". Con un `count(*)` la fila vuelve con 0 aunque
-    no haya nada que contar, así que `fetchone() is None` no es None JAMÁS y
-    la guarda no se dispara — el mismo hecho que en plpgsql hace que
-    `if not found` después de un agregado no salte nunca.
 
-    Y NO PISA UN `anulado_el` YA PUESTO: anular dos veces borraría cuándo se
-    anuló de verdad, que es peor que no anular.
+def sena_por_cajon_de_la_ultima_recepcion(proveedor_id: int) -> dict[int | None, float]:
+    """La seña POR CAJÓN de la recepción con seña más reciente, POR PILA.
+
+    Es lo que precarga el importe del vale (dueño, 25/09: "que traiga el
+    valor, precargado y editable"). Por cajón, igual que el importe de la
+    compra. Las pilas sin ninguna recepción con seña no traen nada.
     """
     conexion = obtener_conexion()
     try:
         with conexion.cursor() as cursor:
             cursor.execute(
-                "SELECT anulado_el FROM vacios_deposito_devoluciones WHERE id = %s",
-                (devolucion_id,),
+                """
+                SELECT DISTINCT ON (c.marca_vacio_id) c.marca_vacio_id, c.sena
+                  FROM compras c
+                 WHERE c.proveedor_id = %s
+                   AND c.estado = 'recepcionado'
+                   AND COALESCE(c.sena, 0) > 0
+                 ORDER BY c.marca_vacio_id, c.procesada_el DESC NULLS LAST, c.id DESC
+                """,
+                (proveedor_id,),
             )
+            filas = cursor.fetchall()
+    finally:
+        conexion.close()
+    return {marca_id: float(sena) for marca_id, sena in filas}
+
+
+def anular_devolucion_vacios(devolucion_id: int) -> None:
+    """Anula una devolución. NUNCA la borra: el registro queda como corrección.
+
+    LA EXISTENCIA SE PREGUNTA CON UN SELECT SIN AGREGADO, que es lo único que
+    puede contestar "no hay". Y NO PISA UN `anulado_el` YA PUESTO: anular dos
+    veces borraría cuándo se anuló de verdad.
+    """
+    _anular("vacios_deposito_devoluciones", devolucion_id, "Esa devolución", "anulada")
+
+
+def _anular(tabla: str, fila_id: int, que: str, anulado: str) -> None:
+    """El género viaja con el sujeto: "Ese ajuste ya estaba anulada" salía igual de prolijo."""
+    conexion = obtener_conexion()
+    try:
+        with conexion.cursor() as cursor:
+            cursor.execute(f"SELECT anulado_el FROM {tabla} WHERE id = %s", (fila_id,))
             fila = cursor.fetchone()
             if fila is None:
-                raise ValueError("Esa devolución no existe.")
+                raise ValueError(f"{que} no existe.")
             if fila[0] is not None:
-                raise ValueError("Esa devolución ya estaba anulada.")
-            cursor.execute(
-                "UPDATE vacios_deposito_devoluciones SET anulado_el = now() WHERE id = %s",
-                (devolucion_id,),
-            )
+                raise ValueError(f"{que} ya estaba {anulado}.")
+            cursor.execute(f"UPDATE {tabla} SET anulado_el = now() WHERE id = %s", (fila_id,))
         conexion.commit()
     finally:
         conexion.close()
@@ -16075,9 +16166,8 @@ def anular_devolucion_vacios(devolucion_id: int) -> None:
 def listar_devoluciones_vacios(proveedor_id: int, limite: int = 30) -> list[dict]:
     """Las devoluciones de un proveedor, la más nueva primero. Las anuladas TAMBIÉN.
 
-    Se muestran las anuladas a propósito: una devolución que desaparece de la
-    lista deja al que la cargó buscando qué hizo mal. Viene `anulada` para que
-    la pantalla la pinte como lo que es — una corrección, no un hueco.
+    La compra ya no se pide (25/09) pero las viejas la tienen, y se muestra
+    cuando está: es lo que decía el vale en su momento.
     """
     conexion = obtener_conexion()
     try:
@@ -16087,10 +16177,11 @@ def listar_devoluciones_vacios(proveedor_id: int, limite: int = 30) -> list[dict
                 SELECT d.id, d.cantidad, d.importe, d.foto_ruta,
                        (d.creado_en AT TIME ZONE 'America/Argentina/Buenos_Aires')::date,
                        d.anulado_el IS NOT NULL,
-                       d.compra_id, a.nombre, c.fecha_operacion
+                       d.compra_id, a.nombre, c.fecha_operacion, mv.nombre
                   FROM vacios_deposito_devoluciones d
-                  JOIN compras c   ON c.id = d.compra_id
-                  JOIN articulos a ON a.id = c.articulo_id
+                  LEFT JOIN compras c      ON c.id = d.compra_id
+                  LEFT JOIN articulos a    ON a.id = c.articulo_id
+                  LEFT JOIN marcas_vacio mv ON mv.id = d.marca_vacio_id
                  WHERE d.proveedor_id = %s
                  ORDER BY d.creado_en DESC, d.id DESC
                  LIMIT %s
@@ -16103,38 +16194,214 @@ def listar_devoluciones_vacios(proveedor_id: int, limite: int = 30) -> list[dict
     return [
         {"id": f[0], "cantidad": f[1], "importe": f[2], "foto_ruta": f[3],
          "fecha": f[4], "anulada": f[5], "compra_id": f[6],
-         "articulo": f[7], "fecha_compra": f[8]}
+         "articulo": f[7], "fecha_compra": f[8], "marca": f[9]}
         for f in filas
     ]
 
 
-def compras_para_vale_de_vacios(proveedor_id: int, limite: int = 40) -> list[dict]:
-    """Las compras recepcionadas de ese proveedor, para elegir contra cuál va el vale.
+def crear_ajuste_vacios_deposito(proveedor_id: int, marca_vacio_id: int | None, cantidad: int,
+                        motivo: str) -> int:
+    """Un AJUSTE de stock de vacíos: el número no cierra y nadie sabe por qué.
 
-    Solo las RECEPCIONADAS: un vale contra una compra que todavía no llegó
-    describe cajones que no están en el galpón. La pantalla no ofrece lo que
-    la escritura después rechazaría — un callejón es peor que no ofrecer nada.
+    Con signo y con motivo obligatorio (lo exige la base:
+    `vacios_aj_cantidad_y_motivo`). No es una devolución: una devolución
+    lleva la foto del vale. Guarda el stock de la pila en ese instante.
+    """
+    conexion = obtener_conexion()
+    try:
+        with conexion.cursor() as cursor:
+            antes = _stock_de_la_pila(cursor, proveedor_id, marca_vacio_id)
+            try:
+                cursor.execute(
+                    """
+                    INSERT INTO vacios_deposito_ajustes
+                        (proveedor_id, marca_vacio_id, cantidad, motivo, stock_sistema)
+                    VALUES (%s, %s, %s, %s, %s)
+                    RETURNING id
+                    """,
+                    (proveedor_id, marca_vacio_id, cantidad, (motivo or "").strip(), antes),
+                )
+            except psycopg2.errors.CheckViolation as error:
+                conexion.rollback()
+                raise ValueError("Un ajuste lleva una cantidad distinta de cero y un motivo.") from error
+            except psycopg2.errors.ForeignKeyViolation as error:
+                conexion.rollback()
+                raise _traducir_marca_ajena(error) from error
+            ajuste_id = cursor.fetchone()[0]
+        conexion.commit()
+        return ajuste_id
+    finally:
+        conexion.close()
+
+
+def anular_ajuste_vacios_deposito(ajuste_id: int) -> None:
+    _anular("vacios_deposito_ajustes", ajuste_id, "Ese ajuste", "anulado")
+
+
+def crear_asignacion_vacios(proveedor_id: int, marca_desde_id: int | None,
+                            marca_hasta_id: int, cantidad: int) -> int:
+    """Pasa N cajones de una pila a una MARCA, sin tocar ninguna recepción.
+
+    UNA fila con las dos puntas: anularla deshace las dos. Y no se pasa más
+    de lo que la pila de origen tiene — la misma regla que la devolución.
+    """
+    if cantidad <= 0:
+        raise ValueError("Los cajones a asignar tienen que ser más que cero.")
+    if marca_desde_id == marca_hasta_id:
+        raise ValueError("Elegí una marca distinta de la pila de origen.")
+    conexion = obtener_conexion()
+    try:
+        with conexion.cursor() as cursor:
+            hay = _stock_de_la_pila(cursor, proveedor_id, marca_desde_id)
+            if cantidad > hay:
+                conexion.rollback()
+                raise ValueError(
+                    f"En la pila {_nombre_de_la_pila(_marca_nombre(cursor, marca_desde_id))} "
+                    f"hay {hay} cajones: no se pueden pasar {cantidad}."
+                )
+            try:
+                cursor.execute(
+                    """
+                    INSERT INTO vacios_deposito_asignaciones
+                        (proveedor_id, marca_desde_id, marca_hasta_id, cantidad, stock_sistema)
+                    VALUES (%s, %s, %s, %s, %s)
+                    RETURNING id
+                    """,
+                    (proveedor_id, marca_desde_id, marca_hasta_id, cantidad, hay),
+                )
+            except psycopg2.errors.ForeignKeyViolation as error:
+                conexion.rollback()
+                raise _traducir_marca_ajena(error) from error
+            asignacion_id = cursor.fetchone()[0]
+        conexion.commit()
+        return asignacion_id
+    finally:
+        conexion.close()
+
+
+def anular_asignacion_vacios(asignacion_id: int) -> None:
+    _anular("vacios_deposito_asignaciones", asignacion_id, "Esa asignación", "anulada")
+
+
+def listar_ajustes_y_asignaciones_vacios(proveedor_id: int, limite: int = 30) -> list[dict]:
+    """Los ajustes y las asignaciones de un proveedor, juntos, el más nuevo primero.
+
+    `tipo` dice cuál es: 'ajuste' (con signo y motivo) o 'asignacion' (de
+    una pila a otra). Las anuladas también, como en las devoluciones.
     """
     conexion = obtener_conexion()
     try:
         with conexion.cursor() as cursor:
             cursor.execute(
                 """
-                SELECT c.id, c.fecha_operacion, a.nombre,
-                       COALESCE(c.cantidad_cajones_real, c.cantidad_cajones)
-                  FROM compras c
-                  JOIN articulos a ON a.id = c.articulo_id
-                 WHERE c.proveedor_id = %s
-                   AND c.estado = 'recepcionado'
-                 ORDER BY c.fecha_operacion DESC, c.id DESC
-                 LIMIT %s
+                SELECT x.tipo, x.id, x.cantidad, x.motivo, x.marca, x.marca_hasta,
+                       (x.creado_en AT TIME ZONE 'America/Argentina/Buenos_Aires')::date,
+                       x.anulada
+                  FROM (
+                    SELECT 'ajuste' AS tipo, a.id, a.cantidad, a.motivo,
+                           mv.nombre AS marca, NULL AS marca_hasta,
+                           a.creado_en, a.anulado_el IS NOT NULL AS anulada
+                      FROM vacios_deposito_ajustes a
+                      LEFT JOIN marcas_vacio mv ON mv.id = a.marca_vacio_id
+                     WHERE a.proveedor_id = %s
+                    UNION ALL
+                    SELECT 'asignacion', s.id, s.cantidad, NULL,
+                           md.nombre, mh.nombre,
+                           s.creado_en, s.anulado_el IS NOT NULL
+                      FROM vacios_deposito_asignaciones s
+                      LEFT JOIN marcas_vacio md ON md.id = s.marca_desde_id
+                      JOIN marcas_vacio mh      ON mh.id = s.marca_hasta_id
+                     WHERE s.proveedor_id = %s
+                ) x
+                ORDER BY x.creado_en DESC, x.id DESC
+                LIMIT %s
                 """,
-                (proveedor_id, limite),
+                (proveedor_id, proveedor_id, limite),
             )
             filas = cursor.fetchall()
     finally:
         conexion.close()
-    return [{"id": f[0], "fecha": f[1], "articulo": f[2], "cajones": f[3]} for f in filas]
+    return [
+        {"tipo": f[0], "id": f[1], "cantidad": f[2], "motivo": f[3],
+         "marca": f[4], "marca_hasta": f[5],
+         "fecha": f[6],
+         "anulada": f[7]}
+        for f in filas
+    ]
+
+
+def crear_conteo_vacios_deposito(proveedor_id: int, marca_vacio_id: int | None,
+                                 cantidad: int, fecha) -> int:
+    """El conteo FÍSICO de una pila. Devuelve su id.
+
+    YA NO ARRANCA LA CUENTA (25/09): sirve para el cotejo, contra lo que el
+    sistema dice AHORA. Guarda igual el stock del instante del conteo, del
+    lado del server —el que cuenta no lo ve— como registro.
+    """
+    conexion = obtener_conexion()
+    try:
+        with conexion.cursor() as cursor:
+            antes = _stock_de_la_pila(cursor, proveedor_id, marca_vacio_id)
+            try:
+                cursor.execute(
+                    """
+                    INSERT INTO conteos_vacios_deposito
+                        (proveedor_id, marca_vacio_id, cantidad, fecha, stock_sistema)
+                    VALUES (%s, %s, %s, %s, %s)
+                    RETURNING id
+                    """,
+                    (proveedor_id, marca_vacio_id, cantidad, fecha, antes),
+                )
+            except psycopg2.errors.ForeignKeyViolation as error:
+                conexion.rollback()
+                raise _traducir_marca_ajena(error) from error
+            conteo_id = cursor.fetchone()[0]
+        conexion.commit()
+        return conteo_id
+    finally:
+        conexion.close()
+
+
+def cotejo_de_vacios_deposito() -> list[dict]:
+    """El ÚLTIMO conteo de cada pila contra lo que el sistema dice AHORA.
+
+    Sistema − Físico, igual que el Cotejo de stock (corolario 25): comparar
+    contra la foto congelada del conteo mete adentro un trabajo del día que
+    se carga después. Acá se compara el stock de hoy con lo contado.
+    """
+    conexion = obtener_conexion()
+    try:
+        with conexion.cursor() as cursor:
+            cursor.execute(
+                f"""
+                WITH ultimo AS (
+                    SELECT DISTINCT ON (c.proveedor_id, c.marca_vacio_id)
+                           c.proveedor_id, c.marca_vacio_id, c.cantidad, c.fecha
+                      FROM conteos_vacios_deposito c
+                     ORDER BY c.proveedor_id, c.marca_vacio_id, c.fecha DESC, c.id DESC
+                )
+                SELECT u.proveedor_id, p.nombre, u.marca_vacio_id, mv.nombre,
+                       u.cantidad, u.fecha, pilas.stock
+                  FROM ultimo u
+                  JOIN proveedores p ON p.id = u.proveedor_id
+                  LEFT JOIN marcas_vacio mv ON mv.id = u.marca_vacio_id
+                  LEFT JOIN ({_SQL_PILAS_DE_VACIOS}) pilas
+                         ON pilas.proveedor_id = u.proveedor_id
+                        AND pilas.marca_id IS NOT DISTINCT FROM u.marca_vacio_id
+                """
+            )
+            filas = cursor.fetchall()
+    finally:
+        conexion.close()
+    resultado = []
+    for f in filas:
+        sistema = int(f[6] or 0)
+        resultado.append({
+            "proveedor_id": f[0], "proveedor": f[1], "marca_id": f[2], "marca": f[3],
+            "contado": int(f[4]), "fecha": f[5], "sistema": sistema,
+            "diferencia": sistema - int(f[4]),
+        })
+    return sorted(resultado, key=lambda x: (-abs(x["diferencia"]), x["proveedor"].lower()))
 
 
 def listar_tipos_cajon() -> list[dict]:

@@ -12,17 +12,13 @@
              margin-bottom: 1rem; box-shadow: 0 1px 3px rgba(0,0,0,.1); }
   .error { background: #fee2e2; color: #991b1b; padding: .75rem 1rem;
            border-radius: 8px; margin-bottom: 1rem; font-size: .95rem; }
+  .botones { display: flex; flex-wrap: wrap; gap: .75rem; margin-bottom: 1rem; }
   .boton-stock { display: flex; align-items: center; justify-content: center;
-                 min-height: 44px; margin-bottom: 1rem; background: #2e8c57; color: #fff;
+                 flex: 1 1 14rem; min-height: 44px; padding: 0 .75rem; text-align: center;
+                 background: #2e8c57; color: #fff;
                  border-radius: 8px; text-decoration: none; font-weight: 600; }
   .aviso { background: #dcfce7; color: #166534; padding: .75rem 1rem;
            border-radius: 8px; margin-bottom: 1rem; font-size: .95rem; }
-  /* EL HUECO SE PINTA, NO SE CALLA. Un proveedor sin conteo tiene sus
-     recepciones cargadas y ninguna se ve: "la cuenta no arrancó" y "hay
-     cuarenta cajones que no te puedo mostrar" se dibujarían exactamente
-     igual, y el que compró los cuarenta se va creyendo que no cargó nada. */
-  .hueco { background: #fef3c7; color: #92400e; padding: .6rem .75rem;
-           border-radius: 8px; margin: .5rem 0 0; font-size: .9rem; }
   .cabeza { display: flex; flex-wrap: wrap; align-items: baseline;
             gap: .5rem; margin-bottom: .35rem; }
   /* `overflow-wrap: anywhere` VA DONDE EL TEXTO LO TIPEA UNA PERSONA, y
@@ -35,10 +31,6 @@
   .cajon { font-size: .85rem; color: #6b7280; overflow-wrap: anywhere; }
   .cajon.sin-declarar { color: #92400e; }
   .stock { font-size: 1.6rem; font-weight: 700; }
-  .stock.sin-arrancar { font-size: 1rem; font-weight: 500; color: #6b7280; }
-  .patas { display: flex; flex-wrap: wrap; gap: .4rem .9rem;
-           font-size: .85rem; color: #555; margin: .35rem 0 .6rem; }
-  .patas span { white-space: nowrap; }
   .fila { display: flex; flex-wrap: wrap; gap: .5rem; align-items: flex-end; }
   .campo { display: flex; flex-direction: column; flex: 1 1 8rem; min-width: 0; }
   label { font-size: .85rem; margin-bottom: .2rem; }
@@ -51,15 +43,16 @@
   button { font-size: 1rem; padding: .7rem 1.1rem; min-height: 44px;
            border: 0; border-radius: 8px; background: #2563eb; color: #fff;
            font-weight: 600; flex: 1 1 8rem; }
-  /* LA REGLA DE LA FECHA VA EN LA PANTALLA y no en un doc: el que arranca la
-     cuenta está acá y no va a ir a buscar nada. Y va con el cuerpo del texto,
-     no en letra chica — el caso que se equivoca (contar 40 Y fecharlo antes
-     de la recepción) suma dos veces, no descuadra nada y no avisa nunca. */
-  .regla-fecha { background: #eff6ff; color: #1e3a8a; border-radius: 8px;
-                 padding: .75rem .9rem; margin: .6rem 0 0; font-size: .9rem; }
-  .regla-fecha ul { margin: .5rem 0 0; padding-left: 1.1rem; }
-  .regla-fecha li { margin-bottom: .35rem; }
-  .regla-fecha li:last-child { margin-bottom: 0; }
+  /* LAS PILAS: una por marca, "sin asignar" primero. Renglones y no tabla:
+     a 390px una tabla de marca/cajones se arrastra de costado. */
+  .pilas { margin: .35rem 0 .2rem; }
+  .pila { display: flex; justify-content: space-between; gap: .75rem;
+          padding: .3rem 0; border-top: 1px solid #f1f5f9; font-size: .95rem; }
+  .pila:first-child { border-top: 0; }
+  .pila-marca { overflow-wrap: anywhere; min-width: 0; }
+  .pila-marca.sin-asignar { color: #6b7280; font-style: italic; }
+  .pila-stock { font-weight: 600; white-space: nowrap; }
+  .ayuda { font-size: .82rem; color: #6b7280; margin: .5rem 0 0; }
   /* SE VE QUE SE PUEDE ENTRAR: borde, color y subrayado. Un link del mismo
      color que el texto de al lado y sin subrayar es un camino que funciona y
      no existe — el único indicio sería el cursor, que en celular no hay. */
@@ -79,43 +72,42 @@
 {% if error %}<div class="error">{{ error }}</div>{% endif %}
 {% if aviso %}<div class="aviso">{{ aviso }}</div>{% endif %}
 
-<a class="boton-stock" href="{{ camino.base }}/vacios/stock">Stock: lista para Excel y PDF</a>
+<div class="botones">
+  <a class="boton-stock" href="{{ camino.base }}/vacios/stock">Stock: lista para Excel y PDF</a>
+  <a class="boton-stock" href="{{ camino.base }}/vacios/cotejo">Cotejo: lo contado contra el sistema</a>
+</div>
 
 <div class="tarjeta">
-  <h2>Arrancar la cuenta de un proveedor</h2>
+  <h2>Contar vacíos</h2>
   <form method="post" action="{{ camino.base }}/vacios/conteo">
     <div class="fila">
       <div class="campo">
-        <label for="proveedor_id">¿De qué proveedor contaste los cajones?</label>
+        <label for="proveedor_id">¿De qué proveedor son los cajones?</label>
         <select id="proveedor_id" name="proveedor_id" required>
           <option value="">Elegí un proveedor</option>
-          {% for p in proveedores if not p.desde %}
+          {% for p in todos %}
           <option value="{{ p.id }}">{{ p.nombre }}</option>
           {% endfor %}
         </select>
       </div>
       <div class="campo">
-        <label for="cantidad">¿Cuántos cajones suyos hay?</label>
+        <label for="marca_vacio_id">¿De qué marca?</label>
+        <select id="marca_vacio_id" name="marca_vacio_id">
+          <option value="">Sin asignar</option>
+        </select>
+      </div>
+      <div class="campo">
+        <label for="cantidad">¿Cuántos hay?</label>
         <input id="cantidad" name="cantidad" type="number" min="0" step="1" required>
       </div>
       <div class="campo">
         <label for="fecha">¿Qué día los contaste?</label>
         <input id="fecha" name="fecha" type="date" value="{{ hoy }}" required>
       </div>
-      <button type="submit">Arrancar la cuenta</button>
+      <button type="submit">Guardar el conteo</button>
     </div>
-    <div class="regla-fecha">
-      <strong>Contá a la mañana, antes de que llegue la mercadería del día.</strong>
-      Desde la fecha que pongas se suman las recepciones, así que lo que entre
-      ese mismo día se cuenta arriba de lo que contaste.
-      <ul>
-        <li>Contaste los cajones que ya tenés: poné la cantidad y fechalo <strong>hoy</strong>.</li>
-        <li>Querés que una recepción ya cargada se sume: poné <strong>cero</strong> cajones
-            y fechalo <strong>antes</strong> de esa recepción. Contar cero es contar.</li>
-        <li>Nunca las dos juntas: contar los cajones <em>y</em> fecharlo antes de
-            la recepción los suma <strong>dos veces</strong>, y eso no se ve después.</li>
-      </ul>
-    </div>
+    <p class="ayuda">Contá una marca por vez. El conteo no cambia el stock: va al
+      cotejo, al lado de lo que dice el sistema.</p>
   </form>
 </div>
 
@@ -130,40 +122,44 @@
       <span class="cajon sin-declarar">sin declarar en qué cajón entrega</span>
     {% endif %}
   </div>
-  {% if p.desde %}
-    <div class="stock">{{ p.stock|numero }} cajones</div>
-    <div class="patas">
-      <span>contados {{ p.contados|numero }}</span>
-      <span>recibidos +{{ p.recibidos|numero }}</span>
-      <span>devueltos −{{ p.devueltos|numero }}</span>
-      <span>desde {{ p.desde.strftime('%d/%m/%Y') }}</span>
+  <div class="stock">{{ p.stock|numero }} cajones</div>
+  <div class="pilas">
+    {% for pila in p.pilas %}
+    <div class="pila">
+      <span class="pila-marca {% if not pila.marca %}sin-asignar{% endif %}">{{ pila.marca or "sin asignar" }}</span>
+      <span class="pila-stock">{{ pila.stock|numero }}</span>
     </div>
-  {% else %}
-    <div class="stock sin-arrancar">La cuenta de este proveedor todavía no arrancó.</div>
-    {% if p.esperando_recepciones or p.esperando_devoluciones %}
-    <div class="hueco">
-      Ya hay
-      {% if p.esperando_recepciones %}
-        <strong>{{ p.esperando_recepciones }} recepci{{ 'ón' if p.esperando_recepciones == 1 else 'ones' }}</strong>
-      {% endif %}
-      {% if p.esperando_recepciones and p.esperando_devoluciones %} y {% endif %}
-      {% if p.esperando_devoluciones %}
-        <strong>{{ p.esperando_devoluciones }} devoluci{{ 'ón' if p.esperando_devoluciones == 1 else 'ones' }}</strong>
-      {% endif %}
-      de este proveedor sin contar, desde el
-      <strong>{{ p.esperando_desde.strftime('%d/%m/%Y') }}</strong>.
-      Para que entren, fechá el conteo antes de ese día.
-    </div>
-    {% endif %}
-  {% endif %}
+    {% endfor %}
+  </div>
   <a class="ver" href="{{ camino.base }}/vacios/{{ p.id }}">Ver y devolver cajones</a>
 </div>
 {% else %}
 <div class="tarjeta vacio">
-  Ningún proveedor tiene cajones que contar todavía: acá aparecen los que
-  tienen una recepción, una devolución o un conteo.
+  Ningún proveedor tiene cajones en el galpón: acá aparecen los que tienen
+  stock o algún movimiento desde el corte del 25/09.
 </div>
 {% endfor %}
+
+<script>
+  // LA MARCA DEPENDE DEL PROVEEDOR: solo se ofrecen las suyas (dueño, 25/09:
+  // el conteo solo ofrece proveedores y marcas ya cargados).
+  (function () {
+    var marcas = {{ marcas_por_proveedor|tojson }};
+    var proveedor = document.getElementById("proveedor_id");
+    var marca = document.getElementById("marca_vacio_id");
+    proveedor.addEventListener("change", function () {
+      marca.innerHTML = "";
+      var sin = document.createElement("option");
+      sin.value = ""; sin.textContent = "Sin asignar";
+      marca.appendChild(sin);
+      (marcas[proveedor.value] || []).forEach(function (m) {
+        var o = document.createElement("option");
+        o.value = m.id; o.textContent = m.nombre;
+        marca.appendChild(o);
+      });
+    });
+  })();
+</script>
 
 {% include "_pie_version.html" %}
 

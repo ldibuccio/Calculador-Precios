@@ -13,8 +13,9 @@
   .exportar a { flex: 1 1 8rem; min-height: 44px; display: flex; align-items: center;
                 justify-content: center; background: #2e8c57; color: #fff;
                 border-radius: 8px; text-decoration: none; font-weight: 600; }
-  /* Una fila por proveedor, en celular: nombre y cajón a la izquierda, la
-     cantidad grande a la derecha. Sin tabla, así no hay scroll de costado. */
+  /* Una fila por PILA (proveedor y marca), en celular: nombre, marca y cajón
+     a la izquierda, la cantidad grande a la derecha. Sin tabla, así no hay
+     scroll de costado. */
   .fila { display: flex; align-items: center; gap: .75rem; padding: .6rem 0;
           border-bottom: 1px solid #eee; }
   .fila:last-child { border-bottom: 0; }
@@ -23,8 +24,6 @@
   .tipo { display: block; font-size: .85rem; color: #666; overflow-wrap: anywhere; }
   .cantidad { font-size: 1.3rem; font-weight: 700; }
   .total { font-weight: 700; }
-  .nota { font-size: .9rem; color: #92400e; background: #fef3c7;
-          padding: .6rem .75rem; border-radius: 8px; }
   .vacio { color: #666; }
 </style>
 </head>
@@ -45,22 +44,17 @@
   <div class="fila">
     <div class="quien">
       <span class="nombre">{{ p.nombre }}</span>
-      <span class="tipo">{{ p.tipo_cajon or "sin declarar en qué cajón entrega" }}</span>
+      <span class="tipo">{{ p.marca }} · {{ p.tipo_cajon or "sin declarar en qué cajón entrega" }}</span>
     </div>
     <span class="cantidad">{{ p.stock|numero }}</span>
   </div>
   {% else %}
-  <p class="vacio">Ningún proveedor tiene la cuenta arrancada todavía.</p>
+  <p class="vacio">No hay cajones de ningún proveedor en el galpón.</p>
   {% endfor %}
   {% if filas %}
-  <div class="fila total"><div class="quien">Total</div><span class="cantidad">{{ total }}</span></div>
+  <div class="fila total"><div class="quien">Total</div><span class="cantidad">{{ total|numero }}</span></div>
   {% endif %}
 </div>
-
-{% if sin_conteo %}
-<p class="nota">{{ sin_conteo }} proveedor{{ "es" if sin_conteo != 1 }} con cajones cargados pero sin conteo
-inicial: no se listan acá. Se arrancan desde <a href="{{ camino.base }}/vacios">Vacíos</a>.</p>
-{% endif %}
 
 {% include "_pie_version.html" %}
 </body>

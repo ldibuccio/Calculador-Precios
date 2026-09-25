@@ -69,19 +69,27 @@ UN_MOVIMIENTO = [{
     "origen": "prestamo_a_colega", "cantidad": -20, "fecha": date(2026, 9, 12),
     "envase": "Caja EJEMPLO Grande", "motivo": None,
 }]
+def _pila(marca_id, marca, stock):
+    return {"proveedor_id": 7, "proveedor": "Puesto EJEMPLO", "tipo_cajon": "Cajón de ejemplo",
+            "marca_id": marca_id, "marca": marca, "foto": 0, "recibidos": 0,
+            "devueltos": 0, "ajustes": 0, "asignados": 0, "stock": stock}
+
+
 UN_PROVEEDOR = [{
-    "id": 7, "nombre": "Puesto EJEMPLO", "tipo_cajon": "Cajón de ejemplo",
-    "desde": date(2026, 9, 17), "contados": 30, "recibidos": 10, "devueltos": 5,
-    "stock": 35, "esperando_recepciones": 0, "esperando_devoluciones": 0,
-    "esperando_desde": None,
+    "id": 7, "nombre": "Puesto EJEMPLO", "tipo_cajon": "Cajón de ejemplo", "stock": 35,
+    "pilas": [_pila(None, None, 12), _pila(71, "EJ Roja", 23)],
 }]
+MARCAS = [{"id": 71, "nombre": "EJ Roja"}]
 UNA_DEVOLUCION = [{
     "id": 11, "cantidad": 5, "fecha": date(2026, 9, 18), "importe": 1000.0,
-    "articulo": "Artículo EJEMPLO", "fecha_compra": date(2026, 9, 17),
+    "articulo": None, "fecha_compra": None, "compra_id": None, "marca": "EJ Roja",
     "anulada": False, "foto_ruta": "2026-09-18/vale.jpg",
 }]
-UNA_COMPRA = [{"id": 40, "articulo": "Artículo EJEMPLO", "cajones": 10,
-               "fecha": date(2026, 9, 17)}]
+UN_AJUSTE = [{"tipo": "ajuste", "id": 21, "cantidad": 2, "marca": None, "marca_hasta": None,
+              "motivo": "EJ aparecieron", "fecha": date(2026, 9, 25), "anulada": False}]
+UN_COTEJO = [{"proveedor_id": 7, "proveedor": "Puesto EJEMPLO", "marca_id": 71,
+              "marca": "EJ Roja", "contado": 20, "fecha": date(2026, 9, 25),
+              "sistema": 23, "diferencia": 3}]
 
 
 def _con_datos():
@@ -94,8 +102,14 @@ def _con_datos():
         "listar_colegas": [{"id": 3, "nombre": "Colega EJEMPLO Uno"}],
         "movimientos_de_colegas": UN_MOVIMIENTO,
         "stock_de_vacios_deposito": UN_PROVEEDOR,
-        "compras_para_vale_de_vacios": UNA_COMPRA,
+        "proveedor_para_vacios": None,
+        "listar_proveedores": [{"id": 7, "nombre": "Puesto EJEMPLO"}],
+        "listar_marcas_vacio": MARCAS,
+        "listar_marcas_vacio_por_proveedor": {7: MARCAS},
         "listar_devoluciones_vacios": UNA_DEVOLUCION,
+        "listar_ajustes_y_asignaciones_vacios": UN_AJUSTE,
+        "sena_por_cajon_de_la_ultima_recepcion": {},
+        "cotejo_de_vacios_deposito": UN_COTEJO,
         "listar_tipos_cajon": [],
     }.items():
         pila.enter_context(patch(f"app.main.{nombre}", return_value=[dict(f) for f in valor]
@@ -112,6 +126,7 @@ PANTALLAS = [
     ("/vacios", 'Puesto EJEMPLO', ""),
     ("/vacios/7", 'Ver el vale', "/vacios"),
     ("/vacios/stock", '<span class="cantidad">35</span>', "/vacios"),
+    ("/vacios/cotejo", 'EJ Roja', "/vacios"),
 ]
 
 
@@ -159,8 +174,13 @@ def test_los_FORMULARIOS_de_cada_pantalla_mandan_a_SU_sector():
                    "/administracion/cajas/conteo-inicial",
                    "/administracion/cajas/movimiento", "/administracion/cajas/colegas"},
         "/vacios": {"/administracion/vacios/conteo"},
-        "/vacios/7": {"/administracion/vacios/7/cajon", "/administracion/vacios/7/devolucion",
-                      "/administracion/vacios/devolucion/11/anular"},
+        # EL AJUSTE, LA ASIGNACIÓN Y SU ANULAR son solo de Administración: entrando
+        # por Compras no se dibujan (lo cuida tests/test_vacios_deposito.py).
+        "/vacios/7": {"/administracion/vacios/7/cajon", "/administracion/vacios/7/marca",
+                      "/administracion/vacios/7/devolucion",
+                      "/administracion/vacios/devolucion/11/anular",
+                      "/administracion/vacios/7/ajuste", "/administracion/vacios/7/asignacion",
+                      "/administracion/vacios/movimiento/ajuste/21/anular"},
     }
     for ruta, esperados in decididos.items():
         with _con_datos():
@@ -186,10 +206,9 @@ def test_los_FORMULARIOS_de_cada_pantalla_mandan_a_SU_sector():
     ("/cajas/umbral", {"envase_id": "1", "umbral": "30"}, "guardar_umbral_de_envase", "/cajas?"),
     ("/cajas/pallet", {"envase_id": "1", "cajas": "60"}, "guardar_cajas_por_pallet", "/cajas?"),
     ("/vacios/conteo", {"proveedor_id": "7", "cantidad": "0", "fecha": "2026-09-20"},
-     "crear_conteo_vacios_deposito", "/vacios?"),
+     "crear_conteo_vacios_deposito", "/vacios/cotejo"),
     ("/vacios/7/cajon", {"tipo_cajon_id": "4"}, "asignar_tipo_cajon", "/vacios/7?"),
-    ("/vacios/7/devolucion", {"compra_id": "40", "cantidad": "5"},
-     "crear_devolucion_vacios", "/vacios/7?"),
+    ("/vacios/7/marca", {"nombre": "EJ Azul"}, "crear_marca_vacio", "/vacios/7?"),
     ("/vacios/devolucion/11/anular", {"proveedor_id": "7"}, "anular_devolucion_vacios",
      "/vacios/7?"),
 ])
@@ -204,6 +223,22 @@ def test_despues_de_GUARDAR_vuelve_al_sector_por_el_que_ENTRO(url, datos, parche
             respuesta.headers["location"]
 
 
+def test_la_DEVOLUCION_con_foto_vuelve_al_sector_por_el_que_ENTRO():
+    """Aparte del parametrizado de arriba porque lleva un ARCHIVO: sin foto rebota."""
+    for sector in ("/administracion", "/compras"):
+        with _con_datos(), \
+             patch("app.main._comprimir_foto_jpeg", return_value=b"jpg"), \
+             patch("app.main.subir_foto_comanda", return_value="vacios/v.jpg"), \
+             patch("app.main.crear_devolucion_vacios") as escritor:
+            respuesta = cliente.post(f"{sector}/vacios/7/devolucion",
+                                     data={"marca_vacio_id": "71", "cantidad": "5"},
+                                     files={"foto": ("v.jpg", b"x", "image/jpeg")},
+                                     follow_redirects=False)
+        assert respuesta.status_code == 303, (sector, respuesta.text[:300])
+        assert escritor.called
+        assert respuesta.headers["location"].startswith(f"{sector}/vacios/7?")
+
+
 @pytest.mark.parametrize("cantidad, importe", [("0", ""), ("5", "no-es-numero"), ("5", "-3")])
 def test_un_vale_mal_cargado_REBOTA_con_400_y_no_revienta(cantidad, importe):
     """Tres de las guardas del vale llamaban a la RUTA con un `status_code` que no acepta.
@@ -214,7 +249,7 @@ def test_un_vale_mal_cargado_REBOTA_con_400_y_no_revienta(cantidad, importe):
     """
     with _con_datos(), patch("app.main.crear_devolucion_vacios") as escritor:
         respuesta = cliente.post("/administracion/vacios/7/devolucion",
-                                 data={"compra_id": "40", "cantidad": cantidad,
+                                 data={"marca_vacio_id": "71", "cantidad": cantidad,
                                        "importe": importe})
     assert respuesta.status_code == 400
     assert not escritor.called
@@ -232,25 +267,22 @@ def test_el_hub_de_ADMINISTRACION_tiene_el_recuadro_y_los_otros_TRES_intactos():
     assert 'href="/administracion/vacios"' in recuadro
 
 
-# EL STOCK DE VACÍOS (23/09): la lista simple con sus dos exportes.
-SIN_CONTEO = dict(UN_PROVEEDOR[0], id=8, nombre="Otro EJEMPLO", desde=None, contados=None,
-                  stock=None, esperando_recepciones=3)
+# EL STOCK DE VACÍOS (23/09): la lista simple con sus dos exportes. Desde el
+# 25/09, UNA FILA POR PILA —proveedor y marca—, y ya no hay "sin conteo".
 
 
-def test_el_STOCK_de_vacios_lista_proveedor_tipo_y_cantidad_y_CUENTA_los_sin_conteo():
-    """El que no tiene conteo no sale en CERO: se cuenta al pie. Un cero diría
-    que no hay cajones, y lo que pasa es que nadie los contó."""
-    with patch("app.main.stock_de_vacios_deposito",
-               return_value=[dict(UN_PROVEEDOR[0]), dict(SIN_CONTEO)]):
+def test_el_STOCK_de_vacios_lista_una_fila_por_PILA_con_su_marca():
+    with patch("app.main.stock_de_vacios_deposito", return_value=[dict(UN_PROVEEDOR[0])]):
         respuesta = cliente.get("/administracion/vacios/stock")
     assert respuesta.status_code == 200
     marcado = respuesta.text.split("</style>")[-1]
-    assert marcado.count('<div class="fila">') == 1
-    assert '<span class="nombre">Puesto EJEMPLO</span>' in marcado
-    assert '<span class="tipo">Cajón de ejemplo</span>' in marcado
-    assert '<span class="cantidad">35</span>' in marcado
-    assert "Otro EJEMPLO" not in marcado
-    assert "1 proveedor con cajones cargados pero sin conteo" in marcado
+    assert marcado.count('<div class="fila">') == 2
+    assert '<span class="tipo">sin asignar · Cajón de ejemplo</span>' in marcado
+    assert '<span class="tipo">EJ Roja · Cajón de ejemplo</span>' in marcado
+    assert '<span class="cantidad">12</span>' in marcado
+    assert '<span class="cantidad">23</span>' in marcado
+    assert '<span class="cantidad">35</span>' in marcado, "el total"
+    assert "sin conteo" not in marcado
     assert 'href="/administracion/vacios/stock/excel"' in marcado
     assert 'href="/administracion/vacios/stock/pdf"' in marcado
 
@@ -259,22 +291,26 @@ def test_el_indice_de_vacios_tiene_el_BOTON_del_stock():
     with _con_datos():
         marcado = cliente.get("/administracion/vacios").text.split("</style>")[-1]
     assert 'class="boton-stock" href="/administracion/vacios/stock"' in marcado
+    # Y EL DEL COTEJO: el barrido de links no puede resolver `{{ camino.base }}`
+    # y lo tiene en su lista de decididas; lo que lo afirma es esto.
+    assert 'class="boton-stock" href="/administracion/vacios/cotejo"' in marcado
 
 
 def test_los_EXPORTES_del_stock_de_vacios_dicen_lo_MISMO_que_la_pantalla():
     import io as _io
     from openpyxl import load_workbook
-    datos = [dict(UN_PROVEEDOR[0]), dict(SIN_CONTEO)]
+    datos = [dict(UN_PROVEEDOR[0])]
     with patch("app.main.stock_de_vacios_deposito", return_value=datos):
         excel = cliente.get("/administracion/vacios/stock/excel")
         pdf = cliente.get("/compras/vacios/stock/pdf")
     assert excel.status_code == 200 and pdf.status_code == 200
     assert pdf.content.startswith(b"%PDF")
     hoja = load_workbook(_io.BytesIO(excel.content)).active
-    filas = [tuple(c.value for c in f[:3]) for f in hoja.iter_rows(min_row=5)]
-    assert filas[0] == ("Puesto EJEMPLO", "Cajón de ejemplo", 35)
-    assert filas[1] == (None, "Total", 35)
-    assert any("1 proveedor(es) con cajones sin conteo" in str(f[0]) for f in filas)
+    filas = [tuple(c.value for c in f[:4]) for f in hoja.iter_rows(min_row=4)]
+    assert filas == [("Proveedor", "Marca", "Tipo de cajón", "Cajones"),
+                     ("Puesto EJEMPLO", "sin asignar", "Cajón de ejemplo", 12),
+                     ("Puesto EJEMPLO", "EJ Roja", "Cajón de ejemplo", 23),
+                     (None, None, "Total", 35)]
 
 
 # CAJAS POR PALLET (23/09): el mismo stock partido en pallets y sueltas.
@@ -380,12 +416,12 @@ def test_cajas_por_pallet_VACIO_borra_el_numero():
 ])
 def test_los_cajones_de_VACIOS_se_leen_ENTEROS_aunque_la_base_devuelva_658_0(ruta, esperado):
     from decimal import Decimal
-    proveedor = dict(UN_PROVEEDOR[0], stock=Decimal("658.0"), contados=Decimal("600.0"),
-                     recibidos=Decimal("70.0"), devueltos=Decimal("12.0"))
+    proveedor = dict(UN_PROVEEDOR[0], stock=Decimal("658.0"),
+                     pilas=[_pila(None, None, Decimal("600.0")), _pila(71, "EJ Roja", Decimal("58.0"))])
     with _con_datos(), patch("app.main.stock_de_vacios_deposito", return_value=[proveedor]):
         respuesta = cliente.get(f"/administracion{ruta}")
     assert respuesta.status_code == 200
     marcado = respuesta.text.split("</style>")[-1]
     assert esperado in marcado
-    for crudo in ("658.0", "600.0", "70.0", "12.0"):
+    for crudo in ("658.0", "600.0", "58.0"):
         assert crudo not in marcado, crudo

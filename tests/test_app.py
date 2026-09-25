@@ -30583,6 +30583,10 @@ PANTALLAS_SIN_LINK_DECIDIDAS = {
         "el href se arma con {{ camino.base }}, que un regex literal no ve",
     "/administracion/vacios/stock/pdf":
         "el href se arma con {{ camino.base }}, que un regex literal no ve",
+    "/compras/vacios/cotejo":
+        "el href se arma con {{ camino.base }}, que un regex literal no ve",
+    "/administracion/vacios/cotejo":
+        "el href se arma con {{ camino.base }}, que un regex literal no ve",
     # Lo afirma sobre el marcado RENDERIZADO test_movimientos_de_cajas.py.
     "/compras/cajas/movimientos":
         "el href se arma con {{ camino.base }}, que un regex literal no ve",
