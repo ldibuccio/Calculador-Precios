@@ -288,14 +288,65 @@ def test_en_pallets_parte_el_stock_y_NO_parte_lo_que_no_puede():
     assert en_pallets(-20, 60) is None
 
 
+def test_el_pallet_REDONDEA_PARA_ABAJO_siempre_y_a_ENTERO():
+    """Del dueño (25/09): 13 pallets y 283 sueltas son 13 pallets, nunca 14 ni
+    13,5 — un pallet incompleto no es un pallet. El caso pegado a la raya es el
+    que distingue el piso del redondeo: 599 de 300 es 1 y no 2."""
+    from core.envases import en_pallets
+    assert en_pallets(13 * 300 + 283, 300) == (13, 283)
+    assert en_pallets(599, 300) == (1, 299)
+    assert en_pallets(299, 300) == (0, 299)
+    # Llegan como Decimal/float de la base: el pallet sigue siendo un ENTERO.
+    pallets, sueltas = en_pallets(599.0, 300.0)
+    assert (pallets, sueltas) == (1, 299) and isinstance(pallets, int)
+
+
 def test_la_tarjeta_dice_PALLETS_Y_SUELTAS_y_la_que_no_tiene_el_numero_NO():
-    """10 cajas de 4 por pallet = 2 pallets y 2 sueltas. La chica no tiene el
-    número cargado, así que se lee solo en cajas."""
+    """10 cajas de 4 por pallet = 2 pallets y 2 sueltas, cada una su número, y
+    el total en cajas abajo. La chica no tiene el número cargado, así que se
+    lee solo en cajas."""
     with _con_datos():
         marcado = cliente.get("/administracion/cajas").text.split("</style>")[-1]
-    assert marcado.count('class="pallets"') == 1
-    assert "2 pallets y 2 sueltas" in " ".join(marcado.split())
+    assert marcado.count('class="piso con-pallets"') == 1
+    texto = " ".join(marcado.split())
+    import re
+    par = re.search(r'<div class="par">(.*?)</div> </div>', texto).group(1)
+    numeros = re.findall(r'<span class="n[^"]*">([^<]*)</span> <span class="r">(\w+)</span>', par)
+    assert numeros == [("2", "pallets"), ("2", "sueltas")]
+    assert "10 cajas en el piso · 4 por pallet" in texto
     assert 'action="/administracion/cajas/pallet"' in marcado
+
+
+def test_PALLETS_y_SUELTAS_se_ven_del_MISMO_tamano_y_el_total_mas_chico():
+    """Lo que se mira en el depósito es el pallet: no puede ser el número chico.
+    Medido con el CSS corrido (el atributo es la intención, no el efecto)."""
+    pytest.importorskip("playwright", reason="lo que se ve lo decide el navegador")
+    from playwright.sync_api import sync_playwright
+    from scripts.medir_layout import CHROMIUM
+
+    with _con_datos():
+        html = cliente.get("/administracion/cajas").text
+    with sync_playwright() as p:
+        navegador = p.chromium.launch(executable_path=CHROMIUM)
+        pagina = navegador.new_page(viewport={"width": 390, "height": 844})
+        pagina.set_content(html)
+        medido = pagina.evaluate("""() => {
+            const piso = document.querySelector('.piso.con-pallets');
+            const tam = el => parseFloat(getComputedStyle(el).fontSize);
+            const [pallets, sueltas] = piso.querySelectorAll('.par .n');
+            const fila = el => Math.round(el.getBoundingClientRect().top);
+            return {pallets: tam(pallets), sueltas: tam(sueltas),
+                    total: tam(piso.querySelector('.total-cajas')),
+                    misma_fila: fila(pallets) === fila(sueltas),
+                    desborde: document.documentElement.scrollWidth
+                              - document.documentElement.clientWidth};
+        }""")
+        navegador.close()
+    assert medido["pallets"] == medido["sueltas"], medido
+    assert medido["pallets"] >= 20, medido
+    assert medido["total"] < medido["pallets"], medido
+    assert medido["misma_fila"], medido
+    assert medido["desborde"] == 0, medido
 
 
 @pytest.mark.parametrize("valor", ["0", "abc", "-3"])
