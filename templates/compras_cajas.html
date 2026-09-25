@@ -36,7 +36,14 @@
             min-width: 0; }
   .stock { font-size: 1.6rem; font-weight: 700; }
   .stock.bajo { color: #b91c1c; }
-  .pallets { display: block; font-size: .9rem; color: #374151; margin-top: .15rem; }
+  /* EL PISO EN PALLETS ocupa la fila entera: pallets y sueltas son dos números
+     grandes lado a lado, y apretados en un tercio del ancho a 390px no entran.
+     "Me deben" y "debo" bajan a la fila de abajo, repartida entre los dos. */
+  .cifras .piso.con-pallets { flex: 1 1 100%; }
+  .piso .par { display: flex; gap: .5rem; }
+  .piso .par > div { flex: 1 1 0; min-width: 0; }
+  .piso .total-cajas { display: block; font-size: .8rem; color: #6b7280;
+                       margin-top: .3rem; }
   .stock.sin-arrancar { font-size: 1rem; font-weight: 500; color: #6b7280; }
   .patas { display: flex; flex-wrap: wrap; gap: .4rem .9rem;
            font-size: .85rem; color: #555; margin: .35rem 0 .75rem; }
@@ -145,6 +152,26 @@
     </div>
 
     <div class="cifras">
+      {# CON EL NÚMERO DE CAJAS POR PALLET, el piso se lee EN PALLETS: en el
+         depósito cuentan pallets, nadie cuenta caja por caja (dueño, 25/09).
+         Pallets y sueltas con el MISMO peso, y el total en cajas abajo y chico.
+         El pallet es siempre ENTERO y para abajo — un pallet incompleto no es un
+         pallet — y eso lo decide `en_pallets`, no esta plantilla. #}
+      {% if e.pallets %}
+      <div class="piso con-pallets">
+        <div class="par">
+          <div>
+            <span class="n {% if e.bajo %}bajo{% endif %}">{{ e.pallets[0] }}</span>
+            <span class="r">pallet{{ "" if e.pallets[0] == 1 else "s" }}</span>
+          </div>
+          <div>
+            <span class="n {% if e.bajo %}bajo{% endif %}">{{ e.pallets[1] }}</span>
+            <span class="r">suelta{{ "" if e.pallets[1] == 1 else "s" }}</span>
+          </div>
+        </div>
+        <span class="total-cajas">{{ e.stock|numero }} cajas en el piso · {{ e.cajas_por_pallet }} por pallet</span>
+      </div>
+      {% else %}
       <div class="piso">
         {% if e.stock is none %}
         <span class="n sin-arrancar">sin arrancar</span>
@@ -152,11 +179,8 @@
         <span class="n {% if e.bajo %}bajo{% endif %}">{{ e.stock|numero }}</span>
         {% endif %}
         <span class="r">en el piso</span>
-        {% if e.pallets %}
-        <span class="pallets">{{ e.pallets[0] }} pallet{{ "" if e.pallets[0] == 1 else "s" }}
-          {%- if e.pallets[1] %} y {{ e.pallets[1] }} suelta{{ "" if e.pallets[1] == 1 else "s" }}{% endif %}</span>
-        {% endif %}
       </div>
+      {% endif %}
       {# ME DEBEN y DEBO se ven SIEMPRE, aunque la cuenta del piso no haya
          arrancado: salen de los movimientos con colegas, que no dependen del
          conteo inicial. Esconderlas ahí diría que no hay nada prestado. #}
