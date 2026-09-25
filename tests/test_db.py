@@ -530,8 +530,12 @@ def test_crear_compra_asigna_el_primer_punto_de_una_guia_nueva():
 
     consultas = [llamada.args[0] for llamada in cursor.execute.call_args_list]
     assert "INSERT INTO guias_compra" in consultas[0]
-    assert "ON CONFLICT (fecha_operacion, proveedor_id) DO NOTHING" in consultas[0]
+    # SIN TARGET: aguanta el unique viejo hasta que corra guia_deposito_2.
+    assert "ON CONFLICT DO NOTHING" in consultas[0]
+    # la compra de Compras va a la guía de Compras, no a la del depósito
+    assert cursor.execute.call_args_list[0].args[1] == (date(2026, 8, 16), 200, False)
     assert "SELECT id FROM guias_compra" in consultas[1]
+    assert "de_deposito = %s" in consultas[1]
     assert "SELECT COUNT(*) FROM compras WHERE guia_id" in consultas[2]
 
     consulta_insert, parametros_insert = cursor.execute.call_args_list[3].args
@@ -10589,12 +10593,13 @@ def test_el_sin_lote_de_ANTES_no_cuenta_las_salidas_DEL_DIA_que_se_esta_cargando
 _HOY_MOVER = date(2026, 9, 19)
 
 
-def _compra_para_mover(estado="recepcionado", corte=date(2026, 8, 30)):
+def _compra_para_mover(estado="recepcionado", corte=date(2026, 8, 30), origen="compras"):
     """(conexion, cursor) con las lecturas que `mover_compra_de_fecha` hace, en orden."""
     return _conexion_falsa(
         filas_fetchone=[
             (3, date(2026, 9, 9), estado,                    # proveedor, fecha, estado
-             datetime(2026, 9, 14, 14, 35, tzinfo=timezone.utc), 5),  # procesada_el, guia vieja
+             datetime(2026, 9, 14, 14, 35, tzinfo=timezone.utc), 5,  # procesada_el, guia vieja
+             origen),                                        # retiro_origen
             (corte,),                                        # _fecha_corte
             (9,),                                            # la guía nueva
             (2,),                                            # cuántas compras tiene ya
@@ -10639,6 +10644,23 @@ def test_mover_de_fecha_DEJA_PASAR_el_dia_siguiente_al_corte():
 
     assert movida["guia_id"] == 9
     conexion.commit.assert_called_once()
+
+
+@pytest.mark.parametrize("origen, de_deposito", [
+    ("ingreso_directo", True), ("compras", False), (None, False)])
+def test_mover_de_fecha_CONSERVA_EL_ORIGEN_de_la_guia(origen, de_deposito):
+    """Un ingreso directo movido de día va a la guía de DEPÓSITO del día nuevo.
+
+    Si preguntara por la de Compras, mover de día sería la puerta por la que
+    un ingreso directo vuelve a la comanda del Puesto — la que guia_deposito_3
+    le sacó. Con los TRES orígenes: sin el de Compras al lado, una función que
+    dijera siempre `True` pasaría.
+    """
+    conexion, cursor = _compra_para_mover(origen=origen)
+    with patch("app.db.obtener_conexion", return_value=conexion):
+        db.mover_compra_de_fecha(77, date(2026, 9, 16), date(2026, 9, 17))
+    _, parametros = _sql_y_parametros_que_contienen(cursor, "INSERT INTO guias_compra")
+    assert parametros == (date(2026, 9, 16), 3, de_deposito)
 
 
 def test_mover_de_fecha_FRENA_si_la_recepcion_es_ANTERIOR_a_la_compra():
@@ -10712,7 +10734,7 @@ def test_mover_de_fecha_avisa_cuando_la_guia_VIEJA_queda_sin_renglones():
     conexion, cursor = _compra_para_mover()
     cursor.fetchone.side_effect = [
         (3, date(2026, 9, 9), "recepcionado",
-         datetime(2026, 9, 14, 14, 35, tzinfo=timezone.utc), 5),
+         datetime(2026, 9, 14, 14, 35, tzinfo=timezone.utc), 5, "compras"),
         (date(2026, 8, 30),), (9,), (2,),
         (0,),                      # la vieja quedó SIN renglones
     ]

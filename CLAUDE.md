@@ -3772,6 +3772,15 @@ arrancó", sus "esperando" y la regla de la fecha— **se fue**.
   cada pila contra lo que el sistema dice ahora. Solo ofrece proveedores y
   marcas ya cargados.
 
+- **El ingreso directo tiene SU guía** (`guias_compra.de_deposito`): "nunca
+  es parte de la comanda del Puesto". Dos guías por día y proveedor, cada
+  una numera sus renglones. El origen no se elige: sale de la compra
+  (`retiro_origen = 'ingreso_directo'`) al cargarla, al moverla de día y al
+  cambiarle el proveedor, y la comanda de la carga manual solo se cuelga de
+  la de Compras. `_guia_de_compra` anda con el unique viejo puesto y sin él
+  —`ON CONFLICT` sin target y respaldo a la guía que haya—, así que el
+  deploy no tiene ventana rota; `guia_deposito_2` y `3` van después.
+
 Los números van contra Postgres en `tests/test_vacios_pilas_contra_la_base.py`,
 con la foto EN MARZO a propósito (corolario 95) y un proveedor cuya recepción
 cae el mismo día que su foto, antes y después de la hora.
