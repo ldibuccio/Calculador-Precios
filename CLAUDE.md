@@ -3760,6 +3760,14 @@ arrancó", sus "esperando" y la regla de la fecha— **se fue**.
   la pone la recepción o una ASIGNACIÓN de Administración, que mueve de una
   pila a otra sin cambiar el total. Las FK son compuestas `(marca, proveedor)`:
   una marca de otro proveedor la rechaza la base.
+- **Las dos marcas de Recepción** (`compras.marca`, texto libre, y
+  `compras.marca_vacio_id`), opcionales, en blanco = "sin asignar". Las dos
+  puertas que recepcionan —Recibir y el rechazo parcial— las escriben en el
+  MISMO UPDATE, con un solo macro en la pantalla. La del vacío solo con seña
+  (sin seña no entra ningún cajón a Vacíos, y la escritura lo rechaza). **El
+  Detalle muestra la de la RECEPCIÓN**: si después Administración asigna esos
+  cajones a otra pila, la compra sigue diciendo con qué marca llegaron. El
+  ingreso directo no lleva seña, así que no tiene marca de vacío.
 - **La devolución sale de una PILA, sin compra**, con la seña por cajón de
   la última recepción de esa pila precargada y editable. **Sin foto del vale
   no es una devolución: es un ajuste** (guarda en la ruta y en la escritura;

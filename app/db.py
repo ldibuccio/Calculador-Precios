@@ -2126,6 +2126,10 @@ def obtener_detalle_compra(compra_id: int) -> dict | None:
                        c.estado, c.procesada_el,
                        c.cantidad_cajones_real, c.contenido_por_cajon_real, c.cantidad_fraccion_real,
                        c.cantidad_cajones_rechazada, c.motivo_rechazo,
+                       -- Las dos marcas que pone Depósito al recibir. NULL es
+                       -- "sin asignar"; el nombre de la del vacío sale de su
+                       -- tabla y no se copia a la compra.
+                       c.marca, mv.nombre AS marca_vacio,
                        -- LA MARCA DE LA CARGA RETROACTIVA, derivada y sin
                        -- columna nueva: `cargado_el` es cuándo se tipeó y
                        -- `procesada_el` cuándo entró al stock. En una compra
@@ -2144,6 +2148,7 @@ def obtener_detalle_compra(compra_id: int) -> dict | None:
                 FROM compras c
                 JOIN articulos a ON a.id = c.articulo_id
                 JOIN proveedores p ON p.id = c.proveedor_id
+                LEFT JOIN marcas_vacio mv ON mv.id = c.marca_vacio_id
                 WHERE c.id = %s
                 """,
                 (compra_id,),
@@ -2984,6 +2989,10 @@ def listar_compras_pendientes_recepcion() -> list[dict]:
                        a.nombre AS articulo_nombre, a.unidad_compra, a.unidad_conteo,
                        c.segunda_por_cajon,
                        p.nombre AS proveedor_nombre, p.codigo_puesto AS proveedor_codigo_puesto,
+                       -- El proveedor y la seña deciden si se ofrece la marca
+                       -- del VACÍO: sin seña no entra ningún cajón a Vacíos,
+                       -- y las marcas que se ofrecen son las de ESTE proveedor.
+                       c.proveedor_id, c.sena,
                        c.cantidad_cajones, c.contenido_por_cajon, c.cantidad_kilos, c.cantidad_fraccion,
                        (SELECT COUNT(*) FROM fotos_recepcion f WHERE f.compra_id = c.id) AS fotos_balanza
                 FROM compras c
@@ -3107,8 +3116,16 @@ def recepcionar_compra(
     cantidad_cajones_rechazada: float | None = None,
     motivo_rechazo: str | None = None,
     segunda_real: float | None = None,
+    marca: str | None = None,
+    marca_vacio_id: int | None = None,
 ) -> str | None:
     """Marca una compra como recepcionada, con los valores REALES que pesó/contó Depósito.
+
+    LAS DOS MARCAS (dueño, 25/09), opcionales y en NULL = "sin asignar":
+    `marca` es la de la MERCADERÍA, texto libre; `marca_vacio_id` es la del
+    CAJÓN, elegida de las cargadas en Vacíos para ESE proveedor, y solo si la
+    compra dejó seña — sin seña no entra ningún vacío a la pila. Ver
+    `_recepcionar_compra`.
 
     Ver _derivar_valores_reales para el significado de valor_real según la
     unidad de compra del artículo. El estimado (cantidad_cajones/
@@ -3135,10 +3152,17 @@ def recepcionar_compra(
     conexion = obtener_conexion()
     try:
         with conexion.cursor() as cursor:
-            aviso, numero_guia = _recepcionar_compra(
-                cursor, compra_id, cantidad_cajones_real, valor_real,
-                cantidad_cajones_rechazada, motivo_rechazo, segunda_real,
-            )
+            try:
+                aviso, numero_guia = _recepcionar_compra(
+                    cursor, compra_id, cantidad_cajones_real, valor_real,
+                    cantidad_cajones_rechazada, motivo_rechazo, segunda_real,
+                    marca, marca_vacio_id,
+                )
+            except psycopg2.errors.ForeignKeyViolation as error:
+                # La FK compuesta (marca, proveedor) decide si la marca es de
+                # ESTE proveedor; acá solo se traduce. No hay otra FK en ese
+                # UPDATE que pueda saltar.
+                raise _traducir_marca_ajena(error) from error
         conexion.commit()
         return aviso, numero_guia
     finally:
@@ -3153,8 +3177,17 @@ def _recepcionar_compra(
     cantidad_cajones_rechazada: float | None = None,
     motivo_rechazo: str | None = None,
     segunda_real: float | None = None,
+    marca: str | None = None,
+    marca_vacio_id: int | None = None,
 ) -> tuple[str | None, int | None]:
     """La escritura de la recepción, con el cursor abierto. Devuelve (aviso, numero_de_guia).
+
+    LAS MARCAS VAN EN EL MISMO UPDATE que la recepción, y las dos pasan por
+    acá — la recepción normal y la del rechazo parcial— así que no hay una
+    segunda puerta que se olvide de escribirlas. Que la marca del vacío sea de
+    este proveedor lo decide la FK compuesta de la base; que la compra haya
+    dejado seña se pregunta acá, porque sin seña esos cajones no entran a
+    ninguna pila y la marca quedaría pegada a nada.
 
     ACÁ SE DISPARA LA GUÍA R EN ORIGEN, y por eso este cuerpo está separado
     de `recepcionar_compra`: es el único lugar por donde pasan TODAS las
@@ -3197,6 +3230,18 @@ def _recepcionar_compra(
         unidad_compra, cantidad_cajones_real, valor_real, segunda_real
     )
 
+    marca = (marca or "").strip() or None
+    if marca_vacio_id is not None:
+        # Solo cuando se eligió una: la recepción de todos los días no paga
+        # esta lectura. Sin agregado, así `None` es "no existe" (corolario 27).
+        cursor.execute("SELECT COALESCE(sena, 0) > 0 FROM compras WHERE id = %s", (compra_id,))
+        con_sena = cursor.fetchone()
+        if not (con_sena and con_sena[0]):
+            raise ValueError(
+                "Esta compra no dejó seña, así que sus cajones no entran a Vacíos: "
+                "no hay marca de vacío que ponerle."
+            )
+
     cursor.execute(
         """
         UPDATE compras
@@ -3208,6 +3253,8 @@ def _recepcionar_compra(
             segunda_por_cajon_real = %s,
             cantidad_cajones_rechazada = %s,
             motivo_rechazo = %s,
+            marca = %s,
+            marca_vacio_id = %s,
             procesada_el = now()
         WHERE id = %s
         """,
@@ -3219,6 +3266,8 @@ def _recepcionar_compra(
             segunda_por_cajon_real,
             cantidad_cajones_rechazada,
             motivo_rechazo,
+            marca,
+            marca_vacio_id,
             compra_id,
         ),
     )

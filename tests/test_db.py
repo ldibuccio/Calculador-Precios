@@ -1101,7 +1101,7 @@ def test_recepcionar_compra_articulo_por_kilo_toma_kilos_por_bulto_y_deriva_el_t
     assert "estado = 'recepcionado'" in consulta_update
     assert "procesada_el = now()" in consulta_update
     (cajones, contenido, kilos, fraccion, segunda_cajon,
-         rechazada, motivo, compra_id) = parametros_update
+         rechazada, motivo, marca, marca_vacio, compra_id) = parametros_update
     assert cajones == 38
     assert contenido == 20  # tomado directo, sin dividir
     assert kilos == 760  # 38 × 20, derivado
@@ -1109,6 +1109,8 @@ def test_recepcionar_compra_articulo_por_kilo_toma_kilos_por_bulto_y_deriva_el_t
     # Recepción normal: sin rechazo parcial (y borra cualquier resto viejo).
     assert rechazada is None
     assert motivo is None
+    # Sin marcas elegidas: las dos quedan "sin asignar", en NULL.
+    assert (marca, marca_vacio) == (None, None)
     assert compra_id == 30
     assert (aviso, numero_guia) == (None, None)
     # Se auto-retira: UPDATE con estado_retiro = 'retirado', origen 'deposito'.
@@ -1132,7 +1134,7 @@ def test_recepcionar_compra_articulo_por_unidad_toma_unidades_por_cajon_y_deriva
 
     _, parametros_update = _sql_y_parametros_que_contienen(cursor, "UPDATE compras")
     (cajones, contenido, kilos, fraccion, segunda_cajon,
-         rechazada, motivo, compra_id) = parametros_update
+         rechazada, motivo, marca, marca_vacio, compra_id) = parametros_update
     assert contenido == 118  # tomado directo, sin dividir
     assert kilos is None
     assert fraccion == 1180  # 10 × 118, derivado
@@ -1244,7 +1246,7 @@ def test_recepcionar_compra_con_rechazo_parcial_guarda_el_registro():
     assert "cantidad_cajones_rechazada = %s" in consulta_update
     assert "motivo_rechazo = %s" in consulta_update
     (cajones, contenido, kilos, fraccion, segunda_cajon,
-         rechazada, motivo, compra_id) = parametros_update
+         rechazada, motivo, marca, marca_vacio, compra_id) = parametros_update
     assert cajones == 8  # los aceptados, no los llegados
     assert kilos == 160  # 8 × 20: el total real sale de los aceptados
     assert rechazada == 2
@@ -9812,7 +9814,7 @@ def test_recepcionar_con_las_DOS_magnitudes_deriva_los_DOS_totales():
         recepcionar_compra(30, cantidad_cajones_real=10, valor_real=9, segunda_real=15)
 
     _, parametros = _sql_y_parametros_que_contienen(cursor, "UPDATE compras")
-    cajones, contenido, kilos, fraccion, segunda_cajon, _, _, _ = parametros
+    cajones, contenido, kilos, fraccion, segunda_cajon, _, _, _, _, _ = parametros
     assert cajones == 10
     assert contenido == 9, "contenido_por_cajon_real es el de unidad_compra, directo"
     assert fraccion == 90, "10 × 9 unidades"
@@ -9855,7 +9857,7 @@ def test_la_recepcion_NO_pide_la_segunda_si_la_compra_trajo_UNA():
         recepcionar_compra(30, cantidad_cajones_real=38, valor_real=20)
 
     _, parametros = _sql_y_parametros_que_contienen(cursor, "UPDATE compras")
-    _, _, kilos, fraccion, segunda_cajon, _, _, _ = parametros
+    _, _, kilos, fraccion, segunda_cajon, _, _, _, _, _ = parametros
     assert kilos == 760
     assert fraccion is None, "la que la compra no declaró queda en None, no en cero"
 
@@ -11035,7 +11037,7 @@ def test_la_RECEPCION_escribe_la_segunda_REAL_tal_como_la_conto_deposito():
     assert "segunda_por_cajon_real = %s" in consulta
 
     (cajones, contenido, kilos, fraccion, segunda_cajon,
-     _, _, _) = parametros
+     _, _, _, _, _) = parametros
     # POR POSICIÓN y no con un `in`: el total (370) TAMBIÉN está en la tupla
     # —`cantidad_fraccion_real` se sigue guardando— así que preguntar si 37
     # está adentro pasa igual con las dos columnas al revés.
