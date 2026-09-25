@@ -390,3 +390,19 @@ PALMALA   3 · 4 · 6 · 2 · YES ·  0 devoluciones ·  0 sin foto
 foto de Frutamax son las viejas y quedan como están (dueño): el CHECK del
 bloque 5 entra `not valid`. Falta el bloque 5, después del deploy, y ahí la
 verificación tiene que dar `3 · 4 · 6 · 3 · YES`.
+
+## 25/09 — `guia_deposito_2` y `guia_deposito_3` (post-deploy de v991)
+
+Corridos seguidos, con `db/guia_deposito_4_verificacion.sql` aparte.
+
+```
+FRUTAMAX  columna 1 · único 1 · únicos 1 · 0 mal ubicadas · 13 guías de depósito · deposito_con_fotos 2 · 15 ingresos directos
+PALMALA   columna 1 · único 1 · únicos 1 · 0 mal ubicadas ·  6 guías de depósito · deposito_con_fotos 1 ·  9 ingresos directos
+```
+
+**Lo que identifica la base son los ingresos directos** —15 contra 9—. Las
+compras quedaron bien. `deposito_con_fotos` no dio 0 y se abrió
+`db/guia_deposito_5_fotos_en_guias_de_deposito.sql` para ver de dónde vino
+cada foto antes de tocar nada. **Y el "tiene que dar 0" de la verificación
+era de más**: la pantalla Fotos de la guía de una compra de ingreso directo
+cuelga la foto de SU guía, que ahora es la de depósito, y eso es correcto.
