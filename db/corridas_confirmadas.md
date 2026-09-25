@@ -431,3 +431,27 @@ de la guía de Compras (`agregar_foto_guia_del_dia` pregunta `de_deposito =
 false`). Por eso `deposito_con_fotos` de Frutamax va a seguir dando 1 más las
 fotos que se suban desde una compra de ingreso directo — ninguna de las dos
 cosas es un error.
+
+## 25/09 — `vacios_marcas_5_foto_obligatoria` (post-deploy)
+
+El CHECK de la foto del vale, NOT VALID, corrido después del deploy del código
+que ya la exige. Verificación `vacios_marcas_6`, en las dos bases:
+
+```
+PALMALA   3 · 4 · 6 · 3 · YES ·  0 devoluciones ·  0 sin foto
+FRUTAMAX  3 · 4 · 6 · 3 · YES · 13 devoluciones · 13 sin foto
+```
+
+`guardas_de_3` pasó de 2 a 3, que es lo único que este bloque mueve. Las 13
+sin foto de Frutamax son las devoluciones de antes de la regla y quedan como
+están (decisión del dueño): el NOT VALID no las revisa, y toda fila nueva lo
+cumple. **Palmala no vota** —solo confirma que el bloque no explota—. El CHECK
+entró a `db/esquema_completo.sql` en el mismo commit, validado: una base nueva
+no tiene filas viejas.
+
+**Y ese NOT VALID dejó una pared puesta**, encontrada el mismo día al cerrar
+Vacíos: NOT VALID exime a lo viejo solo del chequeo al crearse, y todo UPDATE
+posterior se chequea — así que **las 13 viejas de Frutamax no se pueden
+anular** desde que corrió. Lo arregla `vacios_marcas_7_las_viejas_se_anulan`
+(pendiente de correr), que exime a las que van contra una compra y deja el
+CHECK validado.

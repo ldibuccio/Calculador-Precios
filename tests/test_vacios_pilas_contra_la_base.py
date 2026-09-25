@@ -141,6 +141,46 @@ def test_sin_FOTO_no_es_una_devolucion(base):
     assert _pilas(901)[0]["EJ Roja"] == 11
 
 
+def test_la_BASE_rechaza_el_vale_sin_foto_por_INSERT_y_por_UPDATE(base):
+    """vacios_dev_con_foto, sin pasar por la guarda de la escritura (solo lo nuevo, sin compra).
+
+    El UPDATE es el caso que importa: olvidar_foto_borrada ponía la ruta en
+    NULL, y con el CHECK puesto eso rebota y tira la limpieza de fotos entera.
+    Por eso el vale salió de la retención (25/09)."""
+    import psycopg2
+    conexion = psycopg2.connect(base)
+    try:
+        with conexion.cursor() as cursor:
+            for sentencia in (
+                "INSERT INTO vacios_deposito_devoluciones (proveedor_id, cantidad, stock_sistema) "
+                "VALUES (901, 1, 0)",
+                "UPDATE vacios_deposito_devoluciones SET foto_ruta = NULL WHERE proveedor_id = 901",
+                "UPDATE vacios_deposito_devoluciones SET foto_ruta = '  ' WHERE proveedor_id = 901",
+            ):
+                with pytest.raises(psycopg2.errors.CheckViolation, match="vacios_dev_con_foto"):
+                    cursor.execute(sentencia)
+                conexion.rollback()
+            # el caso que tiene que PASAR (corolario 30)
+            cursor.execute("UPDATE vacios_deposito_devoluciones SET foto_ruta = 'otra.jpg' "
+                           "WHERE proveedor_id = 901")
+            assert cursor.rowcount == 3
+            # Y LA VIEJA, contra una compra y sin foto, se puede ANULAR. Con el
+            # CHECK de vacios_marcas_5 (NOT VALID, sin eximir) rebotaba: NOT
+            # VALID no exime a lo viejo de los UPDATE (vacios_marcas_7).
+            cursor.execute("SELECT id FROM compras WHERE proveedor_id = 901 LIMIT 1")
+            (compra_id,), = cursor.fetchall()
+            cursor.execute("INSERT INTO vacios_deposito_devoluciones "
+                           "(proveedor_id, compra_id, cantidad, stock_sistema) "
+                           "VALUES (901, %s, 1, 0) RETURNING id", (compra_id,))
+            vieja = cursor.fetchone()[0]
+            cursor.execute("UPDATE vacios_deposito_devoluciones SET anulado_el = now() "
+                           "WHERE id = %s", (vieja,))
+            assert cursor.rowcount == 1
+    finally:
+        conexion.rollback()
+        conexion.close()
+
+
 def test_la_base_RECHAZA_una_marca_de_OTRO_proveedor(base):
     import app.db as db
     with pytest.raises(ValueError, match="no es de este proveedor"):

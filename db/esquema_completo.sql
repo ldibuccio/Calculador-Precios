@@ -814,13 +814,17 @@ create table vacios_deposito_devoluciones (
     foto_ruta      text,
     stock_sistema  integer not null,
     creado_en      timestamptz not null default now(),
-    anulado_el     timestamptz
+    anulado_el     timestamptz,
+    -- SIN FOTO NO ES UNA DEVOLUCIÓN (dueño, 25/09): lo que no tiene foto es un
+    -- ajuste. Las viejas (contra una COMPRA, modelo anterior al 25/09) quedan
+    -- eximidas: con NOT VALID no se podían ni anular (vacios_marcas_7).
+    constraint vacios_dev_con_foto check (compra_id is not null or btrim(coalesce(foto_ruta, '')) <> '')
 );
 
 comment on table vacios_deposito_devoluciones is 'Salida: se le devuelven al proveedor SUS cajones vacíos. Es lo único que se carga a mano del circuito del depósito — las entradas se derivan de las recepciones.';
-comment on column vacios_deposito_devoluciones.compra_id is 'CONTRA QUÉ COMPRA se aplica el vale. Obligatorio: el descuento no es una cuenta corriente contra el proveedor, vive pegado a la compra concreta contra la que se entregó el vale.';
+comment on column vacios_deposito_devoluciones.compra_id is 'Solo en las devoluciones anteriores al 25/09, que se cargaban contra una compra. Desde el 25/09 la devolución sale de una PILA (proveedor y marca) y no nombra ninguna compra.';
 comment on column vacios_deposito_devoluciones.importe is 'Lo que ese vale descuenta, si tiene importe. NO toca compras.importe ni el costeo: el descuento vive SOLO acá. NULLABLE porque una devolución puede no tener plata atrás.';
-comment on column vacios_deposito_devoluciones.stock_sistema is 'Stock derivado (entradas − devoluciones, sin este movimiento) EN el instante de guardar. Mismo criterio que vacios_devueltos del puesto.';
+comment on column vacios_deposito_devoluciones.stock_sistema is 'Stock de la PILA de la que sale (sin este movimiento) EN el instante de guardar. Mismo criterio que vacios_devueltos del puesto.';
 comment on column vacios_deposito_devoluciones.anulado_el is 'NULL = vigente. Se anula, nunca se borra: el stock lo excluye y el registro queda como corrección.';
 
 create table conteos_vacios_deposito (
@@ -833,8 +837,8 @@ create table conteos_vacios_deposito (
     marca_vacio_id bigint
 );
 
-comment on table conteos_vacios_deposito is 'Conteo físico de los cajones de un proveedor que hay en el galpón. El primero de cada proveedor es su BASE: antes de él no hay cuenta, y las recepciones anteriores a su fecha quedan absorbidas.';
-comment on column conteos_vacios_deposito.fecha is 'El día del conteo, que es lo que decide qué recepciones se suman y cuáles quedan absorbidas. Va aparte de creado_en porque se puede contar hoy y fechar ayer.';
+comment on table conteos_vacios_deposito is 'Conteo físico de una PILA (proveedor y marca) de cajones en el galpón. Desde el 25/09 no arranca ni mueve la cuenta: va al COTEJO, al lado de lo que dice el sistema.';
+comment on column conteos_vacios_deposito.fecha is 'El día del conteo. Va aparte de creado_en porque se puede contar hoy y fechar ayer.';
 comment on column conteos_vacios_deposito.stock_sistema is 'Stock derivado EN el instante del conteo, guardado del lado del server: el que cuenta no lo ve. Si lo viera, transcribe en vez de contar.';
 
 -- EL CORTE DE LOS VACÍOS DEL DEPÓSITO (dueño, 25/09): la foto de lo que el
@@ -852,9 +856,8 @@ comment on table vacios_deposito_foto is 'Stock de vacíos del depósito al cier
 -- LAS MARCAS DE LOS VACÍOS (dueño, 25/09). El stock de vacíos del depósito
 -- se lleva por proveedor y por marca. Las FK compuestas (marca, proveedor)
 -- hacen que la BASE rechace una marca de otro proveedor. Ver
--- db/vacios_marcas_1..4.sql. El CHECK de la foto (vacios_marcas_5) entra
--- acá en el mismo commit que el código que la exige: el de hoy todavía deja
--- cargar una devolución sin foto.
+-- db/vacios_marcas_1..5.sql (el 5 es el CHECK de la foto, que está arriba,
+-- en vacios_deposito_devoluciones).
 create table marcas_vacio (
     id                 bigint generated always as identity primary key,
     proveedor_id       bigint not null references proveedores (id),

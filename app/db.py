@@ -5585,8 +5585,8 @@ def listar_fotos_para_limpiar(fecha_corte) -> list[str]:
     candidato si TODAS las guías que lo usan son de antes de fecha_corte —
     MAX(fecha de guía) por ruta, una sola pasada.
 
-    Los SEIS tipos del bucket entran acá, con el MISMO corte: una sola
-    perilla de retención. Que sea la misma es una decisión, no una
+    CINCO de los seis tipos del bucket entran acá, con el MISMO corte: una
+    sola perilla de retención. Que sea la misma es una decisión, no una
     herencia — si alguno tiene que durar distinto, la razón va escrita acá.
 
     - comandas (fotos_guia), por la fecha de la guía.
@@ -5594,7 +5594,16 @@ def listar_fotos_para_limpiar(fecha_corte) -> list[str]:
     - capturas del mail (fotos_pedido), por la fecha del pedido.
     - archivos de precios (precios_venta_historial), por cuando se subieron.
     - fotos de merma (fotos_merma), por la fecha del movimiento.
-    - vales de vacíos del depósito (vacios_deposito_devoluciones).
+
+    EL SEXTO, EL VALE DE VACÍOS, NO VENCE (25/09), y ésta es la razón
+    escrita: desde `vacios_dev_con_foto` la foto es PARTE de la devolución
+    —sin foto del vale no es una devolución, es un ajuste— así que la base
+    rechaza la fila sin ruta. Vencerla obligaría a olvidar_foto_borrada a
+    ponerla en NULL, el CHECK rebotaría, y como es una sola transacción se
+    caería la limpieza ENTERA. Borrar el archivo y dejar la ruta sería "Ver
+    foto" roto sin síntoma. No afecta la convergencia del bucket: no hay
+    ningún vale con foto anterior al prefijo `vacios/` (las 13 de Frutamax
+    anteriores al CHECK no tienen foto).
 
     (Este párrafo decía CUATRO y ya listaba cuatro cuando la función tocaba
     seis: la merma entró sin que nadie lo actualizara. Es el comentario que
@@ -5607,7 +5616,7 @@ def listar_fotos_para_limpiar(fecha_corte) -> list[str]:
     eso converge únicamente si lo viejo se va venciendo — con dos tipos
     inmortales, la mitad plana no se iba nunca.
 
-    Van con olvidar_foto_borrada, que limpia las CUATRO tablas: separarlas
+    Van con olvidar_foto_borrada, que limpia las MISMAS tablas: separarlas
     deja el archivo borrado del bucket y la fila viva, que es "Ver foto"
     roto sin ningún síntoma.
     """
@@ -5659,21 +5668,8 @@ def listar_fotos_para_limpiar(fecha_corte) -> list[str]:
                 SELECT f.foto_ruta FROM fotos_merma f
                 JOIN remitos_segunda r ON r.id = f.salida_segunda_id
                 WHERE r.fecha_operacion < %s
-                UNION
-                -- EL VALE DE VACÍOS DEL DEPÓSITO. La ruta es una columna y no
-                -- una tabla de fotos, igual que en precios, así que va con
-                -- GROUP BY + MAX: nada impide que dos vales compartan archivo.
-                --
-                -- La ANULADA también entra: la foto es el registro de lo que
-                -- se afirmó y no se borra al anular, pero a los 3 años se va
-                -- como todo lo demás.
-                SELECT d.foto_ruta FROM vacios_deposito_devoluciones d
-                WHERE d.foto_ruta IS NOT NULL
-                GROUP BY d.foto_ruta
-                HAVING MAX(d.creado_en) < ((%s::date)::timestamp AT TIME ZONE 'America/Argentina/Buenos_Aires')
                 """,
-                (fecha_corte, fecha_corte, fecha_corte, fecha_corte, fecha_corte, fecha_corte,
-                 fecha_corte),
+                (fecha_corte, fecha_corte, fecha_corte, fecha_corte, fecha_corte, fecha_corte),
             )
             filas = cursor.fetchall()
         return [fila[0] for fila in filas]
@@ -5714,20 +5710,15 @@ def olvidar_foto_borrada(foto_ruta: str) -> None:
                 "UPDATE precios_venta_historial SET foto_ruta = NULL WHERE foto_ruta = %s", (foto_ruta,)
             )
             filas_tocadas += cursor.rowcount
-            # Tampoco se borra la fila del vale, y por lo mismo: la devolución
-            # es el dato —cuántos cajones salieron y contra qué compra— y la
-            # foto era de dónde salió. Borrarla se llevaría el movimiento de
-            # stock puesto.
-            cursor.execute(
-                "UPDATE vacios_deposito_devoluciones SET foto_ruta = NULL WHERE foto_ruta = %s",
-                (foto_ruta,),
-            )
-            filas_tocadas += cursor.rowcount
+            # El vale de vacíos NO está acá, a propósito: su foto no vence
+            # (ver listar_fotos_para_limpiar) y el CHECK vacios_dev_con_foto
+            # rechaza la ruta en NULL, así que un UPDATE acá haría caer la
+            # limpieza entera.
             if filas_tocadas == 0:
                 raise ValueError(
                     f"El archivo {foto_ruta} ya se borró del Storage y no tenía fila en ninguna "
                     "de las tablas que guardan rutas (fotos_guia, fotos_recepcion, fotos_pedido, "
-                    "fotos_merma, precios_venta_historial, vacios_deposito_devoluciones): o alguien "
+                    "fotos_merma, precios_venta_historial): o alguien "
                     "la borró en el medio, o esta "
                     "función está mirando tablas que no son"
                 )

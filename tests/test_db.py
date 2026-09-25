@@ -1896,7 +1896,10 @@ def test_listar_fotos_para_limpiar_devuelve_los_foto_ruta_encontrados():
     assert "FROM fotos_pedido" in consulta
     assert "FROM precios_venta_historial" in consulta
     assert "FROM fotos_merma" in consulta
-    assert "FROM vacios_deposito_devoluciones" in consulta
+    # EL VALE DE VACÍOS NO VENCE (25/09): su foto es parte de la
+    # devolución desde vacios_dev_con_foto, y ponerla en NULL rebotaría y
+    # tiraría la limpieza entera. Si vuelve a entrar, el CHECK lo frena.
+    assert "vacios_deposito_devoluciones" not in consulta
     # Y la merma son DOS patas, no una: sus dos dueños posibles viven en
     # tablas distintas (movimientos_stock para el stock normal,
     # remitos_segunda para el pool). Con una sola, las fotos del otro dueño
@@ -1904,12 +1907,12 @@ def test_listar_fotos_para_limpiar_devuelve_los_foto_ruta_encontrados():
     assert consulta.count("FROM fotos_merma") == 2
     assert "JOIN movimientos_stock m" in consulta
     assert "JOIN remitos_segunda r" in consulta
-    # LA ESTRUCTURA ADEMÁS DE LOS NOMBRES: siete patas unidas por seis
+    # LA ESTRUCTURA ADEMÁS DE LOS NOMBRES: seis patas unidas por cinco
     # UNION. Sin este conteo, una pata que se caiga entera deja los nombres
     # de arriba en verde —los demás siguen estando— y el test no lo ve.
-    assert consulta.count("UNION") == 6, "se cayó (o se agregó) una pata del UNION"
-    assert parametros == (date(2023, 8, 15),) * 7, (
-        "el corte va a las SIETE patas del UNION, y es el mismo: una sola perilla"
+    assert consulta.count("UNION") == 5, "se cayó (o se agregó) una pata del UNION"
+    assert parametros == (date(2023, 8, 15),) * 6, (
+        "el corte va a las SEIS patas del UNION, y es el mismo: una sola perilla"
     )
 
 
@@ -1949,10 +1952,10 @@ def test_olvidar_foto_borrada_limpia_TODAS_las_tablas_donde_vive_una_ruta():
     # era solo de dónde salió. Se le saca la ruta, que es lo que quedó
     # apuntando a un archivo que no existe.
     assert any("UPDATE precios_venta_historial SET foto_ruta = NULL" in c for c in consultas)
-    # El vale de vacíos tampoco: la devolución es el dato —cuántos cajones
-    # salieron y contra qué compra— y la foto era de dónde salió.
-    assert any("UPDATE vacios_deposito_devoluciones SET foto_ruta = NULL" in c for c in consultas)
-    assert len(consultas) == 6, (
+    # El vale de vacíos NO: su foto no vence, y el CHECK vacios_dev_con_foto
+    # rechaza la ruta en NULL — el UPDATE tiraría la limpieza entera.
+    assert not any("vacios_deposito_devoluciones" in c for c in consultas)
+    assert len(consultas) == 5, (
         "apareció otra tabla con foto_ruta: agregala acá o la ruta huérfana "
         "no se va a limpiar nunca, y el contador la va a contar como borrada"
     )
