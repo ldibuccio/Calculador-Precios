@@ -2296,6 +2296,20 @@ operario tiene adelante lo decide el CSS, que el test no corre. Un assert
 sobre el atributo prueba que la orden se dio; no prueba que se haya
 cumplido. Los dos casos de acá tenían la orden dada.
 
+**Y VOLVIÓ EL 25/09 POR EL OTRO LADO: la orden de MOSTRAR se fue.** El
+selector de colega de Cajas nace `hidden` y lo muestra un script al elegir un
+movimiento de colega. En el rearmado del 20/09 el `<script>` se borró junto
+con el bloque viejo y no volvió: la opción estaba en el selector, el POST la
+aceptaba, el colega estaba cargado, y **no había forma de elegirlo**. Lo
+destapó el dueño usándolo, cinco días después. Ahora lo cuida un test en
+navegador que entra por `/compras` Y por `/administracion` —la `action` lleva
+el prefijo, y el selector viejo por la action exacta solo andaba en una— y
+pregunta `getComputedStyle` en las dos direcciones.
+
+**La señal, para el próximo rearmado**: si una plantilla tiene un `hidden`
+que algo tiene que sacar, `grep` de quién lo saca. Un `hidden` sin nadie que
+lo toque es un campo que no existe.
+
 Corolario 33, del 09/09: **estuve a punto de escribir acá, como hecho, una
 afirmación negativa que era falsa** — y lo que la frenó no fue saber la
 regla, fue el reflejo de verificar de más justo antes de dejarla escrita.

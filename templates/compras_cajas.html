@@ -375,6 +375,37 @@
       puede deber Grandes mientras vos le debés Chicas, y sumarlas diría que
       están a mano.</p>
   </div>
+<script>
+  // El campo del colega solo aparece cuando el movimiento es con un colega.
+  // QUIÉN DECIDE ES `data-colega`, puesto por la plantilla desde el mapa: si
+  // el JS lo dedujera del prefijo del valor, serían TRES lugares diciendo
+  // cuáles son los orígenes de colega en vez de uno.
+  //
+  // Se busca el formulario POR EL CAMPO y no por su `action`: la action lleva
+  // el prefijo del sector (Compras o Administración), y el selector viejo
+  // por la action exacta es justo lo que se perdió en el rearmado del 20/09
+  // —el script se fue, el campo quedó `hidden` para siempre, y no se podía
+  // cargar ningún movimiento con un colega—.
+  //
+  // Y ES COMODIDAD, NO GUARDA: el que decide es el CHECK
+  // movimientos_envase_colega_segun_origen. Un formulario armado a mano entra
+  // igual y la base lo rechaza, que es donde tiene que rebotar.
+  (function () {
+    var origen = document.getElementById('mv-origen');
+    var colega = document.getElementById('mv-colega');
+    if (!origen || !colega) { return; }
+    var campo = colega.closest('.campo-colega');
+    function refrescar() {
+      var elegida = origen.options[origen.selectedIndex];
+      var esDeColega = !!(elegida && elegida.dataset.colega);
+      campo.hidden = !esDeColega;
+      colega.required = esDeColega;
+      if (!esDeColega) { colega.value = ''; }
+    }
+    origen.addEventListener('change', refrescar);
+    refrescar();
+  })();
+</script>
 {% include "_pie_version.html" %}
 </body>
 </html>

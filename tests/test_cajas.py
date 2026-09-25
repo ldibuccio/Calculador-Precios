@@ -2453,3 +2453,83 @@ def test_la_columna_que_SEPARA_los_dos_origenes_existe_y_la_pantalla_la_dibuja()
     # Y CUANDO NO HAY, NO SE DIBUJA: un "0 de pase" en cada fila sería ruido
     # en la mayoría, y el total está al lado para leer el cero.
     assert marcado.count("del depósito") == 1
+
+
+# ---------------------------------------------------------------------------
+# El selector del colega SE VE cuando el movimiento es con un colega
+# ---------------------------------------------------------------------------
+
+UN_COLEGA = [{"id": 7, "nombre": "EJEMPLO Colega"}]
+
+
+def _cajas_renderizada(ruta):
+    """La pantalla de Cajas tal como la sirve la ruta, con UN colega cargado.
+
+    Las dos entradas —Compras y Administración— comparten la plantilla y cada
+    una le pone su prefijo a la `action` del formulario. Por eso el test entra
+    por las DOS: un script que buscara el formulario por la action de una
+    sola andaría en esa y quedaría muerto en la otra.
+    """
+    from app.main import PUERTA_ADMINISTRACION
+    with patch.dict(os.environ, {"CLAVE_ADMINISTRACION": "admin-secreta"}), \
+         patch("app.main.stock_de_envases", return_value=UN_ENVASE_BAJO), \
+         patch("app.main.cuentas_de_colegas", return_value=[]), \
+         patch("app.main.listar_colegas", return_value=UN_COLEGA):
+        cliente.cookies.set(PUERTA_ADMINISTRACION.cookie, PUERTA_ADMINISTRACION.firma("admin-secreta"))
+        try:
+            respuesta = cliente.get(ruta)
+        finally:
+            cliente.cookies.delete(PUERTA_ADMINISTRACION.cookie)
+    assert respuesta.status_code == 200, ruta
+    assert 'value="7">EJEMPLO Colega' in respuesta.text, "el colega no llegó al selector"
+    return respuesta.text
+
+
+@pytest.mark.parametrize("ruta", ["/compras/cajas", "/administracion/cajas"])
+def test_el_selector_del_COLEGA_se_VE_al_elegir_un_movimiento_de_colega(ruta):
+    """Del 25/09, y es del dueño: *"no puedo asignarle cajas a un colega"*.
+
+    El campo nace `hidden` y lo muestra un script cuando el origen elegido es
+    de colega. En el rearmado de Cajas del 20/09 el script SE FUE y el campo
+    quedó escondido para siempre: la opción de colega estaba en el selector,
+    el POST la aceptaba, y el colega no se podía elegir. Ningún test lo vio
+    porque todos leían el MARCADO, donde el campo está — lo que faltaba era
+    que se viera (corolario 32: el atributo es la intención, no el efecto).
+
+    Por eso esto corre en un navegador y pregunta `getComputedStyle`, con las
+    DOS mitades: que aparezca con un origen de colega, y que se vaya con uno
+    que no lo es. Con una sola, un campo siempre visible pasa igual.
+    """
+    pytest.importorskip("playwright", reason="lo que se ve lo decide el navegador")
+    from playwright.sync_api import sync_playwright
+    from scripts.medir_layout import CHROMIUM
+
+    html = _cajas_renderizada(ruta)
+    origen_de_colega = next(iter(ORIGENES_DE_COLEGA))
+    with sync_playwright() as p:
+        navegador = p.chromium.launch(executable_path=CHROMIUM)
+        pagina = navegador.new_page(viewport={"width": 390, "height": 844})
+        pagina.set_content(html)
+        ver = """() => {
+            const s = document.getElementById('mv-colega');
+            const c = s.closest('.campo');
+            return {display: getComputedStyle(c).display, requerido: s.required};
+        }"""
+        # El formulario vive en un <details> cerrado: se abre como lo abre
+        # el dueño, tocando "Cargar un movimiento".
+        pagina.click("summary:has-text('Cargar un movimiento')")
+        al_abrir = pagina.evaluate(ver)
+        pagina.select_option("#mv-origen", origen_de_colega)
+        con_colega = pagina.evaluate(ver)
+        pagina.select_option("#mv-colega", "7")
+        pagina.select_option("#mv-origen", "compra")
+        sin_colega = pagina.evaluate(ver)
+        elegido_despues = pagina.eval_on_selector("#mv-colega", "s => s.value")
+        navegador.close()
+
+    assert al_abrir == {"display": "none", "requerido": False}
+    assert con_colega["display"] != "none", "el selector del colega no se ve"
+    assert con_colega["requerido"] is True
+    assert sin_colega == {"display": "none", "requerido": False}
+    # Y no viaja un colega colgado en una compra: la base lo rechazaría.
+    assert elegido_despues == ""
