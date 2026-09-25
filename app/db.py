@@ -2292,15 +2292,15 @@ def crear_compra(
     extra, nunca bloquea guardar la compra). Cuando varios renglones salen
     de la misma foto, comparten la misma foto_ruta.
 
-    La guía (para Depósito) es una por proveedor por día: se crea o
-    reusa la fila de guias_compra para (fecha_operacion, proveedor_id) con
-    ON CONFLICT DO NOTHING, y el punto dentro de la guía (el ".1"/".2"/
+    La guía (para Depósito) es una por proveedor por día Y POR ORIGEN: se
+    crea o reusa en `_guia_de_compra`, y el punto dentro de la guía (el ".1"/".2"/
     ".3") es la cantidad de compras que ya tiene esa guía más uno — se
     graba una sola vez acá, nunca se recalcula después, así que borrar un
     renglón más adelante no renumera a los demás. Todo en la misma
-    transacción que el INSERT de la compra. Igual con o sin
-    ingreso_directo_deposito: la guía es la misma cuenta, no importa por
-    dónde entró la mercadería.
+    transacción que el INSERT de la compra. DESDE EL 25/09 el ingreso
+    directo va a SU PROPIA guía (`de_deposito`), no a la de Compras de ese
+    proveedor ese día: "el ingreso directo de Depósito nunca es parte de la
+    comanda del Puesto" (dueño).
 
     estado arranca en 'pendiente' (queda a la espera de Recepción en
     Depósito) — se escribe acá explícitamente, a propósito SIN default a
@@ -2529,7 +2529,8 @@ def _insertar_compra_con_guia(
     puertas por las que este caso no se puede registrar, y el operario volvería
     a la guía R a mano. Va en la misma transacción que el insert.
     """
-    guia_id, guia_punto = _guia_de_compra(cursor, fecha_operacion, proveedor_id)
+    guia_id, guia_punto = _guia_de_compra(cursor, fecha_operacion, proveedor_id,
+                                          de_deposito=ingreso_directo_deposito)
 
     # La foto cuelga de la GUÍA, no del renglón: se registra una vez por
     # guía (el ON CONFLICT absorbe los N renglones de la misma comanda).
@@ -3883,33 +3884,68 @@ def _mismo_dia_otra_hora(momento, nuevo_dia):
     return local.replace(year=nuevo_dia.year, month=nuevo_dia.month, day=nuevo_dia.day)
 
 
-def _guia_de_compra(cursor, fecha_operacion, proveedor_id: int) -> tuple[int, int]:
-    """La guía de ese proveedor ese día —creándola si no existe— y el punto que sigue.
+def _guia_de_compra(cursor, fecha_operacion, proveedor_id: int,
+                    de_deposito: bool) -> tuple[int, int]:
+    """La guía de ese proveedor ese día y de ese ORIGEN —creándola si no existe— y el punto que sigue.
 
     Sale de `crear_compra`, donde estaba escrito en línea: mover una compra de
     día es MUDARLA a la guía del día nuevo, y hacerlo con un `insert` copiado
-    sería la misma regla en dos lugares. La guía es `unique (fecha_operacion,
-    proveedor_id)`, así que el `on conflict do nothing` la reusa.
+    sería la misma regla en dos lugares.
+
+    DOS GUÍAS POR DÍA Y PROVEEDOR desde el 25/09 (dueño): la de Compras y la
+    de los INGRESOS DIRECTOS de Depósito, que "nunca es parte de la comanda
+    del Puesto". `de_deposito` NO se elige: lo deciden los llamadores con el
+    origen de la compra, así que un ingreso directo no puede caer en la guía
+    de Compras ni al cargarse, ni al moverse de día, ni al cambiar de proveedor.
+
+    EL `ON CONFLICT` VA SIN TARGET, a propósito, y el SELECT tiene un
+    respaldo: hasta que corra `guia_deposito_2` en una base convive el unique
+    viejo `(fecha, proveedor)`, y el INSERT de la segunda guía del día lo viola.
+    Con target, eso es un error y TODA carga de ese caso rebota entre el
+    deploy y la migración. Sin target no hace nada, el SELECT exacto no
+    encuentra la fila, y se usa la guía que ya hay — que es exactamente lo de
+    antes de este cambio. Con el unique viejo sacado, el respaldo no se
+    alcanza nunca (lo cuida un test contra Postgres en los dos estados).
 
     El punto es `count + 1` de esa guía y NO se renumera nada: el número es el
     renglón del papel del proveedor y ya está escrito en otro lado.
     """
     cursor.execute(
         """
-        INSERT INTO guias_compra (fecha_operacion, proveedor_id)
-        VALUES (%s, %s)
-        ON CONFLICT (fecha_operacion, proveedor_id) DO NOTHING
+        INSERT INTO guias_compra (fecha_operacion, proveedor_id, de_deposito)
+        VALUES (%s, %s, %s)
+        ON CONFLICT DO NOTHING
         """,
-        (fecha_operacion, proveedor_id),
+        (fecha_operacion, proveedor_id, de_deposito),
     )
     cursor.execute(
-        "SELECT id FROM guias_compra WHERE fecha_operacion = %s AND proveedor_id = %s",
-        (fecha_operacion, proveedor_id),
+        "SELECT id FROM guias_compra "
+        "WHERE fecha_operacion = %s AND proveedor_id = %s AND de_deposito = %s",
+        (fecha_operacion, proveedor_id, de_deposito),
     )
-    (guia_id,) = cursor.fetchone()
+    fila = cursor.fetchone()
+    if fila is None:
+        # El respaldo del unique viejo: ver el docstring.
+        cursor.execute(
+            "SELECT id FROM guias_compra WHERE fecha_operacion = %s AND proveedor_id = %s",
+            (fecha_operacion, proveedor_id),
+        )
+        fila = cursor.fetchone()
+    (guia_id,) = fila
     cursor.execute("SELECT COUNT(*) FROM compras WHERE guia_id = %s", (guia_id,))
     (cuantas,) = cursor.fetchone()
     return guia_id, cuantas + 1
+
+
+def _es_ingreso_directo(retiro_origen) -> bool:
+    """El origen que decide la guía de una compra YA cargada.
+
+    Es la MISMA pregunta que hace `guia_deposito_3` para separar las viejas
+    (`retiro_origen is not distinct from 'ingreso_directo'`) y la que cuenta
+    su verificación como `mal_ubicadas`: escrita distinto acá, una compra
+    movida de día volvería a la guía que la migración le sacó.
+    """
+    return retiro_origen == "ingreso_directo"
 
 
 def mover_compra_de_fecha(compra_id: int, nueva_fecha, nueva_recepcion=None) -> dict:
@@ -3964,7 +4000,8 @@ def mover_compra_de_fecha(compra_id: int, nueva_fecha, nueva_recepcion=None) -> 
             # None y no distinguiría "no existe" de "existe" (corolario 27).
             cursor.execute(
                 """
-                SELECT proveedor_id, fecha_operacion, estado, procesada_el, guia_id
+                SELECT proveedor_id, fecha_operacion, estado, procesada_el, guia_id,
+                       retiro_origen
                 FROM compras WHERE id = %s
                 """,
                 (compra_id,),
@@ -3972,7 +4009,8 @@ def mover_compra_de_fecha(compra_id: int, nueva_fecha, nueva_recepcion=None) -> 
             fila = cursor.fetchone()
             if fila is None:
                 raise ValueError("Esa compra no existe.")
-            proveedor_id, fecha_vieja, estado, procesada_vieja, guia_vieja_id = fila
+            (proveedor_id, fecha_vieja, estado, procesada_vieja, guia_vieja_id,
+             retiro_origen) = fila
 
             vivas = _guias_en_origen_vivas(cursor, compra_id)
             if vivas:
@@ -4004,7 +4042,9 @@ def mover_compra_de_fecha(compra_id: int, nueva_fecha, nueva_recepcion=None) -> 
                         f"sin el lote. La recepción tiene que ser posterior al {corte:%d/%m}."
                     )
 
-            guia_id, guia_punto = _guia_de_compra(cursor, nueva_fecha, proveedor_id)
+            guia_id, guia_punto = _guia_de_compra(
+                cursor, nueva_fecha, proveedor_id,
+                de_deposito=_es_ingreso_directo(retiro_origen))
 
             if estado == "recepcionado":
                 cursor.execute(
@@ -4121,19 +4161,20 @@ def cambiar_proveedor_de_compra(compra_id: int, proveedor_id: int) -> dict:
 
     LOS VACÍOS DEL DEPÓSITO SE ACOMODAN SOLOS: se derivan de las recepciones
     por proveedor, así que los cajones de esta compra pasan al nuevo sin tocar
-    nada. Si el nuevo no tiene conteo inicial, esos cajones pasan a esperar.
+    nada — si la compra es posterior a la foto del 25/09 y tiene seña.
     """
     conexion = obtener_conexion()
     try:
         with conexion.cursor() as cursor:
             cursor.execute(
-                "SELECT proveedor_id, fecha_operacion, guia_id FROM compras WHERE id = %s",
+                "SELECT proveedor_id, fecha_operacion, guia_id, retiro_origen "
+                "FROM compras WHERE id = %s",
                 (compra_id,),
             )
             fila = cursor.fetchone()
             if fila is None:
                 raise ValueError("Esa compra no existe.")
-            proveedor_viejo, fecha, guia_vieja_id = fila
+            proveedor_viejo, fecha, guia_vieja_id, retiro_origen = fila
             if int(proveedor_viejo) == int(proveedor_id):
                 raise ValueError("Esa compra ya es de ese proveedor.")
             cursor.execute("SELECT id FROM proveedores WHERE id = %s", (proveedor_id,))
@@ -4147,7 +4188,8 @@ def cambiar_proveedor_de_compra(compra_id: int, proveedor_id: int) -> dict:
                     + ". Ahí el proveedor viejo ya quedó escrito. Anulá eso primero y volvé."
                 )
 
-            guia_id, guia_punto = _guia_de_compra(cursor, fecha, proveedor_id)
+            guia_id, guia_punto = _guia_de_compra(
+                cursor, fecha, proveedor_id, de_deposito=_es_ingreso_directo(retiro_origen))
             cursor.execute(
                 """
                 UPDATE compras SET proveedor_id = %s, guia_id = %s, guia_punto = %s
@@ -5667,12 +5709,17 @@ def agregar_foto_guia_del_dia(fecha_operacion, proveedor_id: int, foto_ruta: str
     Para la carga manual: adjuntar la comanda al cerrar, sin renglón nuevo
     — la guía ya la crearon los renglones cargados antes. Sin guía (nada
     cargado ese día) no hay dónde colgarla: False, y quien llama avisa.
+
+    SOLO LA DE COMPRAS (`de_deposito = false`): la comanda del Puesto no se
+    cuelga nunca de la guía de los ingresos directos (dueño, 25/09). Si ese
+    día el proveedor solo tiene ingresos directos, no hay dónde colgarla.
     """
     conexion = obtener_conexion()
     try:
         with conexion.cursor() as cursor:
             cursor.execute(
-                "SELECT id FROM guias_compra WHERE fecha_operacion = %s AND proveedor_id = %s",
+                "SELECT id FROM guias_compra "
+                "WHERE fecha_operacion = %s AND proveedor_id = %s AND de_deposito = false",
                 (fecha_operacion, proveedor_id),
             )
             fila = cursor.fetchone()

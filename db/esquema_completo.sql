@@ -350,14 +350,13 @@ create table guias_compra (
     proveedor_id     bigint not null references proveedores (id),
     creada_el        timestamptz not null default now(),
     de_deposito      boolean not null default false,
-    -- LOS DOS UNIQUE CONVIVEN hasta que el código pase a preguntar por el
-    -- nuevo: el de hoy hace ON CONFLICT (fecha_operacion, proveedor_id). El
-    -- viejo se va con guia_deposito_2, en el mismo commit que ese código.
-    unique (fecha_operacion, proveedor_id),
+    -- DOS guías por día y proveedor: la de Compras y la de los ingresos
+    -- directos. El unique viejo (fecha, proveedor) se fue con
+    -- guia_deposito_2; el código aguanta los dos estados (_guia_de_compra).
     constraint guias_compra_dia_proveedor_origen unique (fecha_operacion, proveedor_id, de_deposito)
 );
 
-comment on table guias_compra is 'Una guía por proveedor por día de operación. El id es el número de guía (ej. 105).';
+comment on table guias_compra is 'Una guía por proveedor por día de operación y por ORIGEN (Compras o ingreso directo de Depósito). El id es el número de guía (ej. 105).';
 comment on column guias_compra.de_deposito is 'true = la guía de los INGRESOS DIRECTOS de Depósito de ese proveedor ese día. Es otra guía que la de Compras: no comparte comanda ni fotos (dueño, 25/09). Ver db/guia_deposito_1_columna_y_unico.sql.';
 
 create table fotos_guia (
