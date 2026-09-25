@@ -229,6 +229,7 @@
   {% set barra_sector = "administracion" %}
   {% set barra_titulo = "Stock del Depósito" %}
   {% set barra_atras = "/administracion" %}
+  {% from "_info.html" import info %}
   {% include "_barra_navegacion.html" %}
 
   {% if aviso %}
@@ -246,7 +247,7 @@
        Antes vivía al pie, después de toda la lista. #}
     {% if porciones %}
     <a class="boton-exportar" href="/administracion/stock/remanente/exportar-excel?fecha={{ fecha }}">Exportar Excel</a>
-    <p class="ayuda">Agrupado por Fruta, Hortaliza, etc., con las cajas armadas aparte al final. La columna “Contado” va vacía para anotar al lado. Los artículos con bultos sin explicar no entran, porque no hay nada que contar.</p>
+    <p class="ayuda">La columna “Contado” va vacía para anotar al lado. {% call info("¿Qué trae el Excel?") %}Agrupado por Fruta, Hortaliza, etc., con las cajas armadas aparte al final. Los artículos con bultos sin explicar no entran, porque no hay nada que contar.{% endcall %}</p>
     {% endif %}
     {% if not es_hoy %}
     <a class="volver-hoy" href="/administracion/stock/remanente">Volver a hoy</a>

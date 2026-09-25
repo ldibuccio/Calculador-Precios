@@ -4197,7 +4197,8 @@ def test_el_detalle_de_la_compra_MUESTRA_lo_que_volvio_de_un_cliente():
     # y se la come entera. Se ancla con la etiqueta o la clase completa, que
     # es lo que no puede aparecer en prosa ni en CSS (corolario 38).
     texto = respuesta.text
-    assert "<h3>Volvió de un cliente y se le devolvió al proveedor</h3>" in texto
+    # Sin el `</h3>`: desde el 25/09 el título lleva la "i" pegada adentro.
+    assert "<h3>Volvió de un cliente y se le devolvió al proveedor " in texto
     assert '<span class="dev-cabeza">25/08 — 5 bultos de Artículo de EJEMPLO</span>' in texto
     assert '<span class="dev-cabeza">26/08 — 3 bultos de Artículo de EJEMPLO</span>' in texto
     assert "Motivo: llegó golpeado" in texto

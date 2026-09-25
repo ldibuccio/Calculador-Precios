@@ -89,7 +89,6 @@
   }
   details.seccion-agotados .tarjeta { margin-top: 0.5rem; }
   details.seccion-agotados .fila-lote { opacity: 0.55; }
-  .ayuda { color: #888; font-size: 0.85rem; margin: 0.5rem 0 0; }
   .vacio { color: #888; font-style: italic; margin: 0; }
   .volver {
     display: block;
@@ -121,6 +120,7 @@
   {% set barra_sector = "administracion" %}
   {% set barra_titulo = "Stock por Guía" %}
   {% set barra_atras = "/administracion/stock/remanente" %}
+  {% from "_info.html" import info %}
   {% include "_barra_navegacion.html" %}
 
   <div class="resumen {% if stock < 0 %}negativo{% endif %}">
@@ -169,7 +169,7 @@
 
 
   <div class="tarjeta">
-    <h2>Lo que queda, por lote (el más viejo primero)</h2>
+    <h2>Lo que queda, por lote (el más viejo primero) {% call info("En qué orden salen los lotes") %}FIFO: las salidas consumen del lote más viejo, y el reparto se reacomoda solo si se corrige una recepción o se destilda un renglón. Lo único que no sigue ese orden es lo que alguien señaló a propósito: una merma dirigida a su lote, o el desglose que el operario corrigió al cargar una guía R.{% endcall %}</h2>
     {# SI NO CIERRA, SE CALLA. Misma regla y misma función que el desglose
        por kilaje (`_pilas_cierran`): un restante solo baja por las salidas
        que el lote ABSORBIÓ, así que con bultos sin lote los restantes suman
@@ -198,7 +198,6 @@
     {% else %}
     <p class="vacio">No queda nada de ningún lote.</p>
     {% endif %}
-    <p class="ayuda">FIFO: las salidas consumen del lote más viejo, y el reparto se reacomoda solo si se corrige una recepción o se destilda un renglón. Lo único que no sigue ese orden es lo que alguien señaló a propósito: una merma dirigida a su lote, o el desglose que el operario corrigió al cargar una guía R.</p>
   </div>
 
   {% if agotados %}

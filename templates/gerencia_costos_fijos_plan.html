@@ -118,6 +118,7 @@
   {% set barra_sector = "gerencia" %}
   {% set barra_titulo = "Plan de Cuentas" %}
   {% set barra_atras = "/gerencia/costos-fijos" %}
+  {% from "_info.html" import info %}
   {% include "_barra_navegacion.html" %}
 
   {% if aviso %}
@@ -127,7 +128,7 @@
   <div class="error">{{ error }}</div>
   {% endif %}
 
-  <p class="ayuda">Los números los ponés vos (por eso están espaciados: 10, 20... y adentro 10.1, 10.2...). Un grupo nuevo o una subcuenta nueva se dan de alta acá, sin tocar código. "Cargar" guarda la foto del importe de esa subcuenta.</p>
+  <p class="ayuda">¿Cómo se arma el plan? {% call info("Cómo se arma el plan de cuentas") %}Los números los ponés vos (por eso están espaciados: 10, 20... y adentro 10.1, 10.2...). Un grupo nuevo o una subcuenta nueva se dan de alta acá, sin tocar código. "Cargar" guarda la foto del importe de esa subcuenta.{% endcall %}</p>
 
   {% for g in grupos %}
   <div class="tarjeta">

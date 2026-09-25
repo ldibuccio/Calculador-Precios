@@ -85,6 +85,7 @@
   {% set barra_sector = "compras" %}
   {% set barra_titulo = "Nueva compra" %}
   {% set barra_atras = "/compras/nueva/listado" %}
+  {% from "_info.html" import info %}
   {% include "_barra_navegacion.html" %}
 
   {% if error %}
@@ -92,9 +93,8 @@
   {% endif %}
 
   <div class="tarjeta">
-    <p class="ayuda">Sacá una foto nueva o elegí una ya guardada de la comanda: el sistema intenta adivinar el proveedor y los artículos, y te los muestra para que los revises antes de guardar nada.</p>
     <form method="post" action="/compras/nueva/foto" enctype="multipart/form-data" id="form-leer-comanda">
-      <label for="foto">Foto de la comanda</label>
+      <label for="foto">Foto de la comanda {% call info("Cómo se lee la comanda") %}Sacá una foto nueva o elegí una ya guardada de la comanda: el sistema intenta adivinar el proveedor y los artículos, y te los muestra para que los revises antes de guardar nada.{% endcall %}</label>
       <input type="file" id="foto" name="foto" accept="image/*" required>
       <button type="submit" id="boton-leer-comanda">Leer una comanda</button>
       <p id="ayuda-leyendo" class="ayuda" style="display: none;">Leyendo la foto, puede tardar unos segundos...</p>

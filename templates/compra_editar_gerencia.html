@@ -97,6 +97,7 @@
   {% set barra_sector = "gerencia" %}
   {% set barra_titulo = "Corregir o eliminar compra" %}
   {% set barra_atras = "/compras/" ~ compra.id ~ "/detalle" %}
+  {% from "_info.html" import info %}
   {% include "_barra_navegacion.html" %}
 
   {% if error %}
@@ -179,9 +180,9 @@
     {# DOS FECHAS Y NO UNA, a propósito: una compra puede ser del 09 y haberse
        recibido el 14, y aplastar ese hueco sería inventar un dato. #}
     <div class="campo">
-      <label for="fecha_operacion">¿De qué día es la compra?
-        <span class="ayuda">El día del papel del proveedor. Mueve la guía y la ventana
-          del costeo; no mueve el stock.</span></label>
+      <label for="fecha_operacion">¿De qué día es la compra? {% call info("Qué mueve esta fecha") %}Mueve la guía y la ventana
+          del costeo; no mueve el stock.{% endcall %}
+        <span class="ayuda">El día del papel del proveedor.</span></label>
       <input type="date" id="fecha_operacion" name="fecha_operacion"
              value="{{ propuesta.operacion_texto or compra.fecha_operacion }}" required>
       <p class="como-esta">Hoy dice {{ compra.fecha_operacion|fecha_corta }}.</p>
@@ -189,9 +190,8 @@
 
     {% if compra.estado == "recepcionado" %}
     <div class="campo">
-      <label for="fecha_recepcion">¿Qué día entró al depósito?
-        <span class="ayuda">Es la que mueve el Stock del Depósito y el orden de los
-          lotes. La hora se conserva.</span></label>
+      <label for="fecha_recepcion">¿Qué día entró al depósito? {% call info("Qué mueve esta fecha") %}Es la que mueve el Stock del Depósito y el orden de los
+          lotes. La hora se conserva.{% endcall %}</label>
       <input type="date" id="fecha_recepcion" name="fecha_recepcion"
              value="{{ propuesta.recepcion_texto or (compra.procesada_el and compra.procesada_el.date()) or '' }}"
              min="{{ corte_minimo }}" required>

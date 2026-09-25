@@ -37,7 +37,6 @@
     font-size: 0.95rem;
     font-weight: 600;
   }
-  .ayuda { color: #888; font-size: 0.85rem; margin: 0 0 0.75rem; }
   form.alta label {
     display: block;
     font-size: 0.9rem;
@@ -101,6 +100,7 @@
   {% set barra_sector = "puesto" %}
   {% set barra_titulo = "Clientes del Puesto" %}
   {% set barra_atras = "/puesto/envases" %}
+  {% from "_info.html" import info %}
   {% include "_barra_navegacion.html" %}
 
   {% if error %}
@@ -112,8 +112,7 @@
   {% endif %}
 
   <div class="tarjeta">
-    <h2>Cargar cliente</h2>
-    <p class="ayuda">Normalmente los crea el empleado al tipear el nombre en Recibir — acá es solo por si querés adelantarte. Un nombre que ya existe (aunque cambie mayúsculas o acentos) reusa el cliente, no crea otro.</p>
+    <h2>Cargar cliente {% call info("¿Hace falta cargarlo acá?") %}Normalmente los crea el empleado al tipear el nombre en Recibir — acá es solo por si querés adelantarte. Un nombre que ya existe (aunque cambie mayúsculas o acentos) reusa el cliente, no crea otro.{% endcall %}</h2>
     <form class="alta" method="post" action="/puesto/envases/clientes/nuevo">
       <label for="nombre">Nombre *</label>
       <input type="text" id="nombre" name="nombre" required placeholder="Nombre del cliente">
@@ -122,8 +121,7 @@
   </div>
 
   <div class="tarjeta">
-    <h2>Clientes ({{ clientes|length }})</h2>
-    <p class="ayuda">Dar de baja lo saca de las sugerencias de Recibir; sus movimientos quedan. Si vuelve a aparecer, tipear su nombre lo reactiva solo.</p>
+    <h2>Clientes ({{ clientes|length }}) {% call info("Dar de baja") %}Dar de baja lo saca de las sugerencias de Recibir; sus movimientos quedan. Si vuelve a aparecer, tipear su nombre lo reactiva solo.{% endcall %}</h2>
     {% if clientes %}
       {% for c in clientes %}
       <div class="renglon">

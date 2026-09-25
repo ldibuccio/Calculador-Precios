@@ -63,6 +63,7 @@
   {% set barra_sector = "gerencia" %}
   {% set barra_titulo = "Pérdidas" %}
   {% set barra_atras = "/gerencia" %}
+  {% from "_info.html" import info %}
   {% include "_barra_navegacion.html" %}
 
   {% if error_fecha %}<div class="error">{{ error_fecha }}</div>{% endif %}
@@ -99,10 +100,10 @@
     {# NO SE SUMA CON "Plata de cajas", y va en la pantalla y no solo en el
        docstring: las dos muestran plata de la misma caja contestando dos
        preguntas distintas, y el que las sume la cuenta dos veces. #}
-    <p class="nota">La <strong>caja de Día armada</strong> pierde los kilos que tenía
-      <strong>más la caja</strong>; los bultos sueltos pierden solo los kilos.
-      Esta plata <strong>no se suma</strong> con la de “Plata de cajas”: allá la misma caja
-      se cuenta por cliente para reclamarla, acá por destino para el resultado.</p>
+    <p class="nota">Esta plata <strong>no se suma</strong> con la de “Plata de cajas”: allá la misma caja
+      se cuenta por cliente para reclamarla, acá por destino para el resultado.
+      {% call info("Cuánto se pierde en cada caso") %}La <strong>caja de Día armada</strong> pierde los kilos que tenía
+      <strong>más la caja</strong>; los bultos sueltos pierden solo los kilos.{% endcall %}</p>
   </div>
 
   <div class="tarjeta">

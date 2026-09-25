@@ -163,6 +163,7 @@
   {% set barra_sector = "compras" %}
   {% set barra_titulo = "Proveedores de Compras" %}
   {% set barra_atras = "/compras" %}
+  {% from "_info.html" import info %}
   {% include "_barra_navegacion.html" %}
 
   {% if error %}
@@ -178,8 +179,7 @@
        al cargar una compra con un codigo nuevo, y desde el 15/09 tambien se
        pueden cargar de acá, antes de comprarles. -->
   <div class="tarjeta">
-    <h2>Cargar un proveedor</h2>
-    <p class="ayuda">Para tenerlo cargado antes de comprarle. Si no, nace solo la primera vez que cargás una compra con su código.</p>
+    <h2>Cargar un proveedor {% call info("Para qué cargarlo acá") %}Para tenerlo cargado antes de comprarle. Si no, nace solo la primera vez que cargás una compra con su código.{% endcall %}</h2>
     <form class="alta" method="post" action="/compras/proveedores/nuevo">
       <label for="nombre_nuevo">Nombre *</label>
       <input type="text" id="nombre_nuevo" name="nombre" required>
@@ -195,7 +195,7 @@
          OPCIONAL porque la columna es nullable a propósito: exigirlo acá
          dejaría el alta más estricta que los cuarenta y pico que ya están
          cargados sin cajón. #}
-      <label for="tipo_cajon_nuevo">¿En qué cajón entrega?</label>
+      <label for="tipo_cajon_nuevo">¿En qué cajón entrega? {% call info("Para qué sirve el cajón") %}Sirve para llevarle la cuenta de los cajones vacíos que hay que devolverle. Se puede cargar después desde Vacíos del depósito.{% endcall %}</label>
       <select id="tipo_cajon_nuevo" name="tipo_cajon_id">
         <option value="">Todavía no sé</option>
         {% for c in tipos_cajon %}
@@ -205,15 +205,14 @@
       <label for="cajon_nombre_nuevo">…o escribí uno que no esté</label>
       <input type="text" id="cajon_nombre_nuevo" name="cajon_nombre_nuevo"
              maxlength="60" autocomplete="off" placeholder="Cajón cosechero">
-      <p class="ayuda">Sirve para llevarle la cuenta de los cajones vacíos que hay que devolverle. Se puede cargar después desde Vacíos del depósito.</p>
 
       <button type="submit">Cargar proveedor</button>
     </form>
   </div>
 
   <div class="tarjeta">
-    <h2>Proveedores ({{ proveedores|length }})</h2>
-    <p class="ayuda">Editar corrige el nombre mal escrito — sigue siendo el mismo proveedor y sus compras no se mueven. El CÓDIGO no se puede cambiar: es su identidad. Si el código está mal tipeado, el proveedor se da de baja.</p>
+    <h2>Proveedores ({{ proveedores|length }}) {% call info("Qué hace Editar") %}Editar corrige el nombre mal escrito — sigue siendo el mismo proveedor y sus compras no se mueven.{% endcall %}</h2>
+    <p class="ayuda">El CÓDIGO no se puede cambiar: es su identidad. Si el código está mal tipeado, el proveedor se da de baja.</p>
     {% if proveedores %}
       {% for p in proveedores %}
       <div class="renglon{% if not p.activo %} de-baja{% endif %}{% if destacado_id and p.id == destacado_id|int %} destacado{% endif %}">

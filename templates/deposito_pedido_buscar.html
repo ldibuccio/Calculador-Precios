@@ -216,6 +216,7 @@
   {% set barra_sector = "administracion" %}
   {% set barra_titulo = "Armar Remito" %}
   {% set barra_atras = "/administracion" %}
+  {% from "_info.html" import info %}
   {% include "_barra_navegacion.html" %}
 
   {% if error_fecha %}
@@ -247,7 +248,7 @@
     <a class="boton-exportar" href="/administracion/pedidos/buscar/exportar-pdf?cliente_id={{ cliente_id }}&fecha_desde={{ fecha_desde }}&fecha_hasta={{ fecha_hasta }}">Exportar PDF</a>
     <a class="boton-exportar" href="/administracion/pedidos/buscar/exportar-excel?cliente_id={{ cliente_id }}&fecha_desde={{ fecha_desde }}&fecha_hasta={{ fecha_hasta }}">Exportar Excel</a>
     {% endif %}
-    <p class="ayuda">Los kilos son los <strong>enviados por el depósito</strong> al armar cada renglón (lo que se factura), no los de la ficha. Un renglón sin armar figura "sin kilaje".</p>
+    <p class="ayuda">¿De dónde salen los kilos? {% call info("¿De dónde salen los kilos?") %}Los kilos son los <strong>enviados por el depósito</strong> al armar cada renglón (lo que se factura), no los de la ficha. Un renglón sin armar figura "sin kilaje".{% endcall %}</p>
   </div>
 
   {% if grupos is not none %}

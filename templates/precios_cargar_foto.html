@@ -107,6 +107,7 @@
   {% set barra_sector = "comercial" %}
   {% set barra_titulo = "Cargar Foto Precios" %}
   {% set barra_atras = "/precios" %}
+  {% from "_info.html" import info %}
   {% include "_barra_navegacion.html" %}
 
   {% if error %}
@@ -132,7 +133,7 @@
   {% else %}
 
   <div class="tarjeta" id="seccion-elegir-archivo">
-    <p class="ayuda">Tocá el botón: se abre la cámara o el selector de archivos del celular. Podés subir una foto, un PDF o un Excel (.xlsx) — en cuanto lo elijas, arranca a leerlo solo, sin pasos extra.</p>
+    <p class="ayuda">¿Qué puedo subir? {% call info("Qué se puede subir") %}Tocá el botón: se abre la cámara o el selector de archivos del celular. Podés subir una foto, un PDF o un Excel (.xlsx) — en cuanto lo elijas, arranca a leerlo solo, sin pasos extra.{% endcall %}</p>
     <form method="post" action="/precios/cargar-foto" enctype="multipart/form-data" id="form-leer-archivo">
       <input type="hidden" name="cliente_id" value="{{ cliente_id }}">
       <input type="file" id="archivo" name="archivo" accept="image/*,.pdf,.xlsx" required class="input-archivo-oculto">

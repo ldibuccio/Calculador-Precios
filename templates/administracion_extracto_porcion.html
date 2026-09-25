@@ -154,6 +154,7 @@
   {% set barra_sector = "administracion" %}
   {% set barra_titulo = "Movimiento" %}
   {% set barra_atras = volver %}
+  {% from "_info.html" import info %}
   {% include "_barra_navegacion.html" %}
 
   {% if aviso %}
@@ -224,11 +225,11 @@
     {% if extracto.sin_explicar %}
     {# Aviso con datos, jamás una traba: el número igual cierra, porque el
        saldo final sale del Remanente y no de sumar estos renglones. #}
-    <p class="nota">
+    <p class="nota">¿Qué es “Sin explicar”? {% call info("¿Qué es “Sin explicar”?") %}
       <strong>“Sin explicar”</strong> es la parte del movimiento que ningún evento
       del día justifica. El saldo de arriba y el de abajo son los del Stock del Depósito:
       lo que no cuadra es la explicación del medio, no el stock.
-    </p>
+    {% endcall %}</p>
     {% endif %}
   </div>
 

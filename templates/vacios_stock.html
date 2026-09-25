@@ -101,6 +101,7 @@
   {% set barra_sector = "puesto" %}
   {% set barra_titulo = "Stock del Sistema" %}
   {% set barra_atras = "/puesto/envases" %}
+  {% from "_info.html" import info %}
   {% include "_barra_navegacion.html" %}
 
   <div class="tarjeta">
@@ -122,7 +123,7 @@
   <div class="aviso-pasada">Stock al {{ fecha_mostrar }}. Ojo: el stock de fechas pasadas puede cambiar si se anulan movimientos anteriores — anular un movimiento lo borra del stock de todos los días, también de los de antes de la anulación.</div>
   {% endif %}
 
-  <p class="ayuda">Cajones en el puesto según los movimientos: recibidos de clientes − devueltos al proveedor. Un número en rojo es un negativo para revisar en el Cotejo.</p>
+  <p class="ayuda">Un número en rojo es un negativo para revisar en el Cotejo. {% call info("¿Cómo se calcula?") %}Cajones en el puesto según los movimientos: recibidos de clientes − devueltos al proveedor.{% endcall %}</p>
 
   {% if grupos %}
     {% for g in grupos %}

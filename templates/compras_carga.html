@@ -69,6 +69,7 @@
 <body>
   {% set barra_titulo = "Lo que pide un cliente" %}
   {% set barra_sector = "compras" %}
+  {% from "_info.html" import info %}
   {% include "_barra_navegacion.html" %}
 
   {% if aviso %}<div class="tarjeta aviso"><p class="art">{{ aviso }}</p></div>{% endif %}
@@ -78,7 +79,10 @@
     <div class="art">{{ cliente_nombre }} · {{ fecha_mostrar }}</div>
     <div class="modos">
       <label><input type="radio" name="modo" value="automatico"
-                    {% if carga.modo != 'manual' %}checked{% endif %}>Del promedio</label>
+                    {% if carga.modo != 'manual' %}checked{% endif %}>Del promedio {% call info("De dónde sale el promedio") %}Del promedio: los últimos 6 pedidos anteriores al
+      <b>{{ carga.promedio_anterior_a.strftime("%d/%m/%Y") }}</b>, que es el día en que se abrió
+      esta carga. Se vuelve a calcular cada vez que se arma el listado, así que un pedido que
+      entre en el medio se ve.{% endcall %}</label>
       <label><input type="radio" name="modo" value="manual"
                     {% if carga.modo == 'manual' %}checked{% endif %}>A mano</label>
     </div>
@@ -107,24 +111,16 @@
       <label for="dias">{{ "día" if carga.dias == 1 else "días" }}</label>
     </div>
     {% endif %}
-    <p class="ayuda">
-      Del promedio: los últimos 6 pedidos anteriores al
-      <b>{{ carga.promedio_anterior_a.strftime("%d/%m/%Y") }}</b>, que es el día en que se abrió
-      esta carga. Se vuelve a calcular cada vez que se arma el listado, así que un pedido que
-      entre en el medio se ve.
-    </p>
   </div>
 
   <div class="tarjeta">
-    <div class="art">Lo que pide, por artículo</div>
+    <div class="art">Lo que pide, por artículo{% if hay_propuesta %} {% call info("Qué pasa con lo que no toco") %}Esto es lo que propone el promedio. <b>Lo que no toques se vuelve a
+        calcular</b> al armar el listado, así que un pedido que entre en el medio se ve;
+        <b>lo que corrijas queda fijo</b>.{% endcall %}{% endif %}</div>
     {# ARRANCA CON LO QUE HAY Y NADA MÁS. El catálogo entero con un campo por
        artículo es lo que hace que la pantalla no se pueda usar con el pulgar:
        los demás están en el DOM escondidos y los trae el buscador. #}
-    {% if hay_propuesta %}
-      <p class="ayuda">Esto es lo que propone el promedio. <b>Lo que no toques se vuelve a
-        calcular</b> al armar el listado, así que un pedido que entre en el medio se ve;
-        <b>lo que corrijas queda fijo</b>.</p>
-    {% else %}
+    {% if not hay_propuesta %}
       <p class="ayuda">Agregá los artículos de a uno con el buscador. Para sacar uno,
         dejale el campo vacío.</p>
     {% endif %}
@@ -197,10 +193,9 @@
   <form method="post" enctype="multipart/form-data"
         action="/compras/carga/{{ carga.cliente_id }}/{{ carga.fecha.isoformat() }}/archivo">
   <div class="tarjeta">
-    <div class="art">O subí lo que te mandaron</div>
-    <p class="ayuda">Una foto del listado, una captura del mail, un PDF o un Excel. El sistema lo
-      lee y te lo muestra para revisar <b>antes</b> de guardar nada.
-      {% if carga.renglones %}Reemplaza los {{ carga.renglones|length }} que ya tiene.{% endif %}</p>
+    <div class="art">O subí lo que te mandaron {% call info("Qué archivo sirve") %}Una foto del listado, una captura del mail, un PDF o un Excel. El sistema lo
+      lee y te lo muestra para revisar <b>antes</b> de guardar nada.{% endcall %}</div>
+    {% if carga.renglones %}<p class="ayuda">Reemplaza los {{ carga.renglones|length }} que ya tiene.</p>{% endif %}
     <input class="archivo" type="file" name="archivo"
            accept=".jpg,.jpeg,.png,.pdf,.xlsx" required aria-label="Archivo para leer">
     <button class="leer" type="submit">Leer el archivo</button>

@@ -139,6 +139,7 @@
   {% set barra_sector = "puesto" %}
   {% set barra_titulo = "Proveedores del Puesto" %}
   {% set barra_atras = "/puesto/envases" %}
+  {% from "_info.html" import info %}
   {% include "_barra_navegacion.html" %}
 
   {% if error %}
@@ -156,7 +157,7 @@
        listas cerradas de Vacíos. -->
   <div class="tarjeta">
     <h2>Cargar proveedor</h2>
-    <p class="ayuda">Un nombre que ya existe (aunque cambie mayúsculas o acentos) reusa el proveedor, no crea otro. Después de cargarlo, dale su primer tipo en Tipos de Envase para que aparezca en Vacíos.</p>
+    <p class="ayuda">Después de cargarlo, dale su primer tipo en Tipos de Envase para que aparezca en Vacíos. {% call info("¿Y si el nombre ya existe?") %}Un nombre que ya existe (aunque cambie mayúsculas o acentos) reusa el proveedor, no crea otro.{% endcall %}</p>
     <form class="alta" method="post" action="/puesto/envases/proveedores/nuevo">
       <label for="nombre">Nombre *</label>
       <input type="text" id="nombre" name="nombre" required placeholder="Nombre del proveedor">
@@ -165,8 +166,7 @@
   </div>
 
   <div class="tarjeta">
-    <h2>Proveedores ({{ proveedores|length }})</h2>
-    <p class="ayuda">Editar corrige el nombre mal escrito: sigue siendo el mismo proveedor y sus movimientos no se mueven. Dar de baja lo saca de los selects de Vacíos; sus movimientos y su stock histórico quedan.</p>
+    <h2>Proveedores ({{ proveedores|length }}) {% call info("Editar y dar de baja") %}Editar corrige el nombre mal escrito: sigue siendo el mismo proveedor y sus movimientos no se mueven. Dar de baja lo saca de los selects de Vacíos; sus movimientos y su stock histórico quedan.{% endcall %}</h2>
     {% if proveedores %}
       {% for p in proveedores %}
       <div class="renglon">

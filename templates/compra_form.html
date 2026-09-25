@@ -157,6 +157,7 @@
   {% set barra_sector = "compras" %}
   {% set barra_titulo = "Nueva compra" if modo == "nueva" else "Editar compra" %}
   {% set barra_atras = "/compras/nueva/listado" if modo == "nueva" else "/compras/buscar" %}
+  {% from "_info.html" import info %}
   {% include "_barra_navegacion.html" %}
 
   {% if modo == "nueva" %}
@@ -243,7 +244,7 @@
         <input type="number" id="segunda_por_cajon" name="segunda_por_cajon" min="0" step="0.01"
                {% if segunda_magnitud %}required{% endif %}
                value="{% if compra and compra.segunda_por_cajon %}{{ compra.segunda_por_cajon }}{% endif %}">
-        <p class="ayuda">Este artículo se carga con las dos magnitudes: sin las dos, la ficha del cliente que compra en la otra unidad se queda sin costo.</p>
+        <p class="ayuda">Este artículo se carga con las dos magnitudes. {% call info("Por qué las dos magnitudes") %}Sin las dos, la ficha del cliente que compra en la otra unidad se queda sin costo.{% endcall %}</p>
       </div>
 
       {# EL PRECIO DE UNA RECEPCIONADA RECOSTEA HACIA ATRÁS, y esta pantalla

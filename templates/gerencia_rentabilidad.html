@@ -117,6 +117,7 @@
   {% set barra_sector = "gerencia" %}
   {% set barra_titulo = "Rentabilidad" %}
   {% set barra_atras = "/gerencia" %}
+  {% from "_info.html" import info %}
   {% include "_barra_navegacion.html" %}
 
 
@@ -165,7 +166,7 @@
     <a class="boton-exportar" href="/gerencia/rentabilidad/exportar-pdf?cliente_id={{ cliente_id }}&fecha_desde={{ fecha_desde }}&fecha_hasta={{ fecha_hasta }}&articulo_id={{ articulo_id if articulo_id is not none else '' }}&grupo={{ grupo or '' }}">Exportar PDF</a>
     <a class="boton-exportar" href="/gerencia/rentabilidad/exportar-excel?cliente_id={{ cliente_id }}&fecha_desde={{ fecha_desde }}&fecha_hasta={{ fecha_hasta }}&articulo_id={{ articulo_id if articulo_id is not none else '' }}&grupo={{ grupo or '' }}">Exportar Excel</a>
     {% endif %}
-    <p class="ayuda">Los bultos son <strong>lo pedido</strong>, sin ajustar por lo armado: es una estimación de rentabilidad, no facturación. La cuenta es <strong>la misma que Márgenes por Artículo</strong>, a la fecha de cada pedido: venta neta = precio de lista con las tasas del cliente aplicadas; costo = mercadería + envase; la utilidad % se mide solo sobre la mercadería, nunca sobre el envase.</p>
+    <p class="ayuda">¿Cómo se calcula? {% call info("Cómo se calcula la rentabilidad") %}Los bultos son <strong>lo pedido</strong>, sin ajustar por lo armado: es una estimación de rentabilidad, no facturación. La cuenta es <strong>la misma que Márgenes por Artículo</strong>, a la fecha de cada pedido: venta neta = precio de lista con las tasas del cliente aplicadas; costo = mercadería + envase; la utilidad % se mide solo sobre la mercadería, nunca sobre el envase.{% endcall %}</p>
   </div>
 
   {% if resultado %}

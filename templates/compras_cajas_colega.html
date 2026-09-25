@@ -43,6 +43,7 @@
      El nombre va abajo, en el h2, donde sí puede envolver. #}
   {% set barra_titulo = "Cuenta con un colega" %}
   {% set barra_atras = camino.base ~ "/cajas" %}
+  {% from "_info.html" import info %}
   {% include "_barra_navegacion.html" %}
 
   <div class="tarjeta">
@@ -74,9 +75,9 @@
       </div>
     </div>
     {% endfor %}
-    <p class="ayuda">El más nuevo arriba. Estos movimientos NO llevan el
+    <p class="ayuda">El más nuevo arriba. {% call info("Las cajas prestadas antes del conteo") %}Estos movimientos NO llevan el
       recorte del conteo inicial del piso: una caja prestada antes de contar
-      el galpón sigue siendo una caja que te deben.</p>
+      el galpón sigue siendo una caja que te deben.{% endcall %}</p>
   </div>
   {% endif %}
 

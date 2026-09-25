@@ -28,11 +28,6 @@
     margin-bottom: 1rem;
     font-size: 0.95rem;
   }
-  .ayuda {
-    color: #888;
-    font-size: 0.9rem;
-    margin: 0 0 1rem;
-  }
   form label {
     display: block;
     margin-top: 0.75rem;
@@ -110,6 +105,7 @@
   {% set barra_sector = contexto.sector %}
   {% set barra_titulo = "Precios por período" %}
   {% set barra_atras = contexto.atras %}
+  {% from "_info.html" import info %}
   {% include "_barra_navegacion.html" %}
 
   <div class="tarjeta">
@@ -153,9 +149,8 @@
   {% endif %}
 
   <div class="tarjeta">
-    <h2>{{ cliente_nombre }} · del {{ desde_mostrar }} al {{ hasta_mostrar }}</h2>
+    <h2>{{ cliente_nombre }} · del {{ desde_mostrar }} al {{ hasta_mostrar }}{% if filas %} {% call info("¿Cómo se lee cada renglón?") %}Cada renglón dice desde cuándo y hasta cuándo rigió ese precio. Para facturar un día, buscá el renglón que lo contenga.{% endcall %}{% endif %}</h2>
     {% if filas %}
-    <p class="ayuda">Cada renglón dice desde cuándo y hasta cuándo rigió ese precio. Para facturar un día, buscá el renglón que lo contenga.</p>
     {% for fila in filas %}
     <div class="ficha">
       <p class="nombre">{{ fila.nombre }}</p>

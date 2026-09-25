@@ -124,6 +124,7 @@
   {% set barra_sector = "compras" %}
   {% set barra_titulo = "Cargar compra a mano" %}
   {% set barra_atras = "/compras" %}
+  {% from "_info.html" import info %}
   {% include "_barra_navegacion.html" %}
 
   {% if error %}
@@ -136,8 +137,7 @@
      siguientes artículos se suman sin repetirlo. #}
   <form method="post" action="/compras/nueva/manual" id="form-compra" enctype="multipart/form-data" onsubmit="normalizarCodigoPuesto()">
     <div class="tarjeta">
-      <h2>Proveedor</h2>
-      <p class="ayuda">Elegí uno de la lista o cargá uno nuevo. Con "Agregar más artículos" queda fijado para seguir sumándole artículos sin repetirlo.</p>
+      <h2>Proveedor {% call info("Cómo se elige el proveedor") %}Elegí uno de la lista o cargá uno nuevo. Con "Agregar más artículos" queda fijado para seguir sumándole artículos sin repetirlo.{% endcall %}</h2>
       {% include "_buscador_proveedor.html" %}
     </div>
 
@@ -183,7 +183,7 @@
         <input type="number" id="segunda_por_cajon" name="segunda_por_cajon" min="0" step="0.01"
                {% if segunda_magnitud %}required{% endif %}
                value="{% if compra and compra.segunda_por_cajon %}{{ compra.segunda_por_cajon }}{% endif %}">
-        <p class="ayuda">Este artículo se carga con las dos magnitudes: sin las dos, la ficha del cliente que compra en la otra unidad se queda sin costo.</p>
+        <p class="ayuda">Este artículo se carga con las dos magnitudes. {% call info("Por qué las dos magnitudes") %}Sin las dos, la ficha del cliente que compra en la otra unidad se queda sin costo.{% endcall %}</p>
       </div>
 
       <label for="importe">Importe</label>

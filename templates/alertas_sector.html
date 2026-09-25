@@ -107,9 +107,10 @@
   {% set barra_sector = sector %}
   {% set barra_titulo = "Alertas" %}
   {% set barra_atras = volver %}
+  {% from "_info.html" import info %}
   {% include "_barra_navegacion.html" %}
 
-  <p class="ayuda">Lo que hay que mirar hoy en {{ modulo_nombre }}, con el detalle de cada caso. Los bloques salen de las alertas del sector: si mañana aparece una alerta nueva, su bloque aparece solo.</p>
+  <p class="ayuda">Lo que hay que mirar hoy en {{ modulo_nombre }}, con el detalle de cada caso. {% call info("¿De dónde salen estos bloques?") %}Los bloques salen de las alertas del sector: si mañana aparece una alerta nueva, su bloque aparece solo.{% endcall %}</p>
 
   {% if bloques %}
     {% for b in bloques %}

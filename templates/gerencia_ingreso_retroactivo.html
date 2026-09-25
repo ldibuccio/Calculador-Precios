@@ -46,6 +46,7 @@
   {% set barra_sector = "gerencia" %}
   {% set barra_titulo = "Ingreso con fecha anterior" %}
   {% set barra_atras = "/gerencia" %}
+  {% from "_info.html" import info %}
   {% include "_barra_navegacion.html" %}
 
   {% if aviso %}<div class="aviso">{{ aviso }}</div>{% endif %}
@@ -91,9 +92,8 @@
       <input type="date" id="fecha" name="fecha_recepcion" required
              min="{{ primer_dia.isoformat() }}" max="{{ hoy.isoformat() }}"
              value="{{ precarga.fecha_recepcion or '' }}">
-      <p class="ayuda-campo">Desde el {{ primer_dia.strftime('%d/%m/%Y') }} en adelante:
-        el corte del modelo es el {{ corte.strftime('%d/%m/%Y') }} y ese día ya está contado
-        adentro del stock inicial.</p>
+      <p class="ayuda-campo">Desde el {{ primer_dia.strftime('%d/%m/%Y') }} en adelante. {% call info("Por qué desde ese día") %}El corte del modelo es el {{ corte.strftime('%d/%m/%Y') }} y ese día ya está contado
+        adentro del stock inicial.{% endcall %}</p>
 
       <label for="cajones">Bultos</label>
       <input type="number" id="cajones" name="cantidad_cajones" min="0" step="0.01" required

@@ -65,6 +65,7 @@
   {% set barra_sector = "compras" %}
   {% set barra_titulo = "Cargar foto de una comanda" %}
   {% set barra_atras = "/compras" %}
+  {% from "_info.html" import info %}
   {% include "_barra_navegacion.html" %}
 
   {% if error %}
@@ -72,7 +73,7 @@
   {% endif %}
 
   <div class="tarjeta">
-    <p class="ayuda">Tocá el botón: se abre la cámara o la galería del celular. En cuanto saques o elijas la foto, arranca a leer la comanda sola, sin pasos extra.</p>
+    <p class="ayuda">¿Cómo se lee una comanda? {% call info("¿Cómo se lee una comanda?") %}Tocá el botón: se abre la cámara o la galería del celular. En cuanto saques o elijas la foto, arranca a leer la comanda sola, sin pasos extra.{% endcall %}</p>
     <form method="post" action="/compras/nueva/foto" enctype="multipart/form-data" id="form-leer-comanda">
       <input type="file" id="foto" name="foto" accept="image/*" required class="input-foto-oculto">
       <button type="button" id="boton-leer-comanda">Leer una comanda</button>
