@@ -11199,7 +11199,8 @@ def stock_deposito_de_articulo(articulo_id: int) -> float:
     precarga del ajuste comparaba los sueltos contados contra este total y
     proponía borrar tantos bultos como cajas armadas tuviera el artículo (un
     limón con 5 sueltos y 30 cajas daba una precarga de −30 contando los 5
-    exactos). Para una porción va `stock_de_porcion`.
+    exactos). Una porción sale del Remanente a su fecha
+    (`_sistema_por_porcion_al_cierre`, en app/main.py).
     """
     conexion = obtener_conexion()
     try:
@@ -11207,32 +11208,6 @@ def stock_deposito_de_articulo(articulo_id: int) -> float:
             return _stock_deposito_actual(cursor, articulo_id)
     finally:
         conexion.close()
-
-
-def stock_de_porcion(articulo_id: int, ficha_id: int | None = None,
-                     es_segunda: bool = False) -> float:
-    """El stock actual de UNA porción: los sueltos, las cajas de una ficha, o la segunda.
-
-    Es `_stock_de_ficha` con conexión propia — la MISMA función que congela
-    el `stock_sistema` de cada conteo y que arma el Remanente. Por eso el
-    Cotejo, el conteo y la precarga del ajuste comparan todos el mismo
-    número: si esta cuenta cambia, los tres la siguen juntos.
-
-    `ficha_id` None son los bultos SUELTOS, que es el caso del ajuste: un
-    ajuste de stock es por artículo y el Cotejo solo ofrece el botón en esos
-    renglones (ver `ver_cotejo_stock`). Como el movimiento suma al total y
-    las cajas no se tocan, mover el total en `contado − sueltos` deja los
-    sueltos exactamente en lo contado.
-    """
-    conexion = obtener_conexion()
-    try:
-        with conexion.cursor() as cursor:
-            if es_segunda:
-                return _segunda_de_articulo(cursor, articulo_id)
-            return _stock_de_ficha(cursor, articulo_id, ficha_id)
-    finally:
-        conexion.close()
-
 
 
 def crear_movimiento_stock(

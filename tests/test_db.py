@@ -5557,25 +5557,25 @@ def test_la_foto_de_la_merma_de_segunda_cuelga_de_la_SALIDA_y_no_del_movimiento(
     conexion.commit.assert_called_once()
 
 
-def test_stock_de_porcion_es_la_MISMA_funcion_que_congela_el_conteo():
-    """Los sueltos salen de `_stock_de_ficha`, la que usa el conteo y el Remanente.
+def test_el_COTEJO_y_el_AJUSTE_leen_el_sistema_de_la_MISMA_funcion():
+    """Desde el 25/09 los dos comparan contra el cierre del día del conteo, y
+    los dos lo leen de `_sistema_por_porcion_al_cierre`. Escrito en cada uno,
+    la tarjeta mostraría una diferencia y el ajuste propondría otra — que es
+    lo que pasó hasta el 08/09, cuando el ajuste usaba el total del artículo.
 
-    Si esta cuenta se escribiera aparte, el Cotejo compararía contra un
-    número y el ajuste contra otro — que es exactamente lo que pasó hasta el
-    08/09, cuando el ajuste usaba el total del artículo.
-    """
-    from app.db import stock_de_porcion
-
-    conexion, cursor = _conexion_falsa()
-    with (
-        patch("app.db.obtener_conexion", return_value=conexion),
-        patch("app.db._stock_de_ficha", return_value=5.0) as cuenta,
-    ):
-        assert stock_de_porcion(7) == 5.0
-
-    # ficha_id None son los SUELTOS: el caso del ajuste.
-    assert cuenta.call_args.args[1:] == (7, None)
-    assert conexion.close.call_count == 1
+    (Reemplaza al test de `stock_de_porcion`, que se borró el 25/09 al quedar
+    sin llamadores.) Se mira el árbol y no el texto: el docstring de cada
+    ruta nombra la función para explicar por qué (corolario 59)."""
+    import ast
+    arbol = ast.parse(open("app/main.py", encoding="utf-8").read())
+    llamadores = {
+        nodo.name
+        for nodo in ast.walk(arbol) if isinstance(nodo, ast.FunctionDef)
+        for llamada in ast.walk(nodo)
+        if isinstance(llamada, ast.Call) and isinstance(llamada.func, ast.Name)
+        and llamada.func.id == "_sistema_por_porcion_al_cierre"
+    }
+    assert llamadores == {"ver_cotejo_stock", "ver_ajustar_stock_deposito"}
 
 
 def test_stock_deposito_de_articulo_hace_la_misma_cuenta_por_articulo():
