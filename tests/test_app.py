@@ -23363,7 +23363,7 @@ def test_una_fecha_mal_escrita_en_la_url_cae_a_hoy_y_no_rompe():
     assert "Contado hoy" in respuesta.text
 
 
-def test_cotejo_stock_compara_contra_la_foto_congelada_y_arma_el_link_de_ajuste():
+def test_cotejo_stock_compara_contra_el_cierre_del_dia_y_arma_el_link_de_ajuste():
     conteos = [
         {"id": 5, "articulo_id": 1, "cantidad": 12.0, "stock_sistema": 15.0,
          "creado_en": datetime(2026, 8, 25, 10, 30), "articulo_nombre": "Banana",
@@ -23375,72 +23375,92 @@ def test_cotejo_stock_compara_contra_la_foto_congelada_y_arma_el_link_de_ajuste(
     respuesta = _cotejo(conteos)
 
     assert respuesta.status_code == 200
-    # La diferencia es contra la FOTO del conteo, resaltada.
+    # La diferencia es contra el cierre del día del conteo, resaltada.
     assert "-3" in respuesta.text
     assert 'class="tarjeta con-diferencia"' in respuesta.text
-    # Con diferencia: botón al ajuste precargado; sin diferencia, no.
-    assert "articulo_id=1&amp;contado=12.0&amp;stock_conteo=15.0&amp;fecha_conteo=2026-08-25" in respuesta.text
+    # Con diferencia: botón al ajuste con el artículo, lo contado y EL DÍA.
+    # El número del sistema NO viaja en la URL: la pantalla de ajuste lo
+    # vuelve a calcular con la misma función.
+    assert "articulo_id=1&amp;contado=12.0&amp;fecha_conteo=2026-08-25" in respuesta.text
+    assert "stock_conteo" not in respuesta.text
     assert respuesta.text.count("Ajustar a lo contado") == 1
     assert "diferencia-cero" in respuesta.text
 
 
-def test_ajustar_desde_cotejo_precarga_contra_el_stock_actual_y_avisa_si_se_movio():
-    # El conteo fue con el sistema en 15, pero el stock ACTUAL es 18: el
-    # ajuste para dejarlo en lo contado (12) es -6, no el -3 del cotejo —
-    # y la pantalla lo explica ANTES de guardar.
+# El corte que ven los tests del Cotejo y del ajuste: anterior a todas sus
+# fechas, así que ninguna tarjeta cae "antes del corte" sin pedirlo.
+CORTE_DEL_COTEJO = date(2026, 8, 1)
+
+
+def _ajustar_desde_cotejo(query, porciones, corte=CORTE_DEL_COTEJO):
+    """La pantalla de ajuste con el cierre del día parcheado en su FUENTE
+    (`_remanente_a_fecha`), no en la función que la usa: parchear
+    `_sistema_por_porcion_al_cierre` taparía justo la línea que se mira
+    (corolario 9)."""
     with (
-        patch("app.main.stock_de_porcion", return_value=18.0),
-        patch("app.main.listar_articulos", return_value=[{"id": 1, "nombre": "Banana"}]),
+        patch("app.main._remanente_a_fecha", return_value={"porciones": porciones}) as remanente,
+        patch("app.main._corte_o_none", return_value=corte),
+        patch("app.main.listar_articulos", return_value=[{"id": 1, "nombre": "EJEMPLO Uno"}]),
     ):
-        respuesta = cliente.get(
-            "/administracion/stock/ajustar?articulo_id=1&contado=12.0&stock_conteo=15.0&fecha_conteo=2026-08-25"
-        )
+        respuesta = cliente.get("/administracion/stock/ajustar?" + query)
+    return respuesta, remanente
+
+
+def test_ajustar_desde_cotejo_propone_la_DIFERENCIA_DEL_DIA_del_conteo():
+    """Del 25/09. Contó 12 el 25/08 y al cierre de ese día el sistema decía
+    15: se propone −3, que es lo que la tarjeta mostró, y se aplica hoy.
+
+    Hasta ese día se proponía `contado − stock de HOY` ("dejarlo en lo
+    contado"), que con un conteo viejo pisa el stock de hoy con un número de
+    hace días y se lleva puesto todo lo que entró y salió después."""
+    respuesta, remanente = _ajustar_desde_cotejo(
+        "articulo_id=1&contado=12.0&fecha_conteo=2026-08-25",
+        [{"articulo_id": 1, "ficha_id": None, "bultos": 15.0}],
+    )
 
     assert respuesta.status_code == 200
-    assert 'value="-6.0"' in respuesta.text
-    assert "Ajuste a lo contado: conteo del 2026-08-25 (12 contados)" in respuesta.text
-    assert "el stock actual es 18" in respuesta.text
-    assert "el ajuste sugerido para dejarlo en lo contado es -6" in respuesta.text
+    assert 'value="-3.0"' in respuesta.text
+    # Se pidió el cierre DE ESE DÍA y de ese artículo, no el de hoy.
+    remanente.assert_called_once_with(date(2026, 8, 25), 1)
+    assert "Conteo del 25/08: 12 contados, el sistema decía 15" in respuesta.text
+    # A la vista, y diciendo que lo de después no se toca.
+    assert "al cierre de ese día el sistema decía 15" in respuesta.text
+    assert "no se toca" in respuesta.text
+    # La jerga vieja se fue: ya no propone "dejarlo en lo contado".
+    assert "dejarlo en lo contado" not in respuesta.text
 
 
 def test_ajustar_compara_la_PORCION_y_no_el_total_del_articulo():
     """El contado es de los SUELTOS; el total del artículo incluye las cajas.
 
-    Del 08/09: la precarga usaba `stock_deposito_de_articulo`, que devuelve
-    el total. Un limón con 5 sueltos y 30 cajas armadas da sueltos 5 y total
-    35, así que contando los 5 exactos la precarga salía −30: proponía borrar
-    del total tantos bultos como cajas armadas tuviera el artículo.
-
-    Acá los dos números están a propósito muy separados: sueltos 5 y total 35.
-    Contando 6 el ajuste es +1; con el total sería −29.
+    Del 08/09: la precarga usaba el total. Un limón con 5 sueltos y 30 cajas
+    armadas da sueltos 5 y total 35, así que contando los 5 exactos la
+    precarga salía −30: proponía borrar tantos bultos como cajas armadas
+    tuviera el artículo. Los números están a propósito muy separados:
+    contando 6 el ajuste es +1; con el total sería −29.
     """
-    with (
-        patch("app.main.stock_de_porcion", return_value=5.0) as porcion,
-        patch("app.main.listar_articulos", return_value=[{"id": 1, "nombre": "Limon"}]),
-    ):
-        respuesta = cliente.get(
-            "/administracion/stock/ajustar?articulo_id=1&contado=6.0&stock_conteo=5.0&fecha_conteo=2026-09-08"
-        )
+    respuesta, _ = _ajustar_desde_cotejo(
+        "articulo_id=1&contado=6.0&fecha_conteo=2026-09-08",
+        [{"articulo_id": 1, "ficha_id": None, "bultos": 5.0},
+         {"articulo_id": 1, "ficha_id": 9, "bultos": 30.0}],
+    )
 
     assert respuesta.status_code == 200
     assert 'value="1.0"' in respuesta.text
     assert "-29" not in respuesta.text
-    # Y se le pidió la PORCIÓN, no el artículo: sin ficha_id son los sueltos.
-    porcion.assert_called_once_with(1)
 
 
-def test_ajustar_desde_cotejo_sin_movimientos_no_avisa():
-    with (
-        patch("app.main.stock_de_porcion", return_value=15.0),
-        patch("app.main.listar_articulos", return_value=[{"id": 1, "nombre": "Banana"}]),
-    ):
-        respuesta = cliente.get(
-            "/administracion/stock/ajustar?articulo_id=1&contado=12.0&stock_conteo=15.0&fecha_conteo=2026-08-25"
-        )
-
-    assert respuesta.status_code == 200
-    assert 'value="-3.0"' in respuesta.text
-    assert "Desde entonces hubo movimientos" not in respuesta.text
+def test_ajustar_sin_fecha_o_antes_del_corte_NO_propone_cantidad():
+    """Sin un día contra el cual calcular, no hay diferencia que proponer. La
+    pantalla lo dice y deja la cantidad vacía para cargarla a mano."""
+    for query in ("articulo_id=1&contado=6.0",
+                  "articulo_id=1&contado=6.0&fecha_conteo=2026-07-20"):
+        respuesta, remanente = _ajustar_desde_cotejo(
+            query, [{"articulo_id": 1, "ficha_id": None, "bultos": 5.0}])
+        assert respuesta.status_code == 200
+        assert "Cargá la cantidad a mano" in respuesta.text
+        assert 'value="1.0"' not in respuesta.text
+        remanente.assert_not_called()
 
 
 def _salidas_fifo(total, fecha=None):
@@ -26461,21 +26481,22 @@ def test_cotejo_no_ofrece_ajustar_stock_en_una_diferencia_de_FICHA():
     assert "/administracion/stock/guias-r" in cuerpo
 
 
-def _cotejo(conteos, porciones=None, deficits=None, sueltas=None):
-    """El Cotejo con sus TRES lecturas: los conteos, el sistema DE HOY y el déficit.
+def _cotejo(conteos, porciones=None, deficits=None, corte=CORTE_DEL_COTEJO):
+    """El Cotejo con sus lecturas: los conteos, el sistema AL CIERRE del día contado y el déficit.
 
-    Desde el 08/09 la tarjeta compara contra el estado actual y no contra la
-    foto congelada, así que hay que darle las dos. Sin `porciones`, el
-    sistema de hoy es el mismo de la foto: la tarjeta no se movió.
+    Desde el 25/09 cada tarjeta compara contra el cierre del DÍA DE SU
+    CONTEO, que sale de `_remanente_a_fecha(dia)`. Acá el parche devuelve las
+    mismas `porciones` para cualquier día; los tests que necesitan dos días
+    distintos parchean ellos mismos con un `side_effect` por fecha. Sin
+    `porciones`, el sistema de ese día es el de la foto del conteo.
+
+    Una porción que el Remanente no lista está en CERO (ver
+    `_sistema_por_porcion_al_cierre`): una ficha en déficit viene en negativo
+    y SÍ está listada, así que va en `porciones` con su signo.
 
     El déficit va aparte y no se deriva de `porciones`: en la pantalla sale
     de `deficit_de_cajas_por_ficha`, que lo sabe de fichas que NUNCA se
     contaron — que es justo el caso que importa.
-
-    `sueltas` son las porciones que el Remanente NO lista —las que están en
-    cero o en negativo— y que la pantalla va a buscar de a una con
-    `stock_de_porcion`. Una ficha en déficit cae siempre acá: el Remanente
-    lista "solo lo que tiene MÁS DE CERO".
     """
     if porciones is None:
         porciones = [
@@ -26503,6 +26524,7 @@ def _cotejo(conteos, porciones=None, deficits=None, sueltas=None):
         pila.enter_context(patch("app.main.listar_ultimos_conteos_stock", return_value=conteos))
         pila.enter_context(patch("app.main._remanente_a_fecha", return_value={"porciones": porciones}))
         pila.enter_context(patch("app.main.deficit_de_cajas_por_ficha", return_value=deficits or {}))
+        pila.enter_context(patch("app.main._corte_o_none", return_value=corte))
         pila.enter_context(patch("app.main.listar_fichas_de_todos_los_clientes",
                                  return_value=fichas_de_los_conteos))
         pila.enter_context(patch("app.main.listar_clientes",
@@ -26510,11 +26532,6 @@ def _cotejo(conteos, porciones=None, deficits=None, sueltas=None):
         pila.enter_context(patch("app.main.cajas_armadas_por_ficha",
                                  return_value={(f["articulo_id"], f["id"]): 1.0
                                                for f in fichas_de_los_conteos}))
-        # Solo si se pidió: hay tests que parchean `stock_de_porcion` ellos
-        # mismos, y parcharla siempre acá les pisaría el suyo.
-        if sueltas is not None:
-            pila.enter_context(patch("app.main.stock_de_porcion",
-                                     side_effect=lambda a, f, seg=False: sueltas[(a, f)]))
         return cliente.get("/administracion/stock/cotejo")
 
 
@@ -26591,14 +26608,15 @@ def _articulo_con_deficit(contado_sueltos=16.0):
          "creado_en": datetime(2026, 9, 8, 9, 0), "articulo_nombre": "EJEMPLO Deficit",
          "ficha_id": 9, "ficha_nombre": "Caja de ejemplo", "ficha_cliente": "Cliente"},
     ]
-    # La ficha en déficit NO está en las porciones: el Remanente lista "solo
-    # lo que tiene MÁS DE CERO" (_porciones_de_deposito), así que la pantalla
-    # va a buscar su número de a uno. Ponerla acá haría pasar a un déficit
-    # derivado de las porciones, que en producción no la vería nunca.
+    # LA FICHA EN DÉFICIT VIENE EN LAS PORCIONES, con su signo:
+    # `cajas_armadas_por_ficha` devuelve las que tienen algo "en cualquier
+    # sentido", así que el Remanente la lista en −10. El aviso NO sale de ahí:
+    # sale de `deficit_de_cajas_por_ficha`, que es el cuarto valor.
     porciones = [
         {"articulo_id": 2, "ficha_id": None, "bultos": 26.0, "contable": True},
+        {"articulo_id": 2, "ficha_id": 9, "bultos": -10.0, "contable": True},
     ]
-    return conteos, porciones, {(2, 9): 10.0}, {(2, 9): -10.0}
+    return conteos, porciones, {(2, 9): 10.0}
 
 
 def test_una_ficha_en_DEFICIT_manda_a_cargar_la_guia_R_y_no_a_ajustar():
@@ -26665,8 +26683,8 @@ def test_el_aviso_de_deficit_llega_a_los_SUELTOS_aunque_la_ficha_NO_se_haya_cont
     `deficit_de_cajas_por_ficha` y no de las tarjetas, justamente para poder
     avisar acá.
     """
-    conteos, porciones, deficits, sueltas = _articulo_con_deficit()
-    cuerpo = _cotejo(conteos[:1], porciones, deficits, sueltas).text.split("</style>")[-1]
+    conteos, porciones, deficits = _articulo_con_deficit()
+    cuerpo = _cotejo(conteos[:1], porciones, deficits).text.split("</style>")[-1]
 
     # No hay tarjeta de la ficha, así que no hay hermana ni aviso de signos.
     assert "Caja de ejemplo" not in cuerpo
@@ -26813,12 +26831,13 @@ def test_el_cotejo_pone_los_desvios_ARRIBA_y_no_separa_las_porciones():
 
 
 def test_la_ayuda_del_cotejo_dice_contra_QUE_compara():
-    """La ayuda decía "contra lo que el sistema decía EN ese momento", que
-    era cierto hasta el 08/09 y dejó de serlo con la tarjeta comparando
-    contra hoy. Un texto que envejeció es el síntoma de siempre."""
+    """La ayuda cambió dos veces con la cuenta: hasta el 08/09 decía "EN ese
+    momento" (la foto), hasta el 25/09 decía "hoy". Las dos versiones viejas
+    tienen que haberse ido: un texto que envejeció es el síntoma de siempre."""
     respuesta = _cotejo([])
 
-    assert "el sistema dice <strong>hoy</strong>" in respuesta.text
+    assert "al cierre del día en que se contó" in respuesta.text
+    assert "el sistema dice <strong>hoy</strong>" not in respuesta.text
     assert "EN ese momento" not in respuesta.text
 
 
@@ -26865,26 +26884,22 @@ def test_cotejo_SI_ofrece_ajustar_si_el_desvio_aparecio_DESPUES_del_conteo():
     assert "-6" in cuerpo
 
 
-def test_cotejo_le_pone_numero_a_la_porcion_que_el_remanente_no_lista():
-    """Una porción en cero o en negativo no es una pila y no sale del
-    Remanente, pero en el Cotejo tiene que tener número igual: es justo la
-    que hay que poder mirar. Se le pregunta de a una, con la misma función."""
+def test_cotejo_la_porcion_que_el_remanente_no_lista_esta_en_CERO():
+    """El Remanente a una fecha lista toda porción distinta de cero, con su
+    signo (desde el 19/09 también los negativos). Una que no aparece está en
+    cero, y la tarjeta tiene que tener número igual: es justo la que hay que
+    poder mirar. Antes se le preguntaba de a una al stock de HOY, que es la
+    mezcla de instantes que el Cotejo del 25/09 vino a sacar."""
     conteos = [
         {"id": 3, "articulo_id": 5, "cantidad": 2.0, "stock_sistema": 0.0,
          "creado_en": datetime(2026, 9, 8, 9, 0), "articulo_nombre": "Lima",
          "ficha_id": None, "ficha_nombre": None, "ficha_cliente": None},
     ]
-    with patch("app.main.stock_de_porcion", return_value=-1.0) as porcion:
-        respuesta = _cotejo(conteos, porciones=[])
+    cuerpo = _cotejo(conteos, porciones=[]).text.split("</style>")[-1]
 
-    cuerpo = respuesta.text.split("</style>")[-1]
-    # Sistema −1 contra 2 contados: −3, sobra mercadería sobre lo que el
-    # sistema cree tener (y lo que cree tener es imposible, por eso se mira).
-    assert "-3" in cuerpo
+    # Sistema 0 contra 2 contados: −2, sobra en el piso.
+    assert "-2" in cuerpo
     assert "Ajustar a lo contado" in cuerpo
-    # Con las TRES claves: sin la tercera, el fallback pediría los sueltos
-    # cuando lo que falta en las porciones es la segunda del mismo artículo.
-    porcion.assert_called_once_with(5, None, False)
 
 
 def test_cotejo_si_ofrece_ajustar_stock_en_una_diferencia_de_SUELTOS():
@@ -26915,6 +26930,92 @@ def test_cotejo_no_inventa_renglones_de_fichas_que_nunca_se_contaron():
     assert respuesta.status_code == 200
     assert "Todavía no hay conteos físicos cargados" in respuesta.text
     mock_listar.assert_called_once_with()
+
+
+def _conteo_suelto(id_, articulo_id, nombre, cantidad, creado_en):
+    return {"id": id_, "articulo_id": articulo_id, "cantidad": cantidad, "stock_sistema": 0.0,
+            "creado_en": creado_en, "articulo_nombre": nombre,
+            "ficha_id": None, "ficha_nombre": None, "ficha_cliente": None}
+
+
+def test_cada_tarjeta_compara_contra_el_CIERRE_DE_SU_DIA_y_no_contra_hoy():
+    """Del 25/09, y es del dueño: *"el cotejo solo sirve si el conteo es del
+    mismo día que estoy mirando"*.
+
+    Dos conteos de dos días, y el sistema de cada día a propósito distinto:
+    el 22/09 decía 10 y el 25/09 decía 40. Con la regla vieja las dos tarjetas
+    habrían restado contra el mismo número de hoy. Los números están
+    separados para que cruzarlos dé un desvío que se vea."""
+    conteos = [
+        _conteo_suelto(1, 1, "EJEMPLO Viejo", 10.0, datetime(2026, 9, 22, 16, 0)),
+        _conteo_suelto(2, 2, "EJEMPLO Nuevo", 40.0, datetime(2026, 9, 25, 16, 0)),
+    ]
+    por_dia = {
+        date(2026, 9, 22): [{"articulo_id": 1, "ficha_id": None, "bultos": 10.0},
+                            {"articulo_id": 2, "ficha_id": None, "bultos": 99.0}],
+        date(2026, 9, 25): [{"articulo_id": 1, "ficha_id": None, "bultos": 77.0},
+                            {"articulo_id": 2, "ficha_id": None, "bultos": 40.0}],
+    }
+    with (
+        patch("app.main.listar_ultimos_conteos_stock", return_value=conteos),
+        patch("app.main._remanente_a_fecha",
+              side_effect=lambda dia, articulo_id=None: {"porciones": por_dia[dia]}) as remanente,
+        patch("app.main.deficit_de_cajas_por_ficha", return_value={}) as deficit,
+        patch("app.main._corte_o_none", return_value=CORTE_DEL_COTEJO),
+        patch("app.main.listar_fichas_de_todos_los_clientes", return_value=[]),
+        patch("app.main.listar_clientes", return_value=[]),
+        patch("app.main.cajas_armadas_por_ficha", return_value={}),
+    ):
+        respuesta = cliente.get("/administracion/stock/cotejo")
+
+    cuerpo = respuesta.text.split("</style>")[-1]
+    # Las dos coinciden con SU día: ningún desvío, ningún botón.
+    assert cuerpo.count("diferencia-cero") == 2
+    assert "Ajustar a lo contado" not in cuerpo
+    assert "Sistema al cierre del 22/09" in cuerpo
+    assert "Sistema al cierre del 25/09" in cuerpo
+    # Una lectura por día contado, y el déficit al MISMO cierre.
+    assert sorted(c.args[0] for c in remanente.call_args_list) == [date(2026, 9, 22), date(2026, 9, 25)]
+    assert sorted(c.args[0] for c in deficit.call_args_list) == [date(2026, 9, 22), date(2026, 9, 25)]
+
+
+def test_un_conteo_de_ANTES_DEL_CORTE_no_da_diferencia_ni_boton_y_va_AL_FINAL():
+    """El stock de antes del corte es de la cuenta vieja: no hay contra qué
+    compararlo. La tarjeta lo dice, no inventa un número, y va abajo de todo
+    porque no es un "no sé" que haya que mirar: es un conteo que no sirve."""
+    conteos = [
+        _conteo_suelto(1, 1, "EJEMPLO Antiguo", 10.0, datetime(2026, 8, 26, 18, 0)),
+        _conteo_suelto(2, 2, "EJEMPLO Sano", 5.0, datetime(2026, 9, 25, 16, 0)),
+    ]
+    porciones = [{"articulo_id": 2, "ficha_id": None, "bultos": 5.0}]
+    cuerpo = _cotejo(conteos, porciones, corte=date(2026, 9, 5)).text.split("</style>")[-1]
+
+    assert "de antes del corte del modelo (05/09)" in cuerpo
+    assert "Ajustar a lo contado" not in cuerpo
+    assert "Sistema al cierre del 26/08" not in cuerpo
+    assert cuerpo.index("EJEMPLO Sano") < cuerpo.index("EJEMPLO Antiguo")
+
+
+def test_el_DIA_del_conteo_es_el_ARGENTINO_y_no_el_de_la_sesion():
+    """Un conteo de las 22:30 en Argentina es la 01:30 del día siguiente en
+    UTC, que es la zona en que la base lo devuelve. Con `.date()` a secas
+    caería en el cierre del día siguiente."""
+    from app.main import _dia_del_conteo
+    assert _dia_del_conteo(datetime(2026, 9, 23, 1, 30, tzinfo=timezone.utc)) == date(2026, 9, 22)
+    assert _dia_del_conteo(datetime(2026, 9, 23, 4, 0, tzinfo=timezone.utc)) == date(2026, 9, 23)
+
+
+def test_los_SIGNOS_OPUESTOS_solo_valen_entre_porciones_contadas_el_MISMO_DIA():
+    """Cada tarjeta compara contra el cierre de su día: un −2 del lunes al lado
+    de un +1 del jueves son dos instantes, y lo que se movió en el medio
+    explica cualquier signo. No es la firma de una guía R mal atribuida."""
+    conteos, porciones = _articulo_partido()
+    conteos[1] = dict(conteos[1], creado_en=datetime(2026, 9, 11, 9, 0))
+
+    cuerpo = _cotejo(conteos, porciones).text.split("</style>")[-1]
+    assert "ficha equivocada" not in cuerpo
+    # Y el mismo par, contado el mismo día, sí avisa (el control).
+    assert "ficha equivocada" in _cotejo(*_articulo_partido()).text
 
 
 def test_las_pantallas_que_se_mudaron_vuelven_a_ADMINISTRACION():
@@ -33093,3 +33194,30 @@ def test_la_RECARGA_traslada_la_segunda_con_el_armado_y_el_extracto_no_dibuja_ce
 
     extracto = inspect.getsource(modulo.eventos_de_stock_del_dia)
     assert 'HAVING SUM(""" + _SQL_BULTOS_DE_PRIMERA + """) <> 0' in extracto
+
+
+def test_la_frase_de_GUIAS_R_nombra_EXACTAMENTE_lo_que_se_corrige_sin_anular():
+    """Del 25/09. La pantalla decía "corregir una guía es anularla y cargarla
+    de nuevo", y era falso desde el 19/09: la fecha se corrige sin anular.
+
+    La frase ahora nombra las tres correcciones, y este test compara el
+    conjunto ENCONTRADO de rutas de corrección contra el DECIDIDO: si aparece
+    una cuarta, la frase se vuelve falsa y el test cae en el mismo commit."""
+    import re as _re
+    from app.main import app as la_app
+    rutas = {
+        r.path.rsplit("/", 1)[-1]
+        for r in la_app.routes
+        if getattr(r, "path", "").startswith("/administracion/stock/guias-r/{reproceso_id}/")
+        and "POST" in getattr(r, "methods", set())
+    }
+    assert rutas - {"anular"} == {"asignar-ficha", "cambiar-fecha", "completar-costo"}
+
+    fuente = open("templates/deposito_stock_guias_r.html", encoding="utf-8").read()
+    fuente = _re.sub(r"\{#.*?#\}", "", fuente, flags=_re.S)
+    frase = _re.search(r'<p class="ayuda">(.*?)\{% call info', fuente, _re.S).group(1)
+    for nombrada in ("<strong>ficha</strong>", "<strong>día en que se armó</strong>",
+                     "<strong>costo que faltaba</strong>", "anulando la guía"):
+        assert nombrada in frase, nombrada
+    # La jerga vieja, que decía que TODO era anular, no puede quedar.
+    assert "Corregir una guía es anularla" not in fuente

@@ -328,7 +328,13 @@
       El rango y el artículo no se están aplicando.
       <a href="/administracion/stock/guias-r">Volver a la lista</a></p>
     {% endif %}
-    <p class="ayuda">Corregir una guía es anularla y cargarla de nuevo. {% call info("¿Cómo se costea una guía R?") %}El costo del reproceso vive acá y <strong>no toca la cotización</strong> (que usa el costo de compra de la mañana). Todo el costo va a la primera; segunda y merma valen cero.{% endcall %}</p>
+    {# QUÉ SE CORRIGE SIN ANULAR, leído del código y no supuesto (25/09): la
+     ficha (asignar-ficha), el día en que se armó (cambiar-fecha, que rechaza
+     las 'en_origen' y las 'inicial') y el costo que faltaba (completar-costo,
+     que solo llena lo que estaba vacío). Lo demás no tiene otra puerta. Si
+     aparece una corrección nueva, esta frase se vuelve falsa en el mismo
+     commit. #}
+  <p class="ayuda">La <strong>ficha</strong>, el <strong>día en que se armó</strong> (solo en las de reproceso) y el <strong>costo que faltaba</strong> se corrigen acá, sin anular. Las cantidades o el artículo se corrigen anulando la guía y cargándola de nuevo. {% call info("¿Cómo se costea una guía R?") %}El costo del reproceso vive acá y <strong>no toca la cotización</strong> (que usa el costo de compra de la mañana). Todo el costo va a la primera; segunda y merma valen cero.{% endcall %}</p>
   </div>
 
   {# El número que NO va al banner de alertas: guías que nadie va a poder

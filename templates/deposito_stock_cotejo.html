@@ -95,11 +95,11 @@
 
   {# Lo que se lee para ENTENDER EL NÚMERO queda a la vista (el signo); cómo
      se arma la comparación va a la "i". #}
-  <p class="ayuda"><strong>Diferencia = Sistema − Físico</strong>: en <strong>positivo es mercadería que falta</strong>. {% call info("Cómo se compara") %}Cada tarjeta compara el último conteo físico contra lo que el sistema dice <strong>hoy</strong>: eso es lo que dice si el desvío sigue existiendo. Un artículo puede tener varias tarjetas: sus bultos sueltos y las cajas de cada ficha se cuentan por separado.{% endcall %}</p>
+  <p class="ayuda"><strong>Diferencia = Sistema − Físico</strong>: en <strong>positivo es mercadería que falta</strong>. {% call info("Cómo se compara") %}Cada tarjeta compara el último conteo físico contra lo que el sistema decía <strong>al cierre del día en que se contó</strong>: se cuenta a la tarde, después de armar, así que ese cierre es el mismo momento que el conteo. Un conteo viejo no se compara contra hoy, porque en el medio entró y salió mercadería. Un artículo puede tener varias tarjetas: sus bultos sueltos, las cajas de cada ficha y la segunda se cuentan por separado.{% endcall %}</p>
 
   {% if filas %}
     {% for f in filas %}
-    <div class="tarjeta {% if f.dif_hoy not in (none, 0) %}con-diferencia{% endif %}">
+    <div class="tarjeta {% if f.dif_del_dia not in (none, 0) %}con-diferencia{% endif %}">
       {# EL NOMBRE COMPLETO DE LA PORCIÓN EN EL ENCABEZADO, y sale del mismo
          namer que el Remanente y que "Contado hoy". Antes el encabezado era
          el artículo pelado y la porción iba abajo en gris: dos tarjetas del
@@ -113,24 +113,32 @@
          de una como el de la otra. #}
       <p class="encabezado">{{ f.porcion_nombre }}</p>
       <p class="fecha-conteo">Contado el {{ f.creado_en|fecha_hora }}</p>
+      {% if f.antes_del_corte %}
+      {# ANTES DEL CORTE NO HAY CONTRA QUÉ: el stock de esos días es de la
+         cuenta vieja. Se muestra lo contado y se dice por qué no hay
+         diferencia, en vez de inventar una contra hoy. #}
+      <div class="numeros">
+        <div class="celda">
+          <span class="etiqueta">Contado</span>
+          <span class="valor">{{ f.cantidad|numero }}</span>
+        </div>
+      </div>
+      <p class="ayuda-ficha">Es de antes del corte del modelo ({{ f.antes_del_corte.strftime('%d/%m') }}): no hay contra qué compararlo. Para cotejar esta porción, hay que contarla de nuevo.</p>
+      {% else %}
       <div class="numeros">
         <div class="celda">
           <span class="etiqueta">Contado</span>
           <span class="valor">{{ f.cantidad|numero }}</span>
         </div>
         <div class="celda">
-          <span class="etiqueta">Sistema hoy</span>
-          <span class="valor">{% if f.sistema_hoy is none %}—{% else %}{{ f.sistema_hoy|numero }}{% endif %}</span>
+          <span class="etiqueta">Sistema al cierre del {{ f.dia_del_conteo.strftime('%d/%m') }}</span>
+          <span class="valor">{{ f.sistema_del_dia|numero }}</span>
         </div>
         <div class="celda">
           <span class="etiqueta">Diferencia</span>
-          {% if f.dif_hoy is none %}
-          <span class="valor">—</span>
-          {% else %}
-          <span class="valor {% if f.dif_hoy == 0 %}diferencia-cero{% else %}diferencia-distinta{% endif %}">
-            {% if f.dif_hoy > 0 %}+{% endif %}{{ f.dif_hoy|numero }}
+          <span class="valor {% if f.dif_del_dia == 0 %}diferencia-cero{% else %}diferencia-distinta{% endif %}">
+            {% if f.dif_del_dia > 0 %}+{% endif %}{{ f.dif_del_dia|numero }}
           </span>
-          {% endif %}
         </div>
       </div>
       {% if f.deficit %}
@@ -185,15 +193,15 @@
       <a class="boton-ajustar" href="/administracion/stock/guias-r">Revisar las Guías R</a>
       {% endif %}
       {% if f.query_ajuste %}
-      {# La cantidad final se calcula en la pantalla de ajuste contra el
-         stock ACTUAL (con aviso si cambió desde este conteo).
+      {# La pantalla de ajuste propone la diferencia del día del conteo, la
+         misma de esta tarjeta, y la aplica hoy como un movimiento más.
          Con una hermana de signo opuesto —o con una ficha del artículo en
          déficit— el botón pasa a segundo plano pero NO desaparece: puede
          haber una guía R faltante o mal atribuida Y mercadería faltante de
          verdad encima. Más difícil de apretar, no imposible. #}
       <a class="boton-ajustar {% if f.opuestas or f.deficit %}secundario{% endif %}"
          href="/administracion/stock/ajustar?{{ f.query_ajuste }}">Ajustar a lo contado</a>
-      {% elif f.es_segunda and f.dif_hoy not in (none, 0) %}
+      {% elif f.es_segunda and f.dif_del_dia not in (none, 0) %}
       {# LA SEGUNDA ES OTRO CIRCUITO y necesita su propio consejo. Caía en la
          rama de abajo —la de las fichas— y le decía "lo que cambia entre
          fichas es a cuál fueron las cajas", que sobre el pool de segunda no
@@ -210,7 +218,7 @@
         por los <strong>rechazos que no vuelven al stock</strong>, y sale por el <strong>remito al
         Puesto</strong>. Un desvío acá se corrige en alguno de esos tres, no ajustando el stock:
         el ajuste mueve el total del artículo, y la segunda no está en ese total.{% endcall %}</p>
-      {% elif f.dif_hoy not in (none, 0) and not f.opuestas and not f.deficit %}
+      {% elif f.dif_del_dia not in (none, 0) and not f.opuestas and not f.deficit %}
       {# Una diferencia en una FICHA no se arregla con un ajuste de stock:
          el ajuste mueve el total del artículo, y acá el total puede estar
          perfecto. Si sobran cajas de una ficha y faltan de otra, lo que
@@ -218,6 +226,7 @@
       <p class="ayuda-ficha">El total del artículo puede estar bien: lo que cambia entre fichas es a cuál
         fueron las cajas. Revisá la guía R en Guías R, no ajustes el stock.</p>
       <a class="boton-ajustar secundario" href="/administracion/stock/guias-r">Ver Guías R</a>
+      {% endif %}
       {% endif %}
     </div>
     {% endfor %}

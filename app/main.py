@@ -404,7 +404,6 @@ from app.db import (
     recepcionar_compra,
     rechazar_compra,
     registrar_costo_envase,
-    stock_de_porcion,
     stock_deposito_por_articulo,
     stock_vacios,
     stock_vacios_de_tipo,
@@ -12239,47 +12238,76 @@ def ver_ajustar_stock_deposito(
     motivo: str | None = None,
     articulo_id: str | None = None,
     contado: str | None = None,
-    stock_conteo: str | None = None,
     fecha_conteo: str | None = None,
 ):
     """Ajuste de stock. Sin precarga: pantalla en blanco (o solo el motivo, para la carga en cadena del
-    stock inicial). Con precarga (viene del Cotejo): calcula el ajuste.
+    stock inicial). Con precarga (viene del Cotejo): propone la DIFERENCIA del día del conteo.
 
-    La cantidad precargada es contado − stock ACTUAL (no la diferencia
-    congelada del cotejo): "ajustar a lo contado" tiene que dejar el
-    stock en lo contado, aunque hayan entrado movimientos después del
-    conteo. Si el stock cambió desde el conteo, la pantalla lo dice con
-    todos los números ANTES de guardar — mismo diseño que Vacíos.
+    DESDE EL 25/09 la cantidad propuesta es `contado − sistema al cierre del
+    día del conteo`, y se aplica HOY como un movimiento más. Es la misma
+    diferencia que la tarjeta del Cotejo muestra, con el signo del ajuste.
 
-    Y ese "stock actual" es el de la PORCIÓN, no el del artículo. Hasta el
-    08/09 era el total —sueltos más cajas— contra un contado que es solo de
-    sueltos: un limón con 5 sueltos y 30 cajas armadas daba una precarga de
-    −30 contando los 5 exactos, o sea proponía borrar las cajas. No explotó
-    porque el botón solo aparece cuando los sueltos difieren y el caso que
-    lo destapó tenía cero cajas.
+    Hasta ese día era `contado − stock ACTUAL`, o sea "dejarlo en lo
+    contado". Con un conteo de hace una semana eso pisaba el stock de hoy con
+    un número viejo, y se llevaba puesto todo lo que entró y salió después
+    del conteo — movimientos que ya están cargados y no tienen nada que
+    corregir. Lo que el conteo dice es cuánto le faltaba o le sobraba al
+    sistema ESE día, y eso es lo único que el ajuste puede arreglar.
+
+    El sistema de ese día se vuelve a calcular ACÁ, con la misma función que
+    el Cotejo (`_sistema_por_porcion_al_cierre`). No viaja en la URL: un
+    número que se puede tocar a mano no decide una cantidad.
+
+    Y es el de la PORCIÓN SUELTA, no el del artículo. Hasta el 08/09 era el
+    total —sueltos más cajas— contra un contado que es solo de sueltos: un
+    limón con 5 sueltos y 30 cajas armadas proponía borrar las cajas.
+
+    Sin una fecha válida, o con una anterior al corte, no se propone ninguna
+    cantidad: no hay contra qué comparar, y la pantalla lo dice.
     """
     precarga = {"motivo": motivo.strip()} if motivo and motivo.strip() else {}
     contado_valor = _numero_query_o_none(contado)
     if articulo_id and articulo_id.strip().isdigit() and contado_valor is not None:
         try:
-            stock_actual = stock_de_porcion(int(articulo_id))
+            dia = date.fromisoformat((fecha_conteo or "").strip())
+        except ValueError:
+            dia = None
+        corte = _corte_o_none()
+        if dia is None or (corte is not None and dia < corte):
+            precarga = {
+                "articulo_id": articulo_id,
+                "aviso_conteo": (
+                    "Este conteo no dice de qué día es, o es de antes del corte del modelo: "
+                    "no hay un día contra el cual calcular la diferencia. Cargá la cantidad a mano."
+                ),
+            }
+            return _renderizar_pantalla_ajustar_stock(request, precarga=precarga, aviso=aviso)
+        try:
+            sistema_del_dia = _sistema_por_porcion_al_cierre(dia, int(articulo_id)).get(
+                (int(articulo_id), None, False), 0.0
+            )
         except Exception as error_db:
             raise HTTPException(status_code=500, detail=f"Error al conectar con la base de datos: {error_db}") from error_db
 
+        diferencia = round(contado_valor - sistema_del_dia, 2)
+        dia_texto = dia.strftime("%d/%m")
         precarga = {
             "articulo_id": articulo_id,
-            "cantidad": round(contado_valor - stock_actual, 2),
-            "motivo": f"Ajuste a lo contado: conteo del {fecha_conteo or '?'} ({_formatear_numero(contado_valor)} contados)",
+            "cantidad": diferencia,
+            "motivo": (
+                f"Conteo del {dia_texto}: {_formatear_numero(contado_valor)} contados, "
+                f"el sistema decía {_formatear_numero(sistema_del_dia)}"
+            ),
+            # A LA VISTA y no en la "i": cambia lo que se va a guardar. El que
+            # viene de otra época de esta pantalla espera "dejarlo en lo
+            # contado", y eso ya no es lo que propone.
+            "aviso_conteo": (
+                f"El conteo es del {dia_texto}: contaste {_formatear_numero(contado_valor)} y al cierre de "
+                f"ese día el sistema decía {_formatear_numero(sistema_del_dia)}. Se propone esa diferencia "
+                f"({'+' if diferencia > 0 else ''}{_formatear_numero(diferencia)}). Lo que entró y salió "
+                f"después del conteo ya está cargado y no se toca."
+            ),
         }
-        stock_foto = _numero_query_o_none(stock_conteo)
-        if stock_foto is not None and stock_foto != stock_actual:
-            precarga["aviso_conteo"] = (
-                f"Ojo: el conteo fue del {fecha_conteo or '?'} con {_formatear_numero(contado_valor)} contados y el "
-                f"sistema decía {_formatear_numero(stock_foto)}. Desde entonces hubo movimientos: el stock actual es "
-                f"{_formatear_numero(stock_actual)}, así que el ajuste sugerido para dejarlo en lo contado es "
-                f"{'+' if contado_valor - stock_actual > 0 else ''}{_formatear_numero(round(contado_valor - stock_actual, 2))} "
-                f"(no la diferencia que viste en el Cotejo)."
-            )
     return _renderizar_pantalla_ajustar_stock(request, precarga=precarga, aviso=aviso)
 
 
@@ -13840,73 +13868,114 @@ def _nombre_de_porcion(fila) -> str:
     return f"las cajas de {fila['ficha_nombre'] or 'la otra ficha'}"
 
 
+def _dia_del_conteo(creado_en) -> date:
+    """El DÍA ARGENTINO en que se contó. Es el día contra cuyo cierre se coteja.
+
+    Un `timestamptz` que llega de la base viene en la zona de la sesión (UTC
+    en Supabase): con `.date()` a secas, un conteo de las 21:30 cae en el día
+    siguiente. Uno sin zona (solo en los tests) se toma tal cual: convertirlo
+    usaría la zona de la MÁQUINA, que es el entorno y no la función.
+    """
+    if creado_en.tzinfo is None:
+        return creado_en.date()
+    return creado_en.astimezone(ARGENTINA).date()
+
+
+def _sistema_por_porcion_al_cierre(dia, articulo_id=None) -> dict:
+    """{(articulo, ficha, es_segunda): bultos} que el sistema dice AL CIERRE de `dia`.
+
+    Sale de `_remanente_a_fecha`, la misma función que dibuja el Remanente y
+    la Evolución: el Cotejo y el ajuste no escriben una cuenta propia.
+
+    UNA PORCIÓN QUE NO ESTÁ ACÁ ESTÁ EN CERO, y no es una suposición: la
+    consulta del stock lista todo artículo con algún movimiento, las porciones
+    salen con cualquier signo distinto de cero, y la segunda es un pool con
+    piso propio. Por eso el que lee esto usa `.get(clave, 0.0)`.
+    """
+    return {
+        (p["articulo_id"], p["ficha_id"], bool(p.get("es_segunda"))): float(p["bultos"])
+        for p in _remanente_a_fecha(dia, articulo_id)["porciones"]
+    }
+
+
+def _corte_o_none():
+    """La fecha de corte, o None si no se puede leer. El Cotejo sale igual sin ella."""
+    try:
+        return fecha_corte()
+    except Exception:
+        logger.exception("No se pudo leer la fecha de corte para el Cotejo")
+        return None
+
+
 @app.get("/administracion/stock/cotejo")
 def ver_cotejo_stock(request: Request):
-    """Cotejo (control): el último conteo físico de cada PORCIÓN contra la foto del sistema de ese instante.
+    """Cotejo: el último conteo físico de cada PORCIÓN contra lo que el sistema decía AL CIERRE DEL DÍA DEL CONTEO.
 
-    Desde la etapa 3 un artículo tiene varias porciones: sus bultos
-    sueltos y las cajas de cada ficha. Sale de los conteos y de ningún
+    DESDE EL 25/09, y es del dueño: *"el cotejo solo sirve si el conteo es
+    del mismo día que estoy mirando"*. Hasta ese día cada tarjeta restaba el
+    último conteo contra el stock de HOY, así que un conteo de hace una
+    semana arrastraba adentro de la diferencia todo lo que entró y salió en
+    el medio. `cotejo_1` midió que en Frutamax 17 de 43 tarjetas eran de
+    antes de ayer.
+
+    CONTRA EL CIERRE DE ESE DÍA, y no contra la foto congelada al contar
+    (`conteos_stock.stock_sistema`): la foto se sacaba con el trabajo del día
+    a medio cargar (el Mango del 08/09, corolario 25). El cierre reconstruido
+    incluye lo que se cargó tarde con la fecha de ese día. Y contra el cierre
+    del MISMO día porque se cuenta a la tarde, después de armar: `cotejo_1`
+    dio 429 de 574 conteos entre las 14 y las 18.
+
+    ANTES DEL CORTE NO HAY CONTRA QUÉ: el stock de esos días es de la cuenta
+    vieja (lo dice `_fecha_del_remanente`). Esas tarjetas lo dicen y no dan
+    diferencia.
+
+    Desde la etapa 3 un artículo tiene varias porciones: sus bultos sueltos,
+    las cajas de cada ficha y la segunda. Sale de los conteos y de ningún
     otro lado: una ficha que nunca se contó no genera renglón.
     """
     try:
         conteos = listar_ultimos_conteos_stock()
-        # EL SISTEMA DE HOY, por porción. Sale del Remanente —la misma
-        # función que dibuja esa pantalla— y no de una cuenta propia.
-        fecha_hoy = _hoy_argentina()
-        hoy = _remanente_a_fecha(fecha_hoy)
-        # LA CLAVE SON TRES COSAS. La segunda y los sueltos tienen los dos
-        # `ficha_id` None: con dos claves, el número de una se le pega a la
-        # otra y las dos tarjetas mienten a la vez.
-        sistema_hoy = {
-            (p["articulo_id"], p["ficha_id"], bool(p.get("es_segunda"))): float(p["bultos"])
-            for p in hoy["porciones"]
-        }
-        # EL DÉFICIT DE CADA FICHA, de la MISMA función que lo calcula para
-        # el Remanente y para el extracto. No se deriva acá de
-        # `sistema_hoy < 0`: sería la cuarta copia de la misma regla, y la
-        # que decide qué botón se muestra no puede separarse de la que
-        # dibuja el número.
+        corte = _corte_o_none()
+        # UNA LECTURA POR DÍA CONTADO, no por porción: las tarjetas del mismo
+        # día comparten el mismo cierre, y son pocos días distintos.
+        dias = {_dia_del_conteo(c["creado_en"]) for c in conteos}
+        cotejables = {d for d in dias if corte is None or d >= corte}
+        sistema_por_dia = {d: _sistema_por_porcion_al_cierre(d) for d in cotejables}
+        # EL DÉFICIT DE CADA FICHA, AL MISMO CIERRE que el número de la
+        # tarjeta: una guía R que falta explica la diferencia de ese día, y
+        # medirla contra hoy mezclaría dos instantes en el mismo consejo. Sale
+        # de la MISMA función que lo calcula para el Remanente y el extracto.
         #
         # Y sale por FICHA aunque esa ficha no se haya contado nunca: la
         # tarjeta de SUELTOS necesita saberlo igual, y es justo el caso
         # peligroso — sin conteo de la ficha no hay tarjeta hermana, no hay
         # aviso de signos opuestos, y el botón de ajustar queda de primero.
-        deficits = deficit_de_cajas_por_ficha(fecha_hoy)
+        deficit_por_dia = {d: deficit_de_cajas_por_ficha(d) for d in cotejables}
     except Exception as error_db:
         raise HTTPException(status_code=500, detail=f"Error al conectar con la base de datos: {error_db}") from error_db
 
     filas = []
     for conteo in conteos:
         fila = dict(conteo)
-        # Una porción en CERO o en negativo no es una pila y el Remanente no
-        # la lista, pero acá tiene que tener número igual: justo esa es la
-        # que hay que poder mirar. Sale de la misma función, de a una.
+        dia = _dia_del_conteo(conteo["creado_en"])
+        fila["dia_del_conteo"] = dia
         es_segunda = bool(conteo.get("es_segunda"))
+        if dia not in cotejables:
+            fila["antes_del_corte"] = corte
+            fila["sistema_del_dia"] = None
+            fila["dif_del_dia"] = None
+            filas.append(fila)
+            continue
+        # LA CLAVE SON TRES COSAS. La segunda y los sueltos tienen los dos
+        # `ficha_id` None: con dos claves, el número de una se le pega a la
+        # otra y las dos tarjetas mienten a la vez.
         clave = (conteo["articulo_id"], conteo["ficha_id"], es_segunda)
-        if clave in sistema_hoy:
-            fila["sistema_hoy"] = sistema_hoy[clave]
-        else:
-            try:
-                fila["sistema_hoy"] = stock_de_porcion(
-                    conteo["articulo_id"], conteo["ficha_id"], es_segunda
-                )
-            except Exception:
-                logger.exception("No se pudo leer el stock actual de una porción del cotejo")
-                fila["sistema_hoy"] = None
+        fila["sistema_del_dia"] = sistema_por_dia[dia].get(clave, 0.0)
         # SISTEMA MENOS FÍSICO, y ese orden es la definición. Positivo = el
         # sistema dice más de lo que hay en el piso, o sea FALTA mercadería,
-        # que es la pregunta que se viene a hacer acá. Al revés (contado
-        # menos sistema) un faltante salía en negativo y había que darlo
-        # vuelta en la cabeza para leerlo.
-        #
-        # No lo usa la precarga del ajuste: el botón manda `contado` y
-        # `stock_conteo` crudos y la cuenta se hace en la pantalla de ajuste
-        # contra el stock actual. Si algún día alguien la hace salir de acá,
-        # tiene que negarla — son dos convenciones distintas a propósito.
-        fila["dif_hoy"] = (
-            None if fila["sistema_hoy"] is None
-            else round(fila["sistema_hoy"] - float(conteo["cantidad"]), 2)
-        )
+        # que es la pregunta que se viene a hacer acá.
+        fila["dif_del_dia"] = round(fila["sistema_del_dia"] - float(conteo["cantidad"]), 2)
+        deficits = deficit_por_dia[dia]
         # DÉFICIT: salieron cajas de esta ficha sin una guía R que las
         # produzca. No es un desvío de conteo —el sistema no sabe menos de
         # lo que hay, sabe que debe— y por eso no se arregla contando ni
@@ -13923,33 +13992,32 @@ def ver_cotejo_stock(request: Request):
         if propio:
             fila["deficit"] = propio
 
-        # Con diferencia, botón directo a la pantalla de ajuste, precargada
-        # con este conteo (la cantidad final se calcula ahí contra el stock
-        # ACTUAL, no contra esta foto — ver ver_ajustar_stock_deposito).
+        # Con diferencia, botón directo a la pantalla de ajuste con el
+        # artículo, lo contado y el DÍA del conteo. Esa pantalla vuelve a
+        # calcular el cierre de ese día con la misma función y propone la
+        # DIFERENCIA de ese día (ver ver_ajustar_stock_deposito): no viaja un
+        # número del sistema en la URL que alguien pueda cambiar.
         #
         # SOLO en los renglones de sueltos. Un ajuste de stock es por
         # ARTÍCULO: mueve el total, no reparte entre fichas. Si sobran
         # cajas de Bolivia y faltan de Ecuador, el total del artículo está
         # bien y ajustarlo lo rompería — lo que hay que corregir es a qué
         # ficha fue una guía R, que se hace en Guías R desde la etapa 1.
-        # EL BOTÓN SE DECIDE CON EL DESVÍO DE HOY, no con la foto. Hasta el
-        # 08/09 se ofrecía según `diferencia` —la congelada— mientras la
-        # pantalla de ajuste calculaba contra el stock actual: la lista
-        # decidía con un número y la acción usaba otro. Las dos caras del
-        # error: Mango mostraba 13 y un botón con el desvío ya resuelto, y
-        # una porción con foto limpia y desvío vivo no mostraba nada.
+        # EL BOTÓN SE DECIDE CON EL MISMO NÚMERO QUE LA ACCIÓN USA: la
+        # diferencia al cierre del día del conteo. Hasta el 08/09 la lista
+        # decidía con la foto congelada y el ajuste calculaba contra hoy, y
+        # hasta el 25/09 los dos usaban hoy aunque el conteo fuera viejo.
         # NI EN LA SEGUNDA, y no es lo mismo que "ficha_id is None". Un
         # ajuste mueve el TOTAL del artículo, y la segunda no está en el
         # total: la pata `reingresos` la excluye y el pool la suma aparte.
         # Ajustar desde ahí movería la pila equivocada — es el corolario 8,
         # dos cuentas con el mismo nombre y distinto alcance.
-        if fila["dif_hoy"] not in (None, 0) and fila["ficha_id"] is None and not es_segunda:
+        if fila["dif_del_dia"] not in (None, 0) and fila["ficha_id"] is None and not es_segunda:
             fila["query_ajuste"] = urlencode(
                 {
                     "articulo_id": conteo["articulo_id"],
                     "contado": conteo["cantidad"],
-                    "stock_conteo": conteo["stock_sistema"],
-                    "fecha_conteo": conteo["creado_en"].date().isoformat(),
+                    "fecha_conteo": dia.isoformat(),
                 }
             )
         filas.append(fila)
@@ -13974,19 +14042,23 @@ def ver_cotejo_stock(request: Request):
     # stock normal. La segunda es otro circuito —entra por `bultos_segunda`
     # y sale por remito al Puesto—, así que un signo contrario suyo no dice
     # nada de una guía R y mandaría a buscar lo que no está.
+    #
+    # Y LAS DOS CONTADAS EL MISMO DÍA (25/09). Cada tarjeta compara contra el
+    # cierre de SU día: un −2 del lunes al lado de un +1 del jueves son dos
+    # instantes distintos, y el movimiento del medio explica cualquier signo.
     por_articulo = {}
     for fila in filas:
-        if fila["dif_hoy"] not in (None, 0) and not fila.get("es_segunda"):
-            por_articulo.setdefault(fila["articulo_id"], []).append(fila)
+        if fila["dif_del_dia"] not in (None, 0) and not fila.get("es_segunda"):
+            por_articulo.setdefault((fila["articulo_id"], fila["dia_del_conteo"]), []).append(fila)
     for hermanas in por_articulo.values():
         for fila in hermanas:
             opuestas = [
                 o for o in hermanas
-                if o is not fila and (o["dif_hoy"] > 0) != (fila["dif_hoy"] > 0)
+                if o is not fila and (o["dif_del_dia"] > 0) != (fila["dif_del_dia"] > 0)
             ]
             if opuestas:
                 fila["opuestas"] = [
-                    {"nombre": _nombre_de_porcion(o), "dif": o["dif_hoy"]} for o in opuestas
+                    {"nombre": _nombre_de_porcion(o), "dif": o["dif_del_dia"]} for o in opuestas
                 ]
 
     # LOS DESVÍOS ARRIBA. Con treinta tarjetas, una en el puesto veinte no
@@ -13996,12 +14068,13 @@ def ver_cotejo_stock(request: Request):
     # la ficha equivocada" — esa se ve como −2 en una pila y +1 en la otra, y
     # separadas no dice nada.
     #
-    # Una porción sin número (no se pudo leer su stock) pesa como infinito:
-    # "no sé" va arriba, con los desvíos, y no abajo con lo sano.
+    # Un conteo de antes del corte no tiene diferencia y pesa −1: va AL FINAL,
+    # abajo de lo sano. No es un "no sé" que haya que mirar — es un conteo que
+    # no sirve para cotejar, y arriba taparía los desvíos de verdad.
     peso = {}
     for fila in filas:
-        actual = peso.get(fila["articulo_id"], 0.0)
-        propio = float("inf") if fila["dif_hoy"] is None else abs(fila["dif_hoy"])
+        actual = peso.get(fila["articulo_id"], -1.0)
+        propio = -1.0 if fila["dif_del_dia"] is None else abs(fila["dif_del_dia"])
         peso[fila["articulo_id"]] = max(actual, propio)
     filas.sort(key=lambda f: (
         -peso[f["articulo_id"]],

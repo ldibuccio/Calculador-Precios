@@ -1212,7 +1212,10 @@ la que devuelve el total lo dice en la primera línea del docstring. Y cuando
 dos pantallas comparan el mismo número, **las dos salen de la misma
 función**: acá `_stock_de_ficha`, que es la que además congela el
 `stock_sistema` de cada conteo — así el conteo, el Cotejo y el ajuste no se
-pueden separar.
+pueden separar. (`stock_de_porcion` se borró el 25/09: se quedó sin
+llamadores cuando el Cotejo y el ajuste pasaron a leer el cierre del día del
+conteo con `_sistema_por_porcion_al_cierre`. El mecanismo no se mueve: el
+nombre lleva el alcance, y las dos pantallas salen de la misma función.)
 
 Corolario 7, del 07/09: **una diferencia entre dos cuentas no está en
 ninguna de las dos.**
@@ -1818,6 +1821,40 @@ los ajustes posteriores, y está bien. Ahí el circuito es otro —los cajones n
 tienen un "trabajo del día" que se cargue después del conteo— así que la
 premisa que acá era falsa, allá se cumple. **Buscar la otra copia es
 obligatorio (corolario 2); copiarle el arreglo, no.**
+
+### Y EL 25/09 SE MOVIÓ OTRA VEZ: al CIERRE DEL DÍA DEL CONTEO (dueño)
+
+"Sistema de ahora" arregló el Mango y dejó otro agujero: un conteo de hace
+una semana restado contra hoy mete en la diferencia todo lo que se movió en
+el medio. Es exactamente la objeción que este corolario da por válida en su
+primer párrafo, y quedó viva para los conteos viejos. `cotejo_1` (Frutamax,
+25/09) midió que no era un borde: **de 43 tarjetas, 17 eran de antes de
+ayer**, y la más vieja del 26/08.
+
+**Ahora cada tarjeta compara contra el cierre del día de SU conteo**
+(`_sistema_por_porcion_al_cierre`, que sale de `_remanente_a_fecha`). Eso
+satisface las dos objeciones a la vez: el cierre reconstruido incluye lo que
+se cargó tarde con la fecha de ese día (el Mango) y no incluye lo que pasó
+después (el conteo viejo). Y es del MISMO día porque se cuenta a la tarde:
+429 de 574 conteos entre las 14 y las 18.
+
+- **El déficit y los signos opuestos van al mismo cierre.** Dos porciones
+  del mismo artículo contadas en días distintos no firman una guía R mal
+  atribuida: el movimiento del medio explica cualquier signo.
+- **Antes del corte no hay contra qué**: la tarjeta lo dice y va al final.
+- **El ajuste propone la DIFERENCIA de ese día**, aplicada hoy, y recalcula
+  el cierre en el server en vez de leerlo de la URL. Ya no propone "dejarlo
+  en lo contado", que con un conteo viejo pisaba el stock de hoy.
+
+**Queda ABIERTO, y lo decide el dueño**: 59 de 574 conteos (10%) son de
+antes de las 10. Si se contaron antes de armar, su cierre correcto es el del
+día ANTERIOR. Hoy van contra el mismo día.
+
+**Y la otra copia NO se tocó, a propósito, y está anotada**: el Remanente a
+una fecha y su Excel (`_pegar_conteos_a_porciones`) restan el último conteo
+hasta esa fecha contra el sistema de esa fecha, así que un conteo viejo tiene
+el mismo problema ahí. No se le copió el arreglo sin decidir qué tiene que
+mostrar esa pantalla, que es otra pregunta.
 
 Corolario 26, del 08/09, y es la regla escrita dos veces con un agravante
 que no habíamos visto: **no se separaron por descuido — se escribieron

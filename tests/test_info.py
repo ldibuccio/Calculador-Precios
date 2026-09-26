@@ -56,7 +56,8 @@ def _cotejo():
     import app.main as m
     from datetime import datetime, timezone
     base = {"porcion_nombre": "EJEMPLO Uno", "creado_en": datetime(2026, 9, 1, tzinfo=timezone.utc),
-            "cantidad": 5, "sistema_hoy": 8, "dif_hoy": 3, "deficit": 0, "opuestas": [],
+            "cantidad": 5, "sistema_del_dia": 8, "dif_del_dia": 3, "deficit": 0, "opuestas": [],
+            "dia_del_conteo": datetime(2026, 9, 1).date(),
             "query_ajuste": None, "ficha_id": None, "es_segunda": False}
     filas = [dict(base, es_segunda=True), dict(base, ficha_id=7)]
     return m.templates.env.get_template("deposito_stock_cotejo.html").render(filas=filas)
