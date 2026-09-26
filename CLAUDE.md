@@ -1846,15 +1846,18 @@ después (el conteo viejo). Y es del MISMO día porque se cuenta a la tarde:
   el cierre en el server en vez de leerlo de la URL. Ya no propone "dejarlo
   en lo contado", que con un conteo viejo pisaba el stock de hoy.
 
-**Queda ABIERTO, y lo decide el dueño**: 59 de 574 conteos (10%) son de
-antes de las 10. Si se contaron antes de armar, su cierre correcto es el del
-día ANTERIOR. Hoy van contra el mismo día.
+**CERRADO por el dueño el 26/09: NO se corta por hora.** 59 de 574 conteos
+(10%) son de antes de las 10, y van contra el cierre del MISMO día, igual que
+los demás. El motivo es del galpón: *a la mañana ya entra y sale mercadería*,
+así que el cierre del día anterior tampoco sería el correcto para esos
+conteos. Ninguno de los dos cierres es exacto para un conteo de la mañana, y
+el del mismo día es el que ya usan los otros 515. No hace falta medirlo.
 
-**Y la otra copia NO se tocó, a propósito, y está anotada**: el Remanente a
+**Y la otra copia NO se toca, CERRADO por el dueño el 26/09**: el Remanente a
 una fecha y su Excel (`_pegar_conteos_a_porciones`) restan el último conteo
 hasta esa fecha contra el sistema de esa fecha, así que un conteo viejo tiene
-el mismo problema ahí. No se le copió el arreglo sin decidir qué tiene que
-mostrar esa pantalla, que es otra pregunta.
+el mismo problema ahí. **Se deja como está porque el dueño no usa esa
+pantalla.** No es un pendiente: es la decisión de no copiarle el arreglo.
 
 Corolario 26, del 08/09, y es la regla escrita dos veces con un agravante
 que no habíamos visto: **no se separaron por descuido — se escribieron
