@@ -1,0 +1,6 @@
+{#- Las entradas del autocompletar de proveedores de las pantallas de CARGA.
+    Un proveedor con códigos alternativos (27/09) sale una vez por código, con
+    su mismo nombre: elegir "FRUTAMAX S.R.L. (N09P39)" deja en el formulario
+    el puesto por el que llegó, que es el que la compra guarda como código de
+    llegada. Escrito UNA vez: eran cinco copias del mismo `for`. -#}
+{% for p in proveedores %}{ codigo: {{ p.codigo_puesto|tojson }}, nombre: {{ p.nombre|tojson }} },{% for c in p.codigos_alternativos or [] %}{ codigo: {{ c|tojson }}, nombre: {{ p.nombre|tojson }} },{% endfor %}{% endfor %}

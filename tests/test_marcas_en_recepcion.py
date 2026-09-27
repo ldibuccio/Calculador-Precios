@@ -67,7 +67,7 @@ def galpon(monkeypatch):
 
     def compra(sena):
         d.crear_compra(DIA, art, prov, 10, 16, 160, None, 50000, sena, "Clark",
-                       segunda_por_cajon=None)
+                       segunda_por_cajon=None, codigo_llegada=None)
         (compra_id,), = sql("SELECT max(id) FROM compras")
         return compra_id
 

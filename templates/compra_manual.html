@@ -230,7 +230,7 @@
     // completa los dos campos juntos. Si lo que se tipea no matchea nada,
     // se puede usar igual — es la forma de cargar un proveedor nuevo.
     const PROVEEDORES_LISTA = [
-      {% for p in proveedores %}{ codigo: {{ p.codigo_puesto|tojson }}, nombre: {{ p.nombre|tojson }} },{% endfor %}
+      {% include "_proveedores_lista.html" %}
     ];
 
     function normalizarBusquedaProveedor(texto) {

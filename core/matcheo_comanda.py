@@ -96,6 +96,12 @@ def adivinar_proveedor(proveedor_leido: dict, proveedores_existentes: list[dict]
         for proveedor in proveedores_existentes:
             if proveedor["codigo_puesto"] == codigo_candidato:
                 return proveedor
+        # Un CÓDIGO ALTERNATIVO (27/09) es el mismo proveedor llegando por
+        # otro puesto. Se sugiere con el código LEÍDO y no con el principal:
+        # es el que va al formulario, y de ahí a `compras.codigo_llegada`.
+        for proveedor in proveedores_existentes:
+            if codigo_candidato in (proveedor.get("codigos_alternativos") or ()):
+                return {**proveedor, "codigo_puesto": codigo_candidato}
 
     nombre_leido_normalizado = normalizar_texto(proveedor_leido.get("nombre"))
     if nombre_leido_normalizado:

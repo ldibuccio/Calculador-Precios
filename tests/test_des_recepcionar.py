@@ -151,7 +151,7 @@ def galpon(base_real, monkeypatch):
 
     def recepcionada(retiro_origen="deposito"):
         d.crear_compra(date.today(), art, prov, 10, 16, 160, None, 50000, None,
-                       "Clark", None, segunda_por_cajon=None)
+                       "Clark", None, segunda_por_cajon=None, codigo_llegada=None)
         (cid,), = sql("SELECT max(id) FROM compras")
         sql("""UPDATE compras SET estado='recepcionado', cantidad_cajones_real=10,
                contenido_por_cajon_real=16, cantidad_kilos_real=160,

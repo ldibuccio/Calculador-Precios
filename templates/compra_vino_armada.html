@@ -88,7 +88,7 @@
 
   <div class="tarjeta">
     <h2>{{ compra.articulo_nombre }}</h2>
-    <p class="puesto">{{ compra.proveedor_nombre }} ({{ compra.proveedor_codigo_puesto }})</p>
+    <p class="puesto">{{ compra.proveedor_nombre }} ({{ compra.codigo_llegada }})</p>
     <p class="dato">Compra del <strong>{{ compra.fecha_operacion|fecha_corta }}</strong>,
       {{ compra.cantidad_cajones_real|numero }} bultos recibidos.</p>
     {# Y SOLO CUANDO LA GUÍA SE PUEDE ARMAR. Con el bloqueo puesto, prometer

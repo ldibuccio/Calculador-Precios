@@ -3885,6 +3885,35 @@ Los números van contra Postgres en `tests/test_vacios_pilas_contra_la_base.py`,
 con la foto EN MARZO a propósito (corolario 95) y un proveedor cuya recepción
 cae el mismo día que su foto, antes y después de la hora.
 
+## UN PROVEEDOR, VARIOS PUESTOS (27/09)
+
+Decisión del dueño: FRUTAMAX S.R.L. es el N09P41 **y** el N09P39, y es un solo
+proveedor. Desde `codigos_1` a `codigos_4` (corridas en las dos bases):
+
+- **`proveedores.codigo_puesto` sigue siendo el PRINCIPAL**, y los otros viven
+  en `proveedores_codigos`. La base no deja que un código sea de dos
+  proveedores, sumando las dos tablas (trigger `codigo_de_puesto_unico`, 23505).
+- **Una compra que llega por un alternativo se carga en ese proveedor**, sin
+  crear otro y **sin cambiarle el nombre**. La búsqueda está escrita una vez
+  (`_SQL_PROVEEDOR_POR_CODIGO`) y la usan las dos puertas. "La última
+  corrección manda" sigue valiendo, pero solo para el código principal.
+- **`compras.codigo_llegada` es el puesto por el que llegó.** Lo escriben todos
+  los caminos de carga (sin default, así que olvidarlo es un TypeError, y un
+  test de `ast` lo mira porque la suite parchea `crear_compra`). En los flujos
+  de dos pasos —ingreso directo y `/compras/nueva`— el código viaja en la URL
+  y en un campo escondido. Cambiar el proveedor de una compra le pone el
+  principal del nuevo. Lo muestran Logística, Recepción, Compras pendientes,
+  el Detalle y los Excel. **Una guía junta los dos puestos**, porque es una por
+  proveedor y día, así que su título los nombra a los dos y Logística dice de
+  cuál es cada renglón.
+- **El alta a mano pregunta con un modal** si el nombre plegado coincide con uno
+  que ya está: "es el mismo" le suma el puesto, "es otro" lo carga igual.
+  Avisa, no bloquea. La guarda va en el POST.
+
+**`recepciones` y `aprendizaje_proveedores` también apuntan a `proveedores`**
+y no estaban en la lista del bloque 4. Están vacías en las dos bases y el
+código no las usa.
+
 ## El dato de uso decide qué MEJORAR, no qué SACAR
 
 Del 11/09, y es un error de criterio mío, no del código.
@@ -3966,6 +3995,13 @@ porque así está armado el mercado. La heurística no medía parecido — medí
 El tercer criterio, el único que apuntaba a la pregunta —dos NOMBRES que se
 igualan al plegar y colapsar letras repetidas— dio **0 en las dos bases**. Esa
 era la respuesta: no hay fusiones para hacer.
+
+**Y ese 0 no cerraba la pregunta, medido el 27/09**: FRUTAMAX (N09P39) y
+FRUTAMAX S.R.L. (N09P41) eran el mismo proveedor cargado dos veces. Ese
+plegado no sacaba la forma societaria, así que esos dos nombres no se
+igualaban. No se sabe si ya estaban los dos el 11/09. El plegado que usa hoy
+el alta a mano (`core/nombres_de_proveedor.py`) saca también "SRL", "SA",
+"SAS" y "SH" como palabra entera. Ver **"UN PROVEEDOR, VARIOS PUESTOS"**.
 
 ### La regla
 

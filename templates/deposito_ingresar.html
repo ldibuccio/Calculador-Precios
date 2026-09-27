@@ -137,13 +137,14 @@
 
   <div class="tarjeta">
     <label>Proveedor</label>
-    <div class="campo-fijo">{{ proveedor.nombre }} ({{ proveedor.codigo_puesto }})</div>
+    <div class="campo-fijo">{{ proveedor.nombre }} ({{ proveedor.codigo_llegada }})</div>
     <a class="volver" href="/deposito/ingresar">Cambiar proveedor</a>
   </div>
 
   <div class="tarjeta">
     <form method="post" action="/deposito/ingresar" id="form-ingresar">
       <input type="hidden" name="proveedor_id" value="{{ proveedor.id }}">
+      <input type="hidden" name="codigo_llegada" value="{{ proveedor.codigo_llegada }}">
 
       <label for="articulo_id">Artículo *</label>
       <select id="articulo_id" name="articulo_id" required onchange="actualizarContenidoPorCajon(this)">

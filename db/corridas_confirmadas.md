@@ -489,3 +489,31 @@ bulto. Las 28 que siguen sin costo **se quedan así, por decisión del dueño**:
 24 son de antes del corte, y 4 son del 05/09 y consumen guías viejas que nunca
 tuvieron costo. No es un pendiente. Desde v1003 el código completa solo el
 costo cuando se carga el importe tarde.
+
+## 27/09 — `codigos_1` a `codigos_4` (códigos alternativos y fusión de FRUTAMAX S.R.L.)
+
+Los cuatro bloques corridos por el dueño en las dos bases, sin errores. Crean
+`proveedores_codigos` y `compras.codigo_llegada`, y en Frutamax pasan todo lo
+del proveedor 40 (FRUTAMAX, N09P39) al 3 (FRUTAMAX S.R.L., N09P41) y dejan
+N09P39 como código alternativo del 3. Verificación (`codigos_verificacion`):
+
+```
+FRUTAMAX  tabla 1 · columna 1 · guardas 2 · FK de marca 6 · compras sin código 0
+          FRUTAMAX que queda 0 · códigos de la SRL N09P41 + N09P39
+          compras de la SRL N09P39: 26 · N09P41: 326 · aprendizaje 129 ("limon" -> Limón)
+          foto de vacíos 798 · códigos alternativos 1 · proveedores 41
+          última recepción 25/09 · guías que quedan del 40: 0
+PALMALA   tabla 1 · columna 1 · guardas 2 · FK de marca 6 · compras sin código 0
+          códigos alternativos 0 · proveedores 44
+```
+
+Palmala no vota. Solo confirma que los bloques no explotan y que ahí no se
+tocó nada: cero códigos alternativos. Las 26 compras con `N09P39` son las que
+llegaron por el puesto 39, así que el código de llegada quedó con el que
+tenían.
+
+**Dos tablas que apuntan a `proveedores` y no estaban en la lista del bloque 4**:
+`recepciones` y `aprendizaje_proveedores`. Están vacías en las dos bases, y
+el código (`app/`, `core/`, `scripts/`) no las usa: `recepciones` es una de
+las tablas muertas del diseño original. No molestaron, y el borrado del 40 no
+las necesitaba.

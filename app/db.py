@@ -1320,6 +1320,30 @@ def listar_todas_las_conversiones() -> list[dict]:
         conexion.close()
 
 
+# EL PROVEEDOR DE UN CÓDIGO, contando los ALTERNATIVOS (dueño, 27/09). Un
+# proveedor puede tener varios puestos —FRUTAMAX S.R.L. es el 41 y el 39— y
+# `proveedores.codigo_puesto` guarda solo el principal; los otros viven en
+# `proveedores_codigos`. La base garantiza que un código sea de UN solo
+# proveedor contando las dos tablas (trigger `codigo_de_puesto_unico`), así
+# que esto devuelve una fila o ninguna.
+#
+# Escrita UNA vez porque la leen las dos puertas —la que solo busca y la que
+# busca o crea—: con una sola de las dos mirando los alternativos, el alta a
+# mano diría "no existe" de un código que la carga reconoce, o al revés.
+#
+# `por_alternativo` es lo que decide si se pisa el nombre: llegó por un puesto
+# que no es el principal, así que el nombre del remito es el de ESE puesto y
+# no tiene por qué renombrar al proveedor.
+_SQL_PROVEEDOR_POR_CODIGO = """
+    SELECT p.id, p.codigo_puesto, p.nombre, p.activo,
+           (p.codigo_puesto <> %(codigo)s) AS por_alternativo
+      FROM proveedores p
+     WHERE p.codigo_puesto = %(codigo)s
+        OR EXISTS (SELECT 1 FROM proveedores_codigos pc
+                    WHERE pc.proveedor_id = p.id AND pc.codigo = %(codigo)s)
+"""
+
+
 def buscar_proveedor_por_codigo(codigo_puesto: str) -> dict | None:
     """El proveedor de ese código, o None. NO crea nada y NO toca el nombre.
 
@@ -1335,10 +1359,7 @@ def buscar_proveedor_por_codigo(codigo_puesto: str) -> dict | None:
     conexion = obtener_conexion()
     try:
         with conexion.cursor() as cursor:
-            cursor.execute(
-                "SELECT id, codigo_puesto, nombre, activo FROM proveedores WHERE codigo_puesto = %s",
-                (codigo_puesto,),
-            )
+            cursor.execute(_SQL_PROVEEDOR_POR_CODIGO, {"codigo": codigo_puesto})
             fila = cursor.fetchone()
             if fila is None:
                 return None
@@ -1371,17 +1392,23 @@ def obtener_o_crear_proveedor_por_codigo(
     colgando de un proveedor invisible. Devuelve (id, reactivado), y el
     segundo valor existe para que la pantalla lo pueda decir cuando pasa:
     una baja que se deshace sola y en silencio es peor que no tenerla.
+
+    UN CÓDIGO ALTERNATIVO ENCUENTRA A SU PROVEEDOR Y NO LE CAMBIA EL NOMBRE
+    (dueño, 27/09): una compra que llega por el N09P39 se carga en FRUTAMAX
+    S.R.L. —no crea otro proveedor— y el nombre del remito de ese puesto no
+    renombra a la S.R.L. "La última corrección manda" vale para el código
+    principal, que es el que el nombre describe.
     """
     conexion = obtener_conexion()
     try:
         with conexion.cursor() as cursor:
-            cursor.execute("SELECT id, activo FROM proveedores WHERE codigo_puesto = %s", (codigo_puesto,))
+            cursor.execute(_SQL_PROVEEDOR_POR_CODIGO, {"codigo": codigo_puesto})
             fila = cursor.fetchone()
             reactivado = False
             if fila is not None:
-                proveedor_id, activo = fila
+                proveedor_id, _codigo, _nombre, activo, por_alternativo = fila
                 reactivado = not activo
-                if pisar_nombre:
+                if pisar_nombre and not por_alternativo:
                     cursor.execute(
                         "UPDATE proveedores SET nombre = %s, activo = true, actualizado_en = now() WHERE id = %s",
                         (nombre, proveedor_id),
@@ -1403,6 +1430,39 @@ def obtener_o_crear_proveedor_por_codigo(
         conexion.close()
 
 
+def asociar_codigo_a_proveedor(proveedor_id: int, codigo: str) -> str:
+    """Suma `codigo` como puesto ALTERNATIVO del proveedor y devuelve su nombre.
+
+    Es la salida del modal de nombres parecidos (27/09): el que carga un
+    proveedor nuevo descubre que ya existe con otro puesto, y en vez de
+    duplicarlo le suma el código. De ahí en más una compra que llegue por ese
+    puesto se carga en él (`_SQL_PROVEEDOR_POR_CODIGO`).
+
+    DECIDE LA BASE: que el código no sea de nadie más —principal o
+    alternativo— lo garantizan el unique de cada tabla y el trigger
+    `codigo_de_puesto_unico`, y los dos levantan 23505. Acá solo se traduce.
+    """
+    conexion = obtener_conexion()
+    try:
+        with conexion.cursor() as cursor:
+            cursor.execute("SELECT nombre FROM proveedores WHERE id = %s", (proveedor_id,))
+            fila = cursor.fetchone()
+            if fila is None:
+                raise ValueError("Ese proveedor no existe.")
+            try:
+                cursor.execute(
+                    "INSERT INTO proveedores_codigos (proveedor_id, codigo) VALUES (%s, %s)",
+                    (proveedor_id, codigo),
+                )
+            except psycopg2.errors.UniqueViolation:
+                conexion.rollback()
+                raise ValueError(f"El código {codigo} ya es de otro proveedor: no se puede asociar a {fila[0]}.")
+        conexion.commit()
+        return fila[0]
+    finally:
+        conexion.close()
+
+
 def listar_proveedores() -> list[dict]:
     """Los proveedores ACTIVOS (id, codigo_puesto, nombre), para el autocompletar del alta de compras.
 
@@ -1417,11 +1477,26 @@ def listar_proveedores() -> list[dict]:
     Para FILTRAR una búsqueda va la otra (listar_todos_los_proveedores):
     las compras viejas de un proveedor de baja siguen existiendo, y
     esconderlo del filtro esconde historial que sí está.
+
+    Trae `codigos_alternativos` (27/09): el autocompletar de las pantallas de
+    carga ofrece también esos puestos, y el que adivina el proveedor de una
+    comanda los reconoce. Sin eso, el que tipea N09P39 no ve a FRUTAMAX S.R.L.
+    en la lista y cree que es un proveedor nuevo.
     """
     conexion = obtener_conexion()
     try:
         with conexion.cursor() as cursor:
-            cursor.execute("SELECT id, codigo_puesto, nombre FROM proveedores WHERE activo ORDER BY codigo_puesto")
+            cursor.execute(
+                """
+                SELECT p.id, p.codigo_puesto, p.nombre,
+                       coalesce((SELECT array_agg(pc.codigo ORDER BY pc.codigo)
+                                   FROM proveedores_codigos pc
+                                  WHERE pc.proveedor_id = p.id), '{}') AS codigos_alternativos
+                  FROM proveedores p
+                 WHERE p.activo
+                 ORDER BY p.codigo_puesto
+                """
+            )
             columnas = [descripcion[0] for descripcion in cursor.description]
             filas = cursor.fetchall()
         return [dict(zip(columnas, fila)) for fila in filas]
@@ -1466,7 +1541,10 @@ def listar_proveedores_para_abm() -> list[dict]:
             cursor.execute(
                 """
                 SELECT p.id, p.codigo_puesto, p.nombre, p.activo,
-                       (SELECT COUNT(*) FROM compras c WHERE c.proveedor_id = p.id) AS compras
+                       (SELECT COUNT(*) FROM compras c WHERE c.proveedor_id = p.id) AS compras,
+                       coalesce((SELECT array_agg(pc.codigo ORDER BY pc.codigo)
+                                   FROM proveedores_codigos pc
+                                  WHERE pc.proveedor_id = p.id), '{}') AS codigos_alternativos
                 FROM proveedores p
                 ORDER BY p.activo DESC, p.codigo_puesto
                 """
@@ -1604,7 +1682,7 @@ def buscar_compras(
                 SELECT c.id, c.fecha_operacion, a.nombre AS articulo_nombre, a.unidad_compra, a.unidad_conteo,
                 c.segunda_por_cajon, c.segunda_por_cajon_real,
                        p.nombre AS proveedor_nombre,
-                       p.codigo_puesto AS proveedor_codigo_puesto,
+                       p.codigo_puesto AS proveedor_codigo_puesto, coalesce(c.codigo_llegada, p.codigo_puesto) AS codigo_llegada,
                        COALESCE(c.cantidad_cajones_real, c.cantidad_cajones) AS cantidad_cajones,
                        COALESCE(c.contenido_por_cajon_real, c.contenido_por_cajon) AS contenido_por_cajon,
                        COALESCE(c.cantidad_kilos_real, c.cantidad_kilos) AS cantidad_kilos,
@@ -2079,7 +2157,7 @@ def obtener_compra(compra_id: int) -> dict | None:
             cursor.execute(
                 """
                 SELECT c.id, c.fecha_operacion, c.articulo_id, a.nombre AS articulo_nombre,
-                       c.proveedor_id, p.nombre AS proveedor_nombre, p.codigo_puesto AS proveedor_codigo_puesto,
+                       c.proveedor_id, p.nombre AS proveedor_nombre, p.codigo_puesto AS proveedor_codigo_puesto, coalesce(c.codigo_llegada, p.codigo_puesto) AS codigo_llegada,
                        c.guia_id, c.cantidad_cajones, c.contenido_por_cajon,
                        c.cantidad_kilos, c.cantidad_fraccion, c.importe, c.sena, c.tipo_retiro,
                        c.estado, c.estado_retiro
@@ -2117,7 +2195,7 @@ def obtener_detalle_compra(compra_id: int) -> dict | None:
                 SELECT c.id, c.fecha_operacion, c.cargado_el,
                        c.articulo_id, a.nombre AS articulo_nombre, a.unidad_compra, a.unidad_conteo,
                        c.segunda_por_cajon, c.segunda_por_cajon_real,
-                       c.proveedor_id, p.nombre AS proveedor_nombre, p.codigo_puesto AS proveedor_codigo_puesto,
+                       c.proveedor_id, p.nombre AS proveedor_nombre, p.codigo_puesto AS proveedor_codigo_puesto, coalesce(c.codigo_llegada, p.codigo_puesto) AS codigo_llegada,
                        c.guia_id, c.guia_punto,
                        c.cantidad_cajones, c.contenido_por_cajon, c.importe, c.sena, c.tipo_retiro,
                        c.cantidad_kilos, c.cantidad_fraccion,
@@ -2281,8 +2359,13 @@ def crear_compra(
     ficha_en_origen_id: int | None = None,
     *,
     segunda_por_cajon: float | None,
+    codigo_llegada: str | None,
 ) -> None:
     """Inserta una compra cargada por el comprador, con su guía asignada.
+
+    `codigo_llegada` es el puesto TIPEADO por el que llegó, principal o
+    alternativo del proveedor (ver `_insertar_compra_con_guia`). Sin default,
+    igual que `segunda_por_cajon` y por la misma razón.
 
     `segunda_por_cajon` ES KEYWORD-ONLY Y NO TIENE DEFAULT, a propósito: con
     un default, un llamador que se lo olvidara guardaría la compra con la
@@ -2367,6 +2450,7 @@ def crear_compra(
                 recepcionada_el=recepcionada_el,
                 ficha_en_origen_id=ficha_en_origen_id,
                 segunda_por_cajon=segunda_por_cajon,
+                codigo_llegada=codigo_llegada,
             )
         conexion.commit()
     finally:
@@ -2495,6 +2579,7 @@ def _insertar_compra_con_guia(
     ficha_en_origen_id: int | None = None,
     *,
     segunda_por_cajon: float | None,
+    codigo_llegada: str | None,
 ) -> int:
     """Inserta UNA compra (con su guía) usando el cursor que le pasan — sin abrir conexión ni commitear. Devuelve su id.
 
@@ -2664,6 +2749,36 @@ def _insertar_compra_con_guia(
             (compra_id,),
         )
 
+    # EL PUESTO POR EL QUE LLEGÓ (27/09). Un proveedor puede tener varios
+    # —FRUTAMAX S.R.L. es el 41 y el 39— y Logística tiene que saber a cuál
+    # ir. Va afuera de las tres ramas, por lo mismo que el sello: una columna
+    # repetida en tres listas es un lugar más del que olvidarse.
+    #
+    # Sin default en la firma, a propósito: un camino que se lo olvidara
+    # guardaría el principal, que para una compra del 39 es un dato falso y
+    # prolijo. None es "no hay un código tipeado" —la compra se carga eligiendo
+    # el proveedor, no su puesto— y ahí va el principal, que es la verdad.
+    #
+    # Y el código tiene que ser DE ESE proveedor, principal o alternativo: la
+    # misma pregunta que `_SQL_PROVEEDOR_POR_CODIGO`, hecha donde se escribe.
+    cursor.execute(
+        """
+        UPDATE compras c
+           SET codigo_llegada = coalesce(%(codigo)s::text, p.codigo_puesto)
+          FROM proveedores p
+         WHERE c.id = %(compra)s AND p.id = c.proveedor_id
+           AND (%(codigo)s::text IS NULL
+                OR p.codigo_puesto = %(codigo)s::text
+                OR EXISTS (SELECT 1 FROM proveedores_codigos pc
+                            WHERE pc.proveedor_id = p.id AND pc.codigo = %(codigo)s::text))
+        """,
+        {"codigo": codigo_llegada, "compra": compra_id},
+    )
+    # `rowcount` de un UPDATE sin agregado: cero es que el código no es de
+    # ese proveedor (la compra acaba de insertarse, así que existe).
+    if cursor.rowcount == 0:
+        raise ValueError(f"El código {codigo_llegada} no es de ese proveedor.")
+
     if ficha_en_origen_id is not None:
         _validar_caja_en_origen(cursor, ficha_en_origen_id, articulo_id)
         cursor.execute(
@@ -2700,6 +2815,8 @@ def crear_compras_de_comanda(
     renglones: list[dict],
     foto_ruta: str | None,
     carga_token: str | None,
+    *,
+    codigo_llegada: str | None,
 ) -> bool:
     """Guarda TODOS los renglones de una comanda en UNA sola transacción: o entran todos, o ninguno.
 
@@ -2755,6 +2872,8 @@ def crear_compras_de_comanda(
                     # compra anterior al modelo de dos magnitudes — o sea un
                     # hueco legítimo, y nadie lo iría a buscar.
                     segunda_por_cajon=renglon["segunda_por_cajon"],
+                    # POR COMANDA: la comanda es de un puesto.
+                    codigo_llegada=codigo_llegada,
                 )
         conexion.commit()
         return True
@@ -2989,7 +3108,7 @@ def listar_compras_pendientes_recepcion() -> list[dict]:
                        c.ficha_en_origen_id,
                        a.nombre AS articulo_nombre, a.unidad_compra, a.unidad_conteo,
                        c.segunda_por_cajon,
-                       p.nombre AS proveedor_nombre, p.codigo_puesto AS proveedor_codigo_puesto,
+                       p.nombre AS proveedor_nombre, p.codigo_puesto AS proveedor_codigo_puesto, coalesce(c.codigo_llegada, p.codigo_puesto) AS codigo_llegada,
                        -- El proveedor y la seña deciden si se ofrece la marca
                        -- del VACÍO: sin seña no entra ningún cajón a Vacíos,
                        -- y las marcas que se ofrecen son las de ESTE proveedor.
@@ -3380,7 +3499,7 @@ def compra_para_marcar_armada(compra_id: int) -> dict | None:
             cursor.execute(
                 f"""
                 SELECT c.id, c.articulo_id, a.nombre AS articulo_nombre, a.unidad_compra,
-                       p.nombre AS proveedor_nombre, p.codigo_puesto AS proveedor_codigo_puesto,
+                       p.nombre AS proveedor_nombre, p.codigo_puesto AS proveedor_codigo_puesto, coalesce(c.codigo_llegada, p.codigo_puesto) AS codigo_llegada,
                        c.fecha_operacion, c.estado, c.ficha_en_origen_id,
                        c.cantidad_cajones_real, c.cantidad_cajones,
                        COALESCE((
@@ -4242,10 +4361,15 @@ def cambiar_proveedor_de_compra(compra_id: int, proveedor_id: int) -> dict:
                 cursor, fecha, proveedor_id, de_deposito=_es_ingreso_directo(retiro_origen))
             cursor.execute(
                 """
-                UPDATE compras SET proveedor_id = %s, guia_id = %s, guia_punto = %s
+                UPDATE compras SET proveedor_id = %s, guia_id = %s, guia_punto = %s,
+                       -- El puesto viejo es de OTRO proveedor: dejarlo diría que
+                       -- la compra llegó por un lugar que no es de éste. Se
+                       -- eligió el proveedor y no su puesto, así que va el
+                       -- principal (27/09).
+                       codigo_llegada = (SELECT codigo_puesto FROM proveedores WHERE id = %s)
                 WHERE id = %s
                 """,
-                (proveedor_id, guia_id, guia_punto, compra_id),
+                (proveedor_id, guia_id, guia_punto, proveedor_id, compra_id),
             )
         conexion.commit()
         return {"proveedor_viejo": int(proveedor_viejo), "guia_id": guia_id,
@@ -4488,7 +4612,7 @@ def listar_compras_procesadas_hoy_recepcion(fecha) -> list[dict]:
             cursor.execute(
                 """
                 SELECT c.id, a.nombre AS articulo_nombre, a.unidad_compra,
-                       p.nombre AS proveedor_nombre, p.codigo_puesto AS proveedor_codigo_puesto,
+                       p.nombre AS proveedor_nombre, p.codigo_puesto AS proveedor_codigo_puesto, coalesce(c.codigo_llegada, p.codigo_puesto) AS codigo_llegada,
                        c.cantidad_cajones, c.contenido_por_cajon,
                        c.cantidad_cajones_real, c.contenido_por_cajon_real,
                        c.estado, c.procesada_el,
@@ -4600,7 +4724,7 @@ def buscar_retiros(
                 f"""
                 SELECT c.id, c.fecha_operacion, c.retiro_procesado_el, c.tipo_retiro, c.estado_retiro,
                        c.estado, c.cantidad_cajones, c.cantidad_cajones_retirada,
-                       p.nombre AS proveedor_nombre, p.codigo_puesto AS proveedor_codigo_puesto,
+                       p.nombre AS proveedor_nombre, p.codigo_puesto AS proveedor_codigo_puesto, coalesce(c.codigo_llegada, p.codigo_puesto) AS codigo_llegada,
                        a.nombre AS articulo_nombre
                 FROM compras c
                 JOIN articulos a ON a.id = c.articulo_id
@@ -4689,7 +4813,7 @@ def buscar_ingresos_deposito(
                        c.cantidad_cajones_rechazada, c.motivo_rechazo, c.importe, c.sena,
                        a.nombre AS articulo_nombre, a.unidad_compra, a.unidad_conteo,
                        c.segunda_por_cajon,
-                       p.nombre AS proveedor_nombre, p.codigo_puesto AS proveedor_codigo_puesto
+                       p.nombre AS proveedor_nombre, p.codigo_puesto AS proveedor_codigo_puesto, coalesce(c.codigo_llegada, p.codigo_puesto) AS codigo_llegada
                 FROM compras c
                 JOIN articulos a ON a.id = c.articulo_id
                 JOIN proveedores p ON p.id = c.proveedor_id
@@ -5073,7 +5197,7 @@ def listar_compras_pendientes_retiro(tipo_retiro: str) -> list[dict]:
                 SELECT c.id, c.guia_id, c.guia_punto, c.fecha_operacion,
                        a.nombre AS articulo_nombre, a.unidad_compra, a.unidad_conteo,
                        c.segunda_por_cajon,
-                       p.nombre AS proveedor_nombre, p.codigo_puesto AS proveedor_codigo_puesto,
+                       p.nombre AS proveedor_nombre, p.codigo_puesto AS proveedor_codigo_puesto, coalesce(c.codigo_llegada, p.codigo_puesto) AS codigo_llegada,
                        c.cantidad_cajones, c.contenido_por_cajon, c.cantidad_kilos, c.cantidad_fraccion
                 FROM compras c
                 JOIN articulos a ON a.id = c.articulo_id
@@ -5201,7 +5325,7 @@ def listar_compras_procesadas_hoy_retiro(tipo_retiro: str, fecha) -> list[dict]:
                 """
                 SELECT c.id, a.nombre AS articulo_nombre, a.unidad_compra, a.unidad_conteo,
                 c.segunda_por_cajon,
-                       p.nombre AS proveedor_nombre, p.codigo_puesto AS proveedor_codigo_puesto,
+                       p.nombre AS proveedor_nombre, p.codigo_puesto AS proveedor_codigo_puesto, coalesce(c.codigo_llegada, p.codigo_puesto) AS codigo_llegada,
                        c.cantidad_cajones, c.contenido_por_cajon, c.cantidad_cajones_retirada,
                        c.cantidad_kilos, c.cantidad_fraccion,
                        c.estado_retiro, c.retiro_procesado_el, c.estado
@@ -5250,7 +5374,7 @@ def listar_compras_sin_precio() -> list[dict]:
                 SELECT c.id, c.fecha_operacion, a.nombre AS articulo_nombre, a.unidad_compra, a.unidad_conteo,
                 c.segunda_por_cajon, c.segunda_por_cajon_real,
                        p.nombre AS proveedor_nombre,
-                       p.codigo_puesto AS proveedor_codigo_puesto,
+                       p.codigo_puesto AS proveedor_codigo_puesto, coalesce(c.codigo_llegada, p.codigo_puesto) AS codigo_llegada,
                        COALESCE(c.cantidad_cajones_real, c.cantidad_cajones) AS cantidad_cajones,
                        COALESCE(c.contenido_por_cajon_real, c.contenido_por_cajon) AS contenido_por_cajon,
                        -- LAS DOS MAGNITUDES, para que la pantalla no muestre solo la de

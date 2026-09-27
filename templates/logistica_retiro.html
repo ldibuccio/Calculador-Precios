@@ -61,6 +61,12 @@
     font-size: 1rem;
     margin: 0 0 0.15rem;
   }
+  /* Solo cuando la guía junta dos puestos del mismo proveedor. */
+  .puesto-renglon {
+    font-weight: 700;
+    font-size: 0.9rem;
+    margin: 0 0 0.15rem;
+  }
   .cantidad {
     color: #666;
     font-size: 0.88rem;
@@ -182,7 +188,7 @@
   <div class="tarjeta tarjeta-efimera" id="tarjeta-efimera">
     <p class="texto-efimero">
       {{ "Retiraste" if recien_procesado.estado_retiro == "retirado" else "Cancelaste" }}
-      <strong>{{ recien_procesado.articulo_nombre }}</strong> ({{ recien_procesado.proveedor_codigo_puesto }})
+      <strong>{{ recien_procesado.articulo_nombre }}</strong> ({{ recien_procesado.codigo_llegada }})
     </p>
     <form method="post" action="/logistica/retiro/{{ tipo_retiro }}/{{ recien_procesado.id }}/deshacer?origen={{ origen }}">
       <button type="submit" class="boton-secundario">Deshacer</button>
@@ -200,7 +206,7 @@
       {% for p in procesados_hoy %}
       <div class="renglon-procesado">
         <p class="articulo-nombre">{{ p.articulo_nombre }}</p>
-        <p class="proveedor-procesado">{{ p.proveedor_nombre }} ({{ p.proveedor_codigo_puesto }})</p>
+        <p class="proveedor-procesado">{{ p.proveedor_nombre }} ({{ p.codigo_llegada }})</p>
         {# LA CANTIDAD SOLO SI SE RETIRÓ. Un cancelado no retiró nada, así que
            un número acá sería una entrega que no pasó. Y los cajones salen
            resueltos del server: el nulo significa "se retiró todo", no cero
@@ -228,12 +234,15 @@
   {% if guias %}
     {% for guia in guias %}
     <div class="tarjeta">
-      <p class="puesto-nombre">{{ guia.proveedor_codigo_puesto }}</p>
+      <p class="puesto-nombre">{{ guia.codigos_llegada|join(" · ") }}</p>
       <p class="proveedor-nombre">{{ guia.proveedor_nombre }}</p>
 
       {% for c in guia.compras %}
       <div class="renglon">
         <p class="articulo-nombre">{{ c.articulo_nombre }}</p>
+        {# Con la guía repartida en dos puestos, cada renglón dice de cuál
+           se retira: es otro lugar del Mercado. #}
+        {% if guia.codigos_llegada|length > 1 %}<p class="puesto-renglon">Puesto {{ c.codigo_llegada }}</p>{% endif %}
         <p class="cantidad">{{ c.cantidad_cajones|numero }} cajones × {{ magnitudes_del_cajon(c) }}</p>
         {# La mercadería a veces se levanta días después: la fecha de la
            compra siempre a la vista, y resaltada cuando tiene más de un

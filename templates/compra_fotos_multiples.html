@@ -279,7 +279,7 @@
     // estas mismas funciones globales cada vez que se inyecta una comanda
     // nueva — no hace falta "reactivarlos" a mano.
     const PROVEEDORES_LISTA = [
-      {% for p in proveedores %}{ codigo: {{ p.codigo_puesto|tojson }}, nombre: {{ p.nombre|tojson }} },{% endfor %}
+      {% include "_proveedores_lista.html" %}
     ];
 
     function normalizarBusquedaProveedor(texto) {
