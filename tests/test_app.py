@@ -1825,7 +1825,7 @@ COMPRAS_DE_PRUEBA = [
         "fecha_operacion": HOY_DE_PRUEBA,
         "articulo_nombre": "Mzn Red",
         "proveedor_nombre": "Saturno",
-        "proveedor_codigo_puesto": "N07P41",
+        "proveedor_codigo_puesto": "N07P41", "codigo_llegada": "N07P41",
         "cantidad_cajones": 10,
         "contenido_por_cajon": 18,
         "unidad_compra": "kilo",
@@ -1843,7 +1843,7 @@ COMPRAS_DE_PRUEBA = [
         "fecha_operacion": HOY_DE_PRUEBA - timedelta(days=1),
         "articulo_nombre": "Mango",
         "proveedor_nombre": "Frutamax",
-        "proveedor_codigo_puesto": "L03P38",
+        "proveedor_codigo_puesto": "L03P38", "codigo_llegada": "L03P38",
         "cantidad_cajones": 5,
         "contenido_por_cajon": 10,
         "unidad_compra": "unidad",
@@ -2248,7 +2248,7 @@ COMPRAS_BUSQUEDA_DE_PRUEBA = [
         "articulo_nombre": "Tomate Cherry",
         "unidad_compra": "kilo",
         "proveedor_nombre": "Saturno",
-        "proveedor_codigo_puesto": "N07P41",
+        "proveedor_codigo_puesto": "N07P41", "codigo_llegada": "N07P41",
         "cantidad_cajones": 40,
         "contenido_por_cajon": 20,
         "cantidad_kilos": 800,
@@ -2277,7 +2277,7 @@ COMPRAS_BUSQUEDA_DE_PRUEBA = [
         "articulo_nombre": "Mango",
         "unidad_compra": "unidad",
         "proveedor_nombre": "Frutamax",
-        "proveedor_codigo_puesto": "L03P38",
+        "proveedor_codigo_puesto": "L03P38", "codigo_llegada": "L03P38",
         "cantidad_cajones": 10,
         "contenido_por_cajon": 12,
         "cantidad_kilos": None,
@@ -3119,9 +3119,9 @@ def test_agregar_compra_manual_guarda_proveedor_y_articulo_en_un_paso():
     assert respuesta.status_code == 303
     # Sigue en la pantalla clásica con el proveedor YA fijado: los
     # siguientes artículos no lo repiten.
-    assert respuesta.headers["location"] == "/compras/nueva?proveedor_id=200"
+    assert respuesta.headers["location"] == "/compras/nueva?proveedor_id=200&codigo=N07P41"
     mock_proveedor.assert_called_once_with("N07P41", "Saturno")
-    mock_crear.assert_called_once_with(hoy, 5, 200, 8.0, 18.0, 144.0, None, 3000.0, None, "Clark", None, ficha_en_origen_id=None, segunda_por_cajon=None)
+    mock_crear.assert_called_once_with(hoy, 5, 200, 8.0, 18.0, 144.0, None, 3000.0, None, "Clark", None, ficha_en_origen_id=None, segunda_por_cajon=None, codigo_llegada="N07P41")
 
 
 def test_agregar_compra_manual_con_guardar_termina_en_buscar():
@@ -3334,9 +3334,9 @@ def test_agregar_compra_exitosa_redirige_al_mismo_proveedor_calcula_kilos():
         )
 
     assert respuesta.status_code == 303
-    assert respuesta.headers["location"] == "/compras/nueva?proveedor_id=200"
+    assert respuesta.headers["location"] == "/compras/nueva?proveedor_id=200&codigo=N07P41"
     # 10 cajones × 18 kg = 180 kg (unidad_compra del artículo = kilo)
-    mock_crear.assert_called_once_with(HOY_DE_PRUEBA, 5, 200, 10.0, 18.0, 180.0, None, 50000.0, None, "Clark", None, ficha_en_origen_id=None, segunda_por_cajon=None)
+    mock_crear.assert_called_once_with(HOY_DE_PRUEBA, 5, 200, 10.0, 18.0, 180.0, None, 50000.0, None, "Clark", None, ficha_en_origen_id=None, segunda_por_cajon=None, codigo_llegada="N07P41")
 
 
 def test_agregar_compra_calcula_fraccion_para_articulo_por_unidad():
@@ -3369,7 +3369,7 @@ def test_agregar_compra_calcula_fraccion_para_articulo_por_unidad():
     # 10 kilos y 16 unidades por cajón, y la columna guarda el 16.
     mock_crear.assert_called_once_with(
         HOY_DE_PRUEBA, 6, 200, 5.0, 10.0, 80.0, 50.0, 30000.0, None, "Carro", None,
-        ficha_en_origen_id=None, segunda_por_cajon=16.0,
+        ficha_en_origen_id=None, segunda_por_cajon=16.0, codigo_llegada="N07P41",
     )
 
 
@@ -3477,7 +3477,7 @@ def test_agregar_compra_terminar_con_renglon_cargado_lo_guarda_y_va_a_compras():
 
     assert respuesta.status_code == 303
     assert respuesta.headers["location"] == "/compras/buscar"
-    mock_crear.assert_called_once_with(HOY_DE_PRUEBA, 5, 200, 10.0, 18.0, 180.0, None, 50000.0, None, "Clark", None, ficha_en_origen_id=None, segunda_por_cajon=None)
+    mock_crear.assert_called_once_with(HOY_DE_PRUEBA, 5, 200, 10.0, 18.0, 180.0, None, 50000.0, None, "Clark", None, ficha_en_origen_id=None, segunda_por_cajon=None, codigo_llegada="N07P41")
 
 
 def test_agregar_compra_terminar_con_renglon_invalido_muestra_error_y_no_pierde_datos():
@@ -3603,7 +3603,7 @@ def test_agregar_compra_sin_importe_queda_pendiente():
         )
 
     assert respuesta.status_code == 303
-    mock_crear.assert_called_once_with(HOY_DE_PRUEBA, 5, 200, 10.0, 18.0, 180.0, None, None, None, "Clark", None, ficha_en_origen_id=None, segunda_por_cajon=None)
+    mock_crear.assert_called_once_with(HOY_DE_PRUEBA, 5, 200, 10.0, 18.0, 180.0, None, None, None, "Clark", None, ficha_en_origen_id=None, segunda_por_cajon=None, codigo_llegada="N07P41")
 
 
 def test_agregar_compra_importe_negativo_muestra_error():
@@ -3680,7 +3680,7 @@ def test_agregar_compra_tipo_retiro_pases_se_acepta():
         )
 
     assert respuesta.status_code == 303
-    mock_crear.assert_called_once_with(HOY_DE_PRUEBA, 5, 200, 10.0, 18.0, 180.0, None, 50000.0, None, "Pases", None, ficha_en_origen_id=None, segunda_por_cajon=None)
+    mock_crear.assert_called_once_with(HOY_DE_PRUEBA, 5, 200, 10.0, 18.0, 180.0, None, 50000.0, None, "Pases", None, ficha_en_origen_id=None, segunda_por_cajon=None, codigo_llegada="N07P41")
 
 
 def test_ver_nueva_compra_con_proveedor_muestra_las_tres_opciones_de_retiro():
@@ -3866,7 +3866,7 @@ COMPRA_DE_PRUEBA = {
     "articulo_nombre": "Mzn Red",
     "proveedor_id": 200,
     "proveedor_nombre": "Saturno",
-    "proveedor_codigo_puesto": "N07P41",
+    "proveedor_codigo_puesto": "N07P41", "codigo_llegada": "N07P41",
     "cantidad_cajones": 10,
     "contenido_por_cajon": 18,
     "cantidad_kilos": 180,
@@ -3887,7 +3887,7 @@ COMPRA_DETALLE_DE_PRUEBA = {
     "unidad_compra": "kg",
     "proveedor_id": 200,
     "proveedor_nombre": "Saturno",
-    "proveedor_codigo_puesto": "N07P41",
+    "proveedor_codigo_puesto": "N07P41", "codigo_llegada": "N07P41",
     "guia_id": 105,
     "guia_punto": 2,
     "cantidad_cajones": 10,
@@ -5738,7 +5738,7 @@ def test_editar_compra_agregar_articulo_crea_compra_nueva_en_la_misma_guia():
     mock_actualizar_precio.assert_not_called()
     mock_crear.assert_called_once_with(
         COMPRA_DE_PRUEBA["fecha_operacion"], 6, COMPRA_DE_PRUEBA["proveedor_id"], 5.0, 10.0, 50.0,
-        None, 20000.0, None, "Pases", ficha_en_origen_id=None, segunda_por_cajon=None,
+        None, 20000.0, None, "Pases", ficha_en_origen_id=None, segunda_por_cajon=None, codigo_llegada="N07P41",
     )
 
 
@@ -6241,20 +6241,20 @@ def test_eliminar_varias_compras_todas_fallan_informa_las_dos():
 COMPRAS_PENDIENTES_RECEPCION_DE_PRUEBA = [
     {
         "id": 1, "guia_id": 105, "guia_punto": 1, "articulo_id": 11, "articulo_nombre": "Tomate Cherry", "unidad_compra": "kilo",
-        "proveedor_nombre": "Saturno", "proveedor_codigo_puesto": "N07P41", "fecha_operacion": HOY_DE_PRUEBA,
+        "proveedor_nombre": "Saturno", "proveedor_codigo_puesto": "N07P41", "codigo_llegada": "N07P41", "fecha_operacion": HOY_DE_PRUEBA,
         "cantidad_cajones": 40, "contenido_por_cajon": 20, "cantidad_kilos": 800, "cantidad_fraccion": None,
         "ficha_en_origen_id": None, "fotos_balanza": 1,
     },
     {
         "id": 2, "guia_id": 105, "guia_punto": 2, "articulo_id": 22, "articulo_nombre": "Mango", "unidad_compra": "unidad",
-        "proveedor_nombre": "Saturno", "proveedor_codigo_puesto": "N07P41",
+        "proveedor_nombre": "Saturno", "proveedor_codigo_puesto": "N07P41", "codigo_llegada": "N07P41",
         "fecha_operacion": HOY_DE_PRUEBA - timedelta(days=3),
         "cantidad_cajones": 10, "contenido_por_cajon": 12, "cantidad_kilos": None, "cantidad_fraccion": 120,
         "ficha_en_origen_id": None, "fotos_balanza": 0,
     },
     {
         "id": 3, "guia_id": 106, "guia_punto": 1, "articulo_id": 33, "articulo_nombre": "Frutilla", "unidad_compra": "cubeta",
-        "proveedor_nombre": "Don Pepe", "proveedor_codigo_puesto": "N01P02",
+        "proveedor_nombre": "Don Pepe", "proveedor_codigo_puesto": "N01P02", "codigo_llegada": "N01P02",
         "cantidad_cajones": 5, "contenido_por_cajon": 12, "cantidad_kilos": None, "cantidad_fraccion": 60,
         "ficha_en_origen_id": None, "fotos_balanza": 0,
     },
@@ -6552,15 +6552,15 @@ def test_procesados_hoy_marca_SIN_FOTO_solo_en_las_recepcionadas():
     """
     procesados = [
         {"id": 10, "articulo_nombre": "EJEMPLO Con", "unidad_compra": "kilo", "proveedor_nombre": "EJEMPLO Prov",
-         "proveedor_codigo_puesto": "N07P41", "cantidad_cajones": 5, "contenido_por_cajon": 10,
+         "proveedor_codigo_puesto": "N07P41", "codigo_llegada": "N07P41", "cantidad_cajones": 5, "contenido_por_cajon": 10,
          "cantidad_cajones_real": 5, "contenido_por_cajon_real": 10, "estado": "recepcionado",
          "procesada_el": datetime(2026, 9, 8, 9, 0), "fotos_balanza": 1},
         {"id": 11, "articulo_nombre": "EJEMPLO Sin", "unidad_compra": "kilo", "proveedor_nombre": "EJEMPLO Prov",
-         "proveedor_codigo_puesto": "N07P41", "cantidad_cajones": 5, "contenido_por_cajon": 10,
+         "proveedor_codigo_puesto": "N07P41", "codigo_llegada": "N07P41", "cantidad_cajones": 5, "contenido_por_cajon": 10,
          "cantidad_cajones_real": 5, "contenido_por_cajon_real": 10, "estado": "recepcionado",
          "procesada_el": datetime(2026, 9, 8, 9, 30), "fotos_balanza": 0},
         {"id": 12, "articulo_nombre": "EJEMPLO Rechazada", "unidad_compra": "kilo", "proveedor_nombre": "EJEMPLO Prov",
-         "proveedor_codigo_puesto": "N07P41", "cantidad_cajones": 5, "contenido_por_cajon": 10,
+         "proveedor_codigo_puesto": "N07P41", "codigo_llegada": "N07P41", "cantidad_cajones": 5, "contenido_por_cajon": 10,
          "cantidad_cajones_real": None, "contenido_por_cajon_real": None, "estado": "rechazado",
          "procesada_el": datetime(2026, 9, 8, 10, 0), "fotos_balanza": 0},
     ]
@@ -7028,14 +7028,14 @@ def test_no_ingreso_compra_error_de_base_muestra_mensaje():
 PROCESADOS_HOY_RECEPCION_DE_PRUEBA = [
     {
         "id": 1, "articulo_nombre": "Tomate Cherry", "unidad_compra": "kilo",
-        "proveedor_nombre": "Saturno", "proveedor_codigo_puesto": "N07P41",
+        "proveedor_nombre": "Saturno", "proveedor_codigo_puesto": "N07P41", "codigo_llegada": "N07P41",
         "cantidad_cajones": 40, "contenido_por_cajon": 20,
         "cantidad_cajones_real": 38, "contenido_por_cajon_real": 19,
         "estado": "no_ingresado", "procesada_el": datetime(2026, 8, 17, 13, 0, tzinfo=timezone.utc),
     },
     {
         "id": 2, "articulo_nombre": "Mango", "unidad_compra": "unidad",
-        "proveedor_nombre": "Saturno", "proveedor_codigo_puesto": "N07P41",
+        "proveedor_nombre": "Saturno", "proveedor_codigo_puesto": "N07P41", "codigo_llegada": "N07P41",
         "cantidad_cajones": 10, "contenido_por_cajon": 12,
         "cantidad_cajones_real": 10, "contenido_por_cajon_real": None,
         "estado": "recepcionado", "procesada_el": datetime(2026, 8, 17, 12, 30, tzinfo=timezone.utc),
@@ -7129,9 +7129,9 @@ def test_ver_recepcion_panel_procesados_hoy_muestra_el_proveedor_de_CADA_renglon
     # propósito: con el mismo en los dos, un renglón que mostrara el
     # proveedor del otro —o uno solo para toda la lista— pasaría igual.
     uno = dict(PROCESADOS_HOY_RECEPCION_DE_PRUEBA[0],
-               proveedor_nombre="EJEMPLO Uno", proveedor_codigo_puesto="N01P01")
+               proveedor_nombre="EJEMPLO Uno", proveedor_codigo_puesto="N01P01", codigo_llegada="N01P01")
     dos = dict(PROCESADOS_HOY_RECEPCION_DE_PRUEBA[1],
-               proveedor_nombre="EJEMPLO Dos", proveedor_codigo_puesto="N02P02")
+               proveedor_nombre="EJEMPLO Dos", proveedor_codigo_puesto="N02P02", codigo_llegada="N02P02")
     with (
         patch("app.main.listar_compras_pendientes_recepcion", return_value=[]),
         patch("app.main.listar_compras_procesadas_hoy_recepcion", return_value=[uno, dos]),
@@ -7398,7 +7398,7 @@ COMPRAS_PENDIENTES_DE_PRUEBA = [
         "fecha_operacion": HOY_DE_PRUEBA,
         "articulo_nombre": "Mzn Red",
         "proveedor_nombre": "Saturno",
-        "proveedor_codigo_puesto": "N07P41",
+        "proveedor_codigo_puesto": "N07P41", "codigo_llegada": "N07P41",
         "cantidad_cajones": 10,
         "contenido_por_cajon": 18,
         "unidad_compra": "kilo",
@@ -7488,7 +7488,7 @@ COMPRAS_PENDIENTES_MULTIPLES_DE_PRUEBA = [
         "fecha_operacion": HOY_DE_PRUEBA,
         "articulo_nombre": "Mzn Red",
         "proveedor_nombre": "Saturno",
-        "proveedor_codigo_puesto": "N07P41",
+        "proveedor_codigo_puesto": "N07P41", "codigo_llegada": "N07P41",
         "cantidad_cajones": 10,
         "contenido_por_cajon": 18,
     },
@@ -7497,7 +7497,7 @@ COMPRAS_PENDIENTES_MULTIPLES_DE_PRUEBA = [
         "fecha_operacion": HOY_DE_PRUEBA,
         "articulo_nombre": "Kiwi",
         "proveedor_nombre": "Frutamax",
-        "proveedor_codigo_puesto": "L03P38",
+        "proveedor_codigo_puesto": "L03P38", "codigo_llegada": "L03P38",
         "cantidad_cajones": 5,
         "contenido_por_cajon": 16,
     },
@@ -7808,12 +7808,12 @@ def test_confirmar_compra_foto_exitosa_guarda_solo_los_confirmados():
         )
 
     assert respuesta.status_code == 303
-    assert respuesta.headers["location"] == "/compras/nueva?proveedor_id=200"
+    assert respuesta.headers["location"] == "/compras/nueva?proveedor_id=200&codigo=N07P41"
     mock_proveedor.assert_called_once_with("N07P41", "Saturno")
     # Sin foto_preview en el form (estos datos de prueba no la mandan), no
     # hay nada que subir a Storage: foto_ruta queda en None. Y sin
     # carga_token (form viejo), viaja None: se guarda sin protección.
-    mock_crear.assert_called_once_with(HOY_DE_PRUEBA, 200, [RENGLON_KIWI_ESPERADO], None, None)
+    mock_crear.assert_called_once_with(HOY_DE_PRUEBA, 200, [RENGLON_KIWI_ESPERADO], None, None, codigo_llegada="N07P41")
     mock_aprender.assert_called_once_with(200, "kiwi", 5)
 
 
@@ -7874,7 +7874,7 @@ def test_confirmar_compra_foto_accion_guardar_va_directo_al_resumen_y_guarda_igu
     assert respuesta.status_code == 303
     assert respuesta.headers["location"] == "/compras/buscar"
     mock_proveedor.assert_called_once_with("N07P41", "Saturno")
-    mock_crear.assert_called_once_with(HOY_DE_PRUEBA, 200, [RENGLON_KIWI_ESPERADO], None, None)
+    mock_crear.assert_called_once_with(HOY_DE_PRUEBA, 200, [RENGLON_KIWI_ESPERADO], None, None, codigo_llegada="N07P41")
     mock_aprender.assert_called_once_with(200, "kiwi", 5)
 
 
@@ -7949,7 +7949,7 @@ def test_confirmar_compra_foto_si_falla_la_subida_guarda_la_compra_igual_sin_fot
     # NO es un error de "no se pudo guardar la compra": la foto es un
     # extra, la falla de Storage nunca puede bloquear la carga.
     assert respuesta.status_code == 303
-    mock_crear.assert_called_once_with(HOY_DE_PRUEBA, 200, [RENGLON_KIWI_ESPERADO], None, None)
+    mock_crear.assert_called_once_with(HOY_DE_PRUEBA, 200, [RENGLON_KIWI_ESPERADO], None, None, codigo_llegada="N07P41")
 
 
 def test_confirmar_compra_foto_codigo_puesto_invalido_muestra_error():
@@ -8057,7 +8057,7 @@ def test_confirmar_compra_foto_con_token_pasa_el_token_al_guardado():
 
     assert respuesta.status_code == 303
     mock_ya_guardada.assert_called_once_with("token123")
-    mock_crear.assert_called_once_with(HOY_DE_PRUEBA, 200, [RENGLON_KIWI_ESPERADO], None, "token123")
+    mock_crear.assert_called_once_with(HOY_DE_PRUEBA, 200, [RENGLON_KIWI_ESPERADO], None, "token123", codigo_llegada="N07P41")
 
 
 def test_confirmar_compra_foto_reintento_con_token_ya_usado_no_guarda_de_nuevo():
@@ -8626,7 +8626,7 @@ def test_confirmar_compra_foto_con_foto_ruta_ya_subida_no_vuelve_a_subir():
     assert respuesta.status_code == 303
     mock_subir.assert_not_called()
     mock_crear.assert_called_once_with(
-        HOY_DE_PRUEBA, 200, [RENGLON_KIWI_ESPERADO], "2026-08-15/listado-abc123.jpg", None
+        HOY_DE_PRUEBA, 200, [RENGLON_KIWI_ESPERADO], "2026-08-15/listado-abc123.jpg", None, codigo_llegada="N07P41"
     )
 
 
@@ -11201,12 +11201,12 @@ def test_ver_logistica_muestra_solo_clark_y_consultar():
 COMPRAS_PENDIENTES_RETIRO_DE_PRUEBA = [
     {
         "id": 1, "guia_id": 105, "guia_punto": 1, "articulo_nombre": "Tomate Cherry", "unidad_compra": "kilo",
-        "proveedor_nombre": "Saturno", "proveedor_codigo_puesto": "N07P41", "fecha_operacion": HOY_DE_PRUEBA,
+        "proveedor_nombre": "Saturno", "proveedor_codigo_puesto": "N07P41", "codigo_llegada": "N07P41", "fecha_operacion": HOY_DE_PRUEBA,
         "cantidad_cajones": 40, "contenido_por_cajon": 20, "cantidad_kilos": 800, "cantidad_fraccion": None,
     },
     {
         "id": 2, "guia_id": 105, "guia_punto": 2, "articulo_nombre": "Mango", "unidad_compra": "unidad",
-        "proveedor_nombre": "Saturno", "proveedor_codigo_puesto": "N07P41",
+        "proveedor_nombre": "Saturno", "proveedor_codigo_puesto": "N07P41", "codigo_llegada": "N07P41",
         "fecha_operacion": HOY_DE_PRUEBA - timedelta(days=3),
         "cantidad_cajones": 10, "contenido_por_cajon": 12, "cantidad_kilos": None, "cantidad_fraccion": 120,
     },
@@ -11219,7 +11219,7 @@ PROCESADOS_HOY_RETIRO_DE_PRUEBA = [
         # magnitudes: 8 cajones de 40 unidades, con sus kilos al lado.
         "id": 1, "articulo_nombre": "EJEMPLO Uno",
         "unidad_compra": "unidad", "unidad_conteo": "unidad",
-        "proveedor_nombre": "Saturno", "proveedor_codigo_puesto": "N07P02",
+        "proveedor_nombre": "Saturno", "proveedor_codigo_puesto": "N07P02", "codigo_llegada": "N07P02",
         "cantidad_cajones": 10, "contenido_por_cajon": 40,
         "cantidad_kilos": 160, "cantidad_fraccion": 400,
         "cantidad_cajones_retirada": 8,
@@ -11229,7 +11229,7 @@ PROCESADOS_HOY_RETIRO_DE_PRUEBA = [
         # RETIRADO sin anotar: el nulo significa "se retiró TODO lo cargado".
         "id": 2, "articulo_nombre": "EJEMPLO Dos",
         "unidad_compra": "kilo", "unidad_conteo": None,
-        "proveedor_nombre": "Kleppe", "proveedor_codigo_puesto": "N09P37",
+        "proveedor_nombre": "Kleppe", "proveedor_codigo_puesto": "N09P37", "codigo_llegada": "N09P37",
         "cantidad_cajones": 5, "contenido_por_cajon": 16,
         "cantidad_kilos": 80, "cantidad_fraccion": None,
         "cantidad_cajones_retirada": None,
@@ -11239,7 +11239,7 @@ PROCESADOS_HOY_RETIRO_DE_PRUEBA = [
         # CANCELADO: no se retiró nada, así que no lleva cantidad.
         "id": 3, "articulo_nombre": "EJEMPLO Tres",
         "unidad_compra": "kilo", "unidad_conteo": None,
-        "proveedor_nombre": "Almana", "proveedor_codigo_puesto": "N09P36",
+        "proveedor_nombre": "Almana", "proveedor_codigo_puesto": "N09P36", "codigo_llegada": "N09P36",
         "cantidad_cajones": 7, "contenido_por_cajon": 16,
         "cantidad_kilos": 112, "cantidad_fraccion": None,
         "cantidad_cajones_retirada": None,
@@ -11580,14 +11580,14 @@ def test_ver_logistica_retiro_confirmacion_es_en_el_lugar_no_confirm_nativo():
 PROCESADOS_HOY_DE_PRUEBA = [
     {
         "id": 1, "articulo_nombre": "Tomate Cherry", "unidad_compra": "kilo",
-        "proveedor_nombre": "Saturno", "proveedor_codigo_puesto": "N07P41",
+        "proveedor_nombre": "Saturno", "proveedor_codigo_puesto": "N07P41", "codigo_llegada": "N07P41",
         "cantidad_cajones": 40, "contenido_por_cajon": 20, "cantidad_cajones_retirada": 38,
         "estado_retiro": "retirado", "retiro_procesado_el": datetime(2026, 8, 17, 13, 0, tzinfo=timezone.utc),
         "estado": "pendiente",
     },
     {
         "id": 2, "articulo_nombre": "Mango", "unidad_compra": "unidad",
-        "proveedor_nombre": "Saturno", "proveedor_codigo_puesto": "N07P41",
+        "proveedor_nombre": "Saturno", "proveedor_codigo_puesto": "N07P41", "codigo_llegada": "N07P41",
         "cantidad_cajones": 10, "contenido_por_cajon": 12, "cantidad_cajones_retirada": None,
         "estado_retiro": "cancelado", "retiro_procesado_el": datetime(2026, 8, 17, 12, 30, tzinfo=timezone.utc),
         "estado": "pendiente",
@@ -11976,7 +11976,7 @@ def test_elegir_proveedor_ingreso_directo_exitoso_redirige_con_proveedor_id():
         )
 
     assert respuesta.status_code == 303
-    assert respuesta.headers["location"] == "/deposito/ingresar?proveedor_id=200"
+    assert respuesta.headers["location"] == "/deposito/ingresar?proveedor_id=200&codigo=N07P41"
     mock_proveedor.assert_called_once_with("N07P41", "Saturno")
 
 
@@ -12030,7 +12030,7 @@ def test_ingresar_mercaderia_exitoso_agregar_redirige_con_aviso():
 
     assert respuesta.status_code == 303
     assert respuesta.headers["location"] == (
-        "/deposito/ingresar?proveedor_id=200&aviso=Ingresada+sin+precio."
+        "/deposito/ingresar?proveedor_id=200&codigo=N07P41&aviso=Ingresada+sin+precio."
         "+El+comprador+tiene+que+cargar+el+costo."
     )
     # importe/sena van None siempre -- ingreso_directo_deposito=True hace
@@ -12039,7 +12039,7 @@ def test_ingresar_mercaderia_exitoso_agregar_redirige_con_aviso():
         HOY_DE_PRUEBA, 5, 200, 10.0, 18.0, 180.0, None, None, None, "Clark",
         ingreso_directo_deposito=True,
         ficha_en_origen_id=None,
-        segunda_por_cajon=None,
+        segunda_por_cajon=None, codigo_llegada="N07P41",
     )
 
 
@@ -12472,25 +12472,25 @@ INGRESOS_DEPOSITO_DE_PRUEBA = [
      "cantidad_cajones_real": 8.0, "contenido_por_cajon_real": 20.0,
      "cantidad_cajones_rechazada": None, "motivo_rechazo": None, "importe": 5000.0, "sena": 500.0,
      "articulo_nombre": "Kiwi", "unidad_compra": "kilo",
-     "proveedor_nombre": "Saturno", "proveedor_codigo_puesto": "N07P41"},
+     "proveedor_nombre": "Saturno", "proveedor_codigo_puesto": "N07P41", "codigo_llegada": "N07P41"},
     {"id": 2, "fecha_operacion": date(2026, 8, 18), "procesada_el": datetime(2026, 8, 18, 15, 0),
      "guia_id": 105, "guia_punto": 2, "estado": "recepcionado",
      "cantidad_cajones_real": 8.0, "contenido_por_cajon_real": 10.0,
      "cantidad_cajones_rechazada": 2.0, "motivo_rechazo": "Podrido", "importe": 3000.0, "sena": None,
      "articulo_nombre": "Mango", "unidad_compra": "unidad",
-     "proveedor_nombre": "Saturno", "proveedor_codigo_puesto": "N07P41"},
+     "proveedor_nombre": "Saturno", "proveedor_codigo_puesto": "N07P41", "codigo_llegada": "N07P41"},
     {"id": 3, "fecha_operacion": date(2026, 8, 18), "procesada_el": datetime(2026, 8, 18, 15, 30),
      "guia_id": 105, "guia_punto": 3, "estado": "recepcionado",
      "cantidad_cajones_real": 5.0, "contenido_por_cajon_real": 6.0,
      "cantidad_cajones_rechazada": None, "motivo_rechazo": None, "importe": None, "sena": None,
      "articulo_nombre": "Palta", "unidad_compra": "kilo",
-     "proveedor_nombre": "Saturno", "proveedor_codigo_puesto": "N07P41"},
+     "proveedor_nombre": "Saturno", "proveedor_codigo_puesto": "N07P41", "codigo_llegada": "N07P41"},
     {"id": 4, "fecha_operacion": date(2026, 8, 18), "procesada_el": datetime(2026, 8, 18, 16, 0),
      "guia_id": 106, "guia_punto": 1, "estado": "recepcionado",
      "cantidad_cajones_real": 10.0, "contenido_por_cajon_real": 16.0,
      "cantidad_cajones_rechazada": None, "motivo_rechazo": None, "importe": 2000.0, "sena": None,
      "articulo_nombre": "Limón", "unidad_compra": "kilo",
-     "proveedor_nombre": "Verdurin", "proveedor_codigo_puesto": "N03P12"},
+     "proveedor_nombre": "Verdurin", "proveedor_codigo_puesto": "N03P12", "codigo_llegada": "N03P12"},
 ]
 
 
@@ -14801,15 +14801,15 @@ RETIROS_DE_PRUEBA = [
     {"id": 1, "fecha_operacion": date(2026, 8, 16), "retiro_procesado_el": datetime(2026, 8, 16, 7, 30),
      "tipo_retiro": "Carro", "estado_retiro": "retirado", "estado": "pendiente", "cantidad_cajones": 10.0,
      "cantidad_cajones_retirada": None, "proveedor_nombre": "Saturno",
-     "proveedor_codigo_puesto": "N07P41", "articulo_nombre": "Kiwi"},
+     "proveedor_codigo_puesto": "N07P41", "codigo_llegada": "N07P41", "articulo_nombre": "Kiwi"},
     {"id": 2, "fecha_operacion": date(2026, 8, 16), "retiro_procesado_el": datetime(2026, 8, 16, 8, 15),
      "tipo_retiro": "Clark", "estado_retiro": "retirado", "estado": "recepcionado", "cantidad_cajones": 8.0,
      "cantidad_cajones_retirada": 7.0, "proveedor_nombre": "Saturno",
-     "proveedor_codigo_puesto": "N07P41", "articulo_nombre": "Mango"},
+     "proveedor_codigo_puesto": "N07P41", "codigo_llegada": "N07P41", "articulo_nombre": "Mango"},
     {"id": 3, "fecha_operacion": date(2026, 8, 16), "retiro_procesado_el": None,
      "tipo_retiro": "Clark", "estado_retiro": "pendiente", "estado": "pendiente", "cantidad_cajones": 5.0,
      "cantidad_cajones_retirada": None, "proveedor_nombre": "Crefu",
-     "proveedor_codigo_puesto": "N03P12", "articulo_nombre": "Palta"},
+     "proveedor_codigo_puesto": "N03P12", "codigo_llegada": "N03P12", "articulo_nombre": "Palta"},
 ]
 
 
@@ -14987,7 +14987,7 @@ def test_editar_compra_etiqueta_el_contenido_con_la_unidad_del_articulo():
     # el contenido de UN bulto y sin la unidad se confunde en el Mercado.
     compra = {
         "id": 30, "fecha_operacion": HOY_DE_PRUEBA, "articulo_id": 5, "articulo_nombre": "Kiwi",
-        "proveedor_id": 200, "proveedor_nombre": "Saturno", "proveedor_codigo_puesto": "N07P41",
+        "proveedor_id": 200, "proveedor_nombre": "Saturno", "proveedor_codigo_puesto": "N07P41", "codigo_llegada": "N07P41",
         "cantidad_cajones": 10, "contenido_por_cajon": 18, "cantidad_kilos": 180, "cantidad_fraccion": None, "segunda_por_cajon": None,
         "importe": 5000, "sena": None, "tipo_retiro": "Clark", "foto_ruta": None,
         "estado": None, "estado_retiro": "pendiente",
@@ -15007,7 +15007,7 @@ def test_editar_compra_etiqueta_el_contenido_con_la_unidad_del_articulo():
 def test_editar_compra_muestra_las_fotos_de_la_guia_con_subir_y_borrar():
     compra = {
         "id": 30, "fecha_operacion": HOY_DE_PRUEBA, "articulo_id": 5, "articulo_nombre": "Kiwi",
-        "proveedor_id": 200, "proveedor_nombre": "Saturno", "proveedor_codigo_puesto": "N07P41",
+        "proveedor_id": 200, "proveedor_nombre": "Saturno", "proveedor_codigo_puesto": "N07P41", "codigo_llegada": "N07P41",
         "guia_id": 105,
         "cantidad_cajones": 10, "contenido_por_cajon": 18, "cantidad_kilos": 180, "cantidad_fraccion": None, "segunda_por_cajon": None,
         "importe": 5000, "sena": None, "tipo_retiro": "Clark",
@@ -15035,7 +15035,7 @@ def test_editar_compra_muestra_las_fotos_de_la_guia_con_subir_y_borrar():
 def test_editar_compra_sin_foto_no_muestra_el_boton():
     compra = {
         "id": 30, "fecha_operacion": HOY_DE_PRUEBA, "articulo_id": 5, "articulo_nombre": "Kiwi",
-        "proveedor_id": 200, "proveedor_nombre": "Saturno", "proveedor_codigo_puesto": "N07P41",
+        "proveedor_id": 200, "proveedor_nombre": "Saturno", "proveedor_codigo_puesto": "N07P41", "codigo_llegada": "N07P41",
         "cantidad_cajones": 10, "contenido_por_cajon": 18, "cantidad_kilos": 180, "cantidad_fraccion": None, "segunda_por_cajon": None,
         "importe": 5000, "sena": None, "tipo_retiro": "Clark", "foto_ruta": None,
         "estado": None, "estado_retiro": "pendiente",
@@ -21287,7 +21287,7 @@ def test_ver_recepcion_muestra_la_fecha_de_cada_partida_y_marca_las_viejas():
         {
             "id": 1, "guia_id": 105, "guia_punto": 1, "articulo_id": 11, "articulo_nombre": "Tomate",
             "unidad_compra": "kilo",
-            "proveedor_nombre": "Saturno", "proveedor_codigo_puesto": "N07P41",
+            "proveedor_nombre": "Saturno", "proveedor_codigo_puesto": "N07P41", "codigo_llegada": "N07P41",
             "fecha_operacion": date(2026, 8, 22),
             "cantidad_cajones": 40, "contenido_por_cajon": 20, "cantidad_kilos": 800, "cantidad_fraccion": None,
             "ficha_en_origen_id": None,
@@ -21295,7 +21295,7 @@ def test_ver_recepcion_muestra_la_fecha_de_cada_partida_y_marca_las_viejas():
         {
             "id": 2, "guia_id": 106, "guia_punto": 1, "articulo_id": 22, "articulo_nombre": "Mango",
             "unidad_compra": "unidad",
-            "proveedor_nombre": "Don Pepe", "proveedor_codigo_puesto": "N01P02",
+            "proveedor_nombre": "Don Pepe", "proveedor_codigo_puesto": "N01P02", "codigo_llegada": "N01P02",
             "fecha_operacion": date(2026, 8, 20),
             "cantidad_cajones": 10, "contenido_por_cajon": 12, "cantidad_kilos": None, "cantidad_fraccion": 120,
             "ficha_en_origen_id": None,
@@ -29599,7 +29599,7 @@ def _compra_recepcionada_sin_marca(**cambios):
         "articulo_nombre": "Kiwi",
         "unidad_compra": "kilo",
         "proveedor_nombre": "EJEMPLO Uno",
-        "proveedor_codigo_puesto": "N07P41",
+        "proveedor_codigo_puesto": "N07P41", "codigo_llegada": "N07P41",
         "fecha_operacion": date(2026, 9, 9),
         "estado": "recepcionado",
         "ficha_en_origen_id": None,
@@ -32142,7 +32142,7 @@ def test_las_DOS_pantallas_apagan_su_desglose_con_LA_MISMA_funcion():
 
 _COMPRA_A_MOVER = {
     "id": 77, "articulo_nombre": "EJEMPLO Fruta", "proveedor_nombre": "EJEMPLO Puesto",
-    "proveedor_codigo_puesto": "N01P01", "guia_id": 5, "guia_punto": 2,
+    "proveedor_codigo_puesto": "N01P01", "codigo_llegada": "N01P01", "guia_id": 5, "guia_punto": 2,
     "fecha_operacion": date(2026, 9, 9),
     "procesada_el": datetime(2026, 9, 14, 14, 35, tzinfo=timezone.utc),
     "estado": "recepcionado", "cantidad_cajones": 10, "contenido_por_cajon": 16,

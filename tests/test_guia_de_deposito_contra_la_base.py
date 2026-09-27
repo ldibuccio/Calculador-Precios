@@ -54,7 +54,7 @@ def galpon(monkeypatch):
     def cargar(directo, dia=DIA, proveedor=None):
         d.crear_compra(dia, art, proveedor or prov, 10, 16, 160, None, 50000, None,
                        "Clark", None, ingreso_directo_deposito=directo,
-                       segunda_por_cajon=None)
+                       segunda_por_cajon=None, codigo_llegada=None)
         fila, = sql("SELECT c.id, c.guia_id, c.guia_punto, g.de_deposito FROM compras c "
                        "JOIN guias_compra g ON g.id = c.guia_id "
                        "WHERE c.id = (SELECT max(id) FROM compras)")

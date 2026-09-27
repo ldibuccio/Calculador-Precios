@@ -170,7 +170,7 @@
 
   <div class="tarjeta">
     <label>Proveedor</label>
-    <div class="campo-fijo">{{ proveedor.nombre }} ({{ proveedor.codigo_puesto }})</div>
+    <div class="campo-fijo">{{ proveedor.nombre }} ({{ proveedor.codigo_llegada }})</div>
     <a class="volver" href="/compras/nueva/manual">Cambiar proveedor</a>
   </div>
   {% else %}
@@ -182,7 +182,7 @@
   <div class="tarjeta">
     {% if modo == "editar" %}
     <label>Proveedor</label>
-    <div class="campo-fijo">{{ compra.proveedor_nombre }} ({{ compra.proveedor_codigo_puesto }})</div>
+    <div class="campo-fijo">{{ compra.proveedor_nombre }} ({{ compra.codigo_llegada }})</div>
     {% set fotos_volver = "editar" %}
     {% include "_fotos_guia.html" %}
     {% endif %}
@@ -193,6 +193,7 @@
     <form method="post" action="{% if modo == 'nueva' %}/compras/nueva{% else %}/compras/{{ compra.id }}/editar{% if request.url.query %}?{{ request.url.query }}{% endif %}{% endif %}" id="form-compra"{% if modo == "nueva" %} enctype="multipart/form-data"{% endif %}>
       {% if modo == "nueva" %}
       <input type="hidden" name="proveedor_id" value="{{ proveedor.id }}">
+      <input type="hidden" name="codigo_llegada" value="{{ proveedor.codigo_llegada }}">
       {% endif %}
 
       <label for="articulo_id">Artículo *</label>

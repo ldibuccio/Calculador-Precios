@@ -171,7 +171,7 @@ def generar_pdf_ingresos_deposito(
         if indice_grupo > 0:
             elementos.append(Spacer(1, 14))
 
-        titulo = f"{grupo['proveedor_nombre']} ({grupo['proveedor_codigo_puesto']})"
+        titulo = f"{grupo['proveedor_nombre']} ({' · '.join(grupo['codigos_llegada'])})"
         datos_tabla = [
             [Paragraph(titulo, estilo_titulo_tabla)] + [""] * (len(encabezados) - 1),
             [Paragraph(encabezado, estilo_encabezado_tabla) for encabezado in encabezados],
@@ -300,7 +300,7 @@ def generar_excel_ingresos_deposito(
     )
     for grupo in grupos:
         hoja.cell(
-            row=fila_actual, column=1, value=f"{grupo['proveedor_nombre']} ({grupo['proveedor_codigo_puesto']})"
+            row=fila_actual, column=1, value=f"{grupo['proveedor_nombre']} ({' · '.join(grupo['codigos_llegada'])})"
         ).font = fuente_proveedor
         fila_actual += 1
 

@@ -1513,7 +1513,7 @@ def test_la_consulta_del_CATALOGO_trae_las_dos_columnas_del_filtro():
 def _pantalla_corregir(marca, estado="recepcionado", uso_lote=None,
                        frenos_proveedor=None, proveedores=None, url_extra=""):
     compra = {"id": 663, "proveedor_id": 1, "proveedor_nombre": "Proveedor EJEMPLO",
-              "proveedor_codigo_puesto": "N01P01", "articulo_nombre": "Pera EJEMPLO",
+              "proveedor_codigo_puesto": "N01P01", "codigo_llegada": "N01P01", "articulo_nombre": "Pera EJEMPLO",
               "guia_id": 105, "guia_punto": 2, "estado": estado,
               "cantidad_cajones_real": 5.0, "contenido_por_cajon_real": 18.0,
               "cantidad_kilos_real": 90.0, "cantidad_cajones": 5.0,

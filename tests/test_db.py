@@ -525,7 +525,7 @@ def test_crear_compra_asigna_el_primer_punto_de_una_guia_nueva():
     with patch("app.db.obtener_conexion", return_value=conexion):
         crear_compra(
             date(2026, 8, 16), 5, 200, 40, 20, 800, None, 45000.0, None, "Clark",
-            segunda_por_cajon=None,
+            segunda_por_cajon=None, codigo_llegada=None,
         )
 
     consultas = [llamada.args[0] for llamada in cursor.execute.call_args_list]
@@ -563,7 +563,7 @@ def test_crear_compra_suma_puntos_si_la_guia_ya_tiene_renglones():
     with patch("app.db.obtener_conexion", return_value=conexion):
         crear_compra(
             date(2026, 8, 16), 6, 200, 10, 12, None, 120, None, None, "Clark",
-            segunda_por_cajon=None,
+            segunda_por_cajon=None, codigo_llegada=None,
         )
 
     _, parametros_insert = cursor.execute.call_args_list[3].args
@@ -596,7 +596,7 @@ def test_crear_compras_de_comanda_guarda_todos_los_renglones_en_un_solo_commit()
 
     with patch("app.db.obtener_conexion", return_value=conexion):
         guardo = crear_compras_de_comanda(
-            date(2026, 8, 19), 200, renglones, "2026-08-19/n07p41-1.jpg", "token123"
+            date(2026, 8, 19), 200, renglones, "2026-08-19/n07p41-1.jpg", "token123", codigo_llegada=None
         )
 
     assert guardo is True
@@ -633,7 +633,7 @@ def test_crear_compras_de_comanda_con_token_ya_usado_no_inserta_nada():
             [{"articulo_id": 5, "cantidad_cajones": 10, "contenido_por_cajon": 18,
               "cantidad_kilos": 180, "cantidad_fraccion": None, "segunda_por_cajon": None,
               "importe": 5000.0, "sena": None, "tipo_retiro": "Clark"}],
-            None, "token123",
+            None, "token123", codigo_llegada=None,
         )
 
     assert guardo is False
@@ -652,7 +652,7 @@ def test_crear_compras_de_comanda_sin_token_guarda_sin_chequear():
             [{"articulo_id": 5, "cantidad_cajones": 10, "contenido_por_cajon": 18,
               "cantidad_kilos": 180, "cantidad_fraccion": None, "segunda_por_cajon": None,
               "importe": 5000.0, "sena": None, "tipo_retiro": "Clark"}],
-            None, None,
+            None, None, codigo_llegada=None,
         )
 
     assert guardo is True
@@ -695,7 +695,7 @@ def test_crear_compra_ingreso_directo_deposito_nace_recepcionada_y_retirada():
         crear_compra(
             date(2026, 8, 16), 5, 200, 40, 20, 800, None, None, None, "Clark",
             ingreso_directo_deposito=True,
-            segunda_por_cajon=None,
+            segunda_por_cajon=None, codigo_llegada=None,
         )
 
     consulta_insert, parametros_insert = cursor.execute.call_args_list[3].args
@@ -749,7 +749,7 @@ def test_el_ingreso_retroactivo_fecha_las_DOS_columnas_por_las_que_entra_al_stoc
         crear_compra(
             date(2026, 9, 7), 5, 200, 10, 16, 160, None, 0, None, "Clark",
             ingreso_directo_deposito=True, recepcionada_el=momento,
-            segunda_por_cajon=None,
+            segunda_por_cajon=None, codigo_llegada=None,
         )
 
     consulta, parametros = _sql_y_parametros_que_contienen(cursor, "INSERT INTO compras")
@@ -783,13 +783,13 @@ def test_el_ingreso_retroactivo_RECHAZA_una_fecha_del_dia_del_corte_o_anterior()
                 crear_compra(dia, 5, 200, 10, 16, 160, None, 0, None, "Clark",
                              ingreso_directo_deposito=True,
                              recepcionada_el=datetime(dia.year, dia.month, dia.day, 12, 0),
-                             segunda_por_cajon=None)
+                             segunda_por_cajon=None, codigo_llegada=None)
             else:
                 with pytest.raises(ValueError) as rechazo:
                     crear_compra(dia, 5, 200, 10, 16, 160, None, 0, None, "Clark",
                                  ingreso_directo_deposito=True,
                                  recepcionada_el=datetime(dia.year, dia.month, dia.day, 12, 0),
-                             segunda_por_cajon=None)
+                             segunda_por_cajon=None, codigo_llegada=None)
                 assert "POSTERIOR al corte" in str(rechazo.value)
                 assert "05/09/2026" in str(rechazo.value)
 
@@ -805,7 +805,7 @@ def test_la_fecha_de_recepcion_NO_se_puede_elegir_en_una_carga_normal():
         with pytest.raises(ValueError) as rechazo:
             crear_compra(date(2026, 9, 7), 5, 200, 10, 16, 160, None, None, None, "Clark",
                          recepcionada_el=datetime(2026, 9, 7, 12, 0),
-                         segunda_por_cajon=None)
+                         segunda_por_cajon=None, codigo_llegada=None)
     assert "solo se puede elegir en un ingreso directo" in str(rechazo.value)
 
 
@@ -822,7 +822,7 @@ def test_crear_compra_sin_ingreso_directo_sigue_igual_que_antes():
     )
 
     with patch("app.db.obtener_conexion", return_value=conexion):
-        crear_compra(date(2026, 8, 16), 5, 200, 40, 20, 800, None, 45000.0, None, "Clark", segunda_por_cajon=None)
+        crear_compra(date(2026, 8, 16), 5, 200, 40, 20, 800, None, 45000.0, None, "Clark", segunda_por_cajon=None, codigo_llegada=None)
 
     consulta_insert, _ = cursor.execute.call_args_list[3].args
     assert "'pendiente', 'pendiente'" in consulta_insert
@@ -2487,7 +2487,7 @@ def test_crear_compra_cooperativa_nace_retirada_con_origen_cooperativa():
     conexion, cursor = _conexion_falsa(filas_fetchone=[(105,), (0,), (900,)])  # guia_id, punto
 
     with patch("app.db.obtener_conexion", return_value=conexion):
-        crear_compra(date(2026, 8, 19), 5, 200, 10, 18, 180, None, 50000.0, None, "Cooperativa", segunda_por_cajon=None)
+        crear_compra(date(2026, 8, 19), 5, 200, 10, 18, 180, None, 50000.0, None, "Cooperativa", segunda_por_cajon=None, codigo_llegada=None)
 
     # POR LA SENTENCIA y no por la posición: desde que el alta sella el
     # importe con un UPDATE posterior, `[-1]` es ese UPDATE y el assert
@@ -2551,7 +2551,7 @@ def test_crear_compra_carro_nace_retirada_con_origen_automatico():
     conexion, cursor = _conexion_falsa(filas_fetchone=[(105,), (0,), (900,)])
 
     with patch("app.db.obtener_conexion", return_value=conexion):
-        crear_compra(date(2026, 8, 19), 5, 200, 10, 18, 180, None, 50000.0, None, "Carro", segunda_por_cajon=None)
+        crear_compra(date(2026, 8, 19), 5, 200, 10, 18, 180, None, 50000.0, None, "Carro", segunda_por_cajon=None, codigo_llegada=None)
 
     # POR LA SENTENCIA y no por la posición: desde que el alta sella el
     # importe con un UPDATE posterior, `[-1]` es ese UPDATE y el assert
@@ -2567,7 +2567,7 @@ def test_crear_compra_clark_sigue_naciendo_pendiente_de_retiro():
     conexion, cursor = _conexion_falsa(filas_fetchone=[(105,), (0,), (900,)])
 
     with patch("app.db.obtener_conexion", return_value=conexion):
-        crear_compra(date(2026, 8, 19), 5, 200, 10, 18, 180, None, 50000.0, None, "Clark", segunda_por_cajon=None)
+        crear_compra(date(2026, 8, 19), 5, 200, 10, 18, 180, None, 50000.0, None, "Clark", segunda_por_cajon=None, codigo_llegada=None)
 
     # POR LA SENTENCIA y no por la posición: desde que el alta sella el
     # importe con un UPDATE posterior, `[-1]` es ese UPDATE y el assert
@@ -7635,8 +7635,8 @@ def test_listar_proveedores_es_el_unico_lugar_que_filtra_por_activo():
         listar_proveedores()
 
     consulta = cursor.execute.call_args.args[0]
-    assert "WHERE activo" in consulta
-    assert "ORDER BY codigo_puesto" in consulta
+    assert "WHERE p.activo" in consulta
+    assert "ORDER BY p.codigo_puesto" in consulta
 
 
 def test_listar_todos_los_proveedores_no_filtra_nada():
@@ -7671,7 +7671,7 @@ def test_obtener_o_crear_proveedor_por_codigo_reactiva_al_que_estaba_de_baja():
     # Si llegó mercadería con ese código, el proveedor existe: dejarlo de
     # baja haría que el selector mienta y que la compra recién cargada
     # quede colgando de un proveedor invisible.
-    conexion, cursor = _conexion_falsa(filas_fetchone=[(7, False)])
+    conexion, cursor = _conexion_falsa(filas_fetchone=[(7, "N01P02", "EJEMPLO Viejo", False, False)])
 
     with patch("app.db.obtener_conexion", return_value=conexion):
         proveedor_id, reactivado = obtener_o_crear_proveedor_por_codigo("N01P02", "Don Pedro")
@@ -7695,7 +7695,7 @@ def test_con_pisar_nombre_en_FALSE_el_UPDATE_no_toca_el_nombre():
     también cambiarían, pero una consulta que nombra la columna y no la
     recibe es un error distinto del que este test cuida.
     """
-    conexion, cursor = _conexion_falsa(filas_fetchone=[(7, True)])
+    conexion, cursor = _conexion_falsa(filas_fetchone=[(7, "N01P02", "EJEMPLO Viejo", True, False)])
 
     with patch("app.db.obtener_conexion", return_value=conexion):
         proveedor_id, reactivado = obtener_o_crear_proveedor_por_codigo(
@@ -7717,7 +7717,7 @@ def test_con_pisar_nombre_en_TRUE_sigue_mandando_la_ultima_correccion():
     Y éste es el camino de todos los días: llegó mercadería con ese código, y
     el que la recibió acaba de leer el nombre del remito.
     """
-    conexion, cursor = _conexion_falsa(filas_fetchone=[(7, True)])
+    conexion, cursor = _conexion_falsa(filas_fetchone=[(7, "N01P02", "EJEMPLO Viejo", True, False)])
 
     with patch("app.db.obtener_conexion", return_value=conexion):
         obtener_o_crear_proveedor_por_codigo("N01P02", "EJEMPLO Del Remito")
@@ -7728,7 +7728,7 @@ def test_con_pisar_nombre_en_TRUE_sigue_mandando_la_ultima_correccion():
 
 
 def test_obtener_o_crear_proveedor_por_codigo_no_dice_reactivado_si_ya_estaba_activo():
-    conexion, cursor = _conexion_falsa(filas_fetchone=[(7, True)])
+    conexion, cursor = _conexion_falsa(filas_fetchone=[(7, "N01P02", "EJEMPLO Viejo", True, False)])
 
     with patch("app.db.obtener_conexion", return_value=conexion):
         proveedor_id, reactivado = obtener_o_crear_proveedor_por_codigo("N01P02", "Don Pedro")
@@ -8846,7 +8846,7 @@ def test_marcar_una_compra_con_una_caja_de_OTRO_ARTICULO_no_la_guarda():
             crear_compra(
                 date(2026, 9, 11), 1, 200, 10, 16, 160, None, 5000.0, None, "Clark",
                 ficha_en_origen_id=3,
-                segunda_por_cajon=None,
+                segunda_por_cajon=None, codigo_llegada=None,
             )
 
     assert not [c for c in cursor.execute.call_args_list
@@ -8862,7 +8862,7 @@ def test_una_compra_marcada_con_la_caja_de_SU_articulo_se_guarda():
         crear_compra(
             date(2026, 9, 11), 1, 200, 10, 16, 160, None, 5000.0, None, "Clark",
             ficha_en_origen_id=3,
-            segunda_por_cajon=None,
+            segunda_por_cajon=None, codigo_llegada=None,
         )
 
     consulta, parametros = _sql_y_parametros_que_contienen(cursor, "SET ficha_en_origen_id")
@@ -8882,7 +8882,7 @@ def test_una_compra_PENDIENTE_marcada_NO_carga_la_guia_R_todavia():
         crear_compra(
             date(2026, 9, 11), 1, 200, 10, 16, 160, None, 5000.0, None, "Clark",
             ficha_en_origen_id=3,
-            segunda_por_cajon=None,
+            segunda_por_cajon=None, codigo_llegada=None,
         )
 
     assert not [c for c in cursor.execute.call_args_list if "INSERT INTO reprocesos" in c.args[0]]
@@ -8919,7 +8919,7 @@ def test_el_ingreso_directo_MARCADO_carga_su_guia_R_en_el_MISMO_insert():
             date(2026, 8, 25), 1, 200, 10, 16, 160, None, 5000.0, None, "Clark",
             ingreso_directo_deposito=True,
             ficha_en_origen_id=3,
-            segunda_por_cajon=None,
+            segunda_por_cajon=None, codigo_llegada=None,
         )
 
     cabecera = next(c for c in cursor.execute.call_args_list if "INSERT INTO reprocesos\n" in c.args[0])
@@ -10974,7 +10974,7 @@ def test_la_SEGUNDA_POR_CAJON_llega_al_INSERT_con_un_VALOR_y_no_solo_con_None():
         conexion, cursor = _conexion_falsa([(105,), (0,), (900,)])
         with patch("app.db.obtener_conexion", return_value=conexion):
             crear_compra(date(2026, 9, 20), 5, 200, 10, 18, 180, None, 50000.0, None, "Clark",
-                         segunda_por_cajon=valor)
+                         segunda_por_cajon=valor, codigo_llegada=None)
 
         consulta, parametros = cursor.execute.call_args_list[3].args
         assert "segunda_por_cajon" in consulta, "la columna no está en el INSERT"
@@ -10993,7 +10993,7 @@ def test_el_INGRESO_DIRECTO_copia_la_segunda_a_LAS_DOS_columnas():
     conexion, cursor = _conexion_falsa([(105,), (0,), (900,)])
     with patch("app.db.obtener_conexion", return_value=conexion):
         crear_compra(date(2026, 9, 20), 5, 200, 10, 18, 180, None, 50000.0, None, "Clark",
-                     ingreso_directo_deposito=True, segunda_por_cajon=16.0)
+                     ingreso_directo_deposito=True, segunda_por_cajon=16.0, codigo_llegada=None)
 
     consulta, parametros = cursor.execute.call_args_list[3].args
     assert "segunda_por_cajon, segunda_por_cajon_real" in consulta
@@ -11094,7 +11094,7 @@ def test_un_RENGLON_DE_COMANDA_sin_la_segunda_REVIENTA_y_no_guarda_NULL():
     conexion, _ = _conexion_falsa([(105,), (0,), (900,)])
     with patch("app.db.obtener_conexion", return_value=conexion):
         with pytest.raises(KeyError) as falla:
-            crear_compras_de_comanda(date(2026, 9, 20), 200, [sin_la_clave], None, None)
+            crear_compras_de_comanda(date(2026, 9, 20), 200, [sin_la_clave], None, None, codigo_llegada=None)
     assert "segunda_por_cajon" in str(falla.value)
 
     # Y el control: CON la clave entra, para que el test no pase por estar
@@ -11102,7 +11102,7 @@ def test_un_RENGLON_DE_COMANDA_sin_la_segunda_REVIENTA_y_no_guarda_NULL():
     conexion, cursor = _conexion_falsa([(105,), (0,), (900,)])
     with patch("app.db.obtener_conexion", return_value=conexion):
         crear_compras_de_comanda(
-            date(2026, 9, 20), 200, [dict(sin_la_clave, segunda_por_cajon=16.0)], None, None
+            date(2026, 9, 20), 200, [dict(sin_la_clave, segunda_por_cajon=16.0)], None, None, codigo_llegada=None
         )
     _, parametros = _sql_y_parametros_que_contienen(cursor, "INSERT INTO compras")
     assert 16.0 in parametros

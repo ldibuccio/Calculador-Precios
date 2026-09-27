@@ -241,7 +241,7 @@ def _alta(galpon, importe):
     from datetime import date
     d, sql, articulo, proveedor = galpon
     d.crear_compra(date.today(), articulo, proveedor, 10, 16, 160, None,
-                   importe, None, "Carro", None, segunda_por_cajon=None)
+                   importe, None, "Carro", None, segunda_por_cajon=None, codigo_llegada=None)
     (compra_id,), = sql("SELECT max(id) FROM compras")
     return compra_id
 

@@ -187,7 +187,7 @@
           {% for c in compras %}
           <tr>
             <td>{{ c.fecha_operacion|fecha_corta }}</td>
-            <td>{{ c.proveedor_nombre }} ({{ c.proveedor_codigo_puesto }})</td>
+            <td>{{ c.proveedor_nombre }} ({{ c.codigo_llegada }})</td>
             <td>{{ c.articulo_nombre }}</td>
             <td>{{ c.cantidad_cajones|numero }}</td>
             <td>{{ magnitudes_del_cajon(c) }}</td>

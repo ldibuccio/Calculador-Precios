@@ -490,7 +490,7 @@
           <tr data-detalle="/compras/{{ c.id }}/detalle">
             <td><input type="checkbox" name="compra_id" value="{{ c.id }}" class="check-fila" form="form-borrado-multiple"></td>
             <td>{{ c.fecha_operacion.strftime("%d/%m/%Y") }}</td>
-            <td>{{ c.proveedor_nombre }} ({{ c.proveedor_codigo_puesto }})</td>
+            <td>{{ c.proveedor_nombre }} ({{ c.codigo_llegada }})</td>
             {# EL NOMBRE ES UN LINK DE VERDAD, además del click en la fila. La
                fila entera la mueve el JS de abajo y eso alcanza para el dedo,
                pero un renglón que navega sin ser un link no se alcanza con el

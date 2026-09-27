@@ -300,7 +300,7 @@
       {% elif recien_procesado.estado == "rechazado" %}Rechazaste
       {% else %}Marcaste "No ingresó" en
       {% endif %}
-      <strong>{{ recien_procesado.articulo_nombre }}</strong> ({{ recien_procesado.proveedor_codigo_puesto }})
+      <strong>{{ recien_procesado.articulo_nombre }}</strong> ({{ recien_procesado.codigo_llegada }})
     </p>
     {% if recien_procesado.deshacer_bloqueado %}
     <p class="aviso-bloqueo">Ya se recepcionó: para corregirla hace falta Gerencia.</p>
@@ -322,7 +322,7 @@
       {% for p in procesados_hoy %}
       <div class="renglon-procesado">
         <p class="articulo-nombre">{{ p.articulo_nombre }}</p>
-        <p class="proveedor-procesado">{{ p.proveedor_nombre }} ({{ p.proveedor_codigo_puesto }})</p>
+        <p class="proveedor-procesado">{{ p.proveedor_nombre }} ({{ p.codigo_llegada }})</p>
         <p class="cantidad">{{ p.estado_label }} a las {{ p.procesada_el|hora }}</p>
         {% if p.estado == "recepcionado" and p.cantidad_cajones_real is not none and p.contenido_por_cajon_real is not none %}
         <p class="cantidad">Recibido: {{ p.cantidad_cajones_real|numero }} cajones × {{ p.contenido_por_cajon_real|sin_decimales }}{{ p.unidad_compra|sufijo_unidad }} = {{ (p.cantidad_cajones_real * p.contenido_por_cajon_real)|sin_decimales }}{{ p.unidad_compra|sufijo_unidad }}</p>
@@ -382,7 +382,7 @@
   {% if guias %}
     {% for guia in guias %}
     <div class="tarjeta">
-      <h2>{{ guia.proveedor_nombre }} ({{ guia.proveedor_codigo_puesto }})</h2>
+      <h2>{{ guia.proveedor_nombre }} ({{ guia.codigos_llegada|join(" · ") }})</h2>
       <p class="guia-numero">Guía {{ guia.guia_id }}</p>
       {# La fecha de la partida SIEMPRE a la vista (la guía es por proveedor
          y día): si es de un día anterior, se ve al toque. Con más de un

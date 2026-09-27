@@ -60,6 +60,15 @@ def _texto_cantidad(fila: dict) -> str:
     return f"{cantidad} cajones × {contenido}{sufijo}"
 
 
+def _codigos_de_llegada(filas: list[dict]) -> str:
+    """Los puestos por los que llegaron estas compras, sin repetir y en orden de aparición."""
+    codigos: list[str] = []
+    for fila in filas:
+        if fila["codigo_llegada"] not in codigos:
+            codigos.append(fila["codigo_llegada"])
+    return " · ".join(codigos)
+
+
 def _agrupar_por_fecha_y_proveedor(filas: list[dict]) -> list[tuple]:
     """Agrupa las filas por fecha (más reciente primero) y, dentro de cada fecha, por proveedor
     (por código de puesto). Devuelve [(fecha, [(proveedor_nombre, proveedor_codigo, filas), ...]), ...].
@@ -75,8 +84,11 @@ def _agrupar_por_fecha_y_proveedor(filas: list[dict]) -> list[tuple]:
             clave = (fila["proveedor_codigo_puesto"], fila["proveedor_nombre"])
             por_proveedor.setdefault(clave, []).append(fila)
 
+        # El código que se imprime es el de LLEGADA (27/09): un proveedor con
+        # dos puestos queda en UNA tabla —es uno solo, y se le paga a uno— con
+        # los puestos por los que llegaron sus compras en el título.
         proveedores = [
-            (nombre, codigo, por_proveedor[(codigo, nombre)])
+            (nombre, _codigos_de_llegada(por_proveedor[(codigo, nombre)]), por_proveedor[(codigo, nombre)])
             for codigo, nombre in sorted(por_proveedor.keys())
         ]
         resultado.append((fecha, proveedores))

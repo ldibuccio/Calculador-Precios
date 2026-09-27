@@ -328,6 +328,7 @@ from app.db import (
     listar_vigencias_de_precios,
     listar_proveedores,
     listar_proveedores_para_abm,
+    asociar_codigo_a_proveedor,
     cuentas_de_colegas,
     listar_colegas,
     movimientos_de_colegas,
@@ -482,6 +483,7 @@ from core.lector_comandas import (
     recortar_bloque_de_empresa,
 )
 from core.matcheo_comanda import adivinar_articulo, adivinar_proveedor, agrupar_renglones_por_proveedor, normalizar_texto
+from core.nombres_de_proveedor import nombres_parecidos
 from core.storage import (
     BUCKET_COMANDAS,
     PREFIJO_PEDIDO,
@@ -4723,7 +4725,8 @@ def ver_nueva_compra_foto(request: Request, error: str | None = None):
 
 @app.get("/compras/nueva")
 def ver_nueva_compra(
-    request: Request, proveedor_id: int | None = None, error: str | None = None, aviso: str | None = None
+    request: Request, proveedor_id: int | None = None, error: str | None = None, aviso: str | None = None,
+    codigo: str | None = None,
 ):
     """aviso viene por la URL cuando hay algo que contar del guardado anterior (hoy: un proveedor que se reactivó)."""
     if proveedor_id is None:
@@ -4745,6 +4748,7 @@ def ver_nueva_compra(
 
     if proveedor is None:
         raise HTTPException(status_code=404, detail="Proveedor no encontrado")
+    proveedor = _con_codigo_llegada(proveedor, codigo)
 
     try:
         articulos = listar_articulos()
@@ -4905,6 +4909,7 @@ async def agregar_compra_manual(
             foto_ruta,
             ficha_en_origen_id=valores["ficha_en_origen_id"],
             segunda_por_cajon=segunda_por_cajon,
+            codigo_llegada=codigo_valor,
         )
     except Exception as error_db:
         return _reintentar(f"No se pudo guardar la compra: {error_db}", 500)
@@ -4912,7 +4917,7 @@ async def agregar_compra_manual(
     if accion == "terminar":
         return RedirectResponse(url="/compras/buscar", status_code=303)
 
-    return RedirectResponse(url=_url_nueva_compra(proveedor_id, aviso_reactivado), status_code=303)
+    return RedirectResponse(url=_url_nueva_compra(proveedor_id, aviso_reactivado, codigo_valor), status_code=303)
 
 
 @app.post("/compras/nueva")
@@ -4928,6 +4933,7 @@ async def agregar_compra(
     sena: str = Form(""),
     tipo_retiro: str = Form(""),
     ficha_en_origen_id: str = Form(""),
+    codigo_llegada: str = Form(""),
     comanda_foto: UploadFile | None = File(None),
 ):
     bytes_foto = await comanda_foto.read() if comanda_foto is not None else b""
@@ -4945,6 +4951,7 @@ async def agregar_compra(
 
     if proveedor is None:
         raise HTTPException(status_code=404, detail="Proveedor no encontrado")
+    proveedor = _con_codigo_llegada(proveedor, codigo_llegada)
 
     def _reintentar_con_foto_error(error, status_code):
         articulos = listar_articulos()
@@ -5085,6 +5092,7 @@ async def agregar_compra(
             foto_ruta,
             ficha_en_origen_id=valores["ficha_en_origen_id"],
             segunda_por_cajon=segunda_por_cajon,
+            codigo_llegada=proveedor["codigo_llegada"],
         )
     except Exception as error_db:
         articulos = listar_articulos()
@@ -5117,7 +5125,7 @@ async def agregar_compra(
     if accion == "terminar":
         return RedirectResponse(url="/compras/buscar", status_code=303)
 
-    return RedirectResponse(url=f"/compras/nueva?proveedor_id={proveedor_id}", status_code=303)
+    return RedirectResponse(url=_url_nueva_compra(proveedor_id, None, proveedor["codigo_llegada"]), status_code=303)
 
 
 @app.post("/compras/nueva/cancelar")
@@ -5713,7 +5721,9 @@ async def confirmar_compra_foto(request: Request):
             # Todos los renglones de la comanda en UNA transacción: si algo
             # falla a mitad de camino (corte de internet incluido), no queda
             # nada guardado a medias — se reintenta la comanda entera.
-            crear_compras_de_comanda(hoy, proveedor_id, renglones_comanda, foto_ruta, carga_token)
+            crear_compras_de_comanda(
+                hoy, proveedor_id, renglones_comanda, foto_ruta, carga_token, codigo_llegada=codigo_valor
+            )
 
             for texto_leido, valores, _ in renglones_a_guardar:
                 # Solo se aprende de texto REALMENTE leído de la comanda: ni de
@@ -5755,12 +5765,17 @@ async def confirmar_compra_foto(request: Request):
     if accion == "guardar":
         return RedirectResponse(url="/compras/buscar", status_code=303)
 
-    return RedirectResponse(url=_url_nueva_compra(proveedor_id, aviso_reactivado), status_code=303)
+    return RedirectResponse(url=_url_nueva_compra(proveedor_id, aviso_reactivado, codigo_valor), status_code=303)
 
 
-def _url_nueva_compra(proveedor_id: int, aviso: str | None) -> str:
-    """La vuelta a /compras/nueva con el proveedor ya elegido, y el aviso si hay algo que contar."""
-    parametros = {"proveedor_id": proveedor_id}
+def _url_nueva_compra(proveedor_id: int, aviso: str | None, codigo: str) -> str:
+    """La vuelta a /compras/nueva con el proveedor ya elegido, y el aviso si hay algo que contar.
+
+    `codigo` es el puesto por el que llegó (27/09), sin default: los renglones
+    que se agregan después son del mismo puesto, y la pantalla siguiente solo
+    sabe el proveedor.
+    """
+    parametros = {"proveedor_id": proveedor_id, "codigo": codigo}
     if aviso:
         parametros["aviso"] = aviso
     return f"/compras/nueva?{urlencode(parametros)}"
@@ -5785,7 +5800,8 @@ def _aviso_proveedor_reactivado(reactivado: bool, nombre: str) -> str | None:
 
 def _renderizar_pantalla_proveedores_compras(
     request: Request, *, error: str | None = None, aviso: str | None = None,
-    destacado_id: int | None = None, status_code: int = 200
+    destacado_id: int | None = None, status_code: int = 200,
+    alta_pendiente: dict | None = None, parecidos: list[dict] | None = None,
 ):
     try:
         proveedores = listar_proveedores_para_abm()
@@ -5797,7 +5813,8 @@ def _renderizar_pantalla_proveedores_compras(
         request,
         "compras_proveedores.html",
         {"proveedores": proveedores, "tipos_cajon": tipos_cajon,
-         "error": error, "aviso": aviso, "destacado_id": destacado_id},
+         "error": error, "aviso": aviso, "destacado_id": destacado_id,
+         "alta_pendiente": alta_pendiente, "parecidos": parecidos or []},
         status_code=status_code,
     )
 
@@ -5824,7 +5841,8 @@ def ver_proveedores_compras(request: Request, aviso: str | None = None, destacad
 def crear_proveedor_compras_ruta(request: Request, nombre: str = Form(""),
                                  codigo_puesto: str = Form(""),
                                  tipo_cajon_id: str = Form(""),
-                                 cajon_nombre_nuevo: str = Form("")):
+                                 cajon_nombre_nuevo: str = Form(""),
+                                 es_otro: str = Form("")):
     """Alta a mano. Pasa por la MISMA puerta que usa la carga de compras.
 
     El INSERT vive en un solo lugar (`obtener_o_crear_proveedor_por_codigo`):
@@ -5861,15 +5879,40 @@ def crear_proveedor_compras_ruta(request: Request, nombre: str = Form(""),
         # Por eso va como AVISO y con la fila destacada, no como un error que
         # manda a irse.
         de_baja = "" if ya_estaba["activo"] else " Está dado de baja: el botón de alta lo vuelve a activar."
+        # Se nombra el código TIPEADO: si es un puesto alternativo, el
+        # principal del proveedor es otro, y decir ése no explica el rebote.
         return _renderizar_pantalla_proveedores_compras(
             request,
             aviso=(
-                f'El código {ya_estaba["codigo_puesto"]} ya es de "{ya_estaba["nombre"]}", '
+                f'El código {codigo_valor} ya es de "{ya_estaba["nombre"]}", '
                 f"que está más abajo. Si el nombre está mal, corregilo con Editar.{de_baja}"
             ),
             destacado_id=ya_estaba["id"],
             status_code=400,
         )
+
+    # NOMBRES PARECIDOS (dueño, 27/09): FRUTAMAX y FRUTAMAX S.R.L. eran el
+    # mismo proveedor cargado dos veces, uno por cada puesto. Si el nombre
+    # plegado coincide con uno que ya está, un modal lo pregunta ANTES de
+    # crear: es el mismo (y se le suma este puesto) o es otro (y se carga
+    # igual). Avisa, no bloquea: dos proveedores pueden llamarse igual. La
+    # guarda va acá, en el POST, y no en la pantalla: un formulario armado a
+    # mano sin `es_otro` pasa por el modal igual.
+    if not es_otro:
+        try:
+            parecidos = nombres_parecidos(nombre_limpio, listar_proveedores_para_abm())
+        except Exception as error_db:
+            return _renderizar_pantalla_proveedores_compras(
+                request, error=f"No se pudo leer los proveedores: {error_db}", status_code=500
+            )
+        if parecidos:
+            return _renderizar_pantalla_proveedores_compras(
+                request,
+                alta_pendiente={"nombre": nombre_limpio, "codigo_puesto": codigo_valor,
+                                "tipo_cajon_id": tipo_cajon_id, "cajon_nombre_nuevo": cajon_nombre_nuevo},
+                parecidos=parecidos,
+                status_code=409,
+            )
 
     try:
         proveedor_id, _ = obtener_o_crear_proveedor_por_codigo(
@@ -5901,6 +5944,33 @@ def crear_proveedor_compras_ruta(request: Request, nombre: str = Form(""),
     parametros = urlencode({
         "aviso": (f'Proveedor "{nombre_limpio}" ({codigo_valor}) cargado. '
                   f"Ya se puede elegir al cargar una compra.{aviso_cajon}"),
+        "destacado_id": proveedor_id,
+    })
+    return RedirectResponse(url=f"/compras/proveedores?{parametros}", status_code=303)
+
+
+@app.post("/compras/proveedores/{proveedor_id}/asociar-codigo")
+def asociar_codigo_a_proveedor_ruta(request: Request, proveedor_id: int, codigo_puesto: str = Form("")):
+    """"Es el mismo": le suma el puesto tipeado al proveedor que ya existe, en vez de crear otro.
+
+    Es la salida del modal de nombres parecidos. No renombra nada ni crea
+    ningún proveedor: de ahí en más, una compra que llegue por ese puesto se
+    carga en éste. Que el código no sea de nadie más lo decide la base.
+    """
+    error_formato, codigo_valor = _validar_codigo_puesto(codigo_puesto)
+    if error_formato:
+        return _renderizar_pantalla_proveedores_compras(request, error=error_formato, status_code=400)
+    try:
+        nombre = asociar_codigo_a_proveedor(proveedor_id, codigo_valor)
+    except ValueError as rechazo:
+        return _renderizar_pantalla_proveedores_compras(request, error=str(rechazo), status_code=400)
+    except Exception as error_db:
+        return _renderizar_pantalla_proveedores_compras(
+            request, error=f"No se pudo asociar el código: {error_db}", status_code=500
+        )
+    parametros = urlencode({
+        "aviso": (f'El puesto {codigo_valor} quedó asociado a "{nombre}". Una compra que llegue '
+                  "por ese puesto se carga en este proveedor, sin cambiarle el nombre."),
         "destacado_id": proveedor_id,
     })
     return RedirectResponse(url=f"/compras/proveedores?{parametros}", status_code=303)
@@ -6972,6 +7042,7 @@ def editar_compra(
                 "articulo_id": valores["articulo_id"],
                 "proveedor_nombre": compra_actual["proveedor_nombre"],
                 "proveedor_codigo_puesto": compra_actual["proveedor_codigo_puesto"],
+                "codigo_llegada": compra_actual["codigo_llegada"],
                 "cantidad_cajones": cantidad_cajones,
                 "contenido_por_cajon": contenido_por_cajon,
                 "segunda_por_cajon": segunda_por_cajon,
@@ -7009,6 +7080,7 @@ def editar_compra(
             "articulo_id": valores["articulo_id"],
             "proveedor_nombre": compra_actual["proveedor_nombre"],
             "proveedor_codigo_puesto": compra_actual["proveedor_codigo_puesto"],
+            "codigo_llegada": compra_actual["codigo_llegada"],
             "cantidad_cajones": cantidad_cajones,
             "contenido_por_cajon": contenido_por_cajon,
             "segunda_por_cajon": segunda_por_cajon,
@@ -7043,6 +7115,7 @@ def editar_compra(
                 valores["tipo_retiro"],
                 ficha_en_origen_id=valores["ficha_en_origen_id"],
                 segunda_por_cajon=segunda_por_cajon,
+                codigo_llegada=compra_actual["codigo_llegada"],  # el renglón agregado llegó por el mismo puesto
             )
         except Exception as error_db:
             articulos = listar_articulos()
@@ -7051,6 +7124,7 @@ def editar_compra(
                 "articulo_id": valores["articulo_id"],
                 "proveedor_nombre": compra_actual["proveedor_nombre"],
                 "proveedor_codigo_puesto": compra_actual["proveedor_codigo_puesto"],
+                "codigo_llegada": compra_actual["codigo_llegada"],
                 "cantidad_cajones": cantidad_cajones,
                 "contenido_por_cajon": contenido_por_cajon,
                 "segunda_por_cajon": segunda_por_cajon,
@@ -7112,6 +7186,7 @@ def editar_compra(
             "articulo_id": valores["articulo_id"],
             "proveedor_nombre": compra_actual["proveedor_nombre"],
             "proveedor_codigo_puesto": compra_actual["proveedor_codigo_puesto"],
+            "codigo_llegada": compra_actual["codigo_llegada"],
             "cantidad_cajones": cantidad_cajones,
             "contenido_por_cajon": contenido_por_cajon,
             "segunda_por_cajon": segunda_por_cajon,
@@ -8077,6 +8152,7 @@ def cargar_ingreso_retroactivo(
             recepcionada_el=momento,
             ficha_en_origen_id=ficha_marcada,
             segunda_por_cajon=segunda_por_cajon,
+            codigo_llegada=None,  # se eligió el proveedor, no su puesto
         )
     except ValueError as rechazo:
         return _renderizar_ingreso_retroactivo(request, precarga=precarga, error=str(rechazo), status_code=400)
@@ -10583,9 +10659,24 @@ def ver_deposito(request: Request, aviso: str | None = None):
 AVISO_INGRESO_DIRECTO_SIN_PRECIO = "Ingresada sin precio. El comprador tiene que cargar el costo."
 
 
+def _con_codigo_llegada(proveedor: dict, codigo: str | None) -> dict:
+    """Le pone al proveedor del ingreso directo el puesto por el que llegó.
+
+    El ingreso directo es de dos pasos, y el segundo solo sabe el proveedor:
+    el código tipeado en el primero viaja en la URL y en un campo escondido.
+    Viaja ADENTRO del dict del proveedor y no aparte porque así lo llevan
+    solas todas las ramas que vuelven a dibujar el formulario (corolario 43).
+    Devuelve una COPIA: el que lo pidió puede estar compartiendo ese dict.
+    Vacío es el principal. Que el código sea de ese proveedor lo decide
+    `_insertar_compra_con_guia`, que es la que escribe.
+    """
+    return {**proveedor, "codigo_llegada": (codigo or "").strip().upper() or proveedor["codigo_puesto"]}
+
+
 @app.get("/deposito/ingresar")
 def ver_ingresar_mercaderia(
-    request: Request, proveedor_id: int | None = None, error: str | None = None, aviso: str | None = None
+    request: Request, proveedor_id: int | None = None, error: str | None = None, aviso: str | None = None,
+    codigo: str | None = None,
 ):
     """Ingreso directo de mercadería que ya está en el depósito, sin pasar por Logística ni Recepción.
 
@@ -10613,6 +10704,7 @@ def ver_ingresar_mercaderia(
 
     if proveedor is None:
         raise HTTPException(status_code=404, detail="Proveedor no encontrado")
+    proveedor = _con_codigo_llegada(proveedor, codigo)
 
     try:
         articulos = listar_articulos()
@@ -10673,7 +10765,9 @@ def elegir_proveedor_ingreso_directo(request: Request, codigo_puesto: str = Form
             status_code=500,
         )
 
-    parametros = {"proveedor_id": proveedor_id}
+    # EL CÓDIGO VIAJA al paso siguiente: es el puesto por el que llegó, y los
+    # renglones se cargan en otra pantalla que solo sabe el proveedor.
+    parametros = {"proveedor_id": proveedor_id, "codigo": codigo_valor}
     aviso_reactivado = _aviso_proveedor_reactivado(reactivado, nombre_valor)
     if aviso_reactivado:
         parametros["aviso"] = aviso_reactivado
@@ -10691,6 +10785,7 @@ def ingresar_mercaderia(
     segunda_por_cajon: str = Form(""),
     tipo_retiro: str = Form("Clark"),
     ficha_en_origen_id: str = Form(""),
+    codigo_llegada: str = Form(""),
 ):
     """Agrega un artículo ya recibido en Depósito, sin pasar por Logística ni por Recepción.
 
@@ -10711,6 +10806,7 @@ def ingresar_mercaderia(
 
     if proveedor is None:
         raise HTTPException(status_code=404, detail="Proveedor no encontrado")
+    proveedor = _con_codigo_llegada(proveedor, codigo_llegada)
 
     error, valores = _validar_compra_nueva_form(
         articulo_id, cantidad_cajones, contenido_por_cajon, "", "", tipo_retiro, ficha_en_origen_id,
@@ -10804,6 +10900,7 @@ def ingresar_mercaderia(
             # guía R a mano.
             ficha_en_origen_id=valores["ficha_en_origen_id"],
             segunda_por_cajon=segunda_por_cajon,
+            codigo_llegada=proveedor["codigo_llegada"],
         )
     except Exception as error_db:
         articulos = listar_articulos()
@@ -10834,7 +10931,8 @@ def ingresar_mercaderia(
     if accion == "terminar":
         return RedirectResponse(url=f"/deposito?{parametros}", status_code=303)
 
-    return RedirectResponse(url=f"/deposito/ingresar?proveedor_id={proveedor_id}&{parametros}", status_code=303)
+    parametros_proveedor = urlencode({"proveedor_id": proveedor_id, "codigo": proveedor["codigo_llegada"]})
+    return RedirectResponse(url=f"/deposito/ingresar?{parametros_proveedor}&{parametros}", status_code=303)
 
 
 def _validar_cantidad_cajones_real(texto: str) -> tuple[str | None, float | None]:
@@ -10946,6 +11044,12 @@ def _agrupar_pendientes_por_guia(compras: list[dict]) -> list[dict]:
     "fecha_operacion", "compras"}. La fecha es UNA por guía (la guía es por
     proveedor y día): la pantalla la muestra en el encabezado para que se
     vea de un vistazo si la partida es de un día anterior.
+
+    `codigos_llegada` son los PUESTOS por los que llegaron sus compras, sin
+    repetir y en el orden en que aparecen (27/09). Un proveedor con dos
+    puestos —FRUTAMAX S.R.L. es el 41 y el 39— tiene UNA guía por día, así
+    que la guía puede juntar compras de los dos, y el que va a retirar tiene
+    que saber que son dos lugares. Con uno solo es el de siempre.
     """
     guias_por_id: dict[int, dict] = {}
     orden_guias: list[int] = []
@@ -10956,11 +11060,15 @@ def _agrupar_pendientes_por_guia(compras: list[dict]) -> list[dict]:
                 "guia_id": guia_id,
                 "proveedor_nombre": compra["proveedor_nombre"],
                 "proveedor_codigo_puesto": compra["proveedor_codigo_puesto"],
+                "codigos_llegada": [],
                 "fecha_operacion": compra.get("fecha_operacion"),
                 "compras": [],
             }
             orden_guias.append(guia_id)
-        guias_por_id[guia_id]["compras"].append(compra)
+        guia = guias_por_id[guia_id]
+        guia["compras"].append(compra)
+        if compra["codigo_llegada"] not in guia["codigos_llegada"]:
+            guia["codigos_llegada"].append(compra["codigo_llegada"])
     return [guias_por_id[guia_id] for guia_id in orden_guias]
 
 
@@ -15480,7 +15588,7 @@ def _detalle_compras_sin_precio() -> dict:
         [
             fila["fecha_operacion"].strftime("%d/%m"),
             fila["articulo_nombre"],
-            f'{fila["proveedor_nombre"]} ({fila["proveedor_codigo_puesto"]})',
+            f'{fila["proveedor_nombre"]} ({fila["codigo_llegada"]})',
             (f'{_formatear_numero(fila["cantidad_cajones"])} × '
              f'{_formatear_numero(fila["contenido_por_cajon"])}'
              f'{SUFIJOS_UNIDAD_COMPRA.get(fila["unidad_compra"], "")}'),
@@ -17801,6 +17909,10 @@ def _grupos_ingresos_deposito(ingresos: list[dict]) -> tuple[list[dict], dict]:
             grupo = {
                 "proveedor_nombre": ingreso["proveedor_nombre"],
                 "proveedor_codigo_puesto": clave,
+                # Los puestos por los que llegaron (27/09): el grupo es el
+                # proveedor —a quien se le deposita—, y el título dice por
+                # cuáles de sus puestos entró la mercadería.
+                "codigos_llegada": [],
                 "filas": [],
                 "subtotal": 0.0,
                 "subtotal_mercaderia": 0.0,
@@ -17809,6 +17921,8 @@ def _grupos_ingresos_deposito(ingresos: list[dict]) -> tuple[list[dict], dict]:
             }
             grupos_por_proveedor[clave] = grupo
             grupos.append(grupo)
+        if ingreso["codigo_llegada"] not in grupo["codigos_llegada"]:
+            grupo["codigos_llegada"].append(ingreso["codigo_llegada"])
 
         cajones = float(ingreso["cantidad_cajones_real"]) if ingreso["cantidad_cajones_real"] is not None else None
         importe = float(ingreso["importe"]) if ingreso["importe"] is not None else None

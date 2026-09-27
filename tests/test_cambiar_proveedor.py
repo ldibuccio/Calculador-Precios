@@ -88,7 +88,7 @@ def galpon(base_real, monkeypatch):
 
     def recepcionada():
         d.crear_compra(date.today(), art, viejo, 10, 16, 160, None, 50000, None,
-                       "Clark", None, segunda_por_cajon=None)
+                       "Clark", None, segunda_por_cajon=None, codigo_llegada=None)
         (cid,), = sql("SELECT max(id) FROM compras")
         sql("""UPDATE compras SET estado='recepcionado', cantidad_cajones_real=10,
                contenido_por_cajon_real=16, cantidad_kilos_real=160, procesada_el=now()
@@ -244,7 +244,7 @@ def _post(proveedor_id, *, con_clave=True, **parches):
     from app.main import app, _firma_acceso_gerencia
     from tests.test_cajas import _pantalla_corregir  # noqa: F401  (misma compra)
     compra = {"id": 663, "proveedor_id": 1, "proveedor_nombre": "Proveedor EJEMPLO",
-              "proveedor_codigo_puesto": "N01P01", "articulo_nombre": "Pera EJEMPLO",
+              "proveedor_codigo_puesto": "N01P01", "codigo_llegada": "N01P01", "articulo_nombre": "Pera EJEMPLO",
               "guia_id": 105, "guia_punto": 2, "estado": "recepcionado",
               "cantidad_cajones_real": 5.0, "contenido_por_cajon_real": 18.0,
               "cantidad_kilos_real": 90.0, "cantidad_cajones": 5.0,

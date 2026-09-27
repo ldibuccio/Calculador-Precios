@@ -287,7 +287,7 @@
   {% if grupos %}
     {% for g in grupos %}
     <div class="tarjeta">
-      <p class="proveedor-encabezado">{{ g.proveedor_nombre }} <span class="puesto">({{ g.proveedor_codigo_puesto }})</span></p>
+      <p class="proveedor-encabezado">{{ g.proveedor_nombre }} <span class="puesto">({{ g.codigos_llegada|join(" · ") }})</span></p>
       <div class="tabla-scroll">
         <table>
           <thead>

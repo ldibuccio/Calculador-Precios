@@ -659,6 +659,7 @@ def test_el_ALTA_de_proveedores_OFRECE_declarar_el_cajon():
 
 def test_el_ALTA_guarda_el_cajon_del_proveedor_RECIEN_CREADO():
     with patch("app.main.buscar_proveedor_por_codigo", return_value=None), \
+         patch("app.main.listar_proveedores_para_abm", return_value=[]), \
          patch("app.main.obtener_o_crear_proveedor_por_codigo", return_value=(88, True)), \
          patch("app.main.buscar_tipo_cajon_por_nombre", return_value=None), \
          patch("app.main.crear_tipo_cajon", return_value=5) as crear, \
@@ -676,6 +677,7 @@ def test_el_ALTA_guarda_el_cajon_del_proveedor_RECIEN_CREADO():
 def test_el_ALTA_sin_cajon_NO_escribe_nada():
     """"Todavía no sé" es una respuesta, y no tiene que pisar nada."""
     with patch("app.main.buscar_proveedor_por_codigo", return_value=None), \
+         patch("app.main.listar_proveedores_para_abm", return_value=[]), \
          patch("app.main.obtener_o_crear_proveedor_por_codigo", return_value=(88, True)), \
          patch("app.main.asignar_tipo_cajon") as asignar:
         respuesta = cliente.post("/compras/proveedores/nuevo", data={
@@ -694,6 +696,7 @@ def test_si_el_CAJON_falla_el_proveedor_QUEDA_CARGADO_y_lo_dice():
     código ya es de…", que se lee como que el alta no funcionó.
     """
     with patch("app.main.buscar_proveedor_por_codigo", return_value=None), \
+         patch("app.main.listar_proveedores_para_abm", return_value=[]), \
          patch("app.main.obtener_o_crear_proveedor_por_codigo", return_value=(88, True)), \
          patch("app.main.buscar_tipo_cajon_por_nombre",
                side_effect=RuntimeError("la base no contesta")):
@@ -751,6 +754,7 @@ def test_un_cajon_que_YA_EXISTE_se_REUSA_en_vez_de_duplicarse():
     que nadie va a notar.
     """
     with patch("app.main.buscar_proveedor_por_codigo", return_value=None), \
+         patch("app.main.listar_proveedores_para_abm", return_value=[]), \
          patch("app.main.obtener_o_crear_proveedor_por_codigo", return_value=(88, True)), \
          patch("app.main.buscar_tipo_cajon_por_nombre", return_value=4), \
          patch("app.main.crear_tipo_cajon") as crear, \
@@ -772,6 +776,7 @@ def test_el_TEXTO_le_gana_al_de_la_lista_y_no_al_reves():
     los demás tests: en ellos el select viene vacío.
     """
     with patch("app.main.buscar_proveedor_por_codigo", return_value=None), \
+         patch("app.main.listar_proveedores_para_abm", return_value=[]), \
          patch("app.main.obtener_o_crear_proveedor_por_codigo", return_value=(88, True)), \
          patch("app.main.buscar_tipo_cajon_por_nombre", return_value=4), \
          patch("app.main.crear_tipo_cajon"), \

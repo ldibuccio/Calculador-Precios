@@ -273,7 +273,7 @@
   </div>
 
   <div class="tarjeta">
-    <h2>{{ compra.proveedor_nombre }} ({{ compra.proveedor_codigo_puesto }})</h2>
+    <h2>{{ compra.proveedor_nombre }} ({{ compra.codigo_llegada }})</h2>
     <p class="puesto">{{ compra.articulo_nombre }} — Guía {{ compra.guia_id }}.{{ compra.guia_punto }}</p>
 
     {% if compra.estado != "recepcionado" %}

@@ -110,8 +110,8 @@
 
   <div class="tarjeta">
     <h2>{{ compra.articulo_nombre }}</h2>
-    <p class="puesto">{{ compra.proveedor_nombre }}{% if compra.proveedor_codigo_puesto %}
-      · {{ compra.proveedor_codigo_puesto }}{% endif %}
+    <p class="puesto">{{ compra.proveedor_nombre }}{% if compra.codigo_llegada %}
+      · {{ compra.codigo_llegada }}{% endif %}
       {%- if compra.guia_id %} · guía {{ compra.guia_id }}.{{ compra.guia_punto }}{% endif %}</p>
     <p class="como-esta">{{ magnitudes_del_cajon(compra) }}</p>
   </div>
