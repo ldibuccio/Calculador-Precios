@@ -1,0 +1,134 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Juntar dos proveedores</title>
+<style>
+  :root { font-family: -apple-system, system-ui, sans-serif; }
+  body { margin: 0; padding: 1rem; background: #f5f5f5; color: #222; }
+  .tarjeta {
+    background: #fff; border-radius: 10px; padding: 1rem;
+    margin-bottom: 1rem; box-shadow: 0 1px 3px rgba(0, 0, 0, 0.1);
+  }
+  .aviso {
+    background: #dcfce7; color: #166534; padding: 0.75rem 1rem;
+    border-radius: 8px; margin-bottom: 1rem; font-size: 0.95rem;
+    overflow-wrap: anywhere;
+  }
+  .error, .cruce {
+    background: #fee2e2; color: #991b1b; padding: 0.75rem 1rem;
+    border-radius: 8px; margin-bottom: 0.75rem; font-size: 0.95rem;
+    line-height: 1.45; overflow-wrap: anywhere;
+  }
+  .no-se-deshace {
+    background: #fffbeb; border: 1px solid #fde68a; color: #92400e;
+    padding: 0.75rem 0.85rem; border-radius: 8px;
+    font-size: 0.9rem; line-height: 1.5; margin: 0 0 1rem;
+  }
+  label { display: block; margin-top: 0.8rem; font-size: 0.95rem; color: #444; }
+  select {
+    width: 100%; min-width: 0; padding: 0.8rem; margin-top: 0.25rem;
+    border: 1px solid #ccc; border-radius: 8px; font-size: 1.05rem;
+    box-sizing: border-box; background: #fff;
+  }
+  button {
+    display: block; width: 100%; min-height: 44px; margin-top: 1.2rem; padding: 1rem;
+    border: 0; border-radius: 10px; font-size: 1.05rem; font-weight: 700;
+  }
+  button.boton-ver { background: #2563eb; color: #fff; }
+  button.boton-juntar { background: #b91c1c; color: #fff; }
+  h2 { font-size: 1.05rem; margin: 0 0 0.6rem; }
+  .par { margin: 0 0 0.7rem; line-height: 1.45; overflow-wrap: anywhere; }
+  .par strong { display: block; font-size: 1.05rem; }
+  .rotulo-par { color: #666; font-size: 0.82rem; text-transform: uppercase; letter-spacing: 0.03em; }
+  ul.mueve { margin: 0.2rem 0 0.8rem; padding-left: 1.2rem; line-height: 1.6; }
+  .volver {
+    display: block; margin-top: 0.75rem; text-align: center;
+    color: #888; font-size: 0.85rem; text-decoration: none;
+  }
+</style>
+</head>
+<body>
+  {% set barra_sector = "gerencia" %}
+  {% set barra_titulo = "Juntar dos proveedores" %}
+  {% set barra_atras = "/gerencia" %}
+  {% from "_info.html" import info %}
+  {% include "_barra_navegacion.html" %}
+
+  {% if aviso %}<div class="aviso">{{ aviso }}</div>{% endif %}
+  {% if error %}<div class="error">{{ error }}</div>{% endif %}
+
+  {% macro etiqueta(p) -%}
+    {{ p.nombre }} · {{ p.codigo_puesto }}{% if p.codigos_alternativos %} (+{{ p.codigos_alternativos|join(", ") }}){% endif %} · {{ p.compras }} compra{% if p.compras != 1 %}s{% endif %}
+  {%- endmacro %}
+
+  <div class="tarjeta">
+    <h2>¿Cuáles son el mismo proveedor?
+      {% call info("Juntar dos proveedores") %}Para cuando el mismo proveedor quedó cargado dos veces, una por cada puesto,
+      como pasó con FRUTAMAX y con DON LAZZARO. Todo lo del que se va pasa al que se queda:
+      compras, guías, vacíos, marcas y lo aprendido de las comandas. Su código de puesto pasa a
+      ser un <strong>código alternativo</strong> del que se queda, así que una compra que llegue por
+      ese puesto se sigue cargando bien.{% endcall %}
+    </h2>
+    <form method="get" action="/gerencia/proveedores/juntar">
+      <label for="queda">El que se queda</label>
+      <select id="queda" name="queda" required>
+        <option value="" {% if not queda %}selected{% endif %} disabled>Elegí el que se queda...</option>
+        {% for p in proveedores %}
+        <option value="{{ p.id }}" {% if queda == p.id %}selected{% endif %}>{{ etiqueta(p) }}</option>
+        {% endfor %}
+      </select>
+
+      <label for="va">El que se va</label>
+      <select id="va" name="va" required>
+        <option value="" {% if not va %}selected{% endif %} disabled>Elegí el que se va...</option>
+        {% for p in proveedores %}
+        <option value="{{ p.id }}" {% if va == p.id %}selected{% endif %}>{{ etiqueta(p) }}</option>
+        {% endfor %}
+      </select>
+
+      <button type="submit" class="boton-ver">Ver qué se mueve</button>
+    </form>
+  </div>
+
+  {% if resumen %}
+  <div class="tarjeta" id="resumen">
+    <p class="par"><span class="rotulo-par">Se queda</span>
+      <strong>{{ resumen.queda.nombre }}</strong>{{ resumen.queda.codigo_puesto }} · {{ resumen.queda.compras }} compras</p>
+    <p class="par"><span class="rotulo-par">Se va</span>
+      <strong>{{ resumen.va.nombre }}</strong>{{ resumen.va.codigo_puesto }} · {{ resumen.va.compras }} compras</p>
+
+    <h2>Pasa a {{ resumen.queda.nombre }}</h2>
+    <ul class="mueve">
+      <li>{{ resumen.mueve.compras }} compras</li>
+      <li>{{ resumen.mueve.guias }} guías</li>
+      <li>{{ resumen.mueve.marcas }} marcas de vacío</li>
+      <li>{{ resumen.mueve.vacios }} movimientos de vacíos (devoluciones, conteos, ajustes y asignaciones)</li>
+      <li>{{ resumen.mueve.devoluciones_al_proveedor }} devoluciones de mercadería al proveedor</li>
+      <li>{{ resumen.mueve.aprendizaje }} textos aprendidos de las comandas{% if resumen.mueve.aprendizaje_repetido %}
+        ({{ resumen.mueve.aprendizaje_repetido }} repetidos se descartan: queda el de {{ resumen.queda.nombre }}){% endif %}</li>
+      <li>Foto de vacíos del corte: {% if resumen.mueve.foto_vacios is none %}no tiene{% else %}{{ resumen.mueve.foto_vacios }} cajones{% endif %}</li>
+      <li>Pasan a código alternativo: <strong>{{ resumen.mueve.codigos|join(", ") }}</strong></li>
+    </ul>
+
+    {% if resumen.cruces %}
+      {% for cruce in resumen.cruces %}<div class="cruce">{{ cruce }}</div>{% endfor %}
+    {% else %}
+      {# A la vista y no en la "i": cambia lo que se hace en este momento. #}
+      <p class="no-se-deshace"><strong>Esto no se deshace.</strong> {{ resumen.va.nombre }} desaparece de la
+        lista de proveedores. El nombre de {{ resumen.queda.nombre }} no cambia, y las compras que llegaron
+        por {{ resumen.va.codigo_puesto }} siguen diciendo ese puesto.</p>
+      <form method="post" action="/gerencia/proveedores/juntar">
+        <input type="hidden" name="queda" value="{{ resumen.queda.id }}">
+        <input type="hidden" name="va" value="{{ resumen.va.id }}">
+        <button type="submit" class="boton-juntar">Juntar, esto no se deshace</button>
+      </form>
+    {% endif %}
+  </div>
+  {% endif %}
+
+  <a class="volver" href="/gerencia">Volver a Gerencia</a>
+{% include "_pie_version.html" %}
+</body>
+</html>

@@ -222,7 +222,7 @@ PANTALLAS_CON_I = {
     "deposito_stock_reproceso.html", "envases.html", "ficha_form.html",
     "fichas_historial.html", "gerencia_costos_fijos_cargar.html",
     "gerencia_costos_fijos_indices.html", "gerencia_costos_fijos_plan.html",
-    "gerencia_ingreso_retroactivo.html", "gerencia_perdidas.html",
+    "gerencia_ingreso_retroactivo.html", "gerencia_juntar_proveedores.html", "gerencia_perdidas.html",
     "gerencia_rentabilidad.html", "gerencia_rentabilidad_real.html", "negociar.html",
     "precios_cargar_foto.html", "precios_consulta.html", "precios_vigencias.html",
     "sistema_casilla_pedidos.html", "vacios_ajustar.html", "vacios_clientes.html",

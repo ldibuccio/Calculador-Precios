@@ -517,3 +517,21 @@ tenían.
 el código (`app/`, `core/`, `scripts/`) no las usa: `recepciones` es una de
 las tablas muertas del diseño original. No molestaron, y el borrado del 40 no
 las necesitaba.
+
+## 27/09 — `lazzaro_1` y `lazzaro_2` (fusión de PRODUCTOS DON LAZZARO en DON LAZZARO)
+
+Los dos bloques corridos por el dueño en las dos bases, sin errores. En
+Frutamax pasan todo lo del 17 (PRODUCTOS DON LAZZARO, L02P44) al 10 (DON
+LAZZARO, L02P42) y dejan L02P44 como código alternativo del 10. Verificación
+(`lazzaro_verificacion`):
+
+```
+FRUTAMAX  lazzaro_1_y_2 · testigo 1 · PRODUCTOS que queda 0 · DON LAZZARO 1
+          códigos L02P42 + L02P44 · compras L02P42: 14 · L02P44: 1
+          compras sin código 0 · códigos alternativos 2 · proveedores 40
+          última recepción 27/09 · las 11 guías en el id 10
+PALMALA   lazzaro_1_y_2 · testigo 0 · alternativos 0 · proveedores 44
+```
+
+Palmala no se tocó: el testigo (N09P39 como alternativo) da 0 y los bloques
+salen sin hacer nada.

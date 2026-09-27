@@ -329,6 +329,8 @@ from app.db import (
     listar_proveedores,
     listar_proveedores_para_abm,
     asociar_codigo_a_proveedor,
+    juntar_proveedores,
+    resumen_para_juntar_proveedores,
     cuentas_de_colegas,
     listar_colegas,
     movimientos_de_colegas,
@@ -8010,6 +8012,89 @@ def _renderizar_ingreso_retroactivo(request: Request, *, precarga=None, error=No
         raise HTTPException(status_code=500, detail=f"Error al conectar con la base de datos: {error_db}") from error_db
     return templates.TemplateResponse(
         request, "gerencia_ingreso_retroactivo.html", contexto, status_code=status_code
+    )
+
+
+def _id_de_proveedor(valor: str | None) -> int | None:
+    try:
+        return int(valor) if valor not in (None, "") else None
+    except ValueError:
+        return None
+
+
+def _renderizar_juntar_proveedores(request: Request, *, queda: int | None, va: int | None,
+                                   error: str | None = None, aviso: str | None = None,
+                                   status_code: int = 200):
+    """La pantalla de juntar: elegir los dos y, con los dos elegidos, el resumen.
+
+    El resumen sale de `resumen_para_juntar_proveedores`, que es la MISMA
+    pregunta que hace `juntar_proveedores` antes de escribir: el botón aparece
+    solo donde la escritura acepta.
+    """
+    try:
+        proveedores = listar_proveedores_para_abm()
+        resumen = None
+        if queda is not None and va is not None and error is None:
+            try:
+                resumen = resumen_para_juntar_proveedores(queda, va)
+            except ValueError as motivo:
+                error = str(motivo)
+                status_code = 400
+    except Exception as error_db:
+        raise HTTPException(status_code=500, detail=f"Error al conectar con la base de datos: {error_db}") from error_db
+    return templates.TemplateResponse(
+        request, "gerencia_juntar_proveedores.html",
+        {"proveedores": proveedores, "queda": queda, "va": va, "resumen": resumen,
+         "error": error, "aviso": aviso},
+        status_code=status_code,
+    )
+
+
+@app.get("/gerencia/proveedores/juntar")
+def ver_juntar_proveedores(request: Request, queda: str | None = None, va: str | None = None,
+                           aviso: str | None = None):
+    """Juntar dos proveedores que son el mismo cargado dos veces (dueño, 27/09).
+
+    Es lo que hicieron a mano las migraciones de FRUTAMAX y DON LAZZARO, para
+    que el tercer par no necesite una. Vive en Gerencia porque no se deshace.
+    """
+    puerta = _puerta_de_gerencia_para_escribir(request)
+    if puerta is not None:
+        return puerta
+    return _renderizar_juntar_proveedores(
+        request, queda=_id_de_proveedor(queda), va=_id_de_proveedor(va), aviso=aviso
+    )
+
+
+@app.post("/gerencia/proveedores/juntar")
+def juntar_proveedores_ruta(request: Request, queda: str = Form(""), va: str = Form("")):
+    """Junta de verdad. Las guardas viven en `juntar_proveedores`, donde se
+    escribe: un POST armado a mano con un cruce rebota igual que la pantalla."""
+    puerta = _puerta_de_gerencia_para_escribir(request)
+    if puerta is not None:
+        return puerta
+    queda_id, va_id = _id_de_proveedor(queda), _id_de_proveedor(va)
+    if queda_id is None or va_id is None:
+        return _renderizar_juntar_proveedores(
+            request, queda=queda_id, va=va_id,
+            error="Elegí el proveedor que queda y el que se va.", status_code=400,
+        )
+    try:
+        resumen = juntar_proveedores(queda_id, va_id)
+    except ValueError as motivo:
+        return _renderizar_juntar_proveedores(
+            request, queda=queda_id, va=va_id, error=str(motivo), status_code=400
+        )
+    except Exception as error_db:
+        logger.exception("No se pudo juntar los proveedores %s y %s", queda_id, va_id)
+        return _renderizar_juntar_proveedores(
+            request, queda=queda_id, va=va_id,
+            error=f"No se pudo juntar, no se escribió nada: {error_db}", status_code=500,
+        )
+    aviso = (f"Listo: {resumen['va']['nombre']} quedó adentro de {resumen['queda']['nombre']}, "
+             f"con {', '.join(resumen['mueve']['codigos'])} como código alternativo.")
+    return RedirectResponse(
+        "/gerencia/proveedores/juntar?" + urlencode({"aviso": aviso}), status_code=303
     )
 
 
