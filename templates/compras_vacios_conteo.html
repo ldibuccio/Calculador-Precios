@@ -1,0 +1,101 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Contar vacíos</title>
+<style>
+  :root { font-family: -apple-system, system-ui, sans-serif; }
+  body { margin: 0; padding: 1rem; background: #f5f5f5; color: #222; }
+  h2 { font-size: 1.05rem; margin: 0 0 0.75rem; }
+  .tarjeta { background: #fff; border-radius: 10px; padding: 1rem;
+             margin-bottom: 1rem; box-shadow: 0 1px 3px rgba(0,0,0,.1); }
+  .error { background: #fee2e2; color: #991b1b; padding: .75rem 1rem;
+           border-radius: 8px; margin-bottom: 1rem; font-size: .95rem; }
+  .fila { display: flex; flex-wrap: wrap; gap: .5rem; align-items: flex-end; }
+  .campo { display: flex; flex-direction: column; flex: 1 1 8rem; min-width: 0; }
+  label { font-size: .85rem; margin-bottom: .2rem; }
+  /* `min-width: 0` NO ES DECORACIÓN: un <input> adentro de un flex no baja de
+     su ancho intrínseco, y lo que cede es el botón de al lado. */
+  input, select { font-size: 1rem; padding: .6rem; min-height: 44px;
+                  border: 1px solid #cbd5e1; border-radius: 8px; min-width: 0; }
+  button { font-size: 1rem; padding: .7rem 1.1rem; min-height: 44px;
+           border: 0; border-radius: 8px; background: #2563eb; color: #fff;
+           font-weight: 600; flex: 1 1 8rem; }
+  .ayuda { font-size: .82rem; color: #6b7280; margin: .5rem 0 0; }
+</style>
+</head>
+<body>
+
+{% set barra_sector = camino.sector %}
+{% set barra_titulo = "Contar vacíos" %}
+{% set barra_atras = camino.base ~ "/vacios" %}
+{% include "_barra_navegacion.html" %}
+
+{% if error %}<div class="error">{{ error }}</div>{% endif %}
+
+{# ESTA PANTALLA NO MUESTRA NINGÚN NÚMERO DEL SISTEMA, ni en el HTML (dueño,
+   27/09): el que cuenta, si ve cuántos dice el sistema, transcribe en vez de
+   contar. Hasta el 27/09 el formulario vivía en el índice de Vacíos, arriba
+   de las tarjetas con el stock de cada pila. El stock lo guarda el server al
+   guardar el conteo, y se compara después, en el Cotejo. #}
+<div class="tarjeta">
+  <h2>Contar vacíos</h2>
+  <form method="post" action="{{ camino.base }}/vacios/conteo">
+    <div class="fila">
+      <div class="campo">
+        <label for="proveedor_id">¿De qué proveedor son los cajones?</label>
+        <select id="proveedor_id" name="proveedor_id" required>
+          <option value="">Elegí un proveedor</option>
+          {% for p in todos %}
+          <option value="{{ p.id }}">{{ p.nombre }}</option>
+          {% endfor %}
+        </select>
+      </div>
+      <div class="campo">
+        <label for="marca_vacio_id">¿De qué marca?</label>
+        <select id="marca_vacio_id" name="marca_vacio_id">
+          <option value="">Sin asignar</option>
+        </select>
+      </div>
+      <div class="campo">
+        <label for="cantidad">¿Cuántos hay?</label>
+        <input id="cantidad" name="cantidad" type="number" min="0" step="1" required>
+      </div>
+      <div class="campo">
+        <label for="fecha">¿Qué día los contaste?</label>
+        <input id="fecha" name="fecha" type="date" value="{{ hoy }}" required>
+      </div>
+      <button type="submit">Guardar el conteo</button>
+    </div>
+    <p class="ayuda">Contá una marca por vez. El conteo no cambia el stock: va al
+      cotejo, al lado de lo que dice el sistema.</p>
+  </form>
+</div>
+
+
+<script>
+  // LA MARCA DEPENDE DEL PROVEEDOR: solo se ofrecen las suyas (dueño, 25/09:
+  // el conteo solo ofrece proveedores y marcas ya cargados).
+  (function () {
+    var marcas = {{ marcas_por_proveedor|tojson }};
+    var proveedor = document.getElementById("proveedor_id");
+    var marca = document.getElementById("marca_vacio_id");
+    proveedor.addEventListener("change", function () {
+      marca.innerHTML = "";
+      var sin = document.createElement("option");
+      sin.value = ""; sin.textContent = "Sin asignar";
+      marca.appendChild(sin);
+      (marcas[proveedor.value] || []).forEach(function (m) {
+        var o = document.createElement("option");
+        o.value = m.id; o.textContent = m.nombre;
+        marca.appendChild(o);
+      });
+    });
+  })();
+</script>
+
+{% include "_pie_version.html" %}
+
+</body>
+</html>

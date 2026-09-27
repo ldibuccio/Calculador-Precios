@@ -75,40 +75,9 @@
 <div class="botones">
   <a class="boton-stock" href="{{ camino.base }}/vacios/stock">Stock: lista para Excel y PDF</a>
   <a class="boton-stock" href="{{ camino.base }}/vacios/cotejo">Cotejo: lo contado contra el sistema</a>
-</div>
-
-<div class="tarjeta">
-  <h2>Contar vacíos</h2>
-  <form method="post" action="{{ camino.base }}/vacios/conteo">
-    <div class="fila">
-      <div class="campo">
-        <label for="proveedor_id">¿De qué proveedor son los cajones?</label>
-        <select id="proveedor_id" name="proveedor_id" required>
-          <option value="">Elegí un proveedor</option>
-          {% for p in todos %}
-          <option value="{{ p.id }}">{{ p.nombre }}</option>
-          {% endfor %}
-        </select>
-      </div>
-      <div class="campo">
-        <label for="marca_vacio_id">¿De qué marca?</label>
-        <select id="marca_vacio_id" name="marca_vacio_id">
-          <option value="">Sin asignar</option>
-        </select>
-      </div>
-      <div class="campo">
-        <label for="cantidad">¿Cuántos hay?</label>
-        <input id="cantidad" name="cantidad" type="number" min="0" step="1" required>
-      </div>
-      <div class="campo">
-        <label for="fecha">¿Qué día los contaste?</label>
-        <input id="fecha" name="fecha" type="date" value="{{ hoy }}" required>
-      </div>
-      <button type="submit">Guardar el conteo</button>
-    </div>
-    <p class="ayuda">Contá una marca por vez. El conteo no cambia el stock: va al
-      cotejo, al lado de lo que dice el sistema.</p>
-  </form>
+  {# Contar va en SU pantalla: acá abajo está el stock de cada pila, y el que
+     cuenta no lo tiene que ver (dueño, 27/09). #}
+  <a class="boton-stock" href="{{ camino.base }}/vacios/conteo">Contar vacíos</a>
 </div>
 
 <h2>Cajones en el galpón</h2>
@@ -139,27 +108,6 @@
   stock o algún movimiento desde el corte del 25/09.
 </div>
 {% endfor %}
-
-<script>
-  // LA MARCA DEPENDE DEL PROVEEDOR: solo se ofrecen las suyas (dueño, 25/09:
-  // el conteo solo ofrece proveedores y marcas ya cargados).
-  (function () {
-    var marcas = {{ marcas_por_proveedor|tojson }};
-    var proveedor = document.getElementById("proveedor_id");
-    var marca = document.getElementById("marca_vacio_id");
-    proveedor.addEventListener("change", function () {
-      marca.innerHTML = "";
-      var sin = document.createElement("option");
-      sin.value = ""; sin.textContent = "Sin asignar";
-      marca.appendChild(sin);
-      (marcas[proveedor.value] || []).forEach(function (m) {
-        var o = document.createElement("option");
-        o.value = m.id; o.textContent = m.nombre;
-        marca.appendChild(o);
-      });
-    });
-  })();
-</script>
 
 {% include "_pie_version.html" %}
 

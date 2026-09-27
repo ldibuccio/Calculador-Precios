@@ -472,3 +472,20 @@ nuevo y está validado entero. Las 13 sin foto de Frutamax son las mismas 13
 viejas de `vacios_marcas_5`, todas contra una compra (`ofensores 0`), y ahora
 se pueden anular. **Palmala no vota** —solo confirma que el bloque no
 explota—. `db/esquema_completo.sql` ya tenía esta definición desde v997.
+
+## 27/09 — `costo_tarde_1_completar_lo_que_ya_esta`
+
+Completa el costo de las guías R que habían consumido una compra antes de que
+se le cargara el importe, y de las guías que consumieron la primera de ésas.
+Corrida por el dueño y verificada con el Claude que tiene lectura:
+
+```
+FRUTAMAX  compra por completar 0 · reproceso por completar 0 · completas sin total 0 · quedan sin costo 28
+PALMALA   corrió sin error, nada que completar
+```
+
+Las guías 502 y 527 de Palta quedaron con costo: 28.800 y 28.294,74 por
+bulto. Las 28 que siguen sin costo **se quedan así, por decisión del dueño**:
+24 son de antes del corte, y 4 son del 05/09 y consumen guías viejas que nunca
+tuvieron costo. No es un pendiente. Desde v1003 el código completa solo el
+costo cuando se carga el importe tarde.

@@ -394,12 +394,62 @@ def test_el_indice_muestra_el_total_y_CADA_PILA_con_su_marca():
         assert jerga not in marcado, jerga
 
 
+def _conteo(url="/compras/vacios/conteo", metodo="get", datos=None):
+    """La pantalla de contar. El stock se parchea para que EXPLOTE: si la
+    pantalla lo pidiera, el que cuenta podría ver el número del sistema."""
+    with patch("app.main.stock_de_vacios_deposito",
+               side_effect=AssertionError("la pantalla de contar leyó el stock")), \
+         patch("app.main.listar_proveedores",
+               return_value=[{"id": 7, "nombre": "Puesto EJEMPLO"}]), \
+         patch("app.main.listar_marcas_vacio_por_proveedor", return_value={7: MARCAS}):
+        if metodo == "get":
+            return cliente.get(url)
+        return cliente.post(url, data=datos, follow_redirects=False)
+
+
 def test_el_conteo_OFRECE_solo_proveedores_y_marcas_cargados():
     """Dueño, 25/09: solo lo cargado. Por eso son selectores y no texto libre."""
-    marcado = _indice().text.split("</style>")[-1]
+    marcado = _conteo().text.split("</style>")[-1]
     assert '<select id="proveedor_id" name="proveedor_id" required>' in marcado
     assert '<select id="marca_vacio_id" name="marca_vacio_id">' in marcado
     assert 'name="proveedor_nuevo"' not in marcado and 'name="marca_nueva"' not in marcado
+
+
+@pytest.mark.parametrize("sector", ["/compras", "/administracion"])
+def test_la_pantalla_de_CONTAR_no_tiene_ningun_numero_del_sistema(sector):
+    """Dueño, 27/09: el que cuenta no puede ver cuántos dice el sistema, o
+    transcribe en vez de contar. Hasta ese día el formulario vivía en el
+    índice, arriba de las tarjetas con el stock de cada pila.
+
+    No alcanza con que no se DIBUJE: la pantalla no LEE el stock (el parche
+    explota si lo pide), así que tampoco puede quedar en el HTML escondido."""
+    respuesta = _conteo(f"{sector}/vacios/conteo")
+    assert respuesta.status_code == 200, respuesta.text[:300]
+    marcado = respuesta.text.split("</style>")[-1]
+    assert f'action="{sector}/vacios/conteo"' in marcado
+    assert 'name="cantidad"' in marcado
+    assert "cajones</div>" not in marcado and 'class="pila-stock"' not in marcado
+
+
+def test_el_INDICE_ya_no_tiene_el_formulario_de_contar_y_manda_a_su_pantalla():
+    """El control del de arriba: el índice SÍ muestra el stock, así que el
+    formulario no puede estar ahí."""
+    marcado = _indice().text.split("</style>")[-1]
+    assert "35 cajones" in marcado
+    assert 'name="cantidad"' not in marcado
+    assert 'action="/compras/vacios/conteo"' not in marcado
+    assert 'href="/compras/vacios/conteo"' in marcado
+
+
+def test_un_CONTEO_que_rebota_vuelve_a_la_pantalla_de_contar_y_no_al_indice():
+    """El rebote es el camino que no se ve al abrir: si volviera al índice,
+    el que se equivocó de número vería el stock justo antes de reintentar."""
+    respuesta = _conteo(metodo="post", datos={"proveedor_id": "7", "cantidad": "x",
+                                              "fecha": "2026-09-25"})
+    assert respuesta.status_code == 400
+    marcado = respuesta.text.split("</style>")[-1]
+    assert "tienen que ser un número entero" in marcado
+    assert 'name="cantidad"' in marcado
 
 
 def test_el_detalle_en_COMPRAS_no_ofrece_ajuste_ni_asignacion():
