@@ -3907,8 +3907,18 @@ proveedor. Desde `codigos_1` a `codigos_4` (corridas en las dos bases):
   proveedor y día, así que su título los nombra a los dos y Logística dice de
   cuál es cada renglón.
 - **El alta a mano pregunta con un modal** si el nombre plegado coincide con uno
-  que ya está: "es el mismo" le suma el puesto, "es otro" lo carga igual.
-  Avisa, no bloquea. La guarda va en el POST.
+  que ya está, o si uno contiene al otro: "es el mismo" le suma el puesto, "es
+  otro" lo carga igual. Avisa, no bloquea. La guarda va en el POST.
+
+**El segundo par, el mismo día: DON LAZZARO (L02P42) y PRODUCTOS DON LAZZARO
+(L02P44).** El plegado sacaba solo "SRL", "SA", "SAS" y "SH", así que ese par no
+se veía. Desde ahí también saca PRODUCTOS, HNOS, HERMANOS y CIA, siempre como
+palabra entera, y avisa cuando un nombre plegado contiene al otro, con un mínimo
+de 4 letras (`MINIMO_PARA_CONTENER`) para que "SUR" no esté adentro de medio
+padrón. La regla es `son_parecidos`. La fusión es `db/lazzaro_1` y `lazzaro_2`,
+que solo actúan si la base tiene N09P39 como código alternativo, o sea en
+Frutamax: en Palmala no hacen nada aunque estén los mismos nombres. Para la
+próxima se propuso una pantalla de fusión en Gerencia, y no está construida.
 
 **`recepciones` y `aprendizaje_proveedores` también apuntan a `proveedores`**
 y no estaban en la lista del bloque 4. Están vacías en las dos bases y el
@@ -4000,8 +4010,9 @@ era la respuesta: no hay fusiones para hacer.
 FRUTAMAX S.R.L. (N09P41) eran el mismo proveedor cargado dos veces. Ese
 plegado no sacaba la forma societaria, así que esos dos nombres no se
 igualaban. No se sabe si ya estaban los dos el 11/09. El plegado que usa hoy
-el alta a mano (`core/nombres_de_proveedor.py`) saca también "SRL", "SA",
-"SAS" y "SH" como palabra entera. Ver **"UN PROVEEDOR, VARIOS PUESTOS"**.
+el alta a mano (`core/nombres_de_proveedor.py`) saca además formas societarias
+y palabras de relleno ("SRL", "PRODUCTOS", "HNOS"…) como palabra entera, y
+avisa también cuando un nombre contiene al otro. Ver **"UN PROVEEDOR, VARIOS PUESTOS"**.
 
 ### La regla
 
