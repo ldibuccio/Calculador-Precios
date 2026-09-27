@@ -173,7 +173,9 @@ def test_los_FORMULARIOS_de_cada_pantalla_mandan_a_SU_sector():
         "/cajas": {"/administracion/cajas/umbral", "/administracion/cajas/pallet",
                    "/administracion/cajas/conteo-inicial",
                    "/administracion/cajas/movimiento", "/administracion/cajas/colegas"},
-        "/vacios": {"/administracion/vacios/conteo"},
+        # El índice ya no tiene formulario: contar va en SU pantalla (27/09).
+        "/vacios": set(),
+        "/vacios/conteo": {"/administracion/vacios/conteo"},
         # EL AJUSTE, LA ASIGNACIÓN Y SU ANULAR son solo de Administración: entrando
         # por Compras no se dibujan (lo cuida tests/test_vacios_deposito.py).
         "/vacios/7": {"/administracion/vacios/7/cajon", "/administracion/vacios/7/marca",

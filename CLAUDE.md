@@ -3867,7 +3867,10 @@ arrancó", sus "esperando" y la regla de la fecha— **se fue**.
   `/compras`, así que los cierra la puerta por prefijo.
 - **El conteo físico ya no arranca nada: va al COTEJO**, el último conteo de
   cada pila contra lo que el sistema dice ahora. Solo ofrece proveedores y
-  marcas ya cargados.
+  marcas ya cargados. **Y se carga en SU pantalla** (`/vacios/conteo`, dueño,
+  27/09): hasta ese día el formulario estaba en el índice, arriba del stock de
+  cada pila, y el que cuenta veía el número. La pantalla nueva no LEE el stock,
+  así que tampoco puede quedar escondido en el HTML.
 
 - **El ingreso directo tiene SU guía** (`guias_compra.de_deposito`): "nunca
   es parte de la comanda del Puesto". Dos guías por día y proveedor, cada

@@ -6375,12 +6375,37 @@ def _renderizar_vacios(request: Request, *, error: str | None = None,
                        aviso: str | None = None, status_code: int = 200):
     """El índice: cuántos cajones de cada proveedor hay en el galpón, por marca.
 
-    Y el conteo FÍSICO, que desde el 25/09 no arranca ninguna cuenta: se
-    carga para el cotejo. Solo ofrece proveedores y marcas ya cargados
-    (dueño, 25/09) — por eso son selectores y no campos de texto.
+    EL CONTEO NO VIVE ACÁ desde el 27/09: tiene su pantalla
+    (`_renderizar_conteo_vacios`), porque este índice muestra el stock de
+    cada pila y el que cuenta no lo tiene que ver.
     """
     try:
         proveedores = stock_de_vacios_deposito()
+    except Exception as error_db:
+        raise HTTPException(
+            status_code=500, detail=f"Error al conectar con la base de datos: {error_db}"
+        ) from error_db
+
+    return templates.TemplateResponse(
+        request,
+        "compras_vacios.html",
+        {"proveedores": proveedores, "error": error, "aviso": aviso,
+         "camino": _camino_de_cajas_y_vacios(request)},
+        status_code=status_code,
+    )
+
+
+def _renderizar_conteo_vacios(request: Request, *, error: str | None = None,
+                              status_code: int = 200):
+    """El conteo FÍSICO de una pila, SIN ningún número del sistema.
+
+    Si el que cuenta ve cuántos dice el sistema, transcribe en vez de contar
+    (el mismo criterio que Stock Físico y los vacíos del puesto). Por eso esta
+    pantalla NO LEE el stock: no es que lo esconda, es que no lo tiene. Desde
+    el 25/09 el conteo no arranca ninguna cuenta: va al cotejo. Solo ofrece
+    proveedores y marcas ya cargados (dueño, 25/09).
+    """
+    try:
         todos = listar_proveedores()
         marcas = listar_marcas_vacio_por_proveedor()
     except Exception as error_db:
@@ -6390,11 +6415,10 @@ def _renderizar_vacios(request: Request, *, error: str | None = None,
 
     return templates.TemplateResponse(
         request,
-        "compras_vacios.html",
-        {"proveedores": proveedores, "todos": todos,
+        "compras_vacios_conteo.html",
+        {"todos": todos,
          "marcas_por_proveedor": {str(k): v for k, v in marcas.items()},
-         "error": error, "aviso": aviso,
-         "hoy": _hoy_argentina().isoformat(),
+         "error": error, "hoy": _hoy_argentina().isoformat(),
          "camino": _camino_de_cajas_y_vacios(request)},
         status_code=status_code,
     )
@@ -6482,6 +6506,13 @@ def _marca_del_form(texto: str) -> int | None:
     return int(texto) if texto.isdigit() else None
 
 
+@app.get("/compras/vacios/conteo")
+@app.get("/administracion/vacios/conteo")
+def ver_conteo_vacios(request: Request):
+    """La pantalla de contar: el formulario solo, sin el stock al lado."""
+    return _renderizar_conteo_vacios(request)
+
+
 @app.post("/compras/vacios/conteo")
 @app.post("/administracion/vacios/conteo")
 def cargar_conteo_vacios(request: Request, proveedor_id: str = Form(""),
@@ -6493,11 +6524,11 @@ def cargar_conteo_vacios(request: Request, proveedor_id: str = Form(""),
     ahora. Cero vale: contar cero es contar.
     """
     if not proveedor_id.strip().isdigit():
-        return _renderizar_vacios(request, error="Elegí un proveedor.", status_code=400)
+        return _renderizar_conteo_vacios(request, error="Elegí un proveedor.", status_code=400)
 
     texto = cantidad.strip()
     if not texto.isdigit():
-        return _renderizar_vacios(
+        return _renderizar_conteo_vacios(
             request,
             error="Los cajones contados tienen que ser un número entero. Cero vale: contar cero es contar.",
             status_code=400,
@@ -6506,15 +6537,15 @@ def cargar_conteo_vacios(request: Request, proveedor_id: str = Form(""),
     try:
         dia = date.fromisoformat(fecha.strip())
     except ValueError:
-        return _renderizar_vacios(request, error="Poné la fecha del conteo.", status_code=400)
+        return _renderizar_conteo_vacios(request, error="Poné la fecha del conteo.", status_code=400)
 
     try:
         crear_conteo_vacios_deposito(int(proveedor_id), _marca_del_form(marca_vacio_id),
                                      int(texto), dia)
     except ValueError as invalido:
-        return _renderizar_vacios(request, error=str(invalido), status_code=400)
+        return _renderizar_conteo_vacios(request, error=str(invalido), status_code=400)
     except Exception as error_db:
-        return _renderizar_vacios(
+        return _renderizar_conteo_vacios(
             request, error=f"No se pudo guardar el conteo: {error_db}", status_code=400)
 
     return RedirectResponse(
