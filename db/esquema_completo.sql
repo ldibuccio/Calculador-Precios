@@ -131,6 +131,41 @@ comment on column proveedores.activo is
 
 comment on table proveedores is 'Proveedores del mercado. La identidad estable es codigo_puesto (ej. N07P41); el nombre es editable, la ultima correccion manda.';
 
+-- VARIOS CÓDIGOS DE PUESTO PARA UN PROVEEDOR (dueño, 27/09). codigo_puesto es
+-- el PRINCIPAL; los otros viven acá. Un código es de UN solo proveedor contando
+-- principales y alternativos: el unique de cada tabla cubre su lado y el
+-- trigger cruza las dos. Ver db/codigos_1..4.
+create table proveedores_codigos (
+    id           bigint generated always as identity primary key,
+    proveedor_id bigint not null references proveedores (id),
+    codigo       text   not null unique
+                 check (codigo ~ '^[NL][0-9]{2}P[0-9]{2}$'),
+    creado_en    timestamptz not null default now()
+);
+create index proveedores_codigos_proveedor_idx on proveedores_codigos (proveedor_id);
+
+comment on table proveedores_codigos is 'Codigos de puesto ALTERNATIVOS de un proveedor (ej. FRUTAMAX S.R.L. tiene N09P41 principal y N09P39 aca). Una compra que llega por uno de estos se carga en ese proveedor y NO le pisa el nombre.';
+
+create or replace function codigo_de_puesto_unico() returns trigger
+language plpgsql as $f$
+begin
+  if tg_table_name = 'proveedores_codigos' then
+    if exists (select 1 from proveedores where codigo_puesto = new.codigo) then
+      raise exception 'el codigo % ya es el principal de otro proveedor', new.codigo
+        using errcode = '23505';
+    end if;
+  elsif exists (select 1 from proveedores_codigos where codigo = new.codigo_puesto) then
+    raise exception 'el codigo % ya es alternativo de otro proveedor', new.codigo_puesto
+      using errcode = '23505';
+  end if;
+  return new;
+end $f$;
+
+create trigger codigo_unico_alternativo before insert or update of codigo
+  on proveedores_codigos for each row execute function codigo_de_puesto_unico();
+create trigger codigo_unico_principal before insert or update of codigo_puesto
+  on proveedores for each row execute function codigo_de_puesto_unico();
+
 -- ----------------------------------------------------------------------------
 -- 3. CLIENTES + conceptos con historial de vigencia
 -- ----------------------------------------------------------------------------
@@ -417,6 +452,12 @@ create table compras (
     importe_origen             text,
     segunda_por_cajon          numeric,
     segunda_por_cajon_real     numeric,
+    -- Por qué código de puesto LLEGÓ esta compra: el principal del proveedor o
+    -- uno alternativo (proveedores_codigos). Es lo que Logística y Recepción
+    -- muestran, porque es el puesto adonde va el fletero. Ver db/codigos_1.
+    codigo_llegada             text
+        constraint compras_codigo_llegada_formato
+        check (codigo_llegada is null or codigo_llegada ~ '^[NL][0-9]{2}P[0-9]{2}$'),
     -- La FK compuesta (marca_vacio_id, proveedor_id) va al final del archivo,
     -- despues de crear marcas_vacio. Ver db/vacios_marcas_1_marcas_y_compras.sql.
     marca_vacio_id             bigint,
