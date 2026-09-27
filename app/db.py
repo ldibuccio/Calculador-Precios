@@ -11,6 +11,7 @@ from datetime import timedelta
 from contextlib import contextmanager
 
 import psycopg2
+import psycopg2.sql
 
 from core.envases import (cajas_que_mueve_la_guia, como_queda_la_cuenta,
                           efecto_en_la_cuenta, envase_derivado_de_la_ficha,
@@ -1461,6 +1462,261 @@ def asociar_codigo_a_proveedor(proveedor_id: int, codigo: str) -> str:
         return fila[0]
     finally:
         conexion.close()
+
+
+# JUNTAR DOS PROVEEDORES (dueño, 27/09). Es la misma fusión que corrieron a
+# mano db/codigos_3-4 (FRUTAMAX) y db/lazzaro_1-2 (DON LAZZARO), escrita UNA
+# vez para que no haga falta una migración por par.
+#
+# Las tablas que apuntan a `proveedores`, y cuál columna. Lo cuida un test que
+# lee pg_constraint contra el esquema real y compara el conjunto ENCONTRADO
+# contra éste: una tabla nueva con FK a proveedores lo rompe hasta que alguien
+# decida cómo se junta. Si nadie lo hace, el DELETE del final rebota por la FK
+# y no se escribe nada, que es la segunda pared.
+TABLAS_QUE_APUNTAN_A_PROVEEDORES = frozenset({
+    ("compras", "proveedor_id"),
+    ("guias_compra", "proveedor_id"),
+    ("marcas_vacio", "proveedor_id"),
+    ("vacios_deposito_devoluciones", "proveedor_id"),
+    ("conteos_vacios_deposito", "proveedor_id"),
+    ("vacios_deposito_ajustes", "proveedor_id"),
+    ("vacios_deposito_asignaciones", "proveedor_id"),
+    ("vacios_deposito_foto", "proveedor_id"),
+    ("aprendizaje_articulos", "proveedor_id"),
+    ("movimientos_stock", "proveedor_devolucion_id"),
+    ("proveedores_codigos", "proveedor_id"),
+})
+
+# Las dos del diseño original que NO están en db/esquema_completo.sql pero sí
+# en las bases reales, vacías y sin usar (ver db/corridas_confirmadas.md,
+# 27/09). Se mueven igual si existen: sin esto, la primera fila que alguien
+# les escriba hace rebotar el DELETE del proveedor que se va.
+TABLAS_VIEJAS_QUE_APUNTAN_A_PROVEEDORES = ("recepciones", "aprendizaje_proveedores")
+
+# Las marcas y los cinco lugares con FK compuesta (marca, proveedor) se mueven
+# en UNA sentencia: las FK se chequean al final de la sentencia, así que la
+# marca y lo que la nombra cambian de proveedor juntos y conservan su id. En
+# dos sentencias la primera rebota contra la FK compuesta (medido contra el
+# esquema real). Las migraciones soltaban y volvían a poner las FK; la app no
+# toca constraints.
+_SQL_JUNTAR_MARCAS_Y_COMPRAS = """
+    WITH marcas AS (
+        UPDATE marcas_vacio SET proveedor_id = %(queda)s WHERE proveedor_id = %(va)s RETURNING 1
+    ), compras_movidas AS (
+        UPDATE compras c SET proveedor_id = %(queda)s,
+               codigo_llegada = coalesce(c.codigo_llegada, %(codigo_va)s)
+         WHERE c.proveedor_id = %(va)s RETURNING 1
+    ), devoluciones AS (
+        UPDATE vacios_deposito_devoluciones SET proveedor_id = %(queda)s
+         WHERE proveedor_id = %(va)s RETURNING 1
+    ), conteos AS (
+        UPDATE conteos_vacios_deposito SET proveedor_id = %(queda)s
+         WHERE proveedor_id = %(va)s RETURNING 1
+    ), ajustes AS (
+        UPDATE vacios_deposito_ajustes SET proveedor_id = %(queda)s
+         WHERE proveedor_id = %(va)s RETURNING 1
+    ), asignaciones AS (
+        UPDATE vacios_deposito_asignaciones SET proveedor_id = %(queda)s
+         WHERE proveedor_id = %(va)s RETURNING 1
+    )
+    SELECT (SELECT count(*) FROM marcas), (SELECT count(*) FROM compras_movidas)
+"""
+
+
+def _datos_para_juntar(cursor, proveedor_id: int) -> dict:
+    cursor.execute(
+        """
+        SELECT p.id, p.nombre, p.codigo_puesto,
+               coalesce((SELECT array_agg(pc.codigo ORDER BY pc.codigo)
+                           FROM proveedores_codigos pc WHERE pc.proveedor_id = p.id), '{}'),
+               (SELECT count(*) FROM compras c WHERE c.proveedor_id = p.id)
+          FROM proveedores p WHERE p.id = %s
+        """,
+        (proveedor_id,),
+    )
+    fila = cursor.fetchone()
+    if fila is None:
+        raise ValueError("Ese proveedor no existe.")
+    return {"id": fila[0], "nombre": fila[1], "codigo_puesto": fila[2],
+            "codigos_alternativos": list(fila[3]), "compras": fila[4]}
+
+
+def _tablas_viejas_presentes(cursor) -> list[str]:
+    cursor.execute(
+        "SELECT t FROM unnest(%s::text[]) AS t WHERE to_regclass(t) IS NOT NULL",
+        (list(TABLAS_VIEJAS_QUE_APUNTAN_A_PROVEEDORES),),
+    )
+    return [fila[0] for fila in cursor.fetchall()]
+
+
+def _resumen_para_juntar(cursor, queda_id: int, va_id: int) -> dict:
+    """Qué se mueve y qué lo impide. Lo usan la pantalla y el POST: la misma
+    pregunta en los dos lados, así no se ofrece algo que la escritura rechaza."""
+    if queda_id == va_id:
+        raise ValueError("Elegí dos proveedores distintos.")
+    queda = _datos_para_juntar(cursor, queda_id)
+    va = _datos_para_juntar(cursor, va_id)
+
+    cursor.execute(
+        """
+        SELECT
+          (SELECT count(*) FROM guias_compra WHERE proveedor_id = %(va)s),
+          (SELECT count(*) FROM marcas_vacio WHERE proveedor_id = %(va)s),
+          (SELECT count(*) FROM vacios_deposito_devoluciones WHERE proveedor_id = %(va)s)
+          + (SELECT count(*) FROM conteos_vacios_deposito WHERE proveedor_id = %(va)s)
+          + (SELECT count(*) FROM vacios_deposito_ajustes WHERE proveedor_id = %(va)s)
+          + (SELECT count(*) FROM vacios_deposito_asignaciones WHERE proveedor_id = %(va)s),
+          (SELECT count(*) FROM movimientos_stock WHERE proveedor_devolucion_id = %(va)s),
+          (SELECT count(*) FROM aprendizaje_articulos a WHERE a.proveedor_id = %(va)s
+              AND NOT EXISTS (SELECT 1 FROM aprendizaje_articulos b
+                               WHERE b.proveedor_id = %(queda)s AND b.texto_leido = a.texto_leido)),
+          (SELECT count(*) FROM aprendizaje_articulos a WHERE a.proveedor_id = %(va)s
+              AND EXISTS (SELECT 1 FROM aprendizaje_articulos b
+                           WHERE b.proveedor_id = %(queda)s AND b.texto_leido = a.texto_leido)),
+          (SELECT cantidad FROM vacios_deposito_foto WHERE proveedor_id = %(va)s),
+          (SELECT cantidad FROM vacios_deposito_foto WHERE proveedor_id = %(queda)s),
+          (SELECT array_agg(to_char(a.fecha_operacion, 'DD/MM/YYYY')
+                            || CASE WHEN a.de_deposito THEN ' (ingreso directo)' ELSE '' END
+                            ORDER BY a.fecha_operacion)
+             FROM guias_compra a JOIN guias_compra b USING (fecha_operacion, de_deposito)
+            WHERE a.proveedor_id = %(va)s AND b.proveedor_id = %(queda)s),
+          (SELECT array_agg(a.nombre ORDER BY a.nombre)
+             FROM marcas_vacio a JOIN marcas_vacio b USING (nombre_normalizado)
+            WHERE a.proveedor_id = %(va)s AND b.proveedor_id = %(queda)s)
+        """,
+        {"queda": queda_id, "va": va_id},
+    )
+    (guias, marcas, vacios, devoluciones, aprendizaje, aprendizaje_repetido,
+     foto_va, foto_queda, guias_cruzadas, marcas_cruzadas) = cursor.fetchone()
+
+    cruces = []
+    if guias_cruzadas:
+        cruces.append(
+            "Los dos tienen guía el mismo día: " + ", ".join(guias_cruzadas)
+            + ". Mové de fecha las compras de una de las dos guías y volvé."
+        )
+    if marcas_cruzadas:
+        cruces.append(
+            "Los dos tienen una marca de vacío con el mismo nombre: " + ", ".join(marcas_cruzadas)
+            + ". Renombrá la de uno de los dos en Vacíos y volvé."
+        )
+    if foto_va and foto_queda is not None:
+        cruces.append(
+            f"Los dos tienen cajones en la foto de vacíos del corte ({foto_queda} y {foto_va}). "
+            "Esa foto no se edita desde ninguna pantalla: hay que sumarlas a mano antes de juntar."
+        )
+
+    return {
+        "queda": queda,
+        "va": va,
+        "mueve": {
+            "compras": va["compras"],
+            "guias": guias,
+            "marcas": marcas,
+            "vacios": vacios,
+            "devoluciones_al_proveedor": devoluciones,
+            "aprendizaje": aprendizaje,
+            "aprendizaje_repetido": aprendizaje_repetido,
+            "foto_vacios": foto_va,
+            "codigos": [va["codigo_puesto"]] + va["codigos_alternativos"],
+        },
+        "cruces": cruces,
+    }
+
+
+def resumen_para_juntar_proveedores(queda_id: int, va_id: int) -> dict:
+    """Lo que la pantalla muestra ANTES de confirmar. No escribe nada."""
+    conexion = obtener_conexion()
+    try:
+        with conexion.cursor() as cursor:
+            return _resumen_para_juntar(cursor, queda_id, va_id)
+    finally:
+        conexion.close()
+
+
+def juntar_proveedores(queda_id: int, va_id: int) -> dict:
+    """Pasa TODO lo de `va_id` a `queda_id`, borra `va_id` y deja sus códigos
+    como alternativos de `queda_id`. Todo en una transacción: o sale entero o
+    no se escribe nada. Con un cruce levanta ValueError con el texto que dice
+    qué arreglar, el mismo que la pantalla mostró.
+
+    El NOMBRE del que queda no se toca. Las compras del que se va conservan su
+    `codigo_llegada` (el puesto por el que llegaron, que pasa a alternativo).
+    Del aprendizaje repetido queda el del que se queda, como en las migraciones.
+    """
+    conexion = obtener_conexion()
+    try:
+        with conexion.cursor() as cursor:
+            # Los dos bloqueados, en orden de id para no cruzarse con otro juntar.
+            cursor.execute(
+                "SELECT id FROM proveedores WHERE id IN (%s, %s) ORDER BY id FOR UPDATE",
+                (queda_id, va_id),
+            )
+            resumen = _resumen_para_juntar(cursor, queda_id, va_id)
+            if resumen["cruces"]:
+                raise ValueError(" ".join(resumen["cruces"]))
+
+            parametros = {"queda": queda_id, "va": va_id,
+                          "codigo_va": resumen["va"]["codigo_puesto"]}
+            cursor.execute(_SQL_JUNTAR_MARCAS_Y_COMPRAS, parametros)
+            cursor.execute(
+                "UPDATE guias_compra SET proveedor_id = %(queda)s WHERE proveedor_id = %(va)s", parametros
+            )
+            cursor.execute(
+                "UPDATE movimientos_stock SET proveedor_devolucion_id = %(queda)s"
+                " WHERE proveedor_devolucion_id = %(va)s",
+                parametros,
+            )
+            cursor.execute(
+                """
+                DELETE FROM aprendizaje_articulos a WHERE a.proveedor_id = %(va)s
+                   AND EXISTS (SELECT 1 FROM aprendizaje_articulos b
+                                WHERE b.proveedor_id = %(queda)s AND b.texto_leido = a.texto_leido)
+                """,
+                parametros,
+            )
+            cursor.execute(
+                "UPDATE aprendizaje_articulos SET proveedor_id = %(queda)s WHERE proveedor_id = %(va)s",
+                parametros,
+            )
+            # La foto: si el que queda ya tiene, la del que se va está en cero
+            # (el cruce de arriba lo garantiza) y se descarta.
+            if resumen["mueve"]["foto_vacios"] is not None and \
+                    _foto_de_vacios_existe(cursor, queda_id):
+                cursor.execute("DELETE FROM vacios_deposito_foto WHERE proveedor_id = %(va)s", parametros)
+            else:
+                cursor.execute(
+                    "UPDATE vacios_deposito_foto SET proveedor_id = %(queda)s WHERE proveedor_id = %(va)s",
+                    parametros,
+                )
+            cursor.execute(
+                "UPDATE proveedores_codigos SET proveedor_id = %(queda)s WHERE proveedor_id = %(va)s",
+                parametros,
+            )
+            for tabla in _tablas_viejas_presentes(cursor):
+                cursor.execute(
+                    psycopg2.sql.SQL("UPDATE {} SET proveedor_id = %(queda)s WHERE proveedor_id = %(va)s")
+                    .format(psycopg2.sql.Identifier(tabla)),
+                    parametros,
+                )
+            # El principal del que se va pasa a alternativo DESPUÉS de borrarlo:
+            # antes, el trigger codigo_de_puesto_unico lo ve como principal de otro.
+            cursor.execute("DELETE FROM proveedores WHERE id = %(va)s", parametros)
+            cursor.execute(
+                "INSERT INTO proveedores_codigos (proveedor_id, codigo) VALUES (%(queda)s, %(codigo_va)s)",
+                parametros,
+            )
+        conexion.commit()
+        return resumen
+    finally:
+        # Sin commit no queda nada: cualquier error de arriba —un cruce, o el
+        # DELETE que rebota por una FK que nadie decidió— deja la base como estaba.
+        conexion.close()
+
+
+def _foto_de_vacios_existe(cursor, proveedor_id: int) -> bool:
+    cursor.execute("SELECT 1 FROM vacios_deposito_foto WHERE proveedor_id = %s", (proveedor_id,))
+    return cursor.fetchone() is not None
 
 
 def listar_proveedores() -> list[dict]:

@@ -3917,12 +3917,28 @@ palabra entera, y avisa cuando un nombre plegado contiene al otro, con un mínim
 de 4 letras (`MINIMO_PARA_CONTENER`) para que "SUR" no esté adentro de medio
 padrón. La regla es `son_parecidos`. La fusión es `db/lazzaro_1` y `lazzaro_2`,
 que solo actúan si la base tiene N09P39 como código alternativo, o sea en
-Frutamax: en Palmala no hacen nada aunque estén los mismos nombres. Para la
-próxima se propuso una pantalla de fusión en Gerencia, y no está construida.
+Frutamax: en Palmala no hacen nada aunque estén los mismos nombres. Corridas
+en las dos bases el 27/09.
 
-**`recepciones` y `aprendizaje_proveedores` también apuntan a `proveedores`**
-y no estaban en la lista del bloque 4. Están vacías en las dos bases y el
-código no las usa.
+**Desde el 27/09 el tercer par no necesita migración: Gerencia → "Juntar dos
+proveedores"** (`/gerencia/proveedores/juntar`). La lógica vive UNA vez, en
+`juntar_proveedores` (app/db.py), con las mismas guardas que las migraciones:
+guías del mismo día, marca con el mismo nombre y fotos de vacíos con cajones en
+los dos frenan con el texto de qué arreglar. La pantalla pregunta con
+`resumen_para_juntar_proveedores`, la misma consulta que usa el POST, así que el
+botón aparece solo donde la escritura acepta. Todo en una transacción.
+
+- **Las marcas se mueven sin tocar las FK compuestas**: marcas y los cinco
+  lugares que las nombran van en UNA sentencia (CTE), y ahí la FK se chequea al
+  final. Conservan su id. En dos sentencias la primera rebota (medido).
+- **`recepciones` y `aprendizaje_proveedores`** apuntan a `proveedores` en las
+  bases reales y no están en `db/esquema_completo.sql`. Están vacías y nada más
+  las usa, pero la fusión las mueve si existen (`to_regclass`), para que la
+  primera fila que alguien les escriba no haga rebotar el borrado.
+- **Lo cuida un test que lee `pg_constraint`** contra el esquema real y compara
+  las FK a `proveedores` ENCONTRADAS contra `TABLAS_QUE_APUNTAN_A_PROVEEDORES`.
+  Una tabla nueva con FK a proveedores lo rompe hasta que alguien decida cómo se
+  junta. Si igual se escapa, el DELETE del final rebota y no se escribe nada.
 
 ## El dato de uso decide qué MEJORAR, no qué SACAR
 
