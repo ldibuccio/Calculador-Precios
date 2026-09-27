@@ -2954,6 +2954,7 @@ def actualizar_precio_compra(compra_id: int, importe: float | None, sena: float 
                 f"UPDATE compras SET importe = %s, sena = %s, {sello} WHERE id = %s",
                 (importe, sena) + sello_params + (compra_id,),
             )
+            _completar_costos_por_el_importe(cursor, compra_id)
         conexion.commit()
     finally:
         conexion.close()
@@ -5299,6 +5300,7 @@ def actualizar_importe_compra(compra_id: int, importe: float) -> None:
                 f"UPDATE compras SET importe = %s, {sello} WHERE id = %s",
                 (importe,) + sello_params + (compra_id,),
             )
+            _completar_costos_por_el_importe(cursor, compra_id)
         conexion.commit()
     finally:
         conexion.close()
@@ -14063,16 +14065,144 @@ def anular_remito_segunda(remito_id: int) -> None:
         conexion.close()
 
 
+def _completar_costos_congelados(cursor, reprocesos_ids) -> dict:
+    """Rellena los costos que faltaban en esas guías R, y en TODAS las que dependen de ellas. SOLO los NULL, jamás pisa.
+
+    Devuelve {reproceso_id: cuántos consumos siguen sin costo} para cada guía
+    que miró, las de la cascada incluidas.
+
+    DOS FUENTES DE PRECIO, y son las dos que un consumo puede esperar:
+
+      · 'compra'    → `compras.importe`, el precio que se cargó tarde.
+      · 'reproceso' → `costo_por_bulto_primera` de la guía R que armó esa
+        primera. Es la otra mitad del caso, y la que no se ve: la primera de
+        una guía entra al FIFO COMO UN LOTE con ese costo, así que una guía R
+        que consumió cajas de otra guía sin costo queda sin costo ella
+        también, y completar la de arriba no la toca si nadie la baja.
+
+    Por eso es una COLA y no una pasada: cuando una guía queda completa, las
+    que consumieron su primera pasan a la cola. Termina sola, porque cada
+    guía se completa una vez (`costo_total IS NULL` en el UPDATE) y solo una
+    guía que se ACABA de completar agrega trabajo.
+
+    Las anuladas no entran a la cascada: su primera no es un lote de nadie.
+    """
+    pendientes = list(dict.fromkeys(int(i) for i in reprocesos_ids))
+    vistas: dict = {}
+    while pendientes:
+        reproceso_id = pendientes.pop(0)
+        cursor.execute(
+            """
+            UPDATE reprocesos_consumos rc
+            SET costo_por_bulto = c.importe
+            FROM compras c
+            WHERE c.id = rc.compra_id AND rc.reproceso_id = %s
+              AND rc.costo_por_bulto IS NULL AND c.importe IS NOT NULL
+            """,
+            (reproceso_id,),
+        )
+        cursor.execute(
+            """
+            UPDATE reprocesos_consumos rc
+            SET costo_por_bulto = o.costo_por_bulto_primera
+            FROM reprocesos o
+            WHERE rc.origen = 'reproceso' AND o.id = rc.origen_id AND rc.reproceso_id = %s
+              AND rc.costo_por_bulto IS NULL AND o.costo_por_bulto_primera IS NOT NULL
+            """,
+            (reproceso_id,),
+        )
+        # fetchall y no fetchone: con el agregado agrupado, una guía SIN
+        # consumos no devuelve fila y no se confunde con una completa
+        # (corolario 27 — un count sin group by devuelve cero, no "no hay").
+        cursor.execute(
+            """
+            SELECT COUNT(*) FILTER (WHERE costo_por_bulto IS NULL),
+                   COALESCE(SUM(bultos * costo_por_bulto), 0)
+            FROM reprocesos_consumos WHERE reproceso_id = %s
+            GROUP BY reproceso_id
+            """,
+            (reproceso_id,),
+        )
+        filas = list(cursor.fetchall() or [])
+        if not filas:
+            continue
+        sin_precio, costo_total = filas[0]
+        vistas[reproceso_id] = int(sin_precio)
+        if int(sin_precio) != 0:
+            continue
+        total = round(float(costo_total), 2)
+        cursor.execute(
+            """
+            UPDATE reprocesos
+            SET costo_total = %s,
+                costo_por_bulto_primera = CASE WHEN bultos_primera > 0
+                                               THEN round(%s / bultos_primera, 2) END
+            WHERE id = %s AND costo_total IS NULL
+            RETURNING id
+            """,
+            (total, total, reproceso_id),
+        )
+        if not list(cursor.fetchall() or []):
+            continue
+        # Recién completada: las que consumieron SU primera como lote.
+        cursor.execute(
+            """
+            SELECT DISTINCT rc.reproceso_id
+            FROM reprocesos_consumos rc
+            JOIN reprocesos r ON r.id = rc.reproceso_id
+            WHERE rc.origen = 'reproceso' AND rc.origen_id = %s
+              AND rc.costo_por_bulto IS NULL AND r.anulado_el IS NULL
+            """,
+            (reproceso_id,),
+        )
+        for (dependiente,) in cursor.fetchall() or []:
+            if int(dependiente) not in pendientes:
+                pendientes.append(int(dependiente))
+    return vistas
+
+
+def _completar_costos_por_el_importe(cursor, compra_id: int) -> None:
+    """Un importe que se carga TARDE completa las guías R que ya consumieron esa compra.
+
+    EL CASO, del 26/09 y medido en Frutamax: la compra 776 recibió su importe
+    el 25/09 a las 04:04, y las guías R 502 y 527 de Palta —que la habían
+    consumido el 23 y el 24— siguieron sin costo. "Completar costo" existía,
+    pero era un botón que alguien tenía que ir a apretar guía por guía, y el
+    que carga el precio no sabe qué guías lo estaban esperando.
+
+    La llaman los DOS escritores que cambian el importe de una compra que ya
+    existe: la edición y Compras sin precio. El alta no, porque una compra
+    recién nacida no la consumió nadie. Va en la MISMA transacción que el
+    UPDATE del importe: si el precio se guarda, el costo se completa.
+
+    SOLO completa lo que estaba en NULL. Una renegociación de un precio que
+    YA estaba puesto no recostea nada: el costo de la guía es un documento
+    congelado a propósito (ver el comment de `reprocesos_consumos`).
+    """
+    cursor.execute(
+        """
+        SELECT DISTINCT rc.reproceso_id
+        FROM reprocesos_consumos rc
+        JOIN reprocesos r ON r.id = rc.reproceso_id
+        WHERE rc.compra_id = %s AND rc.costo_por_bulto IS NULL AND r.anulado_el IS NULL
+        """,
+        (compra_id,),
+    )
+    ids = [fila[0] for fila in cursor.fetchall() or []]
+    if ids:
+        _completar_costos_congelados(cursor, ids)
+
+
 def completar_costo_reproceso(reproceso_id: int) -> dict:
     """Rellena los costos que faltaban en una guía R con los precios ya cargados — SOLO los NULL, jamás pisa.
 
-    El caso real: se reprocesó a la tarde consumiendo la compra de la
-    mañana, que todavía no tenía precio. Cuando el precio se carga, este
-    botón completa los consumos 'compra' sin costo con el importe actual
-    de esa compra. Si con eso TODOS los consumos quedan con costo, se
-    calculan y graban costo_total y costo_por_bulto_primera (todo a la
-    primera). Los consumos de ajuste/reingreso/sin_lote no tienen precio
-    posible: si los hay, la guía sigue incompleta y se dice.
+    El botón de Guías R. La cuenta vive en `_completar_costos_congelados`,
+    que es la MISMA que corre sola cuando se carga un importe tarde: escrita
+    dos veces, la del botón y la automática se separan. De yapa, el botón
+    también baja a las guías que consumieron la primera de ésta.
+
+    Los consumos de ajuste/reingreso/sin_lote no tienen precio posible: si
+    los hay, la guía sigue incompleta y se dice.
 
     Devuelve {"completado": bool, "sin_precio": cuántos consumos siguen
     sin costo}.
@@ -14080,39 +14210,10 @@ def completar_costo_reproceso(reproceso_id: int) -> dict:
     conexion = obtener_conexion()
     try:
         with conexion.cursor() as cursor:
-            cursor.execute(
-                """
-                UPDATE reprocesos_consumos rc
-                SET costo_por_bulto = c.importe
-                FROM compras c
-                WHERE c.id = rc.compra_id AND rc.reproceso_id = %s
-                  AND rc.costo_por_bulto IS NULL AND c.importe IS NOT NULL
-                """,
-                (reproceso_id,),
-            )
-            cursor.execute(
-                """
-                SELECT COUNT(*) FILTER (WHERE costo_por_bulto IS NULL),
-                       COALESCE(SUM(bultos * costo_por_bulto), 0)
-                FROM reprocesos_consumos WHERE reproceso_id = %s
-                """,
-                (reproceso_id,),
-            )
-            sin_precio, costo_total = cursor.fetchone()
-            completado = int(sin_precio) == 0
-            if completado:
-                cursor.execute(
-                    """
-                    UPDATE reprocesos
-                    SET costo_total = %s,
-                        costo_por_bulto_primera = CASE WHEN bultos_primera > 0
-                                                       THEN round(%s / bultos_primera, 2) END
-                    WHERE id = %s AND costo_total IS NULL
-                    """,
-                    (round(float(costo_total), 2), round(float(costo_total), 2), reproceso_id),
-                )
+            vistas = _completar_costos_congelados(cursor, [reproceso_id])
         conexion.commit()
-        return {"completado": completado, "sin_precio": int(sin_precio)}
+        sin_precio = vistas.get(int(reproceso_id), 0)
+        return {"completado": sin_precio == 0, "sin_precio": sin_precio}
     finally:
         conexion.close()
 

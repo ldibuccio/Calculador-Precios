@@ -6895,37 +6895,29 @@ def test_la_cotizacion_no_lee_el_costo_del_reproceso():
     assert "remitos_segunda" not in fuente.lower()
 
 
-def test_completar_costo_solo_rellena_los_null_y_recalcula_si_quedo_completo():
-    from app.db import completar_costo_reproceso
+def test_completar_costo_SOLO_LLENA_NULL_en_cada_escritura_de_la_cascada():
+    """Las tres escrituras de `_completar_costos_congelados` tienen su guarda de
+    NULL: el costo de una guía R es un documento congelado, y completar no es
+    recostear. El comportamiento —la cascada, la renegociación que no pisa, la
+    guía que sigue incompleta— lo miran los tests contra Postgres de
+    tests/test_costo_del_importe_tarde.py; esto mira que ninguna de las tres
+    UPDATE se quede sin la guarda, que es lo que un caso de prueba puede no
+    ejercitar."""
+    import ast
+    import inspect
 
-    conexion, cursor = _conexion_falsa(filas_fetchone=[(0, 16500.0)])
+    import app.db as d
 
-    with patch("app.db.obtener_conexion", return_value=conexion):
-        resultado = completar_costo_reproceso(12)
-
-    llamadas = [c.args[0] for c in cursor.execute.call_args_list]
-    # SOLO los consumos sin costo, y solo con compras que YA tienen precio:
-    # jamás pisa un costo congelado.
-    assert "rc.costo_por_bulto IS NULL AND c.importe IS NOT NULL" in llamadas[0]
-    # Quedó completo: recalcula y graba el total y el por-caja (guardado
-    # con WHERE costo_total IS NULL: tampoco pisa una guía ya cerrada).
-    assert "WHERE id = %s AND costo_total IS NULL" in llamadas[2]
-    assert resultado == {"completado": True, "sin_precio": 0}
-    conexion.commit.assert_called_once()
-
-
-def test_completar_costo_sigue_incompleto_si_hay_consumos_sin_precio_posible():
-    from app.db import completar_costo_reproceso
-
-    conexion, cursor = _conexion_falsa(filas_fetchone=[(2, 5000.0)])
-
-    with patch("app.db.obtener_conexion", return_value=conexion):
-        resultado = completar_costo_reproceso(13)
-
-    # Con consumos sin precio posible (stock inicial, reingreso, sin lote)
-    # NO se graba ningún total: mejor incompleto visible que un invento.
-    assert len(cursor.execute.call_args_list) == 2
-    assert resultado == {"completado": False, "sin_precio": 2}
+    fuente = inspect.getsource(d._completar_costos_congelados)
+    doc = ast.get_docstring(ast.parse(fuente).body[0])
+    codigo = fuente.replace(doc, "")
+    updates = [u for u in codigo.split("UPDATE ")[1:]]
+    a_consumos = [u for u in updates if u.startswith("reprocesos_consumos")]
+    a_guias = [u for u in updates if u.startswith("reprocesos\n") or u.startswith("reprocesos ")]
+    assert len(a_consumos) == 2 and len(a_guias) == 1, (len(a_consumos), len(a_guias))
+    for u in a_consumos:
+        assert "rc.costo_por_bulto IS NULL" in u.split('"""')[0]
+    assert "costo_total IS NULL" in a_guias[0].split('"""')[0]
 
 
 def test_contar_reprocesos_costo_incompleto_solo_vigentes():
