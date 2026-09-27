@@ -32,7 +32,7 @@ sys.path.insert(0, RAIZ)
 
 from app.main import _agrupar_pendientes_por_guia, app, templates  # noqa: E402
 from core.matcheo_comanda import adivinar_proveedor  # noqa: E402
-from core.nombres_de_proveedor import nombre_de_proveedor_plegado, nombres_parecidos  # noqa: E402
+from core.nombres_de_proveedor import nombre_de_proveedor_plegado, nombres_parecidos, son_parecidos  # noqa: E402
 from scripts.humo import hay_postgres, preparar_base  # noqa: E402
 
 OBLIGATORIO = os.environ.get("HUMO_OBLIGATORIO") == "1"
@@ -74,6 +74,39 @@ def test_un_nombre_que_es_SOLO_un_sufijo_no_coincide_con_nada():
     proveedores = [{"id": 1, "nombre": "S.A."}, {"id": 2, "nombre": "EJEMPLO Uno"}]
     assert nombres_parecidos("S.R.L.", proveedores) == []
     assert nombres_parecidos("ejemplo uno s.a.", proveedores) == [proveedores[1]]
+
+
+def test_PRODUCTOS_HNOS_HERMANOS_y_CIA_no_distinguen_a_un_proveedor():
+    """El par del 27/09: DON LAZZARO y PRODUCTOS DON LAZZARO. Con solo los
+    cuatro sufijos societarios, "productos" quedaba y no se igualaban."""
+    assert nombre_de_proveedor_plegado("PRODUCTOS DON LAZZARO") == nombre_de_proveedor_plegado("Don Lazzaro")
+    base = nombre_de_proveedor_plegado("Núñez")
+    for variante in ("Núñez Hnos.", "NUÑEZ HERMANOS", "Núñez y Cía.", "Nuñez Cia"):
+        assert nombre_de_proveedor_plegado(variante) in (base, base + "y"), variante
+    assert nombres_parecidos("Núñez y Cía.", [{"id": 1, "nombre": "NUÑEZ HNOS"}]) != []
+
+
+def test_las_palabras_nuevas_se_sacan_como_PALABRA_y_no_adentro_de_otra():
+    """"CIAMPI" no pierde su "cia": con un replace suelto sería "mpi"."""
+    assert nombre_de_proveedor_plegado("Ciampi") == "ciampi"
+    assert nombre_de_proveedor_plegado("Productora del Sur") == "productoradelsur"
+
+
+def test_un_nombre_que_CONTIENE_al_otro_es_parecido_en_las_DOS_direcciones():
+    assert son_parecidos("Frutamax", "Frutamax Sur")
+    assert son_parecidos("FRUTAMAX SUR S.A.", "frutamax")
+    proveedores = [{"id": 1, "nombre": "Lazzaro"}, {"id": 2, "nombre": "EJEMPLO Otro"}]
+    assert nombres_parecidos("Productos Don Lazzaro", proveedores) == [proveedores[0]]
+
+
+def test_contener_NO_vale_para_un_nombre_CORTO_ni_para_dos_distintos():
+    """El caso que no tiene que avisar: sin el mínimo, "Sur" está adentro de
+    medio padrón. Y el control de siempre: dos nombres que no se contienen."""
+    assert not son_parecidos("Sur", "Frutamax Sur")
+    assert not son_parecidos("Luz", "Luzzi Hnos")
+    assert son_parecidos("Luzz", "Luzzi Hnos"), "con el mínimo, cuatro letras sí"
+    assert not son_parecidos("Casa Pérez", "Ca Pérez")
+    assert not son_parecidos("EJEMPLO Uno", "EJEMPLO Nuevo")
 
 
 # ------------------------------------------------ lo que se adivina y se ofrece
@@ -233,6 +266,27 @@ def test_un_nombre_PARECIDO_frena_el_alta_con_el_modal_y_NO_crea_nada():
     assert "sumarle el puesto N09P39" in marcado
     # La consecuencia queda a la vista: cambia lo que se hace.
     assert "se cargan en ese proveedor, sin cambiarle el nombre" in marcado
+
+
+def test_PRODUCTOS_DON_LAZZARO_frena_el_alta_contra_DON_LAZZARO():
+    """El caso real que el modal no veía el 27/09, por la ruta entera."""
+    lazzaro = {"id": 10, "codigo_puesto": "L02P42", "nombre": "DON LAZZARO", "activo": True,
+               "compras": 14, "codigos_alternativos": []}
+    with (
+        patch("app.main.buscar_proveedor_por_codigo", return_value=None),
+        patch("app.main.obtener_o_crear_proveedor_por_codigo", return_value=(40, False)) as puerta,
+        patch("app.main.listar_proveedores_para_abm", return_value=PROVEEDORES_ABM + [lazzaro]),
+        patch("app.main.listar_tipos_cajon", return_value=[]),
+    ):
+        respuesta = cliente.post("/compras/proveedores/nuevo",
+                                 data={"nombre": "PRODUCTOS DON LAZZARO", "codigo_puesto": "L02P44"},
+                                 follow_redirects=False)
+
+    assert respuesta.status_code == 409
+    puerta.assert_not_called()
+    marcado = respuesta.text.split('<div class="modal-fondo">')[1]
+    assert 'action="/compras/proveedores/10/asociar-codigo"' in marcado
+    assert 'action="/compras/proveedores/3/asociar-codigo"' not in marcado
 
 
 def test_ES_OTRO_lo_carga_igual_y_sin_volver_a_preguntar():
