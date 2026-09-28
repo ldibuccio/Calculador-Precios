@@ -66,6 +66,11 @@
          color: #1d4ed8; text-decoration: underline; min-height: 44px;
          line-height: 44px; }
   .vacio { color: #6b7280; font-size: .95rem; }
+  /* DE DÓNDE SALE EL NÚMERO (dueño, 28/09): se ve, no va a la "i". Sin
+     esto, el que compara contra un número viejo no sabe que la cuenta
+     arrancó de nuevo. */
+  .origen { background: #eff6ff; color: #1e3a8a; border-radius: 8px;
+            padding: .6rem .75rem; margin: 0 0 1rem; font-size: .9rem; }
 </style>
 </head>
 <body>
@@ -85,6 +90,8 @@
      cuenta no lo tiene que ver (dueño, 27/09). #}
   <a class="boton-stock" href="{{ camino.base }}/vacios/conteo">Contar vacíos</a>
 </div>
+
+{% include "_origen_vacios.html" %}
 
 <h2>Cajones en el galpón</h2>
 {% for p in proveedores %}
@@ -116,7 +123,7 @@
 {% else %}
 <div class="tarjeta vacio">
   Ningún proveedor tiene cajones en el galpón: acá aparecen los que tienen
-  stock o algún movimiento desde el corte del 25/09.
+  stock o algún movimiento desde {{ "el " ~ arranque.motivo if arranque else "el corte del 25/09" }}.
 </div>
 {% endfor %}
 

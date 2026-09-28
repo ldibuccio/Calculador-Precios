@@ -1,0 +1,12 @@
+{# De dónde sale el número de Vacíos del depósito. Lo incluyen el índice y el
+   detalle: escrito una vez, así los dos dicen lo mismo. #}
+{% if arranque %}
+<p class="origen">La cuenta arranca del <strong>{{ arranque.motivo }}</strong>:
+  {{ arranque.total|numero }} cajones contados, cargado el
+  {{ arranque.creado_en.strftime("%d/%m a las %H:%M") }}. Desde ahí suma lo
+  recibido con seña y resta lo devuelto. Lo de antes queda como historia y no
+  mueve el número.</p>
+{% else %}
+<p class="origen">La cuenta arranca de la foto del 25/09. Desde ahí suma lo
+  recibido con seña y resta lo devuelto.</p>
+{% endif %}

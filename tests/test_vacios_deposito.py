@@ -16,7 +16,7 @@ import ast
 import io
 import os
 import re
-from datetime import date
+from datetime import date, datetime
 from unittest.mock import MagicMock, patch
 
 import pytest
@@ -44,8 +44,11 @@ def _puerta_de_compras_abierta():
     """
     from app.main import PUERTA_COMPRAS
 
+    # Sin arranque cargado, como Palmala: el cartel de origen dice "la foto".
+    # Los tests del arranque corren contra Postgres (test_vacios_conteo_2809).
     with patch.dict(os.environ, {"CLAVE_COMPRAS": "compras-secreta",
-                                 "CLAVE_ADMINISTRACION": "admin-secreta"}):
+                                 "CLAVE_ADMINISTRACION": "admin-secreta"}), \
+            patch("app.main.arranque_de_vacios", return_value=None):
         cliente.cookies.set(PUERTA_COMPRAS.cookie, PUERTA_COMPRAS.firma("compras-secreta"))
         cliente.cookies.set(PUERTA_ADMINISTRACION.cookie,
                             PUERTA_ADMINISTRACION.firma("admin-secreta"))
@@ -61,7 +64,7 @@ FUENTE_DB = io.open("app/db.py", encoding="utf-8").read()
 
 def _pila(marca_id, marca, stock):
     return {"proveedor_id": 7, "proveedor": "Puesto EJEMPLO", "tipo_cajon": "Cajón de ejemplo",
-            "marca_id": marca_id, "marca": marca, "foto": 0, "recibidos": 0,
+            "marca_id": marca_id, "marca": marca, "arranque": 0, "recibidos": 0,
             "devueltos": 0, "ajustes": 0, "asignados": 0, "stock": stock}
 
 
@@ -138,8 +141,9 @@ def test_el_corte_compara_contra_el_INSTANTE_de_la_foto_y_no_contra_su_dia():
     f.fecha` la descartaba. Se compara contra `f.creado_en`, en las DOS patas
     que la foto ya incluye.
     """
-    assert "co.procesada_el > f.creado_en" in _SQL_PILAS_DE_VACIOS
-    assert "d.creado_en > f.creado_en" in _SQL_PILAS_DE_VACIOS
+    # Con arranque, contra su instante; sin arranque, contra el de la foto.
+    assert "co.procesada_el > COALESCE((SELECT creado_en FROM arr), f.creado_en," in _SQL_PILAS_DE_VACIOS
+    assert "d.creado_en > COALESCE((SELECT creado_en FROM arr), f.creado_en," in _SQL_PILAS_DE_VACIOS
     assert "f.fecha" not in _SQL_PILAS_DE_VACIOS
 
 
@@ -233,7 +237,7 @@ def test_anular_pregunta_la_EXISTENCIA_con_un_select_SIN_AGREGADO():
         with pytest.raises(ValueError, match="no existe"):
             anular_devolucion_vacios(9999)
     consulta = cursor.execute.call_args_list[0].args[0]
-    assert "SELECT anulado_el" in consulta
+    assert "SELECT t.anulado_el" in consulta
     for agregado in ("count(", "COUNT(", "sum(", "SUM("):
         assert agregado not in consulta
 
@@ -925,3 +929,56 @@ def test_la_tarjeta_de_MOVER_ofrece_salir_de_una_MARCA_y_no_solo_de_sin_marca():
     desde = tarjeta[tarjeta.index('name="marca_desde_id"'):tarjeta.index("</select>")]
     assert re.findall(r'<option value="(\d*)">([^<]+)</option>', desde) == [
         ("", "Sin asignar · hay 12"), ("71", "EJ Roja · hay 23"), ("72", "EJ Azul · hay 0")]
+
+
+# ---------------------------------------------------------------------------
+# EL ARRANQUE DESDE EL CONTEO FÍSICO (dueño, 28/09): la pantalla dice de dónde
+# sale el número, y lo de antes del conteo no ofrece anularse.
+# ---------------------------------------------------------------------------
+ARRANQUE = {"motivo": "Conteo físico 28/09", "creado_en": datetime(2026, 9, 28, 21, 40),
+            "total": 1086}
+
+
+def test_el_INDICE_y_el_DETALLE_dicen_de_que_conteo_arranca_la_cuenta():
+    with patch("app.main.arranque_de_vacios", return_value=ARRANQUE), \
+            patch("app.main.stock_de_vacios_deposito", return_value=list(UN_PROVEEDOR)):
+        indice = cliente.get("/compras/vacios").text.split("</style>")[-1]
+    with patch("app.main.arranque_de_vacios", return_value=ARRANQUE), _con(_parches_del_detalle()):
+        detalle = cliente.get("/compras/vacios/7").text.split("</style>")[-1]
+    for marcado in (indice, detalle):
+        origen, = re.findall(r'<p class="origen">(.*?)</p>', marcado, re.S)
+        texto = " ".join(origen.split())
+        assert "<strong>Conteo físico 28/09</strong>" in texto
+        assert "1086 cajones contados, cargado el 28/09 a las 21:40" in texto
+        assert "foto del 25/09" not in texto
+
+
+def test_SIN_arranque_el_cartel_dice_la_foto_del_25_09():
+    with patch("app.main.stock_de_vacios_deposito", return_value=list(UN_PROVEEDOR)):
+        marcado = cliente.get("/compras/vacios").text.split("</style>")[-1]
+    origen, = re.findall(r'<p class="origen">(.*?)</p>', marcado, re.S)
+    assert "foto del 25/09" in origen
+
+
+def test_lo_de_ANTES_del_conteo_no_ofrece_ANULAR_y_lo_de_despues_si():
+    viejo = {"id": 4, "cantidad": 30, "importe": None, "foto_ruta": "x.jpg",
+             "fecha": date(2026, 9, 26), "anulada": False, "compra_id": None,
+             "articulo": None, "fecha_compra": None, "marca": None}
+    movs = [{"tipo": "ajuste", "id": 5, "cantidad": 2, "marca": None, "marca_hasta": None,
+             "motivo": "viejo", "fecha": date(2026, 9, 26), "anulada": False,
+             "antes_del_arranque": True},
+            {"tipo": "ajuste", "id": 6, "cantidad": 3, "marca": None, "marca_hasta": None,
+             "motivo": "nuevo", "fecha": date(2026, 9, 29), "anulada": False,
+             "antes_del_arranque": False}]
+    devoluciones = [{**viejo, "antes_del_arranque": True},
+                    {**viejo, "id": 8, "antes_del_arranque": False}]
+    with patch("app.main.arranque_de_vacios", return_value=ARRANQUE), \
+            _con(_parches_del_detalle(devoluciones=devoluciones, movimientos=movs)):
+        marcado = cliente.get("/administracion/vacios/7").text.split("</style>")[-1]
+    assert "/vacios/devolucion/4/anular" not in marcado
+    assert "/vacios/devolucion/8/anular" in marcado
+    assert "/vacios/movimiento/ajuste/5/anular" not in marcado
+    assert "/vacios/movimiento/ajuste/6/anular" in marcado
+    assert marcado.count("antes del conteo: no cuenta") == 2
+    # El vale viejo se sigue pudiendo ver: la historia queda.
+    assert "/vacios/devolucion/4/foto" in marcado

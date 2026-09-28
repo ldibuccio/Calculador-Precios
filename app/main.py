@@ -340,6 +340,7 @@ from app.db import (
     obtener_o_crear_colega,
     stock_de_envases,
     stock_de_vacios_deposito,
+    arranque_de_vacios,
     proveedor_para_vacios,
     crear_conteo_vacios_deposito,
     cotejo_de_vacios_deposito,
@@ -6547,6 +6548,7 @@ def _renderizar_vacios(request: Request, *, error: str | None = None,
     """
     try:
         proveedores = stock_de_vacios_deposito()
+        arranque = arranque_de_vacios()
     except Exception as error_db:
         raise HTTPException(
             status_code=500, detail=f"Error al conectar con la base de datos: {error_db}"
@@ -6555,7 +6557,7 @@ def _renderizar_vacios(request: Request, *, error: str | None = None,
     return templates.TemplateResponse(
         request,
         "compras_vacios.html",
-        {"proveedores": proveedores, "error": error, "aviso": aviso,
+        {"proveedores": proveedores, "arranque": arranque, "error": error, "aviso": aviso,
          "camino": _camino_de_cajas_y_vacios(request)},
         status_code=status_code,
     )
@@ -6740,6 +6742,7 @@ def _renderizar_vacios_proveedor(request: Request, proveedor_id: int, *,
         movimientos = listar_ajustes_y_asignaciones_vacios(proveedor_id) if fila else []
         senas = sena_por_cajon_de_la_ultima_recepcion(proveedor_id) if fila else {}
         tipos = listar_tipos_cajon()
+        arranque = arranque_de_vacios()
     except Exception as error_db:
         raise HTTPException(
             status_code=500, detail=f"Error al conectar con la base de datos: {error_db}"
@@ -6765,6 +6768,7 @@ def _renderizar_vacios_proveedor(request: Request, proveedor_id: int, *,
         {"p": fila, "marcas": marcas, "pilas_para_elegir": pilas_para_elegir,
          "devoluciones": devoluciones, "movimientos": movimientos,
          "tipos": tipos, "error": error, "aviso": aviso, "juntar": juntar,
+         "arranque": arranque,
          "es_administracion": camino["sector"] == "administracion",
          "camino": camino},
         status_code=status_code,
