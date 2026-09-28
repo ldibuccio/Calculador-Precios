@@ -229,25 +229,18 @@ def test_si_algo_rebota_en_el_medio_NO_se_escribe_nada(galpon):
         g["sql"]("DROP TABLE ejemplo_ajena")
 
 
-def test_las_dos_tablas_VIEJAS_se_mueven_si_existen(galpon):
-    """`recepciones` y `aprendizaje_proveedores` están en las bases reales y no
-    en el esquema del repo. Se crean acá desde db/schema.sql —leídas, no
-    copiadas— para ejercitar esa rama."""
+def test_las_dos_tablas_VIEJAS_se_mueven(galpon):
+    """`recepciones` y `aprendizaje_proveedores` son del diseño original: el
+    código no las usa, pero están en las bases reales y, desde el 28/09,
+    también en db/esquema_completo.sql. Juntar les mueve el proveedor."""
     g = galpon
-    esquema = io.open(os.path.join(RAIZ, "db", "schema.sql"), encoding="utf-8").read()
-    for tabla in g["d"].TABLAS_VIEJAS_QUE_APUNTAN_A_PROVEEDORES:
-        g["sql"](re.search(rf"create table {tabla} \(.*?\);", esquema, re.S).group(0))
-    try:
-        g["sql"]("INSERT INTO recepciones (fecha_operacion, articulo_id, proveedor_id, cantidad_recibida)"
-                 " VALUES (%s, %s, %s, 1)", (date(2026, 8, 1), g["articulo"], g["va"]))
-        g["sql"]("INSERT INTO aprendizaje_proveedores (texto_leido, proveedor_id) VALUES (%s, %s)",
-                 (f"EJEMPLO puesto {g['n']}", g["va"]))
-        g["d"].juntar_proveedores(g["queda"], g["va"])
-        assert _cuenta(g, "recepciones", "proveedor_id", g["queda"]) == 1
-        assert _cuenta(g, "aprendizaje_proveedores", "proveedor_id", g["queda"]) == 1
-    finally:
-        for tabla in g["d"].TABLAS_VIEJAS_QUE_APUNTAN_A_PROVEEDORES:
-            g["sql"](f"DROP TABLE IF EXISTS {tabla}")
+    g["sql"]("INSERT INTO recepciones (fecha_operacion, articulo_id, proveedor_id, cantidad_recibida)"
+             " VALUES (%s, %s, %s, 1)", (date(2026, 8, 1), g["articulo"], g["va"]))
+    g["sql"]("INSERT INTO aprendizaje_proveedores (texto_leido, proveedor_id) VALUES (%s, %s)",
+             (f"EJEMPLO puesto {g['n']}", g["va"]))
+    g["d"].juntar_proveedores(g["queda"], g["va"])
+    assert _cuenta(g, "recepciones", "proveedor_id", g["queda"]) == 1
+    assert _cuenta(g, "aprendizaje_proveedores", "proveedor_id", g["queda"]) == 1
 
 
 def test_TODA_tabla_con_FK_a_proveedores_esta_DECIDIDA(galpon):
@@ -265,7 +258,8 @@ def test_TODA_tabla_con_FK_a_proveedores_esta_DECIDIDA(galpon):
     )
     encontradas = set(filas)
     assert encontradas, "no encontró ninguna FK: la consulta no mira lo que dice"
-    assert encontradas == g["d"].TABLAS_QUE_APUNTAN_A_PROVEEDORES
+    viejas = {(tabla, "proveedor_id") for tabla in g["d"].TABLAS_VIEJAS_QUE_APUNTAN_A_PROVEEDORES}
+    assert encontradas == g["d"].TABLAS_QUE_APUNTAN_A_PROVEEDORES | viejas
 
 
 # ---------------------------------------------------------------- la pantalla

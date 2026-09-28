@@ -535,3 +535,31 @@ PALMALA   lazzaro_1_y_2 · testigo 0 · alternativos 0 · proveedores 44
 
 Palmala no se tocó: el testigo (N09P39 como alternativo) da 0 y los bloques
 salen sin hacer nada.
+
+## 28/09 — corrección puntual: consumo de la R556 anulada sobre la compra 827 (SOLO Frutamax)
+
+No es una migración: es un arreglo de datos de una sola vez, corrido por el
+dueño a mano. La compra 827 (Palta, 27/09) se cargó con los datos cruzados, se
+volvió a cargar bien, y había que borrarla. "Corregir o eliminar compra" la
+frenaba con "R556 se costeó contra este lote", aunque la R556 estaba anulada
+desde el 28/09 a las 11:21: su consumo congelado seguía apuntando a la compra.
+
+```sql
+delete from reprocesos_consumos rc
+using reprocesos r
+where r.id = rc.reproceso_id
+  and rc.compra_id = 827
+  and r.anulado_el is not null
+returning rc.reproceso_id, rc.compra_id, rc.bultos;
+```
+
+```
+FRUTAMAX  556 · 827 · 8
+```
+
+Una fila: el consumo de 8 bultos de la R556 anulada. Palmala no se corrió, no
+había nada que corregir ahí.
+
+Desde v1010 esto ya no hace falta a mano: el borrado ignora las guías R
+anuladas y borra sus consumos en la misma transacción
+(`_SQL_BORRAR_CONSUMOS_DE_GUIAS_ANULADAS`, app/db.py).

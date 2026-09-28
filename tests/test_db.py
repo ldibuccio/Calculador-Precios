@@ -369,8 +369,9 @@ def test_eliminar_compra_con_renglones_restantes_no_toca_las_fotos():
         resultado = eliminar_compra(30, origen="compras")
 
     assert resultado == []
-    # DELETE de fotos_recepcion (vacío) + DELETE de la compra + COUNT de la guía.
-    assert cursor.execute.call_count == 3
+    # DELETE de fotos_recepcion (vacío) + DELETE de los consumos de guías R
+    # ANULADAS + DELETE de la compra + COUNT de la guía.
+    assert cursor.execute.call_count == 4
     assert not any("fotos_guia" in ll.args[0] for ll in cursor.execute.call_args_list)
     conexion.commit.assert_called_once()
 
@@ -410,7 +411,7 @@ def test_eliminar_compra_sin_guia_no_toca_fotos():
     assert resultado == []
     # El DELETE de fotos_recepcion (vacío) y el de la compra: sin guía no hay
     # fotos de comanda que mirar.
-    assert cursor.execute.call_count == 2
+    assert cursor.execute.call_count == 3  # +1: los consumos de guías R anuladas
     assert not any("fotos_guia" in ll.args[0] for ll in cursor.execute.call_args_list)
 
 
@@ -463,7 +464,7 @@ def test_eliminar_compra_recepcionada_no_se_borra():
 
     # Sin commit: la transacción entera vuelve atrás, incluido el DELETE de
     # fotos_recepcion que corre primero — la foto sigue ahí.
-    assert cursor.execute.call_count == 3  # fotos_recepcion + el DELETE que no borró + el SELECT
+    assert cursor.execute.call_count == 4  # fotos_recepcion + consumos de guías R anuladas + el DELETE que no borró + el SELECT
     conexion.commit.assert_not_called()
     conexion.close.assert_called_once()
 
@@ -488,7 +489,7 @@ def test_eliminar_compra_no_ingresada_no_se_borra():
 
     # Sin commit: la transacción entera vuelve atrás, incluido el DELETE de
     # fotos_recepcion que corre primero — la foto sigue ahí.
-    assert cursor.execute.call_count == 3  # fotos_recepcion + el DELETE que no borró + el SELECT
+    assert cursor.execute.call_count == 4  # fotos_recepcion + consumos de guías R anuladas + el DELETE que no borró + el SELECT
     conexion.commit.assert_not_called()
 
 
@@ -509,7 +510,7 @@ def test_eliminar_compra_retirada_no_se_borra():
 
     # Sin commit: la transacción entera vuelve atrás, incluido el DELETE de
     # fotos_recepcion que corre primero — la foto sigue ahí.
-    assert cursor.execute.call_count == 3  # fotos_recepcion + el DELETE que no borró + el SELECT
+    assert cursor.execute.call_count == 4  # fotos_recepcion + consumos de guías R anuladas + el DELETE que no borró + el SELECT
     conexion.commit.assert_not_called()
 
 
@@ -9332,11 +9333,9 @@ def test_toda_TABLA_que_crea_una_MIGRACION_esta_en_el_esquema_completo():
 
     # Las muertas del diseño original, con la razón al lado de cada una.
     MUERTAS_A_PROPOSITO = {
-        "recepciones": "diseño viejo: hoy la recepción es un estado de compras",
         "pedidos_supermercado": "diseño viejo: hoy son pedidos + pedidos_renglones",
         "precios_dia": "diseño viejo: hoy precios_venta_historial",
         "parametros_historial": "diseño viejo: hoy clientes_parametros_historial",
-        "aprendizaje_proveedores": "nunca se usó",
         "resultados": "nunca se usó",
         "conversion_articulos_cliente": "fusionada dentro de fichas_logistica",
     }
@@ -10755,7 +10754,7 @@ def test_forzar_SALTEA_el_bloqueo_por_estado_y_borra():
     que la única salida sea ésa es el agujero de siempre."""
     conexion, cursor = _conexion_falsa_con_varios_fetchall(
         [(5,), (0,)],                 # el DELETE devuelve la guía; le quedan 0 renglones
-        [[], [], [], [], [], []],     # nada colgando, ni fotos
+        [[], [], [], [], [], [], []],     # nada colgando, ni fotos
     )
     with patch("app.db.obtener_conexion", return_value=conexion):
         db.eliminar_compra(77, forzar=True, origen="gerencia")
@@ -10776,7 +10775,7 @@ def test_forzar_NO_saltea_lo_que_CUELGA_y_lo_NOMBRA():
     """
     conexion, cursor = _conexion_falsa_con_varios_fetchall(
         [(5,), (0,)],
-        [[], [(31,)], [], [], []],    # fotos, consumos con R31, y el resto vacío
+        [[], [(31,)], [], [], [], []],    # fotos, consumos con R31, y el resto vacío
     )
     with patch("app.db.obtener_conexion", return_value=conexion):
         with pytest.raises(ValueError, match="R31"):
@@ -10799,7 +10798,7 @@ def test_SIN_forzar_el_bloqueo_por_estado_SIGUE_PUESTO():
     assert "estado IS DISTINCT FROM" in borrado
 
 
-def test_lo_que_cuelga_enumera_LAS_CUATRO_y_dice_de_que_clase_es_cada_una():
+def test_lo_que_cuelga_enumera_LAS_CINCO_y_dice_de_que_clase_es_cada_una():
     """Las cuatro FK que no se pueden limpiar solas, medidas contra el esquema
     real. `fotos_recepcion` NO está: la borra `eliminar_compra` él mismo,
     porque el archivo es de ESTA compra y de ninguna otra.
@@ -10808,13 +10807,14 @@ def test_lo_que_cuelga_enumera_LAS_CUATRO_y_dice_de_que_clase_es_cada_una():
     que saber a qué pantalla ir a arreglarlo.
     """
     conexion, cursor = _conexion_falsa_con_varios_fetchall(
-        None, [[(31,)], [(32,)], [(9,)], [(4,)]],
+        None, [[(31,)], [(32, False)], [(9,)], [(4,)], [(6,)]],
     )
     with patch("app.db.obtener_conexion", return_value=conexion):
         cuelgan = db.lo_que_cuelga_de_la_compra(77)
 
     assert [c["que"] for c in cuelgan] == [
         "guia_r_consumo", "guia_r_en_origen", "vale_de_vacios", "devolucion_al_proveedor",
+        "recepcion_vieja",
     ]
     assert all(c["detalle"] for c in cuelgan), "cada una se NOMBRA, no se cuenta"
 
@@ -10822,7 +10822,7 @@ def test_lo_que_cuelga_enumera_LAS_CUATRO_y_dice_de_que_clase_es_cada_una():
 def test_lo_que_cuelga_devuelve_VACIO_cuando_no_cuelga_nada():
     """El caso feliz, y sin él una versión que devolviera siempre algo pasaría
     todos los negativos (corolario 30)."""
-    conexion, _ = _conexion_falsa_con_varios_fetchall(None, [[], [], [], []])
+    conexion, _ = _conexion_falsa_con_varios_fetchall(None, [[], [], [], [], []])
     with patch("app.db.obtener_conexion", return_value=conexion):
         assert db.lo_que_cuelga_de_la_compra(77) == []
 
