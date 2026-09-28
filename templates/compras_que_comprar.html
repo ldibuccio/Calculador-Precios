@@ -50,6 +50,14 @@
   .salgo-ayuda { font-size: 0.85rem; color: #555; margin: 0 0 0.75rem; }
   .salida { font-size: 0.95rem; }
   .viejas { margin: 0.4rem 0 0; padding-left: 1.1rem; font-size: 0.9rem; overflow-wrap: anywhere; }
+  /* ARRIBA Y A LA VISTA (dueño, 28/09): se tilda arriba, y tener que bajar
+     hasta el pie para ver el listado recalculado es lo que faltaba. Dos
+     botones que se envuelven en vez de desbordar a 390px. */
+  .arriba { display: flex; flex-wrap: wrap; gap: 0.5rem; margin-bottom: 0.75rem; }
+  .arriba button { flex: 1 1 9rem; min-height: 52px; font-size: 1.05rem; font-weight: 800;
+                   border-radius: 10px; }
+  .actualizar { color: #fff; background: #16a34a; border: 0; }
+  .pdf { color: #2563eb; background: #fff; border: 2px solid #2563eb; }
   .cerrar { min-height: 44px; width: 100%; font-size: 0.95rem; font-weight: 700; color: #444;
             background: #fff; border: 2px solid #ccc; border-radius: 8px; }
 </style>
@@ -62,6 +70,13 @@
   {% if aviso %}<div class="tarjeta"><p class="hueco">{{ aviso }}</p></div>{% endif %}
 
   <form method="post" action="/compras/que-comprar">
+  {# TILDAR NO RECALCULA SOLO: el listado sale de lo GUARDADO. "Actualizar"
+     es el mismo guardado que el botón de abajo, puesto donde se tilda.
+     "PDF" guarda primero, así sale lo tildado en este momento. #}
+  <div class="arriba">
+    <button class="actualizar" type="submit" name="accion" value="guardar">Actualizar</button>
+    <button class="pdf" type="submit" name="accion" value="pdf">Sacar PDF</button>
+  </div>
   <div class="tarjeta">
     <div class="art">Qué clientes y qué fechas</div>
     {# SE ELIGE POR CLIENTE Y, DE CADA UNO, SUS FECHAS (dueño, 22/09): "puedo

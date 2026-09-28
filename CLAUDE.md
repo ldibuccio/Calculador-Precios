@@ -10603,6 +10603,14 @@ este archivo guarda.
    el listado propone de menos. Dónde iría el filtro: en
    `compras_alrededor_de_la_salida`, por ficha, igual que en la foto.
 
+8. **Tildar no recalcula solo (28/09)**: el listado sale de lo GUARDADO.
+   "Actualizar" es el mismo guardado que el Guardar del pie, puesto arriba
+   de los tildes, y "Sacar PDF" guarda primero y redirige a
+   `/compras/que-comprar/pdf`, así sale lo tildado en ese momento. El PDF usa
+   las mismas filas, y cómo se dice cada celda está escrito dos veces
+   (`textos_de_la_fila` y la plantilla). Lo que las mantiene iguales es un
+   test que las compara celda por celda.
+
 ### El `?error=` que se escribe y nadie lee es un error mudo
 
 Del 23/09. El POST de Qué comprar hoy redirigía a `?error=guardar` y a

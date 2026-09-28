@@ -470,6 +470,7 @@ from core.stock import reparto_a_la_fecha, repartir_fifo, salidas_para_reparto
 from core.exportar_rentabilidad import generar_excel_rentabilidad, generar_pdf_rentabilidad
 from core.exportar_rentabilidad_real import generar_excel_rentabilidad_real, generar_pdf_rentabilidad_real
 from core.exportar_pedidos import generar_excel_pedidos, generar_pdf_pedidos
+from core.exportar_que_comprar import generar_pdf_que_comprar
 from core.precios_venta import calcular_cambios_de_precios
 from core.lector_archivos import comprimir_pdf, imagenes_desde_pdf, texto_desde_excel
 from core.lector_comandas import (
@@ -4373,6 +4374,43 @@ def ver_que_comprar(request: Request):
     )
 
 
+@app.get("/compras/que-comprar/pdf")
+def exportar_que_comprar_pdf(request: Request):
+    """El listado abierto en PDF, con las MISMAS filas que la pantalla.
+
+    LEE EL BORRADOR, y por eso el botón de la pantalla GUARDA PRIMERO (acción
+    "pdf" del POST) y recién después redirige acá: así sale lo tildado en ese
+    momento aunque no se haya apretado Actualizar. Un link directo imprimiría
+    lo último guardado, que no es lo que el que aprieta tiene adelante.
+
+    `inline` y no `attachment`: en el celular se abre para leer o imprimir, en
+    vez de quedar en Descargas.
+    """
+    contexto = _contexto_de_que_comprar(request)
+    hoy = datetime.now(ARGENTINA).date()
+    if contexto["salio_el"]:
+        stock = f"stock al salir, {contexto['salio_el'].strftime('%d/%m %H:%M')}"
+    else:
+        stock = "stock de ahora: todavía no saliste a comprar"
+    cargas = [
+        f"{bloque['cliente_nombre']} {c['fecha'].strftime('%d/%m')} "
+        + ("(a mano)" if c["modo"] == "manual"
+           else f"(del promedio, {_formatear_sin_decimales(c['margen_porcentaje'])}% más)")
+        for bloque in contexto["clientes"]
+        for c in bloque["cargas"]
+        if c["id"] in contexto["elegidas"]
+    ]
+    return Response(
+        content=generar_pdf_que_comprar(
+            f"{hoy.strftime('%d/%m/%Y')} · {stock}", cargas, contexto["filas"],
+            _formatear_numero, _formatear_sin_decimales,
+            viejas=contexto["viejas"], aviso=contexto["aviso"],
+        ),
+        media_type="application/pdf",
+        headers={"Content-Disposition": f'inline; filename="Que_comprar_{hoy.isoformat()}.pdf"'},
+    )
+
+
 ERRORES_DE_QUE_COMPRAR = {
     "guardar": "No se pudo guardar el listado. Probá de nuevo.",
     "cerrar": "No se pudo cerrar el listado. Probá de nuevo.",
@@ -4436,6 +4474,10 @@ async def guardar_que_comprar(request: Request):
         except Exception:
             logger.exception("No se pudo sacar la foto del stock al salir a comprar")
             return RedirectResponse("/compras/que-comprar?error=salgo", status_code=303)
+    # EL PDF SALE DE LO RECIÉN GUARDADO: lo tildado en ese momento, aunque no
+    # se haya apretado Actualizar.
+    if accion == "pdf":
+        return RedirectResponse("/compras/que-comprar/pdf", status_code=303)
     return RedirectResponse("/compras/que-comprar", status_code=303)
 
 
