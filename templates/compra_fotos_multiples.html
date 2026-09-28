@@ -241,7 +241,7 @@
   </div>
 
   <div id="contenedor-revision" style="display: none;">
-    <form id="form-revision-multiple">
+    <form id="form-revision-multiple" data-unidad-al-lado>
       <div id="contenido-fragmento"></div>
 
       <button type="button" id="boton-guardar-siguiente" class="boton-exito">Guardar y siguiente</button>
@@ -384,9 +384,10 @@
       // La etiqueta del contenido dice la unidad real del artículo nuevo
       // ("Kilos/Unidades/Cubetas por cajón"), no "Contenido" a secas.
       const etiqueta = document.getElementById("item_" + indice + "_label_contenido");
-      const etiquetasContenido = { kilo: "Kilos por cajón *", unidad: "Unidades por cajón *", cubeta: "Cubetas por cajón *" };
+      // La tabla de títulos vive UNA vez, en `window.Magnitudes`
+      // (_unidad_al_lado.html). El nulo es kilo, igual que en el server.
       if (etiqueta) {
-        etiqueta.textContent = etiquetasContenido[opcion.dataset.unidadCompra] || "Contenido por cajón *";
+        etiqueta.textContent = window.Magnitudes.etiqueta(window.Magnitudes.unidadDeCompra(opcion)) + " *";
       }
       // La segunda magnitud del renglón: la que el contenido por cajón NO
       // trae. Escondida es CSS y el `required` viaja con ella — escondido y
@@ -395,11 +396,10 @@
       const campoSegunda = document.getElementById("item_" + indice + "_segunda_por_cajon");
       const etiquetaSegunda = document.getElementById("item_" + indice + "_label_segunda");
       if (bloqueSegunda && campoSegunda) {
-        const unidadCompra = opcion.dataset.unidadCompra;
-        const segunda = !unidadCompra ? "" : (unidadCompra !== "kilo" ? "kilo" : (opcion.dataset.unidadConteo || ""));
+        const segunda = window.Magnitudes.segunda(opcion);
         bloqueSegunda.classList.toggle("oculto", !segunda);
         campoSegunda.required = Boolean(segunda);
-        if (etiquetaSegunda) etiquetaSegunda.textContent = segunda ? etiquetasContenido[segunda] : "";
+        if (etiquetaSegunda) etiquetaSegunda.textContent = segunda ? window.Magnitudes.etiqueta(segunda) + " *" : "";
         if (!segunda) campoSegunda.value = "";
       }
       // EL ELSE ES OBLIGATORIO, no una prolijidad: sin él, cambiar a un

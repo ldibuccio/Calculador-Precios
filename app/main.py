@@ -416,6 +416,7 @@ from core.conceptos_cliente import calcular_cambio_de_utilidad, calcular_cambios
 from core.que_comprar import (
     MARGEN_SUGERIDO,
     PEDIDOS_DEL_PROMEDIO,
+    bultos_para_mostrar,
     cajones_que_faltan,
     con_margen,
     dias_validos,
@@ -426,7 +427,11 @@ from core.que_comprar import (
     promedio_de_un_dia,
 )
 from core.magnitudes import (
+    ETIQUETAS_POR_CAJON,
+    SUFIJOS_AL_LADO,
+    etiqueta_por_cajon,
     repartir_magnitudes,
+    unidad_de_compra,
 )
 from core.exportar_compras import generar_excel_listado_compras, generar_pdf_listado_compras
 from core.exportar_disponibles import generar_excel_disponibles
@@ -2003,6 +2008,16 @@ def segunda_magnitud_del_articulo(articulo: dict) -> str | None:
     return articulo.get("unidad_conteo")
 
 
+# LOS TÍTULOS DE KILOS Y UNIDADES, UNA SOLA VEZ para las plantillas y el JS
+# (28/09): la compra 827 se cargó cruzada con un campo que decía "Contenido
+# por cajón" al lado de uno que decía "Kilos por cajón".
+templates.env.globals["etiqueta_por_cajon"] = etiqueta_por_cajon
+templates.env.globals["unidad_de_compra"] = unidad_de_compra
+templates.env.globals["segunda_magnitud_del_articulo"] = segunda_magnitud_del_articulo
+templates.env.globals["ETIQUETAS_POR_CAJON"] = ETIQUETAS_POR_CAJON
+templates.env.globals["SUFIJOS_AL_LADO"] = SUFIJOS_AL_LADO
+
+
 def _validar_segunda_magnitud(texto: str, segunda: str | None) -> tuple[str | None, float | None]:
     """Valida el contenido por cajón de la SEGUNDA magnitud. Obligatorio cuando la hay.
 
@@ -3314,12 +3329,13 @@ def _filas_de_que_comprar(
                 # vuelta al primer tecleo.
                 "a_comprar_magnitud": a_comprar_magnitud,
                 # EN BULTOS DEL MERCADO, para leer la fila de izquierda a
-                # derecha: "piden 500 kg, de a 20, son 25 bultos". Con un
-                # decimal y SIN redondear para arriba: son lo que piden y lo
-                # que hay, no lo que se compra. El techo va solo en "A comprar"
-                # y "Falta", que es donde no se puede comprar medio cajón.
-                "pide_bultos": _en_bultos(pide, kilaje),
-                "stock_bultos": _en_bultos(del_piso.get("magnitud"), kilaje),
+                # derecha: "piden 500 kg, de a 20, son 25 bultos". Al ENTERO
+                # MÁS CERCANO (dueño, 28/09: "se compra y se cuenta en bultos
+                # enteros"), y no para arriba: son lo que piden y lo que hay,
+                # no lo que se compra. El techo va solo en "A comprar" y
+                # "Falta", que es donde no se puede comprar medio cajón.
+                "pide_bultos": bultos_para_mostrar(pide, kilaje),
+                "stock_bultos": bultos_para_mostrar(del_piso.get("magnitud"), kilaje),
                 "palabra": PALABRA_DE_LA_UNIDAD.get(unidad, ""),
             }
         )
@@ -3337,13 +3353,6 @@ def _sumar_o_nada(*valores):
     if any(v is None for v in valores):
         return None
     return sum(float(v) for v in valores)
-
-
-def _en_bultos(magnitud, kilaje):
-    """Una magnitud pasada a bultos del Mercado, con un decimal. None si falta algo."""
-    if magnitud is None or not kilaje:
-        return None
-    return round(float(magnitud) / float(kilaje), 1)
 
 
 def _piso_en_magnitud(articulo_ids: list[int], fichas_tildadas: list[dict], al_cierre_de):
@@ -8451,6 +8460,7 @@ def corregir_recepcion_compra_ruta(
     cantidad_cajones_rechazada: str = Form(""),
     motivo_rechazo: str = Form(""),
     confirmado: str = Form(""),
+    segunda_real: str = Form(""),
 ):
     puerta = _puerta_de_gerencia_para_escribir(request)
     if puerta is not None:
@@ -8459,6 +8469,11 @@ def corregir_recepcion_compra_ruta(
     error, cajones_valor = _validar_cantidad_cajones_real(cantidad_cajones_real)
     if not error:
         error, valor_real = _validar_valor_real_recepcion(cantidad_total_real)
+    # La segunda magnitud, con la MISMA validación que Recepción. Si la compra
+    # declaró las dos y no viene, la escritura lo rechaza y lo dice.
+    segunda_valor = None
+    if not error:
+        error, segunda_valor = _validar_segunda_real_recepcion(segunda_real)
 
     # El rechazo parcial es opcional acá: vacío = sin rechazo (y borra uno
     # mal cargado). Los cajones reales de arriba ya son los ACEPTADOS, así
@@ -8503,6 +8518,7 @@ def corregir_recepcion_compra_ruta(
                     "cantidad_total_real": cantidad_total_real,
                     "cantidad_cajones_rechazada": cantidad_cajones_rechazada,
                     "motivo_rechazo": motivo_rechazo,
+                    "segunda_real": segunda_real,
                 },
                 status_code=400,
             )
@@ -8514,6 +8530,7 @@ def corregir_recepcion_compra_ruta(
             valor_real,
             cantidad_cajones_rechazada=cajones_rechazados,
             motivo_rechazo=(motivo_rechazo.strip() or None) if cajones_rechazados is not None else None,
+            segunda_real=segunda_valor,
         )
     except ValueError as error_bloqueo:
         return _renderizar_pantalla_corregir_recepcion(

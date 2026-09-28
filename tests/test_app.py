@@ -5446,7 +5446,7 @@ def test_corregir_recepcion_compra_ruta_guarda_y_redirige():
 
     assert respuesta.status_code == 303
     assert respuesta.headers["location"] == "/compras/30/detalle?aviso=Se+corrigi%C3%B3+la+recepci%C3%B3n+de+esta+compra."
-    mock_corregir.assert_called_once_with(30, 30.0, 2400.0, cantidad_cajones_rechazada=None, motivo_rechazo=None)
+    mock_corregir.assert_called_once_with(30, 30.0, 2400.0, cantidad_cajones_rechazada=None, motivo_rechazo=None, segunda_real=None)
 
 
 def test_ver_corregir_recepcion_muestra_los_campos_de_rechazo_parcial_precargados():
@@ -5482,7 +5482,7 @@ def test_corregir_recepcion_compra_ruta_corrige_el_rechazo_parcial():
         )
 
     assert respuesta.status_code == 303
-    mock_corregir.assert_called_once_with(30, 7.0, 18.0, cantidad_cajones_rechazada=3.0, motivo_rechazo="golpeado")
+    mock_corregir.assert_called_once_with(30, 7.0, 18.0, cantidad_cajones_rechazada=3.0, motivo_rechazo="golpeado", segunda_real=None)
 
 
 def test_corregir_recepcion_compra_ruta_con_rechazo_invalido_da_400():

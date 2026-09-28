@@ -34,9 +34,40 @@ def repartir_magnitudes(
     magnitud". Es el estado de todas las compras anteriores a este modelo, y
     no se puede deducir — quien costea las deja afuera y las cuenta.
     """
-    if unidad_compra == "kilo":
+    # EL NULO ES KILO (28/09), igual que en `segunda_magnitud_del_articulo`
+    # y en el CHECK del esquema. Con `== "kilo"` a secas, un artículo sin la
+    # unidad declarada caía en la otra rama y la recepción guardaba los
+    # kilos en la columna del conteo: la misma inversión que la compra 827,
+    # hecha por el sistema. La carga ya lo normalizaba; la recepción no.
+    if (unidad_compra or "kilo") == "kilo":
         return principal, segunda
     return segunda, principal
+
+
+# CÓMO SE LLAMA CADA MAGNITUD EN EL TÍTULO DE UN CAMPO (28/09). Escrito una
+# vez: lo usan las plantillas (global `etiqueta_por_cajon`) y el JS de las
+# pantallas de carga (`window.Magnitudes`, en _unidad_al_lado.html). Hasta
+# hoy la tabla estaba escrita en ocho lugares y tres decían "Contenido por
+# cajón" sin unidad: así se cargó la compra 827 con los datos cruzados.
+ETIQUETAS_POR_CAJON = {"kilo": "Kilos por cajón", "unidad": "Unidades por cajón",
+                       "cubeta": "Cubetas por cajón"}
+# Lo que va AL LADO del número mientras se escribe.
+SUFIJOS_AL_LADO = {"kilo": "kg", "unidad": "u", "cubeta": "cub."}
+
+
+def unidad_de_compra(articulo) -> str | None:
+    """En qué magnitud se escribe el contenido por cajón de este artículo. None sin artículo.
+
+    El nulo es kilo: un artículo nuevo nace así desde el 15/09.
+    """
+    if not articulo:
+        return None
+    return articulo.get("unidad_compra") or "kilo"
+
+
+def etiqueta_por_cajon(unidad: str | None) -> str:
+    """El título del campo. Sin unidad (todavía no se eligió artículo) no inventa una."""
+    return ETIQUETAS_POR_CAJON.get(unidad or "", "Contenido por cajón")
 
 
 

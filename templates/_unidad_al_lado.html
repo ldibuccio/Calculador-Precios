@@ -1,0 +1,92 @@
+{# LA UNIDAD AL LADO DEL NÚMERO, y los títulos de kilos y unidades (28/09).
+
+   La compra 827 (palta) se cargó con 18 "por cajón" y 80 kilos por cajón,
+   cuando eran 80 unidades y 18 kilos: el primer campo decía "Contenido por
+   cajón" y no decía de qué.
+
+   DOS COSAS, las dos escritas UNA vez para todas las pantallas:
+
+   1. `window.Magnitudes`: qué título lleva cada campo y cuál es la segunda
+      magnitud de un artículo. La tabla viene de core/magnitudes.py, así que
+      el JS y el server no pueden decir cosas distintas. El nulo es kilo.
+   2. El SUFIJO: a todo <input type=number> cuyo <label> empieza con Kilos,
+      Unidades o Cubetas, adentro de un formulario marcado con
+      `data-unidad-al-lado`, se le pone al lado "kg", "u" o "cub.". Sale del
+      TÍTULO y no de un dato propio: el sufijo no puede contradecir al título
+      que está arriba, porque lo lee de ahí.
+
+   El listener va en `document` y se recalcula en change, input y focusin,
+   así anda también en los renglones que llegan por innerHTML (corolario 83):
+   un <script> adentro de un fragmento no corre. #}
+<style>
+  .con-unidad { display: flex; align-items: center; gap: 0.45rem; }
+  .con-unidad > input { flex: 1 1 auto; min-width: 0; }
+  .unidad-al-lado { flex: 0 0 auto; min-width: 2.2em; font-weight: 700; color: #444; }
+</style>
+<script>
+window.Magnitudes = {
+  etiquetas: {{ ETIQUETAS_POR_CAJON | tojson }},
+  sufijos: {{ SUFIJOS_AL_LADO | tojson }},
+  // La unidad del contenido por cajón del artículo de la opción, o "" si no
+  // hay artículo elegido (la opción "Elegí..." tiene value vacío).
+  unidadDeCompra: function (opcion) {
+    if (!opcion || !opcion.value) return "";
+    return opcion.dataset.unidadCompra || "kilo";
+  },
+  // La que el contenido por cajón NO trae: los kilos si se compra contado,
+  // el conteo si se compra por kilo y además cuenta, o "" si lleva una sola.
+  segunda: function (opcion) {
+    var unidad = this.unidadDeCompra(opcion);
+    if (!unidad) return "";
+    return unidad !== "kilo" ? "kilo" : (opcion.dataset.unidadConteo || "");
+  },
+  etiqueta: function (unidad) {
+    return this.etiquetas[unidad] || "Contenido por cajón";
+  }
+};
+
+(function () {
+  var PALABRA = { Kilos: "kilo", Unidades: "unidad", Cubetas: "cubeta" };
+  function unidadDelTitulo(label) {
+    var m = /^\s*(Kilos|Unidades|Cubetas)\b/.exec(label.textContent || "");
+    return m ? PALABRA[m[1]] : "";
+  }
+  function ponerUnidades() {
+    var labels = document.querySelectorAll("label[for]");
+    for (var i = 0; i < labels.length; i++) {
+      var campo = document.getElementById(labels[i].htmlFor);
+      if (!campo || campo.tagName !== "INPUT" || campo.type !== "number") continue;
+      // SOLO EN LOS FORMULARIOS QUE LO PIDEN: las pantallas de carga y de
+      // recepción. Armar Pedido ya dibuja su propia unidad al lado, y un
+      // segundo sufijo la desbordaba 36px (medido).
+      if (!campo.closest("[data-unidad-al-lado]")) continue;
+      var caja = campo.parentNode;
+      var sufijo;
+      if (caja.classList && caja.classList.contains("con-unidad")) {
+        sufijo = caja.querySelector(".unidad-al-lado");
+      } else {
+        var unidad = unidadDelTitulo(labels[i]);
+        // Solo se arma la caja la primera vez que el título dice una unidad:
+        // un campo que nunca la dice queda como estaba.
+        if (!unidad) continue;
+        caja = document.createElement("span");
+        caja.className = "con-unidad";
+        campo.parentNode.insertBefore(caja, campo);
+        caja.appendChild(campo);
+        sufijo = document.createElement("span");
+        sufijo.className = "unidad-al-lado";
+        caja.appendChild(sufijo);
+      }
+      sufijo.textContent = window.Magnitudes.sufijos[unidadDelTitulo(labels[i])] || "";
+    }
+  }
+  ["change", "input", "focusin"].forEach(function (evento) {
+    document.addEventListener(evento, ponerUnidades);
+  });
+  if (document.readyState === "loading") {
+    document.addEventListener("DOMContentLoaded", ponerUnidades);
+  } else {
+    ponerUnidades();
+  }
+})();
+</script>

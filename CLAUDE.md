@@ -598,6 +598,40 @@ Quedan dos guardas, y cada una contesta una mitad distinta:
   **se vuelve a correr cada vez que se toca una tabla que una base puede no
   tener**.
 
+## Los títulos de kilos y unidades se escriben UNA vez (28/09)
+
+La compra 827 (palta) se cargó en Ingreso por depósito con 18 "por cajón" y
+80 kilos, cuando eran 80 unidades y 18 kilos. Ahí el primer campo decía
+"Contenido por cajón", y el segundo quedaba SIN título: su JS usaba
+`ETIQUETAS_CONTENIDO`, que esa pantalla nunca definió, y con palta tiraba un
+error. La tabla de títulos estaba copiada en ocho lugares y esa página no
+tenía su copia.
+
+Ahora la tabla vive en `core/magnitudes.py` (`ETIQUETAS_POR_CAJON`). Las
+plantillas la leen con los globales `etiqueta_por_cajon` y
+`unidad_de_compra`, y el JS con `window.Magnitudes`
+(`templates/_unidad_al_lado.html`, que se incluye desde la barra). El mismo
+parcial pone al lado de cada campo numérico la unidad que dice su título
+("kg", "u", "cub."). La lee del título, así que no puede contradecirlo.
+
+**El nulo es kilo en los tres lados**: el server, el JS y el reparto de
+magnitudes. `repartir_magnitudes` comparaba `== "kilo"`, así que la
+recepción de un artículo sin la unidad declarada guardaba los kilos en la
+columna del conteo.
+
+**Y Corregir recepción no podía corregir una compra con las dos
+magnitudes**: mandaba una sola, y la escritura exige las dos. Por eso la 827
+hubo que borrarla en vez de darla vuelta. Desde el 28/09 tiene el segundo
+campo, con la misma validación que Recepción.
+
+El sufijo va solo en los formularios marcados con `data-unidad-al-lado`
+(las pantallas de carga y de recepción). Armar Pedido ya dibuja su unidad, y
+un segundo sufijo la desbordaba 36px.
+
+Lo cuida `tests/test_titulos_de_magnitudes.py`: en el navegador, cada campo
+de las tres pantallas dice su unidad y no hay errores de JS. Otro test falla
+si alguna plantilla vuelve a tener su propia copia de la tabla.
+
 ## Una regla de negocio no puede estar escrita dos veces
 
 Si la misma regla vive en el código y en la base, son **dos** reglas: se
@@ -10658,6 +10692,12 @@ este archivo guarda.
    el listado se completa a mano en el Mercado, y un espacio se llena con la
    lapicera y un cero impreso no. Lo hace `para_el_papel`, DESPUÉS de
    `textos_de_la_fila`, así la comparación con la pantalla no se toca.
+
+9. **Los bultos que se muestran van enteros (28/09)**: "Piden bultos" y el
+   stock en bultos se redondean al entero más cercano, con medio para
+   arriba (`bultos_para_mostrar`: 11,4 da 11 y 36,5 da 37). El navegador
+   usa `Math.round`, que redondea igual. La cuenta sigue en kilos, y "A
+   comprar" y "Falta" siguen para arriba (decisión del 21/09).
 
 ### El `?error=` que se escribe y nadie lee es un error mudo
 

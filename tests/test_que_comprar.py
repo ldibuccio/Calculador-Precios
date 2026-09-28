@@ -474,7 +474,7 @@ def _fila(articulo_id, nombre):
             "de_quien": [("Dia 26/09", 240.0)], "ya_tengo": 40.0, "en_piso": 40.0,
             "sueltos": 2, "cajas": 0, "comprado_cajones": 0.0, "comprado": 0.0,
             "kilaje": 18.0, "falta": 200.0, "cajones": 12,
-            "a_comprar": 12, "pide_bultos": 13.3, "stock_bultos": 2.2, "palabra": "kg",
+            "a_comprar": 12, "pide_bultos": 13, "stock_bultos": 2, "palabra": "kg",
             "de_partida": 40.0, "en_camino": 0.0, "en_camino_cajones": 0.0,
             "a_comprar_magnitud": 200.0}
 
@@ -856,3 +856,55 @@ def test_mover_el_POR_BULTO_resta_LO_EN_CAMINO_en_A_COMPRAR():
     assert leido["a_comprar"] == "6 cj"
     assert leido["falta"] == "6 cj"
     assert leido["ancho"] <= 0, "la tarjeta arrastra la pantalla de costado"
+
+
+# --- BULTOS ENTEROS (dueño, 28/09) ------------------------------------------
+
+
+@pytest.mark.parametrize("magnitud, kilaje, bultos", [
+    (205.0, 18.0, 11),     # 11,39: el caso del dueño
+    (73.0, 2.0, 37),       # 36,5: MEDIO SUBE. El rival, `round` de Python, da 36
+    (75.0, 2.0, 38),       # 37,5: y `round` da 38 acá, así que un solo .5 no alcanza
+    (205.0, 16.0, 13),     # 12,81
+    (-5.0, 2.0, -2),       # -2,5: stock negativo, igual que Math.round
+    (0.0, 18.0, 0),
+])
+def test_los_bultos_que_se_MUESTRAN_van_al_ENTERO_MAS_CERCANO(magnitud, kilaje, bultos):
+    from core.que_comprar import bultos_para_mostrar
+    assert bultos_para_mostrar(magnitud, kilaje) == bultos
+    assert isinstance(bultos_para_mostrar(magnitud, kilaje), int)
+
+
+@pytest.mark.parametrize("kilaje", [None, 0, 0.0, -3])
+def test_sin_POR_BULTO_no_hay_bultos_que_mostrar(kilaje):
+    from core.que_comprar import bultos_para_mostrar
+    assert bultos_para_mostrar(205.0, kilaje) is None
+
+
+def test_la_FILA_trae_los_bultos_ENTEROS_y_A_COMPRAR_sigue_PARA_ARRIBA():
+    """205 kg de a 18: piden 11 bultos (11,4 al más cercano) y a comprar son
+    12 (para arriba, decisión del 21/09: quedarse corto es peor). Las dos
+    reglas en la misma fila, a propósito."""
+    filas = _filas_de_que_comprar(
+        [_aporte("Dia", a1=205.0)], ARTICULOS, UNIDADES,
+        piso={1: {"magnitud": 73.0, "sueltos": 2, "cajas": 0}},
+        comprado={}, kilajes={1: 18.0})
+    fila = filas[0]
+    assert fila["pide_bultos"] == 11
+    assert fila["stock_bultos"] == 4          # 73/18 = 4,06
+    assert fila["a_comprar"] == 8             # (205-73)/18 = 7,3 -> para arriba
+    assert fila["pide"] == 205.0              # la cuenta sigue en la magnitud
+
+
+def test_el_NAVEGADOR_redondea_IGUAL_que_el_server_en_el_medio():
+    """El JS recalcula la columna al mover el kilaje. Con 73 de a 2 son 36,5:
+    el server dice 37, y el navegador tiene que decir 37 al tipear el mismo
+    kilaje, o el número cambia sin que cambie ningún dato."""
+    fila = dict(_fila(3, "TOMATE"), pide=73.0, en_piso=205.0, kilaje=2.0,
+                pide_bultos=37, stock_bultos=103)
+    leido = _recalcular_en_el_navegador(_render(_contexto([fila])), 2)
+    assert leido["bultos"] == "37"
+    assert leido["stock"] == "103 blt"        # 102,5 -> 103
+    leido = _recalcular_en_el_navegador(_render(_contexto([fila])), 18)
+    assert leido["bultos"] == "4"             # 4,06
+    assert leido["stock"] == "11 blt"         # 11,39

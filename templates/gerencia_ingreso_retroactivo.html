@@ -60,7 +60,7 @@
       Si la mercadería está entrando ahora, esto no va: usá
       <strong>Depósito → Ingresar</strong>.</p>
 
-    <form method="post" action="/gerencia/compras/ingreso-retroactivo">
+    <form method="post" action="/gerencia/compras/ingreso-retroactivo" data-unidad-al-lado>
       <label for="proveedor">Proveedor</label>
       <select id="proveedor" name="proveedor_id" required>
         <option value="" {% if not precarga.proveedor_id %}selected{% endif %} disabled>Elegí el proveedor...</option>
@@ -73,7 +73,9 @@
       <select id="articulo" name="articulo_id" required>
         <option value="" {% if not precarga.articulo_id %}selected{% endif %} disabled>Elegí el artículo...</option>
         {% for a in articulos %}
-        <option value="{{ a.id }}" {% if precarga.articulo_id == a.id|string %}selected{% endif %}>{{ a.nombre }}</option>
+        <option value="{{ a.id }}" data-unidad-compra="{{ a.unidad_compra or '' }}"
+                data-unidad-conteo="{{ a.unidad_conteo or '' }}"
+                {% if precarga.articulo_id == a.id|string %}selected{% endif %}>{{ a.nombre }}</option>
         {% endfor %}
       </select>
 
@@ -99,7 +101,13 @@
       <input type="number" id="cajones" name="cantidad_cajones" min="0" step="0.01" required
              value="{{ precarga.cantidad_cajones or '' }}">
 
-      <label for="contenido">Kilos/unidades por bulto</label>
+      {# LOS DOS TÍTULOS DICEN LA UNIDAD (28/09): decían "Kilos/unidades por
+         bulto" y "La otra magnitud", que es exactamente la confusión con la que
+         se cargó la palta 827. Arrancan con el artículo precargado y cambian
+         al elegir otro. #}
+      {% set articulo_elegido = (articulos | selectattr("id", "equalto", precarga.articulo_id|int) | list | first) if precarga.articulo_id else none %}
+      {% set segunda_magnitud = segunda_magnitud_del_articulo(articulo_elegido) if articulo_elegido else none %}
+      <label for="contenido" id="label-contenido">{{ etiqueta_por_cajon(unidad_de_compra(articulo_elegido)) }}</label>
       <input type="number" id="contenido" name="contenido_por_cajon" min="0" step="0.01" required
              value="{{ precarga.contenido_por_cajon or '' }}">
 
@@ -107,7 +115,7 @@
          campo según el artículo —es una carga de Gerencia, a mano y de a
          una— así que se pide SIEMPRE y el server decide: si el artículo se
          compra solo por kilo, lo que venga acá se ignora. #}
-      <label for="segunda">La otra magnitud, por bulto (si el artículo lleva las dos)</label>
+      <label for="segunda" id="label-segunda">{{ etiqueta_por_cajon(segunda_magnitud) if segunda_magnitud else "La otra magnitud (este artículo no la lleva)" }}</label>
       <input type="number" id="segunda" name="segunda_por_cajon" min="0" step="0.01"
              value="{{ precarga.segunda_por_cajon or '' }}">
       <p class="ayuda-campo">Los kilos si el artículo se compra contado, o las unidades/cubetas
@@ -127,5 +135,18 @@
   <a class="volver" href="/gerencia">Volver a Gerencia</a>
 {% include "_confirmar_vino_armada.html" %}
 {% include "_pie_version.html" %}
+<script>
+  // El título de los dos campos sigue al artículo elegido, con la misma tabla
+  // que todas las pantallas de carga (`window.Magnitudes`).
+  document.getElementById("articulo").addEventListener("change", function () {
+    var opcion = this.selectedOptions[0];
+    var segunda = window.Magnitudes.segunda(opcion);
+    document.getElementById("label-contenido").textContent =
+      window.Magnitudes.etiqueta(window.Magnitudes.unidadDeCompra(opcion));
+    document.getElementById("label-segunda").textContent = segunda
+      ? window.Magnitudes.etiqueta(segunda)
+      : "La otra magnitud (este artículo no la lleva)";
+  });
+</script>
 </body>
 </html>

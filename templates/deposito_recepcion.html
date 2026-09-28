@@ -414,7 +414,7 @@
           Al recibirla se carga sola la guía R.</p>
         {% endif %}
 
-        <form method="post" action="/deposito/recepcion/{{ c.id }}/recepcionar" class="campo-real" id="form-recepcionar-{{ c.id }}">
+        <form method="post" action="/deposito/recepcion/{{ c.id }}/recepcionar" class="campo-real" id="form-recepcionar-{{ c.id }}" data-unidad-al-lado>
           <label for="cajones-real-{{ c.id }}">Cajones reales</label>
           <input type="number" id="cajones-real-{{ c.id }}" name="cantidad_cajones_real" min="0" step="0.01" inputmode="decimal"
                  value="{{ c.cantidad_cajones }}">
@@ -559,7 +559,7 @@
 
         <div class="confirmacion" id="confirmacion-rechazo-parcial-{{ c.id }}">
           <p class="texto-confirmacion">Rechazo parcial de {{ c.articulo_nombre }}: los bultos rechazados se devuelven al proveedor, y se recibe el resto. No se puede deshacer.</p>
-          <form method="post" action="/deposito/recepcion/{{ c.id }}/rechazo-parcial" class="campo-real">
+          <form method="post" action="/deposito/recepcion/{{ c.id }}/rechazo-parcial" class="campo-real" data-unidad-al-lado>
             <label for="llegados-{{ c.id }}">Bultos llegados</label>
             <input type="number" id="llegados-{{ c.id }}" name="cantidad_cajones_llegados" min="0" step="0.01" inputmode="decimal"
                    value="{{ c.cantidad_cajones }}" oninput="actualizarAceptados('{{ c.id }}')">

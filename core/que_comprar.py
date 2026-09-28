@@ -155,6 +155,27 @@ def falta_por_comprar(pide, en_piso, comprado_hoy):
     return max(float(pide) - float(en_piso) - float(comprado_hoy), 0.0)
 
 
+def bultos_para_mostrar(magnitud, kilaje_del_cajon):
+    """Una magnitud pasada a bultos del Mercado, AL ENTERO MÁS CERCANO (dueño, 28/09).
+
+    "Se compra y se cuenta en bultos enteros": 205 kg de a 18 son 11,4 y se
+    muestran 11; 36,5 se muestra 37. Es SOLO lo que se ve —"Piden bultos" y
+    el stock—: la cuenta sigue en la magnitud, y ningún número de acá vuelve
+    a entrar en otra cuenta, así que los redondeos no se suman.
+
+    MEDIO SUBE, y no el `round` de Python: ése redondea 36,5 a 36 (al par).
+    `floor(x + 0,5)` es lo mismo que hace `Math.round` en el navegador, que
+    recalcula esta columna al mover el kilaje: escritos con dos reglas, el
+    número cambiaría al primer tecleo sin que cambie ningún dato.
+
+    "A comprar" y "Falta" NO pasan por acá: van PARA ARRIBA
+    (`cajones_que_faltan`), porque quedarse corto es peor que sobrar.
+    """
+    if magnitud is None or not kilaje_del_cajon or float(kilaje_del_cajon) <= 0:
+        return None
+    return math.floor(float(magnitud) / float(kilaje_del_cajon) + 0.5)
+
+
 def cajones_que_faltan(falta, kilaje_del_cajon):
     """La ÚNICA división de toda la cuenta, y va al final.
 
