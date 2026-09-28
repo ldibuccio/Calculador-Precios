@@ -3988,6 +3988,21 @@ arrancó", sus "esperando" y la regla de la fecha— **se fue**.
   **recepciones CON SEÑA suman, devoluciones restan**, y lo que no cierre se
   arregla con un ajuste. El intento de reconstruir el pasado (arrancar el
   18/09) se descartó: dejaba 16 de 35 proveedores negativos.
+- **Y LA FOTO SALIÓ MAL, medido por el dueño el 28/09**: `vacios_foto_1`
+  sumó TODOS los cajones recibidos desde el primer conteo, con seña o sin
+  ella, porque copió la pantalla de ese día, que no filtraba. Frutamax quedó
+  en 798 (9 contados + 279 + 510) y con la regla son 19 (9 + los 10 de
+  pomelo, los únicos con seña). Lo de DESPUÉS de la foto siempre filtró bien:
+  la única consulta de Vacíos que lee compras es `_SQL_PILAS_DE_VACIOS`, con
+  `COALESCE(sena, 0) > 0`. La corrección es
+  `db/vacios_foto_4_corregir_con_sena.sql`, con la revisión (`vacios_foto_3`)
+  antes y la verificación (`vacios_foto_5`) aparte. Lleva una columna de
+  control que rehace la foto vieja: si no da el número actual, la cuenta no
+  es la misma y la migración aborta sin escribir. **La seña vacía y la seña
+  en cero son lo mismo**: el campo es opcional y no hay forma de decir "sin
+  seña" distinto de "todavía no la cargué". Una seña que se cargue tarde en
+  una compra de antes de la foto solo entra si se carga ANTES de correr la
+  corrección.
 - **La foto se compara por INSTANTE (`f.creado_en`), no por día.** Con la
   fecha, lo recibido el 25/09 después de sacar la foto se perdía entero. Lo
   encontró correr la cuenta contra Postgres, no leerla.
