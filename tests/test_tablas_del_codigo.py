@@ -49,7 +49,7 @@ def _nombradas_por_el_codigo():
     import ast
     nombradas = {}
     ctes = set()
-    for carpeta in ("app", "core"):
+    for carpeta in ("app", "core", "scripts"):
         for nombre in os.listdir(os.path.join(RAIZ, carpeta)):
             if not nombre.endswith(".py"):
                 continue

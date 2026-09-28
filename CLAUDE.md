@@ -585,7 +585,9 @@ esquema del repo, en Frutamax y NO en Palmala. Ahí todo borrado de compra
 revienta con "relation does not exist". La suite y el humo corren contra el
 esquema del repo, así que pasaron en verde. Lo destapó la consulta de
 huellas (`db/comparar_esquema.sql`) corrida en las dos bases, no un test.
-Arreglado en v1011: `recepciones` salió del esquema y del borrado.
+Arreglado en v1011: `recepciones` salió del esquema y del borrado. En la
+ventana en que v1010 estuvo desplegada, el dueño destrabó Palmala creando la
+tabla vacía (ver `db/corridas_confirmadas.md`).
 
 Quedan dos guardas, y cada una contesta una mitad distinta:
 
