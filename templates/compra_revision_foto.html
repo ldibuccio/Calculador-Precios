@@ -204,7 +204,7 @@
   <div class="error">{{ error }}</div>
   {% endif %}
 
-  <form method="post" action="/compras/nueva/foto/confirmar" id="form-confirmar-foto">
+  <form method="post" action="/compras/nueva/foto/confirmar" id="form-confirmar-foto" data-unidad-al-lado>
     <input type="hidden" name="cantidad_renglones" value="{{ renglones|length }}">
     <input type="hidden" name="foto_preview" value="{{ foto_preview }}">
     <!-- Token único por comanda: si el guardado se reintenta (corte de
@@ -374,9 +374,10 @@
       // La etiqueta del contenido dice la unidad real del artículo nuevo
       // ("Kilos/Unidades/Cubetas por cajón"), no "Contenido" a secas.
       const etiqueta = document.getElementById("item_" + indice + "_label_contenido");
-      const etiquetasContenido = { kilo: "Kilos por cajón *", unidad: "Unidades por cajón *", cubeta: "Cubetas por cajón *" };
+      // La tabla de títulos vive UNA vez, en `window.Magnitudes`
+      // (_unidad_al_lado.html). El nulo es kilo, igual que en el server.
       if (etiqueta) {
-        etiqueta.textContent = etiquetasContenido[opcion.dataset.unidadCompra] || "Contenido por cajón *";
+        etiqueta.textContent = window.Magnitudes.etiqueta(window.Magnitudes.unidadDeCompra(opcion)) + " *";
       }
       // La segunda magnitud del renglón: la que el contenido por cajón NO
       // trae. Escondida es CSS y el `required` viaja con ella — escondido y
@@ -385,11 +386,10 @@
       const campoSegunda = document.getElementById("item_" + indice + "_segunda_por_cajon");
       const etiquetaSegunda = document.getElementById("item_" + indice + "_label_segunda");
       if (bloqueSegunda && campoSegunda) {
-        const unidadCompra = opcion.dataset.unidadCompra;
-        const segunda = !unidadCompra ? "" : (unidadCompra !== "kilo" ? "kilo" : (opcion.dataset.unidadConteo || ""));
+        const segunda = window.Magnitudes.segunda(opcion);
         bloqueSegunda.classList.toggle("oculto", !segunda);
         campoSegunda.required = Boolean(segunda);
-        if (etiquetaSegunda) etiquetaSegunda.textContent = segunda ? etiquetasContenido[segunda] : "";
+        if (etiquetaSegunda) etiquetaSegunda.textContent = segunda ? window.Magnitudes.etiqueta(segunda) + " *" : "";
         if (!segunda) campoSegunda.value = "";
       }
       // EL ELSE ES OBLIGATORIO, no una prolijidad: sin él, cambiar a un

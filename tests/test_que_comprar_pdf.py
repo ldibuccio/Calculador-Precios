@@ -31,7 +31,7 @@ def _fila(articulo_id, nombre, **cambios):
             "de_quien": [("EJEMPLO Dia 26/09", 240.0)], "ya_tengo": 40.0, "en_piso": 40.0,
             "sueltos": 2, "cajas": 0, "comprado_cajones": 3.0, "comprado": 54.0,
             "kilaje": 18.0, "falta": 146.0, "cajones": 9,
-            "a_comprar": 12, "pide_bultos": 13.3, "stock_bultos": 2.2, "palabra": "kg",
+            "a_comprar": 12, "pide_bultos": 13, "stock_bultos": 2, "palabra": "kg",
             "de_partida": 40.0, "en_camino": 0.0, "en_camino_cajones": 0.0,
             "a_comprar_magnitud": 200.0}
     fila.update(cambios)
@@ -310,7 +310,7 @@ def test_una_fila_SIN_NADA_QUE_DECIR_sale_con_las_celdas_VACIAS():
     fila_vacia = texto[texto.index("EJEMPLO Vacia"):texto.index("EJEMPLO Normal")]
     assert fila_vacia.split() == ["EJEMPLO", "Vacia", "EJEMPLO", "Dia", "26/09", "240", "240", "kg"]
     fila_normal = texto[texto.index("EJEMPLO Normal"):]
-    for dato in ("18 kg", "13.3", "2.2 blt", "40 kg", "12 cj", "3 cj", "9 cj"):
+    for dato in ("18 kg", "13", "2 blt", "40 kg", "12 cj", "3 cj", "9 cj"):
         assert dato in fila_normal, dato
     # "En camino" de la normal es cero: también en blanco.
     assert "0 cj" not in fila_normal
