@@ -23,7 +23,7 @@ from datetime import date, datetime, time, timedelta, timezone
 from urllib.parse import urlencode
 from uuid import uuid4
 
-from fastapi import FastAPI, File, Form, HTTPException, Request, UploadFile
+from fastapi import FastAPI, File, Form, HTTPException, Query, Request, UploadFile
 from fastapi.responses import JSONResponse, RedirectResponse, Response
 from fastapi.templating import Jinja2Templates
 from PIL import Image, ImageOps
@@ -440,6 +440,8 @@ from core.exportar_compras import generar_excel_listado_compras, generar_pdf_lis
 from core.exportar_disponibles import generar_excel_disponibles
 from core.kilajes import pilas_por_formato
 from core.exportar_remanente import generar_excel_remanente
+from core.exportar_remanente_pdf import generar_pdf_remanente
+from core import remanente_por_tipo
 from core.exportar_precios import (
     TEXTO_SIGUE_VIGENTE,
     generar_excel_lista_precios,
@@ -12356,8 +12358,14 @@ def ver_evolucion_de_porcion(request: Request, articulo_id: str | None = None,
     )
 
 
+def _query_del_remanente(fecha: str, tipos: tuple) -> str:
+    """La fecha y el filtro para un link: las exportaciones bajan lo que se está mirando."""
+    return urlencode([("fecha", fecha), *(("tipo", t) for t in tipos)])
+
+
 @app.get("/administracion/stock/remanente")
-def ver_remanente_deposito(request: Request, fecha: str | None = None):
+def ver_remanente_deposito(request: Request, fecha: str | None = None,
+                           tipo: list[str] = Query(default=[])):
     """Qué hay en el depósito, una porción por renglón. Para mirar y para exportar.
 
     VIVE EN ADMINISTRACIÓN, no en Depósito, y es a propósito: muestra los
@@ -12369,6 +12377,7 @@ def ver_remanente_deposito(request: Request, fecha: str | None = None):
     vez de contra el piso".
     """
     hasta, aviso = _fecha_del_remanente(fecha)
+    tipos = remanente_por_tipo.tipos_elegidos(tipo)
     try:
         # ABAJO Y APARTE: la lista de arriba es lo que HAY, los negativos son
         # un problema a resolver. Mezclados vuelve a ser la pantalla vieja.
@@ -12400,7 +12409,19 @@ def ver_remanente_deposito(request: Request, fecha: str | None = None):
             ({"articulo_id": articulo_id, **datos} for articulo_id, datos in esperando.items()),
             key=lambda p: (-p["bultos"], p["nombre"]),
         )
+    # EL FILTRO POR TIPO (dueño, 28/09). Sin tipos es "Todo": la lista como
+    # siempre, sin secciones. Con tipos, una sección por tipo con su total
+    # arriba. Los bloques de abajo (guía R, negativos) no se filtran: no son
+    # renglones de la lista sino problemas del ARTÍCULO, y un filtro no puede
+    # esconder un faltante.
     contexto.update({
+        "tipos": tipos,
+        "opciones_tipo": remanente_por_tipo.TIPOS,
+        "nombre_filtro": remanente_por_tipo.nombre_del_filtro(tipos),
+        "secciones": (remanente_por_tipo.secciones(contexto["porciones"], tipos)
+                      if tipos else []),
+        "query_exportar": _query_del_remanente(hasta.isoformat(), tipos),
+        "query_hoy": urlencode([("tipo", t) for t in tipos]),
         "hoy": hasta,
         "fecha": hasta.isoformat(),
         "fecha_maxima": hoy.isoformat(),
@@ -12413,7 +12434,8 @@ def ver_remanente_deposito(request: Request, fecha: str | None = None):
 
 
 @app.get("/administracion/stock/remanente/exportar-excel")
-def exportar_remanente_deposito_excel(fecha: str | None = None):
+def exportar_remanente_deposito_excel(fecha: str | None = None,
+                                      tipo: list[str] = Query(default=[])):
     """El mismo remanente en Excel, con una columna vacía para anotar lo contado.
 
     Misma fecha y mismo armador que la pantalla: el archivo que baja es el
@@ -12421,15 +12443,51 @@ def exportar_remanente_deposito_excel(fecha: str | None = None):
     dos exports de días distintos no se pueden pisar en la carpeta.
     """
     hasta, _aviso = _fecha_del_remanente(fecha)
+    tipos = remanente_por_tipo.tipos_elegidos(tipo)
+    try:
+        porciones = _remanente_a_fecha(hasta)["porciones"]
+    except Exception as error_db:
+        raise HTTPException(status_code=500, detail=f"Error al conectar con la base de datos: {error_db}") from error_db
+    # El filtro va en el nombre SOLO si hay uno: "Todo" deja el nombre de
+    # siempre, que es el que ya está en las carpetas.
+    sufijo = f"{remanente_por_tipo.para_el_archivo(tipos)}_" if tipos else ""
+    return Response(
+        content=generar_excel_remanente(hasta, remanente_por_tipo.filtrar(porciones, tipos),
+                                        remanente_por_tipo.nombre_del_filtro(tipos)),
+        media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        headers={"Content-Disposition":
+                 f'attachment; filename="Stock_del_Deposito_{sufijo}{hasta.strftime("%d_%m_%Y")}.xlsx"'},
+    )
+
+
+@app.get("/administracion/stock/remanente/exportar-pdf")
+def exportar_remanente_deposito_pdf(fecha: str | None = None,
+                                    tipo: list[str] = Query(default=[])):
+    """El Stock del Depósito en PDF, con el filtro de la pantalla y una columna para anotar.
+
+    Es el papel para bajar al depósito (dueño, 28/09): controlar la segunda o
+    armar el remito al Puesto. Las secciones salen de la MISMA función que la
+    pantalla; con "Todo" son los tres tipos, cada uno con su total.
+
+    `inline`: en el celular se abre para leer o imprimir, igual que el PDF de
+    Qué comprar hoy.
+    """
+    hasta, _aviso = _fecha_del_remanente(fecha)
+    tipos = remanente_por_tipo.tipos_elegidos(tipo)
     try:
         porciones = _remanente_a_fecha(hasta)["porciones"]
     except Exception as error_db:
         raise HTTPException(status_code=500, detail=f"Error al conectar con la base de datos: {error_db}") from error_db
     return Response(
-        content=generar_excel_remanente(hasta, porciones),
-        media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        content=generar_pdf_remanente(
+            hasta, remanente_por_tipo.secciones(porciones, tipos),
+            remanente_por_tipo.nombre_del_filtro(tipos), _formatear_numero,
+            es_hoy=hasta == _hoy_argentina(),
+        ),
+        media_type="application/pdf",
         headers={"Content-Disposition":
-                 f'attachment; filename="Stock_del_Deposito_{hasta.strftime("%d_%m_%Y")}.xlsx"'},
+                 f'inline; filename="Stock_del_Deposito_{remanente_por_tipo.para_el_archivo(tipos)}_'
+                 f'{hasta.strftime("%d_%m_%Y")}.pdf"'},
     )
 
 

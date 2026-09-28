@@ -17841,9 +17841,11 @@ def test_el_nombre_de_la_pantalla_dice_LO_MISMO_en_el_boton_el_titulo_y_el_Excel
     assert f"<title>{NOMBRE_STOCK_DEPOSITO}</title>" in pantalla
     assert f'{{% set barra_titulo = "{NOMBRE_STOCK_DEPOSITO}" %}}' in pantalla
     assert f'hoja.title = "{NOMBRE_STOCK_DEPOSITO}"' in excel
-    assert f'hoja["A1"] = "{NOMBRE_STOCK_DEPOSITO}"' in excel
-    # El archivo que se baja, sin tildes ni espacios pero el mismo nombre.
-    assert 'filename="Stock_del_Deposito_{hasta.strftime' in ruta_excel
+    # Desde el 28/09 el título lleva el filtro por tipo ("— Segunda", "— Todo").
+    assert f'hoja["A1"] = f"{NOMBRE_STOCK_DEPOSITO} — {{filtro}}"' in excel
+    # El archivo que se baja, sin tildes ni espacios pero el mismo nombre; el
+    # filtro va en el medio solo si hay uno.
+    assert 'filename="Stock_del_Deposito_{sufijo}{hasta.strftime' in ruta_excel
 
 
 def test_no_queda_NINGUN_texto_visible_diciendo_Remanente():
@@ -19222,8 +19224,10 @@ def test_el_boton_de_exportar_esta_pegado_al_de_la_fecha():
     se ve; al pie de la lista, no."""
     cuerpo = _remanente().text.split("</style>")[-1]
 
-    assert (cuerpo.index("Ver esa fecha")
+    # El botón dice "Ver" desde el 28/09: aplica la fecha y el filtro por tipo.
+    assert (cuerpo.index('<button type="submit">Ver</button>')
             < cuerpo.index("Exportar Excel")
+            < cuerpo.index("Exportar PDF")
             < cuerpo.index("Qué hay en el depósito"))
 
 

@@ -118,7 +118,7 @@ def _secciones(porciones: list[dict]) -> list[tuple]:
     return secciones
 
 
-def generar_excel_remanente(fecha: date, porciones: list[dict]) -> bytes:
+def generar_excel_remanente(fecha: date, porciones: list[dict], filtro: str = "Todo") -> bytes:
     """El remanente en una hoja: una fila por porción más el total al pie, en el orden en que viene.
 
     porciones: [{"nombre", "bultos", "grupo", "procesada"}, ...] — ya
@@ -143,7 +143,14 @@ def generar_excel_remanente(fecha: date, porciones: list[dict]) -> bytes:
     HUBO UNA COLUMNA "Contado" VACÍA, para imprimir e ir a contar. Se sacó
     el 07/09: el Remanente vive en Administración y el que cuenta no entra
     ahí — el conteo se carga desde Stock Físico, en Depósito. Con el físico
-    ya adentro del archivo, esa columna no tenía a quién servir.
+    ya adentro del archivo, esa columna no tenía a quién servir. Desde el
+    28/09 la columna para anotar a mano vive en el PDF
+    (core/exportar_remanente_pdf.py), que es el que se imprime para bajar al
+    depósito; acá quedan las tres del último conteo cargado.
+
+    `filtro` es el nombre del filtro por tipo (core/remanente_por_tipo.py) y
+    va EN EL TÍTULO: un archivo de solo Segunda con el título de siempre se
+    lee, impreso, como el depósito entero. Las porciones ya llegan filtradas.
 
     Las columnas del conteo salen del ÚLTIMO conteo de cada porción
     (listar_ultimos_conteos_stock, la misma que el Cotejo) y la diferencia es
@@ -176,7 +183,7 @@ def generar_excel_remanente(fecha: date, porciones: list[dict]) -> bytes:
     hoja.title = "Stock del Depósito"
 
     hoja.merge_cells("A1:E1")
-    hoja["A1"] = "Stock del Depósito"
+    hoja["A1"] = f"Stock del Depósito — {filtro}"
     hoja["A1"].font = Font(bold=True, size=14)
 
     hoja.merge_cells("A2:E2")

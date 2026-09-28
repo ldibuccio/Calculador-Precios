@@ -216,6 +216,41 @@
   .espera .alcance { font-size: 0.85rem; font-weight: 500; opacity: 0.75; }
   .espera .cuantos { font-size: 0.95rem; }
   .espera .ir { color: #1e40af; font-weight: 700; text-decoration: underline; }
+  /* EL FILTRO POR TIPO. Cada opción es una etiqueta entera de 44px que se
+     toca con el pulgar, no un checkbox chiquito; y se envuelven en filas en
+     vez de desbordar a los costados. */
+  .tipos { border: none; margin: 0.9rem 0 0; padding: 0; }
+  .tipos legend { font-weight: 700; font-size: 0.95rem; margin-bottom: 0.35rem; padding: 0; }
+  .opciones-tipo { display: flex; flex-wrap: wrap; gap: 0.5rem; }
+  .opcion-tipo {
+    display: flex;
+    align-items: center;
+    gap: 0.45rem;
+    min-height: 44px;
+    padding: 0 0.85rem;
+    border: 1px solid #cbd5e1;
+    border-radius: 999px;
+    background: #fff;
+    font-size: 1rem;
+    box-sizing: border-box;
+  }
+  .opcion-tipo input { width: 1.2rem; height: 1.2rem; margin: 0; }
+  .opcion-tipo:has(input:checked) { background: #dbeafe; border-color: #1d4ed8; font-weight: 700; }
+  .botones-exportar { display: flex; flex-wrap: wrap; gap: 0.6rem; margin-top: 0.6rem; }
+  .botones-exportar .boton-exportar { flex: 1 1 9rem; margin-top: 0; }
+  /* El total del tipo va ARRIBA de sus renglones: es lo primero que se
+     controla ("Segunda: 25 bultos en total"). */
+  .seccion-tipo { margin-top: 1.25rem; }
+  .seccion-tipo:first-of-type { margin-top: 0; }
+  .total-tipo {
+    margin: 0 0 0.3rem;
+    padding: 0.55rem 0.75rem;
+    background: #eef2ff;
+    border-radius: 8px;
+    font-size: 1.05rem;
+    font-weight: 800;
+  }
+  .total-tipo .numero-negativo { display: inline; }
   .totales {
     display: flex;
     flex-wrap: wrap;
@@ -239,25 +274,38 @@
   {% endif %}
 
   <div class="tarjeta">
+    {# LA FECHA Y EL TIPO VAN EN EL MISMO FORMULARIO: un solo botón aplica los
+       dos, y cambiar la fecha no pierde el filtro. #}
     <form class="fecha-form" method="get" action="/administracion/stock/remanente">
       <label for="fecha">Cómo estaba el depósito al…</label>
       <input type="date" id="fecha" name="fecha" value="{{ fecha }}" max="{{ fecha_maxima }}">
-      <button type="submit">Ver esa fecha</button>
+      <fieldset class="tipos">
+        <legend>Qué mercadería</legend>
+        <div class="opciones-tipo">
+          <label class="opcion-tipo"><input type="checkbox" name="tipo" value="todo"{% if not tipos %} checked{% endif %}> Todo</label>
+          {% for clave, rotulo in opciones_tipo %}
+          <label class="opcion-tipo"><input type="checkbox" name="tipo" value="{{ clave }}"{% if clave in tipos %} checked{% endif %}> {{ rotulo }}</label>
+          {% endfor %}
+        </div>
+      </fieldset>
+      <button type="submit">Ver</button>
     </form>
-    {# El exportar va ACÁ, pegado a la fecha: lo que baja es el archivo de la
-       fecha que dice el campo de arriba, y tenerlos juntos lo hace evidente.
-       Antes vivía al pie, después de toda la lista. #}
+    {# El exportar va ACÁ, pegado a la fecha y al filtro: lo que baja es
+       exactamente lo que dicen los campos de arriba. #}
     {% if porciones %}
-    <a class="boton-exportar" href="/administracion/stock/remanente/exportar-excel?fecha={{ fecha }}">Exportar Excel</a>
-    <p class="ayuda">La columna “Contado” va vacía para anotar al lado. {% call info("¿Qué trae el Excel?") %}Agrupado por Fruta, Hortaliza, etc., con las cajas armadas aparte al final. Los artículos con bultos sin explicar no entran, porque no hay nada que contar.{% endcall %}</p>
+    <div class="botones-exportar">
+      <a class="boton-exportar" href="/administracion/stock/remanente/exportar-excel?{{ query_exportar }}">Exportar Excel</a>
+      <a class="boton-exportar" href="/administracion/stock/remanente/exportar-pdf?{{ query_exportar }}">Exportar PDF</a>
+    </div>
+    <p class="ayuda">Bajan lo filtrado, con el filtro en el título. El PDF trae una columna “Contado” vacía para anotar a mano. {% call info("¿Qué trae cada uno?") %}El Excel va agrupado por Fruta, Hortaliza, etc., con las cajas armadas aparte al final, y trae el último conteo cargado. El PDF va por tipo, con el total de cada uno arriba, y se lee en A4 y en el celular.{% endcall %}</p>
     {% endif %}
     {% if not es_hoy %}
-    <a class="volver-hoy" href="/administracion/stock/remanente">Volver a hoy</a>
+    <a class="volver-hoy" href="/administracion/stock/remanente{% if query_hoy %}?{{ query_hoy }}{% endif %}">Volver a hoy</a>
     {% endif %}
   </div>
 
   <div class="tarjeta">
-    <h2>Qué hay en el depósito</h2>
+    <h2>Qué hay en el depósito{% if tipos %} · {{ nombre_filtro }}{% endif %}</h2>
     <p class="fecha">Al {{ hoy.strftime('%d/%m/%Y') }}</p>
     {# Cuando NO es hoy hay que decirlo fuerte: los mismos renglones con los
        mismos números leídos como el estado actual serían una mentira, y la
@@ -269,12 +317,32 @@
     {# Cada porción es un renglón: en el piso son pilas distintas, en lugares
        distintos y para cosas distintas. Sin total por artículo — sumarlas no
        le sirve a nadie que tenga que ir a buscarlas. #}
-    {% if porciones %}
+    {% macro renglon(p) %}
+      <a class="porcion{% if p.negativo %} negativa{% endif %}" href="/administracion/stock/remanente/porcion?articulo_id={{ p.articulo_id }}&fecha={{ fecha }}{% if p.ficha_id %}&ficha_id={{ p.ficha_id }}{% endif %}{% if p.es_segunda %}&segunda=1{% endif %}">
+        <span class="que">{{ p.nombre }}</span>
+        {% if p.negativo %}
+        <span class="cuanto-falta"><span class="numero-negativo">{{ p.bultos|numero }}</span>
+          <small>faltan explicar {{ p.faltan|numero }}</small></span>
+        {% else %}
+        <span class="cuanto">{{ p.bultos|numero }}</span>
+        {% endif %}
+      </a>
+    {% endmacro %}
+    {% if tipos %}
+      {# CON FILTRO: una sección por tipo, con su total ARRIBA. Un tipo sin
+         nada sale igual, en cero: dice que se miró. #}
+      {% for s in secciones %}
+      <section class="seccion-tipo" data-tipo="{{ s.clave }}">
+        <p class="total-tipo">{{ s.rotulo }}: {% if s.total < 0 %}<span class="numero-negativo">{{ s.total|numero }}</span>{% else %}{{ s.total|numero }}{% endif %} bultos en total</p>
+        {% for p in s.porciones %}{{ renglon(p) }}{% else %}<p class="vacio">No hay bultos de este tipo.</p>{% endfor %}
+      </section>
+      {% endfor %}
+    {% elif porciones %}
       {# El renglón ENTERO es el link al movimiento de esa porción, no un
          link chiquito al lado: a 390 px el área tocable tiene que ser la
          fila. Va acá y no desde Movimientos porque la pregunta que contesta
          es "de este número, ¿cómo llegué?", y el número está justo acá. #}
-      {% for p in porciones %}
+      {% for p in porciones %}{{ renglon(p) }}
       {# EL NEGATIVO VA EN LA LISTA, marcado, y no filtrado. Hasta el 19/09
          el renglón salía solo con `sueltos > 0`, así que un artículo corto
          no aparecía — ni en rojo ni en cero: no estaba. Y no era solo la
@@ -286,15 +354,6 @@
          no se leyera como stock; ahora va el −18 en rojo y la frase abajo,
          que sigue diciendo qué pasó. Vale para los sueltos, las cajas de
          una ficha y la segunda. #}
-      <a class="porcion{% if p.negativo %} negativa{% endif %}" href="/administracion/stock/remanente/porcion?articulo_id={{ p.articulo_id }}&fecha={{ fecha }}{% if p.ficha_id %}&ficha_id={{ p.ficha_id }}{% endif %}{% if p.es_segunda %}&segunda=1{% endif %}">
-        <span class="que">{{ p.nombre }}</span>
-        {% if p.negativo %}
-        <span class="cuanto-falta"><span class="numero-negativo">{{ p.bultos|numero }}</span>
-          <small>faltan explicar {{ p.faltan|numero }}</small></span>
-        {% else %}
-        <span class="cuanto">{{ p.bultos|numero }}</span>
-        {% endif %}
-      </a>
       {% endfor %}
     {% else %}
     <p class="vacio">No hay nada cargado.</p>
@@ -402,6 +461,25 @@
       <span>{{ segunda_total|numero }} bultos de segunda esperando el remito al Puesto</span>
     </p>
   </div>
+<script>
+  // Todo y los tipos se excluyen: tildar un tipo destilda Todo, y tildar
+  // Todo destilda los tipos. Sin esto, el que toca "Segunda" con Todo
+  // tildado de fábrica no sabe qué va a ver. El server resuelve igual si
+  // llegan los dos (gana el tipo), así que esto es comodidad, no la regla.
+  (function () {
+    var casillas = document.querySelectorAll('.opciones-tipo input[name="tipo"]');
+    casillas.forEach(function (casilla) {
+      casilla.addEventListener("change", function () {
+        if (!casilla.checked) return;
+        casillas.forEach(function (otra) {
+          if (otra !== casilla && (casilla.value === "todo" || otra.value === "todo")) {
+            otra.checked = false;
+          }
+        });
+      });
+    });
+  })();
+</script>
 {% include "_pie_version.html" %}
 </body>
 </html>
