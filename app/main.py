@@ -3312,6 +3312,13 @@ def _filas_de_que_comprar(
                 "ya_tengo": ya_tengo,
                 "en_piso": del_piso.get("magnitud"),
                 "sueltos": del_piso.get("sueltos"),
+                # EL NEGATIVO SE MUESTRA, en rojo y con su número: salieron
+                # bultos sueltos que ninguna entrada cubre. La cuenta de
+                # "A comprar" no lo resta (su magnitud es 0).
+                "sueltos_negativos": (
+                    round(float(del_piso["sueltos"]), 2)
+                    if del_piso.get("sueltos") is not None and float(del_piso["sueltos"]) < 0
+                    else None),
                 "cajas": del_piso.get("cajas"),
                 "comprado_cajones": lo_comprado.get("cajones", 0.0),
                 "comprado": comprado_magnitud,
@@ -3414,7 +3421,12 @@ def _foto_del_stock(articulo_ids: list[int], al_cierre_de) -> dict:
         # Los sueltos salen por RESTA, igual que en el Cotejo: el total del
         # artículo menos TODAS las cajas en fichas (no solo las tildadas).
         todas_las_cajas = sum(float(v or 0) for (a, _f), v in cajas.items() if a == articulo_id)
-        sueltos = max(stock.get(articulo_id, 0.0) - todas_las_cajas, 0.0)
+        # EL NÚMERO REAL, AUNQUE SEA NEGATIVO (dueño, 28/09). Hasta ese día
+        # iba con piso en cero y el listado escondía el negativo. La CUENTA
+        # no cambia: la magnitud de un suelto negativo es 0
+        # (`_sueltos_en_magnitud`), así que un faltante del sistema no hace
+        # comprar de más. Lo que cambia es que se ve.
+        sueltos = stock.get(articulo_id, 0.0) - todas_las_cajas
         foto_sueltos[articulo_id] = (
             sueltos, _sueltos_en_magnitud(articulo_id, movimientos, sueltos, al_cierre_de))
     return {"sueltos": foto_sueltos, "cajas": foto_cajas}
@@ -11792,9 +11804,14 @@ def _porciones_de_deposito(filas: list[dict] | None = None, hasta=None,
     ESTA LISTA, así que una porción negativa daba 404 — el camino cerrado,
     no el dato escondido. Medido el 19/09 antes de tocar nada.
 
-    LA SEGUNDA MANTIENE SU `> 0` y es a propósito: es un pool con su propio
-    piso, no una resta entre dos cuentas, así que no tiene cómo caer en este
-    agujero. El día que se mida uno negativo, este comentario es el lugar.
+    LA SEGUNDA TAMBIÉN SALE EN NEGATIVO desde el 28/09. Este párrafo decía
+    que tenía su `> 0` a propósito, porque "es un pool con su propio piso" y
+    no podía caer en negativo, y que "el día que se mida uno negativo, este
+    comentario es el lugar". Se midió: la palta de segunda en −2, con 21
+    remitidas al Puesto y 19 entradas, porque el 05/09 había segunda en el
+    piso que no entró al stock inicial. La fila no salía, y el Cotejo leía
+    "sistema 0" porque busca la porción en esta lista. Las CAJAS de una
+    ficha también llevan su marca de negativo.
 
     El orden agrupa por ARTÍCULO y después por tipo de porción, no por el
     texto que se muestra: así "Pomelo" y "Pomelo caja Día" caen juntas
@@ -11851,6 +11868,8 @@ def _porciones_de_deposito(filas: list[dict] | None = None, hasta=None,
                     if ficha else f"{articulo} Caja (ficha #{ficha_id})"
                 ),
                 "bultos": round(float(bultos), 2),
+                "negativo": float(bultos) < 0,
+                "faltan": round(-float(bultos), 2) if float(bultos) < 0 else 0,
                 "grupo": grupo,
                 # Las cajas armadas van a su propia sección del Excel: en el
                 # piso son una pila aparte, no están con la fruta suelta.
@@ -11858,7 +11877,7 @@ def _porciones_de_deposito(filas: list[dict] | None = None, hasta=None,
                 "articulo_id": fila["articulo_id"], "ficha_id": ficha_id,
                 "es_segunda": False,
             })
-        if float(fila["segunda"]) > 0:
+        if float(fila["segunda"]) != 0:
             # La segunda NO es una caja procesada: son bultos sueltos de
             # calidad menor esperando el remito al Puesto. Va con su artículo.
             #
@@ -11872,6 +11891,8 @@ def _porciones_de_deposito(filas: list[dict] | None = None, hasta=None,
             porciones.append({"articulo": articulo, "orden": 2, "grupo": grupo, "procesada": False,
                               "nombre": _titulo_de_porcion(articulo, None, clientes, 0, True),
                               "bultos": round(float(fila["segunda"]), 2),
+                              "negativo": float(fila["segunda"]) < 0,
+                              "faltan": round(-float(fila["segunda"]), 2) if float(fila["segunda"]) < 0 else 0,
                               "articulo_id": fila["articulo_id"], "ficha_id": None,
                               "es_segunda": True})
 

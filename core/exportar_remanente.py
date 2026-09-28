@@ -49,6 +49,9 @@ AMARILLO_DIFERENCIA_HEX = "FFF2CC"
 _BORDE_SUBTOTAL = Border(left=_BORDE_FINO, right=_BORDE_FINO, top=_BORDE_FINO, bottom=_BORDE_FINO)
 
 
+ROJO_NEGATIVO_HEX = "B91C1C"
+
+
 def _escribir_conteo(hoja, fila, porcion) -> None:
     """Las tres celdas del conteo físico de una porción, o los guiones si no hay.
 
@@ -200,7 +203,11 @@ def generar_excel_remanente(fecha: date, porciones: list[dict]) -> bytes:
         fila_actual += 1
         for porcion in del_grupo:
             hoja.cell(row=fila_actual, column=1, value=porcion["nombre"])
-            hoja.cell(row=fila_actual, column=2, value=float(porcion["bultos"]))
+            celda = hoja.cell(row=fila_actual, column=2, value=float(porcion["bultos"]))
+            # EL NEGATIVO EN ROJO (dueño, 28/09), con el número real: un −2 de
+            # segunda en negro se lee como un dato más.
+            if float(porcion["bultos"]) < 0:
+                celda.font = Font(bold=True, color=ROJO_NEGATIVO_HEX)
             _escribir_conteo(hoja, fila_actual, porcion)
             for columna in _COLUMNAS:
                 hoja.cell(row=fila_actual, column=columna).border = _BORDE_CELDA

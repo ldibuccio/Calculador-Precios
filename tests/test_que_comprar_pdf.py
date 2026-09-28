@@ -322,3 +322,31 @@ def test_el_boton_dice_EXPORTAR_y_no_Sacar_PDF():
     marcado = _render(_contexto()).split("</style>")[-1]
     assert '<button class="pdf" type="submit" name="accion" value="pdf">Exportar</button>' in marcado
     assert "Sacar PDF" not in marcado
+
+
+# --- 5. EL NEGATIVO DEL SISTEMA SE VE (dueño, 28/09) -----------------------
+
+
+def test_la_FOTO_guarda_el_suelto_NEGATIVO_y_su_magnitud_en_cero():
+    """Hasta el 28/09 la foto le ponía piso en cero y el listado escondía el
+    negativo. El número va real; la magnitud va en 0, así que "A comprar" no
+    compra de más por un faltante del sistema."""
+    with patch("app.main.entradas_y_salidas_stock_articulos", return_value={}), \
+         patch("app.main.cajas_armadas_por_ficha", return_value={}), \
+         patch("app.main.stock_deposito_por_articulo",
+               return_value=[{"articulo_id": 7, "stock": -5.0}]), \
+         patch("app.main.listar_fichas_de_todos_los_clientes", return_value=[]):
+        foto = _main._foto_del_stock([7], date(2026, 9, 28))
+    assert foto["sueltos"][7] == (-5.0, 0.0)
+
+
+def test_el_NEGATIVO_se_ve_en_rojo_en_la_PANTALLA_y_en_el_PDF():
+    fila = _fila(1, "EJEMPLO Negativo", sueltos_negativos=-5.0)
+    rival = _fila(2, "EJEMPLO Sano")
+    marcado = _render(_contexto(filas=[fila, rival])).split("</style>")[-1]
+    assert marcado.count('class="stock-negativo"') == 1
+    assert '<small class="stock-negativo">sistema -5 blt sueltos</small>' in marcado
+    texto, _p = _texto_pdf(generar_pdf_que_comprar(
+        "x", ["EJEMPLO Dia 27/09"], [fila, rival], _main._formatear_numero,
+        _main._formatear_sin_decimales))
+    assert texto.count("sistema -5 blt sueltos") == 1

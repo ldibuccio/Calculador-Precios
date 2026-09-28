@@ -11554,7 +11554,12 @@ def stock_deposito_por_articulo(hasta, articulo_id=None) -> list[dict]:
                 WHERE (e.total IS NOT NULL OR s.total IS NOT NULL
                    OR r.total IS NOT NULL OR aj.total IS NOT NULL
                    OR rp.articulo_id IS NOT NULL OR sr.articulo_id IS NOT NULL
-                   OR sp.articulo_id IS NOT NULL OR en.articulo_id IS NOT NULL)
+                   OR sp.articulo_id IS NOT NULL OR en.articulo_id IS NOT NULL
+                   -- Y LAS DOS PATAS DE LA SEGUNDA QUE FALTABAN (28/09): un
+                   -- artículo cuyo único movimiento sea un remito al Puesto o
+                   -- la segunda de una guía R desaparecía de la consulta, y su
+                   -- pool negativo con él.
+                   OR rm.articulo_id IS NOT NULL OR sg.articulo_id IS NOT NULL)
                   {filtro_articulo_final}
                 ORDER BY a.nombre
                 """.format(

@@ -17972,8 +17972,12 @@ def _porciones_en_pantalla(texto):
     en la lista" siguió pasando —por no verlo, no por ser cierto—. Es el
     corolario 57: un cambio en el producto mudó dónde matcheaba el assert.
     """
+    # Desde el 28/09 el corto trae su número real adentro de un span rojo
+    # (`numero-negativo`): el patrón lo atraviesa, o el helper se vuelve a
+    # quedar ciego a los negativos.
     return re.findall(
-        r'<span class="que">([^<]+)</span>\s*<span class="cuanto(?:-falta)?">([^<]+)</span>',
+        r'<span class="que">([^<]+)</span>\s*<span class="cuanto(?:-falta)?">'
+        r'(?:<span class="numero-negativo">)?([^<]+)',
         texto)
 
 
@@ -18828,19 +18832,20 @@ def test_el_negativo_esta_EN_LA_LISTA_marcado_y_ADEMAS_en_su_bloque_de_abajo():
     assert 'href="/administracion/stock/sistema/2"' in cuerpo
 
 
-def test_un_negativo_dice_QUE_PASO_no_cuanto_hay():
-    """Un artículo en −45 no tiene menos cuarenta y cinco cajones: tiene 45
-    bultos que salieron sin que ninguna guía los cubra. Mostrar "−45" en una
-    pantalla de cantidades invita a leerlo como stock y restarlo de algo — es
-    el mismo defecto del "sin procesar −95" que esta pantalla vino a
-    reemplazar."""
+def test_un_negativo_muestra_el_NUMERO_REAL_en_rojo_y_dice_que_paso():
+    """Este test decía lo contrario hasta el 28/09, y era una decisión propia:
+    que el "−45" no apareciera nunca, para que no se leyera como stock. La dio
+    vuelta el dueño: "todos los listados tienen que mostrar los negativos en
+    rojo y con el número real". El renglón lleva el −45 en rojo y la frase
+    abajo, que sigue diciendo qué pasó; el bloque de abajo no cambia."""
     filas = [{"articulo_id": 2, "nombre": "Palta", "stock": -45.0,
               "reproceso_primera": 0.0, "segunda": 0.0}]
     cuerpo = _remanente(filas=filas, cajas={}, fichas=[]).text.split("</style>")[-1]
 
-    assert "Faltan explicar 45 bultos" in cuerpo
-    # El número NUNCA en la columna de la derecha, donde van los bultos que hay.
-    assert "-45" not in cuerpo and "−45" not in cuerpo
+    assert '<span class="numero-negativo">-45</span>' in cuerpo
+    assert "faltan explicar 45" in cuerpo
+    assert "Faltan explicar 45 bultos" in cuerpo       # el bloque de abajo sigue
+    # En la columna de lo que HAY no va: va en su span rojo.
     assert '<span class="cuanto">' not in cuerpo
 
 
@@ -33228,3 +33233,67 @@ def test_la_frase_de_GUIAS_R_nombra_EXACTAMENTE_lo_que_se_corrige_sin_anular():
         assert nombrada in frase, nombrada
     # La jerga vieja, que decía que TODO era anular, no puede quedar.
     assert "Corregir una guía es anularla" not in fuente
+
+
+def test_el_COTEJO_muestra_la_segunda_NEGATIVA_con_su_numero_y_en_rojo():
+    """La palta de segunda decía "sistema 0" con la cuenta en −2 (dueño,
+    28/09). Con la porción en −2 la tarjeta dice −2, en rojo; el RIVAL es la
+    tarjeta de al lado, en positivo, que no lleva la marca."""
+    conteos = [
+        {"id": 8, "articulo_id": 3, "cantidad": 2.0, "stock_sistema": 0.0,
+         "creado_en": datetime(2026, 9, 28, 16, 0), "articulo_nombre": "EJEMPLO Palta",
+         "ficha_id": None, "ficha_nombre": None, "ficha_cliente": None, "es_segunda": True},
+        {"id": 9, "articulo_id": 4, "cantidad": 5.0, "stock_sistema": 6.0,
+         "creado_en": datetime(2026, 9, 28, 16, 0), "articulo_nombre": "EJEMPLO Sano",
+         "ficha_id": None, "ficha_nombre": None, "ficha_cliente": None, "es_segunda": False},
+    ]
+    porciones = [
+        {"articulo_id": 3, "ficha_id": None, "es_segunda": True, "bultos": -2.0},
+        {"articulo_id": 4, "ficha_id": None, "es_segunda": False, "bultos": 6.0},
+    ]
+    cuerpo = _cotejo(conteos, porciones=porciones).text.split("</style>")[-1]
+    assert cuerpo.count("valor-negativo") == 1
+    assert re.search(r'class="valor valor-negativo">-2</span>', cuerpo)
+    # Y el aviso de la segunda nombra el pase, que también la alimenta.
+    assert "el pase a segunda" in cuerpo
+
+
+def test_el_EXCEL_del_remanente_pinta_el_NEGATIVO_en_rojo():
+    import openpyxl
+    from core.exportar_remanente import ROJO_NEGATIVO_HEX, generar_excel_remanente
+
+    porciones = [
+        {"nombre": "EJEMPLO Palta Segunda", "bultos": -2.0, "grupo": None, "procesada": False,
+         "articulo_id": 1, "ficha_id": None, "es_segunda": True},
+        {"nombre": "EJEMPLO Sano", "bultos": 6.0, "grupo": None, "procesada": False,
+         "articulo_id": 2, "ficha_id": None, "es_segunda": False},
+    ]
+    hoja = openpyxl.load_workbook(io.BytesIO(generar_excel_remanente(date(2026, 9, 28), porciones))).active
+    colores = {}
+    for fila in hoja.iter_rows():
+        if fila[0].value in ("EJEMPLO Palta Segunda", "EJEMPLO Sano"):
+            colores[fila[0].value] = (fila[1].value, (fila[1].font.color.rgb if fila[1].font.color else None))
+    assert colores["EJEMPLO Palta Segunda"][0] == -2.0
+    assert str(colores["EJEMPLO Palta Segunda"][1]).endswith(ROJO_NEGATIVO_HEX)
+    assert not str(colores["EJEMPLO Sano"][1]).endswith(ROJO_NEGATIVO_HEX)
+
+
+def test_las_CAJAS_de_una_ficha_en_negativo_llevan_su_marca():
+    """Una ficha en −3 (salieron cajas sin guía R) va marcada como la
+    segunda y los sueltos; el RIVAL es la ficha en +2, sin marca."""
+    from app.main import _porciones_de_deposito
+    filas = [{"articulo_id": 1, "nombre": "EJEMPLO Limon", "grupo": None,
+              "stock": 10.0, "segunda": 0.0}]
+    fichas = [{"id": 11, "cliente_id": 1, "articulo_id": 1, "nombre_cliente": None,
+               "envase_id": 1, "contenido_caja": None, "unidad_venta": "kilo"},
+              {"id": 12, "cliente_id": 2, "articulo_id": 1, "nombre_cliente": None,
+               "envase_id": 1, "contenido_caja": None, "unidad_venta": "kilo"}]
+    with patch("app.main.cajas_armadas_por_ficha", return_value={(1, 11): -3.0, (1, 12): 2.0}), \
+         patch("app.main.listar_fichas_de_todos_los_clientes", return_value=fichas), \
+         patch("app.main.listar_clientes", return_value=[{"id": 1, "nombre": "EJEMPLO Dia"},
+                                                          {"id": 2, "nombre": "EJEMPLO Coto"}]):
+        porciones = _porciones_de_deposito(filas, date(2026, 9, 28))
+    por_ficha = {p["ficha_id"]: p for p in porciones if p["ficha_id"]}
+    assert len(por_ficha) == 2
+    assert por_ficha[11]["negativo"] is True and por_ficha[11]["faltan"] == 3.0
+    assert por_ficha[12]["negativo"] is False

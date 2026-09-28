@@ -95,6 +95,11 @@ def textos_de_la_fila(fila: dict, numero, sin_decimales) -> dict:
         "compre": f"{sin_decimales(fila.get('comprado_cajones') or 0)} cj",
         "falta": falta,
         "de_quien": " · ".join(f"{e} {sin_decimales(t)}" for e, t in fila.get("de_quien") or []),
+        # EL NEGATIVO DEL SISTEMA, con su número (dueño, 28/09). No es un
+        # dato a completar a mano: en el papel va en rojo, no en blanco.
+        "sueltos_negativos": (
+            f"sistema {numero(fila['sueltos_negativos'])} blt sueltos"
+            if fila.get("sueltos_negativos") is not None else ""),
     }
 
 
@@ -172,6 +177,9 @@ def generar_pdf_que_comprar(
                 magnitud = para_el_papel(textos["stock_magnitud"])
                 if clave == "stock" and texto and magnitud:
                     texto += f"<br/><font size='8' color='#595959'>{_escapar(magnitud)}</font>"
+                if clave == "stock" and textos["sueltos_negativos"]:
+                    texto += (("<br/>" if texto else "")
+                              + f"<font size='8' color='#B91C1C'><b>{_escapar(textos['sueltos_negativos'])}</b></font>")
                 estilo = estilos["numero"] if clave in ("a_comprar", "falta") else estilos["dato"]
                 celdas.append(Paragraph(texto, estilo))
             datos.append(celdas)
