@@ -1,0 +1,169 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Ajustar Segunda</title>
+<style>
+  :root { font-family: -apple-system, system-ui, sans-serif; }
+  body {
+    margin: 0;
+    padding: 1rem;
+    background: #f5f5f5;
+    color: #222;
+  }
+  .tarjeta {
+    background: #fff;
+    border-radius: 10px;
+    padding: 1rem;
+    margin-bottom: 1rem;
+    box-shadow: 0 1px 3px rgba(0, 0, 0, 0.1);
+  }
+  .aviso {
+    background: #dcfce7;
+    color: #166534;
+    padding: 0.75rem 1rem;
+    border-radius: 8px;
+    margin-bottom: 1rem;
+    font-size: 0.9rem;
+  }
+  .error {
+    background: #fee2e2;
+    color: #991b1b;
+    padding: 0.75rem 1rem;
+    border-radius: 8px;
+    margin-bottom: 1rem;
+    font-size: 0.95rem;
+  }
+  .aviso-conteo {
+    background: #fef9c3;
+    color: #713f12;
+    border: 2px solid #facc15;
+    padding: 0.75rem 1rem;
+    border-radius: 8px;
+    margin-bottom: 1rem;
+    font-size: 0.9rem;
+  }
+  label {
+    display: block;
+    margin-top: 0.7rem;
+    font-size: 0.9rem;
+    color: #444;
+  }
+  select, input, textarea {
+    width: 100%;
+    padding: 0.65rem;
+    margin-top: 0.25rem;
+    border: 1px solid #ccc;
+    border-radius: 8px;
+    font-size: 1rem;
+    box-sizing: border-box;
+    background: #fff;
+    font-family: inherit;
+  }
+  button.boton-guardar {
+    display: block;
+    width: 100%;
+    margin-top: 1rem;
+    padding: 0.8rem;
+    background: #2563eb;
+    color: #fff;
+    border: none;
+    border-radius: 8px;
+    font-size: 1rem;
+    font-weight: 700;
+    cursor: pointer;
+  }
+  .ayuda { color: #888; font-size: 0.85rem; margin: 0.5rem 0 0; }
+  .dato { font-size: 1rem; margin: 0.2rem 0; }
+  .dato strong { font-weight: 700; }
+  .lista h2 { font-size: 1rem; margin: 0 0 0.5rem; }
+  .ajuste { border-top: 1px solid #eee; padding: 0.6rem 0; overflow-wrap: anywhere; }
+  .ajuste:first-of-type { border-top: none; }
+  .ajuste .linea { margin: 0.1rem 0; font-size: 0.95rem; }
+  .ajuste .motivo { color: #555; font-size: 0.9rem; }
+  .ajuste.anulado { opacity: 0.55; }
+  .ajuste form { margin-top: 0.4rem; }
+  button.boton-anular {
+    min-height: 44px;
+    padding: 0.5rem 1rem;
+    background: #fff;
+    color: #b91c1c;
+    border: 1px solid #b91c1c;
+    border-radius: 8px;
+    font-size: 0.95rem;
+    cursor: pointer;
+  }
+  a.volver { display: inline-block; margin-top: 0.8rem; color: #2563eb; min-height: 44px; line-height: 44px; }
+</style>
+</head>
+<body>
+  {% set barra_sector = "administracion" %}
+  {% set barra_titulo = "Ajustar Segunda" %}
+  {% set barra_atras = "/administracion/stock/cotejo" %}
+  {% from "_info.html" import info %}
+  {% include "_barra_navegacion.html" %}
+
+  {% if aviso %}
+  <div class="aviso">{{ aviso }}</div>
+  {% endif %}
+  {% if error %}
+  <div class="error">{{ error }}</div>
+  {% endif %}
+
+  {% if precarga.articulo_id %}
+  {# La diferencia de ESE día se lee ANTES de guardar: cambia lo que se hace. #}
+  {% if precarga.contado is defined %}
+  <div class="aviso-conteo">El {{ precarga.dia_texto }} contaste {{ precarga.contado|numero }} de segunda
+    y al cierre de ese día el sistema decía {{ precarga.sistema|numero }}. Se propone esa diferencia
+    ({% if precarga.cantidad > 0 %}+{% endif %}{{ precarga.cantidad|numero }}). El ajuste queda fechado el
+    {{ precarga.dia_texto }} y no toca la primera.</div>
+  {% endif %}
+  <div class="tarjeta">
+    <form method="post" action="/administracion/stock/ajustar-segunda">
+      <input type="hidden" name="articulo_id" value="{{ precarga.articulo_id }}">
+      <input type="hidden" name="fecha_conteo" value="{{ precarga.fecha_conteo }}">
+      <p class="dato">Artículo: <strong>{{ precarga.articulo_nombre }}</strong> (segunda)</p>
+      <p class="dato">Día del ajuste: <strong>{{ precarga.dia_texto }}</strong></p>
+
+      <label for="cantidad">¿Cuántos bultos de segunda sumo o resto?</label>
+      <input type="number" id="cantidad" name="cantidad" step="0.01" required
+             placeholder="Ej: 4 suma, -3 resta" value="{{ precarga.cantidad }}">
+
+      <label for="motivo">¿Por qué no vino por la guía R, el rechazo, el pase o el remito? (obligatorio)</label>
+      <input type="text" id="motivo" name="motivo" required
+             placeholder="Ej: segunda que había en el piso al corte y no se cargó"
+             value="{{ precarga.motivo or "" }}">
+
+      <button type="submit" class="boton-guardar">Guardar ajuste de segunda</button>
+    </form>
+  </div>
+  {% else %}
+  <div class="tarjeta">
+    <p class="dato">Un ajuste de segunda se carga desde la tarjeta de segunda del Cotejo, que trae el artículo, lo contado y el día.</p>
+    <a class="volver" href="/administracion/stock/cotejo">Ir al Cotejo</a>
+  </div>
+  {% endif %}
+
+  <div class="tarjeta lista">
+    <h2>Últimos ajustes de segunda</h2>
+    {% for a in ajustes %}
+    <div class="ajuste{% if a.anulado_el %} anulado{% endif %}">
+      <p class="linea"><strong>{{ a.articulo_nombre }}</strong> · {% if a.bultos > 0 %}+{% endif %}{{ a.bultos|numero }} bultos · al {{ a.fecha_operacion.strftime('%d/%m') }}</p>
+      <p class="linea motivo">{{ a.motivo }}</p>
+      {% if a.anulado_el %}
+      <p class="linea motivo">Anulado el {{ a.anulado_el|fecha_hora }}</p>
+      {% else %}
+      <form method="post" action="/administracion/stock/ajustar-segunda/{{ a.id }}/anular"
+            onsubmit="return confirm('¿Anular este ajuste de segunda? No se puede deshacer.');">
+        <button type="submit" class="boton-anular">Anular</button>
+      </form>
+      {% endif %}
+    </div>
+    {% else %}
+    <p class="dato">Todavía no hay ajustes de segunda.</p>
+    {% endfor %}
+  </div>
+{% include "_pie_version.html" %}
+</body>
+</html>

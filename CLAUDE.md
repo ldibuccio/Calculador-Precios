@@ -115,7 +115,7 @@ el listener va en `document` para que ande también en lo que llega por
   que ya ocupa 20px.
 - **Una ayuda que mezcla las dos cosas se parte**: lo que cambia la acción
   queda a la vista y el porqué va a la "i". Por ejemplo, en el Cotejo quedan a
-  la vista el signo de la diferencia y el "no se corrige ajustando".
+  la vista el signo de la diferencia y qué revisar antes de ajustar la segunda.
 
 **Hecho el 25/09 en todas las pantallas que tenían ayudas**: 56 llevan la
 "i" (primero tres, y el mismo día las demás, con el visto bueno del dueño en el
@@ -625,12 +625,26 @@ lo que no hay.
 
 **La segunda no tenía cómo corregirse cuando el desvío no viene de su origen**
 (guía R, rechazo, pase o remito), por ejemplo la segunda que había en el piso
-el 05/09 y no entró al stock inicial. Va `ajustes_segunda`
-(`db/segunda_ajuste_1_tabla.sql`), una tabla propia con motivo y signo. El
-código que la usa espera la verificación de las dos bases.
+el 05/09 y no entró al stock inicial. Desde el 28/09 hay **ajuste de segunda**
+(`/administracion/stock/ajustar-segunda`), con el botón en la tarjeta de
+segunda del Cotejo:
+
+- **Tabla propia**, `ajustes_segunda` (migración corrida en las dos bases el
+  28/09), con signo y motivo obligatorio. No toca la primera: es la sexta pata
+  de `_SQL_POOL_SEGUNDA` y el sexto parámetro de `_pool_segunda`, sin default.
+- **Fechado el día del conteo, no hoy**, al revés del ajuste de primera: así el
+  cierre de ese día queda igual a lo contado y la tarjeta se apaga sola. La
+  diferencia se recalcula en el server con `_sistema_por_porcion_al_cierre`.
+- **Su recorte es `>=` corte y no `>`**, y es la única pata del pool así: un
+  ajuste corrige la cuenta, no pasó en el galpón esa tarde. La escritura
+  rechaza uno de antes del corte (no contaría nunca) y uno del futuro.
+- **El motivo no se precarga**: es lo único que dice por qué no vino por su
+  origen. Se anula desde la misma pantalla; no se borra.
+
 `db/segunda_negativa_1_por_articulo.sql` lista el pool de segunda de cada
-artículo. No reescribe las patas: su WITH es `_SQL_POOL_SEGUNDA` sin
-comentarios, y dio igual que `_segunda_de_articulo` en tres casos plantados.
+artículo. No reescribe las patas: su WITH es `_SQL_POOL_SEGUNDA` con nombres
+cortos para entrar en 2500 caracteres, y un test la corre al lado de
+`_segunda_de_articulo` con un artículo por pata.
 
 ## Los títulos de kilos y unidades se escriben UNA vez (28/09)
 
@@ -657,6 +671,11 @@ columna del conteo.
 magnitudes**: mandaba una sola, y la escritura exige las dos. Por eso la 827
 hubo que borrarla en vez de darla vuelta. Desde el 28/09 tiene el segundo
 campo, con la misma validación que Recepción.
+
+**Un aviso que detecte kilos y unidades cargados al revés NO VA** (dueño,
+28/09). Alcanza con los títulos que nombran la unidad y la unidad al lado del
+número. Es una decisión cerrada, no un pendiente: medido en Frutamax, 31
+compras con las dos magnitudes (3 artículos) y 0 cruzadas.
 
 El sufijo va solo en los formularios marcados con `data-unidad-al-lado`
 (las pantallas de carga y de recepción). Armar Pedido ya dibuja su unidad, y

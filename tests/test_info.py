@@ -169,12 +169,13 @@ def test_CASILLA_las_tres_explicaciones_van_a_la_i_y_el_aviso_queda_a_la_vista()
 def test_COTEJO_el_signo_y_que_hacer_se_ven_el_porque_va_a_la_i():
     marcado = _cotejo()
     infos = _infos(marcado)
-    assert [t for t, _ in infos] == ["Cómo se compara", "Por qué no se ajusta la segunda"], infos
+    assert [t for t, _ in infos] == ["Cómo se compara", "De dónde sale la segunda"], infos
     escondido = "".join(x for _, x in infos)
     # A LA VISTA: cómo leer el número, y qué NO hacer con un desvío
     assert "positivo es mercadería que falta" in marcado
     assert "positivo es mercadería que falta" not in escondido
-    assert "No se corrige ajustando el stock" not in escondido
+    assert "Primero buscá el error en la guía R" in marcado
+    assert "Primero buscá el error en la guía R" not in escondido
     assert "Revisá la guía R en Guías R, no ajustes el stock." in marcado
     assert "Revisá la guía R" not in escondido
 

@@ -5186,10 +5186,11 @@ def test_stock_deposito_se_calcula_de_las_tablas_reales_y_nunca_se_guarda():
     cursor.description = [("articulo_id",), ("nombre",), ("entradas",), ("salidas",), ("reingresos",),
                           ("ajustes",), ("reproceso_primera",), ("reproceso_tomados",),
                           ("segunda_producida",), ("segunda_de_rechazos",),
-                          ("segunda_de_pases",), ("segunda_remitida",), ("segunda_enviada",)]
+                          ("segunda_de_pases",), ("segunda_remitida",), ("segunda_enviada",),
+                          ("segunda_ajustada",)]
     # Los cinco números del pool son DISTINTOS entre sí a propósito: con
     # dos iguales, una pata leída del lugar equivocado da el mismo total.
-    cursor.fetchall.return_value = [(1, "Banana", 40, 15, 2, -3, 6, 10, 5, 4, 7, 2, 3)]
+    cursor.fetchall.return_value = [(1, "Banana", 40, 15, 2, -3, 6, 10, 5, 4, 7, 2, 3, -1)]
 
     with patch("app.db.obtener_conexion", return_value=conexion):
         filas = stock_deposito_por_articulo(date(2026, 9, 6))
@@ -5216,7 +5217,8 @@ def test_stock_deposito_se_calcula_de_las_tablas_reales_y_nunca_se_guarda():
     # stock, y lo que el depósito pasó de primera a segunda − lo remitido.
     # Y desde el 23/09 una SEGUNDA salida: la que se armó para un cliente
     # que la acepta (`bultos_de_segunda`).
-    assert filas[0]["segunda"] == 5 + 4 + 7 - 2 - 3
+    # Y desde el 28/09 el AJUSTE de segunda, con su signo (acá −1).
+    assert filas[0]["segunda"] == 5 + 4 + 7 - 2 - 3 - 1
     # Un rechazo mandado a segunda no suma al stock normal.
     assert "destino_rechazo IS NULL OR destino_rechazo = 'stock'" in consulta
     assert "destino_rechazo IN ('segunda', 'reproceso')" in consulta
@@ -5241,7 +5243,8 @@ def test_el_pool_de_segunda_arranca_en_el_CORTE_y_por_las_TRES_patas():
     cursor.description = [("articulo_id",), ("nombre",), ("entradas",), ("salidas",), ("reingresos",),
                           ("ajustes",), ("reproceso_primera",), ("reproceso_tomados",),
                           ("segunda_producida",), ("segunda_de_rechazos",),
-                          ("segunda_de_pases",), ("segunda_remitida",), ("segunda_enviada",)]
+                          ("segunda_de_pases",), ("segunda_remitida",), ("segunda_enviada",),
+                          ("segunda_ajustada",)]
     cursor.fetchall.return_value = []
 
     with patch("app.db.obtener_conexion", return_value=conexion):
@@ -5576,7 +5579,9 @@ def test_el_COTEJO_y_el_AJUSTE_leen_el_sistema_de_la_MISMA_funcion():
         if isinstance(llamada, ast.Call) and isinstance(llamada.func, ast.Name)
         and llamada.func.id == "_sistema_por_porcion_al_cierre"
     }
-    assert llamadores == {"ver_cotejo_stock", "ver_ajustar_stock_deposito"}
+    # Y desde el 28/09 el ajuste de SEGUNDA: propone la diferencia de la
+    # tarjeta de segunda, así que la lee de la misma función que el Cotejo.
+    assert llamadores == {"ver_cotejo_stock", "ver_ajustar_stock_deposito", "ver_ajustar_segunda"}
 
 
 def test_stock_deposito_de_articulo_hace_la_misma_cuenta_por_articulo():

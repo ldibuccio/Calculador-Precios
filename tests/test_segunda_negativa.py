@@ -14,6 +14,7 @@ Contra la base y no con mocks: lo que se afirma sale de la consulta real, y
 cada caso lleva su rival —la segunda en cero, que no tiene que salir—.
 """
 import os
+import re
 import sys
 from datetime import date, timedelta
 from unittest.mock import patch
@@ -148,3 +149,160 @@ def test_la_pantalla_del_REMANENTE_la_muestra_en_ROJO(galpon):
                  if f"articulo_id={art}&" in r[:r.index("</a>")] and "segunda=1" in r[:r.index("</a>")]]
     assert len(renglones) == 1
     assert '<span class="numero-negativo">-2</span>' in renglones[0]
+
+
+# --- EL AJUSTE DE SEGUNDA (28/09) ---------------------------------------------
+#
+# La migración `segunda_ajuste_1` corrió en las dos bases el 28/09. Todo esto
+# va contra Postgres: lo que se afirma es que el pool SUMA la pata nueva, con
+# su recorte, y eso solo lo puede ver una consulta que corre de verdad.
+
+
+def _ajuste(d, art, bultos, dia, motivo="EJEMPLO segunda del piso al corte"):
+    return d.crear_ajuste_segunda(art, bultos, motivo, dia)
+
+
+def test_el_AJUSTE_suma_al_pool_y_deja_el_cierre_del_dia_en_lo_contado(galpon):
+    """Palta en −2, se cuenta 0 el día 20 y se ajusta +2 ese día: el pool de
+    ese cierre queda en 0, que es lo contado, y el stock congelado es −2."""
+    d, m, sql, corte, articulo, remito, pase = galpon
+    art = articulo("EJEMPLO Palta Ajuste")
+    pase(art, 19)
+    remito(art, 21)
+    dia = corte + timedelta(days=20)
+    assert _ajuste(d, art, 2, dia) == 0.0
+    assert m._sistema_por_porcion_al_cierre(dia).get((art, None, True), 0.0) == 0.0
+    (congelado, bultos, fecha), = sql(
+        "SELECT stock_sistema, bultos, fecha_operacion FROM ajustes_segunda WHERE articulo_id = %s", (art,))
+    assert (float(congelado), float(bultos), fecha) == (-2.0, 2.0, dia)
+    # El día ANTERIOR no lo ve: el ajuste es del día del conteo.
+    assert m._sistema_por_porcion_al_cierre(dia - timedelta(days=1)).get((art, None, True)) == -2.0
+
+
+def test_el_AJUSTE_no_toca_la_PRIMERA(galpon):
+    d, m, _sql, corte, articulo, remito, pase = galpon
+    art = articulo("EJEMPLO Primera Quieta")
+    pase(art, 5)
+    dia = corte + timedelta(days=20)
+    antes = [f for f in d.stock_deposito_por_articulo(dia) if f["articulo_id"] == art][0]["stock"]
+    _ajuste(d, art, 3, dia)
+    despues = [f for f in d.stock_deposito_por_articulo(dia) if f["articulo_id"] == art][0]
+    assert despues["stock"] == antes
+    assert despues["segunda"] == 8.0
+
+
+def test_el_AJUSTE_del_MISMO_dia_del_corte_cuenta_y_el_de_antes_se_rechaza(galpon):
+    """El `>=` a propósito: un ajuste corrige la cuenta, no es algo que pasó en
+    el galpón esa tarde. El rival es el día anterior al corte, que la
+    escritura rechaza porque ahí la segunda no se cuenta."""
+    d, m, _sql, corte, articulo, _remito, _pase = galpon
+    art = articulo("EJEMPLO Dia Del Corte")
+    _ajuste(d, art, 4, corte)
+    assert m._sistema_por_porcion_al_cierre(corte + timedelta(days=1)).get((art, None, True)) == 4.0
+    with pytest.raises(ValueError, match="antes del corte"):
+        _ajuste(d, art, 4, corte - timedelta(days=1))
+    with pytest.raises(ValueError, match="todavía no pasó"):
+        _ajuste(d, art, 4, date(2099, 1, 1))
+
+
+def test_un_ajuste_ANULADO_deja_de_contar(galpon):
+    d, m, sql, corte, articulo, _remito, _pase = galpon
+    art = articulo("EJEMPLO Anulado")
+    dia = corte + timedelta(days=20)
+    _ajuste(d, art, 6, dia)
+    (ajuste_id,), = sql("SELECT id FROM ajustes_segunda WHERE articulo_id = %s", (art,))
+    assert d.anular_ajuste_segunda(ajuste_id) is True
+    assert d.anular_ajuste_segunda(ajuste_id) is False
+    assert m._sistema_por_porcion_al_cierre(dia).get((art, None, True), 0.0) == 0.0
+
+
+def test_la_CONSULTA_de_db_da_el_MISMO_pool_que_el_sistema(galpon, base_real):
+    """`db/segunda_negativa_1` es `_SQL_POOL_SEGUNDA` compactado para entrar en
+    2500 caracteres. Lo que impide que se separe no es haberla copiado bien:
+    es correrla al lado de la función, con un artículo por pata."""
+    d, _m, sql, corte, articulo, remito, pase = galpon
+    arts = [articulo("EJEMPLO Q Remito"), articulo("EJEMPLO Q Pase"), articulo("EJEMPLO Q Ajuste")]
+    remito(arts[0], 5)
+    pase(arts[1], 7)
+    _ajuste(d, arts[2], -3, corte + timedelta(days=2))
+    texto = open(os.path.join(RAIZ, "db", "segunda_negativa_1_por_articulo.sql"), encoding="utf-8").read()
+    assert len(texto) <= 2500
+    filas = {nombre: float(pool) for nombre, *_resto, pool, _corte in sql(texto)}
+    conexion = d.obtener_conexion()
+    try:
+        with conexion.cursor() as cursor:
+            for art in arts:
+                (nombre,), = sql("SELECT nombre FROM articulos WHERE id = %s", (art,))
+                assert filas[nombre] == d._segunda_de_articulo(cursor, art), nombre
+    finally:
+        conexion.close()
+    assert [filas[n] for n in sorted(filas) if n.startswith("EJEMPLO Q ")] == [-3.0, 7.0, -5.0]
+
+
+# --- La pantalla -------------------------------------------------------------
+
+
+def _cliente(m):
+    from fastapi.testclient import TestClient
+    cliente = TestClient(m.app, base_url="https://testserver")
+    cliente.cookies.set(m.PUERTA_ADMINISTRACION.cookie, m.PUERTA_ADMINISTRACION.firma("a"))
+    return cliente
+
+
+def test_la_tarjeta_de_segunda_del_COTEJO_lleva_el_boton_y_la_pantalla_propone_la_diferencia(galpon):
+    d, m, sql, corte, articulo, remito, pase = galpon
+    art = articulo("EJEMPLO Palta Cotejo Boton")
+    pase(art, 19)
+    remito(art, 21)
+    dia = corte + timedelta(days=20)
+    sql("INSERT INTO conteos_stock (articulo_id, es_segunda, cantidad, stock_sistema, creado_en) "
+        "VALUES (%s, true, 0, 0, %s)", (art, f"{dia.isoformat()} 16:00-03"))
+    cliente = _cliente(m)
+    with patch.dict(os.environ, {"CLAVE_ADMINISTRACION": "a"}):
+        cotejo = cliente.get("/administracion/stock/cotejo").text.split("</style>")[-1]
+        tarjeta = [t for t in cotejo.split('<div class="tarjeta') if "EJEMPLO Palta Cotejo Boton" in t]
+        assert len(tarjeta) == 1
+        assert f'href="/administracion/stock/ajustar-segunda?articulo_id={art}&amp;contado=0' in tarjeta[0]
+        # la de PRIMERA no: ese botón mueve el total y la segunda no está ahí
+        assert "/administracion/stock/ajustar?" not in tarjeta[0]
+        pantalla = cliente.get(
+            f"/administracion/stock/ajustar-segunda?articulo_id={art}&contado=0&fecha_conteo={dia.isoformat()}"
+        ).text.split("</style>")[-1]
+    assert 'name="cantidad" step="0.01" required' in pantalla
+    assert 'value="2.0"' in pantalla  # 0 contados − (−2) del sistema
+    # el MOTIVO no viene escrito: es lo único que dice por qué
+    assert re.search(r'name="motivo" required\s+placeholder="[^"]*"\s+value=""', pantalla)
+
+
+def test_guardar_el_ajuste_exige_MOTIVO_y_despues_se_puede_ANULAR(galpon):
+    d, m, sql, corte, articulo, _remito, _pase = galpon
+    art = articulo("EJEMPLO Guardar Ajuste")
+    dia = (corte + timedelta(days=20)).isoformat()
+    cliente = _cliente(m)
+    with patch.dict(os.environ, {"CLAVE_ADMINISTRACION": "a"}):
+        sin = cliente.post("/administracion/stock/ajustar-segunda",
+                           data={"articulo_id": art, "fecha_conteo": dia, "cantidad": "3", "motivo": "  "},
+                           follow_redirects=False)
+        assert sin.status_code == 400 and "El motivo es obligatorio" in sin.text
+        assert sql("SELECT count(*) FROM ajustes_segunda WHERE articulo_id = %s", (art,)) == [(0,)]
+        con = cliente.post("/administracion/stock/ajustar-segunda",
+                           data={"articulo_id": art, "fecha_conteo": dia, "cantidad": "3",
+                                 "motivo": "EJEMPLO segunda del piso"}, follow_redirects=False)
+        assert con.status_code == 303
+        (ajuste_id,), = sql("SELECT id FROM ajustes_segunda WHERE articulo_id = %s", (art,))
+        lista = cliente.get(con.headers["location"]).text
+        assert "EJEMPLO Guardar Ajuste" in lista and "quedó en 3" in lista
+        anular = cliente.post(f"/administracion/stock/ajustar-segunda/{ajuste_id}/anular",
+                              follow_redirects=False)
+        assert anular.status_code == 303
+    (anulado,), = sql("SELECT anulado_el FROM ajustes_segunda WHERE id = %s", (ajuste_id,))
+    assert anulado is not None
+
+
+def test_el_ajuste_de_segunda_esta_detras_de_la_clave_de_ADMINISTRACION(galpon):
+    _d, m, _sql, _corte, _articulo, _remito, _pase = galpon
+    from fastapi.testclient import TestClient
+    sin_cookie = TestClient(m.app, base_url="https://testserver")
+    with patch.dict(os.environ, {"CLAVE_ADMINISTRACION": "a"}):
+        assert sin_cookie.get("/administracion/stock/ajustar-segunda").status_code == 401
+        assert sin_cookie.post("/administracion/stock/ajustar-segunda", data={}).status_code == 401
