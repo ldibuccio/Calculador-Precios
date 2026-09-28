@@ -356,7 +356,7 @@ def test_la_ASIGNACION_pasa_de_la_pila_elegida_a_la_marca_elegida():
             "marca_desde_id": "", "marca_hasta_id": "72", "cantidad": "5"},
             follow_redirects=False)
     assert respuesta.status_code == 303
-    crear.assert_called_once_with(7, None, 72, 5)
+    crear.assert_called_once_with(7, None, 72, 5, marca_nueva="")
 
 
 def test_el_CONTEO_va_al_COTEJO_y_no_arranca_ninguna_cuenta():
@@ -806,3 +806,69 @@ def test_el_DETALLE_de_vacios_tambien_reusa_el_cajon_que_ya_existe():
     assert respuesta.status_code == 303
     crear.assert_not_called()
     asignar.assert_called_once_with(7, 4)
+
+
+def test_la_ASIGNACION_con_marca_ESCRITA_llega_a_la_escritura():
+    with _con(_parches_del_detalle()), \
+         patch("app.main.crear_asignacion_vacios") as crear:
+        respuesta = cliente.post("/administracion/vacios/7/asignacion", data={
+            "marca_desde_id": "", "marca_hasta_id": "", "marca_nueva": "EJ Verde",
+            "cantidad": "5"}, follow_redirects=False)
+    assert respuesta.status_code == 303
+    crear.assert_called_once_with(7, None, None, 5, marca_nueva="EJ Verde")
+
+
+def test_sin_marca_elegida_NI_escrita_rebota_sin_escribir():
+    with _con(_parches_del_detalle()), \
+         patch("app.main.crear_asignacion_vacios") as crear:
+        respuesta = cliente.post("/administracion/vacios/7/asignacion", data={
+            "marca_desde_id": "", "marca_hasta_id": "", "cantidad": "5"})
+    assert respuesta.status_code == 400
+    crear.assert_not_called()
+
+
+def test_la_tarjeta_de_ASIGNAR_sale_AUNQUE_el_proveedor_no_tenga_marcas():
+    """Iba adentro de un `if marcas` y ningún proveedor tenía: no salió nunca."""
+    with _con(_parches_del_detalle(marcas=[])):
+        marcado = cliente.get("/administracion/vacios/7").text.split("</style>")[-1]
+    tarjeta = marcado[marcado.index('id="asignar"'):marcado.index("Queda registrado abajo")]
+    assert 'action="/administracion/vacios/7/asignacion"' in tarjeta
+    assert 'name="marca_hasta_id"' not in tarjeta           # no hay de dónde elegir
+    assert re.search(r'name="marca_nueva"[^>]*required', tarjeta)
+    assert '<p class="sin-marca-total hay">Sin marca: 12 cajones</p>' in tarjeta
+
+
+def test_con_marcas_se_ELIGE_o_se_ESCRIBE():
+    with _con(_parches_del_detalle()):
+        marcado = cliente.get("/administracion/vacios/7").text.split("</style>")[-1]
+    tarjeta = marcado[marcado.index('id="asignar"'):marcado.index("Queda registrado abajo")]
+    opciones = re.findall(r'<option value="(\d*)">([^<]+)</option>',
+                          tarjeta[tarjeta.index('name="marca_hasta_id"'):])
+    assert opciones[:3] == [("", "Una marca nueva (escribila abajo)"), ("71", "EJ Roja"),
+                            ("72", "EJ Azul")]
+    assert 'name="marca_nueva"' in tarjeta
+    assert not re.search(r'name="marca_nueva"[^>]*required', tarjeta)
+
+
+def test_en_COMPRAS_no_hay_tarjeta_de_asignar_ni_link():
+    with _con(_parches_del_detalle(marcas=[])):
+        marcado = cliente.get("/compras/vacios/7").text.split("</style>")[-1]
+    assert 'id="asignar"' not in marcado
+    assert "Asignarles marca" not in _indice().text
+
+
+def test_los_SIN_MARCA_con_cajones_van_RESALTADOS_y_los_en_cero_no():
+    en_cero = [{**UN_PROVEEDOR[0], "id": 8, "stock": 23,
+                "pilas": [_pila(None, None, 0), _pila(71, "EJ Roja", 23)]}]
+    for url in ("/compras/vacios", "/administracion/vacios"):
+        with patch("app.main.stock_de_vacios_deposito", return_value=UN_PROVEEDOR + en_cero), \
+             patch("app.main.listar_proveedores", return_value=[]), \
+             patch("app.main.listar_marcas_vacio_por_proveedor", return_value={}):
+            respuesta = cliente.get(url)
+        partes = respuesta.text.split("</style>")
+        assert ".pila.sin-marca { background:" in partes[0]
+        marcado = partes[-1]
+        assert marcado.count('class="pila sin-marca"') == 1, url
+    # El link a asignar sale solo en Administración, y solo donde hay sin marca.
+    assert respuesta.text.count('href="/administracion/vacios/7#asignar"') == 1
+    assert 'href="/administracion/vacios/8#asignar"' not in respuesta.text

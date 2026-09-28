@@ -3606,7 +3606,7 @@ def _recepcionar_compra(
         unidad_compra, cantidad_cajones_real, valor_real, segunda_real
     )
 
-    marca = (marca or "").strip() or None
+    marca = " ".join((marca or "").split()) or None
     if marca_vacio_id is not None:
         # Solo cuando se eligió una: la recepción de todos los días no paga
         # esta lectura. Sin agregado, así `None` es "no existe" (corolario 27).
@@ -3617,6 +3617,8 @@ def _recepcionar_compra(
                 "Esta compra no dejó seña, así que sus cajones no entran a Vacíos: "
                 "no hay marca de vacío que ponerle."
             )
+    elif marca is not None:
+        marca_vacio_id = _marca_vacio_del_texto(cursor, compra_id, marca)
 
     cursor.execute(
         """
@@ -3650,6 +3652,59 @@ def _recepcionar_compra(
 
     aviso = _auto_retirar_si_corresponde(cursor, compra_id)
     return aviso, _guia_en_origen_si_corresponde(cursor, compra_id)
+
+
+def _marca_vacio_del_texto(cursor, compra_id: int, marca: str) -> int | None:
+    """La marca de CAJÓN que corresponde a la marca escrita al recibir, creándola si falta.
+
+    POR QUÉ EXISTE (dueño, 28/09): del 25 al 28/09 entraron 27 compras en
+    Frutamax, 25 con la marca escrita, y NINGUNA quedó en una pila de Vacíos.
+    La marca del cajón solo se podía ELEGIR de las cargadas en Vacíos, y no
+    había ninguna cargada: el selector no aparecía y el único campo a la vista
+    era el texto, que no tocaba el stock de vacíos.
+
+    Ahora lo escrito ES la marca del cajón: se busca entre las de ESE
+    proveedor por el nombre plegado (`normalizar_texto`, la misma regla que el
+    unique `marcas_vacio_nombre_unico`), y si no está se crea. Así "Rio
+    Uruguay" y "Río  uruguay" caen en la misma pila.
+
+    SOLO CON SEÑA: sin seña esos cajones no entran a Vacíos (dueño, 25/09), y
+    una marca de cajón creada para ellos sería una pila que nunca junta nada.
+    Devuelve None en ese caso, y la marca escrita queda igual en `compras.marca`.
+
+    `ON CONFLICT DO NOTHING` y después se lee: dos recepciones del mismo
+    proveedor con la misma marca nueva, al mismo tiempo, no rebotan.
+    """
+    cursor.execute("SELECT proveedor_id, COALESCE(sena, 0) > 0 FROM compras WHERE id = %s",
+                   (compra_id,))
+    fila = cursor.fetchone()
+    if fila is None or not fila[1]:
+        return None
+    return _marca_vacio_de_nombre(cursor, fila[0], marca)
+
+
+def _marca_vacio_de_nombre(cursor, proveedor_id: int, nombre: str) -> int | None:
+    """La marca de cajón de ESE proveedor con ese nombre, creándola si falta.
+
+    UNA sola vez, para las dos puertas que la necesitan: la recepción (la
+    marca escrita) y la asignación de Administración (la marca nueva). El
+    nombre se busca PLEGADO, con la misma regla que el unique
+    `marcas_vacio_nombre_unico`. None si el nombre está vacío.
+    """
+    nombre = " ".join((nombre or "").split())
+    normalizado = normalizar_texto(nombre)
+    if not normalizado:
+        return None
+    cursor.execute(
+        "INSERT INTO marcas_vacio (proveedor_id, nombre, nombre_normalizado) VALUES (%s, %s, %s) "
+        "ON CONFLICT (proveedor_id, nombre_normalizado) DO NOTHING",
+        (proveedor_id, nombre, normalizado),
+    )
+    cursor.execute(
+        "SELECT id FROM marcas_vacio WHERE proveedor_id = %s AND nombre_normalizado = %s",
+        (proveedor_id, normalizado),
+    )
+    return cursor.fetchone()[0]
 
 
 def _guia_en_origen_si_corresponde(cursor, compra_id: int) -> int | None:
@@ -10230,15 +10285,10 @@ def compras_alrededor_de_la_salida(momento=None) -> dict:
 
     Quedan afuera 'rechazado' y 'no_ingresado': no van a llegar.
 
-    LO QUE NO MIRA, y es el primer lugar donde buscar si "En camino" da un
-    número raro: una compra que viene YA ARMADA en caja nuestra
-    (`ficha_en_origen_id` no nulo) se suma a la fila del ARTÍCULO sin mirar
-    de qué cliente es esa ficha. Las cajas de la foto, en cambio, sí se
-    filtran por los clientes tildados (`_piso_de_la_foto`). O sea que una
-    compra armada para Coto que todavía no llegó achica lo que falta comprar
-    para Día, y el listado propone comprar DE MENOS. Hoy no se filtra porque
-    son pocas; el día que importe, el filtro va acá, por ficha, igual que en
-    la foto.
+    UNA COMPRA QUE VIENE YA ARMADA en caja nuestra (`ficha_en_origen_id` no
+    nulo) se suma a la fila del ARTÍCULO sin mirar de qué cliente es esa
+    ficha. Desde el 28/09 la foto hace lo mismo con las cajas (el stock es
+    del artículo, dueño), así que las dos puntas miran igual.
 
     LO REAL PRIMERO Y EL ESTIMADO DE RESPALDO, igual que la cuenta de stock,
     y LAS DOS MAGNITUDES SEPARADAS: quien llama elige la de la fila.
@@ -16932,19 +16982,30 @@ def anular_ajuste_vacios_deposito(ajuste_id: int) -> None:
 
 
 def crear_asignacion_vacios(proveedor_id: int, marca_desde_id: int | None,
-                            marca_hasta_id: int, cantidad: int) -> int:
+                            marca_hasta_id: int | None, cantidad: int,
+                            marca_nueva: str | None = None) -> int:
     """Pasa N cajones de una pila a una MARCA, sin tocar ninguna recepción.
 
     UNA fila con las dos puntas: anularla deshace las dos. Y no se pasa más
     de lo que la pila de origen tiene — la misma regla que la devolución.
+
+    `marca_nueva` (dueño, 28/09): la marca de destino se puede ESCRIBIR en vez
+    de elegir. Se busca o se crea en esta misma transacción, así que si la
+    asignación rebota tampoco queda la marca. Con las dos, gana la elegida.
     """
     if cantidad <= 0:
         raise ValueError("Los cajones a asignar tienen que ser más que cero.")
-    if marca_desde_id == marca_hasta_id:
-        raise ValueError("Elegí una marca distinta de la pila de origen.")
     conexion = obtener_conexion()
     try:
         with conexion.cursor() as cursor:
+            if marca_hasta_id is None:
+                marca_hasta_id = _marca_vacio_de_nombre(cursor, proveedor_id, marca_nueva)
+            if marca_hasta_id is None:
+                conexion.rollback()
+                raise ValueError("Elegí a qué marca van, o escribí una nueva.")
+            if marca_desde_id == marca_hasta_id:
+                conexion.rollback()
+                raise ValueError("Elegí una marca distinta de la pila de origen.")
             hay = _stock_de_la_pila(cursor, proveedor_id, marca_desde_id)
             if cantidad > hay:
                 conexion.rollback()

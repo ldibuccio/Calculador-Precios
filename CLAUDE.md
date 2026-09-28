@@ -3996,14 +3996,19 @@ arrancó", sus "esperando" y la regla de la fecha— **se fue**.
   la pone la recepción o una ASIGNACIÓN de Administración, que mueve de una
   pila a otra sin cambiar el total. Las FK son compuestas `(marca, proveedor)`:
   una marca de otro proveedor la rechaza la base.
-- **Las dos marcas de Recepción** (`compras.marca`, texto libre, y
-  `compras.marca_vacio_id`), opcionales, en blanco = "sin asignar". Las dos
-  puertas que recepcionan —Recibir y el rechazo parcial— las escriben en el
-  MISMO UPDATE, con un solo macro en la pantalla. La del vacío solo con seña
-  (sin seña no entra ningún cajón a Vacíos, y la escritura lo rechaza). **El
-  Detalle muestra la de la RECEPCIÓN**: si después Administración asigna esos
-  cajones a otra pila, la compra sigue diciendo con qué marca llegaron. El
-  ingreso directo no lleva seña, así que no tiene marca de vacío.
+- **La marca de Recepción es UN campo desde el 28/09** (dueño). Hasta ese
+  día eran dos: el texto (`compras.marca`) y un selector de la marca del
+  cajón que solo aparecía si el proveedor tenía marcas cargadas en Vacíos.
+  No había ninguna, así que 25 de 27 compras quedaron con la marca escrita y
+  los cajones "sin asignar". Ahora, con seña, lo escrito se busca entre las
+  marcas de ese proveedor (plegado con `normalizar_texto`) y si no está se
+  crea (`_marca_vacio_de_nombre`, que también usa la asignación). Sin seña no
+  se crea nada: esos cajones no entran a Vacíos. Las ya cargadas van como
+  sugerencias del campo. Lo que ya estaba lo vincula
+  `db/vacios_marca_texto_1_vincular.sql`. **El Detalle muestra la de la
+  RECEPCIÓN**: si después Administración asigna esos cajones a otra pila, la
+  compra sigue diciendo con qué marca llegaron. El ingreso directo no lleva
+  seña, así que sus cajones no entran a Vacíos.
 - **La devolución sale de una PILA, sin compra**, con la seña por cajón de
   la última recepción de esa pila precargada y editable. **Sin foto del vale
   no es una devolución: es un ajuste** (guarda en la ruta, en la escritura y
@@ -4019,7 +4024,12 @@ arrancó", sus "esperando" y la regla de la fecha— **se fue**.
   devuelve más de lo que dice el sistema**: el freno lee la pila con la fila
   del proveedor bloqueada, y con LA MISMA consulta de la pantalla.
 - **Ajuste y asignación son SOLO de Administración**: no tienen ruta bajo
-  `/compras`, así que los cierra la puerta por prefijo.
+  `/compras`, así que los cierra la puerta por prefijo. **La tarjeta de
+  asignar sale siempre** desde el 28/09: iba adentro de un `if marcas` y,
+  sin marcas cargadas en ningún proveedor, no apareció nunca. Muestra
+  cuántos hay sin marca, la marca de destino se elige o se escribe (y
+  escrita se crea en la misma transacción), y los "sin asignar" con cajones
+  van resaltados en el índice y en el detalle.
 - **El conteo físico ya no arranca nada: va al COTEJO**, el último conteo de
   cada pila contra lo que el sistema dice ahora. Solo ofrece proveedores y
   marcas ya cargados. **Y se carga en SU pantalla** (`/vacios/conteo`, dueño,
@@ -4039,6 +4049,17 @@ arrancó", sus "esperando" y la regla de la fecha— **se fue**.
 Los números van contra Postgres en `tests/test_vacios_pilas_contra_la_base.py`,
 con la foto EN MARZO a propósito (corolario 95) y un proveedor cuya recepción
 cae el mismo día que su foto, antes y después de la hora.
+
+## Buscar compras: la SEÑA (28/09, dueño)
+
+La pantalla, el Excel y el PDF llevan una columna "Seña" al lado del
+importe, vacía si la compra no dejó seña, y el total al pie. Las tres salen
+de `texto_sena` y `total_de_senas` (core/exportar_compras.py). **La seña es
+por cajón, igual que el importe**, así que el total no es la suma de la
+columna: es seña × cajones, y el rótulo lo dice. No había total de importes
+en ninguna de las tres, y el importe por cajón tampoco se puede sumar tal
+cual. En celular la columna nueva corrió las reglas `td:nth-child`, y un
+test compara cuántos `<th>` hay contra cuántas reglas.
 
 ## UN PROVEEDOR, VARIOS PUESTOS (27/09)
 
@@ -10755,12 +10776,18 @@ este archivo guarda.
    pendientes más viejas van a un aviso sin sumarse. Uno solo abierto, sea del
    día que sea. Detalle en `docs/que_comprar_hoy.md`.
 
-   **Lo que no mira, anotado para el día que dé un número raro**: una compra
-   en camino que viene ARMADA en caja nuestra se suma a la fila del artículo
-   sin mirar de qué cliente es la ficha; las cajas de la FOTO sí se filtran
-   por cliente tildado. Una armada para Coto achica lo que falta para Día, y
-   el listado propone de menos. Dónde iría el filtro: en
-   `compras_alrededor_de_la_salida`, por ficha, igual que en la foto.
+   **El stock es del ARTÍCULO, no del cliente (dueño, 28/09)**: los sueltos
+   más TODAS las cajas armadas, de cualquier ficha y cualquier cliente; la
+   segunda no suma. Hasta ese día contaban solo las cajas de los clientes de
+   las cargas tildadas. En camino tampoco filtra por cliente, así que las dos
+   puntas miran igual.
+
+   **Antes de salir, el stock es el de ahora, en gris** y con "provisorio, se
+   congela al salir"; la cuenta ya lo usa. "Salgo a comprar" va arriba de
+   todo, y después de salir arriba dice de cuándo es la foto. El PDF dice
+   "stock provisorio" hasta que se sale. Un stock que no se puede saber dice
+   por qué (una caja de ficha sin contenido, o sueltos sin contenido
+   declarado); en el PDF sigue en blanco, como decidió el dueño.
 
 8. **Tildar no recalcula solo (28/09)**: el listado sale de lo GUARDADO.
    "Actualizar" es el mismo guardado que el Guardar del pie, puesto arriba

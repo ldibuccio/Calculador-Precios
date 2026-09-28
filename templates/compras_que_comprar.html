@@ -58,6 +58,17 @@
   .arriba button { flex: 1 1 9rem; min-height: 52px; font-size: 1.05rem; font-weight: 800;
                    border-radius: 10px; }
   .actualizar { color: #fff; background: #16a34a; border: 0; }
+  /* SALGO A COMPRAR VA ARRIBA DE TODO (dueño, 28/09), a la vista en el
+     celular sin bajar: ocupa la fila entera, antes que los otros dos. */
+  .arriba .salgo { flex: 1 1 100%; margin: 0; color: #fff; background: #2563eb; border: 0; }
+  .arriba .salgo-ayuda { flex: 1 1 100%; margin: -0.2rem 0 0; }
+  .foto-sacada { flex: 1 1 100%; margin: 0; font-size: 0.95rem; }
+  /* EL STOCK ANTES DE SALIR VA EN GRIS: es el de ahora y todavía se mueve.
+     La cuenta ya lo usa; el gris dice que no es el de la foto. */
+  .dato-stock[data-provisorio], .dato-stock[data-provisorio] b,
+  .dato-stock[data-provisorio] small { color: #6b7280; }
+  .dato-stock[data-provisorio] .aviso-provisorio { font-style: italic; }
+  .por-que { display: block; font-size: 0.75rem; color: #92400e; font-weight: 400; }
   .pdf { color: #2563eb; background: #fff; border: 2px solid #2563eb; }
   .cerrar { min-height: 44px; width: 100%; font-size: 0.95rem; font-weight: 700; color: #444;
             background: #fff; border: 2px solid #ccc; border-radius: 8px; }
@@ -76,6 +87,16 @@
      "Exportar" guarda primero y saca el PDF, así sale lo tildado en este
      momento. Se llamaba "Sacar PDF", y no se entendía (dueño, 28/09). #}
   <div class="arriba">
+    {# SALIR NO SE REPITE: una segunda foto movería el punto de partida y lo
+       comprado entre medio pasaría de "Compré" al stock. Para empezar de
+       nuevo se cierra el listado. #}
+    {% if not salio_el %}
+    <button class="salgo" type="submit" name="accion" value="salgo">Salgo a comprar</button>
+    <p class="salgo-ayuda">Guarda el listado y deja fijo el stock de este momento.
+      Apretalo cuando salís, no cuando armás la lista.</p>
+    {% else %}
+    <p class="foto-sacada">Stock congelado el <b>{{ salio_el.strftime("%d/%m a las %H:%M") }}</b>.</p>
+    {% endif %}
     <button class="actualizar" type="submit" name="accion" value="guardar">Actualizar</button>
     <button class="pdf" type="submit" name="accion" value="pdf">Exportar</button>
   </div>
@@ -169,7 +190,7 @@
                   aria-label="{{ f.palabra|capitalize }} por bulto de {{ f.nombre }}"></b></span>
       <span class="dato dato-bultos">Piden bultos
         <b class="pide-bultos">{{ f.pide_bultos|numero if f.pide_bultos is not none else '—' }}</b></span>
-      <span class="dato dato-stock">Stock
+      <span class="dato dato-stock"{% if not salio_el %} data-provisorio{% endif %}>Stock
         <b class="stock-bultos">{% if f.en_piso is none %}<span class="hueco">no se puede saber</span>
            {%- elif f.stock_bultos is not none %}{{ f.stock_bultos|numero }} blt
            {%- else %}{{ f.en_piso|sin_decimales }} {{ f.sufijo }}{% endif %}</b>
@@ -177,7 +198,9 @@
         {# EL NEGATIVO DEL SISTEMA, en rojo y con su número (dueño, 28/09):
            salieron bultos sueltos sin entrada que los cubra. No se resta de
            "A comprar": su magnitud es 0. #}
-        {% if f.sueltos_negativos %}<small class="stock-negativo">sistema {{ f.sueltos_negativos|numero }} blt sueltos</small>{% endif %}</span>
+        {% if f.sueltos_negativos %}<small class="stock-negativo">sistema {{ f.sueltos_negativos|numero }} blt sueltos</small>{% endif %}
+        {% if f.en_piso is none and f.stock_por_que %}<small class="por-que">{{ f.stock_por_que }}</small>{% endif %}
+        {% if not salio_el %}<small class="aviso-provisorio">provisorio, se congela al salir</small>{% endif %}</span>
       <span class="dato dato-en-camino">En camino
         <b class="en-camino">{% if f.en_camino is none %}<span class="hueco">no se sabe la unidad</span>
            {%- else %}{{ f.en_camino_cajones|sin_decimales }} cj{% endif %}</b></span>
@@ -201,14 +224,6 @@
   {% endfor %}
 
   <button class="guardar" type="submit" name="accion" value="guardar">Guardar</button>
-  {# SALIR NO SE REPITE: una segunda foto movería el punto de partida y lo
-     comprado entre medio pasaría de "Compré" al stock. Para empezar de nuevo
-     se cierra el listado. #}
-  {% if not salio_el %}
-    <button class="salgo" type="submit" name="accion" value="salgo">Salgo a comprar</button>
-    <p class="salgo-ayuda">Guarda el listado y deja fijo el stock de este momento.
-      Apretalo cuando salís, no cuando armás la lista.</p>
-  {% endif %}
   {% if hay_borrador %}
     <button class="cerrar" type="submit" name="accion" value="cerrar"
             onclick="return confirm('Cerrar el listado. Queda como historial, con su foto, y se empieza uno nuevo.')">Ya compré: cerrar el listado</button>

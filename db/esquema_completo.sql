@@ -930,7 +930,7 @@ create table marcas_vacio (
     constraint marcas_vacio_id_proveedor unique (id, proveedor_id)
 );
 
-comment on table marcas_vacio is 'Las marcas de los cajones de CADA proveedor de Compras. Se cargan en Vacíos y Recepción solo elige entre ellas.';
+comment on table marcas_vacio is 'Marcas de cajón de cada proveedor. Las crea Recepción al escribir la marca (con seña) o Administración al asignar.';
 comment on column compras.marca_vacio_id is 'La marca del cajón con que llegó esta compra con seña. NULL = sin asignar.';
 comment on column compras.marca is 'La marca de la MERCADERÍA (texto libre, lo carga Recepción). NULL = sin asignar.';
 comment on column vacios_deposito_devoluciones.marca_vacio_id is 'De qué pila salió la devolución. NULL = de los cajones sin asignar.';
