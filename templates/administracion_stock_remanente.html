@@ -151,6 +151,8 @@
     text-align: right;
     line-height: 1.3;
   }
+  .numero-negativo { display: block; color: #b91c1c; font-size: 1.1rem; font-weight: 800; }
+  .cuanto-falta small { display: block; font-size: 0.8rem; font-weight: 600; }
 
   .bloque-negativos {
     margin-top: 2.5rem;
@@ -278,14 +280,17 @@
          no aparecía — ni en rojo ni en cero: no estaba. Y no era solo la
          lista: Movimiento busca la porción acá, así que daba 404.
 
-         EL NÚMERO VA ADENTRO DE LA FRASE y nunca en la columna de la
-         derecha, que es la misma regla del bloque de abajo: "Faltan
-         explicar 18" dice qué pasó; un "−18" en la columna de cantidades
-         se lee como stock y se resta de algo. #}
+         EL NÚMERO REAL, EN ROJO (dueño, 28/09): "todos los listados tienen
+         que mostrar los negativos en rojo y con el número real". Hasta ese
+         día iba solo adentro de la frase ("Faltan explicar 18") para que
+         no se leyera como stock; ahora va el −18 en rojo y la frase abajo,
+         que sigue diciendo qué pasó. Vale para los sueltos, las cajas de
+         una ficha y la segunda. #}
       <a class="porcion{% if p.negativo %} negativa{% endif %}" href="/administracion/stock/remanente/porcion?articulo_id={{ p.articulo_id }}&fecha={{ fecha }}{% if p.ficha_id %}&ficha_id={{ p.ficha_id }}{% endif %}{% if p.es_segunda %}&segunda=1{% endif %}">
         <span class="que">{{ p.nombre }}</span>
         {% if p.negativo %}
-        <span class="cuanto-falta">Faltan explicar {{ p.faltan|numero }}</span>
+        <span class="cuanto-falta"><span class="numero-negativo">{{ p.bultos|numero }}</span>
+          <small>faltan explicar {{ p.faltan|numero }}</small></span>
         {% else %}
         <span class="cuanto">{{ p.bultos|numero }}</span>
         {% endif %}

@@ -22,6 +22,7 @@
   .dato small { display: block; font-size: 0.78rem; color: #666; }
   .a-comprar, .falta { font-size: 1.35rem; font-weight: 800; }
   .hueco { color: #92400e; font-weight: 700; }
+  .stock-negativo { display: block; color: #b91c1c; font-weight: 800; font-size: 0.8rem; }
   .ok { color: #16a34a; }
   /* 44px es el mínimo tocable con el pulgar, y este input se toca parado
      en el Mercado con el celular en una mano. */
@@ -172,7 +173,11 @@
         <b class="stock-bultos">{% if f.en_piso is none %}<span class="hueco">no se puede saber</span>
            {%- elif f.stock_bultos is not none %}{{ f.stock_bultos|numero }} blt
            {%- else %}{{ f.en_piso|sin_decimales }} {{ f.sufijo }}{% endif %}</b>
-        {% if f.en_piso is not none and f.stock_bultos is not none %}<small class="stock-magnitud">{{ f.en_piso|sin_decimales }} {{ f.sufijo }}</small>{% endif %}</span>
+        {% if f.en_piso is not none and f.stock_bultos is not none %}<small class="stock-magnitud">{{ f.en_piso|sin_decimales }} {{ f.sufijo }}</small>{% endif %}
+        {# EL NEGATIVO DEL SISTEMA, en rojo y con su número (dueño, 28/09):
+           salieron bultos sueltos sin entrada que los cubra. No se resta de
+           "A comprar": su magnitud es 0. #}
+        {% if f.sueltos_negativos %}<small class="stock-negativo">sistema {{ f.sueltos_negativos|numero }} blt sueltos</small>{% endif %}</span>
       <span class="dato dato-en-camino">En camino
         <b class="en-camino">{% if f.en_camino is none %}<span class="hueco">no se sabe la unidad</span>
            {%- else %}{{ f.en_camino_cajones|sin_decimales }} cj{% endif %}</b></span>

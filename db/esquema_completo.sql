@@ -701,6 +701,26 @@ create table aprendizaje_articulos (
 comment on table aprendizaje_articulos is 'Aprende qué texto de una comanda (por proveedor) corresponde a qué artículo.';
 
 -- ----------------------------------------------------------------------------
+-- AJUSTES_SEGUNDA — ver db/segunda_ajuste_1_tabla.sql
+-- ----------------------------------------------------------------------------
+create table ajustes_segunda (
+    id              bigint generated always as identity primary key,
+    articulo_id     bigint not null references articulos (id),
+    bultos          numeric not null check (bultos <> 0),
+    motivo          text not null check (btrim(motivo) <> ''),
+    fecha_operacion date not null,
+    stock_sistema   numeric not null,
+    creado_en       timestamptz not null default now(),
+    anulado_el      timestamptz
+);
+
+create index ajustes_segunda_articulo
+    on ajustes_segunda (articulo_id, fecha_operacion) where anulado_el is null;
+
+comment on table ajustes_segunda is
+    'Ajuste del pool de SEGUNDA con motivo, para un desvio que no viene de su origen (guia R, rechazo, pase o remito): la segunda que habia en el piso al corte y no se cargo. bultos con signo: positivo suma al pool, negativo resta. No toca la primera. stock_sistema = el pool al cierre del dia del conteo, congelado.';
+
+-- ----------------------------------------------------------------------------
 -- 11. VACÍOS (Envases Puesto) — cajones de proveedores que entran y salen
 --     del puesto del Mercado. Nada que ver con la tabla envases (esa es el
 --     costo del envase facturado al cliente de distribución).

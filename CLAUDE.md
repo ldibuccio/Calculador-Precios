@@ -598,6 +598,40 @@ Quedan dos guardas, y cada una contesta una mitad distinta:
   **se vuelve a correr cada vez que se toca una tabla que una base puede no
   tener**.
 
+## Los negativos se ven, con su número y en rojo (28/09, dueño)
+
+"Todos los listados tienen que mostrar los negativos en rojo y con el número
+real." La palta de segunda estaba en −2 (21 remitidas al Puesto, 19 entradas)
+y no aparecía en ningún lado:
+
+- **El Remanente** armaba la segunda solo con `> 0`. Su comentario decía que
+  era un pool con piso propio que no podía quedar negativo, y que "el día que
+  se mida uno negativo, este comentario es el lugar". Ahora sale con
+  cualquier signo distinto de cero, y las cajas de una ficha también llevan
+  la marca. El renglón muestra el −2 en rojo y la frase abajo. Hasta ese día
+  el número iba solo adentro de la frase; lo cambió el dueño.
+- **El Cotejo** decía "sistema 0", porque busca la porción en esa lista y la
+  que no está vale cero. Ahora dice −2, en rojo.
+- **La consulta del stock** no miraba los remitos en su filtro, así que un
+  artículo cuyo único movimiento era un remito desaparecía entero.
+- **Qué comprar hoy** le ponía piso en cero a los sueltos. Ahora muestra el
+  negativo en rojo, en la pantalla y en el PDF. La cuenta no cambia: la
+  magnitud de un suelto negativo es 0, así que no compra de más.
+- **El Excel del Remanente** ya tenía el número y ahora lo pinta de rojo. El
+  Remanente no tiene PDF.
+
+El selector de Remito de segunda sigue con `> 0`, a propósito: no se remite
+lo que no hay.
+
+**La segunda no tenía cómo corregirse cuando el desvío no viene de su origen**
+(guía R, rechazo, pase o remito), por ejemplo la segunda que había en el piso
+el 05/09 y no entró al stock inicial. Va `ajustes_segunda`
+(`db/segunda_ajuste_1_tabla.sql`), una tabla propia con motivo y signo. El
+código que la usa espera la verificación de las dos bases.
+`db/segunda_negativa_1_por_articulo.sql` lista el pool de segunda de cada
+artículo. No reescribe las patas: su WITH es `_SQL_POOL_SEGUNDA` sin
+comentarios, y dio igual que `_segunda_de_articulo` en tres casos plantados.
+
 ## Los títulos de kilos y unidades se escriben UNA vez (28/09)
 
 La compra 827 (palta) se cargó en Ingreso por depósito con 18 "por cajón" y
