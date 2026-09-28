@@ -230,3 +230,21 @@ def test_la_SENA_por_cajon_de_la_ultima_recepcion_por_pila(base):
     import app.db as db
     assert db.sena_por_cajon_de_la_ultima_recepcion(901) == {911: 800.0}
     assert db.sena_por_cajon_de_la_ultima_recepcion(902) == {None: 300.0}
+
+
+def test_la_ASIGNACION_a_una_marca_ESCRITA_la_crea_y_si_rebota_no_la_deja(base):
+    """Dueño, 28/09: elegir o CREAR la marca al asignar. Escrita de otra forma,
+    una que ya existe se reusa; y si la asignación rebota, la marca nueva
+    tampoco queda — va en la misma transacción."""
+    import app.db as db
+    with pytest.raises(ValueError, match="hay 3 cajones"):
+        db.crear_asignacion_vacios(901, None, None, 9, marca_nueva="EJ Verde")
+    assert [m["nombre"] for m in db.listar_marcas_vacio(901)] == ["EJ Azul", "EJ Roja"]
+
+    db.crear_asignacion_vacios(901, None, None, 2, marca_nueva="  EJ  Verde ")
+    db.crear_asignacion_vacios(901, None, None, 1, marca_nueva="ej verde")
+    assert [m["nombre"] for m in db.listar_marcas_vacio(901)] == ["EJ Azul", "EJ Roja", "EJ Verde"]
+    assert _pilas(901) == ({None: 0, "EJ Roja": 11, "EJ Verde": 3}, 14)
+
+    with pytest.raises(ValueError, match="Elegí a qué marca van"):
+        db.crear_asignacion_vacios(901, None, None, 1, marca_nueva="   ")

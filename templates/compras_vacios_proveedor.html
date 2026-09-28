@@ -59,6 +59,15 @@
   .pila:first-child { border-top: 0; }
   .pila-marca { overflow-wrap: anywhere; min-width: 0; }
   .pila-marca.sin-asignar { color: #6b7280; font-style: italic; }
+  /* SIN MARCA Y CON CAJONES, RESALTADO (dueño, 28/09): es lo que falta
+     asignar, y en gris chico no se veía. Un "sin asignar" en cero no se
+     resalta: ahí no hay nada que hacer. */
+  .pila.sin-marca { background: #fff7ed; border-left: 4px solid #f97316;
+                    padding-left: .5rem; font-weight: 700; }
+  .pila.sin-marca .pila-marca.sin-asignar { color: #9a3412; }
+  .sin-marca-total { margin: 0 0 .6rem; font-weight: 700; color: #475569; }
+  .sin-marca-total.hay { background: #fff7ed; border-left: 4px solid #f97316;
+                         padding: .45rem .6rem; color: #9a3412; }
   .pila-stock { font-weight: 600; white-space: nowrap; }
   .marcas { display: flex; flex-wrap: wrap; gap: .4rem; margin: 0 0 .75rem; }
   .marca { background: #eef2ff; color: #3730a3; border-radius: 999px;
@@ -83,7 +92,7 @@
 <div class="tarjeta">
   <div class="stock">{{ p.stock|numero }} cajones</div>
   {% for pila in p.pilas %}
-  <div class="pila">
+  <div class="pila{% if not pila.marca and pila.stock %} sin-marca{% endif %}">
     <span class="pila-marca {% if not pila.marca %}sin-asignar{% endif %}">{{ pila.marca or "sin asignar" }}</span>
     <span class="pila-stock">{{ pila.stock|numero }}</span>
   </div>
@@ -235,9 +244,15 @@
   </form>
 </div>
 
-{% if marcas %}
-<div class="tarjeta solo-admin">
+{# LA ASIGNACIÓN SALE SIEMPRE EN ADMINISTRACIÓN (dueño, 28/09). Hasta ese día
+   iba adentro de un `{% if marcas %}`, y como ningún proveedor tenía marcas
+   cargadas no apareció nunca: `vacios_deposito_asignaciones` estaba vacía
+   porque la tarjeta no existía para nadie. Ahora la marca de destino se
+   elige o se escribe, y escrita se crea. #}
+<div class="tarjeta solo-admin" id="asignar">
   <h2>Asignarles una marca</h2>
+  {% set sin_marca = pilas_para_elegir[0].stock %}
+  <p class="sin-marca-total{% if sin_marca %} hay{% endif %}">Sin marca: {{ sin_marca|numero }} cajones</p>
   <form method="post" action="/administracion/vacios/{{ p.id }}/asignacion">
     <div class="fila">
       <div class="campo">
@@ -248,12 +263,19 @@
           {% endfor %}
         </select>
       </div>
+      {% if marcas %}
       <div class="campo">
         <label for="asig_hasta">¿A qué marca pasan?</label>
-        <select id="asig_hasta" name="marca_hasta_id" required>
-          <option value="">Elegí la marca</option>
+        <select id="asig_hasta" name="marca_hasta_id">
+          <option value="">Una marca nueva (escribila abajo)</option>
           {% for m in marcas %}<option value="{{ m.id }}">{{ m.nombre }}</option>{% endfor %}
         </select>
+      </div>
+      {% endif %}
+      <div class="campo">
+        <label for="asig_nueva">{% if marcas %}O una marca nueva{% else %}¿A qué marca pasan?{% endif %}</label>
+        <input id="asig_nueva" name="marca_nueva" type="text" maxlength="60"
+               placeholder="La del sello del cajón" {% if not marcas %}required{% endif %}>
       </div>
       <div class="campo">
         <label for="asig_cantidad">¿Cuántos?</label>
@@ -262,8 +284,8 @@
       <button type="submit">Asignar</button>
     </div>
   </form>
+  <p class="ayuda">Queda registrado abajo y se puede anular.</p>
 </div>
-{% endif %}
 {% endif %}
 
 {% if movimientos %}

@@ -350,31 +350,32 @@
     {% endif %}
   </div>
 
-  {# LAS DOS MARCAS (dueño, 25/09), opcionales y en blanco = "sin asignar".
-     Un solo macro para los DOS formularios que recepcionan —Recibir y el
-     rechazo parcial—: escritas dos veces, la copia que se separe deja una de
-     las dos puertas guardando sin marca y no se nota.
+  {# LA MARCA, UN SOLO CAMPO (dueño, 28/09). Hasta ese día eran dos: el texto
+     de la mercadería y un selector de la marca del cajón que solo aparecía
+     si el proveedor tenía marcas cargadas en Vacíos. No había ninguna
+     cargada, así que el selector no salió nunca y 25 de 27 compras quedaron
+     con la marca escrita y los cajones "sin asignar".
 
-     La del VACÍO solo con seña: sin seña esos cajones no entran a Vacíos. Y
-     solo con las marcas cargadas para ESTE proveedor (las da de alta Vacíos);
-     si no tiene ninguna, se dice en vez de mostrar un selector vacío. #}
+     Ahora lo escrito es también la marca del cajón: con seña, la escritura
+     (`_marca_vacio_del_texto`) la busca entre las de ESE proveedor y si no
+     está la crea. La lista de sugerencias son las que ya tiene, para que
+     "Rio Uruguay" no entre escrito de tres formas. Un solo macro para las DOS
+     puertas que recepcionan: escritas dos veces, una se queda atrás. #}
   {% macro campos_de_marca(c, sufijo) %}
   <div class="marcas-recepcion">
-    <label for="marca-{{ sufijo }}-{{ c.id }}">Marca de la mercadería (opcional)</label>
+    <label for="marca-{{ sufijo }}-{{ c.id }}">Marca (opcional)</label>
     <input type="text" id="marca-{{ sufijo }}-{{ c.id }}" name="marca" maxlength="60"
-           placeholder="Ej: la marca de la manzana" autocomplete="off">
-    {% if c.con_sena %}
+           placeholder="La del cajón: Westfalia, Citrus…" autocomplete="off"
+           {% if c.marcas_vacio %}list="marcas-{{ sufijo }}-{{ c.id }}"{% endif %}>
     {% if c.marcas_vacio %}
-    <label for="marca-vacio-{{ sufijo }}-{{ c.id }}">Marca de los cajones (opcional)</label>
-    <select id="marca-vacio-{{ sufijo }}-{{ c.id }}" name="marca_vacio_id">
-      <option value="">Sin asignar</option>
-      {% for m in c.marcas_vacio %}
-      <option value="{{ m.id }}">{{ m.nombre }}</option>
-      {% endfor %}
-    </select>
-    {% else %}
-    <p class="ayuda-marca">Los cajones quedan sin asignar: este proveedor no tiene marcas cargadas en Vacíos.</p>
+    <datalist id="marcas-{{ sufijo }}-{{ c.id }}">
+      {% for m in c.marcas_vacio %}<option value="{{ m.nombre }}"></option>{% endfor %}
+    </datalist>
     {% endif %}
+    {% if c.con_sena %}
+    <p class="ayuda-marca">Dejó seña: sus cajones entran a Vacíos con esta marca. Si es nueva, se crea.</p>
+    {% else %}
+    <p class="ayuda-marca">Sin seña: sus cajones no entran a Vacíos.</p>
     {% endif %}
   </div>
   {% endmacro %}

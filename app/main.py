@@ -436,7 +436,14 @@ from core.magnitudes import (
     repartir_magnitudes,
     unidad_de_compra,
 )
-from core.exportar_compras import generar_excel_listado_compras, generar_pdf_listado_compras
+from core.exportar_compras import (
+    ROTULO_TOTAL_SENAS,
+    generar_excel_listado_compras,
+    generar_pdf_listado_compras,
+    texto_sena,
+    total_de_senas,
+)
+from core.exportar_compras import _formatear_moneda as _moneda_de_compras
 from core.exportar_disponibles import generar_excel_disponibles
 from core.kilajes import pilas_por_formato
 from core.exportar_remanente import generar_excel_remanente
@@ -3117,6 +3124,11 @@ def _renderizar_pantalla_buscar_compras(
             ),
             "error_fecha": error_fecha,
             "compras": compras,
+            # La seña sale de las MISMAS dos funciones que el Excel y el PDF
+            # (core/exportar_compras.py): las tres salidas no pueden separarse.
+            "texto_sena": texto_sena,
+            "rotulo_total_senas": ROTULO_TOTAL_SENAS,
+            "total_senas": _moneda_de_compras(total_de_senas(compras)),
             "aviso": aviso,
             "aviso_tope": aviso_tope,
         },
@@ -3325,6 +3337,7 @@ def _filas_de_que_comprar(
                     if del_piso.get("sueltos") is not None and float(del_piso["sueltos"]) < 0
                     else None),
                 "cajas": del_piso.get("cajas"),
+                "stock_por_que": del_piso.get("por_que"),
                 "comprado_cajones": lo_comprado.get("cajones", 0.0),
                 "comprado": comprado_magnitud,
                 "de_partida": de_partida,
@@ -3367,16 +3380,15 @@ def _sumar_o_nada(*valores):
     return sum(float(v) for v in valores)
 
 
-def _piso_en_magnitud(articulo_ids: list[int], fichas_tildadas: list[dict], al_cierre_de):
+def _piso_en_magnitud(articulo_ids: list[int], al_cierre_de):
     """Cuánto hay en el piso de cada artículo AL CIERRE DE `al_cierre_de`, EN LA MAGNITUD de su fila.
 
-    Es la foto en vivo (`_foto_del_stock`) leída con las fichas tildadas
-    (`_piso_de_la_foto`). Las dos mitades están separadas porque la foto se
-    GUARDA al salir a comprar y se vuelve a leer después: la misma lectura
-    tiene que servir para la foto de ahora y para la de las 22 de anoche.
+    Es la foto en vivo (`_foto_del_stock`) leída con `_piso_de_la_foto`. Las
+    dos mitades están separadas porque la foto se GUARDA al salir a comprar y
+    se vuelve a leer después: la misma lectura tiene que servir para la foto
+    de ahora y para la de las 22 de anoche.
     """
-    return _piso_de_la_foto(_foto_del_stock(articulo_ids, al_cierre_de),
-                            articulo_ids, fichas_tildadas)
+    return _piso_de_la_foto(_foto_del_stock(articulo_ids, al_cierre_de), articulo_ids)
 
 
 def _foto_del_stock(articulo_ids: list[int], al_cierre_de) -> dict:
@@ -3391,9 +3403,8 @@ def _foto_del_stock(articulo_ids: list[int], al_cierre_de) -> dict:
       - las CAJAS ya armadas tienen UN contenido por ficha
         (`fichas_logistica.contenido_caja`).
 
-    LAS CAJAS VAN POR FICHA Y TODAS, no solo las de los clientes tildados:
-    la foto se guarda al salir, y un cliente se puede tildar después. Cuáles
-    cuentan lo decide `_piso_de_la_foto`, al leerla.
+    LAS CAJAS VAN POR FICHA Y TODAS, de cualquier cliente: el stock del
+    listado es el del ARTÍCULO (dueño, 28/09). Ver `_piso_de_la_foto`.
 
     LA SEGUNDA NO JUEGA y no hay que excluirla: es un pool aparte y ninguna
     de estas dos cuentas lo toca.
@@ -3437,23 +3448,28 @@ def _foto_del_stock(articulo_ids: list[int], al_cierre_de) -> dict:
     return {"sueltos": foto_sueltos, "cajas": foto_cajas}
 
 
-def _piso_de_la_foto(foto: dict, articulo_ids: list[int], fichas_tildadas: list[dict]) -> dict:
-    """{articulo_id: {magnitud, sueltos, cajas}} — la foto leída con las fichas de los clientes TILDADOS.
+def _piso_de_la_foto(foto: dict, articulo_ids: list[int]) -> dict:
+    """{articulo_id: {magnitud, sueltos, cajas, por_que}} — el stock TOTAL de cada artículo en la foto.
 
-    Solo cuentan las cajas de esas fichas: una caja de Día no le sirve al
-    pedido de Coto. Y una caja SIN contenido deja la fila sin número, igual
-    que un suelto cuyas pilas no cierran.
+    EL STOCK ES DEL ARTÍCULO, NO DEL CLIENTE (dueño, 28/09): "salgo a comprar
+    kilos totales para todos los clientes juntos". Son los sueltos más TODAS
+    las cajas armadas, de cualquier ficha y cualquier cliente. Hasta ese día
+    contaban solo las cajas de las fichas de los clientes tildados. La segunda
+    no suma: es un pool aparte y la foto no la lee.
+
+    UNA CAJA SIN CONTENIDO deja la fila sin número, igual que un suelto cuyas
+    pilas no cierran. `por_que` dice cuál de las dos, para que la pantalla no
+    diga solo "no se puede saber".
 
     UN ARTÍCULO QUE NO ESTÁ EN LA FOTO QUEDA SIN NÚMERO y no en cero: la foto
     guardada tiene todo el catálogo, así que el que falta se creó después de
     salir, y de él no se sabe qué había.
     """
-    tildadas = {f["id"] for f in fichas_tildadas}
     piso = {}
     for articulo_id in articulo_ids:
         en_cajas_magnitud, en_cajas_bultos, falta_contenido = 0.0, 0.0, False
-        for ficha_id, (de_articulo, bultos, magnitud) in foto["cajas"].items():
-            if de_articulo != articulo_id or ficha_id not in tildadas:
+        for _ficha_id, (de_articulo, bultos, magnitud) in foto["cajas"].items():
+            if de_articulo != articulo_id:
                 continue
             en_cajas_bultos += bultos
             if magnitud is None:
@@ -3462,11 +3478,15 @@ def _piso_de_la_foto(foto: dict, articulo_ids: list[int], fichas_tildadas: list[
                 en_cajas_magnitud += magnitud
 
         if articulo_id not in foto["sueltos"]:
-            piso[articulo_id] = {"magnitud": None, "sueltos": None, "cajas": en_cajas_bultos}
+            piso[articulo_id] = {"magnitud": None, "sueltos": None, "cajas": en_cajas_bultos,
+                                 "por_que": "el artículo se cargó después de la foto"}
             continue
         sueltos, sueltos_magnitud = foto["sueltos"][articulo_id]
         if sueltos_magnitud is None or falta_contenido:
-            piso[articulo_id] = {"magnitud": None, "sueltos": sueltos, "cajas": en_cajas_bultos}
+            por_que = ("hay cajas armadas de una ficha sin contenido por caja" if falta_contenido
+                       else "hay cajones sueltos sin contenido declarado")
+            piso[articulo_id] = {"magnitud": None, "sueltos": sueltos, "cajas": en_cajas_bultos,
+                                 "por_que": por_que}
             continue
         piso[articulo_id] = {
             "magnitud": sueltos_magnitud + en_cajas_magnitud,
@@ -3622,16 +3642,14 @@ def _contexto_de_que_comprar(request: Request, aviso: str | None = None):
         articulos = {a["id"]: a for a in listar_articulos()}
         unidades = _unidad_de_cada_articulo(
             list(articulos.values()), listar_fichas_de_todos_los_clientes())
-        # Las cajas ya armadas que cuentan son las de los clientes de ESTAS
-        # cargas: una caja de Día no le sirve al pedido de Coto.
-        clientes = sorted({carga["cliente_id"] for carga in cargas})
-        fichas = [f for c in clientes for f in listar_fichas_por_cliente(c)]
         ids = sorted({a for aporte in aportes for a in aporte["pide"]})
         # LA FOTO GUARDADA SI YA SALIÓ; SI NO, LA DE AHORA. La de ahora es al
         # cierre de HOY porque el stock se cuenta por día: incluye lo que ya
         # se recepcionó hoy, y eso mismo queda afuera de "en camino".
         foto = foto_del_listado(borrador["id"]) if salida else _foto_del_stock(ids, hoy)
-        piso = _piso_de_la_foto(foto, ids, fichas) if ids else {}
+        # EL STOCK DEL ARTÍCULO ENTERO, con las cajas de todos los clientes
+        # (dueño, 28/09): se sale a comprar para todos juntos.
+        piso = _piso_de_la_foto(foto, ids) if ids else {}
         compras = compras_alrededor_de_la_salida(salida)
     except Exception:
         logger.exception("No se pudo armar Qué comprar hoy")
@@ -4417,7 +4435,7 @@ def exportar_que_comprar_pdf(request: Request):
     if contexto["salio_el"]:
         stock = f"stock al salir, {contexto['salio_el'].strftime('%d/%m %H:%M')}"
     else:
-        stock = "stock de ahora: todavía no saliste a comprar"
+        stock = "stock provisorio: todavía no saliste a comprar"
     cargas = [
         f"{bloque['cliente_nombre']} {c['fecha'].strftime('%d/%m')} "
         + ("(a mano)" if c["modo"] == "manual"
@@ -6962,17 +6980,23 @@ def cargar_ajuste_vacios_deposito(request: Request, proveedor_id: int,
 @app.post("/administracion/vacios/{proveedor_id}/asignacion")
 def cargar_asignacion_vacios(request: Request, proveedor_id: int,
                              marca_desde_id: str = Form(""), marca_hasta_id: str = Form(""),
-                             cantidad: str = Form("")):
-    """Pasar cajones de una pila a una marca, sin depender de la recepción."""
+                             marca_nueva: str = Form(""), cantidad: str = Form("")):
+    """Pasar cajones de una pila a una marca, sin depender de la recepción.
+
+    La marca de destino se elige o se ESCRIBE (dueño, 28/09): escrita, se crea
+    si no existe, en la misma transacción que la asignación.
+    """
     cajones = _entero_positivo(cantidad)
     hasta = _marca_del_form(marca_hasta_id)
-    if cajones is None or hasta is None:
+    if cajones is None or (hasta is None and not marca_nueva.strip()):
         return _renderizar_vacios_proveedor(
             request, proveedor_id,
-            error="Elegí a qué marca van y cuántos cajones (un número entero mayor que cero).",
+            error="Elegí a qué marca van (o escribí una nueva) y cuántos cajones "
+                  "(un número entero mayor que cero).",
             status_code=400)
     try:
-        crear_asignacion_vacios(proveedor_id, _marca_del_form(marca_desde_id), hasta, cajones)
+        crear_asignacion_vacios(proveedor_id, _marca_del_form(marca_desde_id), hasta, cajones,
+                                marca_nueva=marca_nueva)
     except ValueError as invalido:
         return _renderizar_vacios_proveedor(request, proveedor_id, error=str(invalido),
                                            status_code=400)

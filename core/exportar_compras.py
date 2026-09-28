@@ -52,6 +52,30 @@ def _formatear_moneda(valor) -> str:
     return f"${'-' if negativo else ''}{texto}"
 
 
+# LA SEÑA (dueño, 28/09), al lado del importe y en las TRES salidas: la
+# pantalla de Buscar compras, el Excel y el PDF. Las tres la escriben con
+# `texto_sena` y suman con `total_de_senas`, así que no pueden decir cosas
+# distintas.
+#
+# LA SEÑA ES POR CAJÓN, igual que el importe (el vale de Vacíos la precarga
+# "por cajón"). Por eso el TOTAL no es la suma de la columna —sumar precios
+# por cajón de compras distintas no da nada— sino lo que se dejó de seña en
+# plata: seña × cajones de cada compra. El rótulo del total lo dice.
+ROTULO_TOTAL_SENAS = "Total de señas (seña por cajón × cajones)"
+
+
+def texto_sena(fila: dict) -> str:
+    """La celda de la seña: "$1.200", o vacía si la compra no dejó seña."""
+    sena = fila.get("sena")
+    return _formatear_moneda(sena) if sena else ""
+
+
+def total_de_senas(filas: list[dict]) -> float:
+    """La plata que se dejó de seña: seña por cajón × cajones, de las que tienen."""
+    return round(sum(float(f["sena"]) * float(f.get("cantidad_cajones") or 0)
+                     for f in filas if f.get("sena")), 2)
+
+
 def _texto_cantidad(fila: dict) -> str:
     """"40 cajones × 20k": mismo criterio de abreviatura (k/u/c) que ya usa Últimas Compras."""
     cantidad = _formatear_numero(fila.get("cantidad_cajones"))
@@ -175,11 +199,12 @@ def generar_pdf_listado_compras(fecha_desde: date, fecha_hasta: date, filas: lis
 
             titulo = f"{fecha_operacion.strftime('%d/%m/%Y')} — {proveedor_nombre} ({proveedor_codigo})"
             datos_tabla = [
-                [Paragraph(titulo, estilo_titulo_tabla), "", ""],
+                [Paragraph(titulo, estilo_titulo_tabla), "", "", ""],
                 [
                     Paragraph("Artículo", estilo_encabezado_tabla),
                     Paragraph("Cantidad", estilo_encabezado_tabla),
                     Paragraph("Importe", estilo_encabezado_tabla),
+                    Paragraph("Seña", estilo_encabezado_tabla),
                 ],
             ]
             estilos_filas = []
@@ -190,6 +215,7 @@ def generar_pdf_listado_compras(fecha_desde: date, fecha_hasta: date, filas: lis
                         Paragraph(fila["articulo_nombre"], estilo_articulo),
                         Paragraph(_texto_cantidad(fila), estilo_cantidad),
                         Paragraph(_formatear_moneda(fila.get("importe")), estilo_importe),
+                        Paragraph(texto_sena(fila), estilo_cantidad),
                     ]
                 )
                 if indice_dato % 2 == 1:
@@ -197,7 +223,7 @@ def generar_pdf_listado_compras(fecha_desde: date, fecha_hasta: date, filas: lis
 
             tabla = Table(
                 datos_tabla,
-                colWidths=[ancho_util * 0.5, ancho_util * 0.28, ancho_util * 0.22],
+                colWidths=[ancho_util * 0.42, ancho_util * 0.26, ancho_util * 0.17, ancho_util * 0.15],
                 repeatRows=2,
             )
             tabla.setStyle(
@@ -217,6 +243,10 @@ def generar_pdf_listado_compras(fecha_desde: date, fecha_hasta: date, filas: lis
                 )
             )
             elementos.append(tabla)
+
+    if filas:
+        elementos += [Spacer(1, 12), Paragraph(
+            f"{ROTULO_TOTAL_SENAS}: {_formatear_moneda(total_de_senas(filas))}", estilo_importe)]
 
     documento.build(elementos, onFirstPage=_dibujar_encabezado_pagina, onLaterPages=_dibujar_encabezado_pagina)
     return buffer.getvalue()
@@ -238,7 +268,7 @@ def generar_excel_listado_compras(fecha_desde: date, fecha_hasta: date, filas: l
 
     fila_actual = 1
     hoja.cell(row=fila_actual, column=1, value="Listado de Compras")
-    for columna in range(1, 4):
+    for columna in range(1, 5):
         celda = hoja.cell(row=fila_actual, column=columna)
         celda.fill = relleno_verde
         if columna == 1:
@@ -259,7 +289,7 @@ def generar_excel_listado_compras(fecha_desde: date, fecha_hasta: date, filas: l
             ).font = fuente_proveedor
             fila_actual += 1
 
-            for columna, encabezado in enumerate(("Artículo", "Cantidad", "Importe"), start=1):
+            for columna, encabezado in enumerate(("Artículo", "Cantidad", "Importe", "Seña"), start=1):
                 celda = hoja.cell(row=fila_actual, column=columna, value=encabezado)
                 celda.font = fuente_encabezado_tabla
                 celda.fill = relleno_verde_claro
@@ -272,15 +302,25 @@ def generar_excel_listado_compras(fecha_desde: date, fecha_hasta: date, filas: l
                 celda_importe = hoja.cell(row=fila_actual, column=3, value=float(importe) if importe is not None else "Sin precio")
                 if importe is not None:
                     celda_importe.number_format = '"$"#,##0'
+                # Vacía si no dejó seña: un cero se lee como "dejó cero".
+                if fila.get("sena"):
+                    hoja.cell(row=fila_actual, column=4, value=float(fila["sena"])).number_format = '"$"#,##0'
                 fila_actual += 1
 
             fila_actual += 1  # renglón en blanco entre proveedores
 
         fila_actual += 1  # renglón en blanco entre fechas
 
+    if filas:
+        hoja.cell(row=fila_actual, column=1, value=ROTULO_TOTAL_SENAS).font = Font(bold=True)
+        celda = hoja.cell(row=fila_actual, column=4, value=total_de_senas(filas))
+        celda.font = Font(bold=True)
+        celda.number_format = '"$"#,##0'
+
     hoja.column_dimensions[get_column_letter(1)].width = 34
     hoja.column_dimensions[get_column_letter(2)].width = 22
     hoja.column_dimensions[get_column_letter(3)].width = 14
+    hoja.column_dimensions[get_column_letter(4)].width = 14
 
     buffer = BytesIO()
     libro.save(buffer)

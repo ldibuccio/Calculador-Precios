@@ -149,6 +149,47 @@ def test_los_cajones_recibidos_van_a_la_PILA_de_la_marca_elegida(galpon):
     assert proveedor["stock"] == 17
 
 
+def test_la_marca_ESCRITA_crea_la_marca_del_cajon_y_los_cajones_van_a_esa_pila(galpon):
+    """El caso del 28/09: 25 compras con la marca escrita y ninguna en una pila."""
+    d, compra, estado, prov, _, _ = galpon
+    primera, segunda = compra(sena=500), compra(sena=500)
+
+    d.recepcionar_compra(primera, 10, 16, marca="Río  Uruguay")
+    # Otra forma de escribir la MISMA marca: no crea otra, va a la misma pila.
+    d.recepcionar_compra(segunda, 6, 16, marca="rio uruguay")
+
+    marcas = {m["nombre"]: m["id"] for m in d.listar_marcas_vacio(prov)}
+    assert set(marcas) == {"EJ Roja", "Río Uruguay"}
+    assert estado(primera) == ("recepcionado", "Río Uruguay", marcas["Río Uruguay"])
+    assert estado(segunda) == ("recepcionado", "rio uruguay", marcas["Río Uruguay"])
+    proveedor, = [p for p in d.stock_de_vacios_deposito() if p["id"] == prov]
+    assert {p["marca"]: p["stock"] for p in proveedor["pilas"]} == {"Río Uruguay": 16}
+
+
+def test_una_marca_ESCRITA_que_ya_existe_se_REUSA(galpon):
+    d, compra, estado, prov, roja, _ = galpon
+    compra_id = compra(sena=500)
+    d.recepcionar_compra(compra_id, 10, 16, marca="ej roja")
+    assert estado(compra_id) == ("recepcionado", "ej roja", roja)
+    assert len(d.listar_marcas_vacio(prov)) == 1
+
+
+def test_SIN_SENA_la_marca_escrita_NO_crea_marca_de_cajon(galpon):
+    d, compra, estado, prov, _, _ = galpon
+    compra_id = compra(sena=None)
+    d.recepcionar_compra(compra_id, 10, 16, marca="Bandeja")
+    assert estado(compra_id) == ("recepcionado", "Bandeja", None)
+    assert [m["nombre"] for m in d.listar_marcas_vacio(prov)] == ["EJ Roja"]
+
+
+def test_una_marca_de_cajon_ELEGIDA_gana_sobre_el_texto(galpon):
+    d, compra, estado, prov, roja, _ = galpon
+    compra_id = compra(sena=500)
+    d.recepcionar_compra(compra_id, 10, 16, marca="EJ Granny", marca_vacio_id=roja)
+    assert estado(compra_id) == ("recepcionado", "EJ Granny", roja)
+    assert [m["nombre"] for m in d.listar_marcas_vacio(prov)] == ["EJ Roja"]
+
+
 # --- las pantallas --------------------------------------------------------
 
 def _pendientes(**cambios):
@@ -195,20 +236,26 @@ def test_la_marca_de_la_MERCADERIA_esta_en_las_DOS_puertas_de_cada_compra():
         assert f'action="/deposito/recepcion/{compra_id}/rechazo-parcial"' in renglon
 
 
-def test_la_marca_del_VACIO_solo_con_sena_y_solo_con_las_marcas_de_ESE_proveedor():
+def test_UN_SOLO_campo_de_marca_con_las_sugerencias_de_ESE_proveedor():
+    """Desde el 28/09 no hay selector de la marca del cajón: el texto ES la
+    marca, y las ya cargadas del proveedor van como sugerencias."""
     marcado = _recepcion()
     con_marcas, sin_sena, sin_marcas = (_renglon(marcado, i) for i in (1, 2, 3))
 
-    assert con_marcas.count('name="marca_vacio_id"') == 2
-    opciones = re.findall(r'<option value="(\d*)">([^<]+)</option>', con_marcas)
-    assert opciones[:3] == [("", "Sin asignar"), ("7", "EJ Roja"), ("8", "EJ Azul")]
+    for renglon in (con_marcas, sin_sena, sin_marcas):
+        assert 'name="marca_vacio_id"' not in renglon
+        assert renglon.count('name="marca"') == 2
+
+    # Las sugerencias son las de ESTE proveedor, en las dos puertas.
+    sugeridas = re.findall(r'<option value="([^"]+)"></option>', con_marcas)
+    assert sugeridas == ["EJ Roja", "EJ Azul", "EJ Roja", "EJ Azul"]
     assert "EJ De Otro" not in con_marcas
+    assert "<datalist" not in sin_marcas
 
-    assert 'name="marca_vacio_id"' not in sin_sena
-    assert "no tiene marcas cargadas" not in sin_sena
-
-    assert 'name="marca_vacio_id"' not in sin_marcas
-    assert "no tiene marcas cargadas en Vacíos" in sin_marcas
+    # Qué pasa con los cajones lo dice la seña, a la vista.
+    assert con_marcas.count("sus cajones entran a Vacíos con esta marca") == 2
+    assert sin_marcas.count("sus cajones entran a Vacíos con esta marca") == 2
+    assert sin_sena.count("Sin seña: sus cajones no entran a Vacíos") == 2
 
 
 def test_la_ruta_pasa_las_marcas_a_la_recepcion():
@@ -315,7 +362,9 @@ def test_la_pantalla_NO_se_arrastra_de_costado_con_nombres_sin_espacios(proveedo
     ):
         respuesta = cliente.get("/deposito/recepcion")
     assert respuesta.status_code == 200
-    assert respuesta.text.count('name="marca_vacio_id"') == 2   # la pantalla con el selector
+    # La pantalla con las sugerencias de marca (desde el 28/09 no hay selector).
+    # Dos compras del proveedor 501, dos puertas cada una.
+    assert respuesta.text.count('list="marcas-') == 4
     medicion = medir_sync(respuesta.text, ancho=390)
     assert medicion["pares"] > 0
     # De PÁGINA: en una pantalla de tarjetas `desborde` viene en 0 (corolario 53).

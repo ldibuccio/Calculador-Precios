@@ -51,6 +51,12 @@
   .pila:first-child { border-top: 0; }
   .pila-marca { overflow-wrap: anywhere; min-width: 0; }
   .pila-marca.sin-asignar { color: #6b7280; font-style: italic; }
+  /* SIN MARCA Y CON CAJONES, RESALTADO (dueño, 28/09): es lo que falta
+     asignar, y en gris chico no se veía. Un "sin asignar" en cero no se
+     resalta: ahí no hay nada que hacer. */
+  .pila.sin-marca { background: #fff7ed; border-left: 4px solid #f97316;
+                    padding-left: .5rem; font-weight: 700; }
+  .pila.sin-marca .pila-marca.sin-asignar { color: #9a3412; }
   .pila-stock { font-weight: 600; white-space: nowrap; }
   .ayuda { font-size: .82rem; color: #6b7280; margin: .5rem 0 0; }
   /* SE VE QUE SE PUEDE ENTRAR: borde, color y subrayado. Un link del mismo
@@ -94,13 +100,18 @@
   <div class="stock">{{ p.stock|numero }} cajones</div>
   <div class="pilas">
     {% for pila in p.pilas %}
-    <div class="pila">
+    <div class="pila{% if not pila.marca and pila.stock %} sin-marca{% endif %}">
       <span class="pila-marca {% if not pila.marca %}sin-asignar{% endif %}">{{ pila.marca or "sin asignar" }}</span>
       <span class="pila-stock">{{ pila.stock|numero }}</span>
     </div>
     {% endfor %}
   </div>
   <a class="ver" href="{{ camino.base }}/vacios/{{ p.id }}">Ver y devolver cajones</a>
+  {# Asignar es solo de Administración: desde Compras el link chocaría
+     contra una clave que no es suya (corolario 56). #}
+  {% if camino.sector == "administracion" and p.pilas and not p.pilas[0].marca and p.pilas[0].stock %}
+  <a class="ver" href="/administracion/vacios/{{ p.id }}#asignar">Asignarles marca</a>
+  {% endif %}
 </div>
 {% else %}
 <div class="tarjeta vacio">
