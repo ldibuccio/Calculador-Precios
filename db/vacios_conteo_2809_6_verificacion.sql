@@ -25,7 +25,7 @@ despues as (
 select 'vacios_conteo_2809_5_cargar' as que_migracion,
   (select count(*) from vacios_deposito_arranques where motivo = 'Conteo físico 28/09') as arranques_1,
   (select count(*) from cargadas) as pilas_17,
-  (select coalesce(sum(cantidad), 0) from cargadas) as total_1070,
+  (select coalesce(sum(cantidad), 0) from cargadas) as total_1086,
   (select count(*) from vacios_conteo_2809() t
      join cargadas c on c.proveedor_id = (select proveedor_id from vacios_conteo_2809_proveedor(t.pn))
       and c.nombre_normalizado = lower(translate(t.marca, 'áéíóúñÁÉÍÓÚÑ', 'aeiounAEIOUN'))
@@ -40,6 +40,6 @@ select 'vacios_conteo_2809_5_cargar' as que_migracion,
 
 -- VERIFICACIÓN del arranque de vacíos del 28/09. Se corre APARTE del do del
 -- bloque 5, en otra corrida, y en las dos bases. En Frutamax: arranques 1,
--- pilas 17, total 1070, filas_iguales 17, sin_proveedor 1, y stock_ahora
--- 1070 si no entró ni salió nada después (si no, 1070 ± eso). En Palmala:
+-- pilas 17, total 1086, filas_iguales 17, sin_proveedor 1, y stock_ahora
+-- 1086 si no entró ni salió nada después (si no, 1086 ± eso). En Palmala:
 -- todo en 0 y stock_ahora vacío, porque ahí el bloque 5 no hace nada.

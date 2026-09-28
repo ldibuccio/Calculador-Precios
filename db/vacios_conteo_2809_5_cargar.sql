@@ -37,7 +37,7 @@ begin
     values (v_arr, b.proveedor_id, v_marca, r.cant);
     total := total + r.cant;
   end loop;
-  if total <> 1070 then raise exception 'el total dio %, no 1070', total; end if;
+  if total <> 1086 then raise exception 'el total dio %, no 1086', total; end if;
 end $$;
 
 -- ARRANQUE DE VACÍOS DESDE EL CONTEO FÍSICO DEL 28/09, bloque 5 (el único

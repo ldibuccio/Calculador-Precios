@@ -3978,7 +3978,7 @@ que ese join solo existe para las viejas.)
 
 ### DESDE EL 28/09 LA CUENTA ARRANCA DEL CONTEO FÍSICO (dueño)
 
-Se contó el piso a mano (1.070 cajones en 17 pilas) y eso es el stock de
+Se contó el piso a mano (1.086 cajones en 17 pilas) y eso es el stock de
 arranque. La foto del 25/09 y su corrección (`vacios_foto_4`) **no se corren
 más**: quedan como historia.
 

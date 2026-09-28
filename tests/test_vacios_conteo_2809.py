@@ -36,7 +36,7 @@ TABLA = [
     ("Herederos N7", "Don Quijote", 30), ("Herederos N7", "Fortaleza", 12),
     ("Herederos N7", "Don Ibáñez", 3), ("Saturno", "Babilonia", 91),
     ("Patagonia Market", "Patagonia", 83), ("Roncaglia Alcides J.", "El Pato", 50),
-    ("MRC", "Soto", 48), ("Sin Proveedor", "La Valentina", 35),
+    ("MRC", "Soto", 64), ("Sin Proveedor", "La Valentina", 35),
     ("Abra Chica", "Abra Chica", 24), ("Frutas J. Robol", "Canasto Negro", 24),
     ("FRUTAMAX S.R.L.", "Lisandro", 11), ("FRUTAMAX S.R.L.", "Tom Jug", 1),
     ("Deliverduras", "Crefu", 7), ("Kaizer", "1039", 3),
@@ -185,7 +185,7 @@ def test_la_CARGA_deja_la_tabla_del_duenio_y_nada_mas(base):
     stock = _stock_por_pila(d)
     nombres = {k: v for k, v in CARGADOS.items()}
     assert stock == _esperado(nombres)
-    assert sum(stock.values()) == 1070
+    assert sum(stock.values()) == 1086
     # Los que no están en el conteo desaparecen de la pantalla: cero y sin movimiento después.
     assert not [p for p in d.stock_de_vacios_deposito() if p["id"] in (ids["INGUCA N5"], ids["DIMIMAX"])]
     # "La union" se reusó con su nombre; "Tomjug" pasó a "Tom Jug", el mismo id.
@@ -207,7 +207,7 @@ def test_la_VERIFICACION_da_la_fila_buena_y_ANTES_de_cargar_no(base):
     assert antes[:7] == ("vacios_conteo_2809_5_cargar", 0, 0, 0, 0, 0, None)   # canario
     sql(_leer(BLOQUES[4]))
     fila, = sql(_leer(BLOQUES[5]))
-    assert fila[:7] == ("vacios_conteo_2809_5_cargar", 1, 17, 1070, 17, 1, 1070)
+    assert fila[:7] == ("vacios_conteo_2809_5_cargar", 1, 17, 1086, 17, 1, 1086)
     assert fila[7] is not None and fila[8] is not None
 
 
@@ -297,7 +297,7 @@ def test_la_TABLA_del_duenio_y_la_funcion_de_datos_son_la_MISMA(base):
             "SELECT btrim(regexp_replace(replace(translate(lower(%s), 'áéíóúüñ', 'aeiouun'), "
             "'.', ''), '[^a-z0-9]+', ' ', 'g'))", (prov,))
         assert pn == plegado, prov
-    assert sum(c for _, _, c in TABLA) == 1070
+    assert sum(c for _, _, c in TABLA) == 1086
 
 
 def test_el_buscador_de_la_carga_pliega_IGUAL_que_el_del_test():
@@ -324,7 +324,7 @@ def test_la_pantalla_sabe_de_que_conteo_arranca(base):
     assert d.arranque_de_vacios() is None
     correr(5)
     arranque = d.arranque_de_vacios()
-    assert (arranque["motivo"], arranque["total"]) == ("Conteo físico 28/09", 1070)
+    assert (arranque["motivo"], arranque["total"]) == ("Conteo físico 28/09", 1086)
 
 
 def test_JUNTAR_dos_proveedores_lleva_lo_contado_y_el_total_no_se_mueve(base):
@@ -334,7 +334,7 @@ def test_JUNTAR_dos_proveedores_lleva_lo_contado_y_el_total_no_se_mueve(base):
     antes = sum(_stock_por_pila(d).values())
     d.juntar_proveedores(ids["Saturno"], ids["Kaizer"])
     stock = _stock_por_pila(d)
-    assert sum(stock.values()) == antes == 1070
+    assert sum(stock.values()) == antes == 1086
     assert stock[("SATURNO", "1039")] == 3 and stock[("SATURNO", "Babilonia")] == 91
 
 
@@ -346,4 +346,4 @@ def test_JUNTAR_dos_marcas_suma_lo_contado_de_las_dos(base):
     d.juntar_marcas_vacio(ids["Herederos N7"], fortaleza, quijote)
     stock = _stock_por_pila(d)
     assert stock[("herederos n7", "Don Quijote")] == 42
-    assert sum(stock.values()) == 1070
+    assert sum(stock.values()) == 1086

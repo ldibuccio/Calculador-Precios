@@ -936,7 +936,7 @@ def test_la_tarjeta_de_MOVER_ofrece_salir_de_una_MARCA_y_no_solo_de_sin_marca():
 # sale el número, y lo de antes del conteo no ofrece anularse.
 # ---------------------------------------------------------------------------
 ARRANQUE = {"motivo": "Conteo físico 28/09", "creado_en": datetime(2026, 9, 28, 21, 40),
-            "total": 1070}
+            "total": 1086}
 
 
 def test_el_INDICE_y_el_DETALLE_dicen_de_que_conteo_arranca_la_cuenta():
@@ -949,7 +949,7 @@ def test_el_INDICE_y_el_DETALLE_dicen_de_que_conteo_arranca_la_cuenta():
         origen, = re.findall(r'<p class="origen">(.*?)</p>', marcado, re.S)
         texto = " ".join(origen.split())
         assert "<strong>Conteo físico 28/09</strong>" in texto
-        assert "1070 cajones contados, cargado el 28/09 a las 21:40" in texto
+        assert "1086 cajones contados, cargado el 28/09 a las 21:40" in texto
         assert "foto del 25/09" not in texto
 
 
