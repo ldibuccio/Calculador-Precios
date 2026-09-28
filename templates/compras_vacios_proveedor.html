@@ -22,7 +22,11 @@
   .patas span { white-space: nowrap; }
   .fila { display: flex; flex-wrap: wrap; gap: .5rem; align-items: flex-end; }
   .campo { display: flex; flex-direction: column; flex: 1 1 8rem; min-width: 0; }
-  label { font-size: .85rem; margin-bottom: .2rem; }
+  /* El nombre de una marca va en la etiqueta de su campo (Corregir el nombre)
+     y en la oferta de juntar: el largo no lo controlamos. */
+  label { font-size: .85rem; margin-bottom: .2rem; overflow-wrap: anywhere; }
+  .juntar { border: 2px solid #f97316; }
+  .juntar h2, .juntar p { overflow-wrap: anywhere; }
   input, select { font-size: 1rem; padding: .6rem; min-height: 44px;
                   border: 1px solid #cbd5e1; border-radius: 8px; min-width: 0; }
   button { font-size: 1rem; padding: .7rem 1.1rem; min-height: 44px;
@@ -250,7 +254,7 @@
    porque la tarjeta no existía para nadie. Ahora la marca de destino se
    elige o se escribe, y escrita se crea. #}
 <div class="tarjeta solo-admin" id="asignar">
-  <h2>Asignarles una marca</h2>
+  <h2>Pasar cajones a otra marca</h2>
   {% set sin_marca = pilas_para_elegir[0].stock %}
   <p class="sin-marca-total{% if sin_marca %} hay{% endif %}">Sin marca: {{ sin_marca|numero }} cajones</p>
   <form method="post" action="/administracion/vacios/{{ p.id }}/asignacion">
@@ -284,8 +288,42 @@
       <button type="submit">Asignar</button>
     </div>
   </form>
-  <p class="ayuda">Queda registrado abajo y se puede anular.</p>
+  <p class="ayuda">Salen de "sin asignar" o de otra marca. Queda registrado abajo y se puede anular.</p>
 </div>
+
+{# CORREGIR EL NOMBRE (dueño, 28/09): una marca mal escrita. Los cajones no
+   se mueven: es la misma pila con otro nombre. Si el nombre ya es de otra
+   marca de este proveedor, la escritura lo rechaza y acá se ofrece juntarlas. #}
+{% if juntar %}
+<div class="tarjeta solo-admin juntar" id="juntar">
+  <h2>Ya existe «{{ juntar.queda }}»</h2>
+  <p>¿Juntar «{{ juntar.se_va }}» con «{{ juntar.queda }}»? Todos los cajones y
+     movimientos de «{{ juntar.se_va }}» pasan a «{{ juntar.queda }}», y
+     «{{ juntar.se_va }}» deja de existir.</p>
+  <form method="post" action="/administracion/vacios/{{ p.id }}/marca/{{ juntar.se_va_id }}/juntar">
+    <input type="hidden" name="queda_id" value="{{ juntar.queda_id }}">
+    <button type="submit">Juntarlas</button>
+  </form>
+</div>
+{% endif %}
+{% if marcas %}
+<div class="tarjeta solo-admin" id="renombrar">
+  <h2>Corregir el nombre de una marca</h2>
+  {% for m in marcas %}
+  <form method="post" action="/administracion/vacios/{{ p.id }}/marca/{{ m.id }}/renombrar">
+    <div class="fila">
+      <div class="campo">
+        <label for="renombrar_{{ m.id }}">{{ m.nombre }}</label>
+        <input id="renombrar_{{ m.id }}" name="nombre" type="text" maxlength="60" required
+               placeholder="Nombre bien escrito">
+      </div>
+      <button type="submit">Corregir</button>
+    </div>
+  </form>
+  {% endfor %}
+  <p class="ayuda">Si el nombre ya es de otra marca, te ofrece juntarlas.</p>
+</div>
+{% endif %}
 {% endif %}
 
 {% if movimientos %}

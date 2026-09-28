@@ -11818,11 +11818,13 @@ def test_ver_ingresar_mercaderia_con_proveedor_muestra_formulario_de_renglon():
     assert "Kiwi" in respuesta.text
     assert "Cantidad de cajones" in respuesta.text
     assert "Contenido por cajón" in respuesta.text
-    # Sin campo de precio/costo: eso lo carga el comprador después.
+    # Sin campo de precio: eso lo carga el comprador después.
     assert 'name="importe"' not in respuesta.text
-    assert 'name="sena"' not in respuesta.text
     assert ">Importe<" not in respuesta.text
-    assert ">Seña<" not in respuesta.text
+    # LA SEÑA Y LA MARCA SÍ, desde el 28/09 (dueño): con seña, los cajones
+    # del ingreso directo suman a Vacíos, igual que los recibidos.
+    assert 'name="sena"' in respuesta.text
+    assert 'name="marca"' in respuesta.text
     assert 'action="/deposito/ingresar"' in respuesta.text
 
 
@@ -12039,7 +12041,7 @@ def test_ingresar_mercaderia_exitoso_agregar_redirige_con_aviso():
         HOY_DE_PRUEBA, 5, 200, 10.0, 18.0, 180.0, None, None, None, "Clark",
         ingreso_directo_deposito=True,
         ficha_en_origen_id=None,
-        segunda_por_cajon=None, codigo_llegada="N07P41",
+        segunda_por_cajon=None, codigo_llegada="N07P41", marca="",
     )
 
 

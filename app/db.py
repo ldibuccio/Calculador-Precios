@@ -2616,8 +2616,15 @@ def crear_compra(
     *,
     segunda_por_cajon: float | None,
     codigo_llegada: str | None,
+    marca: str | None = None,
 ) -> None:
     """Inserta una compra cargada por el comprador, con su guía asignada.
+
+    `marca` es la del INGRESO DIRECTO (dueño, 28/09), que nace recibida y no
+    pasa por Recepción: es la misma marca que Recepción escribe al recibir,
+    y con seña se vincula a la marca de cajón del proveedor, creándola si
+    falta (`_marca_vacio_del_texto`). Sin seña queda escrita y no suma a
+    Vacíos. En la misma transacción que el INSERT.
 
     `codigo_llegada` es el puesto TIPEADO por el que llegó, principal o
     alternativo del proveedor (ver `_insertar_compra_con_guia`). Sin default,
@@ -2689,7 +2696,7 @@ def crear_compra(
             recepcionada_el = _recepcion_retroactiva_validada(
                 cursor, recepcionada_el, ingreso_directo_deposito
             )
-            _insertar_compra_con_guia(
+            compra_id = _insertar_compra_con_guia(
                 cursor,
                 fecha_operacion,
                 articulo_id,
@@ -2708,6 +2715,12 @@ def crear_compra(
                 segunda_por_cajon=segunda_por_cajon,
                 codigo_llegada=codigo_llegada,
             )
+            marca = " ".join((marca or "").split()) or None
+            if marca is not None:
+                cursor.execute(
+                    "UPDATE compras SET marca = %s, marca_vacio_id = %s WHERE id = %s",
+                    (marca, _marca_vacio_del_texto(cursor, compra_id, marca), compra_id),
+                )
         conexion.commit()
     finally:
         conexion.close()
@@ -16786,6 +16799,120 @@ def crear_marca_vacio(proveedor_id: int, nombre: str) -> int:
             marca_id = cursor.fetchone()[0]
         conexion.commit()
         return marca_id
+    finally:
+        conexion.close()
+
+
+class MarcaQueYaExiste(ValueError):
+    """Renombrar chocó contra otra marca del MISMO proveedor: se ofrece juntarlas."""
+
+    def __init__(self, otra_id: int, otra_nombre: str):
+        super().__init__(f"Ya hay una marca «{otra_nombre}» en este proveedor.")
+        self.otra_id = otra_id
+        self.otra_nombre = otra_nombre
+
+
+def renombrar_marca_vacio(proveedor_id: int, marca_id: int, nombre: str) -> None:
+    """Le cambia el nombre a una marca de cajón (dueño, 28/09: "está mal escrita").
+
+    Los cajones no se mueven: la pila es la misma, con otro nombre, y el
+    stock, el cotejo y los exportados lo leen del id. Si el nombre nuevo YA
+    es de otra marca de este proveedor —lo decide el unique
+    `marcas_vacio_nombre_unico`, no una pregunta previa— se levanta
+    `MarcaQueYaExiste` y la pantalla ofrece juntarlas.
+    """
+    nombre = " ".join((nombre or "").split())
+    normalizado = normalizar_texto(nombre)
+    if not normalizado:
+        raise ValueError("Poné el nombre nuevo de la marca.")
+    conexion = obtener_conexion()
+    try:
+        with conexion.cursor() as cursor:
+            try:
+                cursor.execute(
+                    "UPDATE marcas_vacio SET nombre = %s, nombre_normalizado = %s "
+                    "WHERE id = %s AND proveedor_id = %s RETURNING 1",
+                    (nombre, normalizado, marca_id, proveedor_id),
+                )
+            except psycopg2.errors.UniqueViolation:
+                conexion.rollback()
+                with conexion.cursor() as buscador:
+                    buscador.execute(
+                        "SELECT id, nombre FROM marcas_vacio "
+                        "WHERE proveedor_id = %s AND nombre_normalizado = %s",
+                        (proveedor_id, normalizado),
+                    )
+                    fila = buscador.fetchone()
+                if fila is None:
+                    raise ValueError(
+                        "La base rechazó el nombre por repetido y no encuentro cuál es: "
+                        "el plegado de Python y el de la base dejaron de coincidir."
+                    )
+                raise MarcaQueYaExiste(fila[0], fila[1])
+            if cursor.fetchone() is None:
+                conexion.rollback()
+                raise ValueError("Esa marca no existe en este proveedor.")
+        conexion.commit()
+    finally:
+        conexion.close()
+
+
+# DÓNDE SE NOMBRA UNA MARCA DE CAJÓN: todas las FK a `marcas_vacio`. Juntar dos
+# marcas mueve las de la que se va a la que queda, en las CINCO tablas. Lo
+# cuida un test que lee `pg_constraint` contra el esquema real: una tabla
+# nueva con FK a marcas lo rompe hasta que alguien decida cómo se junta.
+COLUMNAS_QUE_NOMBRAN_UNA_MARCA = (
+    ("compras", "marca_vacio_id"),
+    ("vacios_deposito_devoluciones", "marca_vacio_id"),
+    ("conteos_vacios_deposito", "marca_vacio_id"),
+    ("vacios_deposito_ajustes", "marca_vacio_id"),
+    ("vacios_deposito_asignaciones", "marca_desde_id"),
+    ("vacios_deposito_asignaciones", "marca_hasta_id"),
+)
+
+
+def juntar_marcas_vacio(proveedor_id: int, se_va_id: int, queda_id: int) -> dict:
+    """Pasa TODO lo de una marca a otra del mismo proveedor y borra la que se va.
+
+    Es el caso "la marca está mal escrita y ya existe la bien escrita": los
+    cajones de las dos son la misma pila. Todo en UNA transacción.
+
+    LAS ASIGNACIONES ENTRE LAS DOS SE BORRAN, y es lo único que se borra: una
+    que pasaba cajones de una a la otra queda de una marca a la misma, que la
+    base rechaza (`vacios_asig_cantidad_y_pilas`), y dentro de la pila
+    juntada no movía nada. Devuelve cuántas fueron, para decirlo.
+    """
+    if se_va_id == queda_id:
+        raise ValueError("Elegí dos marcas distintas.")
+    conexion = obtener_conexion()
+    try:
+        with conexion.cursor() as cursor:
+            cursor.execute(
+                "SELECT id FROM marcas_vacio WHERE proveedor_id = %s AND id IN (%s, %s) FOR UPDATE",
+                (proveedor_id, se_va_id, queda_id),
+            )
+            if len(cursor.fetchall()) != 2:
+                conexion.rollback()
+                raise ValueError("Las dos marcas tienen que ser de este proveedor.")
+            cursor.execute(
+                "DELETE FROM vacios_deposito_asignaciones WHERE proveedor_id = %s AND "
+                "((marca_desde_id = %s AND marca_hasta_id = %s) OR "
+                " (marca_desde_id = %s AND marca_hasta_id = %s))",
+                (proveedor_id, se_va_id, queda_id, queda_id, se_va_id),
+            )
+            entre_ellas = cursor.rowcount
+            movidos = 0
+            for tabla, columna in COLUMNAS_QUE_NOMBRAN_UNA_MARCA:
+                cursor.execute(
+                    psycopg2.sql.SQL("UPDATE {} SET {} = %s WHERE {} = %s AND proveedor_id = %s").format(
+                        psycopg2.sql.Identifier(tabla), psycopg2.sql.Identifier(columna),
+                        psycopg2.sql.Identifier(columna)),
+                    (queda_id, se_va_id, proveedor_id),
+                )
+                movidos += cursor.rowcount
+            cursor.execute("DELETE FROM marcas_vacio WHERE id = %s", (se_va_id,))
+        conexion.commit()
+        return {"movidos": movidos, "asignaciones_entre_ellas": entre_ellas}
     finally:
         conexion.close()
 

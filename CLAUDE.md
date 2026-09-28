@@ -4022,8 +4022,10 @@ arrancó", sus "esperando" y la regla de la fecha— **se fue**.
   sugerencias del campo. Lo que ya estaba lo vincula
   `db/vacios_marca_texto_1_vincular.sql`. **El Detalle muestra la de la
   RECEPCIÓN**: si después Administración asigna esos cajones a otra pila, la
-  compra sigue diciendo con qué marca llegaron. El ingreso directo no lleva
-  seña, así que sus cajones no entran a Vacíos.
+  compra sigue diciendo con qué marca llegaron. **El ingreso directo lleva
+  seña y marca desde el 28/09** (dueño): nace recibido, así que
+  `crear_compra` escribe la marca y la vincula en la misma transacción, con
+  la misma regla que Recepción: con seña suma a Vacíos, sin seña no.
 - **La devolución sale de una PILA, sin compra**, con la seña por cajón de
   la última recepción de esa pila precargada y editable. **Sin foto del vale
   no es una devolución: es un ajuste** (guarda en la ruta, en la escritura y
@@ -4044,7 +4046,18 @@ arrancó", sus "esperando" y la regla de la fecha— **se fue**.
   sin marcas cargadas en ningún proveedor, no apareció nunca. Muestra
   cuántos hay sin marca, la marca de destino se elige o se escribe (y
   escrita se crea en la misma transacción), y los "sin asignar" con cajones
-  van resaltados en el índice y en el detalle.
+  van resaltados en el índice y en el detalle. **Los cajones salen de "sin
+  asignar" o de otra marca**: de 200 "Pepe Jaula" se pasan 150 a "Pepe
+  Torito" con la misma tarjeta.
+- **Corregir el nombre de una marca** (`renombrar_marca_vacio`, solo
+  Administración): la pila es la misma, con otro nombre, y el stock y los
+  exportados lo leen del id. Si el nombre ya es de otra marca del proveedor
+  (lo decide el unique), la pantalla ofrece **juntarlas**
+  (`juntar_marcas_vacio`): todo pasa a la que queda en una transacción, por
+  las columnas de `COLUMNAS_QUE_NOMBRAN_UNA_MARCA`, y la otra se borra. Las
+  asignaciones ENTRE las dos se borran: quedarían de una marca a la misma,
+  que la base rechaza, y dentro de una sola pila no movían nada. Un test que
+  lee `pg_constraint` compara las FK a `marcas_vacio` contra esa lista.
 - **El conteo físico ya no arranca nada: va al COTEJO**, el último conteo de
   cada pila contra lo que el sistema dice ahora. Solo ofrece proveedores y
   marcas ya cargados. **Y se carga en SU pantalla** (`/vacios/conteo`, dueño,
@@ -4071,9 +4084,11 @@ La pantalla, el Excel y el PDF llevan una columna "Seña" al lado del
 importe, vacía si la compra no dejó seña, y el total al pie. Las tres salen
 de `texto_sena` y `total_de_senas` (core/exportar_compras.py). **La seña es
 por cajón, igual que el importe**, así que el total no es la suma de la
-columna: es seña × cajones, y el rótulo lo dice. No había total de importes
-en ninguna de las tres, y el importe por cajón tampoco se puede sumar tal
-cual. En celular la columna nueva corrió las reglas `td:nth-child`, y un
+columna: es seña × cajones, y el rótulo lo dice. **El total de importes va
+al lado** (dueño, 28/09: "para ver cuánta plata hay en lo que filtraste"),
+con la misma cuenta, importe × cajones, y una cola que dice cuántas compras
+sin precio no suman: sin ella, un total al que le faltan compras se lee
+igual de cerrado. En celular la columna nueva corrió las reglas `td:nth-child`, y un
 test compara cuántos `<th>` hay contra cuántas reglas.
 
 ## UN PROVEEDOR, VARIOS PUESTOS (27/09)

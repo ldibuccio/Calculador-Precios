@@ -248,3 +248,71 @@ def test_la_ASIGNACION_a_una_marca_ESCRITA_la_crea_y_si_rebota_no_la_deja(base):
 
     with pytest.raises(ValueError, match="Elegí a qué marca van"):
         db.crear_asignacion_vacios(901, None, None, 1, marca_nueva="   ")
+
+
+def test_RENOMBRAR_una_marca_no_mueve_cajones_solo_el_nombre(base):
+    import app.db as db
+    antes, total = _pilas(901)
+    db.renombrar_marca_vacio(901, 911, "  EJ   Colorada ")
+    pilas, total_despues = _pilas(901)
+    assert pilas == {("EJ Colorada" if k == "EJ Roja" else k): v for k, v in antes.items()}
+    assert total_despues == total
+    assert "EJ Colorada" in [m["nombre"] for m in db.listar_marcas_vacio(901)]
+
+
+def test_RENOMBRAR_a_un_nombre_que_ya_existe_ofrece_juntar(base):
+    import app.db as db
+    with pytest.raises(db.MarcaQueYaExiste) as choque:
+        db.renombrar_marca_vacio(901, 912, "ej  roja")
+    assert (choque.value.otra_id, choque.value.otra_nombre) == (911, "EJ Roja")
+    # No escribió nada: la azul sigue con su nombre.
+    assert [m["nombre"] for m in db.listar_marcas_vacio(901)] == ["EJ Azul", "EJ Roja"]
+    # Una marca de OTRO proveedor con ese nombre no choca.
+    db.renombrar_marca_vacio(901, 912, "EJ Ajena")
+
+
+def test_JUNTAR_pasa_todo_a_la_que_queda_y_borra_las_asignaciones_entre_ellas(base):
+    import app.db as db
+    db.crear_asignacion_vacios(901, 911, 912, 5)          # Roja 6, Azul 5
+    antes, total = _pilas(901)
+    assert antes == {None: 3, "EJ Roja": 6, "EJ Azul": 5}
+
+    resultado = db.juntar_marcas_vacio(901, 912, 911)
+
+    assert resultado["asignaciones_entre_ellas"] == 1
+    # La asignación Roja→Azul se borró: dentro de una sola pila no movía nada.
+    assert _pilas(901) == ({None: 3, "EJ Roja": 11}, total)
+    assert [m["nombre"] for m in db.listar_marcas_vacio(901)] == ["EJ Roja"]
+
+
+def test_JUNTAR_con_una_marca_de_OTRO_proveedor_no_escribe_nada(base):
+    import app.db as db
+    with pytest.raises(ValueError, match="de este proveedor"):
+        db.juntar_marcas_vacio(901, 912, 913)
+    assert len(db.listar_marcas_vacio(901)) == 2
+
+
+def test_MOVER_cajones_de_una_MARCA_a_otra_nueva(base):
+    """"De 200 Pepe Jaula pasar 150 a Pepe Torito": sale de una marca, no de sin marca."""
+    import app.db as db
+    db.crear_asignacion_vacios(901, 911, None, 8, marca_nueva="EJ Torito")
+    assert _pilas(901) == ({None: 3, "EJ Roja": 3, "EJ Torito": 8}, 14)
+
+
+def test_las_FK_a_MARCAS_encontradas_son_las_que_JUNTAR_mueve(base):
+    """Encontrado contra decidido (corolario 60): una tabla nueva con FK a
+    marcas_vacio rompe esto hasta que alguien decida cómo se junta."""
+    import psycopg2
+    import app.db as db
+    conexion = psycopg2.connect(base)
+    with conexion.cursor() as cursor:
+        cursor.execute("""
+            SELECT c.conrelid::regclass::text, a.attname
+              FROM pg_constraint c
+              JOIN LATERAL unnest(c.conkey) WITH ORDINALITY k(attnum, n) ON true
+              JOIN pg_attribute a ON a.attrelid = c.conrelid AND a.attnum = k.attnum
+             WHERE c.contype = 'f' AND c.confrelid = 'marcas_vacio'::regclass
+               AND a.attname <> 'proveedor_id'""")
+        encontradas = set(cursor.fetchall())
+    conexion.close()
+    assert encontradas == set(db.COLUMNAS_QUE_NOMBRAN_UNA_MARCA)

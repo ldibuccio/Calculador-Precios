@@ -21,8 +21,10 @@ from tests.test_app import _puerta_de_compras_abierta  # noqa: F401
 COMPRAS = deepcopy(ta.COMPRAS_BUSQUEDA_DE_PRUEBA[:2])
 COMPRAS[1]["sena"] = 1200.0
 COMPRAS.append({**deepcopy(COMPRAS[1]), "id": 3, "articulo_nombre": "EJEMPLO Palta",
-                "cantidad_cajones": 4, "sena": 300.0})
+                "cantidad_cajones": 4, "sena": 300.0, "importe": 2000.0})
 TOTAL = "$13.200"
+# Importes: 40 × $45.000 + 4 × $2.000 = $1.808.000; el Mango no tiene precio.
+TOTAL_IMPORTES = "Total de importes (importe por cajón × cajones): $1.808.000 · 1 sin precio, no suma"
 RANGO = "fecha_desde=2026-08-01&fecha_hasta=2026-08-06"
 
 
@@ -113,3 +115,21 @@ def test_a_390px_la_sena_no_desborda():
     assert medicion["pares"] > 0
     # En tabla viene `desborde`; en tarjetas, `desborde_pagina` (corolario 53).
     assert medicion.get("desborde_pagina", medicion["desborde"]) == 0, medicion
+
+
+def test_el_TOTAL_DE_IMPORTES_es_importe_por_cajones_y_dice_cuantas_no_suman():
+    """El rival es sumar la columna: $47.000, que no es plata de nada."""
+    assert TOTAL_IMPORTES in _pantalla().split("</style>")[-1]
+    assert TOTAL_IMPORTES in _pdf()
+    filas = _excel()
+    fila, = [f for f in filas if str(f[0]).startswith("Total de importes")]
+    assert fila[0] == TOTAL_IMPORTES.split(": $")[0] + " · 1 sin precio, no suma"
+    assert fila[2] == 1808000.0
+
+
+def test_sin_compras_sin_precio_el_total_no_lleva_la_cola():
+    from core.exportar_compras import cola_sin_precio, total_de_importes
+    con_precio = [c for c in COMPRAS if c["importe"] is not None]
+    assert cola_sin_precio(con_precio) == ""
+    assert total_de_importes(con_precio) == 1808000.0
+    assert cola_sin_precio([{"importe": None}, {"importe": None}]) == " · 2 sin precio, no suman"
