@@ -3976,7 +3976,42 @@ plata en vez de sobre stock. (Esto decía que la resta era un join por
 `compra_id`. **Desde el 25/09 la devolución no va contra una compra**, así
 que ese join solo existe para las viejas.)
 
+### DESDE EL 28/09 LA CUENTA ARRANCA DEL CONTEO FÍSICO (dueño)
+
+Se contó el piso a mano (1.070 cajones en 17 pilas) y eso es el stock de
+arranque. La foto del 25/09 y su corrección (`vacios_foto_4`) **no se corren
+más**: quedan como historia.
+
+- **Dos tablas**: `vacios_deposito_arranques` (el instante y el motivo,
+  "Conteo físico 28/09") y `vacios_deposito_arranque_pilas` (lo contado por
+  proveedor y marca). **El último arranque manda.** La cuenta
+  (`_SQL_PILAS_DE_VACIOS`) es lo contado más lo recibido con seña, menos lo
+  devuelto, más ajustes y asignaciones, todo **cargado DESPUÉS del
+  `creado_en` del arranque**. Una pila o un proveedor que no está en el conteo
+  arranca en cero. Sin arranque (Palmala) la cuenta es la de la foto, como
+  antes.
+- **Lo de antes no se borra y no mueve el número.** Por eso no se puede anular:
+  `_anular` lo rechaza y el detalle no ofrece el botón
+  (`antes_del_arranque`), con la etiqueta "antes del conteo: no cuenta". El
+  índice y el detalle dicen arriba de qué conteo arranca la cuenta
+  (`templates/_origen_vacios.html`).
+- **Se cargó con `db/vacios_conteo_2809_1..6`**: tablas, datos (la tabla del
+  dueño escrita UNA vez, en una función), buscadores, revisión (solo lee),
+  carga (un `do`, solo en la base con N09P39) y verificación aparte. El
+  proveedor se busca por nombre plegado sin puntos: igual exacto, o uno solo
+  que lo contenga. La marca, plegada y sin espacios: "Tomjug" pasó a llamarse
+  "Tom Jug". "Sin Proveedor" se creó con el código N00P00, que no es un
+  puesto.
+- **Juntar proveedores y juntar marcas mueven lo contado** (la tabla está en
+  `TABLAS_QUE_APUNTAN_A_PROVEEDORES` y en `COLUMNAS_QUE_NOMBRAN_UNA_MARCA`).
+
+Lo cuida `tests/test_vacios_conteo_2809.py`, contra Postgres, con historia de
+todo tipo antes del arranque.
+
 ### DESDE EL 25/09: una FOTO, PILAS por marca, y el conteo solo coteja
+
+(La foto dejó de ser el corte el 28/09: ver arriba. Lo que sigue vale para las
+pilas, las marcas y el conteo, y para la cuenta de una base sin arranque.)
 
 Decisiones del dueño, y reemplazan el modelo del conteo inicial del 18/09
 entero. Lo que había —un conteo que ARRANCABA la cuenta, con su "todavía no
@@ -3994,8 +4029,9 @@ arrancó", sus "esperando" y la regla de la fecha— **se fue**.
   en 798 (9 contados + 279 + 510) y con la regla son 19 (9 + los 10 de
   pomelo, los únicos con seña). Lo de DESPUÉS de la foto siempre filtró bien:
   la única consulta de Vacíos que lee compras es `_SQL_PILAS_DE_VACIOS`, con
-  `COALESCE(sena, 0) > 0`. La corrección es
-  `db/vacios_foto_4_corregir_con_sena.sql`, con la revisión (`vacios_foto_3`)
+  `COALESCE(sena, 0) > 0`. La corrección era
+  `db/vacios_foto_4_corregir_con_sena.sql` (**no se corrió**: el 28/09 el
+  dueño cambió la foto por el conteo físico, ver arriba), con la revisión (`vacios_foto_3`)
   antes y la verificación (`vacios_foto_5`) aparte. Lleva una columna de
   control que rehace la foto vieja: si no da el número actual, la cuenta no
   es la misma y la migración aborta sin escribir. **La seña vacía y la seña

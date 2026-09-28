@@ -1482,6 +1482,7 @@ TABLAS_QUE_APUNTAN_A_PROVEEDORES = frozenset({
     ("vacios_deposito_ajustes", "proveedor_id"),
     ("vacios_deposito_asignaciones", "proveedor_id"),
     ("vacios_deposito_foto", "proveedor_id"),
+    ("vacios_deposito_arranque_pilas", "proveedor_id"),
     ("aprendizaje_articulos", "proveedor_id"),
     ("movimientos_stock", "proveedor_devolucion_id"),
     ("proveedores_codigos", "proveedor_id"),
@@ -1493,7 +1494,7 @@ TABLAS_QUE_APUNTAN_A_PROVEEDORES = frozenset({
 # eso revienta ahí.
 TABLAS_VIEJAS_QUE_APUNTAN_A_PROVEEDORES = ("recepciones", "aprendizaje_proveedores")
 
-# Las marcas y los cinco lugares con FK compuesta (marca, proveedor) se mueven
+# Las marcas y los seis lugares con FK compuesta (marca, proveedor) se mueven
 # en UNA sentencia: las FK se chequean al final de la sentencia, así que la
 # marca y lo que la nombra cambian de proveedor juntos y conservan su id. En
 # dos sentencias la primera rebota contra la FK compuesta (medido contra el
@@ -1517,6 +1518,9 @@ _SQL_JUNTAR_MARCAS_Y_COMPRAS = """
          WHERE proveedor_id = %(va)s RETURNING 1
     ), asignaciones AS (
         UPDATE vacios_deposito_asignaciones SET proveedor_id = %(queda)s
+         WHERE proveedor_id = %(va)s RETURNING 1
+    ), arranque AS (
+        UPDATE vacios_deposito_arranque_pilas SET proveedor_id = %(queda)s
          WHERE proveedor_id = %(va)s RETURNING 1
     )
     SELECT (SELECT count(*) FROM marcas), (SELECT count(*) FROM compras_movidas)
@@ -1565,7 +1569,8 @@ def _resumen_para_juntar(cursor, queda_id: int, va_id: int) -> dict:
           (SELECT count(*) FROM vacios_deposito_devoluciones WHERE proveedor_id = %(va)s)
           + (SELECT count(*) FROM conteos_vacios_deposito WHERE proveedor_id = %(va)s)
           + (SELECT count(*) FROM vacios_deposito_ajustes WHERE proveedor_id = %(va)s)
-          + (SELECT count(*) FROM vacios_deposito_asignaciones WHERE proveedor_id = %(va)s),
+          + (SELECT count(*) FROM vacios_deposito_asignaciones WHERE proveedor_id = %(va)s)
+          + (SELECT count(*) FROM vacios_deposito_arranque_pilas WHERE proveedor_id = %(va)s),
           (SELECT count(*) FROM movimientos_stock WHERE proveedor_devolucion_id = %(va)s),
           (SELECT count(*) FROM aprendizaje_articulos a WHERE a.proveedor_id = %(va)s
               AND NOT EXISTS (SELECT 1 FROM aprendizaje_articulos b
@@ -16549,41 +16554,57 @@ def detallar_envases_a_reponer() -> dict:
 # ============================================================================
 
 # EL STOCK DE VACÍOS DEL DEPÓSITO SE LLEVA POR PILA: proveedor y marca del
-# cajón (dueño, 25/09). La marca en NULL es "sin asignar", y es una pila más:
-# ahí cae la foto del corte y todo lo que llegó sin marca.
+# cajón (dueño, 25/09). La marca en NULL es "sin asignar", y es una pila más.
 #
 # LA CUENTA, y es la única que existe (el índice, el detalle, la lista para
 # Excel y las guardas de escritura la leen de acá):
 #
-#     foto del 25/09  (vacios_deposito_foto, siempre a "sin asignar")
-#   + recibido CON SEÑA después de la foto
-#   − devuelto después de la foto
-#   ± ajustes          (Administración, con motivo)
-#   ± asignaciones     (Administración: de una pila a una marca)
+#     ARRANQUE        (el último conteo físico cargado, por pila)
+#   + recibido CON SEÑA después del arranque
+#   − devuelto después del arranque
+#   ± ajustes y asignaciones cargados después del arranque
 #
-# EL ARRANQUE SE FUE: los conteos ya no abren la cuenta, sirven para el
-# cotejo. Un proveedor sin foto (dado de alta después del corte) suma todo lo
-# suyo, que por construcción es posterior.
+# EL ARRANQUE VIGENTE ES EL CONTEO FÍSICO DEL 28/09 (dueño): se contó el piso
+# a mano y eso pasó a ser el stock. `vacios_deposito_arranques` guarda el
+# instante y `vacios_deposito_arranque_pilas` lo contado por pila. Un
+# proveedor o una pila que no está en el conteo ARRANCA EN CERO. TODO LO
+# ANTERIOR queda como historia y no mueve el número: la foto del 25/09, las
+# recepciones, devoluciones, ajustes y asignaciones de antes. Por eso anular
+# uno de ésos lo frena `_anular` (no cambiaría nada, y se leería como que sí).
 #
-# DESPUÉS DE LA FOTO QUIERE DECIR DESPUÉS DEL INSTANTE EN QUE SE SACÓ
-# (`creado_en`), NO del día. La foto se sacó el 25/09 a la tarde con lo que
-# había en ese momento; comparando por día, una devolución cargada esa misma
-# tarde, después de la foto, no habría contado nunca. Lo destapó el test
-# corriendo el 25/09 (corolario 95: la fecha fija del test ERA hoy).
+# SIN ARRANQUE (una base donde no se cargó, como Palmala) la cuenta es la de
+# antes: la FOTO del 25/09 (`vacios_deposito_foto`, a "sin asignar") como
+# base, lo recibido y devuelto después de la foto de ESE proveedor, y los
+# ajustes y asignaciones sin recorte. Un proveedor sin foto suma todo lo suyo.
+#
+# "DESPUÉS" QUIERE DECIR DESPUÉS DEL INSTANTE (`creado_en`), NO del día: con el
+# día, lo cargado esa misma tarde después del conteo no contaría nunca.
 #
 # SOLO LO QUE VINO CON SEÑA: una compra sin seña no deja cajón que devolver
 # (decisión del dueño, 25/09). `COALESCE(sena, 0) > 0`.
 COLUMNAS_PILAS_DE_VACIOS = (
     "proveedor_id", "proveedor", "tipo_cajon", "marca_id", "marca",
-    "foto", "recibidos", "devueltos", "ajustes", "asignados", "stock",
+    "arranque", "recibidos", "devueltos", "ajustes", "asignados", "stock",
 )
 
-_SQL_PILAS_DE_VACIOS = """
-    WITH mov AS (
+# El arranque que manda: el último. Lo leen la cuenta, `_anular` y la pantalla.
+_SQL_ARRANQUE_VIGENTE = """
+    SELECT id, motivo, creado_en FROM vacios_deposito_arranques
+     ORDER BY creado_en DESC, id DESC LIMIT 1
+"""
+
+_SQL_PILAS_DE_VACIOS = f"""
+    WITH arr AS ({_SQL_ARRANQUE_VIGENTE}),
+    mov AS (
         SELECT f.proveedor_id, NULL::bigint AS marca_id,
-               f.cantidad AS foto, 0 AS recibidos, 0 AS devueltos,
+               f.cantidad AS arranque, 0 AS recibidos, 0 AS devueltos,
                0 AS ajustes, 0 AS asignados
           FROM vacios_deposito_foto f
+         WHERE NOT EXISTS (SELECT 1 FROM arr)
+        UNION ALL
+        SELECT ap.proveedor_id, ap.marca_vacio_id, ap.cantidad, 0, 0, 0, 0
+          FROM vacios_deposito_arranque_pilas ap
+          JOIN arr ON arr.id = ap.arranque_id
         UNION ALL
         SELECT co.proveedor_id, co.marca_vacio_id,
                0, COALESCE(co.cantidad_cajones_real, co.cantidad_cajones), 0, 0, 0
@@ -16592,32 +16613,35 @@ _SQL_PILAS_DE_VACIOS = """
          WHERE co.estado = 'recepcionado'
            AND co.procesada_el IS NOT NULL
            AND COALESCE(co.sena, 0) > 0
-           AND (f.creado_en IS NULL OR co.procesada_el > f.creado_en)
+           AND co.procesada_el > COALESCE((SELECT creado_en FROM arr), f.creado_en, '-infinity')
         UNION ALL
         SELECT d.proveedor_id, d.marca_vacio_id, 0, 0, d.cantidad, 0, 0
           FROM vacios_deposito_devoluciones d
           LEFT JOIN vacios_deposito_foto f ON f.proveedor_id = d.proveedor_id
          WHERE d.anulado_el IS NULL
-           AND (f.creado_en IS NULL OR d.creado_en > f.creado_en)
+           AND d.creado_en > COALESCE((SELECT creado_en FROM arr), f.creado_en, '-infinity')
         UNION ALL
         SELECT a.proveedor_id, a.marca_vacio_id, 0, 0, 0, a.cantidad, 0
           FROM vacios_deposito_ajustes a
          WHERE a.anulado_el IS NULL
+           AND a.creado_en > COALESCE((SELECT creado_en FROM arr), '-infinity')
         UNION ALL
         SELECT s.proveedor_id, s.marca_desde_id, 0, 0, 0, 0, -s.cantidad
           FROM vacios_deposito_asignaciones s
          WHERE s.anulado_el IS NULL
+           AND s.creado_en > COALESCE((SELECT creado_en FROM arr), '-infinity')
         UNION ALL
         SELECT s.proveedor_id, s.marca_hasta_id, 0, 0, 0, 0, s.cantidad
           FROM vacios_deposito_asignaciones s
          WHERE s.anulado_el IS NULL
+           AND s.creado_en > COALESCE((SELECT creado_en FROM arr), '-infinity')
     )
     SELECT p.id AS proveedor_id, p.nombre AS proveedor, tc.nombre AS tipo_cajon,
            m.marca_id AS marca_id, mv.nombre AS marca,
-           SUM(m.foto) AS foto, SUM(m.recibidos) AS recibidos,
+           SUM(m.arranque) AS arranque, SUM(m.recibidos) AS recibidos,
            SUM(m.devueltos) AS devueltos, SUM(m.ajustes) AS ajustes,
            SUM(m.asignados) AS asignados,
-           SUM(m.foto) + SUM(m.recibidos) - SUM(m.devueltos)
+           SUM(m.arranque) + SUM(m.recibidos) - SUM(m.devueltos)
              + SUM(m.ajustes) + SUM(m.asignados) AS stock
       FROM mov m
       JOIN proveedores p       ON p.id = m.proveedor_id
@@ -16628,9 +16652,36 @@ _SQL_PILAS_DE_VACIOS = """
 """
 
 
+def arranque_de_vacios() -> dict | None:
+    """El arranque vigente, para decir en la pantalla de dónde sale el número.
+
+    None si no hay (Palmala): la cuenta sale de la foto del 25/09. `total` es
+    lo CONTADO, no el stock de hoy: los dos números van separados en la
+    pantalla, porque desde el arranque entró y salió mercadería.
+    """
+    conexion = obtener_conexion()
+    try:
+        with conexion.cursor() as cursor:
+            cursor.execute(
+                f"""
+                SELECT arr.motivo,
+                       arr.creado_en AT TIME ZONE 'America/Argentina/Buenos_Aires',
+                       (SELECT COALESCE(SUM(cantidad), 0) FROM vacios_deposito_arranque_pilas ap
+                         WHERE ap.arranque_id = arr.id)
+                  FROM ({_SQL_ARRANQUE_VIGENTE}) arr
+                """
+            )
+            fila = cursor.fetchone()
+    finally:
+        conexion.close()
+    if fila is None:
+        return None
+    return {"motivo": fila[0], "creado_en": fila[1], "total": int(fila[2])}
+
+
 def _pila_con_nombres(fila) -> dict:
     pila = dict(zip(COLUMNAS_PILAS_DE_VACIOS, fila))
-    for clave in ("foto", "recibidos", "devueltos", "ajustes", "asignados", "stock"):
+    for clave in ("arranque", "recibidos", "devueltos", "ajustes", "asignados", "stock"):
         pila[clave] = int(pila[clave] or 0)
     return pila
 
@@ -16858,7 +16909,7 @@ def renombrar_marca_vacio(proveedor_id: int, marca_id: int, nombre: str) -> None
 
 
 # DÓNDE SE NOMBRA UNA MARCA DE CAJÓN: todas las FK a `marcas_vacio`. Juntar dos
-# marcas mueve las de la que se va a la que queda, en las CINCO tablas. Lo
+# marcas mueve las de la que se va a la que queda, en las SEIS tablas. Lo
 # cuida un test que lee `pg_constraint` contra el esquema real: una tabla
 # nueva con FK a marcas lo rompe hasta que alguien decida cómo se junta.
 COLUMNAS_QUE_NOMBRAN_UNA_MARCA = (
@@ -16868,6 +16919,9 @@ COLUMNAS_QUE_NOMBRAN_UNA_MARCA = (
     ("vacios_deposito_ajustes", "marca_vacio_id"),
     ("vacios_deposito_asignaciones", "marca_desde_id"),
     ("vacios_deposito_asignaciones", "marca_hasta_id"),
+    # Lo contado en un arranque: juntar dos marcas suma sus pilas, así que
+    # lo contado en las dos pasa a la que queda y el total no se mueve.
+    ("vacios_deposito_arranque_pilas", "marca_vacio_id"),
 )
 
 
@@ -17017,16 +17071,31 @@ def anular_devolucion_vacios(devolucion_id: int) -> None:
 
 
 def _anular(tabla: str, fila_id: int, que: str, anulado: str) -> None:
-    """El género viaja con el sujeto: "Ese ajuste ya estaba anulada" salía igual de prolijo."""
+    """El género viaja con el sujeto: "Ese ajuste ya estaba anulada" salía igual de prolijo.
+
+    LO ANTERIOR AL ARRANQUE NO SE ANULA: ya no mueve el stock, así que anularlo
+    no cambiaría ningún número y se leería como que sí. La guarda va acá,
+    donde se escribe, y la pantalla no ofrece el botón por la misma pregunta
+    (`antes_del_arranque` en los dos listados).
+    """
     conexion = obtener_conexion()
     try:
         with conexion.cursor() as cursor:
-            cursor.execute(f"SELECT anulado_el FROM {tabla} WHERE id = %s", (fila_id,))
+            cursor.execute(
+                f"SELECT t.anulado_el, t.creado_en <= arr.creado_en, arr.motivo FROM {tabla} t "
+                f"LEFT JOIN ({_SQL_ARRANQUE_VIGENTE}) arr ON true WHERE t.id = %s",
+                (fila_id,),
+            )
             fila = cursor.fetchone()
             if fila is None:
                 raise ValueError(f"{que} no existe.")
             if fila[0] is not None:
                 raise ValueError(f"{que} ya estaba {anulado}.")
+            if fila[1]:
+                anularla = "anularlo" if anulado == "anulado" else "anularla"
+                raise ValueError(
+                    f"{que} es anterior al {fila[2]}: el stock arranca de ese conteo, "
+                    f"así que ya no lo mueve y {anularla} no cambiaría nada.")
             cursor.execute(f"UPDATE {tabla} SET anulado_el = now() WHERE id = %s", (fila_id,))
         conexion.commit()
     finally:
@@ -17043,12 +17112,14 @@ def listar_devoluciones_vacios(proveedor_id: int, limite: int = 30) -> list[dict
     try:
         with conexion.cursor() as cursor:
             cursor.execute(
-                """
+                f"""
                 SELECT d.id, d.cantidad, d.importe, d.foto_ruta,
                        (d.creado_en AT TIME ZONE 'America/Argentina/Buenos_Aires')::date,
                        d.anulado_el IS NOT NULL,
-                       d.compra_id, a.nombre, c.fecha_operacion, mv.nombre
+                       d.compra_id, a.nombre, c.fecha_operacion, mv.nombre,
+                       COALESCE(d.creado_en <= arr.creado_en, false)
                   FROM vacios_deposito_devoluciones d
+                  LEFT JOIN ({_SQL_ARRANQUE_VIGENTE}) arr ON true
                   LEFT JOIN compras c      ON c.id = d.compra_id
                   LEFT JOIN articulos a    ON a.id = c.articulo_id
                   LEFT JOIN marcas_vacio mv ON mv.id = d.marca_vacio_id
@@ -17064,7 +17135,8 @@ def listar_devoluciones_vacios(proveedor_id: int, limite: int = 30) -> list[dict
     return [
         {"id": f[0], "cantidad": f[1], "importe": f[2], "foto_ruta": f[3],
          "fecha": f[4], "anulada": f[5], "compra_id": f[6],
-         "articulo": f[7], "fecha_compra": f[8], "marca": f[9]}
+         "articulo": f[7], "fecha_compra": f[8], "marca": f[9],
+         "antes_del_arranque": f[10]}
         for f in filas
     ]
 
@@ -17174,10 +17246,10 @@ def listar_ajustes_y_asignaciones_vacios(proveedor_id: int, limite: int = 30) ->
     try:
         with conexion.cursor() as cursor:
             cursor.execute(
-                """
+                f"""
                 SELECT x.tipo, x.id, x.cantidad, x.motivo, x.marca, x.marca_hasta,
                        (x.creado_en AT TIME ZONE 'America/Argentina/Buenos_Aires')::date,
-                       x.anulada
+                       x.anulada, COALESCE(x.creado_en <= arr.creado_en, false)
                   FROM (
                     SELECT 'ajuste' AS tipo, a.id, a.cantidad, a.motivo,
                            mv.nombre AS marca, NULL AS marca_hasta,
@@ -17194,6 +17266,7 @@ def listar_ajustes_y_asignaciones_vacios(proveedor_id: int, limite: int = 30) ->
                       JOIN marcas_vacio mh      ON mh.id = s.marca_hasta_id
                      WHERE s.proveedor_id = %s
                 ) x
+                LEFT JOIN ({_SQL_ARRANQUE_VIGENTE}) arr ON true
                 ORDER BY x.creado_en DESC, x.id DESC
                 LIMIT %s
                 """,
@@ -17206,7 +17279,7 @@ def listar_ajustes_y_asignaciones_vacios(proveedor_id: int, limite: int = 30) ->
         {"tipo": f[0], "id": f[1], "cantidad": f[2], "motivo": f[3],
          "marca": f[4], "marca_hasta": f[5],
          "fecha": f[6],
-         "anulada": f[7]}
+         "anulada": f[7], "antes_del_arranque": f[8]}
         for f in filas
     ]
 

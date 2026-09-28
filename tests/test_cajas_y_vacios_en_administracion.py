@@ -33,8 +33,10 @@ def _las_dos_puertas_abiertas():
     la pantalla de la clave, y un test que pregunta por la barra la estaría
     buscando en la pantalla equivocada.
     """
+    # Sin arranque cargado: el cartel de origen dice "la foto del 25/09".
     with patch.dict(os.environ, {"CLAVE_COMPRAS": "compras-secreta",
-                                 "CLAVE_ADMINISTRACION": "admin-secreta"}):
+                                 "CLAVE_ADMINISTRACION": "admin-secreta"}), \
+            patch("app.main.arranque_de_vacios", return_value=None):
         cliente.cookies.set(PUERTA_COMPRAS.cookie, PUERTA_COMPRAS.firma("compras-secreta"))
         cliente.cookies.set(PUERTA_ADMINISTRACION.cookie,
                             PUERTA_ADMINISTRACION.firma("admin-secreta"))

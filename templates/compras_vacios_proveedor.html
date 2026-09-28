@@ -81,6 +81,11 @@
   .obligatoria { background: #eff6ff; color: #1e3a8a; border-radius: 8px;
                  padding: .6rem .75rem; margin: .6rem 0 0; font-size: .88rem; }
   .solo-admin { border-left: 4px solid #7c3aed; }
+  /* DE DÓNDE SALE EL NÚMERO (dueño, 28/09): se ve, no va a la "i". Sin
+     esto, el que compara contra un número viejo no sabe que la cuenta
+     arrancó de nuevo. */
+  .origen { background: #eff6ff; color: #1e3a8a; border-radius: 8px;
+            padding: .6rem .75rem; margin: 0 0 1rem; font-size: .9rem; }
 </style>
 </head>
 <body>
@@ -92,6 +97,8 @@
 
 {% if error %}<div class="error">{{ error }}</div>{% endif %}
 {% if aviso %}<div class="aviso">{{ aviso }}</div>{% endif %}
+
+{% include "_origen_vacios.html" %}
 
 <div class="tarjeta">
   <div class="stock">{{ p.stock|numero }} cajones</div>
@@ -195,17 +202,22 @@
       {% if d.importe is not none %}<span class="vale-dato">${{ '{:,.0f}'.format(d.importe).replace(',', '.') }}</span>{% endif %}
       <span class="vale-dato">{{ d.marca or "sin asignar" }}</span>
       {% if d.compra_id %}<span class="vale-dato">contra {{ d.articulo }} del {{ d.fecha_compra.strftime('%d/%m') }}</span>{% endif %}
-      {% if d.anulada %}<span class="etiqueta-anulada">anulada</span>{% endif %}
+      {% if d.anulada %}<span class="etiqueta-anulada">anulada</span>
+      {% elif d.antes_del_arranque %}<span class="etiqueta-anulada">antes del conteo: no cuenta</span>{% endif %}
     </div>
     {% if not d.anulada %}
     <div class="acciones">
       {% if d.foto_ruta %}
       <a href="{{ camino.base }}/vacios/devolucion/{{ d.id }}/foto?proveedor_id={{ p.id }}">Ver el vale</a>
       {% endif %}
+      {# Lo de antes del arranque no se anula: ya no mueve el stock, y
+         `_anular` lo rechaza igual si llega por un POST a mano. #}
+      {% if not d.antes_del_arranque %}
       <form method="post" action="{{ camino.base }}/vacios/devolucion/{{ d.id }}/anular">
         <input type="hidden" name="proveedor_id" value="{{ p.id }}">
         <button class="anular" type="submit">Anular</button>
       </form>
+      {% endif %}
     </div>
     {% endif %}
   </div>
@@ -341,9 +353,10 @@
       <span class="vale-dato">de {{ m.marca or "sin asignar" }} a {{ m.marca_hasta }}</span>
       {% endif %}
       <span class="vale-dato">{{ m.fecha.strftime('%d/%m/%Y') }}</span>
-      {% if m.anulada %}<span class="etiqueta-anulada">{{ "anulado" if m.tipo == "ajuste" else "anulada" }}</span>{% endif %}
+      {% if m.anulada %}<span class="etiqueta-anulada">{{ "anulado" if m.tipo == "ajuste" else "anulada" }}</span>
+      {% elif m.antes_del_arranque %}<span class="etiqueta-anulada">antes del conteo: no cuenta</span>{% endif %}
     </div>
-    {% if es_administracion and not m.anulada %}
+    {% if es_administracion and not m.anulada and not m.antes_del_arranque %}
     <div class="acciones">
       <form method="post" action="/administracion/vacios/movimiento/{{ m.tipo }}/{{ m.id }}/anular">
         <input type="hidden" name="proveedor_id" value="{{ p.id }}">

@@ -45,3 +45,6 @@ end $$;
 -- LA FOTO DEL 25/09 CON LA REGLA DE LA SEÑA (28/09): conteo + cajones
 -- CON SEÑA − devueltos, hasta el instante de la foto. Aborta si una foto
 -- no sale de ninguna regla. Repetible. Verificación APARTE: vacios_foto_5.
+--
+-- NO SE CORRE (dueño, 28/09): la cuenta arranca del conteo físico del
+-- 28/09. Ver db/vacios_conteo_2809_*.sql.
