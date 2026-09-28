@@ -605,3 +605,16 @@ db/esquema_completo.sql. El código no la usa: solo la fusión de
 proveedores la nombra, y le pregunta antes si existe (`to_regclass`). El
 borrado de las cinco vacías (`tablas_viejas_1`) quedó en suspenso por
 decisión del dueño.
+
+## 28/09 — `segunda_ajuste_1` (tabla `ajustes_segunda`), las DOS bases
+
+Corrida por el dueño. Verificación (`db/segunda_ajuste_1_verificacion.sql`),
+corrida aparte:
+
+```
+FRUTAMAX  segunda_ajuste_1 · tabla 1 · columnas 8 · checks 2 · índice 1 · filas 0 · último remito 24/09
+PALMALA   segunda_ajuste_1 · tabla 1 · columnas 8 · checks 2 · índice 1 · filas 0 · sin remitos
+```
+
+Es lo esperado en las dos. El código que la usa (la pata del pool de segunda,
+el botón del Cotejo y la pantalla del ajuste) entró en el commit siguiente.

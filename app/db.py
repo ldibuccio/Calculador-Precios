@@ -11397,11 +11397,31 @@ _SQL_POOL_SEGUNDA = """
                           <= tope.fecha
                       {filtro_r_articulo}
                     GROUP BY r.articulo_id
+                ), ajuste_de_segunda AS (
+                    -- EL AJUSTE DE SEGUNDA (28/09): lo que el Cotejo corrige
+                    -- cuando el desvio no viene de ninguna pata de arriba (la
+                    -- segunda que habia en el piso el 05/09 y no entro al
+                    -- stock inicial). Con signo: positivo suma, negativo resta.
+                    --
+                    -- `>=` Y NO `>`, A PROPOSITO, y es la unica pata del pool
+                    -- que lo lleva. Las otras recortan con `>` porque la foto
+                    -- del corte se toma a la tarde y ya viene neta de lo que
+                    -- paso ese dia (corolario 12). Un ajuste no es algo que
+                    -- paso en el galpon: es una correccion de la cuenta,
+                    -- fechada el dia del conteo. Uno del mismo dia del corte
+                    -- corrige esa foto, y con `>` no contaria nunca.
+                    SELECT articulo_id, SUM(bultos) AS total
+                    FROM ajustes_segunda, corte_seg, tope
+                    WHERE anulado_el IS NULL
+                      AND fecha_operacion >= corte_seg.fecha
+                      AND fecha_operacion <= tope.fecha
+                      {filtro_articulo}
+                    GROUP BY articulo_id
                 )
 """
 
 
-def _pool_segunda(producida, de_rechazos, de_pases, remitida, enviada) -> float:
+def _pool_segunda(producida, de_rechazos, de_pases, remitida, enviada, ajustada) -> float:
     """Lo que HAY en el pool de segunda, sumando las TRES entradas y restando la salida.
 
     Entra lo PRODUCIDO en un reproceso, lo que volvió RECHAZADO y no fue al
@@ -11419,9 +11439,14 @@ def _pool_segunda(producida, de_rechazos, de_pases, remitida, enviada) -> float:
     `enviada` (23/09) es la segunda que salió en un renglón armado para un
     cliente que la acepta. Tampoco tiene default, por la misma razón al
     revés: el llamador que se la olvide ofrece segunda que ya se fue.
+
+    `ajustada` (28/09) es la suma CON SIGNO de los ajustes de segunda que se
+    cargan desde el Cotejo. Sin default por lo mismo: el llamador que se la
+    olvide muestra el pool de antes de corregirlo, y el Cotejo sigue en rojo
+    sobre un desvío que ya se ajustó.
     """
     return round(float(producida) + float(de_rechazos) + float(de_pases)
-                 - float(remitida) - float(enviada), 2)
+                 - float(remitida) - float(enviada) + float(ajustada), 2)
 
 
 def _segunda_de_articulo(cursor, articulo_id: int, hasta=None) -> float:
@@ -11443,9 +11468,10 @@ def _segunda_de_articulo(cursor, articulo_id: int, hasta=None) -> float:
                COALESCE((SELECT total FROM segunda_rechazo), 0),
                COALESCE((SELECT total FROM segunda_pase), 0),
                COALESCE((SELECT total FROM remitida), 0),
-               COALESCE((SELECT total FROM enviada), 0)
+               COALESCE((SELECT total FROM enviada), 0),
+               COALESCE((SELECT total FROM ajuste_de_segunda), 0)
         """,
-        (hasta, articulo_id, articulo_id, articulo_id, articulo_id, articulo_id),
+        (hasta, articulo_id, articulo_id, articulo_id, articulo_id, articulo_id, articulo_id),
     )
     return _pool_segunda(*cursor.fetchone())
 
@@ -11531,7 +11557,8 @@ def stock_deposito_por_articulo(hasta, articulo_id=None) -> list[dict]:
                        COALESCE(sr.total, 0) AS segunda_de_rechazos,
                        COALESCE(sp.total, 0) AS segunda_de_pases,
                        COALESCE(rm.total, 0) AS segunda_remitida,
-                       COALESCE(en.total, 0) AS segunda_enviada
+                       COALESCE(en.total, 0) AS segunda_enviada,
+                       COALESCE(ag.total, 0) AS segunda_ajustada
                 FROM articulos a
                 LEFT JOIN entradas e ON e.articulo_id = a.id
                 LEFT JOIN salidas s ON s.articulo_id = a.id
@@ -11543,6 +11570,7 @@ def stock_deposito_por_articulo(hasta, articulo_id=None) -> list[dict]:
                 LEFT JOIN segunda_pase sp ON sp.articulo_id = a.id
                 LEFT JOIN remitida rm ON rm.articulo_id = a.id
                 LEFT JOIN enviada en ON en.articulo_id = a.id
+                LEFT JOIN ajuste_de_segunda ag ON ag.articulo_id = a.id
                 -- `sp` VA EN EL FILTRO aunque hoy sea redundante: un pase
                 -- resta del stock por la pata de `ajustes` (que es
                 -- `tipo <> 'reingreso_rechazo'`), así que el artículo ya
@@ -11559,7 +11587,10 @@ def stock_deposito_por_articulo(hasta, articulo_id=None) -> list[dict]:
                    -- artículo cuyo único movimiento sea un remito al Puesto o
                    -- la segunda de una guía R desaparecía de la consulta, y su
                    -- pool negativo con él.
-                   OR rm.articulo_id IS NOT NULL OR sg.articulo_id IS NOT NULL)
+                   OR rm.articulo_id IS NOT NULL OR sg.articulo_id IS NOT NULL
+                   -- Y el ajuste de segunda, por lo mismo: un artículo cuyo
+                   -- único movimiento sea un ajuste existe igual.
+                   OR ag.articulo_id IS NOT NULL)
                   {filtro_articulo_final}
                 ORDER BY a.nombre
                 """.format(
@@ -11581,9 +11612,92 @@ def stock_deposito_por_articulo(hasta, articulo_id=None) -> list[dict]:
             fila["segunda"] = _pool_segunda(
                 fila["segunda_producida"], fila["segunda_de_rechazos"],
                 fila["segunda_de_pases"], fila["segunda_remitida"],
-                fila["segunda_enviada"],
+                fila["segunda_enviada"], fila["segunda_ajustada"],
             )
         return filas
+    finally:
+        conexion.close()
+
+
+def crear_ajuste_segunda(articulo_id: int, bultos: float, motivo: str, fecha) -> float:
+    """Guarda un ajuste del pool de SEGUNDA, fechado el día del conteo. Devuelve el pool al cierre de ese día, ya ajustado.
+
+    Es la única corrección de la segunda que no pasa por su origen (guía R,
+    rechazo, pase o remito): la segunda que había en el piso el 05/09 y no
+    entró al stock inicial no tiene otro lugar donde corregirse.
+
+    FECHADO EL DÍA DEL CONTEO y no hoy, y es lo contrario del ajuste de
+    primera, que aplica hoy la diferencia de ese día. Acá el pool es chico y
+    el desvío es de origen: fechado el día del conteo, el cierre de ese día
+    queda igual a lo contado y la tarjeta del Cotejo se apaga sola.
+
+    Las guardas van ACÁ, que es donde se escribe: la base rechaza el cero y el
+    motivo vacío con sus CHECK, y la fecha no la puede mirar. Antes del corte
+    el pool no existe, así que un ajuste de esos días no contaría nunca; en
+    el futuro contaría desde un día que todavía no pasó.
+
+    `stock_sistema` es el pool al cierre de ese día ANTES del ajuste,
+    congelado, igual que en los conteos.
+    """
+    conexion = obtener_conexion()
+    try:
+        with conexion:
+            with conexion.cursor() as cursor:
+                corte = _fecha_corte(cursor)
+                if fecha < corte:
+                    raise ValueError(
+                        f"El ajuste es del {fecha.strftime('%d/%m')}, antes del corte del modelo "
+                        f"({corte.strftime('%d/%m')}): ese día la segunda no se cuenta."
+                    )
+                cursor.execute("SELECT CURRENT_DATE")
+                if fecha > cursor.fetchone()[0]:
+                    raise ValueError("El ajuste no puede ser de un día que todavía no pasó.")
+                antes = _segunda_de_articulo(cursor, articulo_id, fecha)
+                cursor.execute(
+                    """
+                    INSERT INTO ajustes_segunda (articulo_id, bultos, motivo, fecha_operacion, stock_sistema)
+                    VALUES (%s, %s, %s, %s, %s)
+                    """,
+                    (articulo_id, bultos, motivo, fecha, antes),
+                )
+                return round(antes + float(bultos), 2)
+    finally:
+        conexion.close()
+
+
+def listar_ajustes_segunda(limite: int = 30) -> list[dict]:
+    """Los últimos ajustes de segunda, vigentes y anulados, con el nombre del artículo."""
+    conexion = obtener_conexion()
+    try:
+        with conexion.cursor() as cursor:
+            cursor.execute(
+                """
+                SELECT aj.id, aj.articulo_id, a.nombre AS articulo_nombre, aj.bultos, aj.motivo,
+                       aj.fecha_operacion, aj.stock_sistema, aj.creado_en, aj.anulado_el
+                FROM ajustes_segunda aj
+                JOIN articulos a ON a.id = aj.articulo_id
+                ORDER BY aj.creado_en DESC, aj.id DESC
+                LIMIT %s
+                """,
+                (limite,),
+            )
+            columnas = [d[0] for d in cursor.description]
+            return [dict(zip(columnas, fila)) for fila in cursor.fetchall()]
+    finally:
+        conexion.close()
+
+
+def anular_ajuste_segunda(ajuste_id: int) -> bool:
+    """Anula un ajuste de segunda. Nunca borra: queda con su fecha de anulado. False si no había uno vigente con ese id."""
+    conexion = obtener_conexion()
+    try:
+        with conexion:
+            with conexion.cursor() as cursor:
+                cursor.execute(
+                    "UPDATE ajustes_segunda SET anulado_el = now() WHERE id = %s AND anulado_el IS NULL",
+                    (ajuste_id,),
+                )
+                return cursor.rowcount == 1
     finally:
         conexion.close()
 

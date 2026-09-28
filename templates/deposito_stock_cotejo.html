@@ -209,20 +209,24 @@
       {# LA SEGUNDA ES OTRO CIRCUITO y necesita su propio consejo. Caía en la
          rama de abajo —la de las fichas— y le decía "lo que cambia entre
          fichas es a cuál fueron las cajas", que sobre el pool de segunda no
-         significa nada: ahí no hay fichas. Un default que afirma algo es una
-         aserción sin verificar, y ésta mandaba a Guías R a buscar una
-         atribución que no existe.
+         significa nada: ahí no hay fichas.
 
-         Tampoco lleva "Ajustar": un ajuste mueve el TOTAL del artículo y la
-         segunda no está en el total. Hoy no hay pantalla que corrija el
-         pool — se corrige en lo que lo alimenta, y eso es lo que dice. #}
-      {# Partida en dos (25/09): QUÉ HACER queda a la vista —no ajustar, ir a
-         lo que alimenta el pool— y el porqué va a la "i". #}
-      <p class="ayuda-ficha">No se corrige ajustando el stock: se corrige en la guía R, el rechazo, el pase a segunda o el remito al Puesto. {% call info("Por qué no se ajusta la segunda") %}La segunda entra por el <strong>renglón de segunda de las guías R</strong>,
+         Y DESDE EL 28/09 SE PUEDE AJUSTAR (dueño): hay un desvío que no
+         viene de ninguna pata —la segunda que había en el piso el 05/09 y no
+         entró al stock inicial— y sin esto solo se corregía con SQL a mano.
+         No es "Ajustar a lo contado" de la primera: ese mueve el TOTAL del
+         artículo y la segunda no está ahí. Éste mueve el pool, y nada más.
+
+         A LA VISTA queda qué revisar primero, porque cambia lo que se hace;
+         de dónde entra y sale la segunda va a la "i". #}
+      <p class="ayuda-ficha">Primero buscá el error en la guía R, el rechazo, el pase a segunda o el remito al Puesto. Si no viene de ninguno, ajustá la segunda. {% call info("De dónde sale la segunda") %}La segunda entra por el <strong>renglón de segunda de las guías R</strong>,
         por los <strong>rechazos que no vuelven al stock</strong> y por el <strong>pase a segunda</strong>,
         y sale por el <strong>remito al Puesto</strong> y por la que se le manda a un cliente que la
-        acepta. Un desvío acá se corrige en alguno de esos, no ajustando el stock: el ajuste
-        mueve el total del artículo, y la segunda no está en ese total.{% endcall %}</p>
+        acepta. El ajuste es para lo que no vino por ninguno de esos: queda fechado el día del conteo,
+        con su motivo, y no toca la primera.{% endcall %}</p>
+      {% if f.query_ajuste_segunda %}
+      <a class="boton-ajustar" href="/administracion/stock/ajustar-segunda?{{ f.query_ajuste_segunda }}">Ajustar la segunda</a>
+      {% endif %}
       {% elif f.dif_del_dia not in (none, 0) and not f.opuestas and not f.deficit %}
       {# Una diferencia en una FICHA no se arregla con un ajuste de stock:
          el ajuste mueve el total del artículo, y acá el total puede estar

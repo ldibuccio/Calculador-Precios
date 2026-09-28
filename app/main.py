@@ -164,6 +164,9 @@ from app.db import (
     contar_stock_deposito_negativo,
     crear_conteo_stock,
     crear_movimiento_stock,
+    crear_ajuste_segunda,
+    listar_ajustes_segunda,
+    anular_ajuste_segunda,
     crear_pedido,
     crear_salida_de_segunda,
     crear_reproceso,
@@ -12676,6 +12679,150 @@ def ajustar_stock_deposito_ruta(
     )
 
 
+# --- El ajuste de la SEGUNDA (28/09) ---
+# Sale de la tarjeta de segunda del Cotejo. Mueve el pool de segunda y nada
+# más: tabla propia (`ajustes_segunda`), fechado el día del conteo.
+
+
+def _renderizar_ajustar_segunda(request: Request, *, precarga=None, aviso=None, error=None, status_code: int = 200):
+    try:
+        ajustes = listar_ajustes_segunda()
+    except Exception as error_db:
+        raise HTTPException(status_code=500, detail=f"Error al conectar con la base de datos: {error_db}") from error_db
+    return templates.TemplateResponse(
+        request,
+        "deposito_stock_ajustar_segunda.html",
+        {"precarga": precarga or {}, "ajustes": ajustes, "aviso": aviso, "error": error},
+        status_code=status_code,
+    )
+
+
+def _dia_del_ajuste_o_none(texto: str | None):
+    try:
+        return date.fromisoformat((texto or "").strip())
+    except ValueError:
+        return None
+
+
+@app.get("/administracion/stock/ajustar-segunda")
+def ver_ajustar_segunda(
+    request: Request,
+    aviso: str | None = None,
+    articulo_id: str | None = None,
+    contado: str | None = None,
+    fecha_conteo: str | None = None,
+):
+    """Ajuste de la SEGUNDA. Desde el Cotejo propone la diferencia del día del conteo; sin precarga, solo la lista.
+
+    La cantidad propuesta es `contado − pool al cierre del día del conteo`,
+    y ese pool se vuelve a calcular ACÁ con la misma función del Cotejo
+    (`_sistema_por_porcion_al_cierre`): no viaja un número del sistema en la
+    URL que alguien pueda cambiar.
+
+    EL MOTIVO NO SE PRECARGA, y es lo contrario del ajuste de primera. El
+    motivo es lo único que dice por qué la segunda no vino por su origen, y
+    uno ya escrito se acepta con el mismo click que se iba a hacer.
+    """
+    precarga = {}
+    contado_valor = _numero_query_o_none(contado)
+    dia = _dia_del_ajuste_o_none(fecha_conteo)
+    if articulo_id and articulo_id.strip().isdigit() and contado_valor is not None and dia is not None:
+        try:
+            articulo = obtener_articulo(int(articulo_id))
+            sistema_del_dia = _sistema_por_porcion_al_cierre(dia, int(articulo_id)).get(
+                (int(articulo_id), None, True), 0.0
+            ) if articulo else 0.0
+        except Exception as error_db:
+            raise HTTPException(status_code=500, detail=f"Error al conectar con la base de datos: {error_db}") from error_db
+        if articulo:
+            diferencia = round(contado_valor - sistema_del_dia, 2)
+            precarga = {
+                "articulo_id": articulo["id"],
+                "articulo_nombre": articulo["nombre"],
+                "fecha_conteo": dia.isoformat(),
+                "dia_texto": dia.strftime("%d/%m"),
+                "contado": contado_valor,
+                "sistema": sistema_del_dia,
+                "cantidad": diferencia,
+            }
+    return _renderizar_ajustar_segunda(request, precarga=precarga, aviso=aviso)
+
+
+@app.post("/administracion/stock/ajustar-segunda")
+def ajustar_segunda_ruta(
+    request: Request,
+    articulo_id: str = Form(""),
+    fecha_conteo: str = Form(""),
+    cantidad: str = Form(""),
+    motivo: str = Form(""),
+):
+    """Guarda un ajuste de segunda: bultos con signo (nunca 0), motivo OBLIGATORIO, fechado el día del conteo."""
+    motivo_limpio = re.sub(r"\s+", " ", motivo).strip()
+    dia = _dia_del_ajuste_o_none(fecha_conteo)
+    error = None
+    cantidad_valor = None
+    try:
+        cantidad_valor = float(cantidad.strip())
+    except ValueError:
+        error = "La cantidad tiene que ser un número (positivo suma, negativo resta)."
+    if not error and cantidad_valor == 0:
+        error = "Un ajuste de 0 no ajusta nada."
+    if not error and not motivo_limpio:
+        error = "El motivo es obligatorio: sin motivo no se guarda el ajuste."
+    if not error and dia is None:
+        error = "Falta el día del conteo. Entrá desde la tarjeta de segunda del Cotejo."
+
+    articulo = None
+    if not error:
+        try:
+            articulo = obtener_articulo(int(articulo_id)) if articulo_id.strip().isdigit() else None
+        except Exception as error_db:
+            raise HTTPException(status_code=500, detail=f"Error al conectar con la base de datos: {error_db}") from error_db
+        if articulo is None:
+            error = "El artículo no existe."
+
+    pool_nuevo = None
+    if not error:
+        try:
+            pool_nuevo = crear_ajuste_segunda(articulo["id"], cantidad_valor, motivo_limpio, dia)
+        except ValueError as rechazo:
+            error = str(rechazo)
+        except Exception as error_db:
+            return _renderizar_ajustar_segunda(
+                request, error=f"No se pudo guardar el ajuste: {error_db}", status_code=500
+            )
+
+    if error:
+        precarga = {
+            "articulo_id": articulo_id, "articulo_nombre": articulo["nombre"] if articulo else "",
+            "fecha_conteo": fecha_conteo, "dia_texto": dia.strftime("%d/%m") if dia else "",
+            "cantidad": cantidad, "motivo": motivo_limpio,
+        }
+        return _renderizar_ajustar_segunda(request, precarga=precarga, error=error, status_code=400)
+
+    aviso = (
+        f"Ajuste de segunda guardado: {'+' if cantidad_valor > 0 else ''}{_formatear_numero(cantidad_valor)} "
+        f"bultos de {articulo['nombre']}, al {dia.strftime('%d/%m')}. La segunda quedó en "
+        f"{_formatear_numero(pool_nuevo)} al cierre de ese día."
+    )
+    return RedirectResponse(
+        url=f"/administracion/stock/ajustar-segunda?{urlencode({'aviso': aviso})}", status_code=303
+    )
+
+
+@app.post("/administracion/stock/ajustar-segunda/{ajuste_id}/anular")
+def anular_ajuste_segunda_ruta(ajuste_id: int):
+    """Anula un ajuste de segunda cargado por error. No se borra: queda anulado, con su fecha."""
+    try:
+        anulado = anular_ajuste_segunda(ajuste_id)
+    except Exception as error_db:
+        raise HTTPException(status_code=500, detail=f"Error al conectar con la base de datos: {error_db}") from error_db
+    aviso = "Ajuste anulado." if anulado else "Ese ajuste ya estaba anulado o no existe."
+    return RedirectResponse(
+        url=f"/administracion/stock/ajustar-segunda?{urlencode({'aviso': aviso})}", status_code=303
+    )
+
+
 # --- El stock inicial del corte ---
 # Se carga UNA vez, a mano, el día antes del corte: lo que hay en el piso
 # pasa a existir para el sistema. Va en Administración y no en Depósito
@@ -14316,6 +14463,17 @@ def ver_cotejo_stock(request: Request):
         # total: la pata `reingresos` la excluye y el pool la suma aparte.
         # Ajustar desde ahí movería la pila equivocada — es el corolario 8,
         # dos cuentas con el mismo nombre y distinto alcance.
+        # LA SEGUNDA TIENE SU PROPIO AJUSTE desde el 28/09, que mueve el pool
+        # y no el total: otra pantalla y otra tabla. Viaja lo mismo —artículo,
+        # contado y día— y la diferencia se vuelve a calcular allá.
+        if fila["dif_del_dia"] not in (None, 0) and es_segunda:
+            fila["query_ajuste_segunda"] = urlencode(
+                {
+                    "articulo_id": conteo["articulo_id"],
+                    "contado": conteo["cantidad"],
+                    "fecha_conteo": dia.isoformat(),
+                }
+            )
         if fila["dif_del_dia"] not in (None, 0) and fila["ficha_id"] is None and not es_segunda:
             fila["query_ajuste"] = urlencode(
                 {
