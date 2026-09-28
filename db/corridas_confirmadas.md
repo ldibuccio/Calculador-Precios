@@ -586,3 +586,22 @@ PALMALA   64 tablas · 64 iguales al repo · 0 de más · le falta 1
 Esto destapó que v1010 consultaba `recepciones` al borrar una compra, y en
 Palmala esa tabla no existe (ver CLAUDE.md, "Una guía R ANULADA no retiene
 nada"). Arreglado en v1011.
+
+## 28/09 — `recepciones` creada VACÍA en Palmala (destrabe, SOLO Palmala)
+
+Corrida por el dueño. En Palmala, Detalle de compra → Gerencia (Corregir o
+eliminar compra) tiraba `relation "recepciones" does not exist` en
+`SELECT id FROM recepciones WHERE compra_id = 684 ORDER BY id`.
+
+Esa consulta la agregó v1010 a `_lo_que_cuelga` y la sacó v1011. Solo
+v1010 la tuvo: ni v1009 ni v1011 nombran la tabla. El error es de la
+ventana en que v1010 estaba desplegada. Para destrabar, se creó la tabla
+vacía con la misma definición que tiene en Frutamax
+(`create table if not exists recepciones (...)`, la de db/schema.sql). No
+tocó ningún dato.
+
+Con esto `recepciones` existe en las DOS bases, vacía, y no está en
+db/esquema_completo.sql. El código no la usa: solo la fusión de
+proveedores la nombra, y le pregunta antes si existe (`to_regclass`). El
+borrado de las cinco vacías (`tablas_viejas_1`) quedó en suspenso por
+decisión del dueño.
