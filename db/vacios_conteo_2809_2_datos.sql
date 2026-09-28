@@ -5,7 +5,7 @@ returns table (orden int, pn text, marca text, cant int) language sql immutable 
     (5,'herederos n7','Don Ibáñez',3), (6,'saturno','Babilonia',91),
     (7,'patagonia market','Patagonia',83), (8,'roncaglia alcides j','El Pato',50),
     (9,'mrc','Soto',64), (10,'sin proveedor','La Valentina',35),
-    (11,'abra chica','Abra Chica',24), (12,'frutas j robol','Canasto Negro',24),
+    (11,'abra chica','Abra Chica',24), (12,'frutas jrobol','Canasto Negro',24),
     (13,'frutamax srl','Lisandro',11), (14,'frutamax srl','Tom Jug',1),
     (15,'deliverduras','Crefu',7), (16,'kaizer','1039',3),
     (17,'productos san marcos','Ulises',1)

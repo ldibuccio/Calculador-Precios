@@ -45,10 +45,12 @@ TABLA = [
 
 # Cómo están cargados en la base de prueba. Algunos con otra forma a
 # propósito: mayúsculas, puntos, y "KAIZER S.A." que solo CONTIENE el nombre.
+# "FRUTAS J.ROBOL" es como está en Frutamax: el punto pegado, sin espacio.
+# Con "FRUTAS J. ROBOL" el test pasaba y el bloque 4 real no lo encontraba.
 CARGADOS = {
     "RIO URUGUAY": "RIO URUGUAY", "Herederos N7": "herederos n7", "Saturno": "SATURNO",
     "Patagonia Market": "PATAGONIA MARKET", "Roncaglia Alcides J.": "RONCAGLIA ALCIDES J",
-    "MRC": "MRC", "Abra Chica": "ABRA CHICA", "Frutas J. Robol": "FRUTAS J. ROBOL",
+    "MRC": "MRC", "Abra Chica": "ABRA CHICA", "Frutas J. Robol": "FRUTAS J.ROBOL",
     "FRUTAMAX S.R.L.": "FRUTAMAX S.R.L.", "Deliverduras": "DELIVERDURAS",
     "Kaizer": "KAIZER S.A.", "Productos SAN MARCOS": "PRODUCTOS SAN MARCOS",
 }
@@ -286,17 +288,19 @@ def test_DOS_que_lo_contienen_y_ninguno_igual_aborta(base):
 
 def test_la_TABLA_del_duenio_y_la_funcion_de_datos_son_la_MISMA(base):
     """Lo escrito en el .sql contra lo copiado del pedido, fila por fila."""
-    _, sql, _, _, _, correr = base
+    _, sql, ids, _, _, correr = base
     correr(3)
     filas = sql("SELECT pn, marca, cant FROM vacios_conteo_2809() ORDER BY orden")
     assert [(m, c) for _, m, c in filas] == [(m, c) for _, m, c in TABLA]
-    # El nombre plegado que lleva el .sql es el del pedido plegado por el MISMO
-    # buscador que usa la carga (el de la base), no uno escrito a mano.
+    # El nombre del .sql lo resuelve el MISMO buscador de la carga contra el
+    # proveedor TAL COMO ESTÁ CARGADO. Antes se comparaba contra el rótulo del
+    # pedido plegado ("Frutas J. Robol" -> "frutas j robol"), y eso pasaba con
+    # un nombre que en Frutamax ("FRUTAS J.ROBOL") no se encuentra.
     for (pn, _, _), (prov, _, _) in zip(filas, TABLA):
-        (plegado,), = sql(
-            "SELECT btrim(regexp_replace(replace(translate(lower(%s), 'áéíóúüñ', 'aeiouun'), "
-            "'.', ''), '[^a-z0-9]+', ' ', 'g'))", (prov,))
-        assert pn == plegado, prov
+        if prov == "Sin Proveedor":
+            continue
+        (encontrado, _, _), = sql("SELECT * FROM vacios_conteo_2809_proveedor(%s)", (pn,))
+        assert encontrado == ids[prov], (prov, pn)
     assert sum(c for _, _, c in TABLA) == 1086
 
 
