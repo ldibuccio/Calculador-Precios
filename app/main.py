@@ -354,6 +354,9 @@ from app.db import (
     anular_ajuste_vacios_deposito,
     crear_asignacion_vacios,
     anular_asignacion_vacios,
+    renombrar_marca_vacio,
+    juntar_marcas_vacio,
+    MarcaQueYaExiste,
     listar_ajustes_y_asignaciones_vacios,
     listar_tipos_cajon,
     crear_tipo_cajon,
@@ -437,7 +440,10 @@ from core.magnitudes import (
     unidad_de_compra,
 )
 from core.exportar_compras import (
+    ROTULO_TOTAL_IMPORTES,
     ROTULO_TOTAL_SENAS,
+    cola_sin_precio,
+    total_de_importes,
     generar_excel_listado_compras,
     generar_pdf_listado_compras,
     texto_sena,
@@ -3129,6 +3135,8 @@ def _renderizar_pantalla_buscar_compras(
             "texto_sena": texto_sena,
             "rotulo_total_senas": ROTULO_TOTAL_SENAS,
             "total_senas": _moneda_de_compras(total_de_senas(compras)),
+            "rotulo_total_importes": ROTULO_TOTAL_IMPORTES,
+            "total_importes": _moneda_de_compras(total_de_importes(compras)) + cola_sin_precio(compras),
             "aviso": aviso,
             "aviso_tope": aviso_tope,
         },
@@ -6713,7 +6721,7 @@ def cargar_conteo_vacios(request: Request, proveedor_id: str = Form(""),
 
 def _renderizar_vacios_proveedor(request: Request, proveedor_id: int, *,
                                  error: str | None = None, aviso: str | None = None,
-                                 status_code: int = 200):
+                                 status_code: int = 200, juntar: dict | None = None):
     """El detalle de un proveedor: sus pilas, sus marcas, la devolución y el vale.
 
     EL `status_code` NO VA EN LA FIRMA DE LA RUTA, y no es estilo: FastAPI lo
@@ -6756,7 +6764,7 @@ def _renderizar_vacios_proveedor(request: Request, proveedor_id: int, *,
         "compras_vacios_proveedor.html",
         {"p": fila, "marcas": marcas, "pilas_para_elegir": pilas_para_elegir,
          "devoluciones": devoluciones, "movimientos": movimientos,
-         "tipos": tipos, "error": error, "aviso": aviso,
+         "tipos": tipos, "error": error, "aviso": aviso, "juntar": juntar,
          "es_administracion": camino["sector"] == "administracion",
          "camino": camino},
         status_code=status_code,
@@ -7005,6 +7013,51 @@ def cargar_asignacion_vacios(request: Request, proveedor_id: int,
             request, proveedor_id, error=f"No se pudo guardar la asignación: {error_db}",
             status_code=500)
     return _volver_al_proveedor(request, proveedor_id, f"{cajones} cajones asignados.")
+
+
+@app.post("/administracion/vacios/{proveedor_id}/marca/{marca_id}/renombrar")
+def renombrar_marca_de_vacios(request: Request, proveedor_id: int, marca_id: int,
+                              nombre: str = Form("")):
+    """Corregir el nombre de una marca mal escrita (dueño, 28/09).
+
+    Si el nombre nuevo ya es de otra marca de este proveedor, no rebota a
+    secas: vuelve a la pantalla ofreciendo JUNTARLAS, que es lo que quiere el
+    que escribió bien el nombre de una que ya existe.
+    """
+    try:
+        renombrar_marca_vacio(proveedor_id, marca_id, nombre)
+    except MarcaQueYaExiste as choque:
+        actual = next((m["nombre"] for m in listar_marcas_vacio(proveedor_id)
+                       if m["id"] == marca_id), "esa marca")
+        return _renderizar_vacios_proveedor(
+            request, proveedor_id, status_code=409,
+            juntar={"se_va_id": marca_id, "se_va": actual,
+                    "queda_id": choque.otra_id, "queda": choque.otra_nombre})
+    except ValueError as invalido:
+        return _renderizar_vacios_proveedor(request, proveedor_id, error=str(invalido),
+                                           status_code=400)
+    return _volver_al_proveedor(request, proveedor_id, "Nombre de la marca corregido.")
+
+
+@app.post("/administracion/vacios/{proveedor_id}/marca/{se_va_id}/juntar")
+def juntar_marcas_de_vacios(request: Request, proveedor_id: int, se_va_id: int,
+                            queda_id: str = Form("")):
+    """Pasa todo lo de una marca a otra del mismo proveedor, y borra la primera."""
+    if not queda_id.strip().isdigit():
+        return _renderizar_vacios_proveedor(request, proveedor_id,
+                                           error="Elegí con qué marca juntarla.", status_code=400)
+    try:
+        nombres = {m["id"]: m["nombre"] for m in listar_marcas_vacio(proveedor_id)}
+        resultado = juntar_marcas_vacio(proveedor_id, se_va_id, int(queda_id))
+    except ValueError as invalido:
+        return _renderizar_vacios_proveedor(request, proveedor_id, error=str(invalido),
+                                           status_code=400)
+    aviso = (f"«{nombres.get(se_va_id, 'La marca')}» quedó junta con "
+             f"«{nombres.get(int(queda_id), 'la otra')}»: sus cajones son ahora una sola pila.")
+    if resultado["asignaciones_entre_ellas"]:
+        aviso += (f" Se borraron {resultado['asignaciones_entre_ellas']} asignaciones entre las dos,"
+                  " que dentro de una sola pila no movían nada.")
+    return _volver_al_proveedor(request, proveedor_id, aviso)
 
 
 @app.post("/administracion/vacios/movimiento/{tipo}/{movimiento_id}/anular")
@@ -10905,6 +10958,7 @@ def ver_ingresar_mercaderia(
             "compra": None,
             "proveedor": proveedor,
             "renglones_hoy": renglones_hoy,
+            "marcas_vacio": _marcas_sugeridas(proveedor_id),
             "error": error,
             "aviso": aviso,
         },
@@ -10959,6 +11013,18 @@ def elegir_proveedor_ingreso_directo(request: Request, codigo_puesto: str = Form
     return RedirectResponse(url=f"/deposito/ingresar?{urlencode(parametros)}", status_code=303)
 
 
+def _marcas_sugeridas(proveedor_id: int) -> list[dict]:
+    """Las marcas de cajón que ya tiene el proveedor, como sugerencias del campo.
+
+    Son un extra: si no se pueden leer, la pantalla sale igual sin ellas.
+    """
+    try:
+        return listar_marcas_vacio(proveedor_id)
+    except Exception:
+        logger.exception("No se pudieron leer las marcas de vacíos para sugerir")
+        return []
+
+
 @app.post("/deposito/ingresar")
 def ingresar_mercaderia(
     request: Request,
@@ -10971,12 +11037,16 @@ def ingresar_mercaderia(
     tipo_retiro: str = Form("Clark"),
     ficha_en_origen_id: str = Form(""),
     codigo_llegada: str = Form(""),
+    sena: str = Form(""),
+    marca: str = Form(""),
 ):
     """Agrega un artículo ya recibido en Depósito, sin pasar por Logística ni por Recepción.
 
     Mismos validadores que agregar_compra (_validar_compra_nueva_form),
-    pasando importe/sena vacíos siempre — esta pantalla no tiene esos
-    campos. crear_compra hace el resto con ingreso_directo_deposito=True:
+    con el importe vacío siempre: el precio lo carga el comprador después.
+    LA SEÑA Y LA MARCA SÍ (dueño, 28/09): con seña, los cajones suman a
+    Vacíos y la marca se vincula a la del cajón, igual que al recibir.
+    crear_compra hace el resto con ingreso_directo_deposito=True:
     la compra nace 'recepcionado'/'retirado', con las cantidades reales
     iguales a las cargadas (no hay estimado previo).
     """
@@ -10994,7 +11064,7 @@ def ingresar_mercaderia(
     proveedor = _con_codigo_llegada(proveedor, codigo_llegada)
 
     error, valores = _validar_compra_nueva_form(
-        articulo_id, cantidad_cajones, contenido_por_cajon, "", "", tipo_retiro, ficha_en_origen_id,
+        articulo_id, cantidad_cajones, contenido_por_cajon, "", sena, tipo_retiro, ficha_en_origen_id,
         segunda_por_cajon,
     )
 
@@ -11013,6 +11083,8 @@ def ingresar_mercaderia(
                 "segunda_por_cajon": segunda_por_cajon,
                 "tipo_retiro": tipo_retiro,
                 "ficha_en_origen_id": ficha_en_origen_id,
+                "sena": sena,
+                "marca": marca,
             }
             return templates.TemplateResponse(
                 request,
@@ -11048,6 +11120,8 @@ def ingresar_mercaderia(
             "segunda_por_cajon": segunda_por_cajon,
             "tipo_retiro": tipo_retiro,
             "ficha_en_origen_id": ficha_en_origen_id,
+            "sena": sena,
+            "marca": marca,
         }
         return templates.TemplateResponse(
             request,
@@ -11076,7 +11150,7 @@ def ingresar_mercaderia(
             cantidad_kilos,
             cantidad_fraccion,
             None,
-            None,
+            valores["sena"],
             valores["tipo_retiro"],
             ingreso_directo_deposito=True,
             # Y ACÁ LA GUÍA R SALE EN EL MISMO INSERT, porque esta compra nace
@@ -11086,6 +11160,7 @@ def ingresar_mercaderia(
             ficha_en_origen_id=valores["ficha_en_origen_id"],
             segunda_por_cajon=segunda_por_cajon,
             codigo_llegada=proveedor["codigo_llegada"],
+            marca=marca,
         )
     except Exception as error_db:
         articulos = listar_articulos()
@@ -11098,6 +11173,8 @@ def ingresar_mercaderia(
             "segunda_por_cajon": segunda_por_cajon,
             "tipo_retiro": tipo_retiro,
             "ficha_en_origen_id": ficha_en_origen_id,
+            "sena": sena,
+            "marca": marca,
         }
         return templates.TemplateResponse(
             request,

@@ -872,3 +872,56 @@ def test_los_SIN_MARCA_con_cajones_van_RESALTADOS_y_los_en_cero_no():
     # El link a asignar sale solo en Administración, y solo donde hay sin marca.
     assert respuesta.text.count('href="/administracion/vacios/7#asignar"') == 1
     assert 'href="/administracion/vacios/8#asignar"' not in respuesta.text
+
+
+def test_RENOMBRAR_bien_vuelve_con_aviso():
+    with _con(_parches_del_detalle()), \
+         patch("app.main.renombrar_marca_vacio") as renombrar:
+        respuesta = cliente.post("/administracion/vacios/7/marca/71/renombrar",
+                                 data={"nombre": "EJ Colorada"}, follow_redirects=False)
+    assert respuesta.status_code == 303
+    renombrar.assert_called_once_with(7, 71, "EJ Colorada")
+
+
+def test_RENOMBRAR_contra_una_que_YA_EXISTE_ofrece_juntarlas():
+    from app.db import MarcaQueYaExiste
+    with _con(_parches_del_detalle()), \
+         patch("app.main.renombrar_marca_vacio", side_effect=MarcaQueYaExiste(72, "EJ Azul")):
+        respuesta = cliente.post("/administracion/vacios/7/marca/71/renombrar",
+                                 data={"nombre": "ej azul"})
+    assert respuesta.status_code == 409
+    marcado = respuesta.text.split("</style>")[-1]
+    tarjeta = marcado[marcado.index('id="juntar"'):marcado.index('id="renombrar"')]
+    assert "¿Juntar «EJ Roja» con «EJ Azul»?" in tarjeta
+    assert 'action="/administracion/vacios/7/marca/71/juntar"' in tarjeta
+    assert '<input type="hidden" name="queda_id" value="72">' in tarjeta
+
+
+def test_JUNTAR_llama_a_la_escritura_y_dice_lo_que_borro():
+    with _con(_parches_del_detalle()), \
+         patch("app.main.juntar_marcas_vacio",
+               return_value={"movidos": 4, "asignaciones_entre_ellas": 1}) as juntar:
+        respuesta = cliente.post("/administracion/vacios/7/marca/71/juntar",
+                                 data={"queda_id": "72"}, follow_redirects=False)
+    assert respuesta.status_code == 303
+    juntar.assert_called_once_with(7, 71, 72)
+    aviso = respuesta.headers["location"]
+    assert "Se+borraron+1+asignaciones" in aviso or "Se%20borraron%201" in aviso
+
+
+def test_en_COMPRAS_no_se_renombra_ni_se_junta():
+    with _con(_parches_del_detalle()):
+        marcado = cliente.get("/compras/vacios/7").text.split("</style>")[-1]
+    assert "/renombrar" not in marcado and "/juntar" not in marcado
+    with _con(_parches_del_detalle()):
+        marcado = cliente.get("/administracion/vacios/7").text.split("</style>")[-1]
+    assert marcado.count('/renombrar"') == 2               # una por marca
+
+
+def test_la_tarjeta_de_MOVER_ofrece_salir_de_una_MARCA_y_no_solo_de_sin_marca():
+    with _con(_parches_del_detalle()):
+        marcado = cliente.get("/administracion/vacios/7").text.split("</style>")[-1]
+    tarjeta = marcado[marcado.index('id="asignar"'):marcado.index('id="renombrar"')]
+    desde = tarjeta[tarjeta.index('name="marca_desde_id"'):tarjeta.index("</select>")]
+    assert re.findall(r'<option value="(\d*)">([^<]+)</option>', desde) == [
+        ("", "Sin asignar · hay 12"), ("71", "EJ Roja · hay 23"), ("72", "EJ Azul · hay 0")]

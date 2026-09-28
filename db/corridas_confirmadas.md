@@ -618,3 +618,21 @@ PALMALA   segunda_ajuste_1 · tabla 1 · columnas 8 · checks 2 · índice 1 · 
 
 Es lo esperado en las dos. El código que la usa (la pata del pool de segunda,
 el botón del Cotejo y la pantalla del ajuste) entró en el commit siguiente.
+
+## 28/09 — `vacios_marca_texto_1_vincular`, las DOS bases
+
+Corrida por el dueño. Verificación (`db/vacios_marca_texto_1_verificacion.sql`),
+corrida aparte:
+
+```
+FRUTAMAX  vacios_marca_texto_1_vincular · faltan_vincular 0 · vinculadas 8 · con_marca_sin_sena 17 · marcas 8 · recibidas_desde_la_foto 27 · última recepción 28/09
+PALMALA   corrió, con el comentario de la tabla puesto (fila no pegada)
+```
+
+Las 17 con marca escrita y sin seña quedan sin vincular a propósito: sin seña
+no entran a Vacíos. De Palmala el dueño confirmó que corrió pero no pegó la
+fila, así que su `faltan_vincular` no está anotado.
+
+Y de yapa, el caso de Rio Uruguay con `db/vacios_rio_uruguay_1_de_donde_sale.sql`
+(solo lee, Frutamax): foto 350 + 168 con seña · 0 sin seña · 0 devueltos · 0
+ajustes = 518, igual que la pantalla.

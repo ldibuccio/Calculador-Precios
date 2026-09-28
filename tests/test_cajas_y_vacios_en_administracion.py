@@ -182,7 +182,9 @@ def test_los_FORMULARIOS_de_cada_pantalla_mandan_a_SU_sector():
                       "/administracion/vacios/7/devolucion",
                       "/administracion/vacios/devolucion/11/anular",
                       "/administracion/vacios/7/ajuste", "/administracion/vacios/7/asignacion",
-                      "/administracion/vacios/movimiento/ajuste/21/anular"},
+                      "/administracion/vacios/movimiento/ajuste/21/anular",
+                      # Corregir el nombre de una marca (28/09), una por marca.
+                      "/administracion/vacios/7/marca/71/renombrar"},
     }
     for ruta, esperados in decididos.items():
         with _con_datos():

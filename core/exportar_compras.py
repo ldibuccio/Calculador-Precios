@@ -62,6 +62,24 @@ def _formatear_moneda(valor) -> str:
 # por cajón de compras distintas no da nada— sino lo que se dejó de seña en
 # plata: seña × cajones de cada compra. El rótulo del total lo dice.
 ROTULO_TOTAL_SENAS = "Total de señas (seña por cajón × cajones)"
+# EL DE IMPORTES (dueño, 28/09), con la misma cuenta: "para ver cuánta plata
+# hay en lo que filtraste". Una compra SIN PRECIO no suma, y el total lo dice:
+# sin esa cola, un total al que le faltan compras se lee igual de cerrado.
+ROTULO_TOTAL_IMPORTES = "Total de importes (importe por cajón × cajones)"
+
+
+def total_de_importes(filas: list[dict]) -> float:
+    """La plata de lo filtrado: importe por cajón × cajones, de las que tienen precio."""
+    return round(sum(float(f["importe"]) * float(f.get("cantidad_cajones") or 0)
+                     for f in filas if f.get("importe") is not None), 2)
+
+
+def cola_sin_precio(filas: list[dict]) -> str:
+    """" · 2 sin precio, no suman" o vacío: lo que le falta al total de importes."""
+    sin = sum(1 for f in filas if f.get("importe") is None)
+    if not sin:
+        return ""
+    return f" · {sin} sin precio, no {'suma' if sin == 1 else 'suman'}"
 
 
 def texto_sena(fila: dict) -> str:
@@ -246,6 +264,9 @@ def generar_pdf_listado_compras(fecha_desde: date, fecha_hasta: date, filas: lis
 
     if filas:
         elementos += [Spacer(1, 12), Paragraph(
+            f"{ROTULO_TOTAL_IMPORTES}: {_formatear_moneda(total_de_importes(filas))}"
+            f"{cola_sin_precio(filas)}", estilo_importe),
+            Spacer(1, 4), Paragraph(
             f"{ROTULO_TOTAL_SENAS}: {_formatear_moneda(total_de_senas(filas))}", estilo_importe)]
 
     documento.build(elementos, onFirstPage=_dibujar_encabezado_pagina, onLaterPages=_dibujar_encabezado_pagina)
@@ -312,6 +333,12 @@ def generar_excel_listado_compras(fecha_desde: date, fecha_hasta: date, filas: l
         fila_actual += 1  # renglón en blanco entre fechas
 
     if filas:
+        hoja.cell(row=fila_actual, column=1,
+                  value=ROTULO_TOTAL_IMPORTES + cola_sin_precio(filas)).font = Font(bold=True)
+        celda = hoja.cell(row=fila_actual, column=3, value=total_de_importes(filas))
+        celda.font = Font(bold=True)
+        celda.number_format = '"$"#,##0'
+        fila_actual += 1
         hoja.cell(row=fila_actual, column=1, value=ROTULO_TOTAL_SENAS).font = Font(bold=True)
         celda = hoja.cell(row=fila_actual, column=4, value=total_de_senas(filas))
         celda.font = Font(bold=True)
