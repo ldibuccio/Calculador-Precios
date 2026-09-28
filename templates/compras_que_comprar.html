@@ -72,10 +72,11 @@
   <form method="post" action="/compras/que-comprar">
   {# TILDAR NO RECALCULA SOLO: el listado sale de lo GUARDADO. "Actualizar"
      es el mismo guardado que el botón de abajo, puesto donde se tilda.
-     "PDF" guarda primero, así sale lo tildado en este momento. #}
+     "Exportar" guarda primero y saca el PDF, así sale lo tildado en este
+     momento. Se llamaba "Sacar PDF", y no se entendía (dueño, 28/09). #}
   <div class="arriba">
     <button class="actualizar" type="submit" name="accion" value="guardar">Actualizar</button>
-    <button class="pdf" type="submit" name="accion" value="pdf">Sacar PDF</button>
+    <button class="pdf" type="submit" name="accion" value="pdf">Exportar</button>
   </div>
   <div class="tarjeta">
     <div class="art">Qué clientes y qué fechas</div>

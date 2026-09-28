@@ -16,6 +16,7 @@ tabla con los rótulos repetidos en cada hoja), que es la de todos los PDF del
 sistema.
 """
 
+import re
 from io import BytesIO
 
 from reportlab.lib.styles import ParagraphStyle
@@ -97,6 +98,27 @@ def textos_de_la_fila(fila: dict, numero, sin_decimales) -> dict:
     }
 
 
+# LO QUE EL PAPEL DEJA EN BLANCO (dueño, 28/09): "imprimo el listado y lo
+# completo a mano en el Mercado. Un espacio vacío se puede llenar con la
+# lapicera; un cero impreso no". Los carteles de la pantalla ("no se puede
+# saber", "poné el por bulto") y el OK, que es cero para comprar, también.
+# En la PANTALLA siguen: ahí dicen qué hacer, y el test que compara las dos
+# mira `textos_de_la_fila`, que no cambia.
+EN_BLANCO_EN_EL_PAPEL = {"OK", "—", "no se puede saber", HUECO_UNIDAD, HUECO_KILAJE}
+
+
+def para_el_papel(texto: str) -> str:
+    """El texto de la celda para imprimir: vacío si es cero, un cartel o no se sabe.
+
+    Cero es el número que empieza con "0" y sigue con un espacio o nada
+    ("0", "0 cj", "0 kg"). "0.5 kg" NO es cero y se imprime.
+    """
+    texto = (texto or "").strip()
+    if texto in EN_BLANCO_EN_EL_PAPEL or re.match(r"^0(\s|$)", texto):
+        return ""
+    return texto
+
+
 def _escapar(texto) -> str:
     """Paragraph de reportlab lee marcado: un "<" en un nombre rompería el PDF."""
     return str(texto).replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
@@ -146,9 +168,10 @@ def generar_pdf_que_comprar(
                 nombre += f"<br/><font size='8' color='#595959'>{_escapar(textos['de_quien'])}</font>"
             celdas = [Paragraph(nombre, estilos["dato"])]
             for clave, _rotulo in COLUMNAS:
-                texto = _escapar(textos[clave])
-                if clave == "stock" and textos["stock_magnitud"]:
-                    texto += f"<br/><font size='8' color='#595959'>{_escapar(textos['stock_magnitud'])}</font>"
+                texto = _escapar(para_el_papel(textos[clave]))
+                magnitud = para_el_papel(textos["stock_magnitud"])
+                if clave == "stock" and texto and magnitud:
+                    texto += f"<br/><font size='8' color='#595959'>{_escapar(magnitud)}</font>"
                 estilo = estilos["numero"] if clave in ("a_comprar", "falta") else estilos["dato"]
                 celdas.append(Paragraph(texto, estilo))
             datos.append(celdas)
