@@ -701,6 +701,38 @@ create table aprendizaje_articulos (
 comment on table aprendizaje_articulos is 'Aprende qué texto de una comanda (por proveedor) corresponde a qué artículo.';
 
 -- ----------------------------------------------------------------------------
+-- 10b. RECEPCIONES y APRENDIZAJE_PROVEEDORES — del diseño original (db/schema.sql)
+-- Existen en las dos bases reales y no las lee ni las escribe el código:
+-- la recepción es hoy un estado de compras. Están acá (28/09, dueño) para que
+-- la base de pruebas tenga las mismas tablas que producción; la única que las
+-- toca es juntar_proveedores, que les mueve el proveedor. Definición copiada
+-- de db/schema.sql: ninguna migración las alteró después.
+-- ----------------------------------------------------------------------------
+create table recepciones (
+    id                              bigint generated always as identity primary key,
+    fecha_operacion                 date not null,
+    compra_id                       bigint references compras (id), -- vacío si es un agregado fuera de horario sin compra cargada
+    articulo_id                     bigint not null references articulos (id),
+    proveedor_id                    bigint references proveedores (id),
+    cantidad_recibida               numeric not null,
+    kilaje_recibido                 numeric,
+    es_agregado_fuera_de_horario    boolean not null default false,
+    aprobado_por_administracion     boolean not null default false, -- no bloquea la edición, solo indica que fue revisada
+    actualizado_el                  timestamptz not null default now()
+);
+
+comment on table recepciones is 'Lo que efectivamente entra al depósito. Nunca queda cerrada de forma definitiva.';
+
+create table aprendizaje_proveedores (
+    id              bigint generated always as identity primary key,
+    texto_leido     text not null unique,
+    proveedor_id    bigint not null references proveedores (id),
+    creado_en       timestamptz not null default now()
+);
+
+comment on table aprendizaje_proveedores is 'Aprende qué texto de una comanda corresponde a qué proveedor.';
+
+-- ----------------------------------------------------------------------------
 -- 11. VACÍOS (Envases Puesto) — cajones de proveedores que entran y salen
 --     del puesto del Mercado. Nada que ver con la tabla envases (esa es el
 --     costo del envase facturado al cliente de distribución).

@@ -558,6 +558,27 @@ más, sino de algo que no puede haber pasado. El piso manda sobre lo que se
 puede observar; no sobre lo físicamente imposible. Si alguien dice que salió
 del cajón, lo que está describiendo es un reproceso que no se cargó.
 
+## Una guía R ANULADA no retiene nada (28/09)
+
+La compra 827 no se podía borrar porque "R556 se costeó contra este lote", y la
+R556 estaba anulada. Su consumo congelado seguía apuntando a la compra, y
+`_lo_que_cuelga` lo contaba como si la guía estuviera viva. Se destrabó con
+SQL a mano (ver `db/corridas_confirmadas.md`, 28/09).
+
+Desde v1010 el borrado ignora las guías R anuladas y borra sus consumos en la
+misma transacción, antes del DELETE de la compra. Si el borrado después
+rebota, eso se deshace con lo demás. La excepción es la guía **en origen**:
+su `compra_origen_id` es la FK misma y el CHECK del tipo no la deja en NULL,
+así que frena aunque esté anulada, y el mensaje lo dice.
+
+Lo cuidan dos barridos en `tests/test_borrar_compra_con_guia_anulada.py`:
+
+- toda consulta sobre `reprocesos` o `reprocesos_consumos` que no pregunta
+  por `anulado_el` está en una lista decidida, con su razón;
+- toda FK a `compras` está decidida, con lo que hace el borrado con ella.
+
+El 28/09 la única consulta sin ese filtro era la del borrado.
+
 ## Una regla de negocio no puede estar escrita dos veces
 
 Si la misma regla vive en el código y en la base, son **dos** reglas: se
@@ -3932,9 +3953,11 @@ botón aparece solo donde la escritura acepta. Todo en una transacción.
   lugares que las nombran van en UNA sentencia (CTE), y ahí la FK se chequea al
   final. Conservan su id. En dos sentencias la primera rebota (medido).
 - **`recepciones` y `aprendizaje_proveedores`** apuntan a `proveedores` en las
-  bases reales y no están en `db/esquema_completo.sql`. Están vacías y nada más
-  las usa, pero la fusión las mueve si existen (`to_regclass`), para que la
-  primera fila que alguien les escriba no haga rebotar el borrado.
+  bases reales, y desde el 28/09 (dueño) también están en
+  `db/esquema_completo.sql`, copiadas de `db/schema.sql`. El código no las usa,
+  pero la fusión las mueve, para que la primera fila que alguien les escriba no
+  haga rebotar el borrado. `recepciones` apunta también a `compras`, y por eso
+  es el quinto control de `_lo_que_cuelga`.
 - **Lo cuida un test que lee `pg_constraint`** contra el esquema real y compara
   las FK a `proveedores` ENCONTRADAS contra `TABLAS_QUE_APUNTAN_A_PROVEEDORES`.
   Una tabla nueva con FK a proveedores lo rompe hasta que alguien decida cómo se
@@ -6583,7 +6606,9 @@ las dos guardas miran cosas distintas y que no hay una que cubra a la otra.
 **Lo que se construyó** es el hermano del de columnas, y lo importante es
 cómo pregunta: barre los `create table` de `db/*.sql`, resta los que alguna
 migración dropea, y compara el conjunto ENCONTRADO contra el DECIDIDO —las
-siete tablas muertas del diseño original, cada una con su razón al lado—.
+siete tablas muertas del diseño original, cada una con su razón al lado; desde
+el 28/09 son cinco, porque `recepciones` y `aprendizaje_proveedores` entraron al
+esquema por decisión del dueño—.
 Falla en las dos direcciones, así que la lista no puede quedarse protegiendo
 lo que ya no pasa.
 

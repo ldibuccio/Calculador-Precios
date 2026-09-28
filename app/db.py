@@ -1487,10 +1487,11 @@ TABLAS_QUE_APUNTAN_A_PROVEEDORES = frozenset({
     ("proveedores_codigos", "proveedor_id"),
 })
 
-# Las dos del diseño original que NO están en db/esquema_completo.sql pero sí
-# en las bases reales, vacías y sin usar (ver db/corridas_confirmadas.md,
-# 27/09). Se mueven igual si existen: sin esto, la primera fila que alguien
-# les escriba hace rebotar el DELETE del proveedor que se va.
+# Las dos del diseño original que el código no usa, en las bases reales y
+# desde el 28/09 también en db/esquema_completo.sql. Se mueven igual: sin
+# esto, la primera fila que alguien les escriba hace rebotar el DELETE del
+# proveedor que se va. Siguen preguntando si existen (`to_regclass`) porque
+# son del diseño viejo y una base puede no tenerlas.
 TABLAS_VIEJAS_QUE_APUNTAN_A_PROVEEDORES = ("recepciones", "aprendizaje_proveedores")
 
 # Las marcas y los cinco lugares con FK compuesta (marca, proveedor) se mueven
@@ -5720,7 +5721,8 @@ def _motivo_por_el_que_no_se_puede_eliminar(cursor, compra_id: int) -> str:
 def _lo_que_cuelga(cursor, compra_id: int) -> list[dict]:
     """Qué apunta a esta compra y le impide desaparecer. Vacío = se puede borrar.
 
-    SON LAS CUATRO FK QUE NO SE PUEDEN LIMPIAR SOLAS. `fotos_recepcion` no
+    SON LAS FK QUE NO SE PUEDEN LIMPIAR SOLAS: cuatro, y `recepciones`
+    desde el 28/09. `fotos_recepcion` no
     está acá a propósito: `eliminar_compra` la borra él mismo, porque el
     archivo es de ESTA compra y de ninguna otra.
 
@@ -5739,11 +5741,16 @@ def _lo_que_cuelga(cursor, compra_id: int) -> list[dict]:
     """
     cuelgan = []
 
+    # SOLO LAS GUÍAS R VIVAS (28/09). Una anulada ya no consume nada —el
+    # reparto se rejuega y ella no está—, y su consumo congelado lo borra
+    # `eliminar_compra` en la misma transacción
+    # (`_SQL_BORRAR_CONSUMOS_DE_GUIAS_ANULADAS`). Contarla acá dejaba la
+    # compra imposible de borrar sin SQL a mano: pasó con la 827 y la R556.
     cursor.execute(
         """
         SELECT DISTINCT rp.id FROM reprocesos_consumos rc
         JOIN reprocesos rp ON rp.id = rc.reproceso_id
-        WHERE rc.compra_id = %s ORDER BY rp.id
+        WHERE rc.compra_id = %s AND rp.anulado_el IS NULL ORDER BY rp.id
         """,
         (compra_id,),
     )
@@ -5751,13 +5758,20 @@ def _lo_que_cuelga(cursor, compra_id: int) -> list[dict]:
         cuelgan.append({"que": "guia_r_consumo",
                         "detalle": f"R{reproceso_id} se costeó contra este lote"})
 
+    # LA EN ORIGEN SE CUENTA AUNQUE ESTÉ ANULADA, y no es un descuido: su
+    # `compra_origen_id` es la FK misma y el CHECK del tipo no la deja en
+    # NULL, así que ningún borrado la puede soltar. El mensaje lo dice, para
+    # que no manden a anular una guía que ya está anulada.
     cursor.execute(
-        "SELECT id FROM reprocesos WHERE compra_origen_id = %s ORDER BY id",
+        "SELECT id, anulado_el IS NOT NULL FROM reprocesos WHERE compra_origen_id = %s ORDER BY id",
         (compra_id,),
     )
-    for (reproceso_id,) in cursor.fetchall():
-        cuelgan.append({"que": "guia_r_en_origen",
-                        "detalle": f"R{reproceso_id} salió de esta compra, que vino armada"})
+    for reproceso_id, anulada in cursor.fetchall():
+        detalle = f"R{reproceso_id} salió de esta compra, que vino armada"
+        if anulada:
+            detalle += (" (está anulada, pero sigue atada a esta compra: "
+                        "esto no se destraba desde el sistema)")
+        cuelgan.append({"que": "guia_r_en_origen", "detalle": detalle})
 
     cursor.execute(
         "SELECT id FROM vacios_deposito_devoluciones WHERE compra_id = %s ORDER BY id",
@@ -5774,6 +5788,14 @@ def _lo_que_cuelga(cursor, compra_id: int) -> list[dict]:
     for (movimiento_id,) in cursor.fetchall():
         cuelgan.append({"que": "devolucion_al_proveedor",
                         "detalle": f"la devolución al proveedor {movimiento_id} dice que salió de acá"})
+
+    # LA QUINTA, del 28/09: `recepciones` es del diseño original y el código
+    # no la escribe, pero existe en las dos bases con su FK a compras. Una
+    # fila ahí hace rebotar el DELETE con un error que no dice cuál es.
+    cursor.execute("SELECT id FROM recepciones WHERE compra_id = %s ORDER BY id", (compra_id,))
+    for (recepcion_id,) in cursor.fetchall():
+        cuelgan.append({"que": "recepcion_vieja",
+                        "detalle": f"la recepción {recepcion_id} (tabla vieja, sin pantalla) apunta acá"})
 
     return cuelgan
 
@@ -5811,6 +5833,18 @@ _SQL_BORRAR_Y_ARCHIVAR = """
         SELECT (fila->>'id')::bigint, %s, fila FROM borrada
     )
     SELECT guia_id FROM borrada
+"""
+
+
+# LOS CONSUMOS DE GUÍAS R ANULADAS se van con la compra (28/09). Son el
+# documento congelado de una guía que ya no cuenta, y `reprocesos_consumos.
+# compra_id` es una FK sin cascade: dejarlos hace rebotar el DELETE. Es lo
+# mismo que se corrió a mano en Frutamax para la 827 (R556, 8 bultos). Los de
+# guías VIVAS no se tocan: ésos los frena `_lo_que_cuelga` antes.
+_SQL_BORRAR_CONSUMOS_DE_GUIAS_ANULADAS = """
+    DELETE FROM reprocesos_consumos rc
+    USING reprocesos r
+    WHERE r.id = rc.reproceso_id AND rc.compra_id = %s AND r.anulado_el IS NOT NULL
 """
 
 
@@ -5881,6 +5915,10 @@ def eliminar_compra(compra_id: int, forzar: bool = False, *, origen: str) -> lis
                 (compra_id,),
             )
             rutas_de_balanza = [f[0] for f in cursor.fetchall()]
+            # Antes del DELETE y en los DOS caminos: si después la compra no
+            # se puede borrar, sale por el ValueError sin commit y esto se
+            # deshace con lo demás.
+            cursor.execute(_SQL_BORRAR_CONSUMOS_DE_GUIAS_ANULADAS, (compra_id,))
 
             if forzar:
                 # LO QUE CUELGA SE MIRA IGUAL, y ANTES del DELETE: el
