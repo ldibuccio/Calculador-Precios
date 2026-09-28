@@ -636,3 +636,20 @@ fila, así que su `faltan_vincular` no está anotado.
 Y de yapa, el caso de Rio Uruguay con `db/vacios_rio_uruguay_1_de_donde_sale.sql`
 (solo lee, Frutamax): foto 350 + 168 con seña · 0 sin seña · 0 devueltos · 0
 ajustes = 518, igual que la pantalla.
+
+## 28/09 — `vacios_conteo_2809_1` a `_5`: arranque de vacíos desde el conteo físico
+
+Corrida por el dueño. Bloques 1 (tablas), 2 (datos, con `frutas jrobol`
+corregido), 3 (buscadores) y 4 (revisión, solo lee) en las dos bases; el
+bloque 5 (carga) en Frutamax, que es la única que hace algo. Verificación
+(`db/vacios_conteo_2809_6_verificacion.sql`), corrida aparte:
+
+```
+FRUTAMAX  vacios_conteo_2809_5_cargar · arranques 1 · pilas 17 · total 1086 · filas_iguales 17 · sin_proveedor 1 · stock_ahora 1086 · arrancó 28/09 20:21 · última recepción 28/09 13:01
+PALMALA   vacios_conteo_2809_5_cargar · arranques 0 · pilas 0 · sin_proveedor 0 · no se tocó nada
+```
+
+Es lo esperado en las dos. Que la verificación corra en Palmala confirma que
+las tablas del bloque 1 están ahí, que es lo que el código necesita. Desde
+ahora la cuenta de Frutamax arranca de este conteo; la foto del 25/09 y
+`vacios_foto_4` quedan como historia (el 4 no se corrió).
