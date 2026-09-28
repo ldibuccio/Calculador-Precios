@@ -563,3 +563,26 @@ había nada que corregir ahí.
 Desde v1010 esto ya no hace falta a mano: el borrado ignora las guías R
 anuladas y borra sus consumos en la misma transacción
 (`_SQL_BORRAR_CONSUMOS_DE_GUIAS_ANULADAS`, app/db.py).
+
+## 28/09 — `comparar_esquema` en las dos bases (huellas de columnas)
+
+Corrida por el dueño. Formato tabla:columnas:huella(8):filas. Resultado,
+comparado contra una base cargada con `db/esquema_completo.sql`:
+
+```
+FRUTAMAX  73 tablas · 64 iguales al repo · 8 de más · 0 con columnas distintas
+PALMALA   64 tablas · 64 iguales al repo · 0 de más · le falta 1
+```
+
+- **De más, solo en Frutamax**: las cinco vacías del diseño original
+  (`recepciones`, `aprendizaje_proveedores`, `pedidos_supermercado`,
+  `precios_dia`, `resultados`), `conversion_articulos_cliente` (31 filas),
+  `e5_mov` (146) y `parametros_historial` (1).
+- **Le falta a Palmala**: `corte_respaldo_fichas_reprocesos`, que está en el
+  repo y en Frutamax. Es el respaldo del corte de Frutamax; el código no la usa.
+- **Columnas distintas: ninguna**, en las 64 compartidas. La huella mira
+  nombres, tipos y NOT NULL; no defaults, CHECKs, FKs ni índices.
+
+Esto destapó que v1010 consultaba `recepciones` al borrar una compra, y en
+Palmala esa tabla no existe (ver CLAUDE.md, "Una guía R ANULADA no retiene
+nada"). Arreglado en v1011.

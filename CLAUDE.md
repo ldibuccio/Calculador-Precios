@@ -579,6 +579,23 @@ Lo cuidan dos barridos en `tests/test_borrar_compra_con_guia_anulada.py`:
 
 El 28/09 la única consulta sin ese filtro era la del borrado.
 
+**Y v1010 rompió el borrado en Palmala, y ningún test podía verlo.** Le
+sumó a `_lo_que_cuelga` una consulta a `recepciones`, que estaba en el
+esquema del repo, en Frutamax y NO en Palmala. Ahí todo borrado de compra
+revienta con "relation does not exist". La suite y el humo corren contra el
+esquema del repo, así que pasaron en verde. Lo destapó la consulta de
+huellas (`db/comparar_esquema.sql`) corrida en las dos bases, no un test.
+Arreglado en v1011: `recepciones` salió del esquema y del borrado.
+
+Quedan dos guardas, y cada una contesta una mitad distinta:
+
+- `tests/test_tablas_del_codigo.py`: toda tabla que el código consulta está
+  en `db/esquema_completo.sql`. Una base nueva no puede nacer sin ella.
+- `db/comparar_esquema.sql`, corrida en las dos bases: que el esquema del
+  repo sea el de producción. Ésta no es un test porque la corre el dueño, y
+  **se vuelve a correr cada vez que se toca una tabla que una base puede no
+  tener**.
+
 ## Una regla de negocio no puede estar escrita dos veces
 
 Si la misma regla vive en el código y en la base, son **dos** reglas: se
@@ -10630,11 +10647,15 @@ este archivo guarda.
 
 8. **Tildar no recalcula solo (28/09)**: el listado sale de lo GUARDADO.
    "Actualizar" es el mismo guardado que el Guardar del pie, puesto arriba
-   de los tildes, y "Sacar PDF" guarda primero y redirige a
+   de los tildes, y "Exportar" (se llamaba "Sacar PDF") guarda primero y redirige a
    `/compras/que-comprar/pdf`, así sale lo tildado en ese momento. El PDF usa
    las mismas filas, y cómo se dice cada celda está escrito dos veces
    (`textos_de_la_fila` y la plantilla). Lo que las mantiene iguales es un
    test que las compara celda por celda.
+   **En el papel, el cero y lo que no se sabe van EN BLANCO** (dueño, 28/09):
+   el listado se completa a mano en el Mercado, y un espacio se llena con la
+   lapicera y un cero impreso no. Lo hace `para_el_papel`, DESPUÉS de
+   `textos_de_la_fila`, así la comparación con la pantalla no se toca.
 
 ### El `?error=` que se escribe y nadie lee es un error mudo
 

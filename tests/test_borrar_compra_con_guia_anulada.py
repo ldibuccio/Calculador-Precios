@@ -248,7 +248,6 @@ FK_A_COMPRAS_DECIDIDAS = {
     ("reprocesos", "compra_origen_id"): "frena siempre, viva o anulada: el CHECK no la deja en NULL",
     ("vacios_deposito_devoluciones", "compra_id"): "frena y la nombra",
     ("movimientos_stock", "compra_devolucion_id"): "frena y la nombra",
-    ("recepciones", "compra_id"): "frena y la nombra (tabla del diseño viejo)",
 }
 
 
@@ -261,19 +260,3 @@ def test_TODA_FK_a_compras_esta_DECIDIDA(galpon):
          WHERE c.contype = 'f' AND c.confrelid = 'compras'::regclass"""))
     assert encontradas, "no encontró ninguna FK: la consulta no mira lo que dice"
     assert encontradas == set(FK_A_COMPRAS_DECIDIDAS)
-
-
-def test_una_fila_en_RECEPCIONES_frena_el_borrado_y_LA_NOMBRA(galpon):
-    """La tabla vieja existe en las bases reales con su FK a compras. Sin esta
-    guarda, una fila ahí llegaba como un ForeignKeyViolation crudo."""
-    d, sql, recepcionada, _guia_r, _consumos, existe, art = galpon
-    compra = recepcionada()
-    (rid,), = sql("""INSERT INTO recepciones (fecha_operacion, compra_id, articulo_id,
-                     cantidad_recibida) VALUES (date '2026-09-27', %s, %s, 1) RETURNING id""",
-                  (compra, art))
-    with pytest.raises(ValueError, match=f"recepción {rid}"):
-        d.eliminar_compra(compra, forzar=True, origen="gerencia")
-    assert existe(compra)
-    sql("DELETE FROM recepciones WHERE id=%s", (rid,))
-    d.eliminar_compra(compra, forzar=True, origen="gerencia")
-    assert not existe(compra)

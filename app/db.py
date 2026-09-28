@@ -1487,11 +1487,10 @@ TABLAS_QUE_APUNTAN_A_PROVEEDORES = frozenset({
     ("proveedores_codigos", "proveedor_id"),
 })
 
-# Las dos del diseño original que el código no usa, en las bases reales y
-# desde el 28/09 también en db/esquema_completo.sql. Se mueven igual: sin
-# esto, la primera fila que alguien les escriba hace rebotar el DELETE del
-# proveedor que se va. Siguen preguntando si existen (`to_regclass`) porque
-# son del diseño viejo y una base puede no tenerlas.
+# Las dos del diseño original que NO están en db/esquema_completo.sql: solo
+# existen en Frutamax, vacías, y van a borrarse (28/09). Se mueven si
+# existen (`to_regclass`): Palmala no las tiene, y preguntar por ellas sin
+# eso revienta ahí.
 TABLAS_VIEJAS_QUE_APUNTAN_A_PROVEEDORES = ("recepciones", "aprendizaje_proveedores")
 
 # Las marcas y los cinco lugares con FK compuesta (marca, proveedor) se mueven
@@ -5721,8 +5720,10 @@ def _motivo_por_el_que_no_se_puede_eliminar(cursor, compra_id: int) -> str:
 def _lo_que_cuelga(cursor, compra_id: int) -> list[dict]:
     """Qué apunta a esta compra y le impide desaparecer. Vacío = se puede borrar.
 
-    SON LAS FK QUE NO SE PUEDEN LIMPIAR SOLAS: cuatro, y `recepciones`
-    desde el 28/09. `fotos_recepcion` no
+    SON LAS CUATRO FK QUE NO SE PUEDEN LIMPIAR SOLAS. `recepciones` también
+    apunta a compras, pero existe solo en Frutamax, vacía, y se borra: no se
+    pregunta por ella, porque en Palmala la consulta reventaría el borrado
+    (pasó en v1010). `fotos_recepcion` no
     está acá a propósito: `eliminar_compra` la borra él mismo, porque el
     archivo es de ESTA compra y de ninguna otra.
 
@@ -5788,14 +5789,6 @@ def _lo_que_cuelga(cursor, compra_id: int) -> list[dict]:
     for (movimiento_id,) in cursor.fetchall():
         cuelgan.append({"que": "devolucion_al_proveedor",
                         "detalle": f"la devolución al proveedor {movimiento_id} dice que salió de acá"})
-
-    # LA QUINTA, del 28/09: `recepciones` es del diseño original y el código
-    # no la escribe, pero existe en las dos bases con su FK a compras. Una
-    # fila ahí hace rebotar el DELETE con un error que no dice cuál es.
-    cursor.execute("SELECT id FROM recepciones WHERE compra_id = %s ORDER BY id", (compra_id,))
-    for (recepcion_id,) in cursor.fetchall():
-        cuelgan.append({"que": "recepcion_vieja",
-                        "detalle": f"la recepción {recepcion_id} (tabla vieja, sin pantalla) apunta acá"})
 
     return cuelgan
 

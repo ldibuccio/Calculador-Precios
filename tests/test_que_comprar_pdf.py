@@ -19,7 +19,7 @@ import pytest
 from fastapi.testclient import TestClient
 
 import app.main as _main
-from core.exportar_que_comprar import generar_pdf_que_comprar, textos_de_la_fila
+from core.exportar_que_comprar import generar_pdf_que_comprar, para_el_papel, textos_de_la_fila
 
 _cliente = TestClient(_main.app)
 _cliente.cookies.set(_main.PUERTA_COMPRAS.cookie, _main.PUERTA_COMPRAS.firma("compras-secreta"))
@@ -139,7 +139,9 @@ def test_el_PDF_trae_cada_ARTICULO_con_su_FALTA_y_de_quien_sale():
         assert rotulo in texto
     assert "EJEMPLO Dia 26/09 240" in texto
     assert "9 cj" in texto and "12 cj" in texto
-    assert "poné el por bulto" in texto and "no se sabe la unidad" in texto
+    # Los carteles de la pantalla NO van al papel: ahí quedan en blanco.
+    for cartel in ("poné el por bulto", "no se sabe la unidad", "no se puede saber", "OK", "—"):
+        assert cartel not in texto, cartel
 
 
 def test_un_listado_LARGO_sigue_en_la_hoja_siguiente_con_los_rotulos_repetidos():
@@ -278,3 +280,45 @@ def test_a_390px_ACTUALIZAR_se_ve_SIN_BAJAR_aunque_haya_muchas_cargas():
         assert leido[boton]["visible"] and leido[boton]["abajo"] <= 844, boton
         assert leido[boton]["alto"] >= 44, boton
     assert leido["desborde"] == 0
+
+
+# --- 4. EN EL PAPEL, CERO Y "NO SE SABE" QUEDAN EN BLANCO (dueño, 28/09) -----
+
+
+@pytest.mark.parametrize("pantalla, papel", [
+    ("OK", ""), ("—", ""), ("no se puede saber", ""), ("no se sabe la unidad", ""),
+    ("poné el por bulto", ""), ("0 cj", ""), ("0 kg", ""), ("0", ""),
+    # Los RIVALES: parecen cero y no lo son.
+    ("0.5 kg", "0.5 kg"), ("10 cj", "10 cj"), ("3 cj", "3 cj"), ("2.2 blt", "2.2 blt"),
+])
+def test_el_papel_deja_en_BLANCO_el_cero_y_lo_que_no_se_sabe(pantalla, papel):
+    """"Un espacio vacío se puede llenar con la lapicera; un cero impreso no." """
+    assert para_el_papel(pantalla) == papel
+
+
+def test_una_fila_SIN_NADA_QUE_DECIR_sale_con_las_celdas_VACIAS():
+    """Todo en cero o sin saber: lo único impreso es el nombre, de quién sale,
+    y lo pedido. El RIVAL es la fila normal de al lado, que sí imprime sus
+    números: sin ella, un PDF que blanqueara todo pasaría igual."""
+    vacia = _fila(1, "EJEMPLO Vacia", en_piso=None, de_partida=None, falta=None, cajones=None,
+                  a_comprar=None, a_comprar_magnitud=None, stock_bultos=None, kilaje=None,
+                  pide_bultos=None, comprado_cajones=0.0, en_camino_cajones=0.0)
+    normal = _fila(2, "EJEMPLO Normal")
+    texto, _p = _texto_pdf(generar_pdf_que_comprar(
+        "x", ["EJEMPLO Dia 27/09"], [vacia, normal], _main._formatear_numero,
+        _main._formatear_sin_decimales))
+    fila_vacia = texto[texto.index("EJEMPLO Vacia"):texto.index("EJEMPLO Normal")]
+    assert fila_vacia.split() == ["EJEMPLO", "Vacia", "EJEMPLO", "Dia", "26/09", "240", "240", "kg"]
+    fila_normal = texto[texto.index("EJEMPLO Normal"):]
+    for dato in ("18 kg", "13.3", "2.2 blt", "40 kg", "12 cj", "3 cj", "9 cj"):
+        assert dato in fila_normal, dato
+    # "En camino" de la normal es cero: también en blanco.
+    assert "0 cj" not in fila_normal
+
+
+def test_el_boton_dice_EXPORTAR_y_no_Sacar_PDF():
+    """"Sacar PDF" no se entendía (dueño, 28/09). La jerga que no puede
+    aparecer se pregunta también, no solo el texto bueno."""
+    marcado = _render(_contexto()).split("</style>")[-1]
+    assert '<button class="pdf" type="submit" name="accion" value="pdf">Exportar</button>' in marcado
+    assert "Sacar PDF" not in marcado

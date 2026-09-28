@@ -9333,6 +9333,8 @@ def test_toda_TABLA_que_crea_una_MIGRACION_esta_en_el_esquema_completo():
 
     # Las muertas del diseño original, con la razón al lado de cada una.
     MUERTAS_A_PROPOSITO = {
+        "recepciones": "diseño viejo: hoy la recepción es un estado de compras",
+        "aprendizaje_proveedores": "nunca se usó",
         "pedidos_supermercado": "diseño viejo: hoy son pedidos + pedidos_renglones",
         "precios_dia": "diseño viejo: hoy precios_venta_historial",
         "parametros_historial": "diseño viejo: hoy clientes_parametros_historial",
@@ -10754,7 +10756,7 @@ def test_forzar_SALTEA_el_bloqueo_por_estado_y_borra():
     que la única salida sea ésa es el agujero de siempre."""
     conexion, cursor = _conexion_falsa_con_varios_fetchall(
         [(5,), (0,)],                 # el DELETE devuelve la guía; le quedan 0 renglones
-        [[], [], [], [], [], [], []],     # nada colgando, ni fotos
+        [[], [], [], [], [], []],     # nada colgando, ni fotos
     )
     with patch("app.db.obtener_conexion", return_value=conexion):
         db.eliminar_compra(77, forzar=True, origen="gerencia")
@@ -10775,7 +10777,7 @@ def test_forzar_NO_saltea_lo_que_CUELGA_y_lo_NOMBRA():
     """
     conexion, cursor = _conexion_falsa_con_varios_fetchall(
         [(5,), (0,)],
-        [[], [(31,)], [], [], [], []],    # fotos, consumos con R31, y el resto vacío
+        [[], [(31,)], [], [], []],    # fotos, consumos con R31, y el resto vacío
     )
     with patch("app.db.obtener_conexion", return_value=conexion):
         with pytest.raises(ValueError, match="R31"):
@@ -10798,7 +10800,7 @@ def test_SIN_forzar_el_bloqueo_por_estado_SIGUE_PUESTO():
     assert "estado IS DISTINCT FROM" in borrado
 
 
-def test_lo_que_cuelga_enumera_LAS_CINCO_y_dice_de_que_clase_es_cada_una():
+def test_lo_que_cuelga_enumera_LAS_CUATRO_y_dice_de_que_clase_es_cada_una():
     """Las cuatro FK que no se pueden limpiar solas, medidas contra el esquema
     real. `fotos_recepcion` NO está: la borra `eliminar_compra` él mismo,
     porque el archivo es de ESTA compra y de ninguna otra.
@@ -10807,14 +10809,13 @@ def test_lo_que_cuelga_enumera_LAS_CINCO_y_dice_de_que_clase_es_cada_una():
     que saber a qué pantalla ir a arreglarlo.
     """
     conexion, cursor = _conexion_falsa_con_varios_fetchall(
-        None, [[(31,)], [(32, False)], [(9,)], [(4,)], [(6,)]],
+        None, [[(31,)], [(32, False)], [(9,)], [(4,)]],
     )
     with patch("app.db.obtener_conexion", return_value=conexion):
         cuelgan = db.lo_que_cuelga_de_la_compra(77)
 
     assert [c["que"] for c in cuelgan] == [
         "guia_r_consumo", "guia_r_en_origen", "vale_de_vacios", "devolucion_al_proveedor",
-        "recepcion_vieja",
     ]
     assert all(c["detalle"] for c in cuelgan), "cada una se NOMBRA, no se cuenta"
 
@@ -10822,7 +10823,7 @@ def test_lo_que_cuelga_enumera_LAS_CINCO_y_dice_de_que_clase_es_cada_una():
 def test_lo_que_cuelga_devuelve_VACIO_cuando_no_cuelga_nada():
     """El caso feliz, y sin él una versión que devolviera siempre algo pasaría
     todos los negativos (corolario 30)."""
-    conexion, _ = _conexion_falsa_con_varios_fetchall(None, [[], [], [], [], []])
+    conexion, _ = _conexion_falsa_con_varios_fetchall(None, [[], [], [], []])
     with patch("app.db.obtener_conexion", return_value=conexion):
         assert db.lo_que_cuelga_de_la_compra(77) == []
 
