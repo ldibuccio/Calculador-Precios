@@ -618,7 +618,7 @@ y no aparecía en ningún lado:
   negativo en rojo, en la pantalla y en el PDF. La cuenta no cambia: la
   magnitud de un suelto negativo es 0, así que no compra de más.
 - **El Excel del Remanente** ya tenía el número y ahora lo pinta de rojo. El
-  Remanente no tiene PDF.
+  PDF del Remanente (desde el 28/09, ver abajo) también.
 
 El selector de Remito de segunda sigue con `> 0`, a propósito: no se remite
 lo que no hay.
@@ -645,6 +645,34 @@ segunda del Cotejo:
 artículo. No reescribe las patas: su WITH es `_SQL_POOL_SEGUNDA` con nombres
 cortos para entrar en 2500 caracteres, y un test la corre al lado de
 `_segunda_de_articulo` con un artículo por pata.
+
+## El Stock del Depósito se filtra por TIPO (28/09, dueño)
+
+`/administracion/stock/remanente` tiene tildes **Todo · Suelta · Segunda ·
+Procesada**, varios a la vez. Los tipos salen de la clave de la porción, en
+`core/remanente_por_tipo.py`, y lo usan la pantalla, el Excel y el PDF:
+**suelta** es sin ficha y sin segunda, **segunda** es `es_segunda`,
+**procesada** son las cajas armadas a una ficha.
+
+- **Todo es "no filtrar"**, no un cuarto tipo. Los tres tildados juntos son
+  Todo, y un tipo tildado con Todo gana el tipo.
+- **Con filtro, una sección por tipo con su total ARRIBA** ("Segunda: 25
+  bultos en total"), con signo. Un tipo sin nada sale en cero. Con Todo la
+  lista queda como estaba, sin secciones.
+- **Los bloques de abajo (guía R, faltan explicar) no se filtran**: son
+  problemas del artículo, y un filtro no puede esconder un faltante.
+- **El Excel y el PDF bajan lo filtrado**, con el filtro en el título y en el
+  nombre del archivo.
+- **El PDF** (`core/exportar_remanente_pdf.py`) es el papel para bajar al
+  depósito: A4 vertical, una sección por tipo con su total, y una columna
+  **"Contado" vacía** con recuadro para la lapicera. Con Todo trae los tres
+  tipos.
+- **La columna para anotar va en el PDF y no en el Excel.** El Excel ya trae
+  las tres columnas del último conteo cargado, y su "Contado" vacía se sacó el
+  07/09. El que imprime para contar a mano usa el PDF.
+
+Lo cuida `tests/test_remanente_por_tipo.py`, con los tres tipos sacados del
+mismo artículo del fixture, así que un filtro por artículo no pasa.
 
 ## Los títulos de kilos y unidades se escriben UNA vez (28/09)
 
