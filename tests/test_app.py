@@ -30667,6 +30667,8 @@ PANTALLAS_SIN_LINK_DECIDIDAS = {
     "/administracion/clave": "la puerta: el middleware manda acá, no se linkea",
     "/gerencia/auditoria": "301 a /auditoria — es la URL vieja, no una pantalla",
     "/deposito/stock/reproceso/desglose": "JSON que pide el JS, no es una pantalla",
+    "/compras/que-comprar/pdf":
+        "llega por el 303 del POST: el botón guarda primero (test_que_comprar_pdf.py)",
     "/administracion/precios-por-periodo/exportar-excel":
         "el href se arma con {{ contexto.base }}, que un regex literal no ve",
     "/precios/vigencias/exportar-excel":
