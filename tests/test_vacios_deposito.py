@@ -587,10 +587,11 @@ def test_en_el_NAVEGADOR_abrir_una_accion_CIERRA_la_que_estaba_abierta():
     pantalla se hace larguísima y el que carga no sabe cuál está llenando."""
     pytest.importorskip("playwright")
     from playwright.sync_api import sync_playwright
+    from scripts.medir_layout import CHROMIUM
     with _con(_parches_del_detalle()):
         html = cliente.get("/administracion/vacios/7?abrir=pasar").text
     with sync_playwright() as pw:
-        navegador = pw.chromium.launch(executable_path="/opt/pw-browsers/chromium")
+        navegador = pw.chromium.launch(executable_path=CHROMIUM)
         pagina = navegador.new_page(viewport={"width": 390, "height": 800})
         errores = []
         pagina.on("pageerror", lambda e: errores.append(str(e)))
