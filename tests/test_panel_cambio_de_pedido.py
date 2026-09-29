@@ -263,7 +263,7 @@ def test_cada_boton_del_menu_LLEVA_la_clase_de_su_bloque():
         "hay botones del menú sin clase de bloque"
     assert botones.count("ingresos") == 4
     assert botones.count("pedidos") == 1
-    assert botones.count("stock") == 5
+    assert botones.count("stock") == 6
 
 
 # ------------------------------------------- el pie, que cambia en cada commit

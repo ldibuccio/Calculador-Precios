@@ -1554,6 +1554,9 @@ _ICONOS_DEPOSITO = {
     "reproceso": (
         '<svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor" aria-hidden="true"><path stroke-linecap="round" stroke-linejoin="round" d="M16.023 9.348h4.992v-.001M2.985 19.644v-4.992m0 0h4.992m-4.993 0 3.181 3.183a8.25 8.25 0 0 0 13.803-3.7M4.031 9.865a8.25 8.25 0 0 1 13.803-3.7l3.181 3.182m0-4.991v4.99"/></svg>'
     ),
+    "vacios": (
+        '<svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor" aria-hidden="true"><path stroke-linecap="round" stroke-linejoin="round" d="m20.25 7.5-.625 10.632a2.25 2.25 0 0 1-2.247 2.118H6.622a2.25 2.25 0 0 1-2.247-2.118L3.75 7.5M10 11.25h4M3.375 7.5h17.25c.621 0 1.125-.504 1.125-1.125v-1.5c0-.621-.504-1.125-1.125-1.125H3.375c-.621 0-1.125.504-1.125 1.125v1.5c0 .621.504 1.125 1.125 1.125Z"/></svg>'
+    ),
     "remitir": (
         '<svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor" aria-hidden="true"><path stroke-linecap="round" stroke-linejoin="round" d="M6 12 3.269 3.125A59.769 59.769 0 0 1 21.485 12 59.768 59.768 0 0 1 3.27 20.875L5.999 12Zm0 0h7.5"/></svg>'
     ),
@@ -6139,6 +6142,12 @@ CAMINOS_DE_CAJAS_Y_VACIOS = {
     "compras": {"sector": "compras", "base": "/compras", "atras": "/compras"},
     "administracion": {"sector": "administracion", "base": "/administracion",
                        "atras": "/administracion"},
+    # DEPÓSITO SOLO CUENTA (dueño, 29/09): entra a la pantalla de contar
+    # vacíos sin clave, y a ninguna otra de Vacíos. Por eso no tiene rutas de
+    # índice, stock ni cotejo bajo `/deposito`: el conteo es la única que se
+    # declara con este camino, y guardar vuelve a contar en vez de ir al
+    # Cotejo, que muestra el número del sistema.
+    "deposito": {"sector": "deposito", "base": "/deposito", "atras": "/deposito"},
 }
 
 
@@ -6146,6 +6155,8 @@ def _camino_de_cajas_y_vacios(request: Request) -> dict:
     """Por cuál de las dos puertas entró: lo dice el prefijo, igual que al middleware."""
     if request.url.path.startswith("/administracion/"):
         return CAMINOS_DE_CAJAS_Y_VACIOS["administracion"]
+    if request.url.path.startswith("/deposito/"):
+        return CAMINOS_DE_CAJAS_Y_VACIOS["deposito"]
     return CAMINOS_DE_CAJAS_Y_VACIOS["compras"]
 
 
@@ -6538,7 +6549,7 @@ def _renderizar_vacios(request: Request, *, error: str | None = None,
 
 
 def _renderizar_conteo_vacios(request: Request, *, error: str | None = None,
-                              status_code: int = 200):
+                              aviso: str | None = None, status_code: int = 200):
     """El conteo FÍSICO de una pila, SIN ningún número del sistema.
 
     Si el que cuenta ve cuántos dice el sistema, transcribe en vez de contar
@@ -6555,13 +6566,17 @@ def _renderizar_conteo_vacios(request: Request, *, error: str | None = None,
             status_code=500, detail=f"Error al conectar con la base de datos: {error_db}"
         ) from error_db
 
+    camino = _camino_de_cajas_y_vacios(request)
+    # EL ATRÁS DE DEPÓSITO ES SU MENÚ: `/deposito/vacios` no existe, porque el
+    # índice muestra el stock de cada pila.
+    volver = camino["atras"] if camino["sector"] == "deposito" else f"{camino['base']}/vacios"
     return templates.TemplateResponse(
         request,
         "compras_vacios_conteo.html",
         {"todos": todos,
          "marcas_por_proveedor": {str(k): v for k, v in marcas.items()},
-         "error": error, "hoy": _hoy_argentina().isoformat(),
-         "camino": _camino_de_cajas_y_vacios(request)},
+         "error": error, "aviso": aviso, "hoy": _hoy_argentina().isoformat(),
+         "camino": camino, "volver": volver},
         status_code=status_code,
     )
 
@@ -6650,13 +6665,18 @@ def _marca_del_form(texto: str) -> int | None:
 
 @app.get("/compras/vacios/conteo")
 @app.get("/administracion/vacios/conteo")
-def ver_conteo_vacios(request: Request):
-    """La pantalla de contar: el formulario solo, sin el stock al lado."""
-    return _renderizar_conteo_vacios(request)
+@app.get("/deposito/vacios/conteo")
+def ver_conteo_vacios(request: Request, aviso: str | None = None):
+    """La pantalla de contar: el formulario solo, sin el stock al lado.
+
+    Depósito entra por `/deposito/vacios/conteo`, sin clave (dueño, 29/09).
+    """
+    return _renderizar_conteo_vacios(request, aviso=aviso)
 
 
 @app.post("/compras/vacios/conteo")
 @app.post("/administracion/vacios/conteo")
+@app.post("/deposito/vacios/conteo")
 def cargar_conteo_vacios(request: Request, proveedor_id: str = Form(""),
                          marca_vacio_id: str = Form(""),
                          cantidad: str = Form(""), fecha: str = Form("")):
@@ -6690,9 +6710,14 @@ def cargar_conteo_vacios(request: Request, proveedor_id: str = Form(""),
         return _renderizar_conteo_vacios(
             request, error=f"No se pudo guardar el conteo: {error_db}", status_code=400)
 
-    return RedirectResponse(
-        url=f"{_camino_de_cajas_y_vacios(request)['base']}/vacios/cotejo",
-        status_code=303)
+    camino = _camino_de_cajas_y_vacios(request)
+    # DEPÓSITO VUELVE A CONTAR, no al Cotejo: el Cotejo pone al lado el número
+    # del sistema, y el que cuenta la marca siguiente lo vería antes.
+    if camino["sector"] == "deposito":
+        return RedirectResponse(
+            url="/deposito/vacios/conteo?aviso=Conteo+guardado.+Segu%C3%AD+con+la+marca+siguiente.",
+            status_code=303)
+    return RedirectResponse(url=f"{camino['base']}/vacios/cotejo", status_code=303)
 
 
 def _renderizar_vacios_proveedor(request: Request, proveedor_id: int, *,
