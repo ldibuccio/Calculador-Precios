@@ -388,6 +388,21 @@ De acá en adelante, después de cualquier push que se dé por desplegado:
    varios commits en uno y el sello queda arriba. Y después del merge
    se mira la `conclusion` del CI de `main`, no solo la del PR.
 
+   **Y UN CI VERDE EN `main` TAMPOCO ES UN DEPLOY (29/09).** v1037 (PR #64,
+   9ac6605) quedó en `origin/main` con el CI de `main` en `success`, y Railway
+   no desplegó: el historial de deploys no tenía ni uno salteado para ese
+   commit. Lo más probable es que no le llegó el aviso de GitHub de que el CI
+   había pasado, en un día en que la conexión con GitHub anduvo cortándose.
+   Las tres verificaciones de GitHub (commit en `main`, PR mergeado, CI
+   verde) daban bien. Lo único que lo mostró fue que el pie de la app seguía
+   en v1036.
+
+   Así que el número del pie es la cuarta pregunta, y no la contesta nada de
+   GitHub: **¿desplegó?** Desde el celular no se puede forzar el deploy en
+   Railway ("Deploy Latest Commit" necesita la computadora), y la salida es
+   un commit chico REAL, sellado, mergeado por rebase, que vuelve a mandar el
+   aviso. Nunca un commit vacío: suma un commit que el sello no contó.
+
 6. **Y ANTES DE REPORTAR, SE ABRE UNA DE LAS PANTALLAS QUE SE TOCARON.** Del
    20/09, y es del dueño: *"hoy dos veces me dijiste 'hecho' sobre cosas que
    yo no podía ver"*.
