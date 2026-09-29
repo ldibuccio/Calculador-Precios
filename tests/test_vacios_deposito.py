@@ -63,13 +63,13 @@ FUENTE_DB = io.open("app/db.py", encoding="utf-8").read()
 
 
 def _pila(marca_id, marca, stock):
-    return {"proveedor_id": 7, "proveedor": "Puesto EJEMPLO", "tipo_cajon": "Cajón de ejemplo",
+    return {"proveedor_id": 7, "proveedor": "Puesto EJEMPLO",
             "marca_id": marca_id, "marca": marca, "arranque": 0, "recibidos": 0,
             "devueltos": 0, "ajustes": 0, "asignados": 0, "stock": stock}
 
 
 UN_PROVEEDOR = [{
-    "id": 7, "nombre": "Puesto EJEMPLO", "tipo_cajon": "Cajón de ejemplo", "stock": 35,
+    "id": 7, "nombre": "Puesto EJEMPLO", "stock": 35,
     "pilas": [_pila(None, None, 12), _pila(71, "EJ Roja", 23)],
 }]
 MARCAS = [{"id": 71, "nombre": "EJ Roja"}, {"id": 72, "nombre": "EJ Azul"}]
@@ -89,7 +89,7 @@ def _conexion_falsa(filas_fetchone=None, filas_fetchall=None):
 
 
 def _parches_del_detalle(proveedores=UN_PROVEEDOR, marcas=MARCAS, devoluciones=(),
-                         movimientos=(), senas=None, tipos=()):
+                         movimientos=(), senas=None):
     return [
         patch("app.main.stock_de_vacios_deposito", return_value=list(proveedores)),
         patch("app.main.proveedor_para_vacios", return_value=None),
@@ -97,7 +97,6 @@ def _parches_del_detalle(proveedores=UN_PROVEEDOR, marcas=MARCAS, devoluciones=(
         patch("app.main.listar_devoluciones_vacios", return_value=list(devoluciones)),
         patch("app.main.listar_ajustes_y_asignaciones_vacios", return_value=list(movimientos)),
         patch("app.main.sena_por_cajon_de_la_ultima_recepcion", return_value=senas or {}),
-        patch("app.main.listar_tipos_cajon", return_value=list(tipos)),
     ]
 
 
@@ -398,31 +397,6 @@ def test_el_indice_muestra_el_total_y_CADA_PILA_con_su_marca():
         assert jerga not in marcado, jerga
 
 
-SIN_TIPO = [dict(UN_PROVEEDOR[0], tipo_cajon=None,
-                 pilas=[dict(p, tipo_cajon=None) for p in UN_PROVEEDOR[0]["pilas"]])]
-
-
-def test_sin_TIPO_DE_CAJON_no_hay_aviso_ni_en_el_indice_ni_en_el_stock():
-    """El tipo de cajón es anterior a las marcas y casi nadie lo tiene cargado
-    (dueño, 29/09): que falte no se avisa. El proveedor y sus pilas se ven igual,
-    que es lo que dice que se miró la pantalla buena."""
-    indice = _indice(SIN_TIPO).text.split("</style>")[-1]
-    with patch("app.main.stock_de_vacios_deposito", return_value=SIN_TIPO):
-        stock = cliente.get("/compras/vacios/stock").text.split("</style>")[-1]
-    for nombre, marcado in (("índice", indice), ("stock", stock)):
-        assert "Puesto EJEMPLO" in marcado and "EJ Roja" in marcado, nombre
-        assert "sin declarar" not in marcado, nombre
-        assert "None" not in marcado, nombre
-
-
-def test_con_TIPO_DE_CAJON_cargado_se_sigue_viendo():
-    indice = _indice().text.split("</style>")[-1]
-    with patch("app.main.stock_de_vacios_deposito", return_value=UN_PROVEEDOR):
-        stock = cliente.get("/compras/vacios/stock").text.split("</style>")[-1]
-    assert '<span class="cajon">Cajón de ejemplo</span>' in indice
-    assert "EJ Roja · Cajón de ejemplo" in stock
-
-
 def _conteo(url="/compras/vacios/conteo", metodo="get", datos=None):
     """La pantalla de contar. El stock se parchea para que EXPLOTE: si la
     pantalla lo pidiera, el que cuenta podría ver el número del sistema."""
@@ -529,7 +503,7 @@ def test_la_foto_del_vale_es_REQUIRED_en_el_formulario():
 def test_un_proveedor_EN_CERO_se_abre_igual_para_cargarle_marcas():
     parches = _parches_del_detalle(proveedores=[], marcas=[])
     parches[1] = patch("app.main.proveedor_para_vacios", return_value={
-        "id": 9, "nombre": "Puesto EJEMPLO DOS", "tipo_cajon": None, "stock": 0, "pilas": []})
+        "id": 9, "nombre": "Puesto EJEMPLO DOS", "stock": 0, "pilas": []})
     with _con(parches):
         respuesta = cliente.get("/compras/vacios/9")
     assert respuesta.status_code == 200
@@ -583,10 +557,10 @@ def _medir(html, **opciones):
 
 def _pantallas_de_vacios(nombre):
     """Las dos pantallas con el nombre en TODOS los lugares que tipea una persona:
-    el proveedor, el tipo de cajón y la MARCA."""
-    pilas = [dict(_pila(None, None, 12), proveedor=nombre, tipo_cajon=nombre),
-             dict(_pila(71, nombre, 23), proveedor=nombre, tipo_cajon=nombre)]
-    proveedores = [dict(UN_PROVEEDOR[0], nombre=nombre, tipo_cajon=nombre, pilas=pilas)]
+    el proveedor y la MARCA."""
+    pilas = [dict(_pila(None, None, 12), proveedor=nombre),
+             dict(_pila(71, nombre, 23), proveedor=nombre)]
+    proveedores = [dict(UN_PROVEEDOR[0], nombre=nombre, pilas=pilas)]
     marcas = [{"id": 71, "nombre": nombre}]
     devoluciones = [{"id": 1, "cantidad": 25, "importe": 18500.0,
                      "foto_ruta": "2026-09-12/vale.jpg", "fecha": date(2026, 9, 12),
@@ -601,8 +575,7 @@ def _pantallas_de_vacios(nombre):
          patch("app.main.listar_marcas_vacio_por_proveedor", return_value={7: marcas}):
         indice = cliente.get("/compras/vacios")
     with _con(_parches_del_detalle(proveedores=proveedores, marcas=marcas,
-                                   devoluciones=devoluciones, movimientos=movimientos,
-                                   tipos=[{"id": 1, "nombre": nombre}])):
+                                   devoluciones=devoluciones, movimientos=movimientos)):
         detalle = cliente.get("/administracion/vacios/7")
 
     assert indice.status_code == 200 and detalle.status_code == 200
@@ -628,116 +601,6 @@ def test_las_DOS_pantallas_con_nombres_NORMALES_tampoco_se_pisan():
         assert medicion["pares"] > 0, pantalla
         assert desborde == 0, f"{pantalla} desborda {desborde}px"
         assert medicion["solapes"] == [], f"{pantalla}: {medicion['solapes']}"
-
-
-# ---------------------------------------------------------------------------
-# El cajón se declara EN EL ALTA, y la regla es UNA
-# ---------------------------------------------------------------------------
-
-def _rutas_que_resuelven_el_cajon():
-    """Las funciones de `app/main.py` que deciden en qué cajón entrega alguien.
-
-    Se buscan por el ÁRBOL y no por el texto: `ast.unparse` de una función
-    devuelve también su docstring, y el docstring de una guarda NOMBRA la
-    guarda para explicar por qué está — así que un `in` sobre el texto pasa
-    igual con la llamada sacada (corolario 59).
-    """
-    arbol = ast.parse(io.open("app/main.py", encoding="utf-8").read())
-    encontradas = set()
-    for nodo in ast.walk(arbol):
-        if not isinstance(nodo, (ast.FunctionDef, ast.AsyncFunctionDef)):
-            continue
-        for hijo in ast.walk(nodo):
-            if (isinstance(hijo, ast.Call) and isinstance(hijo.func, ast.Name)
-                    and hijo.func.id == "_tipo_cajon_elegido"):
-                encontradas.add(nodo.name)
-    return encontradas
-
-
-def test_las_DOS_puertas_del_cajon_llaman_a_LA_MISMA_funcion():
-    """El alta de Proveedores y el detalle de Vacíos preguntan lo mismo.
-
-    ENCONTRADO contra DECIDIDO y no una lista propia (corolario 60): falla
-    cuando aparece una tercera puerta que se escribe su propia versión, y
-    también cuando una de las dos deja de usarla.
-
-    La copia que se separe no falla ruidosamente: crea un "Cajón Chico" al
-    lado del que ya estaba y parte el stock de vacíos en dos tipos.
-    """
-    assert _rutas_que_resuelven_el_cajon() == {
-        "crear_proveedor_compras_ruta",
-        "guardar_tipo_cajon_de_proveedor",
-    }
-
-
-def test_el_ALTA_de_proveedores_OFRECE_declarar_el_cajon():
-    with patch("app.main.listar_proveedores_para_abm", return_value=[]), \
-         patch("app.main.listar_tipos_cajon",
-               return_value=[{"id": 3, "nombre": "Cajón DE EJEMPLO"}]):
-        respuesta = cliente.get("/compras/proveedores")
-
-    assert respuesta.status_code == 200
-    marcado = respuesta.text.split("</style>")[-1]
-    assert 'name="tipo_cajon_id"' in marcado
-    assert 'name="cajon_nombre_nuevo"' in marcado
-    assert "Cajón DE EJEMPLO" in marcado
-    # NO es obligatorio: los cuarenta y pico que ya están cargados no lo
-    # tienen, y exigirlo en el alta la dejaría más estricta que la base.
-    assert 'name="tipo_cajon_id" required' not in marcado
-
-
-def test_el_ALTA_guarda_el_cajon_del_proveedor_RECIEN_CREADO():
-    with patch("app.main.buscar_proveedor_por_codigo", return_value=None), \
-         patch("app.main.listar_proveedores_para_abm", return_value=[]), \
-         patch("app.main.obtener_o_crear_proveedor_por_codigo", return_value=(88, True)), \
-         patch("app.main.buscar_tipo_cajon_por_nombre", return_value=None), \
-         patch("app.main.crear_tipo_cajon", return_value=5) as crear, \
-         patch("app.main.asignar_tipo_cajon") as asignar:
-        respuesta = cliente.post("/compras/proveedores/nuevo", data={
-            "nombre": "Puesto EJEMPLO", "codigo_puesto": "N07P41",
-            "tipo_cajon_id": "", "cajon_nombre_nuevo": "Cajón cosechero DE EJEMPLO",
-        }, follow_redirects=False)
-
-    assert respuesta.status_code == 303
-    crear.assert_called_once_with("Cajón cosechero DE EJEMPLO")
-    asignar.assert_called_once_with(88, 5)
-
-
-def test_el_ALTA_sin_cajon_NO_escribe_nada():
-    """"Todavía no sé" es una respuesta, y no tiene que pisar nada."""
-    with patch("app.main.buscar_proveedor_por_codigo", return_value=None), \
-         patch("app.main.listar_proveedores_para_abm", return_value=[]), \
-         patch("app.main.obtener_o_crear_proveedor_por_codigo", return_value=(88, True)), \
-         patch("app.main.asignar_tipo_cajon") as asignar:
-        respuesta = cliente.post("/compras/proveedores/nuevo", data={
-            "nombre": "Puesto EJEMPLO", "codigo_puesto": "N07P41",
-            "tipo_cajon_id": "", "cajon_nombre_nuevo": "",
-        }, follow_redirects=False)
-
-    assert respuesta.status_code == 303
-    asignar.assert_not_called()
-
-
-def test_si_el_CAJON_falla_el_proveedor_QUEDA_CARGADO_y_lo_dice():
-    """El proveedor ya está creado: un 500 acá lo mandaría a reintentar.
-
-    Y reintentar contra un código que ya existe es el camino del aviso "ese
-    código ya es de…", que se lee como que el alta no funcionó.
-    """
-    with patch("app.main.buscar_proveedor_por_codigo", return_value=None), \
-         patch("app.main.listar_proveedores_para_abm", return_value=[]), \
-         patch("app.main.obtener_o_crear_proveedor_por_codigo", return_value=(88, True)), \
-         patch("app.main.buscar_tipo_cajon_por_nombre",
-               side_effect=RuntimeError("la base no contesta")):
-        respuesta = cliente.post("/compras/proveedores/nuevo", data={
-            "nombre": "Puesto EJEMPLO", "codigo_puesto": "N07P41",
-            "tipo_cajon_id": "", "cajon_nombre_nuevo": "Cajón DE EJEMPLO",
-        }, follow_redirects=False)
-
-    assert respuesta.status_code == 303
-    destino = respuesta.headers["location"]
-    assert "cargado" in destino
-    assert "el+caj%C3%B3n+no" in destino or "el caj%C3%B3n no" in destino
 
 
 def test_el_503_de_una_puerta_NOMBRA_SU_SECTOR_y_no_Gerencia():
@@ -770,71 +633,70 @@ def test_el_503_de_una_puerta_NOMBRA_SU_SECTOR_y_no_Gerencia():
     assert "Corregir una recepción" not in marcado
 
 
-def test_un_cajon_que_YA_EXISTE_se_REUSA_en_vez_de_duplicarse():
-    """Lo encontró un canario en CERO, y la causa es el corolario 30.
+# ---------------------------------------------------------------------------
+# El TIPO DE CAJÓN por proveedor se fue (dueño, 29/09): lo reemplazan las marcas
+# ---------------------------------------------------------------------------
 
-    Los otros tests del cajón plantan un nombre que NO existe
-    (`buscar_tipo_cajon_por_nombre` devuelve None), o sea exactamente la
-    rama donde reusar y crear hacen lo mismo. Con esa batería, sacarle el
-    `buscar(...) or` a la regla no hace caer nada: el `crear` se llama igual.
+# Lo que decía cuando existía: los rótulos, los campos y el aviso. Se busca la
+# JERGA y no solo que falte un campo: afirmar lo bueno pasa igual si la frase
+# vieja quedó tres líneas más abajo.
+JERGA_DEL_TIPO_DE_CAJON = ("En qué cajón entrega", "Tipo de cajón", "Guardar cajón",
+                           "sin declarar", 'name="tipo_cajon_id"', 'name="cajon_nombre_nuevo"',
+                           "/cajon\"")
 
-    Y lo que se rompería no falla ruidosamente — crea un "Cajón Chico" al
-    lado del que ya estaba, y el stock de vacíos queda partido en dos tipos
-    que nadie va a notar.
+
+def test_el_TIPO_DE_CAJON_no_aparece_en_ninguna_pantalla():
+    """El índice, la lista de stock, el detalle y el alta de proveedores.
+
+    Cada una lleva su IDENTIDAD al lado (corolario 53): sin eso, la pantalla
+    de la clave tampoco dice "Tipo de cajón" y el test pasaría sobre ella.
     """
-    with patch("app.main.buscar_proveedor_por_codigo", return_value=None), \
-         patch("app.main.listar_proveedores_para_abm", return_value=[]), \
-         patch("app.main.obtener_o_crear_proveedor_por_codigo", return_value=(88, True)), \
-         patch("app.main.buscar_tipo_cajon_por_nombre", return_value=4), \
-         patch("app.main.crear_tipo_cajon") as crear, \
-         patch("app.main.asignar_tipo_cajon") as asignar:
-        respuesta = cliente.post("/compras/proveedores/nuevo", data={
-            "nombre": "Puesto EJEMPLO", "codigo_puesto": "N07P41",
-            "tipo_cajon_id": "", "cajon_nombre_nuevo": "Cajón DE EJEMPLO",
-        }, follow_redirects=False)
+    pantallas = {"índice": (_indice(), "Puesto EJEMPLO")}
+    with patch("app.main.stock_de_vacios_deposito", return_value=UN_PROVEEDOR):
+        pantallas["stock"] = (cliente.get("/compras/vacios/stock"), "Puesto EJEMPLO")
+    with _con(_parches_del_detalle()):
+        pantallas["detalle"] = (cliente.get("/compras/vacios/7"), 'action="/compras/vacios/7/marca"')
+    with patch("app.main.listar_proveedores_para_abm", return_value=[]):
+        pantallas["alta de proveedores"] = (cliente.get("/compras/proveedores"),
+                                            'action="/compras/proveedores/nuevo"')
+    for nombre, (respuesta, identidad) in pantallas.items():
+        assert respuesta.status_code == 200, nombre
+        assert identidad in respuesta.text, nombre
+        for jerga in JERGA_DEL_TIPO_DE_CAJON:
+            assert jerga not in respuesta.text, (nombre, jerga)
 
-    assert respuesta.status_code == 303
-    crear.assert_not_called()
-    asignar.assert_called_once_with(88, 4)
+
+def test_los_EXPORTES_del_stock_no_llevan_la_columna_del_tipo_de_cajon():
+    """El Excel lo mira test_cajas_y_vacios_en_administracion; acá, el PDF."""
+    import pypdfium2 as pdfium
+    from core.exportar_vacios_deposito import generar_pdf_stock_vacios_deposito
+    documento = pdfium.PdfDocument(generar_pdf_stock_vacios_deposito(date(2026, 9, 29), UN_PROVEEDOR))
+    texto = "\n".join(pagina.get_textpage().get_text_range() for pagina in documento)
+    assert "Puesto EJEMPLO" in texto and "EJ Roja" in texto and "Cajones" in texto
+    assert "Tipo de cajón" not in texto and "sin declarar" not in texto
 
 
-def test_el_TEXTO_le_gana_al_de_la_lista_y_no_al_reves():
-    """Si tipeó un nombre es porque el de la lista no era.
+def test_NINGUN_codigo_lee_ni_escribe_el_tipo_de_cajon():
+    """Es lo que deja borrar la columna y la tabla (el paso 2) sin que nada explote.
 
-    Sin este caso, una regla que mirara primero el `<select>` pasaría todos
-    los demás tests: en ellos el select viene vacío.
+    Por POSICIÓN y no por el nombre suelto (corolario 59): el comentario de
+    app/db.py nombra `tipos_cajon` para contar que se fue, y eso no es leerla.
+    `tipo_cajon_id` no aparece en prosa en ningún lado, así que ése sí se busca
+    entero. Y ninguna ruta termina en /cajon.
     """
-    with patch("app.main.buscar_proveedor_por_codigo", return_value=None), \
-         patch("app.main.listar_proveedores_para_abm", return_value=[]), \
-         patch("app.main.obtener_o_crear_proveedor_por_codigo", return_value=(88, True)), \
-         patch("app.main.buscar_tipo_cajon_por_nombre", return_value=4), \
-         patch("app.main.crear_tipo_cajon"), \
-         patch("app.main.asignar_tipo_cajon") as asignar:
-        cliente.post("/compras/proveedores/nuevo", data={
-            "nombre": "Puesto EJEMPLO", "codigo_puesto": "N07P41",
-            "tipo_cajon_id": "9", "cajon_nombre_nuevo": "Cajón DE EJEMPLO",
-        }, follow_redirects=False)
-
-    asignar.assert_called_once_with(88, 4)
-
-
-def test_el_DETALLE_de_vacios_tambien_reusa_el_cajon_que_ya_existe():
-    """La otra puerta, con el mismo caso: las dos comparten la función.
-
-    Va escrito igual y no "ya lo cubre el de arriba": el test de la
-    estructura dice que HOY las dos llaman a la misma; éste dice qué tiene
-    que pasar, así que sobrevive al día que alguien las separe.
-    """
-    with patch("app.main.buscar_tipo_cajon_por_nombre", return_value=4), \
-         patch("app.main.crear_tipo_cajon") as crear, \
-         patch("app.main.asignar_tipo_cajon") as asignar:
-        respuesta = cliente.post("/compras/vacios/7/cajon", data={
-            "tipo_cajon_id": "9", "nombre_nuevo": "Cajón DE EJEMPLO",
-        }, follow_redirects=False)
-
-    assert respuesta.status_code == 303
-    crear.assert_not_called()
-    asignar.assert_called_once_with(7, 4)
+    import glob
+    posicion = re.compile(r"(?:FROM|JOIN|INTO|UPDATE)\s+tipos_cajon\b", re.I)
+    ofensores = []
+    archivos = (glob.glob("app/**/*.py", recursive=True) + glob.glob("core/**/*.py", recursive=True)
+                + glob.glob("scripts/**/*.py", recursive=True) + glob.glob("templates/**/*.html", recursive=True))
+    for archivo in archivos:
+        texto = io.open(archivo, encoding="utf-8").read()
+        if posicion.search(texto) or "tipo_cajon_id" in texto:
+            ofensores.append(archivo)
+    assert len(archivos) > 100, "el barrido no encontró los archivos que tenía que mirar"
+    assert ofensores == []
+    from app.main import app as la_app
+    assert [r.path for r in la_app.routes if getattr(r, "path", "").endswith("/cajon")] == []
 
 
 def test_la_ASIGNACION_con_marca_ESCRITA_llega_a_la_escritura():

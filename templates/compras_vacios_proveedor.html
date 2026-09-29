@@ -113,29 +113,6 @@
 </div>
 
 <div class="tarjeta">
-  <h2>¿En qué cajón entrega?</h2>
-  <form method="post" action="{{ camino.base }}/vacios/{{ p.id }}/cajon">
-    <div class="fila">
-      <div class="campo">
-        <label for="tipo_cajon_id">Cajón</label>
-        <select id="tipo_cajon_id" name="tipo_cajon_id">
-          <option value="">Sin declarar</option>
-          {% for t in tipos %}
-          <option value="{{ t.id }}" {% if t.nombre == p.tipo_cajon %}selected{% endif %}>{{ t.nombre }}</option>
-          {% endfor %}
-        </select>
-      </div>
-      <div class="campo">
-        <label for="nombre_nuevo">…o escribí uno que no esté</label>
-        <input id="nombre_nuevo" name="nombre_nuevo" type="text" placeholder="Cajón chico">
-      </div>
-      <button type="submit">Guardar cajón</button>
-    </div>
-    <p class="ayuda">Uno solo: un proveedor entrega siempre en el mismo tipo de cajón.</p>
-  </form>
-</div>
-
-<div class="tarjeta">
   <h2>Marcas de sus cajones</h2>
   {% if marcas %}
   <div class="marcas">

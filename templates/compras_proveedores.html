@@ -229,23 +229,6 @@
              placeholder="N07P41" maxlength="6" autocapitalize="characters" autocomplete="off">
       <p class="ayuda">Es su identidad y no se puede cambiar después: una letra, dos números, la P y dos números. Por ejemplo N07P41.</p>
 
-      {# UNO SOLO, y por eso es un <select> y no una tabla de cruce: un
-         proveedor entrega siempre en el mismo cajón, así que el tipo es
-         CÓMO SE LLAMA EL SUYO y no un eje contra el cual contar. Va
-         OPCIONAL porque la columna es nullable a propósito: exigirlo acá
-         dejaría el alta más estricta que los cuarenta y pico que ya están
-         cargados sin cajón. #}
-      <label for="tipo_cajon_nuevo">¿En qué cajón entrega? {% call info("Para qué sirve el cajón") %}Sirve para llevarle la cuenta de los cajones vacíos que hay que devolverle. Se puede cargar después desde Vacíos del depósito.{% endcall %}</label>
-      <select id="tipo_cajon_nuevo" name="tipo_cajon_id">
-        <option value="">Todavía no sé</option>
-        {% for c in tipos_cajon %}
-        <option value="{{ c.id }}">{{ c.nombre }}</option>
-        {% endfor %}
-      </select>
-      <label for="cajon_nombre_nuevo">…o escribí uno que no esté</label>
-      <input type="text" id="cajon_nombre_nuevo" name="cajon_nombre_nuevo"
-             maxlength="60" autocomplete="off" placeholder="Cajón cosechero">
-
       <button type="submit">Cargar proveedor</button>
     </form>
   </div>
@@ -323,8 +306,6 @@
       <form method="post" action="/compras/proveedores/nuevo">
         <input type="hidden" name="nombre" value="{{ alta_pendiente.nombre }}">
         <input type="hidden" name="codigo_puesto" value="{{ alta_pendiente.codigo_puesto }}">
-        <input type="hidden" name="tipo_cajon_id" value="{{ alta_pendiente.tipo_cajon_id }}">
-        <input type="hidden" name="cajon_nombre_nuevo" value="{{ alta_pendiente.cajon_nombre_nuevo }}">
         <input type="hidden" name="es_otro" value="1">
         <button type="submit" class="boton-otro">Es otro proveedor: cargarlo igual</button>
       </form>

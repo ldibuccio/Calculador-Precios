@@ -3865,7 +3865,7 @@ de bautizar y no en la próxima lectura.
 | cómo entra | un `clientes_puesto` lo trae, con seña o vale | **llega con la mercadería**, en la recepción |
 | cómo sale | el proveedor del puesto lo retira con el camión | se le devuelve al proveedor que lo vendió |
 | dónde vive | `vacios_recibidos` · `vacios_devueltos` · `conteos_vacios` · `ajustes_vacios` | `vacios_deposito_foto` · `vacios_deposito_devoluciones` · `vacios_deposito_ajustes` · `vacios_deposito_asignaciones` · `conteos_vacios_deposito` · `marcas_vacio` |
-| su catálogo | `tipos_envase_puesto` | `tipos_cajon` |
+| su catálogo | `tipos_envase_puesto` | `marcas_vacio`, por proveedor |
 
 **No comparten una sola tabla, y los dos "proveedor" son tablas distintas.**
 Lo único que comparten es la palabra, y por eso las tablas nuevas la llevan
@@ -3873,23 +3873,27 @@ con `_deposito` pegado: un `conteos_vacios` a secas al lado de un
 `conteos_vacios_deposito` se distingue leyendo, que es lo único que se hace
 a las tres de la mañana.
 
-**Y `tipos_cajon` no es `envases`**, que es la tercera cosa que dice algo
-parecido: `envases` es LA CAJA NUESTRA con su costo, la que se le factura al
-cliente. `tipos_cajon` es el cajón AJENO en el que llega la fruta. Uno se
-paga, el otro se devuelve.
+**Y la marca del cajón no es `envases`**, que es la tercera cosa que dice
+algo parecido: `envases` es LA CAJA NUESTRA con su costo, la que se le
+factura al cliente. La marca nombra el cajón AJENO en el que llega la fruta.
+Uno se paga, el otro se devuelve.
 
-### El stock es por PROVEEDOR, y el tipo de cajón no es una segunda dimensión (la MARCA sí, desde el 25/09: ver abajo)
+### El TIPO DE CAJÓN por proveedor se fue (dueño, 29/09): lo reemplazan las marcas
 
-Decisión del dueño: **un proveedor entrega siempre en el mismo tipo de
-cajón**, y se declara una vez en el alta. De ahí sale que
-`proveedores.tipo_cajon_id` sea UNA columna y no una tabla de cruce: el tipo
-es **cómo se llama el cajón de ese proveedor**, no un eje contra el cual
-contar. El circuito del puesto sí tiene las dos dimensiones, y por eso todas
-sus tablas llevan `tipo_envase_id` — la diferencia no es de estilo, es que
-allá un cliente trae cajones de varios tipos y acá no.
+Del 18/09 al 29/09 cada proveedor declaraba "en qué cajón entrega"
+(`proveedores.tipo_cajon_id`, catálogo `tipos_cajon`), uno solo, en el alta y
+en el detalle de Vacíos. Las MARCAS (25/09) lo reemplazaron: un proveedor
+puede tener varias, y son las que parten el stock en pilas. Con un solo
+proveedor cargado, el tipo no entraba en ninguna cuenta.
 
-La columna va **NULLABLE a propósito**: los proveedores ya cargados no la
-tienen y exigirla dejaría sin poder recepcionarles.
+- **Paso 1 (29/09)**: el código dejó de leerlo y escribirlo. Salieron los dos
+  selectores, el aviso de "sin declarar", la ruta `/vacios/{id}/cajon` y la
+  columna del Excel y el PDF del stock. Lo cuida
+  `test_NINGUN_codigo_lee_ni_escribe_el_tipo_de_cajon`, que barre `app/`,
+  `core/`, `scripts/` y `templates/`.
+- **Paso 2**: la migración que borra la columna y la tabla va DESPUÉS del
+  deploy del paso 1 (corolario 94), en las dos bases. Hasta que corra, las
+  dos siguen en `db/esquema_completo.sql`.
 
 ### Y LA REGLA QUE ESTO DEJA: derivar es lo único que hace inmune al campo que no se llena
 

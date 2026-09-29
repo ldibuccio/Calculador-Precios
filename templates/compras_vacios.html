@@ -22,13 +22,12 @@
   .cabeza { display: flex; flex-wrap: wrap; align-items: baseline;
             gap: .5rem; margin-bottom: .35rem; }
   /* `overflow-wrap: anywhere` VA DONDE EL TEXTO LO TIPEA UNA PERSONA, y
-     solo ahí: el nombre del proveedor y el del cajón. Medido a 390px con un
+     solo ahí: el nombre del proveedor. Medido a 390px con un
      nombre sin espacios: la página desbordaba 384px, o sea que la tarjeta
      entera se arrastraba de costado. El largo de los nombres no lo
      controlamos, así que un diseño que solo entra con los de hoy se rompe el
      día que alguien cargue uno largo. */
   .nombre { font-size: 1.1rem; font-weight: 600; overflow-wrap: anywhere; }
-  .cajon { font-size: .85rem; color: #6b7280; overflow-wrap: anywhere; }
   .stock { font-size: 1.6rem; font-weight: 700; }
   .fila { display: flex; flex-wrap: wrap; gap: .5rem; align-items: flex-end; }
   .campo { display: flex; flex-direction: column; flex: 1 1 8rem; min-width: 0; }
@@ -97,11 +96,6 @@
 <div class="tarjeta">
   <div class="cabeza">
     <span class="nombre">{{ p.nombre }}</span>
-    {# Sin aviso cuando falta el tipo de cajón (dueño, 29/09): es anterior a
-       las marcas, que lo reemplazan, y casi ningún proveedor lo tiene. #}
-    {% if p.tipo_cajon %}
-      <span class="cajon">{{ p.tipo_cajon }}</span>
-    {% endif %}
   </div>
   <div class="stock">{{ p.stock|numero }} cajones</div>
   <div class="pilas">
