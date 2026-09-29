@@ -29,7 +29,6 @@
      día que alguien cargue uno largo. */
   .nombre { font-size: 1.1rem; font-weight: 600; overflow-wrap: anywhere; }
   .cajon { font-size: .85rem; color: #6b7280; overflow-wrap: anywhere; }
-  .cajon.sin-declarar { color: #92400e; }
   .stock { font-size: 1.6rem; font-weight: 700; }
   .fila { display: flex; flex-wrap: wrap; gap: .5rem; align-items: flex-end; }
   .campo { display: flex; flex-direction: column; flex: 1 1 8rem; min-width: 0; }
@@ -98,10 +97,10 @@
 <div class="tarjeta">
   <div class="cabeza">
     <span class="nombre">{{ p.nombre }}</span>
+    {# Sin aviso cuando falta el tipo de cajón (dueño, 29/09): es anterior a
+       las marcas, que lo reemplazan, y casi ningún proveedor lo tiene. #}
     {% if p.tipo_cajon %}
       <span class="cajon">{{ p.tipo_cajon }}</span>
-    {% else %}
-      <span class="cajon sin-declarar">sin declarar en qué cajón entrega</span>
     {% endif %}
   </div>
   <div class="stock">{{ p.stock|numero }} cajones</div>
