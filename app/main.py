@@ -340,6 +340,9 @@ from app.db import (
     obtener_o_crear_colega,
     stock_de_envases,
     stock_de_vacios_deposito,
+    LIMITE_CAJONES_VACIOS_EN_GALPON,
+    total_de_vacios_en_galpon,
+    contar_vacios_para_devolver,
     arranque_de_vacios,
     proveedor_para_vacios,
     crear_conteo_vacios_deposito,
@@ -1206,7 +1209,14 @@ def _formatear_bytes(valor) -> str:
     return f"{numero:.1f} {unidad}".replace(".", ",")
 
 
+def _entero_con_miles(valor) -> str:
+    """Un entero con punto de miles y su signo: 1086 -> "1.086", -1086 -> "-1.086"."""
+    entero = int(round(float(valor)))
+    return ("-" if entero < 0 else "") + _agrupar_miles(str(abs(entero)))
+
+
 templates.env.filters["numero"] = _formatear_numero
+templates.env.filters["miles"] = _entero_con_miles
 templates.env.filters["fecha_corta"] = _formatear_fecha_corta
 templates.env.filters["moneda"] = _formatear_moneda
 templates.env.filters["porcentaje"] = _formatear_porcentaje
@@ -6562,6 +6572,10 @@ def _renderizar_vacios(request: Request, *, error: str | None = None,
         request,
         "compras_vacios.html",
         {"proveedores": proveedores, "arranque": arranque, "error": error, "aviso": aviso,
+         # El total del galpón (dueño, 29/09): la MISMA suma que la alerta
+         # de devolver, sobre la misma lista.
+         "total": total_de_vacios_en_galpon(proveedores),
+         "limite": LIMITE_CAJONES_VACIOS_EN_GALPON,
          "camino": _camino_de_cajas_y_vacios(request)},
         status_code=status_code,
     )
@@ -16215,7 +16229,7 @@ def ver_gerencia(request: Request):
     """
     if not _acceso_gerencia_valido(request):
         return _pantalla_clave_gerencia(request)
-    return templates.TemplateResponse(request, "gerencia.html", {})
+    return templates.TemplateResponse(request, "gerencia.html", {"banner": _banner_alertas("gerencia")})
 
 
 @app.post("/gerencia/clave")
@@ -17056,6 +17070,26 @@ ALERTAS = [
         contar=lambda: contar_casillas_sin_revisar(),
     ),
     DefinicionAlerta(
+        codigo="vacios_para_devolver",
+        # Dueño, 29/09: con más de LIMITE_CAJONES_VACIOS_EN_GALPON cajones
+        # vacíos en el galpón (el TOTAL, no por proveedor) hay que devolver.
+        # Los casos son los cajones: el banner dice el número en la frase.
+        titulo="Cajones vacíos en el galpón: hay que devolver",
+        texto=lambda casos: _texto_de_vacios_para_devolver(casos),
+        url="/administracion/vacios",
+        texto_link="Ver Vacíos del depósito",
+        modulos=("compras", "gerencia", "administracion"),
+        # Vacíos vive en Administración. Desde Compras y Gerencia ese link
+        # chocaría contra una clave ajena (corolario 56): cada uno va a su
+        # propia pantalla de Alertas, que tiene la lista por proveedor.
+        destinos_por_sector={
+            "compras": ("/compras/alertas", "Ver por proveedor"),
+            "gerencia": ("/gerencia/alertas", "Ver por proveedor"),
+        },
+        contar=lambda: contar_vacios_para_devolver(),
+        detallar=lambda: _detalle_vacios_para_devolver(),
+    ),
+    DefinicionAlerta(
         codigo="modulos_inexistentes",
         # La alerta que vigila a las alertas. Sin módulos propios: vive solo en
         # Auditoría, que es donde se mira lo que le pasa al sistema.
@@ -17065,6 +17099,33 @@ ALERTAS = [
         contar=lambda: _contar_modulos_inexistentes(),
     ),
 ]
+
+
+def _texto_de_vacios_para_devolver(cajones) -> str:
+    return f"Hay {_entero_con_miles(cajones)} cajones vacíos en el galpón: hay que devolver"
+
+
+def _detalle_vacios_para_devolver() -> dict:
+    """Los proveedores con cajones en el galpón, de más a menos.
+
+    El resumen sale de estas mismas filas, así que la frase y la lista no se
+    pueden contradecir. Si el total ya bajó del límite, la lista sale igual y
+    el resumen lo dice: la foto del banner puede ser de hace seis horas.
+    """
+    # Los que están en cero no suman ni restan, y se sacan de la lista. Un
+    # NEGATIVO se queda: resta del total, y sin él la lista no sumaría.
+    proveedores = [p for p in stock_de_vacios_deposito() if p["stock"] != 0]
+    total = total_de_vacios_en_galpon(proveedores)
+    if total > LIMITE_CAJONES_VACIOS_EN_GALPON:
+        resumen = _texto_de_vacios_para_devolver(total)
+    else:
+        resumen = f"Hay {_entero_con_miles(total)} cajones vacíos en el galpón"
+    return {
+        "columnas": ["Proveedor", "Cajones"],
+        "filas": [[p["nombre"], _entero_con_miles(p["stock"])] for p in proveedores],
+        "resumen": resumen,
+        "nota": f"el aviso salta con más de {_entero_con_miles(LIMITE_CAJONES_VACIOS_EN_GALPON)}",
+    }
 
 
 def _banner_alertas(modulo: str) -> dict:
@@ -17087,10 +17148,15 @@ def _banner_alertas(modulo: str) -> dict:
         estado = listar_estado_alertas()
     except Exception:
         logger.exception("No se pudo leer el estado de las alertas para el banner de %s", modulo)
-        return {"alertas": [], "frescura": None}
+        return {"alertas": [], "frescura": None, "activas": 0}
+    alertas = para_mostrar(ALERTAS, estado, modulo)
     return {
-        "alertas": para_mostrar(ALERTAS, estado, modulo),
+        "alertas": alertas,
         "frescura": frescura(estado, datetime.now(ARGENTINA)),
+        # Las que tienen casos: el número del botón "Alertas". Una sin
+        # calcular o con error sale en el banner pero no se cuenta acá: no
+        # se sabe si tiene casos.
+        "activas": sum(1 for a in alertas if a["casos"] and not a["error"]),
     }
 
 
@@ -17523,6 +17589,25 @@ def ver_alertas_comercial(request: Request):
     suya. Comercial veía números que no podía abrir.
     """
     return _pantalla_de_alertas(request, "comercial", "Comercial", "/comercial")
+
+
+@app.get("/gerencia/alertas")
+def ver_alertas_gerencia(request: Request):
+    """Las alertas de Gerencia (29/09, dueño). La misma pantalla de todos.
+
+    La clave se pregunta acá, como en cada pantalla de /gerencia: esa puerta
+    no tiene middleware que cubra los GET.
+    """
+    if not _acceso_gerencia_valido(request):
+        return _pantalla_clave_gerencia(request)
+    return _pantalla_de_alertas(request, "gerencia", "Gerencia", "/gerencia")
+
+
+@app.get("/administracion/alertas")
+def ver_alertas_administracion(request: Request):
+    """Las alertas de Administración (29/09, dueño). La cierra el middleware
+    de su prefijo, como todo /administracion."""
+    return _pantalla_de_alertas(request, "administracion", "Administración", "/administracion")
 
 
 @app.get("/auditoria")
@@ -22890,7 +22975,7 @@ def _recalcular_alertas_si_toca() -> None:
     el reloj coincida con nada.
     """
     estado = listar_estado_alertas()
-    if not hay_que_recalcular(estado, datetime.now(ARGENTINA)):
+    if not hay_que_recalcular(estado, datetime.now(ARGENTINA), ALERTAS):
         return
     logger.info("Las alertas están vencidas: recalculando")
     recalcular(ALERTAS)

@@ -4167,6 +4167,22 @@ arrancó", sus "esperando" y la regla de la fecha— **se fue**.
   sentido y cantidad (`propuesta_desde_el_cotejo`). La URL no lleva números,
   y el motivo no se precarga.
 
+- **El total del galpón y el aviso de devolver** (dueño, 29/09). El índice
+  dice el total de todos los proveedores al lado de "Cajones en el galpón",
+  en rojo si pasa del límite. Con más de `LIMITE_CAJONES_VACIOS_EN_GALPON`
+  (500, en `app/db.py`, un solo lugar) salta `vacios_para_devolver`: "Hay N
+  cajones vacíos en el galpón: hay que devolver", en Compras, Gerencia y
+  Administración. Es sobre el TOTAL, no por proveedor, y un negativo resta.
+  La frase la arma el campo `texto` de `DefinicionAlerta`. Gerencia y
+  Administración estrenaron su pantalla de Alertas (`/gerencia/alertas`,
+  `/administracion/alertas`), y los cuatro hubs dicen en el botón cuántas
+  tienen casos (`templates/_boton_alertas.html`). Desde Compras y Gerencia el
+  link va a su propia pantalla de Alertas, que lista los proveedores: Vacíos
+  está detrás de la clave de Administración (corolario 56). Y una alerta
+  que el registro tiene y la foto no se calcula en el tick siguiente, sin
+  esperar las seis horas (`hay_que_recalcular`). Las cuatro acciones del
+  detalle del proveedor van en azul.
+
 - **El ingreso directo tiene SU guía** (`guias_compra.de_deposito`): "nunca
   es parte de la comanda del Puesto". Dos guías por día y proveedor, cada
   una numera sus renglones. El origen no se elige: sale de la compra

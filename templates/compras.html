@@ -91,6 +91,7 @@
   {% endif %}
 
   {% include "_banner_alertas.html" %}
+  {% from "_boton_alertas.html" import cuantas_alertas %}
 
   <div class="tarjeta">
     <h2>Cargar</h2>
@@ -107,7 +108,7 @@
     <div class="grupo-botones">
       {# PRIMERO de Operaciones: es lo que hay que mirar antes de hacer nada,
          y el banner de arriba manda acá. #}
-      <a class="boton boton-naranja" href="/compras/alertas">Alertas</a>
+      <a class="boton boton-naranja" href="/compras/alertas">Alertas{{ cuantas_alertas(banner) }}</a>
       <a class="boton boton-naranja" href="/compras/buscar">Buscar Compras</a>
       {# La calculadora de "qué pasa si", para decidir parado en el puesto. #}
       <a class="boton boton-naranja" href="/compras/analizar">Analizar Artículo</a>

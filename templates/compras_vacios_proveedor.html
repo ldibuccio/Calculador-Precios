@@ -88,7 +88,13 @@
     box-sizing: border-box; display: flex; flex-direction: column; gap: .15rem; }
   details.accion > summary::-webkit-details-marker,
   details.historial > summary::-webkit-details-marker { display: none; }
-  details.accion > summary strong { color: #1d4ed8; font-size: 1rem; }
+  /* LAS CUATRO ACCIONES EN AZUL (dueño, 29/09), el azul de los botones
+     principales del sistema (#2563eb, el mismo de los <button> de acá). El
+     historial queda blanco: no es una acción, es para mirar. */
+  details.accion > summary { background: #2563eb; color: #fff; border-radius: 10px; }
+  details.accion[open] > summary { border-radius: 10px 10px 0 0; }
+  details.accion > summary strong { color: #fff; font-size: 1rem; }
+  details.accion > summary .que-hace { color: #dbeafe; }
   details.historial > summary strong { color: #374151; font-size: 1rem; }
   details[open] > summary { border-bottom: 1px solid #e5e7eb; }
   details.accion > form, details.accion > p, details.accion > .juntar,

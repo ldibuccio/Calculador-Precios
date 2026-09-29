@@ -20,6 +20,9 @@
     {% set _ = _avisos.append({"texto": "No se pudo calcular: " ~ _a.titulo, "url": "/auditoria"}) %}
   {% elif _a.casos is none %}
     {% set _ = _avisos.append({"texto": "Sin calcular todavía: " ~ _a.titulo, "url": "/auditoria"}) %}
+  {% elif _a.texto %}
+    {# La alerta que trae su propia frase con el número adentro. #}
+    {% set _ = _avisos.append({"texto": _a.texto, "url": _a.url}) %}
   {% else %}
     {# La FECHA del caso más viejo, cuando la alerta la tiene. "Pedidos
        incompletos (3)" no dice si es de hoy o de la semana pasada, y esa es

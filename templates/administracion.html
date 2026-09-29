@@ -58,6 +58,13 @@
   {# Para no dejar Administración abierta en un celular suelto. Solo aparece
      si hay clave configurada: sin ella no hay nada que bloquear. #}
   {% include "_banner_alertas.html" %}
+  {% from "_boton_alertas.html" import cuantas_alertas %}
+
+  {# PRIMERO, como en Compras: es lo que hay que mirar antes de hacer nada, y
+     el banner de arriba manda acá. #}
+  <div class="tarjeta">
+    <a class="boton" href="/administracion/alertas">Alertas{{ cuantas_alertas(banner) }}</a>
+  </div>
 
   <div class="tarjeta">
     <h2>Control de stock</h2>

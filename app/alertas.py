@@ -118,6 +118,11 @@ class DefinicionAlerta:
     titulo_corto: str = ""
     detallar: Callable | None = None
     destinos_por_sector: dict = field(default_factory=dict)
+    # texto: OPCIONAL, callable(casos) -> str. Para la alerta cuyo número ES
+    # la frase ("Hay 1.086 cajones vacíos en el galpón: hay que devolver").
+    # El banner y la pantalla del sector la usan en vez de "título (casos)";
+    # Auditoría sigue con título y número, igual que las demás.
+    texto: Callable | None = None
 
 
 def normalizar_conteo(resultado) -> dict:
@@ -260,13 +265,20 @@ def frescura(estado, ahora) -> dict:
     }
 
 
-def hay_que_recalcular(estado, ahora) -> bool:
+def hay_que_recalcular(estado, ahora, definiciones=()) -> bool:
     """True si la foto más nueva pasó las HORAS_RECALCULO, o si nunca se calculó.
 
     El criterio es "cuán vieja es", no "¿ya corrí el turno de las 6?": así se
     autocorrige después de una caída, sin depender de que el reloj coincida
     con nada.
+
+    Y TAMBIÉN si el registro tiene una alerta que la foto no tiene (29/09): es
+    una alerta recién desplegada. Sin esto quedaba "sin calcular" hasta seis
+    horas, y la de los vacíos tenía que aparecer apenas se desplegara.
     """
+    calculadas = {fila["codigo"] for fila in estado}
+    if any(d.codigo not in calculadas for d in definiciones):
+        return True
     fechas = [fila["calculada_el"] for fila in estado if fila.get("calculada_el")]
     if not fechas:
         return True
@@ -313,6 +325,7 @@ def unir(definiciones, estado, modulo=None) -> list:
             "titulo_corto": definicion.titulo_corto or definicion.titulo,
             "codigo": definicion.codigo,
             "titulo": definicion.titulo,
+            "texto": _texto_con_casos(definicion, fila),
             "url": url,
             "texto_link": texto_link,
             "modulos": definicion.modulos,
@@ -322,6 +335,17 @@ def unir(definiciones, estado, modulo=None) -> list:
             "error": fila["error"] if fila else None,
         })
     return unidas
+
+
+def _texto_con_casos(definicion, fila) -> str | None:
+    """La frase armada con el número, solo si la alerta la tiene y hay número.
+
+    Sin casos (sin calcular, o con error) no hay número que poner, y el
+    banner cae a su texto de siempre ("Sin calcular todavía: ...").
+    """
+    if definicion.texto is None or not fila or not fila["casos"]:
+        return None
+    return definicion.texto(fila["casos"])
 
 
 def para_mostrar(definiciones, estado, modulo=None) -> list:
