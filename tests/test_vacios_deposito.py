@@ -398,6 +398,31 @@ def test_el_indice_muestra_el_total_y_CADA_PILA_con_su_marca():
         assert jerga not in marcado, jerga
 
 
+SIN_TIPO = [dict(UN_PROVEEDOR[0], tipo_cajon=None,
+                 pilas=[dict(p, tipo_cajon=None) for p in UN_PROVEEDOR[0]["pilas"]])]
+
+
+def test_sin_TIPO_DE_CAJON_no_hay_aviso_ni_en_el_indice_ni_en_el_stock():
+    """El tipo de cajón es anterior a las marcas y casi nadie lo tiene cargado
+    (dueño, 29/09): que falte no se avisa. El proveedor y sus pilas se ven igual,
+    que es lo que dice que se miró la pantalla buena."""
+    indice = _indice(SIN_TIPO).text.split("</style>")[-1]
+    with patch("app.main.stock_de_vacios_deposito", return_value=SIN_TIPO):
+        stock = cliente.get("/compras/vacios/stock").text.split("</style>")[-1]
+    for nombre, marcado in (("índice", indice), ("stock", stock)):
+        assert "Puesto EJEMPLO" in marcado and "EJ Roja" in marcado, nombre
+        assert "sin declarar" not in marcado, nombre
+        assert "None" not in marcado, nombre
+
+
+def test_con_TIPO_DE_CAJON_cargado_se_sigue_viendo():
+    indice = _indice().text.split("</style>")[-1]
+    with patch("app.main.stock_de_vacios_deposito", return_value=UN_PROVEEDOR):
+        stock = cliente.get("/compras/vacios/stock").text.split("</style>")[-1]
+    assert '<span class="cajon">Cajón de ejemplo</span>' in indice
+    assert "EJ Roja · Cajón de ejemplo" in stock
+
+
 def _conteo(url="/compras/vacios/conteo", metodo="get", datos=None):
     """La pantalla de contar. El stock se parchea para que EXPLOTE: si la
     pantalla lo pidiera, el que cuenta podría ver el número del sistema."""

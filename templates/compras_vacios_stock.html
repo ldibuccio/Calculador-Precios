@@ -44,7 +44,7 @@
   <div class="fila">
     <div class="quien">
       <span class="nombre">{{ p.nombre }}</span>
-      <span class="tipo">{{ p.marca }} · {{ p.tipo_cajon or "sin declarar en qué cajón entrega" }}</span>
+      <span class="tipo">{{ p.marca }}{% if p.tipo_cajon %} · {{ p.tipo_cajon }}{% endif %}</span>
     </div>
     <span class="cantidad">{{ p.stock|numero }}</span>
   </div>
