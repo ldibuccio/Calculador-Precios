@@ -17129,43 +17129,112 @@ def _anular(tabla: str, fila_id: int, que: str, anulado: str) -> None:
         conexion.close()
 
 
-def listar_devoluciones_vacios(proveedor_id: int, limite: int = 30) -> list[dict]:
-    """Las devoluciones de un proveedor, la más nueva primero. Las anuladas TAMBIÉN.
+# TODO LO QUE MOVIÓ UNA PILA, en UNA consulta (dueño, 29/09): el historial del
+# detalle y la pantalla de Movimientos leen de acá. Son las MISMAS cinco patas
+# que `_SQL_PILAS_DE_VACIOS` —el arranque, lo recibido con seña, lo devuelto,
+# los ajustes y los pases entre marcas— así que la lista y el número no pueden
+# contar cosas distintas. Y trae también lo que NO mueve el número (lo anulado
+# y lo de antes del arranque), marcado, porque es la historia.
+#
+# `cantidad` va con el signo de su efecto sobre la pila: la entrada suma, la
+# devolución resta, el ajuste trae el suyo. El PASE no tiene signo —resta de
+# una marca y suma a otra— y el ARRANQUE es lo contado, no un movimiento.
+TIPOS_DE_MOVIMIENTO_DE_VACIOS = ("arranque", "entrada", "devolucion", "ajuste", "asignacion")
 
-    La compra ya no se pide (25/09) pero las viejas la tienen, y se muestra
-    cuando está: es lo que decía el vale en su momento.
+_SQL_MOVIMIENTOS_DE_VACIOS = f"""
+    WITH arr AS ({_SQL_ARRANQUE_VIGENTE}),
+    x AS (
+        SELECT 'arranque' AS tipo, ap.id, arr.creado_en AS instante, ap.proveedor_id,
+               ap.marca_vacio_id AS marca_id, NULL::bigint AS marca_hasta_id,
+               ap.cantidad, arr.motivo, NULL::bigint AS compra_id, NULL AS foto_ruta,
+               NULL::numeric AS importe, false AS anulada, false AS antes
+          FROM vacios_deposito_arranque_pilas ap
+          JOIN arr ON arr.id = ap.arranque_id
+        UNION ALL
+        SELECT 'entrada', co.id, co.procesada_el, co.proveedor_id, co.marca_vacio_id, NULL,
+               COALESCE(co.cantidad_cajones_real, co.cantidad_cajones), NULL, co.id, NULL,
+               co.sena, false, COALESCE(co.procesada_el <= (SELECT creado_en FROM arr), false)
+          FROM compras co
+         WHERE co.estado = 'recepcionado'
+           AND co.procesada_el IS NOT NULL
+           AND COALESCE(co.sena, 0) > 0
+        UNION ALL
+        SELECT 'devolucion', d.id, d.creado_en, d.proveedor_id, d.marca_vacio_id, NULL,
+               -d.cantidad, NULL, d.compra_id, d.foto_ruta, d.importe,
+               d.anulado_el IS NOT NULL,
+               COALESCE(d.creado_en <= (SELECT creado_en FROM arr), false)
+          FROM vacios_deposito_devoluciones d
+        UNION ALL
+        SELECT 'ajuste', a.id, a.creado_en, a.proveedor_id, a.marca_vacio_id, NULL,
+               a.cantidad, a.motivo, NULL, NULL, NULL, a.anulado_el IS NOT NULL,
+               COALESCE(a.creado_en <= (SELECT creado_en FROM arr), false)
+          FROM vacios_deposito_ajustes a
+        UNION ALL
+        SELECT 'asignacion', s.id, s.creado_en, s.proveedor_id, s.marca_desde_id,
+               s.marca_hasta_id, s.cantidad, NULL, NULL, NULL, NULL,
+               s.anulado_el IS NOT NULL,
+               COALESCE(s.creado_en <= (SELECT creado_en FROM arr), false)
+          FROM vacios_deposito_asignaciones s
+    )
+    SELECT x.tipo, x.id, x.instante AT TIME ZONE 'America/Argentina/Buenos_Aires',
+           x.proveedor_id, p.nombre, x.marca_id, md.nombre, mh.nombre,
+           x.cantidad, x.motivo, x.compra_id, ar.nombre, x.foto_ruta, x.importe,
+           x.anulada, x.antes
+      FROM x
+      JOIN proveedores p        ON p.id = x.proveedor_id
+      LEFT JOIN marcas_vacio md ON md.id = x.marca_id
+      LEFT JOIN marcas_vacio mh ON mh.id = x.marca_hasta_id
+      LEFT JOIN compras c       ON c.id = x.compra_id
+      LEFT JOIN articulos ar    ON ar.id = c.articulo_id
+     WHERE (%(proveedor_id)s::bigint IS NULL OR x.proveedor_id = %(proveedor_id)s)
+     ORDER BY x.instante DESC, x.tipo, x.id DESC
+     LIMIT %(limite)s
+"""
+
+COLUMNAS_MOVIMIENTOS_DE_VACIOS = (
+    "tipo", "id", "instante", "proveedor_id", "proveedor", "marca_id", "marca",
+    "marca_hasta", "cantidad", "motivo", "compra_id", "articulo", "foto_ruta",
+    "importe", "anulada", "antes_del_arranque",
+)
+
+
+def movimientos_de_vacios(proveedor_id: int | None = None, limite: int = 50) -> list[dict]:
+    """Los movimientos de vacíos, el más nuevo primero. Ver `_SQL_MOVIMIENTOS_DE_VACIOS`.
+
+    Se leen POR NOMBRE (`COLUMNAS_MOVIMIENTOS_DE_VACIOS`): un lector por
+    índice no nombra ninguna columna y se desfasa en silencio.
     """
     conexion = obtener_conexion()
     try:
         with conexion.cursor() as cursor:
-            cursor.execute(
-                f"""
-                SELECT d.id, d.cantidad, d.importe, d.foto_ruta,
-                       (d.creado_en AT TIME ZONE 'America/Argentina/Buenos_Aires')::date,
-                       d.anulado_el IS NOT NULL,
-                       d.compra_id, a.nombre, c.fecha_operacion, mv.nombre,
-                       COALESCE(d.creado_en <= arr.creado_en, false)
-                  FROM vacios_deposito_devoluciones d
-                  LEFT JOIN ({_SQL_ARRANQUE_VIGENTE}) arr ON true
-                  LEFT JOIN compras c      ON c.id = d.compra_id
-                  LEFT JOIN articulos a    ON a.id = c.articulo_id
-                  LEFT JOIN marcas_vacio mv ON mv.id = d.marca_vacio_id
-                 WHERE d.proveedor_id = %s
-                 ORDER BY d.creado_en DESC, d.id DESC
-                 LIMIT %s
-                """,
-                (proveedor_id, limite),
-            )
+            cursor.execute(_SQL_MOVIMIENTOS_DE_VACIOS,
+                           {"proveedor_id": proveedor_id, "limite": limite})
             filas = cursor.fetchall()
     finally:
         conexion.close()
-    return [
-        {"id": f[0], "cantidad": f[1], "importe": f[2], "foto_ruta": f[3],
-         "fecha": f[4], "anulada": f[5], "compra_id": f[6],
-         "articulo": f[7], "fecha_compra": f[8], "marca": f[9],
-         "antes_del_arranque": f[10]}
-        for f in filas
-    ]
+    movimientos = []
+    for fila in filas:
+        m = dict(zip(COLUMNAS_MOVIMIENTOS_DE_VACIOS, fila))
+        m["cantidad"] = int(m["cantidad"])
+        m["fecha"] = m["instante"].date() if m["instante"] else None
+        movimientos.append(m)
+    return movimientos
+
+
+def foto_de_la_devolucion(devolucion_id: int, proveedor_id: int) -> str | None:
+    """La ruta de la foto de un vale, de CUALQUIER fecha. Pregunta por el id, no
+    por la lista: la lista trae las últimas, y un vale viejo daba 404."""
+    conexion = obtener_conexion()
+    try:
+        with conexion.cursor() as cursor:
+            cursor.execute(
+                "SELECT foto_ruta FROM vacios_deposito_devoluciones "
+                "WHERE id = %s AND proveedor_id = %s",
+                (devolucion_id, proveedor_id))
+            fila = cursor.fetchone()
+    finally:
+        conexion.close()
+    return fila[0] if fila else None
 
 
 def crear_ajuste_vacios_deposito(proveedor_id: int, marca_vacio_id: int | None, cantidad: int,
@@ -17261,54 +17330,6 @@ def crear_asignacion_vacios(proveedor_id: int, marca_desde_id: int | None,
 
 def anular_asignacion_vacios(asignacion_id: int) -> None:
     _anular("vacios_deposito_asignaciones", asignacion_id, "Esa asignación", "anulada")
-
-
-def listar_ajustes_y_asignaciones_vacios(proveedor_id: int, limite: int = 30) -> list[dict]:
-    """Los ajustes y las asignaciones de un proveedor, juntos, el más nuevo primero.
-
-    `tipo` dice cuál es: 'ajuste' (con signo y motivo) o 'asignacion' (de
-    una pila a otra). Las anuladas también, como en las devoluciones.
-    """
-    conexion = obtener_conexion()
-    try:
-        with conexion.cursor() as cursor:
-            cursor.execute(
-                f"""
-                SELECT x.tipo, x.id, x.cantidad, x.motivo, x.marca, x.marca_hasta,
-                       (x.creado_en AT TIME ZONE 'America/Argentina/Buenos_Aires')::date,
-                       x.anulada, COALESCE(x.creado_en <= arr.creado_en, false)
-                  FROM (
-                    SELECT 'ajuste' AS tipo, a.id, a.cantidad, a.motivo,
-                           mv.nombre AS marca, NULL AS marca_hasta,
-                           a.creado_en, a.anulado_el IS NOT NULL AS anulada
-                      FROM vacios_deposito_ajustes a
-                      LEFT JOIN marcas_vacio mv ON mv.id = a.marca_vacio_id
-                     WHERE a.proveedor_id = %s
-                    UNION ALL
-                    SELECT 'asignacion', s.id, s.cantidad, NULL,
-                           md.nombre, mh.nombre,
-                           s.creado_en, s.anulado_el IS NOT NULL
-                      FROM vacios_deposito_asignaciones s
-                      LEFT JOIN marcas_vacio md ON md.id = s.marca_desde_id
-                      JOIN marcas_vacio mh      ON mh.id = s.marca_hasta_id
-                     WHERE s.proveedor_id = %s
-                ) x
-                LEFT JOIN ({_SQL_ARRANQUE_VIGENTE}) arr ON true
-                ORDER BY x.creado_en DESC, x.id DESC
-                LIMIT %s
-                """,
-                (proveedor_id, proveedor_id, limite),
-            )
-            filas = cursor.fetchall()
-    finally:
-        conexion.close()
-    return [
-        {"tipo": f[0], "id": f[1], "cantidad": f[2], "motivo": f[3],
-         "marca": f[4], "marca_hasta": f[5],
-         "fecha": f[6],
-         "anulada": f[7], "antes_del_arranque": f[8]}
-        for f in filas
-    ]
 
 
 def crear_conteo_vacios_deposito(proveedor_id: int, marca_vacio_id: int | None,

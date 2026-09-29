@@ -90,14 +90,22 @@ def _conexion_falsa(filas_fetchone=None, filas_fetchall=None):
     return conexion, cursor
 
 
-def _parches_del_detalle(proveedores=UN_PROVEEDOR, marcas=MARCAS, devoluciones=(),
-                         movimientos=(), senas=None):
+def _mov(tipo, id, cantidad, **resto):
+    """Una fila de `movimientos_de_vacios`, con todas sus columnas."""
+    fila = {"tipo": tipo, "id": id, "cantidad": cantidad, "fecha": date(2026, 9, 25),
+            "marca": None, "marca_hasta": None, "motivo": None, "compra_id": None,
+            "articulo": None, "foto_ruta": None, "importe": None, "anulada": False,
+            "antes_del_arranque": False}
+    fila.update(resto)
+    return fila
+
+
+def _parches_del_detalle(proveedores=UN_PROVEEDOR, marcas=MARCAS, movimientos=(), senas=None):
     return [
         patch("app.main.stock_de_vacios_deposito", return_value=list(proveedores)),
         patch("app.main.proveedor_para_vacios", return_value=None),
         patch("app.main.listar_marcas_vacio", return_value=list(marcas)),
-        patch("app.main.listar_devoluciones_vacios", return_value=list(devoluciones)),
-        patch("app.main.listar_ajustes_y_asignaciones_vacios", return_value=list(movimientos)),
+        patch("app.main.movimientos_de_vacios", return_value=list(movimientos)),
         patch("app.main.sena_por_cajon_de_la_ultima_recepcion", return_value=senas or {}),
     ]
 
@@ -458,10 +466,8 @@ def test_un_CONTEO_que_rebota_vuelve_a_la_pantalla_de_contar_y_no_al_indice():
 
 
 def test_el_detalle_en_COMPRAS_no_ofrece_ajuste_ni_asignacion():
-    with _con(_parches_del_detalle(movimientos=[{
-            "tipo": "ajuste", "id": 3, "cantidad": 2, "marca": "EJ Roja",
-            "marca_hasta": None, "motivo": "EJ aparecieron",
-            "fecha": date(2026, 9, 25), "anulada": False}])):
+    with _con(_parches_del_detalle(movimientos=[
+            _mov("ajuste", 3, 2, marca="EJ Roja", motivo="EJ aparecieron")])):
         respuesta = cliente.get("/compras/vacios/7")
     assert respuesta.status_code == 200
     marcado = respuesta.text.split("</style>")[-1]
@@ -473,10 +479,8 @@ def test_el_detalle_en_COMPRAS_no_ofrece_ajuste_ni_asignacion():
 
 
 def test_el_detalle_en_ADMINISTRACION_ofrece_ajuste_asignacion_y_anular():
-    with _con(_parches_del_detalle(movimientos=[{
-            "tipo": "asignacion", "id": 3, "cantidad": 2, "marca": None,
-            "marca_hasta": "EJ Roja", "motivo": None,
-            "fecha": date(2026, 9, 25), "anulada": False}])):
+    with _con(_parches_del_detalle(movimientos=[
+            _mov("asignacion", 3, 2, marca_hasta="EJ Roja")])):
         respuesta = cliente.get("/administracion/vacios/7")
     marcado = respuesta.text.split("</style>")[-1]
     assert 'action="/administracion/vacios/7/ajuste"' in marcado
@@ -494,6 +498,113 @@ def test_el_vale_se_PRECARGA_con_la_sena_de_CADA_pila():
     # server con el número, que es más claro que una opción que falta.
     assert opciones == [("", "300.0"), ("71", "800.0"), ("72", "")]
     assert "No se le descuenta a la" in marcado
+
+
+# ── El detalle en tres zonas (dueño, 29/09) ─────────────────────────────────
+
+def _abiertas(marcado):
+    """Los <details> que vienen desplegados, por id."""
+    return re.findall(r'<details class="(?:accion|historial)" id="(\w+)"[^>]*\bopen\b', marcado)
+
+
+def _todas(marcado):
+    return re.findall(r'<details class="(?:accion|historial)" id="(\w+)"', marcado)
+
+
+def test_las_CUATRO_acciones_y_el_historial_llegan_CERRADOS_y_en_su_orden():
+    with _con(_parches_del_detalle()):
+        marcado = cliente.get("/administracion/vacios/7").text.split("</style>")[-1]
+    assert _todas(marcado) == ["devolver", "pasar", "corregir", "ajustar", "movimientos"]
+    assert _abiertas(marcado) == []
+    # Las cuatro comparten el `name`: el navegador las abre de a una.
+    assert len(re.findall(r'<details class="accion" id="\w+" name="accion"', marcado)) == 4
+
+
+@pytest.mark.parametrize("abrir", ["devolver", "pasar", "corregir", "ajustar", "movimientos"])
+def test_abrir_despliega_ESA_y_ninguna_otra(abrir):
+    with _con(_parches_del_detalle()):
+        marcado = cliente.get(f"/administracion/vacios/7?abrir={abrir}").text.split("</style>")[-1]
+    assert _abiertas(marcado) == [abrir]
+
+
+def test_un_abrir_que_no_es_una_accion_no_abre_nada():
+    with _con(_parches_del_detalle()):
+        marcado = cliente.get('/administracion/vacios/7?abrir=x" onload="y').text.split("</style>")[-1]
+    assert _abiertas(marcado) == [] and 'onload="y' not in marcado
+
+
+def test_un_AJUSTE_que_rebota_vuelve_con_el_AJUSTE_abierto_y_el_error_arriba():
+    """El error queda al lado de lo que hay que corregir: si el formulario
+    volviera plegado, el que se equivocó tendría que ir a buscarlo."""
+    with _con(_parches_del_detalle()):
+        respuesta = cliente.post("/administracion/vacios/7/ajuste",
+                                 data={"sentido": "", "cantidad": "2", "motivo": "x"})
+    assert respuesta.status_code == 400
+    marcado = respuesta.text.split("</style>")[-1]
+    assert _abiertas(marcado) == ["ajustar"]
+    assert "Decí si sobran o faltan" in marcado
+
+
+def test_en_COMPRAS_solo_devolver_y_marcas_nunca_pasar_ni_ajustar():
+    with _con(_parches_del_detalle()):
+        marcado = cliente.get("/compras/vacios/7").text.split("</style>")[-1]
+    assert _todas(marcado) == ["devolver", "corregir", "movimientos"]
+    assert "Marcas de sus cajones" in marcado and "Corregir una marca" not in marcado
+
+
+def test_el_HISTORIAL_dice_cada_tipo_y_solo_ofrece_anular_lo_que_se_anula():
+    movs = [_mov("arranque", 1, 40, marca="EJ Roja", motivo="Conteo físico 28/09"),
+            _mov("entrada", 2, 10, marca="EJ Roja", compra_id=55, articulo="EJ Pera"),
+            _mov("devolucion", 3, -5, foto_ruta="v.jpg", importe=4000.0),
+            _mov("ajuste", 4, -2, motivo="EJ se rompieron"),
+            _mov("asignacion", 5, 6, marca_hasta="EJ Roja"),
+            _mov("ajuste", 6, 1, motivo="EJ anulado", anulada=True)]
+    with _con(_parches_del_detalle(movimientos=movs)):
+        marcado = cliente.get("/administracion/vacios/7").text.split("</style>")[-1]
+    historial = marcado[marcado.index('id="movimientos"'):]
+    assert re.findall(r'data-tipo="(\w+)"', historial) == [m["tipo"] for m in movs]
+    renglones = [" ".join(re.sub(r"<[^>]+>", " ", r).split())
+                 for r in re.findall(r'<div class="vale-cabeza">(.*?)</div>', historial, re.S)]
+    assert renglones == ["40 Conteo físico · EJ Roja",
+                         "+10 Compra con seña #55 · EJ Roja",
+                         "-5 Devolución · Sin marca",
+                         "-2 Ajuste · Sin marca",
+                         "6 Pase Sin marca → EJ Roja",
+                         "+1 Ajuste · Sin marca anulado"]
+    assert "EJ Pera · se corrige desde la compra" in historial
+    assert "$4.000 · vale cargado" in historial and "EJ se rompieron" in historial
+    # El signo va en color: verde lo que suma, rojo lo que resta.
+    assert '<span class="vale-cantidad suma">+10' in historial
+    assert '<span class="vale-cantidad resta">-5' in historial
+    anular = re.findall(r'action="([^"]*/anular)"', historial)
+    assert anular == ["/administracion/vacios/devolucion/3/anular",
+                      "/administracion/vacios/movimiento/ajuste/4/anular",
+                      "/administracion/vacios/movimiento/asignacion/5/anular"]
+
+
+def test_en_el_NAVEGADOR_abrir_una_accion_CIERRA_la_que_estaba_abierta():
+    """El efecto, no el atributo (corolario 32): con dos abiertas a la vez la
+    pantalla se hace larguísima y el que carga no sabe cuál está llenando."""
+    pytest.importorskip("playwright")
+    from playwright.sync_api import sync_playwright
+    with _con(_parches_del_detalle()):
+        html = cliente.get("/administracion/vacios/7?abrir=pasar").text
+    with sync_playwright() as pw:
+        navegador = pw.chromium.launch(executable_path="/opt/pw-browsers/chromium")
+        pagina = navegador.new_page(viewport={"width": 390, "height": 800})
+        errores = []
+        pagina.on("pageerror", lambda e: errores.append(str(e)))
+        pagina.set_content(html)
+        abiertas = lambda: pagina.eval_on_selector_all(
+            "details.accion", "ds => ds.filter(d => d.open).map(d => d.id)")
+        assert abiertas() == ["pasar"]
+        pagina.click("#ajustar > summary")
+        pagina.wait_for_timeout(100)
+        assert abiertas() == ["ajustar"]
+        alto = pagina.eval_on_selector("#ajustar > summary", "e => e.getBoundingClientRect().height")
+        navegador.close()
+    assert alto >= 44
+    assert errores == []
 
 
 def test_la_foto_del_vale_es_REQUIRED_en_el_formulario():
@@ -564,21 +675,19 @@ def _pantallas_de_vacios(nombre):
              dict(_pila(71, nombre, 23), proveedor=nombre)]
     proveedores = [dict(UN_PROVEEDOR[0], nombre=nombre, pilas=pilas)]
     marcas = [{"id": 71, "nombre": nombre}]
-    devoluciones = [{"id": 1, "cantidad": 25, "importe": 18500.0,
-                     "foto_ruta": "2026-09-12/vale.jpg", "fecha": date(2026, 9, 12),
-                     "anulada": False, "compra_id": None, "articulo": None,
-                     "fecha_compra": None, "marca": nombre}]
-    movimientos = [{"tipo": "ajuste", "id": 3, "cantidad": 2, "marca": nombre,
-                    "marca_hasta": None, "motivo": nombre,
-                    "fecha": date(2026, 9, 25), "anulada": False}]
+    movimientos = [_mov("devolucion", 1, -25, importe=18500.0, marca=nombre,
+                        foto_ruta="2026-09-12/vale.jpg", fecha=date(2026, 9, 12)),
+                   _mov("ajuste", 3, 2, marca=nombre, motivo=nombre),
+                   _mov("entrada", 9, 10, marca=nombre, compra_id=40, articulo=nombre),
+                   _mov("asignacion", 4, 5, marca=nombre, marca_hasta=nombre)]
 
     with patch("app.main.stock_de_vacios_deposito", return_value=proveedores), \
          patch("app.main.listar_proveedores", return_value=[{"id": 7, "nombre": nombre}]), \
          patch("app.main.listar_marcas_vacio_por_proveedor", return_value={7: marcas}):
         indice = cliente.get("/compras/vacios")
     with _con(_parches_del_detalle(proveedores=proveedores, marcas=marcas,
-                                   devoluciones=devoluciones, movimientos=movimientos)):
-        detalle = cliente.get("/administracion/vacios/7")
+                                   movimientos=movimientos)):
+        detalle = cliente.get("/administracion/vacios/7?abrir=movimientos")
 
     assert indice.status_code == 200 and detalle.status_code == 200
     return indice.text, detalle.text
@@ -724,7 +833,7 @@ def test_la_tarjeta_de_ASIGNAR_sale_AUNQUE_el_proveedor_no_tenga_marcas():
     """Iba adentro de un `if marcas` y ningún proveedor tenía: no salió nunca."""
     with _con(_parches_del_detalle(marcas=[])):
         marcado = cliente.get("/administracion/vacios/7").text.split("</style>")[-1]
-    tarjeta = marcado[marcado.index('id="asignar"'):marcado.index("Queda registrado abajo")]
+    tarjeta = marcado[marcado.index('id="pasar"'):marcado.index('id="corregir"')]
     assert 'action="/administracion/vacios/7/asignacion"' in tarjeta
     assert 'name="marca_hasta_id"' not in tarjeta           # no hay de dónde elegir
     assert re.search(r'name="marca_nueva"[^>]*required', tarjeta)
@@ -734,7 +843,7 @@ def test_la_tarjeta_de_ASIGNAR_sale_AUNQUE_el_proveedor_no_tenga_marcas():
 def test_con_marcas_se_ELIGE_o_se_ESCRIBE():
     with _con(_parches_del_detalle()):
         marcado = cliente.get("/administracion/vacios/7").text.split("</style>")[-1]
-    tarjeta = marcado[marcado.index('id="asignar"'):marcado.index("Queda registrado abajo")]
+    tarjeta = marcado[marcado.index('id="pasar"'):marcado.index('id="corregir"')]
     opciones = re.findall(r'<option value="(\d*)">([^<]+)</option>',
                           tarjeta[tarjeta.index('name="marca_hasta_id"'):])
     assert opciones[:3] == [("", "Una marca nueva (escribila abajo)"), ("71", "EJ Roja"),
@@ -746,7 +855,7 @@ def test_con_marcas_se_ELIGE_o_se_ESCRIBE():
 def test_en_COMPRAS_no_hay_tarjeta_de_asignar_ni_link():
     with _con(_parches_del_detalle(marcas=[])):
         marcado = cliente.get("/compras/vacios/7").text.split("</style>")[-1]
-    assert 'id="asignar"' not in marcado
+    assert 'id="pasar"' not in marcado
     assert "Asignarles marca" not in _indice().text
 
 
@@ -763,8 +872,8 @@ def test_los_SIN_MARCA_con_cajones_van_RESALTADOS_y_los_en_cero_no():
         marcado = partes[-1]
         assert marcado.count('class="pila sin-marca"') == 1, url
     # El link a asignar sale solo en Administración, y solo donde hay sin marca.
-    assert respuesta.text.count('href="/administracion/vacios/7#asignar"') == 1
-    assert 'href="/administracion/vacios/8#asignar"' not in respuesta.text
+    assert respuesta.text.count('href="/administracion/vacios/7?abrir=pasar"') == 1
+    assert 'href="/administracion/vacios/8?abrir=pasar"' not in respuesta.text
 
 
 def test_RENOMBRAR_bien_vuelve_con_aviso():
@@ -784,7 +893,7 @@ def test_RENOMBRAR_contra_una_que_YA_EXISTE_ofrece_juntarlas():
                                  data={"nombre": "ej azul"})
     assert respuesta.status_code == 409
     marcado = respuesta.text.split("</style>")[-1]
-    tarjeta = marcado[marcado.index('id="juntar"'):marcado.index('id="renombrar"')]
+    tarjeta = marcado[marcado.index('id="juntar"'):marcado.index('/renombrar"')]
     assert "¿Juntar «EJ Roja» con «EJ Azul»?" in tarjeta
     assert 'action="/administracion/vacios/7/marca/71/juntar"' in tarjeta
     assert '<input type="hidden" name="queda_id" value="72">' in tarjeta
@@ -814,10 +923,10 @@ def test_en_COMPRAS_no_se_renombra_ni_se_junta():
 def test_la_tarjeta_de_MOVER_ofrece_salir_de_una_MARCA_y_no_solo_de_sin_marca():
     with _con(_parches_del_detalle()):
         marcado = cliente.get("/administracion/vacios/7").text.split("</style>")[-1]
-    tarjeta = marcado[marcado.index('id="asignar"'):marcado.index('id="renombrar"')]
+    tarjeta = marcado[marcado.index('id="pasar"'):marcado.index('id="corregir"')]
     desde = tarjeta[tarjeta.index('name="marca_desde_id"'):tarjeta.index("</select>")]
     assert re.findall(r'<option value="(\d*)">([^<]+)</option>', desde) == [
-        ("", "Sin asignar · hay 12"), ("71", "EJ Roja · hay 23"), ("72", "EJ Azul · hay 0")]
+        ("", "Sin marca · hay 12"), ("71", "EJ Roja · hay 23"), ("72", "EJ Azul · hay 0")]
 
 
 # ---------------------------------------------------------------------------
@@ -850,19 +959,12 @@ def test_SIN_arranque_el_cartel_dice_la_foto_del_25_09():
 
 
 def test_lo_de_ANTES_del_conteo_no_ofrece_ANULAR_y_lo_de_despues_si():
-    viejo = {"id": 4, "cantidad": 30, "importe": None, "foto_ruta": "x.jpg",
-             "fecha": date(2026, 9, 26), "anulada": False, "compra_id": None,
-             "articulo": None, "fecha_compra": None, "marca": None}
-    movs = [{"tipo": "ajuste", "id": 5, "cantidad": 2, "marca": None, "marca_hasta": None,
-             "motivo": "viejo", "fecha": date(2026, 9, 26), "anulada": False,
-             "antes_del_arranque": True},
-            {"tipo": "ajuste", "id": 6, "cantidad": 3, "marca": None, "marca_hasta": None,
-             "motivo": "nuevo", "fecha": date(2026, 9, 29), "anulada": False,
-             "antes_del_arranque": False}]
-    devoluciones = [{**viejo, "antes_del_arranque": True},
-                    {**viejo, "id": 8, "antes_del_arranque": False}]
+    movs = [_mov("ajuste", 5, 2, motivo="viejo", antes_del_arranque=True),
+            _mov("ajuste", 6, 3, motivo="nuevo"),
+            _mov("devolucion", 4, -30, foto_ruta="x.jpg", antes_del_arranque=True),
+            _mov("devolucion", 8, -30, foto_ruta="x.jpg")]
     with patch("app.main.arranque_de_vacios", return_value=ARRANQUE), \
-            _con(_parches_del_detalle(devoluciones=devoluciones, movimientos=movs)):
+            _con(_parches_del_detalle(movimientos=movs)):
         marcado = cliente.get("/administracion/vacios/7").text.split("</style>")[-1]
     assert "/vacios/devolucion/4/anular" not in marcado
     assert "/vacios/devolucion/8/anular" in marcado

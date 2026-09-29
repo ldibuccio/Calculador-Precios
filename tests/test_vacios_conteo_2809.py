@@ -236,11 +236,12 @@ def test_lo_de_DESPUES_suma_y_lo_de_ANTES_no_se_puede_anular(base):
     assert stock[("SATURNO", "Babilonia")] == 91
     assert stock[("SATURNO", None)] == 6
     # Lo de antes queda como historia: el listado lo marca y anularlo rebota.
-    dev, = d.listar_devoluciones_vacios(ids["RIO URUGUAY"])
+    dev, = [m for m in d.movimientos_de_vacios(ids["RIO URUGUAY"]) if m["tipo"] == "devolucion"]
     assert dev["antes_del_arranque"] is True
     with pytest.raises(ValueError, match="anterior al Conteo físico 28/09"):
         d.anular_devolucion_vacios(dev["id"])
-    movs = d.listar_ajustes_y_asignaciones_vacios(ids["Herederos N7"])
+    movs = [m for m in d.movimientos_de_vacios(ids["Herederos N7"])
+            if m["tipo"] in ("ajuste", "asignacion")]
     assert movs and all(m["antes_del_arranque"] for m in movs)
     ajuste, = [m for m in movs if m["tipo"] == "ajuste"]
     with pytest.raises(ValueError, match="anularlo no cambiaría nada"):
@@ -351,3 +352,60 @@ def test_JUNTAR_dos_marcas_suma_lo_contado_de_las_dos(base):
     stock = _stock_por_pila(d)
     assert stock[("herederos n7", "Don Quijote")] == 42
     assert sum(stock.values()) == 1086
+
+
+def _plegar_movimientos(movimientos):
+    """El stock por pila rearmado SOLO con la lista del historial: el arranque
+    pone lo contado, cada movimiento vivo suma con su signo, y el pase resta de
+    una marca y suma a la otra. Lo anulado y lo de antes del conteo no mueven."""
+    stock = {}
+    for m in movimientos:
+        if m["anulada"] or m["antes_del_arranque"]:
+            continue
+        desde = (m["proveedor"], m["marca"])
+        if m["tipo"] == "asignacion":
+            stock[desde] = stock.get(desde, 0) - m["cantidad"]
+            hasta = (m["proveedor"], m["marca_hasta"])
+            stock[hasta] = stock.get(hasta, 0) + m["cantidad"]
+        else:
+            stock[desde] = stock.get(desde, 0) + m["cantidad"]
+    return {clave: n for clave, n in stock.items() if n}
+
+
+def test_la_LISTA_de_movimientos_SUMADA_da_el_MISMO_stock_que_la_tarjeta(base):
+    """El historial y el número salen de dos consultas: si se separan, lo ve esto.
+
+    La lista pasa por `_SQL_MOVIMIENTOS_DE_VACIOS` y la tarjeta por
+    `_SQL_PILAS_DE_VACIOS`. Con UNA pata de más o de menos en cualquiera de las
+    dos, estos dos números dejan de coincidir. Hay de todo DESPUÉS del conteo
+    —entrada, devolución, ajuste, pase, uno anulado— y la historia de antes,
+    que no tiene que sumar."""
+    d, sql, ids, marcas, compra, correr = base
+    correr(5)
+    compra("Herederos N7", 7, "2099-01-01 10:00-03", marcas["la union"])
+    compra("DIMIMAX", 4, "2099-01-01 10:00-03")
+    compra("DIMIMAX", 9, "2099-01-01 10:00-03", sena=None)       # sin seña: no suma
+    d.crear_devolucion_vacios(ids["Herederos N7"], marcas["la union"], 3, foto_ruta="v.jpg")
+    d.crear_ajuste_vacios_deposito(ids["MRC"], None, 2, "apareció uno")
+    anulado = d.crear_ajuste_vacios_deposito(ids["MRC"], None, 6, "error")
+    d.anular_ajuste_vacios_deposito(anulado)
+    d.crear_asignacion_vacios(ids["Herederos N7"], marcas["la union"], marcas["vieja"], 4)
+
+    movimientos = d.movimientos_de_vacios(limite=100000)
+    assert set(m["tipo"] for m in movimientos) == set(d.TIPOS_DE_MOVIMIENTO_DE_VACIOS)
+    assert any(m["antes_del_arranque"] for m in movimientos), "la historia vieja no vino"
+    assert _plegar_movimientos(movimientos) == _stock_por_pila(d)
+
+
+def test_los_SIGNOS_y_el_filtro_por_PROVEEDOR(base):
+    d, sql, ids, marcas, compra, correr = base
+    correr(5)
+    compra("DIMIMAX", 4, "2099-01-01 10:00-03")
+    d.crear_devolucion_vacios(ids["DIMIMAX"], None, 3, foto_ruta="v.jpg", importe=900)
+    movs = d.movimientos_de_vacios(ids["DIMIMAX"])
+    assert {m["proveedor_id"] for m in movs} == {ids["DIMIMAX"]}
+    nuevos = [(m["tipo"], m["cantidad"], m["importe"]) for m in movs if not m["antes_del_arranque"]]
+    # La recepción está fechada en 2099: el más nuevo va arriba.
+    assert nuevos == [("entrada", 4, 500), ("devolucion", -3, 900)]
+    instantes = [m["instante"] for m in movs]
+    assert instantes == sorted(instantes, reverse=True)

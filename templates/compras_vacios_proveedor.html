@@ -25,7 +25,6 @@
   /* El nombre de una marca va en la etiqueta de su campo (Corregir el nombre)
      y en la oferta de juntar: el largo no lo controlamos. */
   label { font-size: .85rem; margin-bottom: .2rem; overflow-wrap: anywhere; }
-  .juntar { border: 2px solid #f97316; }
   .juntar h2, .juntar p { overflow-wrap: anywhere; }
   input, select { font-size: 1rem; padding: .6rem; min-height: 44px;
                   border: 1px solid #cbd5e1; border-radius: 8px; min-width: 0; }
@@ -40,13 +39,16 @@
   .vale:first-of-type { border-top: 0; }
   .vale-cabeza { display: flex; flex-wrap: wrap; gap: .5rem;
                  align-items: baseline; }
-  .vale-cantidad { font-size: 1.05rem; font-weight: 600; }
+  .vale-cantidad { font-size: 1.05rem; font-weight: 700; }
+  .vale-cantidad.suma { color: #15803d; }
+  .vale-cantidad.resta { color: #b91c1c; }
+  .vale-que { font-size: 1rem; overflow-wrap: anywhere; min-width: 0; }
   /* El nombre del artículo lo tipea una persona y acá viaja adentro del
      renglón del vale: sin esto, uno sin espacios arrastra la tarjeta entera
      de costado. El nombre del PROVEEDOR no necesita nada — va en la barra,
      que ya se achica sola. */
   .vale-dato { font-size: .85rem; color: #555; overflow-wrap: anywhere; }
-  .vale.anulada .vale-cantidad, .vale.anulada .vale-dato {
+  .vale.anulada .vale-cantidad, .vale.anulada .vale-dato, .vale.anulada .vale-que {
     color: #9ca3af; text-decoration: line-through; }
   .etiqueta-anulada { background: #f3f4f6; color: #6b7280; border-radius: 6px;
                       padding: .1rem .45rem; font-size: .78rem;
@@ -73,14 +75,31 @@
   .sin-marca-total.hay { background: #fff7ed; border-left: 4px solid #f97316;
                          padding: .45rem .6rem; color: #9a3412; }
   .pila-stock { font-weight: 600; white-space: nowrap; }
-  .marcas { display: flex; flex-wrap: wrap; gap: .4rem; margin: 0 0 .75rem; }
-  .marca { background: #eef2ff; color: #3730a3; border-radius: 999px;
-           padding: .2rem .7rem; font-size: .9rem; overflow-wrap: anywhere; }
   /* LA FOTO ES OBLIGATORIA y se dice ARRIBA del botón, no en letra chica:
      el que no tiene vale no tiene una devolución, tiene un ajuste. */
   .obligatoria { background: #eff6ff; color: #1e3a8a; border-radius: 8px;
                  padding: .6rem .75rem; margin: .6rem 0 0; font-size: .88rem; }
-  .solo-admin { border-left: 4px solid #7c3aed; }
+  /* LAS ACCIONES Y EL HISTORIAL: cada <summary> es un botón de 44px que se
+     toca con el pulgar, con una línea que dice qué hace. */
+  details.accion, details.historial { background: #fff; border-radius: 10px;
+    margin-bottom: .75rem; box-shadow: 0 1px 3px rgba(0,0,0,.1); }
+  details.accion > summary, details.historial > summary {
+    list-style: none; cursor: pointer; padding: .8rem 1rem; min-height: 44px;
+    box-sizing: border-box; display: flex; flex-direction: column; gap: .15rem; }
+  details.accion > summary::-webkit-details-marker,
+  details.historial > summary::-webkit-details-marker { display: none; }
+  details.accion > summary strong { color: #1d4ed8; font-size: 1rem; }
+  details.historial > summary strong { color: #374151; font-size: 1rem; }
+  details[open] > summary { border-bottom: 1px solid #e5e7eb; }
+  details.accion > form, details.accion > p, details.accion > .juntar,
+  details.historial > .vale, details.historial > p { margin: .75rem 1rem; }
+  details.accion > form:last-child, details.historial > :last-child { margin-bottom: 1rem; }
+  .que-hace { font-size: .85rem; color: #555; }
+  /* ADENTRO DE UNA ACCIÓN, UN CAMPO POR RENGLÓN, como la maqueta: a dos
+     columnas el selector cortaba "Sin marca · hay 12" y la "i" caía abajo. */
+  details.accion .campo, details.accion button { flex-basis: 100%; }
+  .marca-nueva { border-top: 1px solid #e5e7eb; padding-top: .75rem; }
+  .juntar { border: 2px solid #f97316; border-radius: 8px; padding: .75rem; }
   /* DE DÓNDE SALE EL NÚMERO (dueño, 28/09): se ve, no va a la "i". Sin
      esto, el que compara contra un número viejo no sabe que la cuenta
      arrancó de nuevo. */
@@ -104,7 +123,7 @@
   <div class="stock">{{ p.stock|numero }} cajones</div>
   {% for pila in p.pilas %}
   <div class="pila{% if not pila.marca and pila.stock %} sin-marca{% endif %}">
-    <span class="pila-marca {% if not pila.marca %}sin-asignar{% endif %}">{{ pila.marca or "sin asignar" }}</span>
+    <span class="pila-marca {% if not pila.marca %}sin-asignar{% endif %}">{{ pila.marca or "Sin marca" }}</span>
     <span class="pila-stock">{{ pila.stock|numero }}</span>
   </div>
   {% else %}
@@ -112,29 +131,14 @@
   {% endfor %}
 </div>
 
-<div class="tarjeta">
-  <h2>Marcas de sus cajones</h2>
-  {% if marcas %}
-  <div class="marcas">
-    {% for m in marcas %}<span class="marca">{{ m.nombre }}</span>{% endfor %}
-  </div>
-  {% else %}
-  <p class="vacio">Todavía no tiene marcas: sus cajones van a "sin asignar".</p>
-  {% endif %}
-  <form method="post" action="{{ camino.base }}/vacios/{{ p.id }}/marca">
-    <div class="fila">
-      <div class="campo">
-        <label for="nombre_marca">Marca nueva</label>
-        <input id="nombre_marca" name="nombre" type="text" required placeholder="La del sello del cajón">
-      </div>
-      <button type="submit">Agregar marca</button>
-    </div>
-    <p class="ayuda">Recepción elige la marca del cajón entre éstas.</p>
-  </form>
-</div>
-
-<div class="tarjeta">
-  <h2>Devolverle cajones</h2>
+{# LAS ACCIONES, DE A UNA POR VEZ (dueño, 29/09): cuatro botones que despliegan
+   su formulario. Van en <details> con el mismo `name`, que el navegador abre de
+   a uno; el script de abajo hace lo mismo donde el `name` no se respeta. La que
+   viene abierta es la del formulario que rebotó (`abierta`), para que el error
+   quede al lado de lo que hay que corregir. #}
+<details class="accion" id="devolver" name="accion"{% if abierta == "devolver" %} open{% endif %}>
+  <summary><strong>Devolver cajones</strong>
+    <span class="que-hace">Resta cajones de una marca: se los llevó el proveedor.</span></summary>
   <form method="post" action="{{ camino.base }}/vacios/{{ p.id }}/devolucion" enctype="multipart/form-data">
     <div class="fila">
       <div class="campo">
@@ -167,83 +171,16 @@
     <p class="obligatoria"><strong>Sin la foto del vale no es una devolución.</strong>
       Si no hay vale, es un ajuste{% if not es_administracion %} y se carga en Administración{% endif %}.</p>
   </form>
-</div>
-
-<div class="tarjeta">
-  <h2>Devoluciones</h2>
-  {% for d in devoluciones %}
-  <div class="vale {% if d.anulada %}anulada{% endif %}">
-    <div class="vale-cabeza">
-      <span class="vale-cantidad">{{ d.cantidad }} cajones</span>
-      <span class="vale-dato">{{ d.fecha.strftime('%d/%m/%Y') }}</span>
-      {% if d.importe is not none %}<span class="vale-dato">${{ '{:,.0f}'.format(d.importe).replace(',', '.') }}</span>{% endif %}
-      <span class="vale-dato">{{ d.marca or "sin asignar" }}</span>
-      {% if d.compra_id %}<span class="vale-dato">contra {{ d.articulo }} del {{ d.fecha_compra.strftime('%d/%m') }}</span>{% endif %}
-      {% if d.anulada %}<span class="etiqueta-anulada">anulada</span>
-      {% elif d.antes_del_arranque %}<span class="etiqueta-anulada">antes del conteo: no cuenta</span>{% endif %}
-    </div>
-    {% if not d.anulada %}
-    <div class="acciones">
-      {% if d.foto_ruta %}
-      <a href="{{ camino.base }}/vacios/devolucion/{{ d.id }}/foto?proveedor_id={{ p.id }}">Ver el vale</a>
-      {% endif %}
-      {# Lo de antes del arranque no se anula: ya no mueve el stock, y
-         `_anular` lo rechaza igual si llega por un POST a mano. #}
-      {% if not d.antes_del_arranque %}
-      <form method="post" action="{{ camino.base }}/vacios/devolucion/{{ d.id }}/anular">
-        <input type="hidden" name="proveedor_id" value="{{ p.id }}">
-        <button class="anular" type="submit">Anular</button>
-      </form>
-      {% endif %}
-    </div>
-    {% endif %}
-  </div>
-  {% else %}
-  <p class="vacio">Todavía no se le devolvió ningún cajón.</p>
-  {% endfor %}
-</div>
+</details>
 
 {% if es_administracion %}
-<div class="tarjeta solo-admin">
-  <h2>Ajustar el stock</h2>
-  <form method="post" action="/administracion/vacios/{{ p.id }}/ajuste">
-    <div class="fila">
-      <div class="campo">
-        <label for="ajuste_marca">¿Qué cajones?</label>
-        <select id="ajuste_marca" name="marca_vacio_id">
-          {% for pila in pilas_para_elegir %}
-          <option value="{{ pila.id if pila.id is not none else '' }}">{{ pila.nombre }} · hay {{ pila.stock|numero }}</option>
-          {% endfor %}
-        </select>
-      </div>
-      <div class="campo">
-        <label for="ajuste_sentido">¿Sobran o faltan?</label>
-        <select id="ajuste_sentido" name="sentido" required>
-          <option value="">Elegí</option>
-          <option value="sobran">Sobran: hay más de los que dice</option>
-          <option value="faltan">Faltan: hay menos de los que dice</option>
-        </select>
-      </div>
-      <div class="campo">
-        <label for="ajuste_cantidad">¿Cuántos?</label>
-        <input id="ajuste_cantidad" name="cantidad" type="number" min="1" step="1" required>
-      </div>
-      <div class="campo">
-        <label for="ajuste_motivo">¿Por qué?</label>
-        <input id="ajuste_motivo" name="motivo" type="text" required placeholder="Se contaron y había 12">
-      </div>
-      <button type="submit">Guardar el ajuste</button>
-    </div>
-  </form>
-</div>
-
 {# LA ASIGNACIÓN SALE SIEMPRE EN ADMINISTRACIÓN (dueño, 28/09). Hasta ese día
    iba adentro de un `{% if marcas %}`, y como ningún proveedor tenía marcas
-   cargadas no apareció nunca: `vacios_deposito_asignaciones` estaba vacía
-   porque la tarjeta no existía para nadie. Ahora la marca de destino se
-   elige o se escribe, y escrita se crea. #}
-<div class="tarjeta solo-admin" id="asignar">
-  <h2>Pasar cajones a otra marca</h2>
+   cargadas no apareció nunca. Ahora la marca de destino se elige o se escribe,
+   y escrita se crea. #}
+<details class="accion" id="pasar" name="accion"{% if abierta == "pasar" %} open{% endif %}>
+  <summary><strong>Pasar cajones a otra marca</strong>
+    <span class="que-hace">Mueve cajones entre marcas o les pone marca a los sin marca.</span></summary>
   {% set sin_marca = pilas_para_elegir[0].stock %}
   <p class="sin-marca-total{% if sin_marca %} hay{% endif %}">Sin marca: {{ sin_marca|numero }} cajones</p>
   <form method="post" action="/administracion/vacios/{{ p.id }}/asignacion">
@@ -277,27 +214,30 @@
       <button type="submit">Asignar</button>
     </div>
   </form>
-  <p class="ayuda">Salen de "sin asignar" o de otra marca. Queda registrado abajo y se puede anular.</p>
-</div>
+</details>
 
-{# CORREGIR EL NOMBRE (dueño, 28/09): una marca mal escrita. Los cajones no
-   se mueven: es la misma pila con otro nombre. Si el nombre ya es de otra
-   marca de este proveedor, la escritura lo rechaza y acá se ofrece juntarlas. #}
-{% if juntar %}
-<div class="tarjeta solo-admin juntar" id="juntar">
-  <h2>Ya existe «{{ juntar.queda }}»</h2>
-  <p>¿Juntar «{{ juntar.se_va }}» con «{{ juntar.queda }}»? Todos los cajones y
-     movimientos de «{{ juntar.se_va }}» pasan a «{{ juntar.queda }}», y
-     «{{ juntar.se_va }}» deja de existir.</p>
-  <form method="post" action="/administracion/vacios/{{ p.id }}/marca/{{ juntar.se_va_id }}/juntar">
-    <input type="hidden" name="queda_id" value="{{ juntar.queda_id }}">
-    <button type="submit">Juntarlas</button>
-  </form>
-</div>
 {% endif %}
-{% if marcas %}
-<div class="tarjeta solo-admin" id="renombrar">
-  <h2>Corregir el nombre de una marca</h2>
+
+{# CORREGIR UNA MARCA (dueño, 28/09): una marca mal escrita. Los cajones no
+   se mueven: es la misma pila con otro nombre. Si el nombre ya es de otra
+   marca de este proveedor, la escritura lo rechaza y acá se ofrece juntarlas.
+   El alta de una marca nueva vive acá también: es la misma lista. #}
+<details class="accion" id="corregir" name="accion"{% if abierta == "corregir" %} open{% endif %}>
+  <summary><strong>{% if es_administracion %}Corregir una marca{% else %}Marcas de sus cajones{% endif %}</strong>
+    <span class="que-hace">{% if es_administracion %}Cambiarle el nombre o juntarla con otra.{% else %}Agregar la marca del sello del cajón.{% endif %}</span></summary>
+  {% if es_administracion %}
+  {% if juntar %}
+  <div class="juntar" id="juntar">
+    <h2>Ya existe «{{ juntar.queda }}»</h2>
+    <p>¿Juntar «{{ juntar.se_va }}» con «{{ juntar.queda }}»? Todos los cajones y
+       movimientos de «{{ juntar.se_va }}» pasan a «{{ juntar.queda }}», y
+       «{{ juntar.se_va }}» deja de existir.</p>
+    <form method="post" action="/administracion/vacios/{{ p.id }}/marca/{{ juntar.se_va_id }}/juntar">
+      <input type="hidden" name="queda_id" value="{{ juntar.queda_id }}">
+      <button type="submit">Juntarlas</button>
+    </form>
+  </div>
+  {% endif %}
   {% for m in marcas %}
   <form method="post" action="/administracion/vacios/{{ p.id }}/marca/{{ m.id }}/renombrar">
     <div class="fila">
@@ -309,31 +249,107 @@
       <button type="submit">Corregir</button>
     </div>
   </form>
+  {% else %}
+  <p class="vacio">Todavía no tiene marcas: sus cajones van a "sin marca".</p>
   {% endfor %}
-  <p class="ayuda">Si el nombre ya es de otra marca, te ofrece juntarlas.</p>
-</div>
-{% endif %}
+  {% if marcas %}<p class="ayuda">Si el nombre ya es de otra marca, te ofrece juntarlas.</p>{% endif %}
+  {% elif marcas %}
+  <p class="ayuda">Sus marcas: {{ marcas|map(attribute="nombre")|join(" · ") }}. El nombre se corrige en Administración.</p>
+  {% else %}
+  <p class="vacio">Todavía no tiene marcas: sus cajones van a "sin marca".</p>
+  {% endif %}
+  <form method="post" action="{{ camino.base }}/vacios/{{ p.id }}/marca" class="marca-nueva">
+    <div class="fila">
+      <div class="campo">
+        <label for="nombre_marca">Marca nueva</label>
+        <input id="nombre_marca" name="nombre" type="text" required placeholder="La del sello del cajón">
+      </div>
+      <button type="submit">Agregar marca</button>
+    </div>
+  </form>
+</details>
+
+{% if es_administracion %}
+<details class="accion" id="ajustar" name="accion"{% if abierta == "ajustar" %} open{% endif %}>
+  <summary><strong>Ajustar</strong>
+    <span class="que-hace">Sumar o restar cajones, con el motivo.</span></summary>
+  <form method="post" action="/administracion/vacios/{{ p.id }}/ajuste">
+    <div class="fila">
+      <div class="campo">
+        <label for="ajuste_marca">¿Qué cajones?</label>
+        <select id="ajuste_marca" name="marca_vacio_id">
+          {% for pila in pilas_para_elegir %}
+          <option value="{{ pila.id if pila.id is not none else '' }}">{{ pila.nombre }} · hay {{ pila.stock|numero }}</option>
+          {% endfor %}
+        </select>
+      </div>
+      <div class="campo">
+        <label for="ajuste_sentido">¿Sobran o faltan?</label>
+        <select id="ajuste_sentido" name="sentido" required>
+          <option value="">Elegí</option>
+          <option value="sobran">Sobran: hay más de los que dice</option>
+          <option value="faltan">Faltan: hay menos de los que dice</option>
+        </select>
+      </div>
+      <div class="campo">
+        <label for="ajuste_cantidad">¿Cuántos?</label>
+        <input id="ajuste_cantidad" name="cantidad" type="number" min="1" step="1" required>
+      </div>
+      <div class="campo">
+        <label for="ajuste_motivo">¿Por qué?</label>
+        <input id="ajuste_motivo" name="motivo" type="text" required placeholder="Se contaron y había 12">
+      </div>
+      <button type="submit">Guardar el ajuste</button>
+    </div>
+  </form>
+</details>
 {% endif %}
 
-{% if movimientos %}
-<div class="tarjeta">
-  <h2>Ajustes y asignaciones</h2>
+{# EL HISTORIAL, CERRADO (dueño, 29/09): todo lo que movió cajones de este
+   proveedor en una sola lista —el conteo, las entradas, las devoluciones, los
+   ajustes y los pases—, el más nuevo arriba. Sale de `movimientos_de_vacios`,
+   la misma consulta que va a usar la pantalla de Movimientos. #}
+<details class="historial" id="movimientos"{% if abierta == "movimientos" %} open{% endif %}>
+  <summary><strong>Ver movimientos de este proveedor</strong></summary>
   {% for m in movimientos %}
-  <div class="vale {% if m.anulada %}anulada{% endif %}">
+  <div class="vale {% if m.anulada %}anulada{% endif %}" data-tipo="{{ m.tipo }}">
+    {# COMO LA MAQUETA APROBADA (29/09): el número con su signo adelante y en
+       color, lo que es y la marca; abajo la fecha y el dato que lo explica. #}
+    {% set marca = m.marca or "Sin marca" %}
     <div class="vale-cabeza">
-      {% if m.tipo == "ajuste" %}
-      <span class="vale-cantidad">{{ "+" if m.cantidad > 0 }}{{ m.cantidad }} cajones</span>
-      <span class="vale-dato">{{ m.marca or "sin asignar" }}</span>
-      <span class="vale-dato">{{ m.motivo }}</span>
-      {% else %}
-      <span class="vale-cantidad">{{ m.cantidad }} cajones</span>
-      <span class="vale-dato">de {{ m.marca or "sin asignar" }} a {{ m.marca_hasta }}</span>
-      {% endif %}
-      <span class="vale-dato">{{ m.fecha.strftime('%d/%m/%Y') }}</span>
-      {% if m.anulada %}<span class="etiqueta-anulada">{{ "anulado" if m.tipo == "ajuste" else "anulada" }}</span>
+      <span class="vale-cantidad {% if m.tipo in ('entrada', 'devolucion', 'ajuste') %}{{ 'suma' if m.cantidad > 0 else 'resta' }}{% endif %}">
+        {%- if m.tipo in ("entrada", "ajuste") and m.cantidad > 0 %}+{% endif %}{{ m.cantidad }}</span>
+      <span class="vale-que">
+      {%- if m.tipo == "arranque" %}Conteo físico · {{ marca }}
+      {%- elif m.tipo == "entrada" %}Compra con seña #{{ m.compra_id }} · {{ marca }}
+      {%- elif m.tipo == "devolucion" %}Devolución · {{ marca }}
+      {%- elif m.tipo == "ajuste" %}Ajuste · {{ marca }}
+      {%- else %}Pase {{ marca }} → {{ m.marca_hasta or "Sin marca" }}{% endif %}</span>
+      {% if m.anulada %}<span class="etiqueta-anulada">anulado</span>
       {% elif m.antes_del_arranque %}<span class="etiqueta-anulada">antes del conteo: no cuenta</span>{% endif %}
     </div>
-    {% if es_administracion and not m.anulada and not m.antes_del_arranque %}
+    <div class="vale-dato">{{ m.fecha.strftime('%d/%m/%Y') if m.fecha }}
+      {%- if m.tipo == "arranque" and m.motivo %} · {{ m.motivo }}
+      {%- elif m.tipo == "entrada" %}{% if m.articulo %} · {{ m.articulo }}{% endif %} · se corrige desde la compra
+      {%- elif m.tipo == "devolucion" %}{% if m.importe is not none %} · ${{ '{:,.0f}'.format(m.importe).replace(',', '.') }}{% endif %}{% if m.foto_ruta %} · vale cargado{% endif %}{% if m.compra_id and m.articulo %} · contra {{ m.articulo }}{% endif %}
+      {%- elif m.tipo == "ajuste" %} · {{ m.motivo }}{% endif %}</div>
+    {# Lo de antes del arranque no se anula: ya no mueve el stock, y `_anular`
+       lo rechaza igual si llega por un POST a mano. Una entrada se corrige
+       desde su compra: no tiene fila propia que anular. #}
+    {% if not m.anulada %}
+    {% if m.tipo == "devolucion" %}
+    <div class="acciones">
+      {% if m.foto_ruta %}
+      <a href="{{ camino.base }}/vacios/devolucion/{{ m.id }}/foto?proveedor_id={{ p.id }}">Ver el vale</a>
+      {% endif %}
+      {% if not m.antes_del_arranque %}
+      <form method="post" action="{{ camino.base }}/vacios/devolucion/{{ m.id }}/anular">
+        <input type="hidden" name="proveedor_id" value="{{ p.id }}">
+        <button class="anular" type="submit">Anular</button>
+      </form>
+      {% endif %}
+    </div>
+    {% elif m.tipo in ("ajuste", "asignacion") and es_administracion and not m.antes_del_arranque %}
     <div class="acciones">
       <form method="post" action="/administracion/vacios/movimiento/{{ m.tipo }}/{{ m.id }}/anular">
         <input type="hidden" name="proveedor_id" value="{{ p.id }}">
@@ -341,10 +357,12 @@
       </form>
     </div>
     {% endif %}
+    {% endif %}
   </div>
+  {% else %}
+  <p class="vacio">Todavía no tiene movimientos.</p>
   {% endfor %}
-</div>
-{% endif %}
+</details>
 
 <script>
   // EL IMPORTE SE PRECARGA con la seña por cajón de la última recepción de
@@ -365,6 +383,17 @@
     }
     pila.addEventListener("change", precargar);
     cantidad.addEventListener("input", precargar);
+  })();
+  // DE A UNA ACCIÓN POR VEZ: el `name` de los <details> ya lo hace en los
+  // navegadores nuevos; esto cubre los que no lo respetan.
+  (function () {
+    var acciones = document.querySelectorAll("details.accion");
+    acciones.forEach(function (d) {
+      d.addEventListener("toggle", function () {
+        if (!d.open) return;
+        acciones.forEach(function (otra) { if (otra !== d) otra.open = false; });
+      });
+    });
   })();
 </script>
 

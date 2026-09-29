@@ -82,13 +82,16 @@ UN_PROVEEDOR = [{
     "pilas": [_pila(None, None, 12), _pila(71, "EJ Roja", 23)],
 }]
 MARCAS = [{"id": 71, "nombre": "EJ Roja"}]
-UNA_DEVOLUCION = [{
-    "id": 11, "cantidad": 5, "fecha": date(2026, 9, 18), "importe": 1000.0,
-    "articulo": None, "fecha_compra": None, "compra_id": None, "marca": "EJ Roja",
-    "anulada": False, "foto_ruta": "2026-09-18/vale.jpg",
-}]
-UN_AJUSTE = [{"tipo": "ajuste", "id": 21, "cantidad": 2, "marca": None, "marca_hasta": None,
-              "motivo": "EJ aparecieron", "fecha": date(2026, 9, 25), "anulada": False}]
+UNOS_MOVIMIENTOS = [
+    {"tipo": "devolucion", "id": 11, "cantidad": -5, "fecha": date(2026, 9, 18),
+     "importe": 1000.0, "articulo": None, "compra_id": None, "marca": "EJ Roja",
+     "marca_hasta": None, "motivo": None, "anulada": False, "antes_del_arranque": False,
+     "foto_ruta": "2026-09-18/vale.jpg"},
+    {"tipo": "ajuste", "id": 21, "cantidad": 2, "fecha": date(2026, 9, 25),
+     "importe": None, "articulo": None, "compra_id": None, "marca": None,
+     "marca_hasta": None, "motivo": "EJ aparecieron", "anulada": False,
+     "antes_del_arranque": False, "foto_ruta": None},
+]
 UN_COTEJO = [{"proveedor_id": 7, "proveedor": "Puesto EJEMPLO", "marca_id": 71,
               "marca": "EJ Roja", "contado": 20, "fecha": date(2026, 9, 25),
               "sistema": 23, "diferencia": 3}]
@@ -108,8 +111,7 @@ def _con_datos():
         "listar_proveedores": [{"id": 7, "nombre": "Puesto EJEMPLO"}],
         "listar_marcas_vacio": MARCAS,
         "listar_marcas_vacio_por_proveedor": {7: MARCAS},
-        "listar_devoluciones_vacios": UNA_DEVOLUCION,
-        "listar_ajustes_y_asignaciones_vacios": UN_AJUSTE,
+        "movimientos_de_vacios": UNOS_MOVIMIENTOS,
         "sena_por_cajon_de_la_ultima_recepcion": {},
         "cotejo_de_vacios_deposito": UN_COTEJO,
     }.items():
