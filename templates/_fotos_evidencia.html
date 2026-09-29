@@ -92,8 +92,8 @@
     <div class="evidencia-tira">
       {% for f in fotos_balanza %}
       <div class="evidencia-item">
-        <a href="/deposito/recepcion/{{ compra.id }}/foto-balanza/ver" target="_blank" rel="noopener">
-          <img src="/deposito/recepcion/{{ compra.id }}/foto-balanza/ver"
+        <a href="/deposito/recepcion/{{ compra.id }}/foto-balanza/{{ f.id }}/ver" target="_blank" rel="noopener">
+          <img src="/deposito/recepcion/{{ compra.id }}/foto-balanza/{{ f.id }}/ver"
                alt="Mercadería sobre la balanza" loading="lazy">
         </a>
       </div>

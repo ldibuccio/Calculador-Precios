@@ -38,7 +38,8 @@ cliente = TestClient(app, base_url="https://testserver")
 
 @pytest.fixture(autouse=True)
 def _puerta_de_compras_abierta():
-    """Vacíos vive bajo `/compras` y `/administracion`, y los dos tienen puerta.
+    """Vacíos vive bajo `/administracion`, que tiene puerta. La de Compras se
+    abre igual: el test de la clave de ese sector entra por Cajas.
 
     ES UNA SEGUNDA COPIA de la fixture de `tests/test_app.py` y no se puede
     compartir: cada módulo tiene su propio `cliente`, y una fixture le pone

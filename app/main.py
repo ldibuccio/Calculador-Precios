@@ -404,6 +404,7 @@ from app.db import (
     obtener_ultimo_disponible_cliente,
     listar_estado_alertas,
     agregar_foto_recepcion,
+    borrar_foto_recepcion,
     listar_fotos_de_recepcion,
     marca_en_origen_de_la_compra,
     cambiar_proveedor_de_compra,
@@ -7906,11 +7907,13 @@ def borrar_foto_de_guia_ruta(
 
 
 @app.get("/compras/{compra_id}/detalle")
-def ver_detalle_compra(request: Request, compra_id: int, aviso: str | None = None):
-    """Historia completa de una compra: carga, retiro y recepción. Solo lectura, no se edita nada acá.
+def ver_detalle_compra(request: Request, compra_id: int, aviso: str | None = None,
+                       error: str | None = None):
+    """Historia completa de una compra: carga, retiro y recepción. Los números no se editan acá.
 
     aviso viene de /compras/{id}/corregir-recepcion tras guardar una
-    corrección — la edición en sí vive en esa otra pantalla.
+    corrección — la edición en sí vive en esa otra pantalla — o de sumar o
+    borrar una foto de la pesada, que es lo único que se toca desde acá.
     """
     try:
         compra = obtener_detalle_compra(compra_id)
@@ -7959,8 +7962,102 @@ def ver_detalle_compra(request: Request, compra_id: int, aviso: str | None = Non
             "devoluciones": devoluciones,
             "bultos_devueltos": round(sum(d["bultos"] for d in devoluciones), 2),
             "aviso": aviso,
+            "error": error,
         },
     )
+
+
+def _volver_al_detalle(compra_id: int, **parametros) -> RedirectResponse:
+    return RedirectResponse(url=f"/compras/{compra_id}/detalle?{urlencode(parametros)}#pesaje",
+                            status_code=303)
+
+
+@app.post("/compras/{compra_id}/fotos-balanza")
+async def agregar_fotos_de_pesada(compra_id: int, fotos: list[UploadFile] = File(...)):
+    """Fotos de la pesada cargadas DESPUÉS de recibir (dueño, 29/09): la que no
+    se sacó en el momento, o una más. Van a `fotos_recepcion`, igual que las de
+    la recepción, y con el mismo pipeline (1000 px, calidad 60).
+
+    Anda con la compra en cualquier estado y no toca ningún número de la
+    compra: son solo fotos. Se validan TODAS antes de subir la primera, así un
+    archivo que no es foto no deja la tanda a medias.
+    """
+    try:
+        compra = obtener_compra(compra_id)
+    except Exception as error_db:
+        raise HTTPException(status_code=500, detail=f"Error al conectar con la base de datos: {error_db}") from error_db
+    if compra is None:
+        raise HTTPException(status_code=404, detail="Compra no encontrada")
+
+    comprimidas = []
+    for foto in fotos:
+        crudo = await foto.read()
+        comprimida = _comprimir_foto_jpeg(crudo) if crudo else None
+        if comprimida is None:
+            return _volver_al_detalle(
+                compra_id, error=f"«{foto.filename or 'Un archivo'}» no es una foto. No se subió ninguna.")
+        comprimidas.append(comprimida)
+    if not comprimidas:
+        return _volver_al_detalle(compra_id, error="No llegó ninguna foto.")
+
+    guardadas = 0
+    for comprimida in comprimidas:
+        try:
+            ruta = subir_foto_comanda(comprimida, f"balanza-{compra_id}", prefijo=PREFIJO_PESAJE)
+            agregar_foto_recepcion(compra_id, ruta)
+        except Exception as error:
+            logger.exception("No se pudo guardar una foto de pesada de la compra %s", compra_id)
+            return _volver_al_detalle(
+                compra_id, error=f"Se guardaron {guardadas} de {len(comprimidas)} fotos: {error}")
+        guardadas += 1
+    return _volver_al_detalle(
+        compra_id, aviso="Foto de pesada agregada." if guardadas == 1
+        else f"{guardadas} fotos de pesada agregadas.")
+
+
+def _foto_de_pesada(compra_id: int, foto_id: int) -> dict:
+    """La foto con ese id, si es de ESTA compra. Un id ajeno es un 404."""
+    try:
+        fotos = listar_fotos_de_recepcion(compra_id)
+    except Exception as error_db:
+        raise HTTPException(status_code=500, detail=f"Error al conectar con la base de datos: {error_db}") from error_db
+    foto = next((f for f in fotos if f["id"] == foto_id), None)
+    if foto is None:
+        raise HTTPException(status_code=404, detail="Esa foto no es de la pesada de esta compra")
+    return foto
+
+
+@app.get("/deposito/recepcion/{compra_id}/foto-balanza/{foto_id}/ver")
+def ver_foto_de_pesada(compra_id: int, foto_id: int):
+    """URL firmada de UNA foto de balanza. La de arriba devuelve siempre la
+    última, y en el detalle y en Corregir recepción, con varias, todas las
+    miniaturas eran la misma. Va bajo /deposito, sin clave, como la de arriba:
+    la usan Compras y Gerencia, y cada una tiene la suya."""
+    foto = _foto_de_pesada(compra_id, foto_id)
+    try:
+        url_firmada = obtener_url_foto(foto["foto_ruta"])
+    except Exception as error_storage:
+        raise HTTPException(
+            status_code=500, detail=f"No se pudo generar el link de la foto: {error_storage}"
+        ) from error_storage
+    return RedirectResponse(url=url_firmada, status_code=307)
+
+
+@app.post("/compras/{compra_id}/fotos-balanza/{foto_id}/borrar")
+def borrar_foto_de_pesada(compra_id: int, foto_id: int):
+    """Una foto de pesada subida por error. La confirmación la pide la pantalla;
+    acá se borra la fila y después el archivo, que es solo de esta compra."""
+    try:
+        ruta = borrar_foto_recepcion(compra_id, foto_id)
+    except Exception as error_db:
+        raise HTTPException(status_code=500, detail=f"Error al conectar con la base de datos: {error_db}") from error_db
+    if ruta is None:
+        raise HTTPException(status_code=404, detail="Esa foto no es de la pesada de esta compra")
+    try:
+        borrar_foto_comanda(ruta)
+    except Exception:
+        logger.exception("No se pudo borrar del Storage la foto de pesada %s (la fila ya se sacó)", ruta)
+    return _volver_al_detalle(compra_id, aviso="Foto de pesada borrada.")
 
 
 def _renderizar_pantalla_corregir_recepcion(

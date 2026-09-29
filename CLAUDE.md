@@ -4946,6 +4946,21 @@ no la foto. **Las 12 sin foto de esos mismos días dan 8%, casi idéntico al
 Y `foto_despues = 0`: ninguna foto se subió después de recepcionar, así que
 todas son previas al número. La evidencia es limpia.
 
+**Desde el 29/09 hay una puerta para subirlas DESPUÉS** (dueño): el detalle
+de la compra tiene "Agregar foto de pesada", que acepta varias y las guarda
+en `fotos_recepcion` con su `creado_en`. También se puede borrar una, con
+confirmación. No toca ningún número de la compra. Dos consecuencias:
+- `foto_despues` deja de ser cero por construcción. Si se vuelve a medir el
+  efecto de la foto, las de después se separan comparando `creado_en` contra
+  `procesada_el`.
+- `recepciones_sin_pesaje` cuenta una foto subida tarde como evidencia, y la
+  recepción sale de la alerta. Es lo que se quiere: el aviso existe para que
+  alguien mire lo que se está yendo, y subir la foto es mirarlo.
+
+Cada miniatura pide su foto por id (`/deposito/recepcion/{compra}/foto-balanza/{foto}/ver`).
+La ruta sin id devuelve la última, y hasta el 29/09 el detalle y Corregir
+recepción la usaban en el loop: con varias fotos, todas se veían iguales.
+
 ### La conclusión es la CONTRARIA a la que teníamos dos turnos antes
 
 Con el 82% sin tocar de `kilos_4` habíamos concluido *"Depósito no pesa"*.

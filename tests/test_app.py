@@ -4011,10 +4011,10 @@ def test_el_detalle_muestra_LAS_DOS_fotos_CON_SU_ETIQUETA():
     assert respuesta.status_code == 200
     assert "Fotos de la comanda (guía)" in respuesta.text
     assert "Fotos del pesaje (balanza)" in respuesta.text
-    # Cada una apunta a SU ruta: la de la guía por foto_id, la de balanza
-    # por compra. Mezcladas, el detalle mostraría dos veces la misma.
+    # Cada una apunta a SU ruta, las dos por foto_id. La de balanza iba por
+    # compra y devolvía siempre la última: con varias, todas eran la misma.
     assert 'src="/compras/30/fotos/9/ver"' in respuesta.text
-    assert 'src="/deposito/recepcion/30/foto-balanza/ver"' in respuesta.text
+    assert 'src="/deposito/recepcion/30/foto-balanza/3/ver"' in respuesta.text
     assert "Esta compra no tiene foto de la balanza." not in respuesta.text
 
 
@@ -27640,7 +27640,7 @@ def test_corregir_recepcion_muestra_LAS_DOS_FOTOS_y_dice_cual_falta():
     # Las dos: cada una con su ruta, que es lo único que las separa.
     texto = pantalla(comanda, pesaje)
     assert 'src="/compras/30/fotos/9/ver"' in texto
-    assert 'src="/deposito/recepcion/30/foto-balanza/ver"' in texto
+    assert 'src="/deposito/recepcion/30/foto-balanza/4/ver"' in texto
     assert "no tiene foto" not in texto
 
     # Falta el pesaje: se dice, y se dice POR QUÉ importa acá.
@@ -27654,7 +27654,7 @@ def test_corregir_recepcion_muestra_LAS_DOS_FOTOS_y_dice_cual_falta():
 
     # Falta la comanda.
     texto = pantalla([], pesaje)
-    assert 'src="/deposito/recepcion/30/foto-balanza/ver"' in texto
+    assert 'src="/deposito/recepcion/30/foto-balanza/4/ver"' in texto
     assert "Esta guía no tiene foto de la comanda" in texto
 
     # Ninguna: las dos ausencias se nombran, no se queda muda.
