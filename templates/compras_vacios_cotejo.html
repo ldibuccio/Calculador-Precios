@@ -26,6 +26,9 @@
   .contar { display: flex; align-items: center; justify-content: center; min-height: 44px;
             margin-bottom: 1rem; border-radius: 8px; background: #2e8c57; color: #fff;
             font-weight: 600; text-decoration: none; }
+  .ajustar { display: flex; align-items: center; justify-content: center; min-height: 44px;
+             margin-top: .75rem; border-radius: 8px; border: 2px solid #b91c1c;
+             color: #b91c1c; font-weight: 600; text-decoration: none; }
 </style>
 </head>
 <body>
@@ -45,7 +48,7 @@
 <div class="tarjeta" data-pila="{{ f.proveedor_id }}-{{ f.marca_id or '' }}">
   <div class="cabeza">
     <span class="nombre">{{ f.proveedor }}</span>
-    <span class="marca">{{ f.marca or "sin asignar" }}</span>
+    <span class="marca">{{ f.marca or "Sin marca" }}</span>
   </div>
   <div class="numeros">
     <span>contados {{ f.contado }} el {{ f.fecha.strftime('%d/%m') }}</span>
@@ -54,10 +57,16 @@
       {% if f.diferencia == 0 %}cierra{% else %}{{ "+" if f.diferencia > 0 }}{{ f.diferencia }}{% endif %}
     </span>
   </div>
+  {# AJUSTAR (dueño, 29/09): abre el proveedor con el ajuste desplegado y la
+     diferencia precargada. La cuenta la rehace el server con `?pila=`: la URL
+     no lleva números. #}
+  {% if f.diferencia != 0 %}
+  <a class="ajustar" href="/administracion/vacios/{{ f.proveedor_id }}?abrir=ajustar&amp;pila={{ f.marca_id if f.marca_id is not none else 'sin' }}">Ajustar</a>
+  {% endif %}
 </div>
 {% else %}
-<div class="tarjeta vacio">Todavía no se contó ningún cajón. Se cuenta desde
-  <a href="{{ camino.base }}/vacios">Vacíos del depósito</a>.</div>
+<div class="tarjeta vacio">Todavía no se contó ningún cajón. Se cuenta con
+  "Cargar un conteo", arriba.</div>
 {% endfor %}
 
 {% include "_pie_version.html" %}

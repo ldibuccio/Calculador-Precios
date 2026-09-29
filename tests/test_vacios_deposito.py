@@ -283,7 +283,7 @@ def test_la_DEVOLUCION_sin_foto_rebota_400_y_no_escribe():
     with _con(_parches_del_detalle()), \
          patch("app.main.crear_devolucion_vacios") as crear, \
          patch("app.main.subir_foto_comanda") as subir:
-        respuesta = cliente.post("/compras/vacios/7/devolucion",
+        respuesta = cliente.post("/administracion/vacios/7/devolucion",
                                  data={"marca_vacio_id": "71", "cantidad": "3"})
     assert respuesta.status_code == 400
     assert "Sin la foto del vale no es una devolución" in respuesta.text
@@ -296,14 +296,14 @@ def test_la_DEVOLUCION_con_foto_escribe_la_PILA_elegida_y_la_ruta_subida():
          patch("app.main._comprimir_foto_jpeg", return_value=b"jpg"), \
          patch("app.main.subir_foto_comanda", return_value="vacios/v.jpg"), \
          patch("app.main.crear_devolucion_vacios", return_value=1) as crear:
-        respuesta = cliente.post("/compras/vacios/7/devolucion",
+        respuesta = cliente.post("/administracion/vacios/7/devolucion",
                                  data={"marca_vacio_id": "", "cantidad": "3", "importe": "2.400"},
                                  files={"foto": _foto()}, follow_redirects=False)
     assert respuesta.status_code == 303
-    assert respuesta.headers["location"].startswith("/compras/vacios/7?")
-    # Entró por /compras: la puerta es la del prefijo, no una que tipee alguien.
+    assert respuesta.headers["location"].startswith("/administracion/vacios/7?")
+    # La puerta es la del prefijo, no una que tipee alguien.
     crear.assert_called_once_with(7, None, 3, foto_ruta="vacios/v.jpg", importe=2400.0,
-                                  cargada_desde="compras")
+                                  cargada_desde="administracion")
 
 
 def test_si_la_foto_NO_SE_SUBE_no_se_guarda_nada_y_lo_dice():
@@ -311,7 +311,7 @@ def test_si_la_foto_NO_SE_SUBE_no_se_guarda_nada_y_lo_dice():
          patch("app.main._comprimir_foto_jpeg", return_value=b"jpg"), \
          patch("app.main.subir_foto_comanda", side_effect=RuntimeError("storage caído")), \
          patch("app.main.crear_devolucion_vacios") as crear:
-        respuesta = cliente.post("/compras/vacios/7/devolucion",
+        respuesta = cliente.post("/administracion/vacios/7/devolucion",
                                  data={"marca_vacio_id": "71", "cantidad": "3"},
                                  files={"foto": _foto()})
     assert respuesta.status_code == 502
@@ -325,7 +325,7 @@ def test_el_FRENO_de_la_pila_se_ve_en_la_pantalla_con_el_numero():
          patch("app.main.subir_foto_comanda", return_value="vacios/v.jpg"), \
          patch("app.main.crear_devolucion_vacios",
                side_effect=ValueError("En la pila EJ Roja hay 23 cajones: no se pueden devolver 40.")):
-        respuesta = cliente.post("/compras/vacios/7/devolucion",
+        respuesta = cliente.post("/administracion/vacios/7/devolucion",
                                  data={"marca_vacio_id": "71", "cantidad": "40"},
                                  files={"foto": _foto()})
     assert respuesta.status_code == 400
@@ -382,11 +382,11 @@ def test_la_ASIGNACION_pasa_de_la_pila_elegida_a_la_marca_elegida():
 
 def test_el_CONTEO_va_al_COTEJO_y_no_arranca_ninguna_cuenta():
     with patch("app.main.crear_conteo_vacios_deposito") as crear:
-        respuesta = cliente.post("/compras/vacios/conteo", data={
+        respuesta = cliente.post("/administracion/vacios/conteo", data={
             "proveedor_id": "7", "marca_vacio_id": "71", "cantidad": "0",
             "fecha": "2026-09-25"}, follow_redirects=False)
     assert respuesta.status_code == 303
-    assert respuesta.headers["location"] == "/compras/vacios/cotejo"
+    assert respuesta.headers["location"] == "/administracion/vacios/cotejo"
     # CERO VALE: contar cero es contar.
     crear.assert_called_once_with(7, 71, 0, date(2026, 9, 25))
 
@@ -400,7 +400,7 @@ def _indice(proveedores=UN_PROVEEDOR):
          patch("app.main.listar_proveedores",
                return_value=[{"id": 7, "nombre": "Puesto EJEMPLO"}]), \
          patch("app.main.listar_marcas_vacio_por_proveedor", return_value={7: MARCAS}):
-        return cliente.get("/compras/vacios")
+        return cliente.get("/administracion/vacios")
 
 
 def test_el_indice_muestra_el_total_y_CADA_PILA_con_su_marca():
@@ -415,7 +415,7 @@ def test_el_indice_muestra_el_total_y_CADA_PILA_con_su_marca():
         assert jerga not in marcado, jerga
 
 
-def _conteo(url="/compras/vacios/conteo", metodo="get", datos=None):
+def _conteo(url="/administracion/vacios/conteo", metodo="get", datos=None):
     """La pantalla de contar. El stock se parchea para que EXPLOTE: si la
     pantalla lo pidiera, el que cuenta podría ver el número del sistema."""
     with patch("app.main.stock_de_vacios_deposito",
@@ -436,7 +436,7 @@ def test_el_conteo_OFRECE_solo_proveedores_y_marcas_cargados():
     assert 'name="proveedor_nuevo"' not in marcado and 'name="marca_nueva"' not in marcado
 
 
-@pytest.mark.parametrize("sector", ["/compras", "/administracion"])
+@pytest.mark.parametrize("sector", ["/administracion", "/deposito"])
 def test_la_pantalla_de_CONTAR_no_tiene_ningun_numero_del_sistema(sector):
     """Dueño, 27/09: el que cuenta no puede ver cuántos dice el sistema, o
     transcribe en vez de contar. Hasta ese día el formulario vivía en el
@@ -461,8 +461,8 @@ def test_el_INDICE_ya_no_tiene_el_formulario_de_contar_y_el_COTEJO_manda_a_su_pa
     assert 'name="cantidad"' not in marcado
     assert "/vacios/conteo" not in marcado
     with patch("app.main.cotejo_de_vacios_deposito", return_value=[]):
-        cotejo = cliente.get("/compras/vacios/cotejo").text.split("</style>")[-1]
-    assert 'href="/compras/vacios/conteo"' in cotejo
+        cotejo = cliente.get("/administracion/vacios/cotejo").text.split("</style>")[-1]
+    assert 'href="/administracion/vacios/conteo"' in cotejo
 
 
 def test_un_CONTEO_que_rebota_vuelve_a_la_pantalla_de_contar_y_no_al_indice():
@@ -476,17 +476,18 @@ def test_un_CONTEO_que_rebota_vuelve_a_la_pantalla_de_contar_y_no_al_indice():
     assert 'name="cantidad"' in marcado
 
 
-def test_el_detalle_en_COMPRAS_no_ofrece_ajuste_ni_asignacion():
-    with _con(_parches_del_detalle(movimientos=[
-            _mov("ajuste", 3, 2, marca="EJ Roja", motivo="EJ aparecieron")])):
-        respuesta = cliente.get("/compras/vacios/7")
-    assert respuesta.status_code == 200
-    marcado = respuesta.text.split("</style>")[-1]
-    assert "/ajuste" not in marcado and "/asignacion" not in marcado
-    assert "/movimiento/" not in marcado, "anular un ajuste tampoco es de Compras"
-    # el movimiento SÍ se ve: esconderlo dejaría el número sin explicar
-    assert "EJ aparecieron" in marcado
-    assert "se carga en Administración" in marcado
+def test_VACIOS_ya_no_existe_bajo_COMPRAS():
+    """Dueño, 29/09: Vacíos del depósito vive en Administración, y Depósito
+    cuenta y devuelve sin clave. Bajo /compras no queda ninguna ruta, y ninguna
+    plantilla manda ahí: un link viejo sería un 404 en el botón."""
+    import app.main as m
+    rutas = [r.path for r in m.app.routes if getattr(r, "path", "").startswith("/compras/vacios")]
+    assert rutas == []
+    assert cliente.get("/compras/vacios").status_code == 404
+    linkean = [str(a) for a in Path("templates").glob("*.html")
+               if "/compras/vacios" in a.read_text(encoding="utf-8")]
+    assert linkean == []
+
 
 
 def test_el_detalle_en_ADMINISTRACION_ofrece_ajuste_asignacion_y_anular():
@@ -502,7 +503,7 @@ def test_el_detalle_en_ADMINISTRACION_ofrece_ajuste_asignacion_y_anular():
 
 def test_el_vale_se_PRECARGA_con_la_sena_de_CADA_pila():
     with _con(_parches_del_detalle(senas={None: 300.0, 71: 800.0})):
-        respuesta = cliente.get("/compras/vacios/7")
+        respuesta = cliente.get("/administracion/vacios/7")
     marcado = respuesta.text.split("</style>")[-1]
     opciones = re.findall(r'<option value="(\d*)"\s+data-sena="([^"]*)"', marcado)
     # LAS TRES pilas, la azul en cero y sin seña: devolver de ahí lo frena el
@@ -556,11 +557,6 @@ def test_un_AJUSTE_que_rebota_vuelve_con_el_AJUSTE_abierto_y_el_error_arriba():
     assert "Decí si sobran o faltan" in marcado
 
 
-def test_en_COMPRAS_solo_devolver_y_marcas_nunca_pasar_ni_ajustar():
-    with _con(_parches_del_detalle()):
-        marcado = cliente.get("/compras/vacios/7").text.split("</style>")[-1]
-    assert _todas(marcado) == ["devolver", "corregir", "movimientos"]
-    assert "Marcas de sus cajones" in marcado and "Corregir una marca" not in marcado
 
 
 def test_el_HISTORIAL_dice_cada_tipo_y_solo_ofrece_anular_lo_que_se_anula():
@@ -621,7 +617,7 @@ def test_en_el_NAVEGADOR_abrir_una_accion_CIERRA_la_que_estaba_abierta():
 
 def test_la_foto_del_vale_es_REQUIRED_en_el_formulario():
     with _con(_parches_del_detalle()):
-        marcado = cliente.get("/compras/vacios/7").text.split("</style>")[-1]
+        marcado = cliente.get("/administracion/vacios/7").text.split("</style>")[-1]
     assert re.search(r'<input id="foto" name="foto" type="file"[^>]*required', marcado)
 
 
@@ -630,14 +626,14 @@ def test_un_proveedor_EN_CERO_se_abre_igual_para_cargarle_marcas():
     parches[1] = patch("app.main.proveedor_para_vacios", return_value={
         "id": 9, "nombre": "Puesto EJEMPLO DOS", "stock": 0, "pilas": []})
     with _con(parches):
-        respuesta = cliente.get("/compras/vacios/9")
+        respuesta = cliente.get("/administracion/vacios/9")
     assert respuesta.status_code == 200
-    assert 'action="/compras/vacios/9/marca"' in respuesta.text
+    assert 'action="/administracion/vacios/9/marca"' in respuesta.text
 
 
 def test_un_proveedor_que_NO_existe_da_404():
     with _con(_parches_del_detalle(proveedores=[])):
-        respuesta = cliente.get("/compras/vacios/999")
+        respuesta = cliente.get("/administracion/vacios/999")
     assert respuesta.status_code == 404
 
 
@@ -647,24 +643,105 @@ def test_el_COTEJO_dice_la_diferencia_y_cierra_en_cero():
              {"proveedor_id": 7, "proveedor": "Puesto EJEMPLO", "marca": None,
               "contado": 12, "fecha": date(2026, 9, 25), "sistema": 12, "diferencia": 0}]
     with patch("app.main.cotejo_de_vacios_deposito", return_value=filas):
-        respuesta = cliente.get("/compras/vacios/cotejo")
+        respuesta = cliente.get("/administracion/vacios/cotejo")
     assert respuesta.status_code == 200
     marcado = respuesta.text.split("</style>")[-1]
     assert "EJ Roja" in marcado and "cierra" in marcado
 
 
-def test_la_pantalla_esta_LINKEADA_desde_el_hub_de_compras():
-    """Una ruta sin botón no la ve nadie, y la suite entera entra por la URL."""
-    hub = io.open("templates/compras.html", encoding="utf-8").read()
-    assert 'href="/compras/vacios"' in hub
+# ---------------------------------------------------------------------------
+# AJUSTAR DESDE EL COTEJO (dueño, 29/09): el botón abre el proveedor con el
+# ajuste desplegado y la diferencia precargada. La URL no lleva números: el
+# server rehace la cuenta con la MISMA función del Cotejo.
+# ---------------------------------------------------------------------------
+
+COTEJO_CON_AJUSTES = [
+    {"proveedor_id": 7, "proveedor": "Puesto EJEMPLO", "marca_id": 71, "marca": "EJ Roja",
+     "contado": 20, "fecha": date(2026, 9, 25), "sistema": 23, "diferencia": 3},
+    {"proveedor_id": 7, "proveedor": "Puesto EJEMPLO", "marca_id": None, "marca": None,
+     "contado": 15, "fecha": date(2026, 9, 26), "sistema": 12, "diferencia": -3},
+    {"proveedor_id": 7, "proveedor": "Puesto EJEMPLO", "marca_id": 72, "marca": "EJ Azul",
+     "contado": 5, "fecha": date(2026, 9, 26), "sistema": 5, "diferencia": 0},
+]
+
+
+def test_la_PROPUESTA_sale_del_signo_de_la_diferencia():
+    from core.movimientos_vacios import propuesta_desde_el_cotejo
+    faltan = propuesta_desde_el_cotejo(COTEJO_CON_AJUSTES, 7, 71)
+    assert (faltan["sentido"], faltan["cantidad"], faltan["marca_id"]) == ("faltan", 3, 71)
+    sobran = propuesta_desde_el_cotejo(COTEJO_CON_AJUSTES, 7, None)
+    assert (sobran["sentido"], sobran["cantidad"], sobran["marca_id"]) == ("sobran", 3, None)
+    assert propuesta_desde_el_cotejo(COTEJO_CON_AJUSTES, 7, 72) is None, "cierra: nada que ajustar"
+    assert propuesta_desde_el_cotejo(COTEJO_CON_AJUSTES, 8, 71) is None, "otro proveedor"
+    assert propuesta_desde_el_cotejo(COTEJO_CON_AJUSTES, 7, 99) is None, "sin conteo"
+
+
+def test_el_COTEJO_ofrece_AJUSTAR_solo_donde_no_cierra_y_sin_numeros_en_la_url():
+    from app.db import SIN_MARCA
+    with patch("app.main.cotejo_de_vacios_deposito", return_value=COTEJO_CON_AJUSTES):
+        marcado = cliente.get("/administracion/vacios/cotejo").text.split("</style>")[-1]
+    links = re.findall(r'<a class="ajustar" href="([^"]+)">Ajustar</a>', marcado)
+    assert links == ["/administracion/vacios/7?abrir=ajustar&amp;pila=71",
+                     f"/administracion/vacios/7?abrir=ajustar&amp;pila={SIN_MARCA}"]
+    assert "Sin marca" in marcado and "sin asignar" not in marcado
+
+
+@pytest.mark.parametrize("pila, marca, sentido", [("71", "71", "faltan"), ("sin", "", "sobran")])
+def test_AJUSTAR_desde_el_cotejo_abre_el_ajuste_con_la_diferencia_PRECARGADA(pila, marca, sentido):
+    with _con(_parches_del_detalle()), \
+         patch("app.main.cotejo_de_vacios_deposito", return_value=COTEJO_CON_AJUSTES):
+        respuesta = cliente.get(f"/administracion/vacios/7?abrir=ajustar&pila={pila}")
+    assert respuesta.status_code == 200
+    marcado = respuesta.text.split("</style>")[-1]
+    assert _abiertas(marcado) == ["ajustar"]
+    ajuste = marcado[marcado.index('id="ajustar"'):marcado.index('id="movimientos"')]
+    elegidas = re.findall(r'<option value="([^"]*)" selected>', ajuste)
+    assert elegidas == [marca, sentido]
+    assert 'name="cantidad" type="number" min="1" step="1" required value="3"' in ajuste
+    # El motivo NO se precarga: es lo único que dice por qué no cerró.
+    motivo = re.search(r'<input id="ajuste_motivo"[^>]*>', ajuste).group(0)
+    assert "value=" not in motivo
+    assert "Del Cotejo:" in ajuste
+
+
+@pytest.mark.parametrize("url", [
+    "/administracion/vacios/7?abrir=ajustar&pila=72",      # esa pila cierra
+    "/administracion/vacios/7?abrir=ajustar&pila=basura",  # no es una pila
+    "/administracion/vacios/7?abrir=pasar&pila=71",        # no pidió ajustar
+])
+def test_sin_DIFERENCIA_no_se_precarga_nada(url):
+    with _con(_parches_del_detalle()), \
+         patch("app.main.cotejo_de_vacios_deposito", return_value=COTEJO_CON_AJUSTES):
+        marcado = cliente.get(url).text.split("</style>")[-1]
+    ajuste = marcado[marcado.index('id="ajustar"'):marcado.index('id="movimientos"')]
+    assert " selected>" not in ajuste and 'value="3"' not in ajuste
+    assert "Del Cotejo:" not in ajuste
+
+
+def test_el_detalle_SIN_pila_no_le_pregunta_al_cotejo():
+    """El Cotejo recorre todas las pilas: pedírselo en cada apertura del detalle
+    sería pagar esa cuenta para nada."""
+    with _con(_parches_del_detalle()), \
+         patch("app.main.cotejo_de_vacios_deposito", side_effect=AssertionError("no")) as cotejo:
+        assert cliente.get("/administracion/vacios/7?abrir=ajustar").status_code == 200
+    assert not cotejo.called
+
+
+def test_la_pantalla_esta_LINKEADA_desde_el_hub_de_ADMINISTRACION():
+    """Una ruta sin botón no la ve nadie, y la suite entera entra por la URL.
+    Que Compras ya no linkee lo afirma `test_VACIOS_ya_no_existe_bajo_COMPRAS`."""
+    admin = io.open("templates/administracion.html", encoding="utf-8").read()
+    assert 'href="/administracion/vacios"' in admin
+
 
 
 def test_el_boton_NO_se_llama_solo_Vacios_porque_el_del_puesto_ya_se_llama_asi():
-    hub = io.open("templates/compras.html", encoding="utf-8").read()
-    etiqueta = re.search(r'href="/compras/vacios">([^<]+)<', hub)
+    hub = io.open("templates/administracion.html", encoding="utf-8").read()
+    etiqueta = re.search(r'href="/administracion/vacios">([^<]+)<', hub)
     assert etiqueta, "no encontré el botón"
     assert etiqueta.group(1).strip() != "Vacíos"
     assert "depósito" in etiqueta.group(1).lower()
+
 
 
 # ---------------------------------------------------------------------------
@@ -696,7 +773,7 @@ def _pantallas_de_vacios(nombre):
     with patch("app.main.stock_de_vacios_deposito", return_value=proveedores), \
          patch("app.main.listar_proveedores", return_value=[{"id": 7, "nombre": nombre}]), \
          patch("app.main.listar_marcas_vacio_por_proveedor", return_value={7: marcas}):
-        indice = cliente.get("/compras/vacios")
+        indice = cliente.get("/administracion/vacios")
     with _con(_parches_del_detalle(proveedores=proveedores, marcas=marcas,
                                    movimientos=movimientos)):
         detalle = cliente.get("/administracion/vacios/7?abrir=movimientos")
@@ -735,14 +812,15 @@ def test_el_503_de_una_puerta_NOMBRA_SU_SECTOR_y_no_Gerencia():
     leía se iba a pedir la clave equivocada: la url era una y los sectores,
     tres (corolario 56).
 
-    Se descubrió acá porque Vacíos es de Compras y su primer POST dio 503.
+    Se descubrió acá porque Vacíos era de Compras y su primer POST dio 503.
+    Desde el 29/09 Vacíos no está bajo /compras, así que prueba con Cajas.
     """
     from app.main import PUERTA_COMPRAS
 
     # Sin la variable cargada: es el único caso que dibuja esta pantalla.
     with patch.dict(os.environ, {"CLAVE_COMPRAS": ""}):
-        respuesta = cliente.post("/compras/vacios/conteo",
-                                 data={"proveedor_id": "7", "cantidad": "30",
+        respuesta = cliente.post("/compras/cajas/conteo-inicial",
+                                 data={"envase_id": "7", "cantidad": "30",
                                        "fecha": "2026-09-18"},
                                  follow_redirects=False)
 
@@ -776,9 +854,9 @@ def test_el_TIPO_DE_CAJON_no_aparece_en_ninguna_pantalla():
     """
     pantallas = {"índice": (_indice(), "Puesto EJEMPLO")}
     with patch("app.main.stock_de_vacios_deposito", return_value=UN_PROVEEDOR):
-        pantallas["stock"] = (cliente.get("/compras/vacios/stock"), "Puesto EJEMPLO")
+        pantallas["stock"] = (cliente.get("/administracion/vacios/stock"), "Puesto EJEMPLO")
     with _con(_parches_del_detalle()):
-        pantallas["detalle"] = (cliente.get("/compras/vacios/7"), 'action="/compras/vacios/7/marca"')
+        pantallas["detalle"] = (cliente.get("/administracion/vacios/7"), 'action="/administracion/vacios/7/marca"')
     with patch("app.main.listar_proveedores_para_abm", return_value=[]):
         pantallas["alta de proveedores"] = (cliente.get("/compras/proveedores"),
                                             'action="/compras/proveedores/nuevo"')
@@ -864,17 +942,10 @@ def test_con_marcas_se_ELIGE_o_se_ESCRIBE():
     assert not re.search(r'name="marca_nueva"[^>]*required', tarjeta)
 
 
-def test_en_COMPRAS_no_hay_tarjeta_de_asignar_ni_link():
-    with _con(_parches_del_detalle(marcas=[])):
-        marcado = cliente.get("/compras/vacios/7").text.split("</style>")[-1]
-    assert 'id="pasar"' not in marcado
-    assert "Asignarles marca" not in _indice().text
-
-
 def test_los_SIN_MARCA_con_cajones_van_RESALTADOS_y_los_en_cero_no():
     en_cero = [{**UN_PROVEEDOR[0], "id": 8, "stock": 23,
                 "pilas": [_pila(None, None, 0), _pila(71, "EJ Roja", 23)]}]
-    for url in ("/compras/vacios", "/administracion/vacios"):
+    for url in ("/administracion/vacios",):
         with patch("app.main.stock_de_vacios_deposito", return_value=UN_PROVEEDOR + en_cero), \
              patch("app.main.listar_proveedores", return_value=[]), \
              patch("app.main.listar_marcas_vacio_por_proveedor", return_value={}):
@@ -923,15 +994,6 @@ def test_JUNTAR_llama_a_la_escritura_y_dice_lo_que_borro():
     assert "Se+borraron+1+asignaciones" in aviso or "Se%20borraron%201" in aviso
 
 
-def test_en_COMPRAS_no_se_renombra_ni_se_junta():
-    with _con(_parches_del_detalle()):
-        marcado = cliente.get("/compras/vacios/7").text.split("</style>")[-1]
-    assert "/renombrar" not in marcado and "/juntar" not in marcado
-    with _con(_parches_del_detalle()):
-        marcado = cliente.get("/administracion/vacios/7").text.split("</style>")[-1]
-    assert marcado.count('/renombrar"') == 2               # una por marca
-
-
 def test_la_tarjeta_de_MOVER_ofrece_salir_de_una_MARCA_y_no_solo_de_sin_marca():
     with _con(_parches_del_detalle()):
         marcado = cliente.get("/administracion/vacios/7").text.split("</style>")[-1]
@@ -952,9 +1014,9 @@ ARRANQUE = {"motivo": "Conteo físico 28/09", "creado_en": datetime(2026, 9, 28,
 def test_el_INDICE_y_el_DETALLE_dicen_de_que_conteo_arranca_la_cuenta():
     with patch("app.main.arranque_de_vacios", return_value=ARRANQUE), \
             patch("app.main.stock_de_vacios_deposito", return_value=list(UN_PROVEEDOR)):
-        indice = cliente.get("/compras/vacios").text.split("</style>")[-1]
+        indice = cliente.get("/administracion/vacios").text.split("</style>")[-1]
     with patch("app.main.arranque_de_vacios", return_value=ARRANQUE), _con(_parches_del_detalle()):
-        detalle = cliente.get("/compras/vacios/7").text.split("</style>")[-1]
+        detalle = cliente.get("/administracion/vacios/7").text.split("</style>")[-1]
     for marcado in (indice, detalle):
         origen, = re.findall(r'<p class="origen">(.*?)</p>', marcado, re.S)
         texto = " ".join(origen.split())
@@ -965,7 +1027,7 @@ def test_el_INDICE_y_el_DETALLE_dicen_de_que_conteo_arranca_la_cuenta():
 
 def test_SIN_arranque_el_cartel_dice_la_foto_del_25_09():
     with patch("app.main.stock_de_vacios_deposito", return_value=list(UN_PROVEEDOR)):
-        marcado = cliente.get("/compras/vacios").text.split("</style>")[-1]
+        marcado = cliente.get("/administracion/vacios").text.split("</style>")[-1]
     origen, = re.findall(r'<p class="origen">(.*?)</p>', marcado, re.S)
     assert "foto del 25/09" in origen
 
@@ -1360,12 +1422,10 @@ def test_el_EXCEL_de_movimientos_dice_lo_MISMO_que_la_pantalla():
     assert "Del 01/03/2026 al 15/03/2026 · Puesto EJEMPLO" == hoja.cell(row=2, column=1).value
 
 
-def test_el_INDICE_de_Administracion_tiene_los_TRES_botones_y_el_de_Compras_no_Movimientos():
+def test_el_INDICE_de_Administracion_tiene_los_TRES_botones():
     with patch("app.main.stock_de_vacios_deposito", return_value=list(UN_PROVEEDOR)):
         admin = cliente.get("/administracion/vacios").text.split("</style>")[-1]
-        compras = cliente.get("/compras/vacios").text.split("</style>")[-1]
     botones = re.findall(r'<a class="boton-stock" href="([^"]+)">([^<]+)</a>', admin)
     assert botones == [("/administracion/vacios/stock", "Exportar"),
                        ("/administracion/vacios/cotejo", "Cotejo"),
                        ("/administracion/vacios/movimientos", "Movimientos")]
-    assert "/movimientos" not in compras

@@ -30680,25 +30680,15 @@ PANTALLAS_SIN_LINK_DECIDIDAS = {
     "/compras/nueva": "DEUDA: renderiza pantalla y nada la linkea (17/09)",
     # Los links existen y los afirma el test de la pantalla sobre el marcado
     # RENDERIZADO (test_cajas_y_vacios_en_administracion.py).
-    "/compras/vacios/stock":
-        "el href se arma con {{ camino.base }}, que un regex literal no ve",
-    "/compras/vacios/stock/excel":
-        "el href se arma con {{ camino.base }}, que un regex literal no ve",
-    "/compras/vacios/stock/pdf":
-        "el href se arma con {{ camino.base }}, que un regex literal no ve",
     "/administracion/vacios/stock":
         "el href se arma con {{ camino.base }}, que un regex literal no ve",
     "/administracion/vacios/stock/excel":
         "el href se arma con {{ camino.base }}, que un regex literal no ve",
     "/administracion/vacios/stock/pdf":
         "el href se arma con {{ camino.base }}, que un regex literal no ve",
-    "/compras/vacios/cotejo":
-        "el href se arma con {{ camino.base }}, que un regex literal no ve",
     "/administracion/vacios/cotejo":
         "el href se arma con {{ camino.base }}, que un regex literal no ve",
     # Lo afirma sobre el marcado RENDERIZADO tests/test_vacios_deposito.py.
-    "/compras/vacios/conteo":
-        "el href se arma con {{ camino.base }}, que un regex literal no ve",
     "/administracion/vacios/conteo":
         "el href se arma con {{ camino.base }}, que un regex literal no ve",
     # Lo afirma sobre el marcado RENDERIZADO test_movimientos_de_cajas.py.

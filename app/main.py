@@ -473,6 +473,7 @@ from core.movimientos_vacios import (
     TEXTO_DE_LA_PUERTA as TEXTO_DE_LA_PUERTA_VACIO,
     TEXTO_DEL_TIPO as TEXTO_DEL_TIPO_VACIO,
     generar_excel_movimientos_vacios_deposito,
+    propuesta_desde_el_cotejo,
     texto_de_cantidad as texto_de_cantidad_vacio,
     texto_de_la_marca as texto_de_la_marca_vacio,
     ventana as ventana_de_movimientos_vacios,
@@ -6598,7 +6599,6 @@ def _renderizar_conteo_vacios(request: Request, *, error: str | None = None,
     )
 
 
-@app.get("/compras/vacios")
 @app.get("/administracion/vacios")
 def ver_vacios_deposito(request: Request, aviso: str | None = None):
     """Los cajones del proveedor que están en el galpón, DERIVADOS en cada lectura.
@@ -6621,7 +6621,6 @@ def _stock_de_vacios_para_listar():
         ) from error_db
 
 
-@app.get("/compras/vacios/stock")
 @app.get("/administracion/vacios/stock")
 def ver_stock_de_vacios_deposito(request: Request):
     """La lista para Excel y PDF: una fila por PILA (proveedor y marca).
@@ -6636,7 +6635,6 @@ def ver_stock_de_vacios_deposito(request: Request):
     )
 
 
-@app.get("/compras/vacios/stock/excel")
 @app.get("/administracion/vacios/stock/excel")
 def exportar_stock_de_vacios_excel():
     hoy = _hoy_argentina()
@@ -6647,7 +6645,6 @@ def exportar_stock_de_vacios_excel():
     )
 
 
-@app.get("/compras/vacios/stock/pdf")
 @app.get("/administracion/vacios/stock/pdf")
 def exportar_stock_de_vacios_pdf():
     hoy = _hoy_argentina()
@@ -6658,7 +6655,6 @@ def exportar_stock_de_vacios_pdf():
     )
 
 
-@app.get("/compras/vacios/cotejo")
 @app.get("/administracion/vacios/cotejo")
 def ver_cotejo_de_vacios(request: Request):
     """El último conteo físico de cada pila contra lo que el sistema dice AHORA."""
@@ -6769,7 +6765,6 @@ def _marca_del_form(texto: str) -> int | None:
     return int(texto) if texto.isdigit() else None
 
 
-@app.get("/compras/vacios/conteo")
 @app.get("/administracion/vacios/conteo")
 @app.get("/deposito/vacios/conteo")
 def ver_conteo_vacios(request: Request, aviso: str | None = None):
@@ -6780,7 +6775,6 @@ def ver_conteo_vacios(request: Request, aviso: str | None = None):
     return _renderizar_conteo_vacios(request, aviso=aviso)
 
 
-@app.post("/compras/vacios/conteo")
 @app.post("/administracion/vacios/conteo")
 @app.post("/deposito/vacios/conteo")
 def cargar_conteo_vacios(request: Request, proveedor_id: str = Form(""),
@@ -6829,7 +6823,7 @@ def cargar_conteo_vacios(request: Request, proveedor_id: str = Form(""),
 def _renderizar_vacios_proveedor(request: Request, proveedor_id: int, *,
                                  error: str | None = None, aviso: str | None = None,
                                  status_code: int = 200, juntar: dict | None = None,
-                                 abierta: str | None = None):
+                                 abierta: str | None = None, pila: str | None = None):
     """El detalle de un proveedor, en TRES ZONAS (dueño, 29/09): el resumen, las
     cuatro acciones que se abren de a una, y el historial cerrado.
 
@@ -6853,6 +6847,15 @@ def _renderizar_vacios_proveedor(request: Request, proveedor_id: int, *,
         movimientos = movimientos_de_vacios(proveedor_id) if fila else []
         senas = sena_por_cajon_de_la_ultima_recepcion(proveedor_id) if fila else {}
         arranque = arranque_de_vacios()
+        # DESDE EL COTEJO: `?pila=` dice qué marca (o "sin"), y el número se
+        # vuelve a calcular acá con la cuenta del Cotejo, no se lee de la URL.
+        propuesta = None
+        if fila and abierta == "ajustar" and pila is not None:
+            marca_de_la_pila = (None if pila == SIN_MARCA_VACIO
+                                else int(pila) if pila.isdigit() else "nada")
+            if marca_de_la_pila != "nada":
+                propuesta = propuesta_desde_el_cotejo(
+                    cotejo_de_vacios_deposito(), proveedor_id, marca_de_la_pila)
     except Exception as error_db:
         raise HTTPException(
             status_code=500, detail=f"Error al conectar con la base de datos: {error_db}"
@@ -6880,8 +6883,7 @@ def _renderizar_vacios_proveedor(request: Request, proveedor_id: int, *,
          "error": error, "aviso": aviso, "juntar": juntar,
          "abierta": ("corregir" if juntar else
                      abierta if abierta in ACCIONES_DEL_DETALLE_DE_VACIOS else None),
-         "arranque": arranque,
-         "es_administracion": camino["sector"] == "administracion",
+         "arranque": arranque, "propuesta": propuesta,
          "camino": camino},
         status_code=status_code,
     )
@@ -6893,15 +6895,15 @@ def _renderizar_vacios_proveedor(request: Request, proveedor_id: int, *,
 ACCIONES_DEL_DETALLE_DE_VACIOS = ("devolver", "pasar", "corregir", "ajustar", "movimientos")
 
 
-@app.get("/compras/vacios/{proveedor_id}")
 @app.get("/administracion/vacios/{proveedor_id}")
 def ver_vacios_de_proveedor(request: Request, proveedor_id: int,
                             error: str | None = None, aviso: str | None = None,
-                            abrir: str | None = None):
+                            abrir: str | None = None, pila: str | None = None):
     """El detalle de un proveedor. `?abrir=` despliega una acción (el índice
-    manda a "pasar" para asignarles marca a los sin marca)."""
+    manda a "pasar" para asignarles marca a los sin marca, y el Cotejo a
+    "ajustar" con `?pila=` para precargar la diferencia)."""
     return _renderizar_vacios_proveedor(request, proveedor_id, error=error, aviso=aviso,
-                                        abierta=abrir)
+                                        abierta=abrir, pila=pila)
 
 
 def _volver_al_proveedor(request: Request, proveedor_id: int, aviso: str,
@@ -6915,7 +6917,6 @@ def _volver_al_proveedor(request: Request, proveedor_id: int, aviso: str,
         status_code=303)
 
 
-@app.post("/compras/vacios/{proveedor_id}/marca")
 @app.post("/administracion/vacios/{proveedor_id}/marca")
 def cargar_marca_vacio(request: Request, proveedor_id: int, nombre: str = Form("")):
     """Una marca de cajón de este proveedor. Recepción solo elige entre éstas."""
@@ -6994,7 +6995,6 @@ async def _guardar_devolucion_de_vacios(proveedor_id: int, marca_vacio_id: str, 
     return cajones, None, 303
 
 
-@app.post("/compras/vacios/{proveedor_id}/devolucion")
 @app.post("/administracion/vacios/{proveedor_id}/devolucion")
 async def cargar_devolucion_vacios(request: Request, proveedor_id: int,
                                    marca_vacio_id: str = Form(""), cantidad: str = Form(""),
@@ -7064,7 +7064,6 @@ async def cargar_devolucion_vacios_deposito(request: Request, proveedor_id: str 
         status_code=303)
 
 
-@app.post("/compras/vacios/devolucion/{devolucion_id}/anular")
 @app.post("/administracion/vacios/devolucion/{devolucion_id}/anular")
 def anular_devolucion_vacios_ruta(request: Request, devolucion_id: int,
                                   proveedor_id: str = Form("")):
@@ -7085,7 +7084,6 @@ def anular_devolucion_vacios_ruta(request: Request, devolucion_id: int,
         status_code=303)
 
 
-@app.get("/compras/vacios/devolucion/{devolucion_id}/foto")
 @app.get("/administracion/vacios/devolucion/{devolucion_id}/foto")
 def ver_foto_del_vale(devolucion_id: int, proveedor_id: int):
     """URL firmada de la foto del vale."""

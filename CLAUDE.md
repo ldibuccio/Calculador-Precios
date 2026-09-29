@@ -4092,8 +4092,8 @@ arrancó", sus "esperando" y la regla de la fecha— **se fue**.
   Salió de `listar_fotos_para_limpiar` y de `olvidar_foto_borrada`. **No se
   devuelve más de lo que dice el sistema**: el freno lee la pila con la fila
   del proveedor bloqueada, y con LA MISMA consulta de la pantalla.
-- **Ajuste y asignación son SOLO de Administración**: no tienen ruta bajo
-  `/compras`, así que los cierra la puerta por prefijo. **La tarjeta de
+- **Ajuste y asignación son SOLO de Administración**, igual que todo Vacíos
+  desde el 29/09 (ver abajo). **La tarjeta de
   asignar sale siempre** desde el 28/09: iba adentro de un `if marcas` y,
   sin marcas cargadas en ningún proveedor, no apareció nunca. Muestra
   cuántos hay sin marca, la marca de destino se elige o se escribe (y
@@ -4128,8 +4128,8 @@ arrancó", sus "esperando" y la regla de la fecha— **se fue**.
 
 - **El detalle de un proveedor va en TRES ZONAS** (dueño, 29/09): el total con
   una fila por marca ("Sin marca" incluida); cuatro acciones que se despliegan
-  de a una (Devolver, Pasar a otra marca, Corregir una marca, Ajustar; en
-  Compras solo Devolver y el alta de marca); y el historial cerrado, "Ver
+  de a una (Devolver, Pasar a otra marca, Corregir una marca, Ajustar); y el
+  historial cerrado, "Ver
   movimientos de este proveedor". `?abrir=` despliega una, y un formulario que
   rebota vuelve con la suya abierta. **El historial sale de
   `movimientos_de_vacios`**: las mismas cinco patas que `_SQL_PILAS_DE_VACIOS`,
@@ -4155,6 +4155,17 @@ arrancó", sus "esperando" y la regla de la fecha— **se fue**.
   dato".
   (`templates/vacios_movimientos.html` es la pantalla de Vacíos del PUESTO:
   la del depósito se llama `compras_vacios_movimientos.html`.)
+
+- **Vacíos del depósito salió de Compras** (dueño, 29/09): no queda ninguna
+  ruta bajo `/compras/vacios` ni el botón del hub de Compras. Vive en
+  Administración, y Depósito cuenta y devuelve sin clave. Lo cuida
+  `test_VACIOS_ya_no_existe_bajo_COMPRAS`, que mira las rutas y que ninguna
+  plantilla linkee ahí. El camino `compras` de `CAMINOS_DE_CAJAS_Y_VACIOS`
+  queda por Cajas. **El Cotejo tiene "Ajustar"** en cada fila que no cierra:
+  abre el proveedor con `?abrir=ajustar&pila=<marca o "sin">`, y el server
+  rehace la diferencia con `cotejo_de_vacios_deposito` para precargar marca,
+  sentido y cantidad (`propuesta_desde_el_cotejo`). La URL no lleva números,
+  y el motivo no se precarga.
 
 - **El ingreso directo tiene SU guía** (`guias_compra.de_deposito`): "nunca
   es parte de la comanda del Puesto". Dos guías por día y proveedor, cada
