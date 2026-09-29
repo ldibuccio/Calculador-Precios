@@ -7,7 +7,7 @@ core/lector_comandas.py.
 
 import os
 import re
-from datetime import timedelta
+from datetime import date, timedelta
 from contextlib import contextmanager
 
 import psycopg2
@@ -16984,8 +16984,16 @@ class DevolucionDeMas(ValueError):
     """
 
 
+# POR QUÉ PUERTA ENTRA UNA DEVOLUCIÓN (dueño, 29/09): el sistema no tiene
+# usuarios, así que se guarda el SECTOR. Es la lista del CHECK
+# `vacios_dev_cargada_desde` (db/vacios_origen_devolucion_1.sql), y un test la
+# lee del .sql para que no se separen.
+PUERTAS_DE_LA_DEVOLUCION = ("deposito", "administracion", "compras")
+
+
 def crear_devolucion_vacios(proveedor_id: int, marca_vacio_id: int | None, cantidad: int,
-                            foto_ruta: str, importe: float | None = None) -> int:
+                            foto_ruta: str, importe: float | None = None, *,
+                            cargada_desde: str) -> int:
     """Le devuelve al proveedor cajones de UNA PILA. Devuelve su id.
 
     SIN COMPRA (dueño, 25/09): la devolución sale de una pila —proveedor y
@@ -16999,7 +17007,13 @@ def crear_devolucion_vacios(proveedor_id: int, marca_vacio_id: int | None, canti
     lee con la fila del proveedor bloqueada y en la misma transacción.
 
     EL IMPORTE NO TOCA `compras.importe` NI EL COSTEO: es plata de envase.
+
+    `cargada_desde` NO TIENE DEFAULT, a propósito: un camino nuevo que se
+    olvide de decir por dónde entró revienta acá en vez de guardar un NULL que
+    se lee igual que una devolución vieja.
     """
+    if cargada_desde not in PUERTAS_DE_LA_DEVOLUCION:
+        raise ValueError(f"Puerta desconocida para una devolución: {cargada_desde!r}.")
     if not (foto_ruta or "").strip():
         raise ValueError("Sin la foto del vale no es una devolución: cargalo como ajuste.")
     conexion = obtener_conexion()
@@ -17016,11 +17030,13 @@ def crear_devolucion_vacios(proveedor_id: int, marca_vacio_id: int | None, canti
                 cursor.execute(
                     """
                     INSERT INTO vacios_deposito_devoluciones
-                        (proveedor_id, marca_vacio_id, cantidad, importe, foto_ruta, stock_sistema)
-                    VALUES (%s, %s, %s, %s, %s, %s)
+                        (proveedor_id, marca_vacio_id, cantidad, importe, foto_ruta,
+                         stock_sistema, cargada_desde)
+                    VALUES (%s, %s, %s, %s, %s, %s, %s)
                     RETURNING id
                     """,
-                    (proveedor_id, marca_vacio_id, cantidad, importe, foto_ruta, hay),
+                    (proveedor_id, marca_vacio_id, cantidad, importe, foto_ruta, hay,
+                     cargada_desde),
                 )
             except psycopg2.errors.ForeignKeyViolation as error:
                 conexion.rollback()
@@ -17147,13 +17163,16 @@ _SQL_MOVIMIENTOS_DE_VACIOS = f"""
         SELECT 'arranque' AS tipo, ap.id, arr.creado_en AS instante, ap.proveedor_id,
                ap.marca_vacio_id AS marca_id, NULL::bigint AS marca_hasta_id,
                ap.cantidad, arr.motivo, NULL::bigint AS compra_id, NULL AS foto_ruta,
-               NULL::numeric AS importe, false AS anulada, false AS antes
+               NULL::numeric AS importe, false AS anulada, false AS antes,
+               'conteo'::text AS cargada_desde
           FROM vacios_deposito_arranque_pilas ap
           JOIN arr ON arr.id = ap.arranque_id
         UNION ALL
         SELECT 'entrada', co.id, co.procesada_el, co.proveedor_id, co.marca_vacio_id, NULL,
                COALESCE(co.cantidad_cajones_real, co.cantidad_cajones), NULL, co.id, NULL,
-               co.sena, false, COALESCE(co.procesada_el <= (SELECT creado_en FROM arr), false)
+               co.sena, false, COALESCE(co.procesada_el <= (SELECT creado_en FROM arr), false),
+               CASE WHEN co.retiro_origen = 'ingreso_directo' THEN 'deposito'
+                    ELSE 'recepcion' END
           FROM compras co
          WHERE co.estado = 'recepcionado'
            AND co.procesada_el IS NOT NULL
@@ -17162,24 +17181,27 @@ _SQL_MOVIMIENTOS_DE_VACIOS = f"""
         SELECT 'devolucion', d.id, d.creado_en, d.proveedor_id, d.marca_vacio_id, NULL,
                -d.cantidad, NULL, d.compra_id, d.foto_ruta, d.importe,
                d.anulado_el IS NOT NULL,
-               COALESCE(d.creado_en <= (SELECT creado_en FROM arr), false)
+               COALESCE(d.creado_en <= (SELECT creado_en FROM arr), false),
+               d.cargada_desde
           FROM vacios_deposito_devoluciones d
         UNION ALL
         SELECT 'ajuste', a.id, a.creado_en, a.proveedor_id, a.marca_vacio_id, NULL,
                a.cantidad, a.motivo, NULL, NULL, NULL, a.anulado_el IS NOT NULL,
-               COALESCE(a.creado_en <= (SELECT creado_en FROM arr), false)
+               COALESCE(a.creado_en <= (SELECT creado_en FROM arr), false),
+               'administracion'
           FROM vacios_deposito_ajustes a
         UNION ALL
         SELECT 'asignacion', s.id, s.creado_en, s.proveedor_id, s.marca_desde_id,
                s.marca_hasta_id, s.cantidad, NULL, NULL, NULL, NULL,
                s.anulado_el IS NOT NULL,
-               COALESCE(s.creado_en <= (SELECT creado_en FROM arr), false)
+               COALESCE(s.creado_en <= (SELECT creado_en FROM arr), false),
+               'administracion'
           FROM vacios_deposito_asignaciones s
     )
     SELECT x.tipo, x.id, x.instante AT TIME ZONE 'America/Argentina/Buenos_Aires',
            x.proveedor_id, p.nombre, x.marca_id, md.nombre, mh.nombre,
            x.cantidad, x.motivo, x.compra_id, ar.nombre, x.foto_ruta, x.importe,
-           x.anulada, x.antes
+           x.anulada, x.antes, x.cargada_desde
       FROM x
       JOIN proveedores p        ON p.id = x.proveedor_id
       LEFT JOIN marcas_vacio md ON md.id = x.marca_id
@@ -17187,6 +17209,13 @@ _SQL_MOVIMIENTOS_DE_VACIOS = f"""
       LEFT JOIN compras c       ON c.id = x.compra_id
       LEFT JOIN articulos ar    ON ar.id = c.articulo_id
      WHERE (%(proveedor_id)s::bigint IS NULL OR x.proveedor_id = %(proveedor_id)s)
+       AND (%(desde)s::date IS NULL
+            OR (x.instante AT TIME ZONE 'America/Argentina/Buenos_Aires')::date >= %(desde)s)
+       AND (%(hasta)s::date IS NULL
+            OR (x.instante AT TIME ZONE 'America/Argentina/Buenos_Aires')::date <= %(hasta)s)
+       AND (NOT %(filtrar_marca)s
+            OR x.marca_id IS NOT DISTINCT FROM %(marca_id)s::bigint
+            OR x.marca_hasta_id IS NOT DISTINCT FROM %(marca_id)s::bigint)
      ORDER BY x.instante DESC, x.tipo, x.id DESC
      LIMIT %(limite)s
 """
@@ -17194,21 +17223,35 @@ _SQL_MOVIMIENTOS_DE_VACIOS = f"""
 COLUMNAS_MOVIMIENTOS_DE_VACIOS = (
     "tipo", "id", "instante", "proveedor_id", "proveedor", "marca_id", "marca",
     "marca_hasta", "cantidad", "motivo", "compra_id", "articulo", "foto_ruta",
-    "importe", "anulada", "antes_del_arranque",
+    "importe", "anulada", "antes_del_arranque", "cargada_desde",
 )
 
 
-def movimientos_de_vacios(proveedor_id: int | None = None, limite: int = 50) -> list[dict]:
+# La marca de un filtro: "todas" no filtra; SIN_MARCA es la pila sin marca
+# (NULL), que no se puede pedir con un id.
+SIN_MARCA = "sin"
+
+
+def movimientos_de_vacios(proveedor_id: int | None = None, limite: int | None = 50, *,
+                          desde: date | None = None, hasta: date | None = None,
+                          marca: int | str | None = None) -> list[dict]:
     """Los movimientos de vacíos, el más nuevo primero. Ver `_SQL_MOVIMIENTOS_DE_VACIOS`.
 
     Se leen POR NOMBRE (`COLUMNAS_MOVIMIENTOS_DE_VACIOS`): un lector por
     índice no nombra ninguna columna y se desfasa en silencio.
+
+    `desde` y `hasta` son días de Argentina, los dos incluidos. `marca` es un
+    id, `SIN_MARCA` o None (todas); un PASE entra si sale o llega a esa marca.
+    `limite` None trae todo: lo usa el Excel.
     """
     conexion = obtener_conexion()
     try:
         with conexion.cursor() as cursor:
             cursor.execute(_SQL_MOVIMIENTOS_DE_VACIOS,
-                           {"proveedor_id": proveedor_id, "limite": limite})
+                           {"proveedor_id": proveedor_id, "limite": limite,
+                            "desde": desde, "hasta": hasta,
+                            "filtrar_marca": marca is not None,
+                            "marca_id": None if marca in (None, SIN_MARCA) else int(marca)})
             filas = cursor.fetchall()
     finally:
         conexion.close()

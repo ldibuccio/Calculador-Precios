@@ -127,9 +127,9 @@ def test_no_se_DEVUELVE_mas_de_lo_que_dice_el_sistema_y_no_se_escribe_nada(base)
     # Es su PROPIA clase (sigue siendo un ValueError): Depósito la atrapa y
     # dice otra cosa, porque este texto trae el número del stock (29/09).
     with pytest.raises(db.DevolucionDeMas, match="hay 3 cajones"):
-        db.crear_devolucion_vacios(901, None, 4, foto_ruta="vale.jpg")
+        db.crear_devolucion_vacios(901, None, 4, foto_ruta="vale.jpg", cargada_desde="administracion")
     assert _pilas(901)[0][None] == 3
-    db.crear_devolucion_vacios(901, None, 3, foto_ruta="vale.jpg", importe=2400)
+    db.crear_devolucion_vacios(901, None, 3, foto_ruta="vale.jpg", importe=2400, cargada_desde="administracion")
     pilas, total = _pilas(901)
     assert pilas[None] == 0 and total == 11
     # la pila que llegó a cero porque se devolvió todo SIGUE a la vista
@@ -139,7 +139,7 @@ def test_no_se_DEVUELVE_mas_de_lo_que_dice_el_sistema_y_no_se_escribe_nada(base)
 def test_sin_FOTO_no_es_una_devolucion(base):
     import app.db as db
     with pytest.raises(ValueError, match="ajuste"):
-        db.crear_devolucion_vacios(901, 911, 1, foto_ruta="  ")
+        db.crear_devolucion_vacios(901, 911, 1, foto_ruta="  ", cargada_desde="administracion")
     assert _pilas(901)[0]["EJ Roja"] == 11
 
 

@@ -1,0 +1,154 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Movimientos de vacíos</title>
+<style>
+  :root { font-family: -apple-system, system-ui, sans-serif; }
+  body { margin: 0; padding: 1rem; background: #f5f5f5; color: #222; }
+  h2 { font-size: 1.05rem; margin: 0 0 0.75rem; }
+  .tarjeta { background: #fff; border-radius: 10px; padding: 1rem;
+             margin-bottom: 1rem; box-shadow: 0 1px 3px rgba(0,0,0,.1); }
+  .error { background: #fee2e2; color: #991b1b; padding: .75rem 1rem;
+           border-radius: 8px; margin-bottom: 1rem; font-size: .95rem; }
+  .fila { display: flex; flex-wrap: wrap; gap: .5rem; align-items: flex-end; }
+  .campo { display: flex; flex-direction: column; flex: 1 1 9rem; min-width: 0; }
+  label { font-size: .85rem; margin-bottom: .2rem; }
+  /* `min-width: 0`: un input adentro de un flex no baja de su ancho
+     intrínseco, y lo que cede es lo de al lado. */
+  input, select { font-size: 1rem; padding: .6rem; min-height: 44px; min-width: 0;
+                  border: 1px solid #cbd5e1; border-radius: 8px; background: #fff; }
+  .botones { display: flex; flex-wrap: wrap; gap: .5rem; margin-top: .75rem; }
+  button, .exportar { flex: 1 1 9rem; font-size: 1rem; min-height: 44px; border-radius: 8px;
+                      font-weight: 600; box-sizing: border-box; }
+  button { border: 0; background: #2563eb; color: #fff; padding: .7rem 1rem; }
+  .exportar { display: flex; align-items: center; justify-content: center;
+              background: #e5e7eb; color: #111; text-decoration: none; padding: 0 .75rem; }
+  .ayuda { font-size: .82rem; color: #6b7280; margin: .5rem 0 0; }
+  .vale { border-top: 1px solid #e5e7eb; padding: .7rem 0; }
+  .vale:first-of-type { border-top: 0; }
+  .vale-cabeza { display: flex; flex-wrap: wrap; gap: .4rem; align-items: baseline; }
+  .vale-cantidad { font-size: 1.05rem; font-weight: 700; }
+  .vale-cantidad.suma { color: #15803d; }
+  .vale-cantidad.resta { color: #b91c1c; }
+  /* El proveedor y la marca los tipea una persona: sin esto, uno sin espacios
+     arrastra la pantalla de costado. */
+  .vale-que { font-size: 1rem; overflow-wrap: anywhere; min-width: 0; }
+  .vale-dato { font-size: .85rem; color: #555; overflow-wrap: anywhere; margin-top: .15rem; }
+  .vale.anulada .vale-cantidad, .vale.anulada .vale-que, .vale.anulada .vale-dato {
+    color: #9ca3af; text-decoration: line-through; }
+  .etiqueta-anulada { background: #f3f4f6; color: #6b7280; border-radius: 6px;
+                      padding: .1rem .45rem; font-size: .78rem; text-decoration: none; }
+  .ir { display: inline-block; min-height: 44px; line-height: 44px; color: #1d4ed8;
+        text-decoration: underline; font-size: .9rem; }
+  .vacio { color: #6b7280; font-size: .95rem; }
+  .corte { background: #fef3c7; color: #92400e; padding: .6rem .75rem;
+           border-radius: 8px; margin: 0 0 .75rem; font-size: .9rem; }
+</style>
+</head>
+<body>
+{% set barra_sector = "administracion" %}
+{% set barra_titulo = "Movimientos de vacíos" %}
+{% set barra_atras = "/administracion/vacios" %}
+{% include "_barra_navegacion.html" %}
+{% import "_movimiento_vacio.html" as movimiento %}
+
+{% if filtros.error %}<div class="error">{{ filtros.error }}</div>{% endif %}
+
+<form class="tarjeta" method="get" action="/administracion/vacios/movimientos">
+  <div class="fila">
+    <div class="campo">
+      <label for="desde">Desde</label>
+      <input id="desde" name="desde" type="date" value="{{ filtros.desde.isoformat() }}">
+    </div>
+    <div class="campo">
+      <label for="hasta">Hasta</label>
+      <input id="hasta" name="hasta" type="date" value="{{ filtros.hasta.isoformat() }}">
+    </div>
+    <div class="campo">
+      <label for="proveedor_id">Proveedor</label>
+      <select id="proveedor_id" name="proveedor_id">
+        <option value="">Todos</option>
+        {% for p in proveedores %}
+        <option value="{{ p.id }}"{% if p.id == filtros.proveedor_id %} selected{% endif %}>{{ p.nombre }}</option>
+        {% endfor %}
+      </select>
+    </div>
+    <div class="campo">
+      <label for="marca">Marca</label>
+      {# Las marcas son de UN proveedor: sin proveedor elegido no hay cuáles
+         ofrecer, y "Sin marca" de todos a la vez tampoco nombra una pila. #}
+      <select id="marca" name="marca"{% if filtros.proveedor_id is none %} disabled{% endif %}>
+        <option value="">Todas</option>
+        {% if filtros.proveedor_id is not none %}
+        <option value="{{ sin_marca }}"{% if filtros.marca == sin_marca %} selected{% endif %}>Sin marca</option>
+        {% for m in marcas_por_proveedor.get(filtros.proveedor_id|string, []) %}
+        <option value="{{ m.id }}"{% if m.id == filtros.marca %} selected{% endif %}>{{ m.nombre }}</option>
+        {% endfor %}
+        {% endif %}
+      </select>
+    </div>
+  </div>
+  <div class="botones">
+    <button type="submit">Buscar</button>
+    {% if not filtros.error %}
+    <a class="exportar" href="/administracion/vacios/movimientos/excel?{{ consulta }}">Exportar a Excel</a>
+    {% endif %}
+  </div>
+  <p class="ayuda">Hasta 90 días por búsqueda. El Excel baja lo que está filtrado.</p>
+</form>
+
+{% if not filtros.error %}
+<div class="tarjeta">
+  <h2>{{ movimientos|length }}{% if cortado %}+{% endif %} {{ "movimiento" if movimientos|length == 1 and not cortado else "movimientos" }}</h2>
+  {% if cortado %}
+  <p class="corte">Se muestran los {{ limite }} más nuevos. Achicá las fechas, o bajá el Excel, que trae todos.</p>
+  {% endif %}
+  {% for m in movimientos %}
+  <div class="vale {% if m.anulada %}anulada{% endif %}" data-tipo="{{ m.tipo }}">
+    {{ movimiento.renglon(m, con_proveedor=True) }}
+    {# EL REGISTRO DE CADA FILA: el vale de la devolución, o el proveedor con su
+       historial abierto. La COMPRA no se linkea: su detalle vive bajo la clave
+       de Compras, y desde Administración el link chocaría contra una clave
+       ajena (corolario 56). Su número va en el renglón. #}
+    {% if m.tipo == "devolucion" and m.foto_ruta %}
+    <a class="ir" href="/administracion/vacios/devolucion/{{ m.id }}/foto?proveedor_id={{ m.proveedor_id }}">Ver el vale</a>
+    {% elif m.tipo != "entrada" %}
+    <a class="ir" href="/administracion/vacios/{{ m.proveedor_id }}?abrir=movimientos">Ver en el proveedor</a>
+    {% endif %}
+  </div>
+  {% else %}
+  <p class="vacio">No hubo movimientos con esos filtros.</p>
+  {% endfor %}
+</div>
+{% endif %}
+
+<script>
+  // LA MARCA DEPENDE DEL PROVEEDOR: al cambiarlo se ofrecen las suyas.
+  (function () {
+    var marcas = {{ marcas_por_proveedor|tojson }};
+    var proveedor = document.getElementById("proveedor_id");
+    var marca = document.getElementById("marca");
+    proveedor.addEventListener("change", function () {
+      marca.innerHTML = "";
+      var todas = document.createElement("option");
+      todas.value = ""; todas.textContent = "Todas";
+      marca.appendChild(todas);
+      marca.disabled = !proveedor.value;
+      if (!proveedor.value) return;
+      var sin = document.createElement("option");
+      sin.value = {{ sin_marca|tojson }}; sin.textContent = "Sin marca";
+      marca.appendChild(sin);
+      (marcas[proveedor.value] || []).forEach(function (m) {
+        var o = document.createElement("option");
+        o.value = m.id; o.textContent = m.nombre;
+        marca.appendChild(o);
+      });
+    });
+  })();
+</script>
+
+{% include "_pie_version.html" %}
+</body>
+</html>

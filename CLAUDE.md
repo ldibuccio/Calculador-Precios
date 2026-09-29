@@ -4138,6 +4138,24 @@ arrancó", sus "esperando" y la regla de la fecha— **se fue**.
   base sin arranque (Palmala) no marca como "antes" lo anterior a la foto: esa
   base no vota.
 
+- **El índice de Administración tiene tres botones** (dueño, 29/09):
+  Exportar, Cotejo y Movimientos. "Cargar un conteo" pasó al Cotejo.
+  **Movimientos** (`/administracion/vacios/movimientos`) filtra por fecha,
+  proveedor y marca: 30 días por defecto y 90 como máximo
+  (`core/movimientos_vacios.py`). Con más de 90 no consulta y lo dice. La
+  consulta es la misma del historial del detalle, y el renglón se dibuja una
+  vez (`templates/_movimiento_vacio.html`). La marca filtra por la de salida
+  Y la de llegada, así un pase aparece en las dos. La compra no lleva link,
+  porque su detalle está detrás de la clave de Compras (corolario 56). El
+  Excel baja lo filtrado, sin tope. **"Por dónde entró" es el SECTOR, no
+  quién**: conteo, Recepción, Depósito (ingreso directo), Administración o
+  Compras. La devolución lo guarda en `cargada_desde` (migración del 29/09,
+  en las dos bases), sin default en la escritura: un camino que se olvide de
+  decirlo es un TypeError. Las 13 devoluciones viejas de Frutamax dicen "sin
+  dato".
+  (`templates/vacios_movimientos.html` es la pantalla de Vacíos del PUESTO:
+  la del depósito se llama `compras_vacios_movimientos.html`.)
+
 - **El ingreso directo tiene SU guía** (`guias_compra.de_deposito`): "nunca
   es parte de la comanda del Puesto". Dos guías por día y proveedor, cada
   una numera sus renglones. El origen no se elige: sale de la compra

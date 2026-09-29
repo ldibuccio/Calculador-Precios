@@ -1,0 +1,22 @@
+{# UN MOVIMIENTO DE VACÍOS, escrito UNA vez (29/09): lo dibujan el historial del
+   detalle de un proveedor y la pantalla de Movimientos. Las palabras salen de
+   core/movimientos_vacios.py, que es también lo que usa el Excel, así la
+   pantalla y el archivo no pueden decir cosas distintas.
+
+   `con_proveedor` lo pone Movimientos, que mezcla proveedores; el detalle ya
+   dice de quién es en la barra. #}
+{% macro renglon(m, con_proveedor=False) %}
+<div class="vale-cabeza">
+  <span class="vale-cantidad {% if m.tipo in ('entrada', 'devolucion', 'ajuste') %}{{ 'suma' if m.cantidad > 0 else 'resta' }}{% endif %}">
+    {{- texto_de_cantidad_vacio(m) }}</span>
+  <span class="vale-que">{{ texto_del_tipo_vacio[m.tipo] }}
+    {%- if con_proveedor %} · {{ m.proveedor }}{% endif %} · {{ texto_de_la_marca_vacio(m) }}</span>
+  {% if m.anulada %}<span class="etiqueta-anulada">anulado</span>
+  {% elif m.antes_del_arranque %}<span class="etiqueta-anulada">antes del conteo: no cuenta</span>{% endif %}
+</div>
+<div class="vale-dato">{{ m.fecha.strftime('%d/%m/%Y') if m.fecha }} · {{ texto_de_la_puerta_vacio.get(m.cargada_desde, m.cargada_desde) }}
+  {%- if m.tipo == "arranque" and m.motivo %} · {{ m.motivo }}
+  {%- elif m.tipo == "entrada" %} · compra #{{ m.compra_id }}{% if m.articulo %} · {{ m.articulo }}{% endif %} · se corrige desde la compra
+  {%- elif m.tipo == "devolucion" %}{% if m.importe is not none %} · ${{ '{:,.0f}'.format(m.importe).replace(',', '.') }}{% endif %}{% if m.foto_ruta %} · vale cargado{% endif %}{% if m.compra_id and m.articulo %} · contra {{ m.articulo }}{% endif %}
+  {%- elif m.tipo == "ajuste" %} · {{ m.motivo }}{% endif %}</div>
+{% endmacro %}

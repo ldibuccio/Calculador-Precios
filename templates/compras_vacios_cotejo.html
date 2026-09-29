@@ -23,6 +23,9 @@
   .ayuda { font-size: .88rem; color: #1e3a8a; background: #eff6ff;
            padding: .6rem .75rem; border-radius: 8px; margin-bottom: 1rem; }
   .vacio { color: #6b7280; }
+  .contar { display: flex; align-items: center; justify-content: center; min-height: 44px;
+            margin-bottom: 1rem; border-radius: 8px; background: #2e8c57; color: #fff;
+            font-weight: 600; text-decoration: none; }
 </style>
 </head>
 <body>
@@ -31,6 +34,10 @@
 {% set barra_atras = camino.base ~ "/vacios" %}
 {% from "_info.html" import info %}
 {% include "_barra_navegacion.html" %}
+
+{# CONTAR VIVE ACÁ desde el 29/09: el índice quedó con Exportar, Cotejo y
+   Movimientos. El conteo sigue en SU pantalla, que no muestra el stock. #}
+<a class="contar" href="{{ camino.base }}/vacios/conteo">Cargar un conteo</a>
 
 <p class="ayuda"><strong>Diferencia = sistema − contado</strong>: <strong>positiva, el sistema dice que hay más de los que hay</strong>. {% call info("Cómo se compara") %}El último conteo de cada marca contra lo que el sistema dice <strong>hoy</strong>.{% endcall %}</p>
 

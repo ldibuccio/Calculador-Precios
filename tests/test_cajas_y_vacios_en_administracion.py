@@ -86,11 +86,11 @@ UNOS_MOVIMIENTOS = [
     {"tipo": "devolucion", "id": 11, "cantidad": -5, "fecha": date(2026, 9, 18),
      "importe": 1000.0, "articulo": None, "compra_id": None, "marca": "EJ Roja",
      "marca_hasta": None, "motivo": None, "anulada": False, "antes_del_arranque": False,
-     "foto_ruta": "2026-09-18/vale.jpg"},
+     "foto_ruta": "2026-09-18/vale.jpg", "cargada_desde": "administracion"},
     {"tipo": "ajuste", "id": 21, "cantidad": 2, "fecha": date(2026, 9, 25),
      "importe": None, "articulo": None, "compra_id": None, "marca": None,
      "marca_hasta": None, "motivo": "EJ aparecieron", "anulada": False,
-     "antes_del_arranque": False, "foto_ruta": None},
+     "antes_del_arranque": False, "foto_ruta": None, "cargada_desde": "administracion"},
 ]
 UN_COTEJO = [{"proveedor_id": 7, "proveedor": "Puesto EJEMPLO", "marca_id": 71,
               "marca": "EJ Roja", "contado": 20, "fecha": date(2026, 9, 25),

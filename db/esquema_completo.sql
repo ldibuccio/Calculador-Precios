@@ -864,6 +864,9 @@ create table vacios_deposito_devoluciones (
     stock_sistema  integer not null,
     creado_en      timestamptz not null default now(),
     anulado_el     timestamptz,
+    cargada_desde  text,
+    constraint vacios_dev_cargada_desde check (cargada_desde is null
+        or cargada_desde in ('deposito', 'administracion', 'compras')),
     -- SIN FOTO NO ES UNA DEVOLUCIÓN (dueño, 25/09): lo que no tiene foto es un
     -- ajuste. Las viejas (contra una COMPRA, modelo anterior al 25/09) quedan
     -- eximidas: con NOT VALID no se podían ni anular (vacios_marcas_7).
@@ -875,6 +878,7 @@ comment on column vacios_deposito_devoluciones.compra_id is 'Solo en las devoluc
 comment on column vacios_deposito_devoluciones.importe is 'Lo que ese vale descuenta, si tiene importe. NO toca compras.importe ni el costeo: el descuento vive SOLO acá. NULLABLE porque una devolución puede no tener plata atrás.';
 comment on column vacios_deposito_devoluciones.stock_sistema is 'Stock de la PILA de la que sale (sin este movimiento) EN el instante de guardar. Mismo criterio que vacios_devueltos del puesto.';
 comment on column vacios_deposito_devoluciones.anulado_el is 'NULL = vigente. Se anula, nunca se borra: el stock lo excluye y el registro queda como corrección.';
+comment on column vacios_deposito_devoluciones.cargada_desde is 'Por qué puerta entró la devolución: deposito, administracion o compras. NULL en las cargadas antes de esta columna: no hay de dónde deducirlo. El sistema no tiene usuarios, así que dice el SECTOR y no la persona.';
 
 create table conteos_vacios_deposito (
     id             bigint generated always as identity primary key,

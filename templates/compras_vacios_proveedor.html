@@ -112,6 +112,7 @@
 {% set barra_titulo = p.nombre %}
 {% set barra_atras = camino.base ~ "/vacios" %}
 {% from "_info.html" import info %}
+{% import "_movimiento_vacio.html" as movimiento %}
 {% include "_barra_navegacion.html" %}
 
 {% if error %}<div class="error">{{ error }}</div>{% endif %}
@@ -313,26 +314,7 @@
   <summary><strong>Ver movimientos de este proveedor</strong></summary>
   {% for m in movimientos %}
   <div class="vale {% if m.anulada %}anulada{% endif %}" data-tipo="{{ m.tipo }}">
-    {# COMO LA MAQUETA APROBADA (29/09): el número con su signo adelante y en
-       color, lo que es y la marca; abajo la fecha y el dato que lo explica. #}
-    {% set marca = m.marca or "Sin marca" %}
-    <div class="vale-cabeza">
-      <span class="vale-cantidad {% if m.tipo in ('entrada', 'devolucion', 'ajuste') %}{{ 'suma' if m.cantidad > 0 else 'resta' }}{% endif %}">
-        {%- if m.tipo in ("entrada", "ajuste") and m.cantidad > 0 %}+{% endif %}{{ m.cantidad }}</span>
-      <span class="vale-que">
-      {%- if m.tipo == "arranque" %}Conteo físico · {{ marca }}
-      {%- elif m.tipo == "entrada" %}Compra con seña #{{ m.compra_id }} · {{ marca }}
-      {%- elif m.tipo == "devolucion" %}Devolución · {{ marca }}
-      {%- elif m.tipo == "ajuste" %}Ajuste · {{ marca }}
-      {%- else %}Pase {{ marca }} → {{ m.marca_hasta or "Sin marca" }}{% endif %}</span>
-      {% if m.anulada %}<span class="etiqueta-anulada">anulado</span>
-      {% elif m.antes_del_arranque %}<span class="etiqueta-anulada">antes del conteo: no cuenta</span>{% endif %}
-    </div>
-    <div class="vale-dato">{{ m.fecha.strftime('%d/%m/%Y') if m.fecha }}
-      {%- if m.tipo == "arranque" and m.motivo %} · {{ m.motivo }}
-      {%- elif m.tipo == "entrada" %}{% if m.articulo %} · {{ m.articulo }}{% endif %} · se corrige desde la compra
-      {%- elif m.tipo == "devolucion" %}{% if m.importe is not none %} · ${{ '{:,.0f}'.format(m.importe).replace(',', '.') }}{% endif %}{% if m.foto_ruta %} · vale cargado{% endif %}{% if m.compra_id and m.articulo %} · contra {{ m.articulo }}{% endif %}
-      {%- elif m.tipo == "ajuste" %} · {{ m.motivo }}{% endif %}</div>
+    {{ movimiento.renglon(m) }}
     {# Lo de antes del arranque no se anula: ya no mueve el stock, y `_anular`
        lo rechaza igual si llega por un POST a mano. Una entrada se corrige
        desde su compra: no tiene fila propia que anular. #}

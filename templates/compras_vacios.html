@@ -81,12 +81,16 @@
 {% if error %}<div class="error">{{ error }}</div>{% endif %}
 {% if aviso %}<div class="aviso">{{ aviso }}</div>{% endif %}
 
+{# LOS TRES BOTONES DE ADMINISTRACIÓN (dueño, 29/09): Exportar, Cotejo y
+   Movimientos. Contar se mudó al Cotejo, que es donde se lee lo contado, y
+   lo cuenta Depósito desde su menú. Movimientos es solo de Administración:
+   desde Compras el link chocaría contra una clave ajena (corolario 56). #}
 <div class="botones">
-  <a class="boton-stock" href="{{ camino.base }}/vacios/stock">Stock: lista para Excel y PDF</a>
-  <a class="boton-stock" href="{{ camino.base }}/vacios/cotejo">Cotejo: lo contado contra el sistema</a>
-  {# Contar va en SU pantalla: acá abajo está el stock de cada pila, y el que
-     cuenta no lo tiene que ver (dueño, 27/09). #}
-  <a class="boton-stock" href="{{ camino.base }}/vacios/conteo">Contar vacíos</a>
+  <a class="boton-stock" href="{{ camino.base }}/vacios/stock">Exportar</a>
+  <a class="boton-stock" href="{{ camino.base }}/vacios/cotejo">Cotejo</a>
+  {% if camino.sector == "administracion" %}
+  <a class="boton-stock" href="/administracion/vacios/movimientos">Movimientos</a>
+  {% endif %}
 </div>
 
 {% include "_origen_vacios.html" %}
@@ -101,7 +105,7 @@
   <div class="pilas">
     {% for pila in p.pilas %}
     <div class="pila{% if not pila.marca and pila.stock %} sin-marca{% endif %}">
-      <span class="pila-marca {% if not pila.marca %}sin-asignar{% endif %}">{{ pila.marca or "sin asignar" }}</span>
+      <span class="pila-marca {% if not pila.marca %}sin-asignar{% endif %}">{{ pila.marca or "Sin marca" }}</span>
       <span class="pila-stock">{{ pila.stock|numero }}</span>
     </div>
     {% endfor %}
