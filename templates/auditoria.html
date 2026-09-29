@@ -146,7 +146,7 @@
     Pasaron más de {{ horas_vencimiento }} horas: el cálculo automático no está corriendo. Lo que ves puede estar desactualizado.
   </div>
   {% else %}
-  <div class="frescura">Calculadas {{ frescura.texto }}. Se recalculan solas dos veces por día.</div>
+  <div class="frescura">Calculadas {{ frescura.texto }}. Se recalculan solas cada {{ horas_recalculo }} horas.</div>
   {% endif %}
 
   <form method="post" action="/auditoria/recalcular">

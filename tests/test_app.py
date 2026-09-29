@@ -14011,6 +14011,21 @@ def test_auditoria_muestra_siempre_de_cuando_es_la_foto():
     assert "Recalcular ahora" in respuesta.text
 
 
+def test_auditoria_dice_CADA_CUANTO_se_recalcula_con_el_numero_del_bucle():
+    """Decía "dos veces por día" y el bucle recalcula cada HORAS_RECALCULO (6).
+
+    El número sale de la constante que usa `hay_que_recalcular`, no escrito a
+    mano: si cambia el intervalo, la pantalla lo sigue sola.
+    """
+    from app.alertas import HORAS_RECALCULO
+
+    with patch("app.main.listar_estado_alertas", return_value=_foto_alertas()):
+        respuesta = cliente.get("/auditoria")
+    texto = respuesta.text.split("</style>")[-1]
+    assert f"Se recalculan solas cada {HORAS_RECALCULO} horas." in texto
+    assert "dos veces por día" not in texto
+
+
 def test_auditoria_avisa_fuerte_cuando_el_calculo_automatico_se_murio():
     """La trampa del 25/08: "no hay problemas" y "no se está calculando" no pueden verse iguales."""
     vieja = datetime.now(ARGENTINA_TEST) - timedelta(hours=40)
