@@ -12,6 +12,8 @@
              margin-bottom: 1rem; box-shadow: 0 1px 3px rgba(0,0,0,.1); }
   .error { background: #fee2e2; color: #991b1b; padding: .75rem 1rem;
            border-radius: 8px; margin-bottom: 1rem; font-size: .95rem; }
+  .aviso { background: #dcfce7; color: #166534; padding: .75rem 1rem;
+           border-radius: 8px; margin-bottom: 1rem; font-size: .95rem; }
   .fila { display: flex; flex-wrap: wrap; gap: .5rem; align-items: flex-end; }
   .campo { display: flex; flex-direction: column; flex: 1 1 8rem; min-width: 0; }
   label { font-size: .85rem; margin-bottom: .2rem; }
@@ -29,10 +31,11 @@
 
 {% set barra_sector = camino.sector %}
 {% set barra_titulo = "Contar vacíos" %}
-{% set barra_atras = camino.base ~ "/vacios" %}
+{% set barra_atras = volver %}
 {% include "_barra_navegacion.html" %}
 
 {% if error %}<div class="error">{{ error }}</div>{% endif %}
+{% if aviso %}<div class="aviso">{{ aviso }}</div>{% endif %}
 
 {# ESTA PANTALLA NO MUESTRA NINGÚN NÚMERO DEL SISTEMA, ni en el HTML (dueño,
    27/09): el que cuenta, si ve cuántos dice el sistema, transcribe en vez de

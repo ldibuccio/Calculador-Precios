@@ -4116,6 +4116,10 @@ arrancó", sus "esperando" y la regla de la fecha— **se fue**.
   27/09): hasta ese día el formulario estaba en el índice, arriba del stock de
   cada pila, y el que cuenta veía el número. La pantalla nueva no LEE el stock,
   así que tampoco puede quedar escondido en el HTML.
+  **Depósito la abre sin clave** desde el 29/09 (dueño): botón "Stock Vacíos"
+  debajo de "Stock Mercadería" en su menú, en `/deposito/vacios/conteo`. Es
+  la única ruta de Vacíos bajo `/deposito`, y guardar vuelve a contar en vez
+  de ir al Cotejo, que muestra el número del sistema.
 
 - **El ingreso directo tiene SU guía** (`guias_compra.de_deposito`): "nunca
   es parte de la comanda del Puesto". Dos guías por día y proveedor, cada

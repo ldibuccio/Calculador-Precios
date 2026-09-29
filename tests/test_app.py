@@ -27293,7 +27293,9 @@ def test_deposito_ordena_los_botones_como_pasan_las_cosas():
         # desde ahí está el botón a armar. El rótulo lo puso el dueño el
         # 20/09; desde el 25/09 dice "Pedidos".
         ('/deposito/pedido', "Pedidos"),
-        ('/deposito/stock/fisico', "Contar el stock"),
+        ('/deposito/stock/fisico', "Stock Mercadería"),
+        # Justo abajo (dueño, 29/09): el conteo de vacíos, sin la clave.
+        ('/deposito/vacios/conteo', "Stock Vacíos"),
         ('/deposito/stock/remito-segunda', "Remitir la segunda"),
     ]
     # El ícono va ENTRE el href y el rótulo, así que el rótulo ya no es lo

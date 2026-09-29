@@ -17,6 +17,7 @@ import io
 import os
 import re
 from datetime import date, datetime
+from pathlib import Path
 from unittest.mock import MagicMock, patch
 
 import pytest
@@ -869,3 +870,79 @@ def test_lo_de_ANTES_del_conteo_no_ofrece_ANULAR_y_lo_de_despues_si():
     assert marcado.count("antes del conteo: no cuenta") == 2
     # El vale viejo se sigue pudiendo ver: la historia queda.
     assert "/vacios/devolucion/4/foto" in marcado
+
+
+# ── Depósito cuenta vacíos sin la clave (dueño, 29/09) ──────────────────────
+
+def test_el_menu_de_DEPOSITO_dice_Stock_Mercaderia_y_abajo_Stock_Vacios():
+    """El botón se renombró y el nuevo va JUSTO abajo: ningún botón en el medio.
+
+    Y la jerga vieja no puede quedar en ningún lado del menú."""
+    marcado = cliente.get("/deposito").text.split("</style>")[-1]
+    botones = re.findall(r'<a class="boton[^"]*" href="([^"]+)"', marcado)
+    i = botones.index("/deposito/stock/fisico")
+    assert botones[i + 1] == "/deposito/vacios/conteo", botones
+    assert "<span>Stock Mercadería</span>" in marcado
+    assert "<span>Stock Vacíos</span>" in marcado
+    assert "Contar el stock" not in marcado and "Contar stock" not in marcado
+
+
+def test_la_jerga_Contar_stock_no_aparece_en_ninguna_plantilla_ni_en_el_codigo():
+    """El conjunto ENCONTRADO tiene que estar vacío: un link o una ayuda que
+    siga diciendo el nombre viejo manda a buscar un botón que no existe."""
+    raiz = Path(__file__).resolve().parent.parent
+    encontrados = [
+        str(a.relative_to(raiz))
+        for carpeta in ("templates", "app", "core")
+        for a in (raiz / carpeta).rglob("*")
+        if a.suffix in (".html", ".py")
+        and re.search(r"contar (el )?stock", a.read_text(encoding="utf-8"), re.I)
+    ]
+    assert encontrados == []
+
+
+def test_DEPOSITO_abre_el_conteo_de_vacios_SIN_ninguna_cookie():
+    """Sin la clave de Administración ni la de Compras: la barra es la de
+    Depósito, el formulario manda a Depósito y el atrás vuelve a su menú."""
+    limpio = TestClient(app)
+    with patch.dict(os.environ, {"CLAVE_COMPRAS": "compras-secreta",
+                                 "CLAVE_ADMINISTRACION": "admin-secreta"}), \
+         patch("app.main.stock_de_vacios_deposito",
+               side_effect=AssertionError("la pantalla de contar leyó el stock")), \
+         patch("app.main.listar_proveedores",
+               return_value=[{"id": 7, "nombre": "Puesto EJEMPLO"}]), \
+         patch("app.main.listar_marcas_vacio_por_proveedor", return_value={7: MARCAS}):
+        respuesta = limpio.get("/deposito/vacios/conteo")
+        # EL CONTROL: con las claves puestas, el MISMO cliente rebota en las
+        # otras dos puertas. Sin esto, el 200 de arriba se daría también con
+        # las puertas apagadas y no probaría nada.
+        cerradas = [limpio.get(f"{s}/vacios/conteo").status_code
+                    for s in ("/compras", "/administracion")]
+    assert cerradas == [401, 401], cerradas
+    assert respuesta.status_code == 200, respuesta.text[:300]
+    marcado = respuesta.text
+    assert 'action="/deposito/vacios/conteo"' in marcado
+    assert 'name="cantidad"' in marcado
+    # Ningún camino de esta pantalla lleva a una puerta con clave.
+    assert "/administracion/" not in marcado and "/compras/" not in marcado
+
+
+def test_el_conteo_de_DEPOSITO_vuelve_a_contar_y_NO_al_cotejo():
+    """El Cotejo muestra el número del sistema: el que sigue contando lo vería."""
+    with patch("app.main.crear_conteo_vacios_deposito") as escritor:
+        respuesta = TestClient(app).post(
+            "/deposito/vacios/conteo",
+            data={"proveedor_id": "7", "cantidad": "0", "fecha": "2026-09-20"},
+            follow_redirects=False)
+    assert respuesta.status_code == 303, respuesta.text[:300]
+    assert escritor.called
+    destino = respuesta.headers["location"]
+    assert destino.startswith("/deposito/vacios/conteo?aviso="), destino
+    assert "cotejo" not in destino
+
+
+def test_DEPOSITO_no_tiene_ninguna_otra_pantalla_de_vacios():
+    """Solo cuenta: el índice, el stock, el cotejo y el detalle de un
+    proveedor muestran el número del sistema, y no existen bajo /deposito."""
+    rutas = {r.path for r in app.routes if getattr(r, "path", "").startswith("/deposito/vacios")}
+    assert rutas == {"/deposito/vacios/conteo"}
