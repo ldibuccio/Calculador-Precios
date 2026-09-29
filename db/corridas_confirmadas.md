@@ -677,3 +677,20 @@ Se fueron la columna y la tabla, y la población de proveedores quedó igual
 en las dos. Lo único que se perdió es lo que la revisión dijo: el "Goloso"
 declarado de Rio Uruguay en Frutamax, que ya vive como marca en Vacíos.
 `db/esquema_completo.sql` perdió las dos cosas en el mismo commit.
+
+## 29/09 — `vacios_origen_devolucion_1`: por dónde entró cada devolución de vacíos
+
+Corrida por el dueño en las dos bases. Agrega `vacios_deposito_devoluciones.cargada_desde`
+(deposito, administracion o compras) con su CHECK. Verificación
+(`vacios_origen_devolucion_2_verificacion.sql`), corrida aparte del `do`:
+
+```
+FRUTAMAX  vacios_origen_devolucion · columna 1 · check 1 · devoluciones 13 · con valor 0
+PALMALA   vacios_origen_devolucion · columna 1 · check 1 · devoluciones 0
+```
+
+Las 13 de Frutamax quedan en NULL, que es lo esperado: no hay forma de saber
+por dónde entraron, y deducirlo sería inventarlo. Palmala no tiene
+devoluciones: ahí la verificación solo confirma que la migración no explota.
+`db/esquema_completo.sql` ganó la columna y el CHECK en el mismo commit que
+el código que la escribe (parte 3 de Vacíos).

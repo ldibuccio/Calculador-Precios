@@ -95,7 +95,8 @@ def _mov(tipo, id, cantidad, **resto):
     fila = {"tipo": tipo, "id": id, "cantidad": cantidad, "fecha": date(2026, 9, 25),
             "marca": None, "marca_hasta": None, "motivo": None, "compra_id": None,
             "articulo": None, "foto_ruta": None, "importe": None, "anulada": False,
-            "antes_del_arranque": False}
+            "antes_del_arranque": False, "cargada_desde": None,
+            "proveedor_id": 7, "proveedor": "Puesto EJEMPLO"}
     fila.update(resto)
     return fila
 
@@ -201,14 +202,16 @@ def test_el_INSERT_de_la_devolucion_guarda_la_ESTRUCTURA_ENTERA():
     with patch("app.db.obtener_conexion", return_value=conexion), \
          patch("app.db._stock_de_la_pila", return_value=30):
         devolucion_id = crear_devolucion_vacios(
-            7, 71, 12, foto_ruta="vacios/2026-09-25/v.jpg", importe=5000.0)
+            7, 71, 12, foto_ruta="vacios/2026-09-25/v.jpg", importe=5000.0,
+            cargada_desde="administracion")
 
     assert devolucion_id == 88
     insert = next(ll for ll in cursor.execute.call_args_list
                   if "INSERT INTO vacios_deposito_devoluciones" in ll.args[0])
-    assert insert.args[1] == (7, 71, 12, 5000.0, "vacios/2026-09-25/v.jpg", 30)
+    assert insert.args[1] == (7, 71, 12, 5000.0, "vacios/2026-09-25/v.jpg", 30,
+                              "administracion")
     for columna in ("proveedor_id", "marca_vacio_id", "cantidad", "importe",
-                    "foto_ruta", "stock_sistema"):
+                    "foto_ruta", "stock_sistema", "cargada_desde"):
         assert columna in insert.args[0], columna
     assert "compra_id" not in insert.args[0], "la devolución ya no va contra una compra"
 
@@ -218,7 +221,7 @@ def test_devolver_MAS_de_lo_que_hay_NO_escribe_nada():
     with patch("app.db.obtener_conexion", return_value=conexion), \
          patch("app.db._stock_de_la_pila", return_value=3):
         with pytest.raises(ValueError, match="hay 3 cajones: no se pueden devolver 4"):
-            crear_devolucion_vacios(7, 71, 4, foto_ruta="v.jpg")
+            crear_devolucion_vacios(7, 71, 4, foto_ruta="v.jpg", cargada_desde="administracion")
     assert not any("INSERT" in ll.args[0] for ll in cursor.execute.call_args_list)
     conexion.commit.assert_not_called()
 
@@ -227,7 +230,7 @@ def test_sin_FOTO_no_llega_ni_a_abrir_la_base():
     """La guarda va donde se ESCRIBE, antes que nada: un POST armado a mano no la saltea."""
     with patch("app.db.obtener_conexion") as abrir:
         with pytest.raises(ValueError, match="ajuste"):
-            crear_devolucion_vacios(7, None, 1, foto_ruta="   ")
+            crear_devolucion_vacios(7, None, 1, foto_ruta="   ", cargada_desde="deposito")
     abrir.assert_not_called()
 
 
@@ -298,7 +301,9 @@ def test_la_DEVOLUCION_con_foto_escribe_la_PILA_elegida_y_la_ruta_subida():
                                  files={"foto": _foto()}, follow_redirects=False)
     assert respuesta.status_code == 303
     assert respuesta.headers["location"].startswith("/compras/vacios/7?")
-    crear.assert_called_once_with(7, None, 3, foto_ruta="vacios/v.jpg", importe=2400.0)
+    # Entró por /compras: la puerta es la del prefijo, no una que tipee alguien.
+    crear.assert_called_once_with(7, None, 3, foto_ruta="vacios/v.jpg", importe=2400.0,
+                                  cargada_desde="compras")
 
 
 def test_si_la_foto_NO_SE_SUBE_no_se_guarda_nada_y_lo_dice():
@@ -339,6 +344,9 @@ def test_AJUSTE_y_ASIGNACION_existen_SOLO_bajo_administracion():
         "/administracion/vacios/{proveedor_id}/ajuste",
         "/administracion/vacios/{proveedor_id}/asignacion",
         "/administracion/vacios/movimiento/{tipo}/{movimiento_id}/anular",
+        # La pantalla de Movimientos (29/09) también es solo de Administración.
+        "/administracion/vacios/movimientos",
+        "/administracion/vacios/movimientos/excel",
     }
 
 
@@ -400,7 +408,7 @@ def test_el_indice_muestra_el_total_y_CADA_PILA_con_su_marca():
     assert respuesta.status_code == 200
     marcado = respuesta.text.split("</style>")[-1]
     assert "35 cajones" in marcado
-    assert "sin asignar" in marcado
+    assert "Sin marca" in marcado
     assert "EJ Roja" in marcado
     # y la cuenta vieja no quedó dibujada en ningún lado
     for jerga in ("todavía no arrancó", "Contá a la mañana", "recibidos +"):
@@ -444,14 +452,17 @@ def test_la_pantalla_de_CONTAR_no_tiene_ningun_numero_del_sistema(sector):
     assert "cajones</div>" not in marcado and 'class="pila-stock"' not in marcado
 
 
-def test_el_INDICE_ya_no_tiene_el_formulario_de_contar_y_manda_a_su_pantalla():
+def test_el_INDICE_ya_no_tiene_el_formulario_de_contar_y_el_COTEJO_manda_a_su_pantalla():
     """El control del de arriba: el índice SÍ muestra el stock, así que el
-    formulario no puede estar ahí."""
+    formulario no puede estar ahí. Desde el 29/09 el índice tiene Exportar,
+    Cotejo y Movimientos, y el link a contar vive en el Cotejo."""
     marcado = _indice().text.split("</style>")[-1]
     assert "35 cajones" in marcado
     assert 'name="cantidad"' not in marcado
-    assert 'action="/compras/vacios/conteo"' not in marcado
-    assert 'href="/compras/vacios/conteo"' in marcado
+    assert "/vacios/conteo" not in marcado
+    with patch("app.main.cotejo_de_vacios_deposito", return_value=[]):
+        cotejo = cliente.get("/compras/vacios/cotejo").text.split("</style>")[-1]
+    assert 'href="/compras/vacios/conteo"' in cotejo
 
 
 def test_un_CONTEO_que_rebota_vuelve_a_la_pantalla_de_contar_y_no_al_indice():
@@ -566,12 +577,12 @@ def test_el_HISTORIAL_dice_cada_tipo_y_solo_ofrece_anular_lo_que_se_anula():
     renglones = [" ".join(re.sub(r"<[^>]+>", " ", r).split())
                  for r in re.findall(r'<div class="vale-cabeza">(.*?)</div>', historial, re.S)]
     assert renglones == ["40 Conteo físico · EJ Roja",
-                         "+10 Compra con seña #55 · EJ Roja",
+                         "+10 Compra con seña · EJ Roja",
                          "-5 Devolución · Sin marca",
                          "-2 Ajuste · Sin marca",
-                         "6 Pase Sin marca → EJ Roja",
+                         "6 Pase · Sin marca → EJ Roja",
                          "+1 Ajuste · Sin marca anulado"]
-    assert "EJ Pera · se corrige desde la compra" in historial
+    assert "compra #55 · EJ Pera · se corrige desde la compra" in historial
     assert "$4.000 · vale cargado" in historial and "EJ se rompieron" in historial
     # El signo va en color: verde lo que suma, rojo lo que resta.
     assert '<span class="vale-cantidad suma">+10' in historial
@@ -1151,7 +1162,7 @@ def test_una_DEVOLUCION_de_Deposito_guarda_por_la_misma_escritura_y_vuelve_a_dev
     assert respuesta.status_code == 303, respuesta.text[:300]
     assert respuesta.headers["location"].startswith("/deposito/vacios/devolucion?aviso=")
     mocks["crear_devolucion_vacios"].assert_called_once_with(
-        7, 71, 5, foto_ruta="vacios/vale.jpg", importe=4000.0)
+        7, 71, 5, foto_ruta="vacios/vale.jpg", importe=4000.0, cargada_desde="deposito")
 
 
 def test_una_DEVOLUCION_de_Deposito_SIN_FOTO_no_se_guarda():
@@ -1167,3 +1178,194 @@ def test_una_DEVOLUCION_de_Deposito_sin_PROVEEDOR_no_se_guarda():
     assert respuesta.status_code == 400
     assert "Elegí un proveedor" in respuesta.text
     mocks["crear_devolucion_vacios"].assert_not_called()
+
+
+# ── Parte 3 (dueño, 29/09): por dónde entró, y la pantalla de Movimientos ────
+
+from core.movimientos_vacios import (  # noqa: E402
+    TEXTO_DE_LA_PUERTA, TEXTO_DEL_TIPO, generar_excel_movimientos_vacios_deposito,
+    texto_de_cantidad, ventana,
+)
+
+
+def test_las_PUERTAS_de_la_devolucion_son_las_del_CHECK_de_la_migracion():
+    """La lista se LEE del .sql, no se copia: copiada envejece en silencio."""
+    from app.db import PUERTAS_DE_LA_DEVOLUCION
+    for archivo in ("db/vacios_origen_devolucion_1.sql", "db/esquema_completo.sql"):
+        texto = io.open(archivo, encoding="utf-8").read()
+        lista = re.search(r"cargada_desde in \(([^)]*)\)", texto).group(1)
+        assert tuple(re.findall(r"'(\w+)'", lista)) == PUERTAS_DE_LA_DEVOLUCION, archivo
+    # Y cada puerta tiene su palabra en la pantalla y el Excel.
+    assert set(PUERTAS_DE_LA_DEVOLUCION) <= set(TEXTO_DE_LA_PUERTA)
+
+
+def test_una_PUERTA_desconocida_no_llega_ni_a_abrir_la_base():
+    with patch("app.db.obtener_conexion") as abrir:
+        with pytest.raises(ValueError, match="Puerta desconocida"):
+            crear_devolucion_vacios(7, None, 1, foto_ruta="v.jpg", cargada_desde="gerencia")
+    abrir.assert_not_called()
+
+
+def test_la_puerta_NO_tiene_default_en_la_escritura():
+    """Un camino nuevo que se olvide de decirla revienta, no guarda un NULL que
+    se lee igual que una devolución vieja."""
+    import inspect
+    parametro = inspect.signature(crear_devolucion_vacios).parameters["cargada_desde"]
+    assert parametro.default is inspect.Parameter.empty
+    assert parametro.kind is inspect.Parameter.KEYWORD_ONLY
+
+
+HOY_MOVIMIENTOS = date(2026, 3, 20)
+
+
+@pytest.mark.parametrize("desde, hasta, esperado", [
+    ("", "", (date(2026, 2, 19), HOY_MOVIMIENTOS, None)),              # 30 días, los dos incluidos
+    ("2026-01-01", "2026-03-31", (date(2026, 1, 1), date(2026, 3, 31), None)),   # 90 justos
+])
+def test_la_VENTANA_por_defecto_son_30_dias_y_entran_90(desde, hasta, esperado):
+    assert ventana(desde, hasta, HOY_MOVIMIENTOS) == esperado
+
+
+@pytest.mark.parametrize("desde, hasta, error", [
+    ("2026-01-01", "2026-04-01", "Hasta 90 días"),                     # 91: el de al lado del corte
+    ("2026-03-10", "2026-03-01", "posterior"),
+    ("ayer", "", "no se entiende"),
+])
+def test_la_VENTANA_rechaza_lo_que_no_se_puede_pedir(desde, hasta, error):
+    assert error in ventana(desde, hasta, HOY_MOVIMIENTOS)[2]
+
+
+def test_el_SIGNO_de_cada_tipo():
+    assert texto_de_cantidad(_mov("entrada", 1, 10)) == "+10"
+    assert texto_de_cantidad(_mov("devolucion", 1, -5)) == "-5"
+    assert texto_de_cantidad(_mov("ajuste", 1, 2)) == "+2"
+    assert texto_de_cantidad(_mov("ajuste", 1, -2)) == "-2"
+    assert texto_de_cantidad(_mov("asignacion", 1, 6)) == "6"
+    assert texto_de_cantidad(_mov("arranque", 1, 40)) == "40"
+    assert set(TEXTO_DEL_TIPO) == set(__import__("app.db").db.TIPOS_DE_MOVIMIENTO_DE_VACIOS)
+
+
+MOVS_PANTALLA = [
+    _mov("devolucion", 3, -20, marca="EJ Roja", foto_ruta="v.jpg", importe=30000.0,
+         cargada_desde="deposito"),
+    _mov("asignacion", 5, 15, marca_hasta="EJ Azul", cargada_desde="administracion"),
+    _mov("entrada", 2, 10, marca="EJ Roja", compra_id=1234, articulo="EJ Pera",
+         cargada_desde="recepcion"),
+    _mov("ajuste", 4, -3, motivo="EJ rotos", proveedor_id=8, proveedor="Puesto EJEMPLO Dos",
+         cargada_desde="administracion"),
+    _mov("devolucion", 6, -1, cargada_desde=None),
+]
+
+
+def _movimientos(url, movimientos=MOVS_PANTALLA):
+    with patch("app.main.movimientos_de_vacios", return_value=[dict(m) for m in movimientos]) as leer, \
+         patch("app.main.listar_proveedores", return_value=[{"id": 7, "nombre": "Puesto EJEMPLO"},
+                                                             {"id": 8, "nombre": "Puesto EJEMPLO Dos"}]), \
+         patch("app.main.listar_marcas_vacio_por_proveedor", return_value={7: MARCAS}), \
+         patch("app.main._hoy_argentina", return_value=HOY_MOVIMIENTOS):
+        respuesta = cliente.get(url)
+    return respuesta, leer
+
+
+def test_MOVIMIENTOS_arranca_en_los_ultimos_30_dias_y_pide_eso_a_la_base():
+    respuesta, leer = _movimientos("/administracion/vacios/movimientos")
+    assert respuesta.status_code == 200
+    marcado = respuesta.text.split("</style>")[-1]
+    assert 'value="2026-02-19"' in marcado and 'value="2026-03-20"' in marcado
+    kwargs = leer.call_args.kwargs
+    assert (kwargs["desde"], kwargs["hasta"], kwargs["marca"]) == (date(2026, 2, 19), HOY_MOVIMIENTOS, None)
+    assert "5 movimientos" in marcado
+
+
+def test_MOVIMIENTOS_cada_fila_dice_proveedor_marca_signo_y_POR_DONDE_ENTRO():
+    marcado = _movimientos("/administracion/vacios/movimientos")[0].text.split("</style>")[-1]
+    filas = re.findall(r'<div class="vale[^"]*" data-tipo="\w+">(.*?)</div>\s*(?:<a|</div>|<div class="vale)',
+                       marcado, re.S)
+    cabezas = [" ".join(re.sub(r"<[^>]+>", " ", c).split())
+               for c in re.findall(r'<div class="vale-cabeza">(.*?)</div>', marcado, re.S)]
+    assert cabezas == ["-20 Devolución · Puesto EJEMPLO · EJ Roja",
+                       "15 Pase · Puesto EJEMPLO · Sin marca → EJ Azul",
+                       "+10 Compra con seña · Puesto EJEMPLO · EJ Roja",
+                       "-3 Ajuste · Puesto EJEMPLO Dos · Sin marca",
+                       "-1 Devolución · Puesto EJEMPLO · Sin marca"], filas
+    datos = [" ".join(re.sub(r"<[^>]+>", " ", d).split())
+             for d in re.findall(r'<div class="vale-dato">(.*?)</div>', marcado, re.S)]
+    assert [d.split(" · ")[1] for d in datos] == [
+        "Depósito", "Administración", "Recepción", "Administración", "sin dato"]
+    assert "compra #1234" in datos[2]
+
+
+def test_MOVIMIENTOS_linkea_el_REGISTRO_y_nunca_una_pantalla_de_Compras():
+    """La compra no se linkea: su detalle vive bajo la clave de Compras (corolario 56)."""
+    marcado = _movimientos("/administracion/vacios/movimientos")[0].text.split("</style>")[-1]
+    hrefs = re.findall(r'<a class="ir" href="([^"]+)"', marcado)
+    assert hrefs == ["/administracion/vacios/devolucion/3/foto?proveedor_id=7",
+                     "/administracion/vacios/7?abrir=movimientos",
+                     "/administracion/vacios/8?abrir=movimientos",
+                     "/administracion/vacios/7?abrir=movimientos"]
+    assert "/compras/" not in marcado
+
+
+def test_MOVIMIENTOS_con_mas_de_90_dias_no_consulta_y_lo_dice():
+    respuesta, leer = _movimientos("/administracion/vacios/movimientos?desde=2026-01-01&hasta=2026-04-01")
+    assert respuesta.status_code == 400
+    assert "Hasta 90 días por búsqueda" in respuesta.text
+    leer.assert_not_called()
+    assert "/movimientos/excel" not in respuesta.text.split("</style>")[-1]
+
+
+def test_MOVIMIENTOS_filtra_por_proveedor_y_marca_y_el_EXCEL_lleva_los_MISMOS_filtros():
+    url = "/administracion/vacios/movimientos?desde=2026-03-01&hasta=2026-03-15&proveedor_id=7&marca=71"
+    respuesta, leer = _movimientos(url)
+    assert leer.call_args.args[0] == 7
+    assert leer.call_args.kwargs["marca"] == 71
+    marcado = respuesta.text.split("</style>")[-1]
+    assert '<option value="71" selected>EJ Roja</option>' in marcado
+    excel = re.search(r'href="(/administracion/vacios/movimientos/excel\?[^"]+)"', marcado).group(1)
+    with patch("app.main.movimientos_de_vacios", return_value=[dict(m) for m in MOVS_PANTALLA]) as leer_excel, \
+         patch("app.main.listar_proveedores", return_value=[{"id": 7, "nombre": "Puesto EJEMPLO"}]), \
+         patch("app.main.listar_marcas_vacio_por_proveedor", return_value={7: MARCAS}):
+        archivo = cliente.get(excel.replace("&amp;", "&"))
+    assert archivo.status_code == 200
+    assert leer_excel.call_args.args == (7, None)          # el Excel no tiene tope
+    assert {k: leer_excel.call_args.kwargs[k] for k in ("desde", "hasta", "marca")} == \
+        {k: leer.call_args.kwargs[k] for k in ("desde", "hasta", "marca")}
+
+
+def test_MOVIMIENTOS_sin_proveedor_no_ofrece_marcas_y_sin_marca_se_pide_aparte():
+    marcado = _movimientos("/administracion/vacios/movimientos")[0].text.split("</style>")[-1]
+    assert re.search(r'<select id="marca" name="marca" disabled>', marcado)
+    _, leer = _movimientos("/administracion/vacios/movimientos?proveedor_id=7&marca=sin")
+    assert leer.call_args.kwargs["marca"] == "sin"
+
+
+def test_MOVIMIENTOS_avisa_cuando_CORTA_la_lista():
+    muchos = [_mov("ajuste", i, 1) for i in range(501)]
+    marcado = _movimientos("/administracion/vacios/movimientos", muchos)[0].text.split("</style>")[-1]
+    assert "500+ movimientos" in marcado
+    assert "Se muestran los 500 más nuevos" in marcado
+    assert marcado.count('data-tipo="ajuste"') == 500
+
+
+def test_el_EXCEL_de_movimientos_dice_lo_MISMO_que_la_pantalla():
+    from openpyxl import load_workbook
+    libro = load_workbook(io.BytesIO(generar_excel_movimientos_vacios_deposito(
+        date(2026, 3, 1), date(2026, 3, 15), "Puesto EJEMPLO", [dict(m) for m in MOVS_PANTALLA])))
+    hoja = libro.active
+    filas = [[c.value for c in fila] for fila in hoja.iter_rows(min_row=5)]
+    assert [f[1] for f in filas] == ["Devolución", "Pase", "Compra con seña", "Ajuste", "Devolución"]
+    assert [f[4] for f in filas] == [-20, 15, 10, -3, -1]
+    assert [f[5] for f in filas] == ["Depósito", "Administración", "Recepción", "Administración", "sin dato"]
+    assert filas[2][6] == 1234 and filas[3][7] == "EJ rotos" and filas[0][8] == 30000.0
+    assert "Del 01/03/2026 al 15/03/2026 · Puesto EJEMPLO" == hoja.cell(row=2, column=1).value
+
+
+def test_el_INDICE_de_Administracion_tiene_los_TRES_botones_y_el_de_Compras_no_Movimientos():
+    with patch("app.main.stock_de_vacios_deposito", return_value=list(UN_PROVEEDOR)):
+        admin = cliente.get("/administracion/vacios").text.split("</style>")[-1]
+        compras = cliente.get("/compras/vacios").text.split("</style>")[-1]
+    botones = re.findall(r'<a class="boton-stock" href="([^"]+)">([^<]+)</a>', admin)
+    assert botones == [("/administracion/vacios/stock", "Exportar"),
+                       ("/administracion/vacios/cotejo", "Cotejo"),
+                       ("/administracion/vacios/movimientos", "Movimientos")]
+    assert "/movimientos" not in compras

@@ -79,3 +79,29 @@ def test_NINGUN_nombre_indefinido_en_app_ni_core():
     _, salida = _pyflakes(*CARPETAS)
     indefinidos = [l for l in salida.splitlines() if "undefined name" in l]
     assert indefinidos == [], "\n".join(indefinidos)
+
+
+# DOS IMPORTS CON EL MISMO NOMBRE (29/09). `app/main.py` importaba
+# `generar_excel_movimientos_vacios` de core/exportar_vacios.py (Vacíos del
+# PUESTO) y la pantalla nueva del depósito importó otra función con el mismo
+# nombre desde core/movimientos_vacios.py. Python no da error: gana la segunda,
+# y el Excel del Puesto empezó a llamar a la del depósito con otros argumentos.
+# Lo agarró el humo, no ninguna suite de las dos pantallas. pyflakes lo ve como
+# "redefinition of unused", y en app/ y core/ hay cero.
+
+def test_pyflakes_ENCUENTRA_un_import_que_pisa_a_otro(tmp_path):
+    archivo = tmp_path / "plantado.py"
+    archivo.write_text(
+        "from os.path import join as armar\n"
+        "from posixpath import join as armar\n"
+        "armar('a', 'b')\n",
+        encoding="utf-8",
+    )
+    _, salida = _pyflakes(str(archivo))
+    assert "redefinition of unused 'armar'" in salida, salida
+
+
+def test_NINGUN_import_pisa_a_otro_en_app_ni_core():
+    _, salida = _pyflakes(*CARPETAS)
+    pisados = [l for l in salida.splitlines() if "redefinition of unused" in l]
+    assert pisados == [], "\n".join(pisados)

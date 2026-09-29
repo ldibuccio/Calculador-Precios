@@ -385,7 +385,8 @@ def test_la_LISTA_de_movimientos_SUMADA_da_el_MISMO_stock_que_la_tarjeta(base):
     compra("Herederos N7", 7, "2099-01-01 10:00-03", marcas["la union"])
     compra("DIMIMAX", 4, "2099-01-01 10:00-03")
     compra("DIMIMAX", 9, "2099-01-01 10:00-03", sena=None)       # sin seña: no suma
-    d.crear_devolucion_vacios(ids["Herederos N7"], marcas["la union"], 3, foto_ruta="v.jpg")
+    d.crear_devolucion_vacios(ids["Herederos N7"], marcas["la union"], 3, foto_ruta="v.jpg",
+                              cargada_desde="deposito")
     d.crear_ajuste_vacios_deposito(ids["MRC"], None, 2, "apareció uno")
     anulado = d.crear_ajuste_vacios_deposito(ids["MRC"], None, 6, "error")
     d.anular_ajuste_vacios_deposito(anulado)
@@ -401,7 +402,8 @@ def test_los_SIGNOS_y_el_filtro_por_PROVEEDOR(base):
     d, sql, ids, marcas, compra, correr = base
     correr(5)
     compra("DIMIMAX", 4, "2099-01-01 10:00-03")
-    d.crear_devolucion_vacios(ids["DIMIMAX"], None, 3, foto_ruta="v.jpg", importe=900)
+    d.crear_devolucion_vacios(ids["DIMIMAX"], None, 3, foto_ruta="v.jpg", importe=900,
+                              cargada_desde="deposito")
     movs = d.movimientos_de_vacios(ids["DIMIMAX"])
     assert {m["proveedor_id"] for m in movs} == {ids["DIMIMAX"]}
     nuevos = [(m["tipo"], m["cantidad"], m["importe"]) for m in movs if not m["antes_del_arranque"]]
@@ -409,3 +411,48 @@ def test_los_SIGNOS_y_el_filtro_por_PROVEEDOR(base):
     assert nuevos == [("entrada", 4, 500), ("devolucion", -3, 900)]
     instantes = [m["instante"] for m in movs]
     assert instantes == sorted(instantes, reverse=True)
+
+
+def test_los_FILTROS_y_la_PUERTA_de_Movimientos_contra_la_base(base):
+    """Fecha, proveedor, marca y por dónde entró, con la consulta de verdad.
+
+    La recepción fechada en 2099 queda afuera de una ventana que termina hoy; el
+    ingreso directo es de Depósito y la recepción común de Recepción; un pase
+    entra al filtrar por la marca de la que SALE y por la que LLEGA."""
+    from datetime import date
+    d, sql, ids, marcas, compra, correr = base
+    correr(5)
+    compra("Herederos N7", 7, "2099-01-01 10:00-03", marcas["la union"])
+    sql("UPDATE compras SET retiro_origen = 'ingreso_directo' WHERE proveedor_id = %s "
+        "AND procesada_el > '2098-01-01'", (ids["Herederos N7"],))
+    compra("DIMIMAX", 4, "2099-01-01 10:00-03")
+    d.crear_devolucion_vacios(ids["DIMIMAX"], None, 3, foto_ruta="v.jpg", cargada_desde="deposito")
+    d.crear_asignacion_vacios(ids["Herederos N7"], marcas["la union"], marcas["vieja"], 4)
+
+    todos = d.movimientos_de_vacios(limite=None)
+    # Por id y no por nombre: el nombre en la base es el plegado de la carga.
+    puertas = {(m["tipo"], m["proveedor_id"]): m["cargada_desde"] for m in todos
+               if not m["antes_del_arranque"] and m["tipo"] != "arranque"}
+    herederos, dimimax = ids["Herederos N7"], ids["DIMIMAX"]
+    assert puertas[("entrada", herederos)] == "deposito"
+    assert puertas[("entrada", dimimax)] == "recepcion"
+    assert puertas[("devolucion", dimimax)] == "deposito"
+    assert puertas[("asignacion", herederos)] == "administracion"
+    assert {m["cargada_desde"] for m in todos if m["tipo"] == "arranque"} == {"conteo"}
+    # la devolución VIEJA (antes de la columna) queda sin dato
+    assert any(m["tipo"] == "devolucion" and m["cargada_desde"] is None for m in todos)
+
+    hoy = date.today()
+    hasta_hoy = d.movimientos_de_vacios(limite=None, hasta=hoy)
+    assert not any(m["instante"].year == 2099 for m in hasta_hoy)
+    assert any(m["instante"].year == 2099 for m in d.movimientos_de_vacios(
+        limite=None, desde=date(2099, 1, 1), hasta=date(2099, 1, 1)))
+
+    for marca in (marcas["la union"], marcas["vieja"]):
+        pases = [m for m in d.movimientos_de_vacios(ids["Herederos N7"], None, marca=marca)
+                 if m["tipo"] == "asignacion" and not m["antes_del_arranque"]]
+        assert len(pases) == 1, marca
+    sin = d.movimientos_de_vacios(ids["DIMIMAX"], None, marca=d.SIN_MARCA)
+    assert sin and all(m["marca_id"] is None for m in sin)
+    con_marca = d.movimientos_de_vacios(ids["Herederos N7"], None, marca=marcas["vieja"])
+    assert all(m["marca_id"] == marcas["vieja"] or m["tipo"] == "asignacion" for m in con_marca)

@@ -347,6 +347,7 @@ from app.db import (
     crear_devolucion_vacios,
     anular_devolucion_vacios,
     movimientos_de_vacios,
+    SIN_MARCA as SIN_MARCA_VACIO,
     foto_de_la_devolucion,
     sena_por_cajon_de_la_ultima_recepcion,
     senas_por_cajon_de_todas_las_pilas,
@@ -467,6 +468,14 @@ from core.exportar_vacios import (
     generar_excel_stock_vacios,
     generar_pdf_movimientos_vacios,
     generar_pdf_stock_vacios,
+)
+from core.movimientos_vacios import (
+    TEXTO_DE_LA_PUERTA as TEXTO_DE_LA_PUERTA_VACIO,
+    TEXTO_DEL_TIPO as TEXTO_DEL_TIPO_VACIO,
+    generar_excel_movimientos_vacios_deposito,
+    texto_de_cantidad as texto_de_cantidad_vacio,
+    texto_de_la_marca as texto_de_la_marca_vacio,
+    ventana as ventana_de_movimientos_vacios,
 )
 from core.exportar_vacios_deposito import (
     filas_del_stock as filas_del_stock_de_vacios,
@@ -1419,6 +1428,12 @@ def _version_app() -> dict:
 
 
 templates.env.globals["version_app"] = _version_app()
+# Las palabras de un movimiento de vacíos: las usan el detalle del proveedor,
+# la pantalla de Movimientos y su Excel, desde core/movimientos_vacios.py.
+templates.env.globals["texto_del_tipo_vacio"] = TEXTO_DEL_TIPO_VACIO
+templates.env.globals["texto_de_la_puerta_vacio"] = TEXTO_DE_LA_PUERTA_VACIO
+templates.env.globals["texto_de_cantidad_vacio"] = texto_de_cantidad_vacio
+templates.env.globals["texto_de_la_marca_vacio"] = texto_de_la_marca_vacio
 templates.env.filters["hora"] = _formatear_hora
 templates.env.filters["hora_corta"] = _formatear_hora_corta
 
@@ -6659,6 +6674,95 @@ def ver_cotejo_de_vacios(request: Request):
     )
 
 
+def _filtros_de_movimientos_vacios(desde: str, hasta: str, proveedor_id: str,
+                                    marca: str) -> dict:
+    """Los filtros de Movimientos leídos UNA vez: los usan la pantalla y el Excel,
+    así el archivo baja exactamente lo que la pantalla muestra."""
+    inicio, fin, error = ventana_de_movimientos_vacios(desde, hasta, _hoy_argentina())
+    proveedor = int(proveedor_id) if proveedor_id.strip().isdigit() else None
+    marca = marca.strip()
+    if marca == SIN_MARCA_VACIO:
+        marca_elegida = SIN_MARCA_VACIO
+    elif marca.isdigit():
+        marca_elegida = int(marca)
+    else:
+        marca_elegida = None
+    return {"desde": inicio, "hasta": fin, "error": error,
+            "proveedor_id": proveedor, "marca": marca_elegida}
+
+
+@app.get("/administracion/vacios/movimientos")
+def ver_movimientos_de_vacios(request: Request, desde: str = "", hasta: str = "",
+                              proveedor_id: str = "", marca: str = ""):
+    """Todo lo que movió cajones, filtrado por fecha, proveedor y marca (dueño, 29/09).
+
+    Por defecto los últimos 30 días; como máximo 90. Sale de la MISMA consulta
+    que el historial del detalle de un proveedor. Solo Administración: está
+    bajo su prefijo, y Compras deja de tener Vacíos.
+    """
+    filtros = _filtros_de_movimientos_vacios(desde, hasta, proveedor_id, marca)
+    try:
+        proveedores = listar_proveedores()
+        marcas = listar_marcas_vacio_por_proveedor()
+        movimientos = [] if filtros["error"] else movimientos_de_vacios(
+            filtros["proveedor_id"], LIMITE_DE_MOVIMIENTOS_VACIOS + 1,
+            desde=filtros["desde"], hasta=filtros["hasta"], marca=filtros["marca"])
+    except Exception as error_db:
+        raise HTTPException(
+            status_code=500, detail=f"Error al conectar con la base de datos: {error_db}"
+        ) from error_db
+    # Se pide UNO DE MÁS para saber si hubo corte: sin eso, "mostrando 500" y
+    # "había 500" se dibujan igual.
+    cortado = len(movimientos) > LIMITE_DE_MOVIMIENTOS_VACIOS
+    return templates.TemplateResponse(
+        request, "compras_vacios_movimientos.html",
+        {"movimientos": movimientos[:LIMITE_DE_MOVIMIENTOS_VACIOS], "cortado": cortado,
+         "limite": LIMITE_DE_MOVIMIENTOS_VACIOS,
+         "filtros": filtros, "proveedores": proveedores,
+         "marcas_por_proveedor": {str(k): v for k, v in marcas.items()},
+         "sin_marca": SIN_MARCA_VACIO,
+         "consulta": urlencode({"desde": filtros["desde"].isoformat(),
+                                "hasta": filtros["hasta"].isoformat(),
+                                "proveedor_id": proveedor_id, "marca": marca})},
+        status_code=400 if filtros["error"] else 200,
+    )
+
+
+@app.get("/administracion/vacios/movimientos/excel")
+def exportar_movimientos_de_vacios_excel(desde: str = "", hasta: str = "",
+                                         proveedor_id: str = "", marca: str = ""):
+    """Lo filtrado, entero y sin tope: el Excel es para cuadrar, no para mirar."""
+    filtros = _filtros_de_movimientos_vacios(desde, hasta, proveedor_id, marca)
+    if filtros["error"]:
+        raise HTTPException(status_code=400, detail=filtros["error"])
+    movimientos = movimientos_de_vacios(filtros["proveedor_id"], None, desde=filtros["desde"],
+                                        hasta=filtros["hasta"], marca=filtros["marca"])
+    partes = []
+    if filtros["proveedor_id"] is not None:
+        nombre = next((p["nombre"] for p in listar_proveedores()
+                       if p["id"] == filtros["proveedor_id"]), f"proveedor {filtros['proveedor_id']}")
+        partes.append(nombre)
+    if filtros["marca"] == SIN_MARCA_VACIO:
+        partes.append("sin marca")
+    elif filtros["marca"] is not None:
+        partes.append(next((m["nombre"] for lista in listar_marcas_vacio_por_proveedor().values()
+                            for m in lista if m["id"] == filtros["marca"]),
+                           f"marca {filtros['marca']}"))
+    texto_filtro = " · ".join(partes) or "todos los proveedores"
+    return Response(
+        content=generar_excel_movimientos_vacios_deposito(filtros["desde"], filtros["hasta"],
+                                                 texto_filtro, movimientos),
+        media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        headers={"Content-Disposition":
+                 f'attachment; filename="Movimientos_Vacios_{filtros["desde"].isoformat()}'
+                 f'_{filtros["hasta"].isoformat()}.xlsx"'},
+    )
+
+
+# Lo que la pantalla dibuja como mucho. El Excel no tiene tope.
+LIMITE_DE_MOVIMIENTOS_VACIOS = 500
+
+
 def _marca_del_form(texto: str) -> int | None:
     """La pila elegida: el id de una marca, o vacío para "sin asignar"."""
     texto = texto.strip()
@@ -6833,15 +6937,15 @@ def _entero_positivo(texto: str) -> int | None:
 
 async def _guardar_devolucion_de_vacios(proveedor_id: int, marca_vacio_id: str, cantidad: str,
                                        importe: str, foto: UploadFile | None, *,
-                                       sin_el_numero: bool) -> tuple[int | None, str | None, int]:
+                                       cargada_desde: str) -> tuple[int | None, str | None, int]:
     """Valida y guarda una devolución. Las DOS puertas pasan por acá (Administración
     y Depósito), así la regla está escrita una vez.
 
     Devuelve `(cajones, None, 303)` si guardó, o `(None, mensaje, status)` si no.
 
-    `sin_el_numero` es la puerta de Depósito (dueño, 29/09): el freno de "no se
-    devuelve más de lo que hay" dice cuántos hay, y Depósito no ve el stock.
-    Ahí el mensaje manda a Administración y no nombra el número.
+    `cargada_desde` es la puerta, y se guarda con la devolución (dueño, 29/09).
+    En Depósito el freno de "no se devuelve más de lo que hay" no dice el
+    número: Depósito no ve el stock, así que el mensaje manda a Administración.
 
     SIN COMPRA (dueño, 25/09): la devolución sale de la pila, no de una compra.
     LA FOTO DEL VALE ES OBLIGATORIA: sin foto no es una devolución, es un ajuste.
@@ -6876,9 +6980,10 @@ async def _guardar_devolucion_de_vacios(proveedor_id: int, marca_vacio_id: str, 
 
     try:
         crear_devolucion_vacios(proveedor_id, _marca_del_form(marca_vacio_id), cajones,
-                                foto_ruta=foto_ruta, importe=valor_importe)
+                                foto_ruta=foto_ruta, importe=valor_importe,
+                                cargada_desde=cargada_desde)
     except DevolucionDeMas as de_mas:
-        if sin_el_numero:
+        if cargada_desde == "deposito":
             return None, ("El sistema no tiene tantos cajones de esa marca: "
                           "avisale a Administración. No se guardó nada."), 400
         return None, str(de_mas), 400
@@ -6901,7 +7006,8 @@ async def cargar_devolucion_vacios(request: Request, proveedor_id: int,
     el número de la pila — acá sí se dice, Administración ve el stock.
     """
     cajones, error, status = await _guardar_devolucion_de_vacios(
-        proveedor_id, marca_vacio_id, cantidad, importe, foto, sin_el_numero=False)
+        proveedor_id, marca_vacio_id, cantidad, importe, foto,
+        cargada_desde=_camino_de_cajas_y_vacios(request)["sector"])
     if error:
         return _renderizar_vacios_proveedor(request, proveedor_id, abierta="devolver", error=error, status_code=status)
     return _volver_al_proveedor(request, proveedor_id, f"Devolución de {cajones} cajones guardada.")
@@ -6949,7 +7055,7 @@ async def cargar_devolucion_vacios_deposito(request: Request, proveedor_id: str 
     if not proveedor_id.strip().isdigit():
         return _renderizar_devolucion_deposito(request, error="Elegí un proveedor.", status_code=400)
     cajones, error, status = await _guardar_devolucion_de_vacios(
-        int(proveedor_id), marca_vacio_id, cantidad, importe, foto, sin_el_numero=True)
+        int(proveedor_id), marca_vacio_id, cantidad, importe, foto, cargada_desde="deposito")
     if error:
         return _renderizar_devolucion_deposito(request, error=error, status_code=status)
     return RedirectResponse(
