@@ -346,7 +346,8 @@ from app.db import (
     cotejo_de_vacios_deposito,
     crear_devolucion_vacios,
     anular_devolucion_vacios,
-    listar_devoluciones_vacios,
+    movimientos_de_vacios,
+    foto_de_la_devolucion,
     sena_por_cajon_de_la_ultima_recepcion,
     senas_por_cajon_de_todas_las_pilas,
     DevolucionDeMas,
@@ -360,7 +361,6 @@ from app.db import (
     renombrar_marca_vacio,
     juntar_marcas_vacio,
     MarcaQueYaExiste,
-    listar_ajustes_y_asignaciones_vacios,
     crear_movimiento_envase,
     guardar_umbral_de_envase,
     guardar_cajas_por_pallet,
@@ -6724,8 +6724,15 @@ def cargar_conteo_vacios(request: Request, proveedor_id: str = Form(""),
 
 def _renderizar_vacios_proveedor(request: Request, proveedor_id: int, *,
                                  error: str | None = None, aviso: str | None = None,
-                                 status_code: int = 200, juntar: dict | None = None):
-    """El detalle de un proveedor: sus pilas, sus marcas, la devolución y el vale.
+                                 status_code: int = 200, juntar: dict | None = None,
+                                 abierta: str | None = None):
+    """El detalle de un proveedor, en TRES ZONAS (dueño, 29/09): el resumen, las
+    cuatro acciones que se abren de a una, y el historial cerrado.
+
+    `abierta` dice qué acción viene desplegada: la del formulario que rebotó
+    (el que se equivocó vuelve a SU formulario, no a una pantalla con los
+    cuatro cerrados) o la que pide la URL (`?abrir=`). Solo vale una de las
+    de `ACCIONES_DEL_DETALLE_DE_VACIOS`: otra cosa se ignora.
 
     EL `status_code` NO VA EN LA FIRMA DE LA RUTA, y no es estilo: FastAPI lo
     tomaría como query param, así que `?status_code=500` lo elegiría quien
@@ -6739,8 +6746,7 @@ def _renderizar_vacios_proveedor(request: Request, proveedor_id: int, *,
         fila = (next((p for p in proveedores if p["id"] == proveedor_id), None)
                 or proveedor_para_vacios(proveedor_id))
         marcas = listar_marcas_vacio(proveedor_id) if fila else []
-        devoluciones = listar_devoluciones_vacios(proveedor_id) if fila else []
-        movimientos = listar_ajustes_y_asignaciones_vacios(proveedor_id) if fila else []
+        movimientos = movimientos_de_vacios(proveedor_id) if fila else []
         senas = sena_por_cajon_de_la_ultima_recepcion(proveedor_id) if fila else {}
         arranque = arranque_de_vacios()
     except Exception as error_db:
@@ -6755,7 +6761,7 @@ def _renderizar_vacios_proveedor(request: Request, proveedor_id: int, *,
     # cero: devolver de una en cero lo frena el server con el número, que es
     # más claro que una opción que falta.
     stock_por_marca = {p["marca_id"]: p["stock"] for p in fila["pilas"]}
-    pilas_para_elegir = [{"id": None, "nombre": "Sin asignar", "stock": stock_por_marca.get(None, 0),
+    pilas_para_elegir = [{"id": None, "nombre": "Sin marca", "stock": stock_por_marca.get(None, 0),
                           "sena": senas.get(None)}]
     pilas_para_elegir += [{"id": m["id"], "nombre": m["nombre"],
                            "stock": stock_por_marca.get(m["id"], 0), "sena": senas.get(m["id"])}
@@ -6766,8 +6772,10 @@ def _renderizar_vacios_proveedor(request: Request, proveedor_id: int, *,
         request,
         "compras_vacios_proveedor.html",
         {"p": fila, "marcas": marcas, "pilas_para_elegir": pilas_para_elegir,
-         "devoluciones": devoluciones, "movimientos": movimientos,
+         "movimientos": movimientos,
          "error": error, "aviso": aviso, "juntar": juntar,
+         "abierta": ("corregir" if juntar else
+                     abierta if abierta in ACCIONES_DEL_DETALLE_DE_VACIOS else None),
          "arranque": arranque,
          "es_administracion": camino["sector"] == "administracion",
          "camino": camino},
@@ -6775,18 +6783,31 @@ def _renderizar_vacios_proveedor(request: Request, proveedor_id: int, *,
     )
 
 
+# Las acciones del detalle que se despliegan (y el historial), con el nombre que
+# lleva su `id` en la plantilla y el `?abrir=` de la URL. UNA lista: la leen el
+# render y el test que compara contra las que la plantilla dibuja.
+ACCIONES_DEL_DETALLE_DE_VACIOS = ("devolver", "pasar", "corregir", "ajustar", "movimientos")
+
+
 @app.get("/compras/vacios/{proveedor_id}")
 @app.get("/administracion/vacios/{proveedor_id}")
 def ver_vacios_de_proveedor(request: Request, proveedor_id: int,
-                            error: str | None = None, aviso: str | None = None):
-    """El detalle de un proveedor."""
-    return _renderizar_vacios_proveedor(request, proveedor_id, error=error, aviso=aviso)
+                            error: str | None = None, aviso: str | None = None,
+                            abrir: str | None = None):
+    """El detalle de un proveedor. `?abrir=` despliega una acción (el índice
+    manda a "pasar" para asignarles marca a los sin marca)."""
+    return _renderizar_vacios_proveedor(request, proveedor_id, error=error, aviso=aviso,
+                                        abierta=abrir)
 
 
-def _volver_al_proveedor(request: Request, proveedor_id: int, aviso: str) -> RedirectResponse:
+def _volver_al_proveedor(request: Request, proveedor_id: int, aviso: str,
+                         abrir: str | None = None) -> RedirectResponse:
+    parametros = {"aviso": aviso}
+    if abrir:
+        parametros["abrir"] = abrir
     return RedirectResponse(
         url=f"{_camino_de_cajas_y_vacios(request)['base']}/vacios/{proveedor_id}?" +
-            urlencode({"aviso": aviso}),
+            urlencode(parametros),
         status_code=303)
 
 
@@ -6797,11 +6818,10 @@ def cargar_marca_vacio(request: Request, proveedor_id: int, nombre: str = Form("
     try:
         crear_marca_vacio(proveedor_id, nombre)
     except ValueError as invalido:
-        return _renderizar_vacios_proveedor(request, proveedor_id, error=str(invalido),
+        return _renderizar_vacios_proveedor(request, proveedor_id, abierta="corregir", error=str(invalido),
                                            status_code=400)
     except Exception as error_db:
-        return _renderizar_vacios_proveedor(
-            request, proveedor_id, error=f"No se pudo guardar la marca: {error_db}",
+        return _renderizar_vacios_proveedor(request, proveedor_id, abierta="corregir", error=f"No se pudo guardar la marca: {error_db}",
             status_code=500)
     return _volver_al_proveedor(request, proveedor_id, "Marca agregada.")
 
@@ -6883,7 +6903,7 @@ async def cargar_devolucion_vacios(request: Request, proveedor_id: int,
     cajones, error, status = await _guardar_devolucion_de_vacios(
         proveedor_id, marca_vacio_id, cantidad, importe, foto, sin_el_numero=False)
     if error:
-        return _renderizar_vacios_proveedor(request, proveedor_id, error=error, status_code=status)
+        return _renderizar_vacios_proveedor(request, proveedor_id, abierta="devolver", error=error, status_code=status)
     return _volver_al_proveedor(request, proveedor_id, f"Devolución de {cajones} cajones guardada.")
 
 
@@ -6949,12 +6969,13 @@ def anular_devolucion_vacios_ruta(request: Request, devolucion_id: int,
         anular_devolucion_vacios(devolucion_id)
     except ValueError as invalido:
         return RedirectResponse(
-            url=f"{destino}?" + urlencode({"error": str(invalido)}),
+            url=f"{destino}?" + urlencode({"error": str(invalido), "abrir": "movimientos"}),
             status_code=303)
 
     return RedirectResponse(
         url=f"{destino}?" +
-            urlencode({"aviso": "Devolución anulada. El stock ya lo refleja."}),
+            urlencode({"aviso": "Devolución anulada. El stock ya lo refleja.",
+                       "abrir": "movimientos"}),
         status_code=303)
 
 
@@ -6962,9 +6983,9 @@ def anular_devolucion_vacios_ruta(request: Request, devolucion_id: int,
 @app.get("/administracion/vacios/devolucion/{devolucion_id}/foto")
 def ver_foto_del_vale(devolucion_id: int, proveedor_id: int):
     """URL firmada de la foto del vale."""
-    for devolucion in listar_devoluciones_vacios(proveedor_id):
-        if devolucion["id"] == devolucion_id and devolucion["foto_ruta"]:
-            return RedirectResponse(url=obtener_url_foto(devolucion["foto_ruta"]), status_code=303)
+    foto_ruta = foto_de_la_devolucion(devolucion_id, proveedor_id)
+    if foto_ruta:
+        return RedirectResponse(url=obtener_url_foto(foto_ruta), status_code=303)
     raise HTTPException(status_code=404, detail="Ese vale no tiene foto")
 
 
@@ -6982,19 +7003,17 @@ def cargar_ajuste_vacios_deposito(request: Request, proveedor_id: int,
     """
     cajones = _entero_positivo(cantidad)
     if cajones is None or sentido not in ("sobran", "faltan"):
-        return _renderizar_vacios_proveedor(
-            request, proveedor_id,
+        return _renderizar_vacios_proveedor(request, proveedor_id, abierta="ajustar",
             error="Decí si sobran o faltan, y cuántos cajones (un número entero mayor que cero).",
             status_code=400)
     try:
         crear_ajuste_vacios_deposito(proveedor_id, _marca_del_form(marca_vacio_id),
                                      cajones if sentido == "sobran" else -cajones, motivo)
     except ValueError as invalido:
-        return _renderizar_vacios_proveedor(request, proveedor_id, error=str(invalido),
+        return _renderizar_vacios_proveedor(request, proveedor_id, abierta="ajustar", error=str(invalido),
                                            status_code=400)
     except Exception as error_db:
-        return _renderizar_vacios_proveedor(
-            request, proveedor_id, error=f"No se pudo guardar el ajuste: {error_db}",
+        return _renderizar_vacios_proveedor(request, proveedor_id, abierta="ajustar", error=f"No se pudo guardar el ajuste: {error_db}",
             status_code=500)
     return _volver_al_proveedor(request, proveedor_id, "Ajuste guardado.")
 
@@ -7011,8 +7030,7 @@ def cargar_asignacion_vacios(request: Request, proveedor_id: int,
     cajones = _entero_positivo(cantidad)
     hasta = _marca_del_form(marca_hasta_id)
     if cajones is None or (hasta is None and not marca_nueva.strip()):
-        return _renderizar_vacios_proveedor(
-            request, proveedor_id,
+        return _renderizar_vacios_proveedor(request, proveedor_id, abierta="pasar",
             error="Elegí a qué marca van (o escribí una nueva) y cuántos cajones "
                   "(un número entero mayor que cero).",
             status_code=400)
@@ -7020,11 +7038,10 @@ def cargar_asignacion_vacios(request: Request, proveedor_id: int,
         crear_asignacion_vacios(proveedor_id, _marca_del_form(marca_desde_id), hasta, cajones,
                                 marca_nueva=marca_nueva)
     except ValueError as invalido:
-        return _renderizar_vacios_proveedor(request, proveedor_id, error=str(invalido),
+        return _renderizar_vacios_proveedor(request, proveedor_id, abierta="pasar", error=str(invalido),
                                            status_code=400)
     except Exception as error_db:
-        return _renderizar_vacios_proveedor(
-            request, proveedor_id, error=f"No se pudo guardar la asignación: {error_db}",
+        return _renderizar_vacios_proveedor(request, proveedor_id, abierta="pasar", error=f"No se pudo guardar la asignación: {error_db}",
             status_code=500)
     return _volver_al_proveedor(request, proveedor_id, f"{cajones} cajones asignados.")
 
@@ -7043,12 +7060,11 @@ def renombrar_marca_de_vacios(request: Request, proveedor_id: int, marca_id: int
     except MarcaQueYaExiste as choque:
         actual = next((m["nombre"] for m in listar_marcas_vacio(proveedor_id)
                        if m["id"] == marca_id), "esa marca")
-        return _renderizar_vacios_proveedor(
-            request, proveedor_id, status_code=409,
+        return _renderizar_vacios_proveedor(request, proveedor_id, abierta="corregir", status_code=409,
             juntar={"se_va_id": marca_id, "se_va": actual,
                     "queda_id": choque.otra_id, "queda": choque.otra_nombre})
     except ValueError as invalido:
-        return _renderizar_vacios_proveedor(request, proveedor_id, error=str(invalido),
+        return _renderizar_vacios_proveedor(request, proveedor_id, abierta="corregir", error=str(invalido),
                                            status_code=400)
     return _volver_al_proveedor(request, proveedor_id, "Nombre de la marca corregido.")
 
@@ -7058,13 +7074,13 @@ def juntar_marcas_de_vacios(request: Request, proveedor_id: int, se_va_id: int,
                             queda_id: str = Form("")):
     """Pasa todo lo de una marca a otra del mismo proveedor, y borra la primera."""
     if not queda_id.strip().isdigit():
-        return _renderizar_vacios_proveedor(request, proveedor_id,
+        return _renderizar_vacios_proveedor(request, proveedor_id, abierta="corregir",
                                            error="Elegí con qué marca juntarla.", status_code=400)
     try:
         nombres = {m["id"]: m["nombre"] for m in listar_marcas_vacio(proveedor_id)}
         resultado = juntar_marcas_vacio(proveedor_id, se_va_id, int(queda_id))
     except ValueError as invalido:
-        return _renderizar_vacios_proveedor(request, proveedor_id, error=str(invalido),
+        return _renderizar_vacios_proveedor(request, proveedor_id, abierta="corregir", error=str(invalido),
                                            status_code=400)
     aviso = (f"«{nombres.get(se_va_id, 'La marca')}» quedó junta con "
              f"«{nombres.get(int(queda_id), 'la otra')}»: sus cajones son ahora una sola pila.")
@@ -7086,10 +7102,12 @@ def anular_ajuste_o_asignacion_vacios(request: Request, tipo: str, movimiento_id
     try:
         anular(movimiento_id)
     except ValueError as invalido:
-        return RedirectResponse(url=f"{destino}?" + urlencode({"error": str(invalido)}),
+        return RedirectResponse(url=f"{destino}?" + urlencode({"error": str(invalido),
+                                                                "abrir": "movimientos"}),
                                 status_code=303)
     return RedirectResponse(
-        url=f"{destino}?" + urlencode({"aviso": "Anulado. El stock ya lo refleja."}),
+        url=f"{destino}?" + urlencode({"aviso": "Anulado. El stock ya lo refleja.",
+                                       "abrir": "movimientos"}),
         status_code=303)
 
 

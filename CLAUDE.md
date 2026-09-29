@@ -4126,6 +4126,18 @@ arrancó", sus "esperando" y la regla de la fecha— **se fue**.
   Administración" sin el número. Contar y devolver son las DOS únicas rutas de
   Vacíos bajo `/deposito`, y un test lo exige.
 
+- **El detalle de un proveedor va en TRES ZONAS** (dueño, 29/09): el total con
+  una fila por marca ("Sin marca" incluida); cuatro acciones que se despliegan
+  de a una (Devolver, Pasar a otra marca, Corregir una marca, Ajustar; en
+  Compras solo Devolver y el alta de marca); y el historial cerrado, "Ver
+  movimientos de este proveedor". `?abrir=` despliega una, y un formulario que
+  rebota vuelve con la suya abierta. **El historial sale de
+  `movimientos_de_vacios`**: las mismas cinco patas que `_SQL_PILAS_DE_VACIOS`,
+  con lo anulado y lo de antes del conteo marcados. Lo ata a la tarjeta un test
+  contra Postgres que suma la lista y la compara con el stock por pila. Con una
+  base sin arranque (Palmala) no marca como "antes" lo anterior a la foto: esa
+  base no vota.
+
 - **El ingreso directo tiene SU guía** (`guias_compra.de_deposito`): "nunca
   es parte de la comanda del Puesto". Dos guías por día y proveedor, cada
   una numera sus renglones. El origen no se elige: sale de la compra

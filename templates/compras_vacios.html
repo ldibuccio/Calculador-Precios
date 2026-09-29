@@ -110,7 +110,7 @@
   {# Asignar es solo de Administración: desde Compras el link chocaría
      contra una clave que no es suya (corolario 56). #}
   {% if camino.sector == "administracion" and p.pilas and not p.pilas[0].marca and p.pilas[0].stock %}
-  <a class="ver" href="/administracion/vacios/{{ p.id }}#asignar">Asignarles marca</a>
+  <a class="ver" href="/administracion/vacios/{{ p.id }}?abrir=pasar">Asignarles marca</a>
   {% endif %}
 </div>
 {% else %}
