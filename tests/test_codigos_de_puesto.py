@@ -248,7 +248,6 @@ def _alta(datos):
         patch("app.main.buscar_proveedor_por_codigo", return_value=None),
         patch("app.main.obtener_o_crear_proveedor_por_codigo", return_value=(40, False)) as puerta,
         patch("app.main.listar_proveedores_para_abm", return_value=PROVEEDORES_ABM),
-        patch("app.main.listar_tipos_cajon", return_value=[]),
     ):
         respuesta = cliente.post("/compras/proveedores/nuevo", data=datos, follow_redirects=False)
     return respuesta, puerta
@@ -276,7 +275,6 @@ def test_PRODUCTOS_DON_LAZZARO_frena_el_alta_contra_DON_LAZZARO():
         patch("app.main.buscar_proveedor_por_codigo", return_value=None),
         patch("app.main.obtener_o_crear_proveedor_por_codigo", return_value=(40, False)) as puerta,
         patch("app.main.listar_proveedores_para_abm", return_value=PROVEEDORES_ABM + [lazzaro]),
-        patch("app.main.listar_tipos_cajon", return_value=[]),
     ):
         respuesta = cliente.post("/compras/proveedores/nuevo",
                                  data={"nombre": "PRODUCTOS DON LAZZARO", "codigo_puesto": "L02P44"},
@@ -320,7 +318,6 @@ def test_si_la_BASE_rechaza_el_codigo_se_dice_como_400():
         patch("app.main.asociar_codigo_a_proveedor",
               side_effect=ValueError("El código N09P39 ya es de otro proveedor: no se puede asociar a X.")),
         patch("app.main.listar_proveedores_para_abm", return_value=PROVEEDORES_ABM),
-        patch("app.main.listar_tipos_cajon", return_value=[]),
     ):
         respuesta = cliente.post("/compras/proveedores/3/asociar-codigo", data={"codigo_puesto": "N09P39"})
 
@@ -335,7 +332,6 @@ def test_el_codigo_REPETIDO_nombra_el_codigo_TIPEADO_y_no_el_principal():
               return_value={"id": 3, "codigo_puesto": "N09P41", "nombre": "FRUTAMAX S.R.L.",
                             "activo": True, "por_alternativo": True}),
         patch("app.main.listar_proveedores_para_abm", return_value=PROVEEDORES_ABM),
-        patch("app.main.listar_tipos_cajon", return_value=[]),
     ):
         respuesta = cliente.post("/compras/proveedores/nuevo",
                                  data={"nombre": "Frutamax", "codigo_puesto": "N09P39"})

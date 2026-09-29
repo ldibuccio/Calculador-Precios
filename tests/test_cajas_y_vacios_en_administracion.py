@@ -72,13 +72,13 @@ UN_MOVIMIENTO = [{
     "envase": "Caja EJEMPLO Grande", "motivo": None,
 }]
 def _pila(marca_id, marca, stock):
-    return {"proveedor_id": 7, "proveedor": "Puesto EJEMPLO", "tipo_cajon": "Cajón de ejemplo",
+    return {"proveedor_id": 7, "proveedor": "Puesto EJEMPLO",
             "marca_id": marca_id, "marca": marca, "foto": 0, "recibidos": 0,
             "devueltos": 0, "ajustes": 0, "asignados": 0, "stock": stock}
 
 
 UN_PROVEEDOR = [{
-    "id": 7, "nombre": "Puesto EJEMPLO", "tipo_cajon": "Cajón de ejemplo", "stock": 35,
+    "id": 7, "nombre": "Puesto EJEMPLO", "stock": 35,
     "pilas": [_pila(None, None, 12), _pila(71, "EJ Roja", 23)],
 }]
 MARCAS = [{"id": 71, "nombre": "EJ Roja"}]
@@ -112,7 +112,6 @@ def _con_datos():
         "listar_ajustes_y_asignaciones_vacios": UN_AJUSTE,
         "sena_por_cajon_de_la_ultima_recepcion": {},
         "cotejo_de_vacios_deposito": UN_COTEJO,
-        "listar_tipos_cajon": [],
     }.items():
         pila.enter_context(patch(f"app.main.{nombre}", return_value=[dict(f) for f in valor]
                                  if isinstance(valor, list) else valor))
@@ -180,7 +179,7 @@ def test_los_FORMULARIOS_de_cada_pantalla_mandan_a_SU_sector():
         "/vacios/conteo": {"/administracion/vacios/conteo"},
         # EL AJUSTE, LA ASIGNACIÓN Y SU ANULAR son solo de Administración: entrando
         # por Compras no se dibujan (lo cuida tests/test_vacios_deposito.py).
-        "/vacios/7": {"/administracion/vacios/7/cajon", "/administracion/vacios/7/marca",
+        "/vacios/7": {"/administracion/vacios/7/marca",
                       "/administracion/vacios/7/devolucion",
                       "/administracion/vacios/devolucion/11/anular",
                       "/administracion/vacios/7/ajuste", "/administracion/vacios/7/asignacion",
@@ -213,7 +212,6 @@ def test_los_FORMULARIOS_de_cada_pantalla_mandan_a_SU_sector():
     ("/cajas/pallet", {"envase_id": "1", "cajas": "60"}, "guardar_cajas_por_pallet", "/cajas?"),
     ("/vacios/conteo", {"proveedor_id": "7", "cantidad": "0", "fecha": "2026-09-20"},
      "crear_conteo_vacios_deposito", "/vacios/cotejo"),
-    ("/vacios/7/cajon", {"tipo_cajon_id": "4"}, "asignar_tipo_cajon", "/vacios/7?"),
     ("/vacios/7/marca", {"nombre": "EJ Azul"}, "crear_marca_vacio", "/vacios/7?"),
     ("/vacios/devolucion/11/anular", {"proveedor_id": "7"}, "anular_devolucion_vacios",
      "/vacios/7?"),
@@ -283,8 +281,8 @@ def test_el_STOCK_de_vacios_lista_una_fila_por_PILA_con_su_marca():
     assert respuesta.status_code == 200
     marcado = respuesta.text.split("</style>")[-1]
     assert marcado.count('<div class="fila">') == 2
-    assert '<span class="tipo">sin asignar · Cajón de ejemplo</span>' in marcado
-    assert '<span class="tipo">EJ Roja · Cajón de ejemplo</span>' in marcado
+    assert '<span class="tipo">sin asignar</span>' in marcado
+    assert '<span class="tipo">EJ Roja</span>' in marcado
     assert '<span class="cantidad">12</span>' in marcado
     assert '<span class="cantidad">23</span>' in marcado
     assert '<span class="cantidad">35</span>' in marcado, "el total"
@@ -312,11 +310,14 @@ def test_los_EXPORTES_del_stock_de_vacios_dicen_lo_MISMO_que_la_pantalla():
     assert excel.status_code == 200 and pdf.status_code == 200
     assert pdf.content.startswith(b"%PDF")
     hoja = load_workbook(_io.BytesIO(excel.content)).active
-    filas = [tuple(c.value for c in f[:4]) for f in hoja.iter_rows(min_row=4)]
-    assert filas == [("Proveedor", "Marca", "Tipo de cajón", "Cajones"),
-                     ("Puesto EJEMPLO", "sin asignar", "Cajón de ejemplo", 12),
-                     ("Puesto EJEMPLO", "EJ Roja", "Cajón de ejemplo", 23),
-                     (None, None, "Total", 35)]
+    # El tipo de cajón salió el 29/09 (dueño): lo reemplazan las marcas. El
+    # ancho de la hoja se mira aparte, para que una columna de más se vea.
+    assert hoja.max_column == 3
+    filas = [tuple(c.value for c in f) for f in hoja.iter_rows(min_row=4)]
+    assert filas == [("Proveedor", "Marca", "Cajones"),
+                     ("Puesto EJEMPLO", "sin asignar", 12),
+                     ("Puesto EJEMPLO", "EJ Roja", 23),
+                     (None, "Total", 35)]
 
 
 # CAJAS POR PALLET (23/09): el mismo stock partido en pallets y sueltas.

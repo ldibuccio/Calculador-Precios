@@ -16548,9 +16548,9 @@ def detallar_envases_a_reponer() -> dict:
 # que la vendió. No comparten una sola tabla, y los dos "proveedor" son
 # tablas distintas.
 #
-# Y `tipos_cajon` NO ES `envases`: `envases` es la caja NUESTRA con su costo,
-# la que se le factura al cliente. `tipos_cajon` es el cajón AJENO en el que
-# llega la fruta. Uno se paga, el otro se devuelve.
+# El cajón AJENO se identifica por su MARCA (`marcas_vacio`). El "tipo de cajón
+# por proveedor" que había antes (`tipos_cajon`) lo reemplazaron las marcas y
+# el código dejó de usarlo el 29/09 (dueño).
 # ============================================================================
 
 # EL STOCK DE VACÍOS DEL DEPÓSITO SE LLEVA POR PILA: proveedor y marca del
@@ -16583,7 +16583,7 @@ def detallar_envases_a_reponer() -> dict:
 # SOLO LO QUE VINO CON SEÑA: una compra sin seña no deja cajón que devolver
 # (decisión del dueño, 25/09). `COALESCE(sena, 0) > 0`.
 COLUMNAS_PILAS_DE_VACIOS = (
-    "proveedor_id", "proveedor", "tipo_cajon", "marca_id", "marca",
+    "proveedor_id", "proveedor", "marca_id", "marca",
     "arranque", "recibidos", "devueltos", "ajustes", "asignados", "stock",
 )
 
@@ -16636,7 +16636,7 @@ _SQL_PILAS_DE_VACIOS = f"""
          WHERE s.anulado_el IS NULL
            AND s.creado_en > COALESCE((SELECT creado_en FROM arr), '-infinity')
     )
-    SELECT p.id AS proveedor_id, p.nombre AS proveedor, tc.nombre AS tipo_cajon,
+    SELECT p.id AS proveedor_id, p.nombre AS proveedor,
            m.marca_id AS marca_id, mv.nombre AS marca,
            SUM(m.arranque) AS arranque, SUM(m.recibidos) AS recibidos,
            SUM(m.devueltos) AS devueltos, SUM(m.ajustes) AS ajustes,
@@ -16645,10 +16645,9 @@ _SQL_PILAS_DE_VACIOS = f"""
              + SUM(m.ajustes) + SUM(m.asignados) AS stock
       FROM mov m
       JOIN proveedores p       ON p.id = m.proveedor_id
-      LEFT JOIN tipos_cajon tc ON tc.id = p.tipo_cajon_id
       LEFT JOIN marcas_vacio mv ON mv.id = m.marca_id
      WHERE p.activo = true
-     GROUP BY p.id, p.nombre, tc.nombre, m.marca_id, mv.nombre
+     GROUP BY p.id, p.nombre, m.marca_id, mv.nombre
 """
 
 
@@ -16723,7 +16722,7 @@ def stock_de_vacios_deposito() -> list[dict]:
             continue
         p = proveedores.setdefault(pila["proveedor_id"], {
             "id": pila["proveedor_id"], "nombre": pila["proveedor"],
-            "tipo_cajon": pila["tipo_cajon"], "stock": 0, "pilas": [],
+            "stock": 0, "pilas": [],
         })
         p["stock"] += pila["stock"]
         p["pilas"].append(pila)
@@ -16733,7 +16732,7 @@ def stock_de_vacios_deposito() -> list[dict]:
 
 
 def proveedor_para_vacios(proveedor_id: int) -> dict | None:
-    """Un proveedor ACTIVO con su tipo de cajón, tenga o no cajones en el galpón.
+    """Un proveedor ACTIVO, tenga o no cajones en el galpón.
 
     El detalle de Vacíos se abre también para uno en cero: es donde se le
     cargan las marcas antes de la primera recepción que las necesite.
@@ -16742,8 +16741,7 @@ def proveedor_para_vacios(proveedor_id: int) -> dict | None:
     try:
         with conexion.cursor() as cursor:
             cursor.execute(
-                "SELECT p.id, p.nombre, tc.nombre FROM proveedores p "
-                "LEFT JOIN tipos_cajon tc ON tc.id = p.tipo_cajon_id "
+                "SELECT p.id, p.nombre FROM proveedores p "
                 "WHERE p.id = %s AND p.activo = true",
                 (proveedor_id,),
             )
@@ -16752,7 +16750,7 @@ def proveedor_para_vacios(proveedor_id: int) -> dict | None:
         conexion.close()
     if fila is None:
         return None
-    return {"id": fila[0], "nombre": fila[1], "tipo_cajon": fila[2], "stock": 0, "pilas": []}
+    return {"id": fila[0], "nombre": fila[1], "stock": 0, "pilas": []}
 
 
 def _stock_de_la_pila(cursor, proveedor_id: int, marca_id: int | None) -> int:
@@ -16815,8 +16813,7 @@ def listar_marcas_vacio_por_proveedor() -> dict[int, list[dict]]:
 def crear_marca_vacio(proveedor_id: int, nombre: str) -> int:
     """Agrega una marca de cajón a un proveedor. Devuelve su id.
 
-    Mismo criterio que `crear_tipo_cajon`: el plegado vive en
-    `normalizar_texto` y la base hace cumplir la unicidad POR PROVEEDOR
+    El plegado vive en `normalizar_texto` y la base hace cumplir la unicidad POR PROVEEDOR
     (`marcas_vacio_nombre_unico`). No se pre-pregunta: se inserta y se
     traduce la violación.
     """
@@ -17356,114 +17353,3 @@ def cotejo_de_vacios_deposito() -> list[dict]:
             "diferencia": sistema - int(f[4]),
         })
     return sorted(resultado, key=lambda x: (-abs(x["diferencia"]), x["proveedor"].lower()))
-
-
-def listar_tipos_cajon() -> list[dict]:
-    """El catálogo de tipos de cajón del depósito, activos, por nombre."""
-    conexion = obtener_conexion()
-    try:
-        with conexion.cursor() as cursor:
-            cursor.execute(
-                "SELECT id, nombre FROM tipos_cajon WHERE activo = true ORDER BY nombre"
-            )
-            filas = cursor.fetchall()
-    finally:
-        conexion.close()
-    return [{"id": f[0], "nombre": f[1]} for f in filas]
-
-
-def crear_tipo_cajon(nombre: str) -> int:
-    """Agrega un tipo de cajón. Devuelve su id.
-
-    EL PLEGADO ESTÁ ESCRITO UNA SOLA VEZ, en `normalizar_texto`, y la base
-    solo hace cumplir la unicidad de lo que Python escribió. No hay una
-    segunda expresión en SQL que pueda separarse de ésta — que es como "Cajón
-    Chico" entró al lado de "cajon  chico" en la tabla de al lado.
-
-    Y NO SE PRE-PREGUNTA "¿ya existe?": se intenta insertar y se traduce la
-    violación del unique. Preguntar antes es la regla escrita dos veces, y
-    entre la pregunta y el INSERT cabe otra carga.
-    """
-    normalizado = normalizar_texto(nombre)
-    if not normalizado:
-        raise ValueError("Poné un nombre para el cajón.")
-    conexion = obtener_conexion()
-    try:
-        with conexion.cursor() as cursor:
-            try:
-                cursor.execute(
-                    "INSERT INTO tipos_cajon (nombre, nombre_normalizado) VALUES (%s, %s) RETURNING id",
-                    # El nombre que se MUESTRA también colapsa los espacios de
-                    # adentro: si no, "Cajón  Chico" y "Cajón Chico" se ven
-                    # distintos en la pantalla y el índice los considera el
-                    # mismo — dos cosas que el operario no puede conciliar.
-                    (" ".join(nombre.split()), normalizado),
-                )
-            except psycopg2.errors.UniqueViolation:
-                conexion.rollback()
-                # SI EL CONSTRAINT RECHAZA Y NO ENCONTRAMOS EL MOTIVO, ESO SE
-                # DICE: es la señal de que las dos reglas se separaron, y
-                # tragarla es cómo se pierde meses después.
-                with conexion.cursor() as buscador:
-                    buscador.execute(
-                        "SELECT nombre FROM tipos_cajon WHERE nombre_normalizado = %s",
-                        (normalizado,),
-                    )
-                    fila = buscador.fetchone()
-                if fila is None:
-                    raise ValueError(
-                        "La base rechazó el cajón por repetido y no encuentro cuál es: "
-                        "el plegado de Python y el de la base dejaron de coincidir."
-                    )
-                raise ValueError(f"Ese cajón ya está cargado como «{fila[0]}».")
-            tipo_id = cursor.fetchone()[0]
-        conexion.commit()
-        return tipo_id
-    finally:
-        conexion.close()
-
-
-def asignar_tipo_cajon(proveedor_id: int, tipo_cajon_id: int | None) -> None:
-    """En qué cajón entrega ese proveedor. UNO SOLO.
-
-    Es un atributo del proveedor y no una segunda dimensión de la cuenta,
-    porque un proveedor entrega siempre en el mismo tipo: el tipo es CÓMO SE
-    LLAMA su cajón, no un eje contra el cual contar. El circuito del puesto
-    sí tiene las dos dimensiones —allá un cliente trae cajones de varios
-    tipos— y por eso todas sus tablas llevan `tipo_envase_id`. La diferencia
-    no es de estilo.
-    """
-    conexion = obtener_conexion()
-    try:
-        with conexion.cursor() as cursor:
-            cursor.execute(
-                "UPDATE proveedores SET tipo_cajon_id = %s, actualizado_en = now() WHERE id = %s",
-                (tipo_cajon_id, proveedor_id),
-            )
-        conexion.commit()
-    finally:
-        conexion.close()
-
-
-def buscar_tipo_cajon_por_nombre(nombre: str) -> int | None:
-    """El id del tipo de cajón que se llame así, o None. Pliega igual que el alta.
-
-    USA `normalizar_texto`, que es la MISMA función con la que se escribió
-    `nombre_normalizado`. Una comparación escrita a mano acá sería la regla
-    dos veces: la que busca dejaría de encontrar lo que la que guarda
-    considera repetido, y el que tipea "Cajón Chico" se comería un rechazo
-    sin ver dónde está el que ya existe.
-    """
-    normalizado = normalizar_texto(nombre)
-    if not normalizado:
-        return None
-    conexion = obtener_conexion()
-    try:
-        with conexion.cursor() as cursor:
-            cursor.execute(
-                "SELECT id FROM tipos_cajon WHERE nombre_normalizado = %s", (normalizado,)
-            )
-            fila = cursor.fetchone()
-    finally:
-        conexion.close()
-    return None if fila is None else int(fila[0])

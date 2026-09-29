@@ -359,10 +359,6 @@ from app.db import (
     juntar_marcas_vacio,
     MarcaQueYaExiste,
     listar_ajustes_y_asignaciones_vacios,
-    listar_tipos_cajon,
-    crear_tipo_cajon,
-    buscar_tipo_cajon_por_nombre,
-    asignar_tipo_cajon,
     crear_movimiento_envase,
     guardar_umbral_de_envase,
     guardar_cajas_por_pallet,
@@ -5902,14 +5898,13 @@ def _renderizar_pantalla_proveedores_compras(
 ):
     try:
         proveedores = listar_proveedores_para_abm()
-        tipos_cajon = listar_tipos_cajon()
     except Exception as error_db:
         raise HTTPException(status_code=500, detail=f"Error al conectar con la base de datos: {error_db}") from error_db
 
     return templates.TemplateResponse(
         request,
         "compras_proveedores.html",
-        {"proveedores": proveedores, "tipos_cajon": tipos_cajon,
+        {"proveedores": proveedores,
          "error": error, "aviso": aviso, "destacado_id": destacado_id,
          "alta_pendiente": alta_pendiente, "parecidos": parecidos or []},
         status_code=status_code,
@@ -5937,8 +5932,6 @@ def ver_proveedores_compras(request: Request, aviso: str | None = None, destacad
 @app.post("/compras/proveedores/nuevo")
 def crear_proveedor_compras_ruta(request: Request, nombre: str = Form(""),
                                  codigo_puesto: str = Form(""),
-                                 tipo_cajon_id: str = Form(""),
-                                 cajon_nombre_nuevo: str = Form(""),
                                  es_otro: str = Form("")):
     """Alta a mano. Pasa por la MISMA puerta que usa la carga de compras.
 
@@ -6005,8 +5998,7 @@ def crear_proveedor_compras_ruta(request: Request, nombre: str = Form(""),
         if parecidos:
             return _renderizar_pantalla_proveedores_compras(
                 request,
-                alta_pendiente={"nombre": nombre_limpio, "codigo_puesto": codigo_valor,
-                                "tipo_cajon_id": tipo_cajon_id, "cajon_nombre_nuevo": cajon_nombre_nuevo},
+                alta_pendiente={"nombre": nombre_limpio, "codigo_puesto": codigo_valor},
                 parecidos=parecidos,
                 status_code=409,
             )
@@ -6020,27 +6012,9 @@ def crear_proveedor_compras_ruta(request: Request, nombre: str = Form(""),
             request, error=f"No se pudo guardar el proveedor: {error_db}", status_code=500
         )
 
-    # EL CAJÓN SE ESCRIBE DESPUÉS Y NO ADENTRO DEL ALTA: el INSERT del
-    # proveedor vive en un solo lugar (`obtener_o_crear_proveedor_por_codigo`)
-    # y lo comparte con la carga de compras, donde nadie declara un cajón.
-    # Meterlo ahí sería darle un parámetro a la puerta de todos los días para
-    # servir a la de una vez.
-    #
-    # Y NO ROMPE EL ALTA SI FALLA: el proveedor ya está creado, que es lo que
-    # se vino a hacer. Un 500 acá dejaría al que carga creyendo que no se
-    # guardó nada, y volvería a intentarlo contra un código que ya existe.
-    aviso_cajon = ""
-    try:
-        tipo_id = _tipo_cajon_elegido(tipo_cajon_id, cajon_nombre_nuevo)
-        if tipo_id is not None:
-            asignar_tipo_cajon(proveedor_id, tipo_id)
-    except Exception as error_cajon:
-        aviso_cajon = (f" El proveedor quedó cargado, pero el cajón no: {error_cajon}. "
-                       "Se puede cargar desde Vacíos del depósito.")
-
     parametros = urlencode({
         "aviso": (f'Proveedor "{nombre_limpio}" ({codigo_valor}) cargado. '
-                  f"Ya se puede elegir al cargar una compra.{aviso_cajon}"),
+                  f"Ya se puede elegir al cargar una compra."),
         "destacado_id": proveedor_id,
     })
     return RedirectResponse(url=f"/compras/proveedores?{parametros}", status_code=303)
@@ -6741,7 +6715,6 @@ def _renderizar_vacios_proveedor(request: Request, proveedor_id: int, *,
         devoluciones = listar_devoluciones_vacios(proveedor_id) if fila else []
         movimientos = listar_ajustes_y_asignaciones_vacios(proveedor_id) if fila else []
         senas = sena_por_cajon_de_la_ultima_recepcion(proveedor_id) if fila else {}
-        tipos = listar_tipos_cajon()
         arranque = arranque_de_vacios()
     except Exception as error_db:
         raise HTTPException(
@@ -6767,7 +6740,7 @@ def _renderizar_vacios_proveedor(request: Request, proveedor_id: int, *,
         "compras_vacios_proveedor.html",
         {"p": fila, "marcas": marcas, "pilas_para_elegir": pilas_para_elegir,
          "devoluciones": devoluciones, "movimientos": movimientos,
-         "tipos": tipos, "error": error, "aviso": aviso, "juntar": juntar,
+         "error": error, "aviso": aviso, "juntar": juntar,
          "arranque": arranque,
          "es_administracion": camino["sector"] == "administracion",
          "camino": camino},
@@ -6783,56 +6756,11 @@ def ver_vacios_de_proveedor(request: Request, proveedor_id: int,
     return _renderizar_vacios_proveedor(request, proveedor_id, error=error, aviso=aviso)
 
 
-def _tipo_cajon_elegido(tipo_cajon_id: str, nombre_nuevo: str) -> int | None:
-    """En qué cajón entrega un proveedor, resuelto en UN SOLO LUGAR.
-
-    Lo preguntan DOS pantallas —el alta de Proveedores y el detalle de
-    Vacíos— y es la misma regla: si tipeó un nombre gana el nombre, y si ese
-    nombre ya existe se REUSA en vez de crear un duplicado; si no, el de la
-    lista; si no, ninguno (la columna es nullable a propósito).
-
-    Escrita dos veces son dos reglas, y la que se separe no falla: crea un
-    "Cajón Chico" al lado del que ya estaba, y el stock de vacíos queda
-    partido en dos tipos que nadie va a notar.
-    """
-    texto = " ".join(nombre_nuevo.split())
-    if texto:
-        return buscar_tipo_cajon_por_nombre(texto) or crear_tipo_cajon(texto)
-    if tipo_cajon_id.strip().isdigit():
-        return int(tipo_cajon_id)
-    return None
-
-
 def _volver_al_proveedor(request: Request, proveedor_id: int, aviso: str) -> RedirectResponse:
     return RedirectResponse(
         url=f"{_camino_de_cajas_y_vacios(request)['base']}/vacios/{proveedor_id}?" +
             urlencode({"aviso": aviso}),
         status_code=303)
-
-
-@app.post("/compras/vacios/{proveedor_id}/cajon")
-@app.post("/administracion/vacios/{proveedor_id}/cajon")
-def guardar_tipo_cajon_de_proveedor(request: Request, proveedor_id: int,
-                                    tipo_cajon_id: str = Form(""),
-                                    nombre_nuevo: str = Form("")):
-    """En qué cajón entrega este proveedor. UNO SOLO.
-
-    EL CAMPO DE TEXTO NO ES UN ATAJO: los cuarenta y pico de proveedores que
-    ya estaban tienen la columna en NULL —la migración no podía inventarla—
-    así que el que empiece a usar esto va a tener que bautizar el cajón la
-    primera vez. Si el nombre tipeado ya existe se REUSA en vez de rebotar.
-    """
-    try:
-        asignar_tipo_cajon(proveedor_id, _tipo_cajon_elegido(tipo_cajon_id, nombre_nuevo))
-    except ValueError as invalido:
-        return _renderizar_vacios_proveedor(request, proveedor_id, error=str(invalido),
-                                           status_code=400)
-    except Exception as error_db:
-        return _renderizar_vacios_proveedor(
-            request, proveedor_id, error=f"No se pudo guardar el cajón: {error_db}",
-            status_code=500)
-
-    return _volver_al_proveedor(request, proveedor_id, "Cajón guardado.")
 
 
 @app.post("/compras/vacios/{proveedor_id}/marca")
