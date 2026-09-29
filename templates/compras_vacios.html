@@ -64,6 +64,10 @@
          color: #1d4ed8; text-decoration: underline; min-height: 44px;
          line-height: 44px; }
   .vacio { color: #6b7280; font-size: .95rem; }
+  .titulo-total { display: flex; flex-wrap: wrap; align-items: baseline;
+                  justify-content: space-between; gap: .5rem; }
+  .total { font-size: 1.9rem; font-weight: 800; color: #111; white-space: nowrap; }
+  .total-alto { color: #b91c1c; }
   /* DE DÓNDE SALE EL NÚMERO (dueño, 28/09): se ve, no va a la "i". Sin
      esto, el que compara contra un número viejo no sabe que la cuenta
      arrancó de nuevo. */
@@ -95,7 +99,11 @@
 
 {% include "_origen_vacios.html" %}
 
-<h2>Cajones en el galpón</h2>
+{# EL TOTAL AL LADO DEL TÍTULO (dueño, 29/09): la suma de todos los
+   proveedores, la misma que dispara la alerta de devolver. En rojo cuando
+   pasa del límite. #}
+<h2 class="titulo-total">Cajones en el galpón
+  <span class="total{% if total > limite %} total-alto{% endif %}">{{ total|miles }}</span></h2>
 {% for p in proveedores %}
 <div class="tarjeta">
   <div class="cabeza">

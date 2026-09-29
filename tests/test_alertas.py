@@ -193,6 +193,28 @@ def test_pasadas_las_horas_de_recalculo_hay_que_recalcular():
     assert hay_que_recalcular([_fila(calculada_el=vieja)], AHORA) is True
 
 
+def test_una_alerta_RECIEN_DESPLEGADA_se_calcula_sin_esperar_las_seis_horas():
+    """La foto está fresca, pero el registro tiene una alerta que la foto no
+    tiene: es nueva, y tiene que aparecer apenas se despliega (29/09)."""
+    from app.alertas import DefinicionAlerta
+    fresca = [_fila(codigo="vieja", calculada_el=AHORA - timedelta(hours=1))]
+    vieja = DefinicionAlerta(codigo="vieja", titulo="t", url="/x", texto_link="x", contar=lambda: 0)
+    nueva = DefinicionAlerta(codigo="nueva", titulo="t", url="/x", texto_link="x", contar=lambda: 0)
+    assert hay_que_recalcular(fresca, AHORA, [vieja, nueva]) is True
+    # y con todas en la foto, fresca no se recalcula
+    assert hay_que_recalcular(fresca, AHORA, [vieja]) is False
+
+
+def test_el_bucle_le_pasa_el_REGISTRO_a_hay_que_recalcular():
+    import app.main as main
+    with patch("app.main.listar_estado_alertas", return_value=[]), \
+         patch("app.main.hay_que_recalcular", return_value=False) as mirar, \
+         patch("app.main.recalcular") as correr:
+        main._recalcular_alertas_si_toca()
+    assert mirar.call_args.args[2] is main.ALERTAS
+    correr.assert_not_called()
+
+
 def test_el_vencimiento_cae_entre_una_y_dos_corridas():
     """Una corrida perdida no dispara el aviso, dos sí.
 

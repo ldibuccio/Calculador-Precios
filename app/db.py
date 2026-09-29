@@ -16753,6 +16753,33 @@ def stock_de_vacios_deposito() -> list[dict]:
     return sorted(proveedores.values(), key=lambda x: (-x["stock"], x["nombre"].lower()))
 
 
+# EL AVISO DE DEVOLVER (dueño, 29/09): con más de esta cantidad de cajones
+# vacíos en el galpón, salta la alerta `vacios_para_devolver` en Compras,
+# Gerencia y Administración. Es sobre el TOTAL de todos los proveedores, no
+# por proveedor. Vive acá, una sola vez: lo leen la alerta y su detalle.
+LIMITE_CAJONES_VACIOS_EN_GALPON = 500
+
+
+def total_de_vacios_en_galpon(proveedores: list[dict]) -> int:
+    """La suma de cajones de todos los proveedores, sobre lo que ya se leyó.
+
+    Recibe la lista de `stock_de_vacios_deposito` y no vuelve a consultar: el
+    total del índice y el de la alerta salen de la MISMA cuenta.
+    """
+    return sum(p["stock"] for p in proveedores)
+
+
+def contar_vacios_para_devolver() -> int:
+    """Los cajones del galpón si pasan del límite, cero si no.
+
+    Devuelve el TOTAL y no un 1: el banner lo muestra como número ("Hay 1.086
+    cajones vacíos en el galpón"), y un 1 no le dice al que lo lee cuánto hay
+    que devolver.
+    """
+    total = total_de_vacios_en_galpon(stock_de_vacios_deposito())
+    return total if total > LIMITE_CAJONES_VACIOS_EN_GALPON else 0
+
+
 def proveedor_para_vacios(proveedor_id: int) -> dict | None:
     """Un proveedor ACTIVO, tenga o no cajones en el galpón.
 

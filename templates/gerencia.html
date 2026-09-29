@@ -51,6 +51,14 @@
   {% set barra_atras = "/inicio" %}
   {% include "_barra_navegacion.html" %}
 
+  {% include "_banner_alertas.html" %}
+  {% from "_boton_alertas.html" import cuantas_alertas %}
+
+  {# PRIMERO, como en Compras: es lo que hay que mirar antes de hacer nada, y
+     el banner de arriba manda acá. #}
+  <div class="tarjeta">
+    <a class="boton" href="/gerencia/alertas">Alertas{{ cuantas_alertas(banner) }}</a>
+  </div>
 
   {# El manejo del dinero, con su clave. La Auditoría vive en su propio
      sector (/auditoria), sin clave: es control operativo, no plata. #}

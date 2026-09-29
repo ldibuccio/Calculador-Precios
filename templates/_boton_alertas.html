@@ -1,0 +1,13 @@
+{# El número del botón "Alertas" de un hub: cuántas tienen casos (29/09,
+   dueño). UNO para todos los sectores, y sale de `banner.activas`, que arma
+   _banner_alertas() con la misma lectura que el banner. Sin casos no pone
+   nada y el botón dice solo "Alertas".
+
+   Pone SOLO el número y no el <a> entero: el link queda escrito en cada hub
+   para que el barrido de pantallas sin link lo encuentre.
+   Uso: {% from "_boton_alertas.html" import cuantas_alertas %}
+        <a class="boton" href="/gerencia/alertas">Alertas{{ cuantas_alertas(banner) }}</a>
+   El banner va como argumento: un macro importado no ve el contexto. #}
+{% macro cuantas_alertas(banner) -%}
+{% if banner and banner.activas %} ({{ banner.activas }}){% endif %}
+{%- endmacro %}
