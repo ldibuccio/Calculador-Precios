@@ -29,6 +29,7 @@ from fastapi.templating import Jinja2Templates
 from PIL import Image, ImageOps
 
 from app.alertas import (
+    HORAS_RECALCULO,
     HORAS_VENCIMIENTO,
     DefinicionAlerta,
     frescura,
@@ -17640,6 +17641,7 @@ def ver_auditoria(request: Request, aviso: str | None = None, error: str | None 
             "controles_corridos": len(ALERTAS),
             "frescura": frescura(estado, ahora),
             "horas_vencimiento": HORAS_VENCIMIENTO,
+            "horas_recalculo": HORAS_RECALCULO,
             "aviso": aviso,
             "error": error,
         },
@@ -22959,8 +22961,8 @@ def revisar_casillas_activas(ahora=None) -> int:
 # vencen — lo que no puede pasar nunca más es que bloquee el bucle.
 SEGUNDOS_TIMEOUT_TICK = 120
 
-# Tope para el recálculo de alertas. Corre dos veces por día, así que demorar
-# un tick de casilla como mucho ese rato, dos veces al día, no molesta a nadie
+# Tope para el recálculo de alertas. Corre cada HORAS_RECALCULO, así que demorar
+# un tick de casilla como mucho ese rato, cuatro veces al día, no molesta a nadie
 # — y con tope, una alerta colgada no puede dejar el bucle parado para siempre.
 SEGUNDOS_TIMEOUT_ALERTAS = 180
 
