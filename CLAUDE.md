@@ -377,6 +377,17 @@ De acá en adelante, después de cualquier push que se dé por desplegado:
    el conjunto ENCONTRADO contra el DECIDIDO, así que el próximo no depende
    de que alguien se acuerde.
 
+   **Y LOS PR SE MERGEAN POR REBASE O FAST-FORWARD, NUNCA CON COMMIT DE
+   MERGE (28/09, dueño).** El sello es la cantidad de commits de la
+   historia, y un commit de merge suma uno que ningún sello contó. Pasó con
+   el #53: la rama estaba sellada en 1023 y en verde, el merge dejó `main`
+   en 1024, `test_VERSION_NUMERO_esta_al_dia_con_la_historia` cayó, y con
+   el CI de `main` en rojo el deploy no salió hasta que el #54 re-selló.
+   El verde de la rama no lo puede ver: el commit que rompe se crea al
+   mergear. Así que el método es `rebase`; `squash` tampoco, porque junta
+   varios commits en uno y el sello queda arriba. Y después del merge
+   se mira la `conclusion` del CI de `main`, no solo la del PR.
+
 6. **Y ANTES DE REPORTAR, SE ABRE UNA DE LAS PANTALLAS QUE SE TOCARON.** Del
    20/09, y es del dueño: *"hoy dos veces me dijiste 'hecho' sobre cosas que
    yo no podía ver"*.
