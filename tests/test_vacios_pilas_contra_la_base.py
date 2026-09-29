@@ -124,7 +124,9 @@ def test_un_proveedor_en_cero_y_sin_movimientos_NO_se_muestra(base):
 
 def test_no_se_DEVUELVE_mas_de_lo_que_dice_el_sistema_y_no_se_escribe_nada(base):
     import app.db as db
-    with pytest.raises(ValueError, match="hay 3 cajones"):
+    # Es su PROPIA clase (sigue siendo un ValueError): Depósito la atrapa y
+    # dice otra cosa, porque este texto trae el número del stock (29/09).
+    with pytest.raises(db.DevolucionDeMas, match="hay 3 cajones"):
         db.crear_devolucion_vacios(901, None, 4, foto_ruta="vale.jpg")
     assert _pilas(901)[0][None] == 3
     db.crear_devolucion_vacios(901, None, 3, foto_ruta="vale.jpg", importe=2400)
@@ -230,6 +232,16 @@ def test_la_SENA_por_cajon_de_la_ultima_recepcion_por_pila(base):
     import app.db as db
     assert db.sena_por_cajon_de_la_ultima_recepcion(901) == {911: 800.0}
     assert db.sena_por_cajon_de_la_ultima_recepcion(902) == {None: 300.0}
+
+
+def test_la_SENA_de_TODAS_las_pilas_dice_lo_mismo_que_la_de_UN_proveedor(base):
+    """La devolución de Depósito precarga el importe con la seña de todas las
+    pilas; el detalle, con la de un proveedor. Es la MISMA consulta, y lo que
+    lo prueba es que den lo mismo, no que el texto se parezca."""
+    import app.db as db
+    todas = db.senas_por_cajon_de_todas_las_pilas()
+    assert todas[901] == db.sena_por_cajon_de_la_ultima_recepcion(901) == {911: 800.0}
+    assert todas[902] == db.sena_por_cajon_de_la_ultima_recepcion(902) == {None: 300.0}
 
 
 def test_la_ASIGNACION_a_una_marca_ESCRITA_la_crea_y_si_rebota_no_la_deja(base):

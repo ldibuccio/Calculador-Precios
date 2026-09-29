@@ -255,7 +255,7 @@ def test_los_TRES_bloques_del_menu_tienen_TRES_colores_DISTINTOS():
 
 def test_cada_boton_del_menu_LLEVA_la_clase_de_su_bloque():
     """Sin la clase, el botón cae al `.boton` pelado y se pinta de otro color
-    — o de ninguno. Se cuentan los once contra su denominador: un assert de
+    — o de ninguno. Se cuentan los doce contra su denominador: un assert de
     "aparece la clase" pasa con uno solo puesto."""
     marcado = _leer("templates/deposito.html").split("</style>")[-1]
     botones = re.findall(r'<a class="boton ([a-z]+)"', marcado)
@@ -263,7 +263,7 @@ def test_cada_boton_del_menu_LLEVA_la_clase_de_su_bloque():
         "hay botones del menú sin clase de bloque"
     assert botones.count("ingresos") == 4
     assert botones.count("pedidos") == 1
-    assert botones.count("stock") == 6
+    assert botones.count("stock") == 7
 
 
 # ------------------------------------------- el pie, que cambia en cada commit

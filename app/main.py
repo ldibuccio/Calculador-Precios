@@ -348,6 +348,8 @@ from app.db import (
     anular_devolucion_vacios,
     listar_devoluciones_vacios,
     sena_por_cajon_de_la_ultima_recepcion,
+    senas_por_cajon_de_todas_las_pilas,
+    DevolucionDeMas,
     listar_marcas_vacio,
     listar_marcas_vacio_por_proveedor,
     crear_marca_vacio,
@@ -6809,6 +6811,64 @@ def _entero_positivo(texto: str) -> int | None:
     return int(texto) if texto.isdigit() and int(texto) > 0 else None
 
 
+async def _guardar_devolucion_de_vacios(proveedor_id: int, marca_vacio_id: str, cantidad: str,
+                                       importe: str, foto: UploadFile | None, *,
+                                       sin_el_numero: bool) -> tuple[int | None, str | None, int]:
+    """Valida y guarda una devolución. Las DOS puertas pasan por acá (Administración
+    y Depósito), así la regla está escrita una vez.
+
+    Devuelve `(cajones, None, 303)` si guardó, o `(None, mensaje, status)` si no.
+
+    `sin_el_numero` es la puerta de Depósito (dueño, 29/09): el freno de "no se
+    devuelve más de lo que hay" dice cuántos hay, y Depósito no ve el stock.
+    Ahí el mensaje manda a Administración y no nombra el número.
+
+    SIN COMPRA (dueño, 25/09): la devolución sale de la pila, no de una compra.
+    LA FOTO DEL VALE ES OBLIGATORIA: sin foto no es una devolución, es un ajuste.
+    Si la foto no se puede leer o subir, NO se guarda nada y se dice.
+    EL IMPORTE NO TOCA `compras.importe` NI EL COSTEO — es plata de envase.
+    """
+    cajones = _entero_positivo(cantidad)
+    if cajones is None:
+        return None, "Los cajones devueltos tienen que ser un número entero mayor que cero.", 400
+
+    valor_importe = None
+    if importe.strip():
+        try:
+            valor_importe = float(importe.replace(".", "").replace(",", ".").strip())
+        except ValueError:
+            return None, "El importe del vale no es un número.", 400
+        if valor_importe < 0:
+            return None, "El importe del vale no puede ser negativo.", 400
+
+    if foto is None or not foto.filename:
+        return None, ("Sin la foto del vale no es una devolución. Si no hay vale, "
+                      "es un ajuste y se carga en Administración."), 400
+    bytes_foto = await foto.read()
+    comprimida = _comprimir_foto_jpeg(bytes_foto) if bytes_foto else None
+    if comprimida is None:
+        return None, "La foto del vale no se pudo leer: sacala de nuevo. No se guardó nada.", 400
+    try:
+        foto_ruta = subir_foto_comanda(comprimida, f"vale-{proveedor_id}", prefijo=PREFIJO_VACIOS)
+    except Exception:
+        logger.exception("No se pudo subir la foto del vale de vacíos")
+        return None, "La foto del vale no se pudo subir: probá de nuevo. No se guardó nada.", 502
+
+    try:
+        crear_devolucion_vacios(proveedor_id, _marca_del_form(marca_vacio_id), cajones,
+                                foto_ruta=foto_ruta, importe=valor_importe)
+    except DevolucionDeMas as de_mas:
+        if sin_el_numero:
+            return None, ("El sistema no tiene tantos cajones de esa marca: "
+                          "avisale a Administración. No se guardó nada."), 400
+        return None, str(de_mas), 400
+    except ValueError as invalido:
+        return None, str(invalido), 400
+    except Exception as error_db:
+        return None, f"No se pudo guardar la devolución: {error_db}", 400
+    return cajones, None, 303
+
+
 @app.post("/compras/vacios/{proveedor_id}/devolucion")
 @app.post("/administracion/vacios/{proveedor_id}/devolucion")
 async def cargar_devolucion_vacios(request: Request, proveedor_id: int,
@@ -6817,68 +6877,65 @@ async def cargar_devolucion_vacios(request: Request, proveedor_id: int,
                                    foto: UploadFile | None = File(None)):
     """Se le devuelven al proveedor cajones de UNA PILA (proveedor y marca).
 
-    SIN COMPRA (dueño, 25/09): la devolución sale de la pila, no de una compra.
-
-    LA FOTO DEL VALE ES OBLIGATORIA (dueño, 25/09): sin foto no es una
-    devolución, es un ajuste. Si la foto no se puede leer o subir, NO se
-    guarda nada y se dice — el camino sin foto es el ajuste de Administración.
-
     NO SE DEVUELVE MÁS DE LO QUE DICE EL SISTEMA: lo frena la escritura, con
-    el número de la pila.
-
-    EL IMPORTE NO TOCA `compras.importe` NI EL COSTEO — es plata de envase.
+    el número de la pila — acá sí se dice, Administración ve el stock.
     """
-    cajones = _entero_positivo(cantidad)
-    if cajones is None:
-        return _renderizar_vacios_proveedor(
-            request, proveedor_id,
-            error="Los cajones devueltos tienen que ser un número entero mayor que cero.",
-            status_code=400)
-
-    valor_importe = None
-    if importe.strip():
-        try:
-            valor_importe = float(importe.replace(".", "").replace(",", ".").strip())
-        except ValueError:
-            return _renderizar_vacios_proveedor(
-                request, proveedor_id, error="El importe del vale no es un número.", status_code=400)
-        if valor_importe < 0:
-            return _renderizar_vacios_proveedor(
-                request, proveedor_id, error="El importe del vale no puede ser negativo.",
-                status_code=400)
-
-    sin_foto = ("Sin la foto del vale no es una devolución. Si no hay vale, "
-                "es un ajuste y se carga en Administración.")
-    if foto is None or not foto.filename:
-        return _renderizar_vacios_proveedor(request, proveedor_id, error=sin_foto, status_code=400)
-    bytes_foto = await foto.read()
-    comprimida = _comprimir_foto_jpeg(bytes_foto) if bytes_foto else None
-    if comprimida is None:
-        return _renderizar_vacios_proveedor(
-            request, proveedor_id,
-            error="La foto del vale no se pudo leer: sacala de nuevo. No se guardó nada.",
-            status_code=400)
-    try:
-        foto_ruta = subir_foto_comanda(comprimida, f"vale-{proveedor_id}", prefijo=PREFIJO_VACIOS)
-    except Exception:
-        logger.exception("No se pudo subir la foto del vale de vacíos")
-        return _renderizar_vacios_proveedor(
-            request, proveedor_id,
-            error="La foto del vale no se pudo subir: probá de nuevo. No se guardó nada.",
-            status_code=502)
-
-    try:
-        crear_devolucion_vacios(proveedor_id, _marca_del_form(marca_vacio_id), cajones,
-                                foto_ruta=foto_ruta, importe=valor_importe)
-    except ValueError as invalido:
-        return _renderizar_vacios_proveedor(request, proveedor_id, error=str(invalido),
-                                           status_code=400)
-    except Exception as error_db:
-        return _renderizar_vacios_proveedor(
-            request, proveedor_id, error=f"No se pudo guardar la devolución: {error_db}",
-            status_code=400)
-
+    cajones, error, status = await _guardar_devolucion_de_vacios(
+        proveedor_id, marca_vacio_id, cantidad, importe, foto, sin_el_numero=False)
+    if error:
+        return _renderizar_vacios_proveedor(request, proveedor_id, error=error, status_code=status)
     return _volver_al_proveedor(request, proveedor_id, f"Devolución de {cajones} cajones guardada.")
+
+
+def _renderizar_devolucion_deposito(request: Request, *, error: str | None = None,
+                                    aviso: str | None = None, status_code: int = 200):
+    """Depósito devuelve cajones SIN VER EL STOCK (dueño, 29/09).
+
+    Como el conteo, esta pantalla NO LEE el stock: no es que lo esconda, es que
+    no lo tiene. Ofrece los proveedores y marcas cargados, y la seña de la
+    última recepción de cada pila para precargar el importe del vale.
+    """
+    try:
+        todos = listar_proveedores()
+        marcas = listar_marcas_vacio_por_proveedor()
+        senas = senas_por_cajon_de_todas_las_pilas()
+    except Exception as error_db:
+        raise HTTPException(
+            status_code=500, detail=f"Error al conectar con la base de datos: {error_db}"
+        ) from error_db
+    return templates.TemplateResponse(
+        request, "deposito_vacios_devolucion.html",
+        {"todos": todos,
+         "marcas_por_proveedor": {str(k): v for k, v in marcas.items()},
+         "senas": {str(prov): {("" if m is None else str(m)): s for m, s in pilas.items()}
+                   for prov, pilas in senas.items()},
+         "error": error, "aviso": aviso},
+        status_code=status_code,
+    )
+
+
+@app.get("/deposito/vacios/devolucion")
+def ver_devolucion_vacios_deposito(request: Request, aviso: str | None = None):
+    """La devolución de Depósito: proveedor, marca, cuántos, importe y la foto del vale."""
+    return _renderizar_devolucion_deposito(request, aviso=aviso)
+
+
+@app.post("/deposito/vacios/devolucion")
+async def cargar_devolucion_vacios_deposito(request: Request, proveedor_id: str = Form(""),
+                                            marca_vacio_id: str = Form(""),
+                                            cantidad: str = Form(""), importe: str = Form(""),
+                                            foto: UploadFile | None = File(None)):
+    """Guarda por la MISMA función que Administración, con el freno sin el número."""
+    if not proveedor_id.strip().isdigit():
+        return _renderizar_devolucion_deposito(request, error="Elegí un proveedor.", status_code=400)
+    cajones, error, status = await _guardar_devolucion_de_vacios(
+        int(proveedor_id), marca_vacio_id, cantidad, importe, foto, sin_el_numero=True)
+    if error:
+        return _renderizar_devolucion_deposito(request, error=error, status_code=status)
+    return RedirectResponse(
+        url="/deposito/vacios/devolucion?" + urlencode(
+            {"aviso": f"Devolución de {cajones} cajones guardada."}),
+        status_code=303)
 
 
 @app.post("/compras/vacios/devolucion/{devolucion_id}/anular")

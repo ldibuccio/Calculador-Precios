@@ -22,6 +22,7 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 from fastapi.testclient import TestClient
+from fastapi.responses import HTMLResponse
 
 from app.db import (
     COLUMNAS_PILAS_DE_VACIOS,
@@ -942,7 +943,124 @@ def test_el_conteo_de_DEPOSITO_vuelve_a_contar_y_NO_al_cotejo():
 
 
 def test_DEPOSITO_no_tiene_ninguna_otra_pantalla_de_vacios():
-    """Solo cuenta: el índice, el stock, el cotejo y el detalle de un
+    """Solo cuenta y devuelve: el índice, el stock, el cotejo y el detalle de un
     proveedor muestran el número del sistema, y no existen bajo /deposito."""
     rutas = {r.path for r in app.routes if getattr(r, "path", "").startswith("/deposito/vacios")}
-    assert rutas == {"/deposito/vacios/conteo"}
+    assert rutas == {"/deposito/vacios/conteo", "/deposito/vacios/devolucion"}
+
+
+# ── Depósito DEVUELVE sin ver el stock (dueño, 29/09) ───────────────────────
+
+CLAVES = {"CLAVE_COMPRAS": "compras-secreta", "CLAVE_ADMINISTRACION": "admin-secreta"}
+
+
+def _devolucion_deposito(metodo="get", datos=None, archivo=True, escritor=None):
+    """La pantalla y el POST de Depósito con un cliente SIN cookie y las claves
+    PUESTAS: si alguna ruta pasara por una puerta, contestaría 401."""
+    limpio = TestClient(app)
+    parches = [
+        patch.dict(os.environ, CLAVES),
+        patch("app.main.stock_de_vacios_deposito",
+              side_effect=AssertionError("la devolución de Depósito leyó el stock")),
+        patch("app.main.listar_proveedores",
+              return_value=[{"id": 7, "nombre": "Puesto EJEMPLO"}]),
+        patch("app.main.listar_marcas_vacio_por_proveedor", return_value={7: MARCAS}),
+        patch("app.main.senas_por_cajon_de_todas_las_pilas", return_value={7: {71: 800.0}}),
+        patch("app.main._comprimir_foto_jpeg", return_value=b"jpg"),
+        patch("app.main.subir_foto_comanda", return_value="vacios/vale.jpg"),
+        patch("app.main.crear_devolucion_vacios", **(escritor or {"return_value": 1})),
+    ]
+    from contextlib import ExitStack
+    with ExitStack() as pila:
+        mocks = {p.attribute: pila.enter_context(p) for p in parches[1:]}
+        pila.enter_context(parches[0])
+        if metodo == "get":
+            return limpio.get("/deposito/vacios/devolucion"), mocks
+        files = {"foto": ("vale.jpg", b"xx", "image/jpeg")} if archivo else None
+        return limpio.post("/deposito/vacios/devolucion", data=datos, files=files,
+                           follow_redirects=False), mocks
+
+
+def test_la_DEVOLUCION_de_Deposito_abre_sin_clave_y_no_muestra_el_stock():
+    """El selector de marca de Administración dice "Marca · hay 420": éste no.
+    Y el stock ni se lee — el parche explota si la pantalla lo pide."""
+    respuesta, _ = _devolucion_deposito()
+    assert respuesta.status_code == 200, respuesta.text[:300]
+    marcado = respuesta.text.split("</style>")[-1]
+    assert 'action="/deposito/vacios/devolucion"' in marcado
+    for campo in ('name="proveedor_id"', 'name="marca_vacio_id"', 'name="cantidad"',
+                  'name="importe"', 'name="foto"'):
+        assert campo in marcado, campo
+    assert " · hay " not in marcado
+    assert "/administracion/" not in marcado and "/compras/" not in marcado
+
+
+def test_la_puerta_de_Depósito_es_la_UNICA_abierta_EL_CONTROL():
+    """Con las mismas claves, las otras dos puertas rebotan. Sin esto, el 200 de
+    arriba se daría también con las puertas apagadas."""
+    limpio = TestClient(app)
+    with patch.dict(os.environ, CLAVES):
+        cerradas = [limpio.post(f"{s}/vacios/7/devolucion", data={}).status_code
+                    for s in ("/compras", "/administracion")]
+    assert cerradas == [401, 401], cerradas
+
+
+def test_devolver_DE_MAS_en_Deposito_manda_a_Administracion_SIN_el_numero():
+    from app.db import DevolucionDeMas
+    respuesta, _ = _devolucion_deposito(
+        "post", {"proveedor_id": "7", "marca_vacio_id": "71", "cantidad": "500"},
+        escritor={"side_effect": DevolucionDeMas("En la pila EJ Roja hay 420 cajones: "
+                                                  "no se pueden devolver 500.")})
+    assert respuesta.status_code == 400
+    marcado = respuesta.text.split("</style>")[-1]
+    assert "avisale a Administración" in marcado
+    assert "420" not in marcado and "hay 420" not in respuesta.text
+
+
+def test_devolver_DE_MAS_en_Administracion_SI_dice_el_numero():
+    """El control del de arriba: la misma excepción por la otra puerta muestra el
+    número, que es lo que distingue el mensaje de Depósito de un mensaje roto."""
+    from app.db import DevolucionDeMas
+    with patch.dict(os.environ, CLAVES), \
+         patch("app.main._comprimir_foto_jpeg", return_value=b"jpg"), \
+         patch("app.main.subir_foto_comanda", return_value="vacios/vale.jpg"), \
+         patch("app.main.crear_devolucion_vacios",
+               side_effect=DevolucionDeMas("En la pila EJ Roja hay 420 cajones: "
+                                           "no se pueden devolver 500.")), \
+         patch("app.main._renderizar_vacios_proveedor",
+               side_effect=lambda req, pid, **kw: HTMLResponse(kw["error"], kw["status_code"])):
+        cliente.cookies.set(PUERTA_ADMINISTRACION.cookie,
+                            PUERTA_ADMINISTRACION.firma("admin-secreta"))
+        try:
+            respuesta = cliente.post("/administracion/vacios/7/devolucion",
+                                     data={"marca_vacio_id": "71", "cantidad": "500"},
+                                     files={"foto": ("vale.jpg", b"xx", "image/jpeg")})
+        finally:
+            cliente.cookies.clear()
+    assert respuesta.status_code == 400
+    assert "hay 420 cajones" in respuesta.text
+
+
+def test_una_DEVOLUCION_de_Deposito_guarda_por_la_misma_escritura_y_vuelve_a_devolver():
+    respuesta, mocks = _devolucion_deposito(
+        "post", {"proveedor_id": "7", "marca_vacio_id": "71", "cantidad": "5",
+                 "importe": "4.000"})
+    assert respuesta.status_code == 303, respuesta.text[:300]
+    assert respuesta.headers["location"].startswith("/deposito/vacios/devolucion?aviso=")
+    mocks["crear_devolucion_vacios"].assert_called_once_with(
+        7, 71, 5, foto_ruta="vacios/vale.jpg", importe=4000.0)
+
+
+def test_una_DEVOLUCION_de_Deposito_SIN_FOTO_no_se_guarda():
+    respuesta, mocks = _devolucion_deposito(
+        "post", {"proveedor_id": "7", "marca_vacio_id": "", "cantidad": "5"}, archivo=False)
+    assert respuesta.status_code == 400
+    assert "Sin la foto del vale" in respuesta.text
+    mocks["crear_devolucion_vacios"].assert_not_called()
+
+
+def test_una_DEVOLUCION_de_Deposito_sin_PROVEEDOR_no_se_guarda():
+    respuesta, mocks = _devolucion_deposito("post", {"proveedor_id": "", "cantidad": "5"})
+    assert respuesta.status_code == 400
+    assert "Elegí un proveedor" in respuesta.text
+    mocks["crear_devolucion_vacios"].assert_not_called()
