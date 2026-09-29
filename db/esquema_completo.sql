@@ -100,17 +100,6 @@ comment on column articulos.merma_porcentaje is 'Porcentaje de merma esperado de
 -- ----------------------------------------------------------------------------
 -- 2. PROVEEDORES — identidad estable: codigo_puesto (ej. N07P41)
 -- ----------------------------------------------------------------------------
-create table tipos_cajon (
-    id                 bigint generated always as identity primary key,
-    nombre             text not null,
-    nombre_normalizado text not null unique,
-    activo             boolean not null default true,
-    creado_en          timestamptz not null default now()
-);
-
-comment on table tipos_cajon is 'Catálogo de tipos de cajón FÍSICO de los proveedores de Compras (el envase en el que llega la mercadería al depósito). NO es tipos_envase_puesto —ese es del circuito del puesto— ni envases, que es el costo de la caja nuestra facturada al cliente.';
-comment on column tipos_cajon.nombre_normalizado is 'nombre en minúsculas, sin acentos ni espacios de más. El UNIQUE evita el mismo cajón escrito de tres formas, igual que en proveedores_puesto.';
-
 create table proveedores (
     id              bigint generated always as identity primary key,
     nombre          text not null,
@@ -118,7 +107,6 @@ create table proveedores (
     actualizado_en  timestamptz not null default now(),
     codigo_puesto   text unique not null check (codigo_puesto ~ '^[NL][0-9]{2}P[0-9]{2}$'),
     activo          boolean not null default true,
-    tipo_cajon_id   bigint references tipos_cajon (id),
     -- Once dígitos sin guiones, y NULLABLE: la mayoría de los puestos no lo
     -- tiene cargado y exigirlo dejaría sin poder crear un proveedor en el
     -- Mercado. Ver db/agregar_cuit_a_proveedores.sql.

@@ -653,3 +653,27 @@ Es lo esperado en las dos. Que la verificación corra en Palmala confirma que
 las tablas del bloque 1 están ahí, que es lo que el código necesita. Desde
 ahora la cuenta de Frutamax arranca de este conteo; la foto del 25/09 y
 `vacios_foto_4` quedan como historia (el 4 no se corrió).
+
+## 29/09 — `tipo_de_cajon_1` a `_3`: sale el tipo de cajón por proveedor (paso 2)
+
+Corrida por el dueño en las dos bases, después de ver v1028 en el pie (el
+paso 1, que dejó de leer y escribir el tipo, ya estaba desplegado).
+
+Revisión (`tipo_de_cajon_1_revisar.sql`, solo lee), antes de borrar:
+
+```
+FRUTAMAX  columna 1 · tabla 1 · tipos cargados 1 · proveedores con tipo 1 · se pierde "RIO URUGUAY → Goloso" · fks 1 · proveedores 41
+PALMALA   columna 1 · tabla 1 · tipos cargados 0 · proveedores con tipo 0 · fks 1 · proveedores 44
+```
+
+Verificación (`tipo_de_cajon_3_verificacion.sql`), corrida aparte del `do`:
+
+```
+FRUTAMAX  tipo_de_cajon_2_borrar · columna 0 · tabla 0 · proveedores 41 · última recepción 28/09 13:01
+PALMALA   tipo_de_cajon_2_borrar · columna 0 · tabla 0 · proveedores 44 · última recepción 28/09 17:54
+```
+
+Se fueron la columna y la tabla, y la población de proveedores quedó igual
+en las dos. Lo único que se perdió es lo que la revisión dijo: el "Goloso"
+declarado de Rio Uruguay en Frutamax, que ya vive como marca en Vacíos.
+`db/esquema_completo.sql` perdió las dos cosas en el mismo commit.
