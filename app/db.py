@@ -16975,6 +16975,15 @@ def _traducir_marca_ajena(error) -> ValueError:
     return ValueError("Esa marca no es de este proveedor.")
 
 
+class DevolucionDeMas(ValueError):
+    """El freno de "no se devuelve más de lo que dice el sistema".
+
+    Es su propia clase porque el MENSAJE depende de quién lo lee: dice cuántos
+    hay, y Depósito no ve el stock (dueño, 29/09). La puerta de Depósito la
+    atrapa y dice otra cosa; la de Administración muestra este texto.
+    """
+
+
 def crear_devolucion_vacios(proveedor_id: int, marca_vacio_id: int | None, cantidad: int,
                             foto_ruta: str, importe: float | None = None) -> int:
     """Le devuelve al proveedor cajones de UNA PILA. Devuelve su id.
@@ -16999,7 +17008,7 @@ def crear_devolucion_vacios(proveedor_id: int, marca_vacio_id: int | None, canti
             hay = _stock_de_la_pila(cursor, proveedor_id, marca_vacio_id)
             if cantidad > hay:
                 conexion.rollback()
-                raise ValueError(
+                raise DevolucionDeMas(
                     f"En la pila {_nombre_de_la_pila(_marca_nombre(cursor, marca_vacio_id))} "
                     f"hay {hay} cajones: no se pueden devolver {cantidad}."
                 )
@@ -17031,6 +17040,37 @@ def _marca_nombre(cursor, marca_id: int | None) -> str | None:
     return fila[0] if fila else None
 
 
+# LA SEÑA DE LA ÚLTIMA RECEPCIÓN DE CADA PILA, escrita UNA vez: la leen el
+# detalle del proveedor (un proveedor) y la devolución de Depósito (todos).
+_SQL_SENA_ULTIMA_POR_PILA = """
+    SELECT DISTINCT ON (c.proveedor_id, c.marca_vacio_id)
+           c.proveedor_id, c.marca_vacio_id, c.sena
+      FROM compras c
+     WHERE c.estado = 'recepcionado'
+       AND COALESCE(c.sena, 0) > 0
+       {filtro}
+     ORDER BY c.proveedor_id, c.marca_vacio_id, c.procesada_el DESC NULLS LAST, c.id DESC
+"""
+
+
+def _senas_por_pila(proveedor_id: int | None) -> dict[int, dict[int | None, float]]:
+    conexion = obtener_conexion()
+    try:
+        with conexion.cursor() as cursor:
+            if proveedor_id is None:
+                cursor.execute(_SQL_SENA_ULTIMA_POR_PILA.format(filtro=""))
+            else:
+                cursor.execute(_SQL_SENA_ULTIMA_POR_PILA.format(filtro="AND c.proveedor_id = %s"),
+                               (proveedor_id,))
+            filas = cursor.fetchall()
+    finally:
+        conexion.close()
+    resultado: dict[int, dict[int | None, float]] = {}
+    for prov, marca_id, sena in filas:
+        resultado.setdefault(prov, {})[marca_id] = float(sena)
+    return resultado
+
+
 def sena_por_cajon_de_la_ultima_recepcion(proveedor_id: int) -> dict[int | None, float]:
     """La seña POR CAJÓN de la recepción con seña más reciente, POR PILA.
 
@@ -17038,24 +17078,13 @@ def sena_por_cajon_de_la_ultima_recepcion(proveedor_id: int) -> dict[int | None,
     valor, precargado y editable"). Por cajón, igual que el importe de la
     compra. Las pilas sin ninguna recepción con seña no traen nada.
     """
-    conexion = obtener_conexion()
-    try:
-        with conexion.cursor() as cursor:
-            cursor.execute(
-                """
-                SELECT DISTINCT ON (c.marca_vacio_id) c.marca_vacio_id, c.sena
-                  FROM compras c
-                 WHERE c.proveedor_id = %s
-                   AND c.estado = 'recepcionado'
-                   AND COALESCE(c.sena, 0) > 0
-                 ORDER BY c.marca_vacio_id, c.procesada_el DESC NULLS LAST, c.id DESC
-                """,
-                (proveedor_id,),
-            )
-            filas = cursor.fetchall()
-    finally:
-        conexion.close()
-    return {marca_id: float(sena) for marca_id, sena in filas}
+    return _senas_por_pila(proveedor_id).get(proveedor_id, {})
+
+
+def senas_por_cajon_de_todas_las_pilas() -> dict[int, dict[int | None, float]]:
+    """La misma seña, de TODOS los proveedores: la precarga de la devolución de
+    Depósito, donde el proveedor se elige en la pantalla."""
+    return _senas_por_pila(None)
 
 
 def anular_devolucion_vacios(devolucion_id: int) -> None:
