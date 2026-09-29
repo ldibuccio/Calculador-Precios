@@ -122,3 +122,22 @@ def generar_excel_movimientos_vacios_deposito(desde: date, hasta: date, filtro: 
     salida = BytesIO()
     libro.save(salida)
     return salida.getvalue()
+
+
+def propuesta_desde_el_cotejo(filas: list[dict], proveedor_id: int,
+                              marca_id: int | None) -> dict | None:
+    """Lo que precarga el ajuste cuando se llega desde el Cotejo (dueño, 29/09).
+
+    `filas` son las de `cotejo_de_vacios_deposito`, que es la MISMA cuenta que
+    muestra el Cotejo: diferencia = sistema − contado. Positiva, el sistema
+    dice que hay más, así que FALTAN; negativa, SOBRAN. Si esa pila no tiene
+    conteo, o cierra, no hay nada que proponer.
+    """
+    fila = next((f for f in filas if f["proveedor_id"] == proveedor_id
+                 and f["marca_id"] == marca_id), None)
+    if fila is None or fila["diferencia"] == 0:
+        return None
+    return {"marca_id": marca_id, "contado": fila["contado"], "fecha": fila["fecha"],
+            "sistema": fila["sistema"],
+            "sentido": "faltan" if fila["diferencia"] > 0 else "sobran",
+            "cantidad": abs(fila["diferencia"])}

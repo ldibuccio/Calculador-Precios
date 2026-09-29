@@ -1,7 +1,8 @@
 """Cajas y Vacíos entran también por Administración, con el camino entero de allá.
 
-Las pantallas son las MISMAS que Compras tiene en /compras/cajas y
-/compras/vacios: los mismos handlers y las mismas consultas. Lo que se prueba
+Cajas es la MISMA pantalla que Compras tiene en /compras/cajas: los mismos
+handlers y las mismas consultas. Vacíos del depósito vive solo acá desde el
+29/09 (dueño). Lo que se prueba
 acá es el CAMINO, y sobre todo lo que no se ve entrando: la barra sale bien
 porque la arma el server, y lo que se queda apuntando al otro sector es la
 `action` de un formulario o el destino de un redirect, que recién muerde en
@@ -151,9 +152,11 @@ def test_entrando_por_ADMINISTRACION_todo_el_camino_es_de_ADMINISTRACION(ruta, p
     assert 'href="/compras"' not in marcado
 
 
-@pytest.mark.parametrize("ruta, propio, atras", PANTALLAS)
+@pytest.mark.parametrize("ruta, propio, atras",
+                         [p for p in PANTALLAS if p[0].startswith("/cajas")])
 def test_entrando_por_COMPRAS_sigue_siendo_todo_de_COMPRAS(ruta, propio, atras):
-    """El dueño de las pantallas no se movió: los botones de Compras quedan donde están."""
+    """Cajas sigue también en Compras. Vacíos del depósito no: desde el 29/09
+    vive solo en Administración (lo cuida `test_VACIOS_ya_no_existe_bajo_COMPRAS`)."""
     with _con_datos():
         respuesta = cliente.get(f"/compras{ruta}")
     assert respuesta.status_code == 200
@@ -219,8 +222,10 @@ def test_los_FORMULARIOS_de_cada_pantalla_mandan_a_SU_sector():
      "/vacios/7?"),
 ])
 def test_despues_de_GUARDAR_vuelve_al_sector_por_el_que_ENTRO(url, datos, parche, destino):
-    """Las dos puertas, cada una a la suya. El redirect es el camino que no se ve al abrir."""
-    for sector in ("/administracion", "/compras"):
+    """Las dos puertas, cada una a la suya. El redirect es el camino que no se ve al abrir.
+    Vacíos tiene una sola: Administración."""
+    sectores = ("/administracion",) if url.startswith("/vacios") else ("/administracion", "/compras")
+    for sector in sectores:
         with patch(f"app.main.{parche}") as escritor:
             respuesta = cliente.post(f"{sector}{url}", data=datos, follow_redirects=False)
         assert respuesta.status_code == 303, (sector, respuesta.text[:300])
@@ -231,7 +236,7 @@ def test_despues_de_GUARDAR_vuelve_al_sector_por_el_que_ENTRO(url, datos, parche
 
 def test_la_DEVOLUCION_con_foto_vuelve_al_sector_por_el_que_ENTRO():
     """Aparte del parametrizado de arriba porque lleva un ARCHIVO: sin foto rebota."""
-    for sector in ("/administracion", "/compras"):
+    for sector in ("/administracion",):
         with _con_datos(), \
              patch("app.main._comprimir_foto_jpeg", return_value=b"jpg"), \
              patch("app.main.subir_foto_comanda", return_value="vacios/v.jpg"), \
@@ -308,7 +313,7 @@ def test_los_EXPORTES_del_stock_de_vacios_dicen_lo_MISMO_que_la_pantalla():
     datos = [dict(UN_PROVEEDOR[0])]
     with patch("app.main.stock_de_vacios_deposito", return_value=datos):
         excel = cliente.get("/administracion/vacios/stock/excel")
-        pdf = cliente.get("/compras/vacios/stock/pdf")
+        pdf = cliente.get("/administracion/vacios/stock/pdf")
     assert excel.status_code == 200 and pdf.status_code == 200
     assert pdf.content.startswith(b"%PDF")
     hoja = load_workbook(_io.BytesIO(excel.content)).active

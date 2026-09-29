@@ -103,6 +103,7 @@
   /* DE DÓNDE SALE EL NÚMERO (dueño, 28/09): se ve, no va a la "i". Sin
      esto, el que compara contra un número viejo no sabe que la cuenta
      arrancó de nuevo. */
+  .propuesta { background: #fef3c7; border-radius: 8px; padding: .6rem .75rem; margin: 0 0 .75rem; }
   .origen { background: #eff6ff; color: #1e3a8a; border-radius: 8px;
             padding: .6rem .75rem; margin: 0 0 1rem; font-size: .9rem; }
 </style>
@@ -170,11 +171,10 @@
       <button type="submit">Guardar la devolución</button>
     </div>
     <p class="obligatoria"><strong>Sin la foto del vale no es una devolución.</strong>
-      Si no hay vale, es un ajuste{% if not es_administracion %} y se carga en Administración{% endif %}.</p>
+      Si no hay vale, es un ajuste.</p>
   </form>
 </details>
 
-{% if es_administracion %}
 {# LA ASIGNACIÓN SALE SIEMPRE EN ADMINISTRACIÓN (dueño, 28/09). Hasta ese día
    iba adentro de un `{% if marcas %}`, y como ningún proveedor tenía marcas
    cargadas no apareció nunca. Ahora la marca de destino se elige o se escribe,
@@ -217,16 +217,13 @@
   </form>
 </details>
 
-{% endif %}
-
 {# CORREGIR UNA MARCA (dueño, 28/09): una marca mal escrita. Los cajones no
    se mueven: es la misma pila con otro nombre. Si el nombre ya es de otra
    marca de este proveedor, la escritura lo rechaza y acá se ofrece juntarlas.
    El alta de una marca nueva vive acá también: es la misma lista. #}
 <details class="accion" id="corregir" name="accion"{% if abierta == "corregir" %} open{% endif %}>
-  <summary><strong>{% if es_administracion %}Corregir una marca{% else %}Marcas de sus cajones{% endif %}</strong>
-    <span class="que-hace">{% if es_administracion %}Cambiarle el nombre o juntarla con otra.{% else %}Agregar la marca del sello del cajón.{% endif %}</span></summary>
-  {% if es_administracion %}
+  <summary><strong>Corregir una marca</strong>
+    <span class="que-hace">Cambiarle el nombre o juntarla con otra.</span></summary>
   {% if juntar %}
   <div class="juntar" id="juntar">
     <h2>Ya existe «{{ juntar.queda }}»</h2>
@@ -254,11 +251,6 @@
   <p class="vacio">Todavía no tiene marcas: sus cajones van a "sin marca".</p>
   {% endfor %}
   {% if marcas %}<p class="ayuda">Si el nombre ya es de otra marca, te ofrece juntarlas.</p>{% endif %}
-  {% elif marcas %}
-  <p class="ayuda">Sus marcas: {{ marcas|map(attribute="nombre")|join(" · ") }}. El nombre se corrige en Administración.</p>
-  {% else %}
-  <p class="vacio">Todavía no tiene marcas: sus cajones van a "sin marca".</p>
-  {% endif %}
   <form method="post" action="{{ camino.base }}/vacios/{{ p.id }}/marca" class="marca-nueva">
     <div class="fila">
       <div class="campo">
@@ -270,17 +262,24 @@
   </form>
 </details>
 
-{% if es_administracion %}
+{# DESDE EL COTEJO (dueño, 29/09): "Ajustar" abre esto con la marca, el sentido
+   y la cantidad del último conteo de esa pila contra el sistema de AHORA,
+   calculados en el server y no leídos de la URL. El motivo no se precarga: es
+   lo único que dice por qué no cerró. #}
 <details class="accion" id="ajustar" name="accion"{% if abierta == "ajustar" %} open{% endif %}>
   <summary><strong>Ajustar</strong>
     <span class="que-hace">Sumar o restar cajones, con el motivo.</span></summary>
+  {% if propuesta %}
+  <p class="propuesta">Del Cotejo: contados {{ propuesta.contado|numero }} el {{ propuesta.fecha.strftime('%d/%m') }},
+    el sistema dice {{ propuesta.sistema|numero }}. {{ "Faltan" if propuesta.sentido == "faltan" else "Sobran" }} {{ propuesta.cantidad|numero }}.</p>
+  {% endif %}
   <form method="post" action="/administracion/vacios/{{ p.id }}/ajuste">
     <div class="fila">
       <div class="campo">
         <label for="ajuste_marca">¿Qué cajones?</label>
         <select id="ajuste_marca" name="marca_vacio_id">
           {% for pila in pilas_para_elegir %}
-          <option value="{{ pila.id if pila.id is not none else '' }}">{{ pila.nombre }} · hay {{ pila.stock|numero }}</option>
+          <option value="{{ pila.id if pila.id is not none else '' }}"{% if propuesta and propuesta.marca_id == pila.id %} selected{% endif %}>{{ pila.nombre }} · hay {{ pila.stock|numero }}</option>
           {% endfor %}
         </select>
       </div>
@@ -288,13 +287,13 @@
         <label for="ajuste_sentido">¿Sobran o faltan?</label>
         <select id="ajuste_sentido" name="sentido" required>
           <option value="">Elegí</option>
-          <option value="sobran">Sobran: hay más de los que dice</option>
-          <option value="faltan">Faltan: hay menos de los que dice</option>
+          <option value="sobran"{% if propuesta and propuesta.sentido == "sobran" %} selected{% endif %}>Sobran: hay más de los que dice</option>
+          <option value="faltan"{% if propuesta and propuesta.sentido == "faltan" %} selected{% endif %}>Faltan: hay menos de los que dice</option>
         </select>
       </div>
       <div class="campo">
         <label for="ajuste_cantidad">¿Cuántos?</label>
-        <input id="ajuste_cantidad" name="cantidad" type="number" min="1" step="1" required>
+        <input id="ajuste_cantidad" name="cantidad" type="number" min="1" step="1" required{% if propuesta %} value="{{ propuesta.cantidad|int }}"{% endif %}>
       </div>
       <div class="campo">
         <label for="ajuste_motivo">¿Por qué?</label>
@@ -304,7 +303,6 @@
     </div>
   </form>
 </details>
-{% endif %}
 
 {# EL HISTORIAL, CERRADO (dueño, 29/09): todo lo que movió cajones de este
    proveedor en una sola lista —el conteo, las entradas, las devoluciones, los
@@ -331,7 +329,7 @@
       </form>
       {% endif %}
     </div>
-    {% elif m.tipo in ("ajuste", "asignacion") and es_administracion and not m.antes_del_arranque %}
+    {% elif m.tipo in ("ajuste", "asignacion") and not m.antes_del_arranque %}
     <div class="acciones">
       <form method="post" action="/administracion/vacios/movimiento/{{ m.tipo }}/{{ m.id }}/anular">
         <input type="hidden" name="proveedor_id" value="{{ p.id }}">
