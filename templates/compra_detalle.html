@@ -89,6 +89,25 @@
     margin-top: 0.5rem;
   }
   .vacio { color: #888; font-style: italic; font-size: 0.9rem; }
+  .error {
+    background: #fee2e2;
+    color: #991b1b;
+    padding: 0.75rem 1rem;
+    border-radius: 8px;
+    margin-bottom: 1rem;
+    font-size: 0.9rem;
+  }
+  /* Envuelve en vez de scrollear de costado: cada foto lleva su hora y su
+     botón, y en celular sobra alto y falta ancho. */
+  .tira-pesada { flex-wrap: wrap; overflow-x: visible; }
+  .foto-pesada { display: flex; flex-direction: column; align-items: center; gap: 0.3rem; }
+  .foto-pesada-hora { font-size: 0.8rem; color: #555; }
+  .foto-pesada form { margin: 0; }
+  .borrar-pesada {
+    min-height: 44px; min-width: 6.5rem; padding: 0 0.7rem;
+    background: #fff; color: #dc2626; border: 1px solid #dc2626; border-radius: 8px;
+    font-size: 0.9rem; font-weight: 600; cursor: pointer;
+  }
   .aviso {
     background: #fef9c3;
     color: #713f12;
@@ -147,6 +166,9 @@
   {% from "_info.html" import info %}
   {% include "_barra_navegacion.html" %}
 
+  {% if error %}
+  <div class="error">{{ error }}</div>
+  {% endif %}
   {% if aviso %}
   <div class="aviso">{{ aviso }}</div>
   {% endif %}
@@ -339,23 +361,39 @@
        cosas distintas —el papel del proveedor y la mercadería sobre la
        balanza— y sin la etiqueta al lado se confunden: acá es donde mira
        el que audita, y una foto mal leída vale menos que ninguna. #}
-    <div class="fotos-guia">
+    {# LA PESADA, TODAS JUNTAS (dueño, 29/09): las de la recepción y las que se
+       suman después desde acá, cada una con su fecha y hora. Cada miniatura
+       pide SU foto por id: la ruta de Recepción devuelve siempre la última, y
+       con varias fotos todas se veían iguales. #}
+    <div class="fotos-guia" id="pesaje">
       <h3>Fotos del pesaje (balanza)</h3>
       {% if fotos_balanza %}
-      <div class="fotos-guia-tira">
+      <div class="fotos-guia-tira tira-pesada">
         {% for f in fotos_balanza %}
-        <div class="foto-guia-item">
-          <a href="/deposito/recepcion/{{ compra.id }}/foto-balanza/ver" target="_blank" rel="noopener">
-            <img src="/deposito/recepcion/{{ compra.id }}/foto-balanza/ver"
+        <div class="foto-guia-item foto-pesada">
+          <a href="/deposito/recepcion/{{ compra.id }}/foto-balanza/{{ f.id }}/ver" target="_blank" rel="noopener">
+            <img src="/deposito/recepcion/{{ compra.id }}/foto-balanza/{{ f.id }}/ver"
                  alt="Mercadería sobre la balanza" loading="lazy">
           </a>
+          <span class="foto-pesada-hora">{{ f.creado_en|fecha_hora }}</span>
+          <form method="post" action="/compras/{{ compra.id }}/fotos-balanza/{{ f.id }}/borrar"
+                onsubmit="return confirm('¿Borrar esta foto de la pesada? No se puede deshacer.');">
+            <button type="submit" class="borrar-pesada">Borrar</button>
+          </form>
         </div>
         {% endfor %}
       </div>
       {% else %}
       <p class="fotos-guia-vacio">Esta compra no tiene foto de la balanza.</p>
       {% endif %}
-      <p class="fotos-guia-nota">La saca Depósito al recepcionar. Cuelga de este artículo, no de la guía.</p>
+      <form class="fotos-guia-subir" method="post" action="/compras/{{ compra.id }}/fotos-balanza"
+            enctype="multipart/form-data">
+        {# Sin `capture`: en el celular ofrece la cámara Y la galería. #}
+        <input type="file" name="fotos" id="fotos-pesada" accept="image/*" multiple
+               onchange="if (this.files.length) this.form.submit();">
+        <label class="boton-agregar-foto" for="fotos-pesada">＋ Agregar foto de pesada</label>
+      </form>
+      <p class="fotos-guia-nota">Cuelga de este artículo, no de la guía. No cambia ningún número de la compra.</p>
     </div>
   </div>
 

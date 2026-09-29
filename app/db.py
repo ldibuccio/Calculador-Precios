@@ -6294,6 +6294,27 @@ def agregar_foto_recepcion(compra_id: int, foto_ruta: str) -> None:
         conexion.close()
 
 
+def borrar_foto_recepcion(compra_id: int, foto_id: int) -> str | None:
+    """Saca UNA foto de balanza de ESTA compra y devuelve su ruta para borrarla del Storage.
+
+    El archivo de balanza nunca se comparte (ver el comment de la tabla), así
+    que la ruta vuelve siempre que la fila existía. Un id de otra compra no
+    borra nada: el WHERE pide los dos, y vuelve None.
+    """
+    conexion = obtener_conexion()
+    try:
+        with conexion.cursor() as cursor:
+            cursor.execute(
+                "DELETE FROM fotos_recepcion WHERE id = %s AND compra_id = %s RETURNING foto_ruta",
+                (foto_id, compra_id),
+            )
+            fila = cursor.fetchone()
+        conexion.commit()
+        return fila[0] if fila else None
+    finally:
+        conexion.close()
+
+
 def listar_fotos_de_recepcion(compra_id: int) -> list[dict]:
     """Las fotos de balanza de una compra, más viejas primero (el orden en que se sacaron)."""
     conexion = obtener_conexion()
