@@ -16550,7 +16550,8 @@ def detallar_envases_a_reponer() -> dict:
 #
 # El cajón AJENO se identifica por su MARCA (`marcas_vacio`). El "tipo de cajón
 # por proveedor" que había antes (`tipos_cajon`) lo reemplazaron las marcas y
-# el código dejó de usarlo el 29/09 (dueño).
+# el código dejó de usarlo el 29/09 (dueño). La columna y la tabla se
+# borraron ese mismo día en las dos bases (`db/tipo_de_cajon_1..3`).
 # ============================================================================
 
 # EL STOCK DE VACÍOS DEL DEPÓSITO SE LLEVA POR PILA: proveedor y marca del

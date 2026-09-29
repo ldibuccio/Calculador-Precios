@@ -3891,9 +3891,10 @@ proveedor cargado, el tipo no entraba en ninguna cuenta.
   columna del Excel y el PDF del stock. Lo cuida
   `test_NINGUN_codigo_lee_ni_escribe_el_tipo_de_cajon`, que barre `app/`,
   `core/`, `scripts/` y `templates/`.
-- **Paso 2**: la migración que borra la columna y la tabla va DESPUÉS del
-  deploy del paso 1 (corolario 94), en las dos bases. Hasta que corra, las
-  dos siguen en `db/esquema_completo.sql`.
+- **Paso 2 (29/09)**: `db/tipo_de_cajon_1..3` borraron la columna y la
+  tabla en las dos bases, después del deploy del paso 1 (corolario 94), y
+  `db/esquema_completo.sql` las perdió en el mismo commit. Ver
+  `db/corridas_confirmadas.md`.
 
 ### Y LA REGLA QUE ESTO DEJA: derivar es lo único que hace inmune al campo que no se llena
 
