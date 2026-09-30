@@ -16413,10 +16413,10 @@ def _detalle_armados_esperando_guia_r() -> dict:
     """Cada armado que espera su guía R, con el pedido: para cotejar el número.
 
     Sale de `armados_esperando_guia_r`, que rejuega el MISMO FIFO que el
-    conteo: la suma de "Esperan" es el número de la alerta. "Cajas a armados
-    sin caja" es del ARTÍCULO y se repite en sus filas: son cajas (de guía R
-    o de un rechazo que volvió) que se llevaron armados de fichas SIN envase,
-    y que después le faltan a uno de caja.
+    conteo: la suma de "Esperan" es el número de la alerta. "Cajas a renglones
+    sin ficha" es del ARTÍCULO y se repite en sus filas: son cajas (de guía R
+    o de un rechazo que volvió) que se llevaron renglones sin ficha, que son
+    los únicos que todavía pueden sacarle la caja a uno de Día.
     """
     filas = armados_esperando_guia_r()
     renglones = [
@@ -16427,7 +16427,7 @@ def _detalle_armados_esperando_guia_r() -> dict:
             if fila["pedido_id"] is not None else "?",
             " · ".join(x for x in (fila["cliente"], fila["sucursal"]) if x) or "?",
             _formatear_numero(fila["esperan"]),
-            _formatear_numero(fila["cajas_a_salidas_sin_caja"]),
+            _formatear_numero(fila["cajas_a_armados_sin_ficha"]),
         ]
         for fila in filas
     ]
@@ -16435,7 +16435,7 @@ def _detalle_armados_esperando_guia_r() -> dict:
     total = round(sum(f["esperan"] for f in filas), 2)
     return {
         "columnas": ["Armado", "Artículo", "Pedido", "Cliente", "Esperan",
-                     "Cajas a armados sin caja"],
+                     "Cajas a renglones sin ficha"],
         "filas": renglones,
         "resumen": f"{_formatear_numero(total)} bultos en {len(renglones)} "
                    f"{'renglón' if len(renglones) == 1 else 'renglones'} de {articulos} artículo"

@@ -510,6 +510,34 @@ que está describiendo es un reproceso que no se cargó.
 Sin envase es **envase perdido** (manzana, pera, arándano): sale en el cajón
 del proveedor, no se reprocesa nunca, y ahí nada de esto aplica.
 
+### Y al revés: un armado en cajón NUNCA toma una caja armada (30/09, dueño)
+
+**El pedido se arma según la ficha del cliente.** Si la ficha dice cajón, sale
+del cajón; si dice caja, sale de cajas (guía R o rechazo que volvió). Nunca se
+cruzan, y no es una decisión a consultar: cruzarlas es un error.
+
+Hasta el 30/09 el armado PREFERÍA lo trabajado sin mirar si su ficha llevaba
+caja, así que un pedido en cajón de otro cliente se llevaba las cajas de Día.
+El stock total daba bien; lo que se rompía era el reparto por lotes: el armado
+de Día quedaba "esperando una guía R" y afuera de la Rentabilidad Real, y el
+de cajón quedaba costeado a precio de caja.
+
+- **Vive en `pasadas_de_lotes`** (core/stock.py), al lado de la pared del
+  envase: un armado con ficha y sin envase recorre solo lo que NO es
+  `TIPOS_LOTE_TRABAJADO`, sin pasada de respaldo. Si no hay cajón, queda
+  `sin_lote`. Las dos copias del FIFO la leen de ahí.
+- **También lo elegido a mano**: `lotes_senalados` descarta un lote que
+  `lote_ofrecido` no ofrece. `guardar_lotes_elegidos` ya lo rechazaba al
+  escribir; esto cubre una corrección guardada antes de la regla.
+- **El renglón SIN ficha sigue con la preferencia vieja**: no hay ficha que
+  respetar. Es el único que todavía puede sacarle la caja a uno de Día, y por
+  eso el detalle de la alerta cuenta cuántas cajas se llevaron.
+- **Un rechazo lleva la ficha del renglón del que volvió.** El lote sigue
+  siendo `reingreso_rechazo`, pero si esa ficha no tiene envase trae
+  `en_cajon` (lo pone `_entradas_y_salidas_stock_varios`): es un cajón que
+  vuelve, lo toma un armado en cajón y no uno de caja. Lo decide
+  `es_caja_armada` (core/stock.py). Sin renglón o sin ficha queda como caja.
+
 **LA CONDICIÓN ES UNA SOLA Y TIENE UN SOLO NOMBRE**: `envase_id IS NOT NULL`
 en `fichas_logistica`, que viaja con la salida como `ficha_con_envase` desde
 `_SQL_SALIDAS_STOCK`. No se deduce del nombre del artículo, ni del contenido
@@ -611,8 +639,7 @@ bajó de 603 a 180 bultos.
 
 **El detalle de la alerta** (Administración → Alertas, desde el 30/09) lista
 cada armado que espera: fecha de armado, artículo, pedido, cliente y
-sucursal, y cuántas cajas del artículo se llevaron armados de fichas SIN
-envase. Sale del mismo rejuego que el número (`_rejuego_de_armados_con_caja`),
+sucursal, y cuántas cajas del artículo se llevaron renglones sin ficha. Sale del mismo rejuego que el número (`_rejuego_de_armados_con_caja`),
 así que la lista suma lo mismo que la alerta. Un rechazo que vuelve a stock
 entra al reparto como lote de cajas (`reingreso_rechazo`), con el costo
 congelado del listado del día del pedido.
