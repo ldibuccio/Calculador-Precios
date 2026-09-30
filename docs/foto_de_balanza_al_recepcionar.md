@@ -75,6 +75,13 @@ hoy.
 
 ## Decisión 3 — La limpieza las incluye DESDE EL PRINCIPIO
 
+> **Desde el 30/09 esta decisión cambió de forma** (dueño): la limpieza de
+> Sistema (`listar_fotos_para_limpiar` y `olvidar_foto_borrada`) se sacó. La
+> foto de balanza sigue entrando en la regla de 3 años, ahora desde Gerencia →
+> Fotos de más de 3 años: se borra el ARCHIVO, la fila queda, y borrar una
+> compra ya no se lleva sus fotos. Ver "FOTOS: LA REGLA DE 3 AÑOS" en CLAUDE.md.
+> Lo de abajo describe cómo era.
+
 Sin esto, una foto de balanza **no se borra nunca**: `listar_fotos_para_limpiar`
 lee solo de `fotos_guia`, así que las nuevas ni siquiera aparecerían como
 candidatas. En dos años son miles de archivos inmortales.

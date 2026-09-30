@@ -57,6 +57,9 @@ NO_SE_ABREN = {
     "/gerencia/vales/{vale_id}/foto": "idem",
     "/deposito/pedido/{pedido_id}/fotos/{foto_id}/ver": "idem",
     "/deposito/recepcion/{compra_id}/foto-balanza/ver": "idem",
+    "/administracion/vales/{vale_id}/fotos/{foto_id}/ver": "idem",
+    "/gerencia/vales/{vale_id}/fotos/{foto_id}/ver": "idem",
+    "/gerencia/fotos/compras-borradas/{foto_id}/ver": "idem",
     # El mail necesita una casilla configurada con su credencial, que por
     # regla del proyecto no vive en la base.
     "/deposito/pedido/mails/{mail_id}/revisar": "necesita una casilla con credencial",
@@ -249,6 +252,14 @@ def siembra():
       select 'devolucion', d.id, 500, 'EJ-1' from vacios_deposito_devoluciones d limit 1;
     insert into vales_a_cobrar (origen, proveedor_id, fecha, importe)
       select 'anterior_al_sistema', pr.id, '2026-08-01', 1000 from proveedores pr limit 1;
+    -- Fotos (30/09): una anexada, una de compra borrada y una ya borrada por
+    -- antigüedad, así Gerencia → Fotos pasa por las nueve patas y sus joins.
+    insert into vales_a_cobrar_fotos (vale_id, foto_ruta, sector)
+      select v.id, 'vales/EJEMPLO.jpg', 'gerencia' from vales_a_cobrar v limit 1;
+    insert into fotos_de_compras_borradas (compra_id, foto_ruta, subida_el)
+      values (999999, 'pesaje/EJEMPLO-BORRADA.jpg', now());
+    insert into fotos_borradas_por_antiguedad (foto_ruta, tipo, subida_el)
+      values ('vales/EJEMPLO.jpg', 'vale', now() - interval '4 years');
     """
 
 

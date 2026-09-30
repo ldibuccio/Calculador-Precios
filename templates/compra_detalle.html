@@ -376,10 +376,16 @@
                  alt="Mercadería sobre la balanza" loading="lazy">
           </a>
           <span class="foto-pesada-hora">{{ f.creado_en|fecha_hora }}</span>
+          {# La de una DEVOLUCIÓN es respaldo y no se borra (dueño, 30/09): la
+             escritura la rechaza igual, así que el botón no se ofrece. #}
+          {% if f.movimiento_id %}
+          <span class="foto-pesada-hora foto-de-devolucion">De la devolución al proveedor</span>
+          {% else %}
           <form method="post" action="/compras/{{ compra.id }}/fotos-balanza/{{ f.id }}/borrar"
                 onsubmit="return confirm('¿Borrar esta foto de la pesada? No se puede deshacer.');">
             <button type="submit" class="borrar-pesada">Borrar</button>
           </form>
+          {% endif %}
         </div>
         {% endfor %}
       </div>

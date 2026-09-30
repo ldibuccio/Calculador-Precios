@@ -1,0 +1,114 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Fotos de más de 3 años</title>
+<style>
+  :root { font-family: -apple-system, system-ui, sans-serif; }
+  body { margin: 0; padding: 1rem; background: #f5f5f5; color: #222; }
+  .tarjeta {
+    background: #fff; border-radius: 10px; padding: 1rem; margin-bottom: 1rem;
+    box-shadow: 0 1px 3px rgba(0, 0, 0, 0.1); overflow-wrap: anywhere;
+  }
+  .error { background: #fee2e2; color: #991b1b; padding: 0.75rem 1rem; border-radius: 8px; margin-bottom: 1rem; }
+  .aviso { background: #dcfce7; color: #166534; padding: 0.75rem 1rem; border-radius: 8px; margin-bottom: 1rem; }
+  h2 { font-size: 1.05rem; margin: 0 0 0.3rem; }
+  .cuenta { color: #444; font-size: 0.9rem; margin: 0 0 0.6rem; }
+  .total { font-size: 1.5rem; font-weight: 700; margin: 0; }
+  .total-dato { color: #444; margin: 0.2rem 0 0; }
+  .fila { padding: 0.55rem 0; border-top: 1px solid #eee; }
+  .fila-cabeza { display: flex; justify-content: space-between; gap: 0.6rem; }
+  .fila-que { font-weight: 600; }
+  .fila-dato { color: #555; font-size: 0.88rem; }
+  .vieja { color: #b45309; font-weight: 700; }
+  .vacio { color: #666; font-style: italic; }
+  .borrar form { display: flex; flex-direction: column; gap: 0.6rem; }
+  .borrar label.tilde { display: flex; gap: 0.6rem; align-items: center; min-height: 44px; font-size: 0.95rem; }
+  .borrar label.tilde input { width: 1.4rem; height: 1.4rem; flex: none; }
+  .borrar button { min-height: 48px; border-radius: 8px; border: none; background: #dc2626; color: #fff;
+    font-weight: 600; font-size: 1rem; }
+  .fila a.ver { display: inline-flex; align-items: center; min-height: 44px; color: #2563eb; font-weight: 600; }
+</style>
+</head>
+<body>
+  {% from "_info.html" import info %}
+  {% set barra_sector = "gerencia" %}
+  {% set barra_titulo = "Fotos de más de 3 años" %}
+  {% set barra_atras = "/gerencia" %}
+  {% include "_barra_navegacion.html" %}
+
+  {% if aviso %}<div class="aviso">{{ aviso }}</div>{% endif %}
+  {% if error %}<div class="error">{{ error }}</div>{% endif %}
+
+  <div class="tarjeta" id="viejas">
+    <h2>Más de 3 años {% call info("Cómo funciona") %}Una foto se puede borrar recién cuando pasaron
+      <strong>3 años desde que se subió</strong>, y solo desde acá, a mano. Se borra el archivo y
+      <strong>queda el registro</strong>: donde estaba la foto dice "Foto borrada por antigüedad el
+      DD/MM/AAAA". Las que se borran por error de carga en el momento siguen igual que antes.{% endcall %}</h2>
+    <p class="total">{{ total_viejas }} foto{{ '' if total_viejas == 1 else 's' }}</p>
+    <p class="total-dato">Subidas antes del {{ corte.strftime('%d/%m/%Y') }} ·
+      {% if total_bytes_viejas is none %}tamaño sin dato{% else %}{{ total_bytes_viejas|tamano }}{% endif %}</p>
+    {% for f in filas %}
+    <div class="fila">
+      <div class="fila-cabeza">
+        <span class="fila-que">{{ f.texto }}</span>
+        <span class="{{ 'vieja' if f.viejas else '' }}">{{ f.viejas }} de {{ f.cantidad }}</span>
+      </div>
+      <div class="fila-dato">
+        {%- if f.bytes is none %}tamaño sin dato
+        {%- else %}{{ f.bytes_viejas|tamano }} de más de 3 años · {{ f.bytes|tamano }} en total{% endif %}</div>
+    </div>
+    {% endfor %}
+    <p class="cuenta" style="margin-top: 0.6rem;">En total: {{ total_cantidad }} foto{{ '' if total_cantidad == 1 else 's' }}
+      {%- if total_bytes is not none %} · {{ total_bytes|tamano }}{% endif %}.</p>
+  </div>
+
+  {% if total_viejas %}
+  <div class="tarjeta borrar">
+    <h2>Borrar las fotos de más de 3 años</h2>
+    <p class="cuenta">Se borran los archivos de {{ total_viejas }} foto{{ '' if total_viejas == 1 else 's' }}. Esto no se deshace.</p>
+    <form method="post" action="/gerencia/fotos/borrar-viejas">
+      <label class="tilde"><input type="checkbox" name="confirmo" value="si" required>
+        Sí, borrar los archivos. Queda el registro de cada foto.</label>
+      <button type="submit">Borrar {{ total_viejas }} foto{{ '' if total_viejas == 1 else 's' }}</button>
+    </form>
+  </div>
+  {% endif %}
+
+  <div class="tarjeta" id="compras-borradas">
+    <h2>Pesadas de compras borradas</h2>
+    {% for f in de_compras_borradas %}
+    <div class="fila">
+      <div class="fila-cabeza">
+        <span class="fila-que">De la compra N° {{ f.compra_id }}, borrada el {{ f.compra_borrada_el|fecha_hora }}</span>
+      </div>
+      <div class="fila-dato">Subida el {{ f.subida_el|fecha_hora }}
+        {%- if f.borrada_el %} · {{ texto_de_foto_borrada(f.borrada_el) }}{% endif %}</div>
+      {% if not f.borrada_el %}
+      <a class="ver" href="/gerencia/fotos/compras-borradas/{{ f.id }}/ver" target="_blank" rel="noopener">Ver foto</a>
+      {% endif %}
+    </div>
+    {% else %}
+    <p class="vacio">No se borró ninguna compra con fotos de pesada.</p>
+    {% endfor %}
+  </div>
+
+  <div class="tarjeta" id="sin-registro">
+    <h2>Archivos sin registro</h2>
+    {% if sin_registro is none %}
+    <p class="vacio">No se pudo leer el bucket: sin dato.</p>
+    {% else %}
+    <p class="cuenta">{{ sin_registro.cantidad }} archivo{{ '' if sin_registro.cantidad == 1 else 's' }} ·
+      {{ sin_registro.bytes|tamano }}. Ninguna fila los nombra. No se borran.</p>
+    {% endif %}
+  </div>
+
+  <div class="tarjeta">
+    <h2>Ya borradas por antigüedad</h2>
+    <p class="cuenta">{{ borradas.cantidad }} foto{{ '' if borradas.cantidad == 1 else 's' }}
+      {%- if borradas.ultima %} · la última el {{ borradas.ultima|fecha_hora }}{% endif %}.</p>
+  </div>
+{% include "_pie_version.html" %}
+</body>
+</html>

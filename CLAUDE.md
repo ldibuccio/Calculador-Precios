@@ -4227,10 +4227,11 @@ arrancó", sus "esperando" y la regla de la fecha— **se fue**.
   (`compra_id is not null or foto`), y no por NOT VALID: `vacios_marcas_5`
   corrió NOT VALID y con eso **las 13 viejas de Frutamax no se podían
   anular**, porque NOT VALID exime a lo viejo solo del chequeo al crearse y
-  todo UPDATE posterior se chequea. Lo arregla `vacios_marcas_7`, corrida el 25/09 en las dos. **Y la
-  foto del vale NO VENCE**: la limpieza de fotos le ponía la ruta en NULL,
-  el CHECK lo rebota, y como es una transacción se caía la limpieza entera.
-  Salió de `listar_fotos_para_limpiar` y de `olvidar_foto_borrada`. **No se
+  todo UPDATE posterior se chequea. Lo arregla `vacios_marcas_7`, corrida el 25/09 en las dos. **La foto
+  del vale entra en la regla de 3 años desde el 30/09**: hasta ese día no
+  vencía, porque la limpieza vieja le ponía la ruta en NULL y el CHECK lo
+  rebotaba. La regla nueva borra el ARCHIVO y deja la ruta (ver "FOTOS: LA
+  REGLA DE 3 AÑOS"), así que el CHECK se sigue cumpliendo. **No se
   devuelve más de lo que dice el sistema**: el freno lee la pila con la fila
   del proveedor bloqueada, y con LA MISMA consulta de la pantalla.
 - **Ajuste y asignación son SOLO de Administración**, igual que todo Vacíos
@@ -4366,7 +4367,8 @@ Son DOS operaciones y se registran separadas; en las dos el COSTO SE CANCELA
 - **Desde depósito** (`/deposito/devolver`, sin clave): proveedor → sus
   compras con lo que QUEDA en el piso (el restante del lote de la compra en el
   reparto de ahora, `_compras_con_resto_del_proveedor`) → cantidad, motivo y
-  fotos opcionales, que van a las fotos de la compra (`fotos_recepcion`). Nunca
+  fotos opcionales, que van a las fotos de la compra (`fotos_recepcion`, con
+  `movimiento_id`: el detalle de la compra no las deja borrar). Nunca
   más de lo que queda: el tope se recalcula en el POST. Es un movimiento
   `devolucion_deposito` (migración `db/devolucion_deposito_1`, verificación en
   `_2`), con cantidad negativa y la compra obligatoria (CHECK).
@@ -4454,6 +4456,45 @@ textos y el Excel en `core/vales.py`.
 - **NADA DE ESTO TOCA EL STOCK.**
 
 Lo cuida `tests/test_vales_a_cobrar.py`, contra Postgres.
+
+## FOTOS: LA REGLA DE 3 AÑOS Y LAS ANEXADAS DE UN VALE (30/09, dueño)
+
+- **Una foto de respaldo no se borra antes de 3 años desde que se SUBIÓ.**
+  Vale para todas: pesadas, devoluciones de mercadería, comandas, capturas de
+  pedido, archivos de precios, mermas, devoluciones de vacíos, vales y
+  anexadas. Las que se borran por error de carga en el momento (una pesada o
+  una comanda desde la compra, una captura del pedido) siguen igual.
+- **Después se borran a mano, desde Gerencia → "Fotos de más de 3 años"**
+  (`/gerencia/fotos`): cuántas y cuánto ocupan por tipo, y un botón con tilde
+  de confirmación. Se va el ARCHIVO y **la fila que lo nombraba queda**;
+  `fotos_borradas_por_antiguedad` dice cuándo. Todo "Ver foto" pasa por
+  `_ir_a_la_foto` (app/main.py), que en ese caso muestra "Foto borrada por
+  antigüedad el DD/MM/AAAA". Un test exige que `obtener_url_foto` no se llame
+  en ningún otro lado. El registro se escribe y se commitea DESPUÉS de borrar
+  el archivo: si el Storage falla, la foto queda como estaba.
+- **La lista de todas las fotos está escrita UNA vez**: `_SQL_FOTOS_DE_RESPALDO`
+  (app/db.py), nueve patas. La regla (el corte, los tipos, el resumen) vive en
+  `core/fotos.py`. Un test compara las tablas del esquema con columna de foto
+  contra las decididas: una tabla nueva que guarde fotos falla hasta entrar.
+- **Los archivos sin registro** (16 en Frutamax el 30/09) se muestran aparte
+  y no se borran. El tamaño sale de `storage.objects`; si no se puede leer,
+  la pantalla dice "sin dato".
+- **La limpieza vieja de Sistema se sacó**: no pedía clave, borraba la fila y
+  contaba por la fecha de la compra o del pedido.
+- **La foto de una devolución de mercadería no se borra**: va a
+  `fotos_recepcion` con `movimiento_id`, y `borrar_foto_recepcion` la deja
+  afuera en el WHERE.
+- **Borrar una compra no borra sus fotos de pesada**, forzado o no, de a una
+  o con el Cancelar del día: pasan a `fotos_de_compras_borradas` en la misma
+  transacción (`_SQL_GUARDAR_FOTOS_DE_COMPRAS_BORRADAS`) y el archivo queda.
+  Se ven en Gerencia → Fotos: "de la compra N° X, borrada el …".
+- **Un vale suma fotos en cualquier estado** ("Anexar foto", Administración y
+  Gerencia): `vales_a_cobrar_fotos`, con el sector. La original no se copia y
+  ninguna se borra. El detalle las muestra en orden con su origen
+  (`texto_de_la_foto`, core/vales.py) y el listado dice cuántas tiene cada vale
+  y marca el que no tiene ninguna.
+- Migraciones `db/fotos_1` a `fotos_4`, verificación en `fotos_5`. Lo cuida
+  `tests/test_fotos.py`, contra Postgres.
 
 ## Buscar compras: la SEÑA (28/09, dueño)
 

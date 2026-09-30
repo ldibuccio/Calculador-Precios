@@ -40,6 +40,7 @@
   .alerta-limite { color: #dc2626; font-weight: 700; }
   .fila a.abrir { display: block; color: inherit; text-decoration: none; min-height: 44px; }
   .viejo { color: #dc2626; font-weight: 700; }
+  .sin-foto { color: #b45309; font-weight: 700; }
   .limites form { display: flex; flex-wrap: wrap; gap: 0.6rem; align-items: flex-end; }
   .limites label { flex: 1 1 9rem; font-size: 0.85rem; color: #444; }
   .limites input { display: block; width: 100%; box-sizing: border-box; margin-top: 0.2rem; padding: 0.6rem;
@@ -106,7 +107,10 @@
         <div class="fila-dato">{{ v.fecha.strftime('%d/%m/%Y') }} · {{ texto_del_origen[v.origen] }}
           {%- if v.cajones %} · {{ v.cajones }} cajón{{ '' if v.cajones == 1 else 'es' }}{% endif %}
           {%- if v.estado == 'en_cartera' %} · <span class="{{ 'viejo' if v.dias > resumen.limites.dias else '' }}">{{ v.dias }} días en cartera</span>
-          {%- else %} · {{ texto_de_la_salida(v) }}{% endif %}</div>
+          {%- else %} · {{ texto_de_la_salida(v) }}{% endif %}
+          {#- CUÁNTAS FOTOS, y marcado el que no tiene ninguna (dueño, 30/09). #}
+          {%- if v.fotos %} · {{ v.fotos }} foto{{ '' if v.fotos == 1 else 's' }}
+          {%- else %} · <span class="sin-foto">sin foto</span>{% endif %}</div>
       </a>
     </div>
     {% else %}

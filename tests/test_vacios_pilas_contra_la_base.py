@@ -146,9 +146,10 @@ def test_sin_FOTO_no_es_una_devolucion(base):
 def test_la_BASE_rechaza_el_vale_sin_foto_por_INSERT_y_por_UPDATE(base):
     """vacios_dev_con_foto, sin pasar por la guarda de la escritura (solo lo nuevo, sin compra).
 
-    El UPDATE es el caso que importa: olvidar_foto_borrada ponía la ruta en
-    NULL, y con el CHECK puesto eso rebota y tira la limpieza de fotos entera.
-    Por eso el vale salió de la retención (25/09)."""
+    El UPDATE es el caso que importa: la limpieza vieja de Sistema ponía la
+    ruta en NULL, y con el CHECK puesto eso rebotaba. Desde el 30/09 la regla
+    de 3 años borra el ARCHIVO y deja la ruta (fotos_borradas_por_antiguedad),
+    así que el vale vuelve a entrar en la regla sin chocar con el CHECK."""
     import psycopg2
     conexion = psycopg2.connect(base)
     try:

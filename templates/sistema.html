@@ -84,36 +84,6 @@
   {% include "_banner_alertas.html" %}
 
   <div class="tarjeta">
-    <h2>Fotos de comandas</h2>
-    {% if uso_storage is not none %}
-    <p class="espacio-storage">
-      {{ uso_storage.cantidad }} foto{% if uso_storage.cantidad != 1 %}s{% endif %} guardada{% if uso_storage.cantidad != 1 %}s{% endif %}
-      · {{ uso_storage.bytes_totales|tamano }}
-    </p>
-    {% endif %}
-    {% if cantidad_fotos_para_limpiar is none %}
-    <!-- El conteo se hace bajo demanda: recorre todas las compras con
-         foto, y no vale la pena pagarlo en cada visita a esta pantalla. -->
-    <form method="post" action="/sistema/revisar-fotos-viejas">
-      <button type="submit" class="boton boton-secundario" style="margin-top: 0;">
-        Revisar fotos de más de 3 años
-      </button>
-    </form>
-    {% else %}
-    <p class="espacio-storage">
-      {{ cantidad_fotos_para_limpiar }} foto{% if cantidad_fotos_para_limpiar != 1 %}s{% endif %}
-      de más de 3 años para limpiar.
-    </p>
-    <form method="post" action="/sistema/limpiar-fotos-viejas" id="form-limpiar-fotos-viejas">
-      <button type="submit" class="boton boton-secundario" id="boton-limpiar-fotos-viejas"
-              data-cantidad="{{ cantidad_fotos_para_limpiar }}" style="margin-top: 0;">
-        Limpiar fotos de más de 3 años
-      </button>
-    </form>
-    {% endif %}
-  </div>
-
-  <div class="tarjeta">
     <h2>Casilla de Pedidos</h2>
     <p style="color: #555; font-size: 0.9rem; margin: 0 0 0.75rem;">La lectura del mail diario del pedido: configuración, activación y revisión manual.</p>
     <a class="boton" href="/sistema/casilla-pedidos" style="margin-top: 0;">Casilla de Pedidos</a>
@@ -121,29 +91,6 @@
 
   <a class="volver" href="/compras">Volver a compras</a>
 
-  <script>
-    const formLimpiarFotosViejas = document.getElementById("form-limpiar-fotos-viejas");
-    if (formLimpiarFotosViejas) {
-      formLimpiarFotosViejas.addEventListener("submit", function (evento) {
-        const boton = document.getElementById("boton-limpiar-fotos-viejas");
-        const cantidad = parseInt(boton.dataset.cantidad, 10) || 0;
-        if (cantidad === 0) {
-          evento.preventDefault();
-          alert("No hay fotos de más de 3 años para borrar.");
-          return;
-        }
-        if (
-          !confirm(
-            "¿Borrar las fotos de compras de más de 3 años? Se van a eliminar " +
-              cantidad +
-              " fotos. Los registros de compra se conservan. No se puede deshacer."
-          )
-        ) {
-          evento.preventDefault();
-        }
-      });
-    }
-  </script>
 {% include "_pie_version.html" %}
 </body>
 </html>
