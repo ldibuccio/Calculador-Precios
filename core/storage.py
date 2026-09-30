@@ -40,10 +40,11 @@ BUCKET_COMANDAS = "comandas"
 # nació prefijado sin que nadie tuviera que acordarse. La regla se pagó
 # sola en veinticuatro horas.
 #
-# Lo de ANTES del 08/09 queda plano y NO se mueve: la limpieza de 3 años
-# lo borra solo, así que el bucket converge sin migrar 262 archivos en dos
-# bases. Eso vale mientras los CINCO tipos entren en esa limpieza —
-# `listar_fotos_para_limpiar` en app/db.py, que es lo que la hace posible.
+# Lo de ANTES del 08/09 queda plano y NO se mueve: la regla de 3 años
+# (Gerencia → Fotos de más de 3 años) lo borra a su tiempo, así que el bucket
+# converge sin migrar 262 archivos en dos bases. Eso vale mientras TODOS los
+# tipos entren en `_SQL_FOTOS_DE_RESPALDO` (app/db.py), que es la lista de
+# todas las fotos del sistema.
 PREFIJO_COMANDA = "comanda"
 PREFIJO_PRECIOS = "precios"
 PREFIJO_PEDIDO = "pedido"
@@ -52,6 +53,8 @@ PREFIJO_MERMA = "merma"
 # El vale de la devolución de vacíos del DEPÓSITO. No es el del puesto:
 # ese circuito no sube fotos.
 PREFIJO_VACIOS = "vacios"
+# Las fotos ANEXADAS a un vale a cobrar (dueño, 30/09).
+PREFIJO_VALE = "vales"
 EXPIRACION_URL_FIRMADA_SEGUNDOS = 3600  # 1 hora
 TIMEOUT_HTTP_SEGUNDOS = 30
 

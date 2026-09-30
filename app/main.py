@@ -284,7 +284,12 @@ from app.db import (
     renombrar_proveedor_puesto,
     renombrar_tipo_envase_puesto,
     registrar_tick_revision,
-    olvidar_foto_borrada,
+    fotos_de_respaldo,
+    tamanos_del_bucket,
+    registrar_foto_borrada_por_antiguedad,
+    contar_fotos_borradas_por_antiguedad,
+    listar_fotos_de_compras_borradas,
+    foto_de_compra_borrada,
     listar_fotos_de_guia,
     listar_fotos_pedido,
     listar_ajustes_vacios_por_rango,
@@ -330,7 +335,6 @@ from app.db import (
     listar_fichas_por_cliente,
     listar_renglones_pedido,
     listar_sucursales_pedido,
-    listar_fotos_para_limpiar,
     listar_precios_anteriores_por_cliente,
     listar_historial_de_precios_de_ficha,
     listar_precios_vigentes_por_cliente,
@@ -354,6 +358,10 @@ from app.db import (
     contar_vales_plata_sin_aplicar,
     contar_vales_viejos,
     foto_del_vale,
+    fotos_del_vale,
+    anexar_fotos_al_vale,
+    foto_anexada_del_vale,
+    foto_borrada_por_antiguedad,
     guardar_limites_de_vales,
     limites_de_vales,
     listar_vales,
@@ -433,7 +441,6 @@ from app.db import (
     cambiar_proveedor_de_compra,
     frenos_para_cambiar_proveedor,
     deficit_de_cajas_por_ficha,
-    obtener_uso_storage_bucket,
     recepcionar_compra,
     rechazar_compra,
     registrar_costo_envase,
@@ -502,6 +509,13 @@ from core.movimientos_vacios import (
     texto_de_la_marca as texto_de_la_marca_vacio,
     ventana as ventana_de_movimientos_vacios,
 )
+from core.fotos import (
+    archivos_sin_registro,
+    corte_de_respaldo,
+    fotos_para_borrar,
+    resumen_por_tipo,
+    total_de as total_de_fotos,
+)
 from core.vales import (
     OPCIONES_DE_ESTADO as OPCIONES_DE_ESTADO_VALE,
     TEXTO_DEL_ESTADO as TEXTO_DEL_ESTADO_VALE,
@@ -512,6 +526,7 @@ from core.vales import (
     estado_del_filtro as estado_del_filtro_vales,
     fecha_del_filtro as fecha_del_filtro_vales,
     generar_excel_movimientos_vales,
+    texto_de_la_foto as texto_de_la_foto_vale,
     texto_de_la_salida as texto_de_la_salida_vale,
     total_de as total_de_vales,
 )
@@ -574,6 +589,7 @@ from core.storage import (
     subir_archivo_comanda,
     subir_foto_comanda,
     PREFIJO_VACIOS,
+    PREFIJO_VALE,
 )
 
 UNIDADES_VENTA_VALIDAS = {"kilo", "unidad", "cubeta"}
@@ -7155,7 +7171,7 @@ def ver_foto_del_vale(devolucion_id: int, proveedor_id: int):
     """URL firmada de la foto del vale."""
     foto_ruta = foto_de_la_devolucion(devolucion_id, proveedor_id)
     if foto_ruta:
-        return RedirectResponse(url=obtener_url_foto(foto_ruta), status_code=303)
+        return _ir_a_la_foto(foto_ruta, status_code=303)
     raise HTTPException(status_code=404, detail="Ese vale no tiene foto")
 
 
@@ -7671,6 +7687,51 @@ def marcar_vino_armada(request: Request, compra_id: int, ficha_en_origen_id: str
     return RedirectResponse(url=f"/compras/buscar?{urlencode({'aviso': aviso})}", status_code=303)
 
 
+def texto_de_foto_borrada(borrada_el) -> str:
+    """Lo que queda a la vista de una foto cuyo archivo se borró por tener más
+    de 3 años (dueño, 30/09). Una sola frase para todas las pantallas."""
+    return f"Foto borrada por antigüedad el {borrada_el.astimezone(ARGENTINA).strftime('%d/%m/%Y')}"
+
+
+def _ir_a_la_foto(foto_ruta: str, status_code: int = 307):
+    """TODA pantalla que muestra una foto pasa por acá (dueño, 30/09).
+
+    Si el archivo se borró por antigüedad, no hay a dónde redirigir: devuelve
+    una imagen con la frase "Foto borrada por antigüedad el DD/MM/AAAA", que se
+    ve igual en una miniatura (<img>) que abierta sola. Si no, pide una URL
+    firmada nueva y redirige, como siempre.
+
+    Escrito UNA vez: un "Ver foto" que no preguntara acá mostraría una imagen
+    rota sin decir por qué. Lo cuida un test que exige que `obtener_url_foto`
+    no se llame en ningún otro lado de app/main.py.
+    """
+    try:
+        borrada_el = foto_borrada_por_antiguedad(foto_ruta)
+    except Exception:
+        logger.exception("No se pudo mirar si la foto %s se borró por antigüedad", foto_ruta)
+        borrada_el = None
+    if borrada_el is not None:
+        texto = texto_de_foto_borrada(borrada_el)
+        # En dos renglones, cortado en " el ": entra en una miniatura angosta.
+        arriba, _, abajo = texto.rpartition(" el ")
+        svg = (
+            '<svg xmlns="http://www.w3.org/2000/svg" width="320" height="240" viewBox="0 0 320 240">'
+            '<rect width="320" height="240" fill="#f3f4f6"/>'
+            '<text x="160" y="112" font-family="sans-serif" font-size="15" text-anchor="middle" fill="#444">'
+            f'{arriba}</text>'
+            '<text x="160" y="136" font-family="sans-serif" font-size="15" text-anchor="middle" fill="#444">'
+            f'el {abajo}</text></svg>'
+        )
+        return Response(content=svg, media_type="image/svg+xml", headers={"Cache-Control": "no-store"})
+    try:
+        url_firmada = obtener_url_foto(foto_ruta)
+    except Exception as error_storage:
+        raise HTTPException(
+            status_code=500, detail=f"No se pudo generar el link de la foto: {error_storage}"
+        ) from error_storage
+    return RedirectResponse(url=url_firmada, status_code=status_code)
+
+
 def _borrar_fotos_del_storage(rutas, contexto: str) -> None:
     """Saca del Storage archivos cuyas filas ya se borraron. Nunca levanta.
 
@@ -7830,14 +7891,7 @@ def ver_foto_compra(compra_id: int):
     if not fotos:
         raise HTTPException(status_code=404, detail="Esta compra no tiene fotos guardadas")
 
-    try:
-        url_firmada = obtener_url_foto(fotos[0]["foto_ruta"])
-    except Exception as error_storage:
-        raise HTTPException(
-            status_code=500, detail=f"No se pudo generar el link de la foto: {error_storage}"
-        ) from error_storage
-
-    return RedirectResponse(url=url_firmada, status_code=307)
+    return _ir_a_la_foto(fotos[0]["foto_ruta"])
 
 
 def _fotos_de_la_guia_de(compra: dict) -> list[dict]:
@@ -7872,13 +7926,7 @@ def ver_foto_de_guia(compra_id: int, foto_id: int):
     if foto is None:
         raise HTTPException(status_code=404, detail="Esa foto no es de la guía de esta compra")
 
-    try:
-        url_firmada = obtener_url_foto(foto["foto_ruta"])
-    except Exception as error_storage:
-        raise HTTPException(
-            status_code=500, detail=f"No se pudo generar el link de la foto: {error_storage}"
-        ) from error_storage
-    return RedirectResponse(url=url_firmada, status_code=307)
+    return _ir_a_la_foto(foto["foto_ruta"])
 
 
 @app.post("/compras/{compra_id}/fotos")
@@ -8099,13 +8147,7 @@ def ver_foto_de_pesada(compra_id: int, foto_id: int):
     miniaturas eran la misma. Va bajo /deposito, sin clave, como la de arriba:
     la usan Compras y Gerencia, y cada una tiene la suya."""
     foto = _foto_de_pesada(compra_id, foto_id)
-    try:
-        url_firmada = obtener_url_foto(foto["foto_ruta"])
-    except Exception as error_storage:
-        raise HTTPException(
-            status_code=500, detail=f"No se pudo generar el link de la foto: {error_storage}"
-        ) from error_storage
-    return RedirectResponse(url=url_firmada, status_code=307)
+    return _ir_a_la_foto(foto["foto_ruta"])
 
 
 @app.post("/compras/{compra_id}/fotos-balanza/{foto_id}/borrar")
@@ -8117,7 +8159,10 @@ def borrar_foto_de_pesada(compra_id: int, foto_id: int):
     except Exception as error_db:
         raise HTTPException(status_code=500, detail=f"Error al conectar con la base de datos: {error_db}") from error_db
     if ruta is None:
-        raise HTTPException(status_code=404, detail="Esa foto no es de la pesada de esta compra")
+        raise HTTPException(
+            status_code=404,
+            detail="Esa foto no es una pesada de esta compra que se pueda borrar (la de una devolución es respaldo)",
+        )
     try:
         borrar_foto_comanda(ruta)
     except Exception:
@@ -10551,47 +10596,15 @@ async def guardar_y_exportar_precios_cargar_foto_excel(request: Request):
     return _respuesta_listado_generado(cliente, cambios, "excel")
 
 
-def _fecha_de_corte_limpieza_fotos():
-    """3 años atrás de hoy: las fotos de compras más viejas que esto son candidatas a limpiar del Storage."""
-    hoy = _hoy_argentina()
-    try:
-        return hoy.replace(year=hoy.year - 3)
-    except ValueError:
-        # 29 de febrero en un año bisiesto: hace 3 años no lo era.
-        return hoy.replace(month=2, day=28, year=hoy.year - 3)
-
-
-def _renderizar_pantalla_sistema(
-    request: Request,
-    *,
-    mensaje: str | None = None,
-    error: str | None = None,
-    status_code: int = 200,
-    cantidad_fotos_para_limpiar: int | None = None,
-):
-    # El indicador de espacio es informativo, no bloqueante: si falla, la
-    # pantalla se muestra igual (uso_storage queda None y la plantilla no
-    # lo muestra). El conteo de fotos para limpiar NO se calcula acá: es
-    # una consulta que recorre todas las compras con foto, y no puede
-    # correr en cada visita a esta pantalla por un numerito informativo —
-    # se calcula bajo demanda con el botón "Revisar" (ver
-    # revisar_fotos_viejas_ruta), y llega ya calculado por parámetro.
-    try:
-        uso_storage = obtener_uso_storage_bucket(BUCKET_COMANDAS)
-    except Exception:
-        uso_storage = None
-
+def _renderizar_pantalla_sistema(request: Request):
+    """La pantalla de Sistema. Las fotos viejas ya NO se limpian desde acá
+    (dueño, 30/09): la limpieza de Sistema no pedía clave, borraba el registro
+    y contaba la antigüedad por la fecha de la compra. Vive en Gerencia →
+    Fotos de más de 3 años."""
     return templates.TemplateResponse(
         request,
         "sistema.html",
-        {
-            "error": error,
-            "mensaje": mensaje,
-            "uso_storage": uso_storage,
-            "cantidad_fotos_para_limpiar": cantidad_fotos_para_limpiar,
-            "banner": _banner_alertas("sistema"),
-        },
-        status_code=status_code,
+        {"banner": _banner_alertas("sistema")},
     )
 
 
@@ -10600,56 +10613,107 @@ def ver_sistema(request: Request):
     return _renderizar_pantalla_sistema(request)
 
 
-@app.post("/sistema/revisar-fotos-viejas")
-def revisar_fotos_viejas_ruta(request: Request):
-    """Cuenta bajo demanda cuántas fotos de más de 3 años hay para limpiar, y lo muestra con el botón de borrar."""
+# ============================================================================
+# FOTOS DE MÁS DE 3 AÑOS (dueño, 30/09): Gerencia, a mano y con confirmación.
+#
+# Reemplaza a la limpieza de Sistema. Cuenta y mide por tipo, borra solo lo
+# que tiene más de 3 años DESDE QUE SE SUBIÓ, y deja el registro: la fila que
+# nombraba la foto queda, y "Ver foto" dice "Foto borrada por antigüedad el
+# DD/MM/AAAA". Los archivos sin registro se muestran aparte y no se borran.
+# Las fotos de pesada de compras borradas se ven acá. La regla vive en
+# core/fotos.py y la lista de fotos en _SQL_FOTOS_DE_RESPALDO (app/db.py).
+# ============================================================================
+
+
+def _estado_de_las_fotos() -> dict:
+    """Todo lo que la pantalla muestra y el borrado vuelve a calcular. El
+    bucket puede no leerse (permisos, base local): los tamaños van en None y la
+    pantalla dice "sin dato", sin tapar las cantidades."""
+    hoy = _hoy_argentina()
+    corte = corte_de_respaldo(hoy)
+    fotos = fotos_de_respaldo()
     try:
-        cantidad = len(listar_fotos_para_limpiar(_fecha_de_corte_limpieza_fotos()))
-    except Exception as error_db:
-        return _renderizar_pantalla_sistema(
-            request, error=f"No se pudo revisar las fotos viejas: {error_db}", status_code=500
-        )
-    return _renderizar_pantalla_sistema(request, cantidad_fotos_para_limpiar=cantidad)
+        tamanos = tamanos_del_bucket(BUCKET_COMANDAS)
+    except Exception:
+        logger.exception("No se pudo leer el tamaño de los archivos del bucket")
+        tamanos = None
+    return {"corte": corte, "fotos": fotos, "tamanos": tamanos,
+            "para_borrar": fotos_para_borrar(fotos, corte)}
 
 
-@app.post("/sistema/limpiar-fotos-viejas")
-def limpiar_fotos_viejas_ruta(request: Request):
-    fecha_corte = _fecha_de_corte_limpieza_fotos()
+@app.get("/gerencia/fotos")
+def ver_fotos_de_mas_de_3_anios(request: Request, aviso: str | None = None, error: str | None = None):
+    """Fotos de más de 3 años: cuántas hay y cuánto ocupan, por tipo."""
+    if not _acceso_gerencia_valido(request):
+        return _pantalla_clave_gerencia(request)
     try:
-        fotos_a_borrar = listar_fotos_para_limpiar(fecha_corte)
+        estado = _estado_de_las_fotos()
+        borradas = contar_fotos_borradas_por_antiguedad()
+        de_compras_borradas = listar_fotos_de_compras_borradas()
     except Exception as error_db:
-        return _renderizar_pantalla_sistema(
-            request, error=f"No se pudo revisar qué fotos limpiar: {error_db}", status_code=500
-        )
+        raise HTTPException(status_code=500, detail=f"Error al conectar con la base de datos: {error_db}") from error_db
+    filas = resumen_por_tipo(estado["fotos"], estado["tamanos"], estado["corte"])
+    return templates.TemplateResponse(request, "gerencia_fotos.html", {
+        "filas": filas, "corte": estado["corte"],
+        "total_cantidad": total_de_fotos(filas, "cantidad"), "total_bytes": total_de_fotos(filas, "bytes"),
+        "total_viejas": total_de_fotos(filas, "viejas"), "total_bytes_viejas": total_de_fotos(filas, "bytes_viejas"),
+        "sin_registro": archivos_sin_registro(estado["fotos"], estado["tamanos"]),
+        "borradas": borradas, "de_compras_borradas": de_compras_borradas,
+        "texto_de_foto_borrada": texto_de_foto_borrada,
+        "aviso": aviso, "error": error,
+    })
 
-    if not fotos_a_borrar:
-        return _renderizar_pantalla_sistema(request, mensaje="No hay fotos de más de 3 años para borrar.")
 
+@app.post("/gerencia/fotos/borrar-viejas")
+def borrar_fotos_de_mas_de_3_anios(request: Request, confirmo: str = Form("")):
+    """Borra el ARCHIVO de las fotos de más de 3 años y deja el registro.
+
+    La lista se vuelve a calcular acá, no viaja en el formulario: el que
+    confirma dice "sí", no cuáles. Sin el tilde no se borra nada. Cada foto
+    es su propia transacción (registrar_foto_borrada_por_antiguedad): si una
+    falla en el Storage, esa queda como estaba y se sigue con las demás.
+    """
+    puerta = _puerta_de_gerencia_para_escribir(request)
+    if puerta is not None:
+        return puerta
+    if confirmo != "si":
+        return RedirectResponse(url="/gerencia/fotos?" + urlencode(
+            {"error": "Para borrar hay que tildar la confirmación."}), status_code=303)
+    try:
+        estado = _estado_de_las_fotos()
+    except Exception as error_db:
+        raise HTTPException(status_code=500, detail=f"Error al conectar con la base de datos: {error_db}") from error_db
+    para_borrar = estado["para_borrar"]
+    if not para_borrar:
+        return RedirectResponse(url="/gerencia/fotos?" + urlencode(
+            {"aviso": "No hay fotos de más de 3 años para borrar."}), status_code=303)
     borradas = 0
-    for foto_ruta in fotos_a_borrar:
+    for foto in para_borrar:
+        tamano = None if estado["tamanos"] is None else estado["tamanos"].get(foto["ruta"])
         try:
-            borrar_foto_comanda(foto_ruta)
+            registrar_foto_borrada_por_antiguedad(foto["ruta"], foto["tipo"], foto["subida_el"], tamano,
+                                                  borrar_foto_comanda)
         except Exception:
-            logger.exception("No se pudo borrar del Storage la foto vieja %s — se sigue con las demás", foto_ruta)
+            logger.exception("No se pudo borrar la foto vieja %s: quedó como estaba", foto["ruta"])
             continue
-
-        try:
-            olvidar_foto_borrada(foto_ruta)
-        except Exception:
-            logger.exception(
-                "Se borró del Storage la foto vieja %s pero no se pudo limpiar su fila (fotos_guia / "
-                "fotos_recepcion): queda una fila apuntando a un archivo que ya no existe",
-                foto_ruta,
-            )
-            continue
-
         borradas += 1
-
-    if borradas == len(fotos_a_borrar):
-        mensaje = f"Se liberaron {borradas} fotos."
+    if borradas == len(para_borrar):
+        aviso = f"Se borraron {borradas} foto{'' if borradas == 1 else 's'}. Queda el registro de cada una."
     else:
-        mensaje = f"Se liberaron {borradas} de {len(fotos_a_borrar)} fotos. Las demás quedaron para otro intento."
-    return _renderizar_pantalla_sistema(request, mensaje=mensaje)
+        aviso = (f"Se borraron {borradas} de {len(para_borrar)} fotos. Las demás quedaron como estaban "
+                 "y se pueden volver a intentar.")
+    return RedirectResponse(url="/gerencia/fotos?" + urlencode({"aviso": aviso}), status_code=303)
+
+
+@app.get("/gerencia/fotos/compras-borradas/{foto_id}/ver")
+def ver_foto_de_compra_borrada(request: Request, foto_id: int):
+    """Una foto de pesada de una compra que se borró. Solo Gerencia."""
+    if not _acceso_gerencia_valido(request):
+        return _pantalla_clave_gerencia(request)
+    foto_ruta = foto_de_compra_borrada(foto_id)
+    if foto_ruta is None:
+        raise HTTPException(status_code=404, detail="Esa foto no existe")
+    return _ir_a_la_foto(foto_ruta, status_code=303)
 
 
 @app.get("/comercial")
@@ -12043,13 +12107,7 @@ def ver_foto_de_balanza(compra_id: int):
     if not fotos:
         raise HTTPException(status_code=404, detail="Esta compra no tiene foto de balanza")
 
-    try:
-        url_firmada = obtener_url_foto(fotos[-1]["foto_ruta"])
-    except Exception as error_storage:
-        raise HTTPException(
-            status_code=500, detail=f"No se pudo generar el link de la foto: {error_storage}"
-        ) from error_storage
-    return RedirectResponse(url=url_firmada, status_code=307)
+    return _ir_a_la_foto(fotos[-1]["foto_ruta"])
 
 
 def _marca_vacio_de_recepcion(valor: str) -> tuple[str | None, int | None]:
@@ -19412,6 +19470,7 @@ def _renderizar_vale(request: Request, vale_id: int, *, aviso: str | None = None
     hoy = _hoy_argentina()
     try:
         vale = vale_a_cobrar(vale_id, hoy)
+        fotos = fotos_del_vale(vale_id) if vale is not None else []
     except Exception as error_db:
         raise HTTPException(status_code=500, detail=f"Error al conectar con la base de datos: {error_db}") from error_db
     if vale is None:
@@ -19421,8 +19480,8 @@ def _renderizar_vale(request: Request, vale_id: int, *, aviso: str | None = None
     salidas = [tipo for tipo, sector in SECTOR_DE_LA_SALIDA.items()
                if sector == camino["sector"]] if vale["estado"] == "en_cartera" else []
     return templates.TemplateResponse(request, "vale_a_cobrar.html", {
-        "camino": camino, "vale": vale, "salidas": salidas, "hoy": hoy,
-        "texto_del_estado": TEXTO_DEL_ESTADO_VALE, "texto_del_origen": TEXTO_DEL_ORIGEN_VALE,
+        "camino": camino, "vale": vale, "salidas": salidas, "hoy": hoy, "fotos": fotos,
+        "texto_de_la_foto": texto_de_la_foto_vale, "texto_del_estado": TEXTO_DEL_ESTADO_VALE, "texto_del_origen": TEXTO_DEL_ORIGEN_VALE,
         "texto_del_sector": TEXTO_DEL_SECTOR_VALE, "texto_de_la_salida": texto_de_la_salida_vale,
         "aviso": aviso, "error": error,
     }, status_code=status_code)
@@ -19449,8 +19508,71 @@ def ver_foto_de_vale(request: Request, vale_id: int):
         return sin_clave
     foto_ruta = foto_del_vale(vale_id)
     if foto_ruta:
-        return RedirectResponse(url=obtener_url_foto(foto_ruta), status_code=303)
+        return _ir_a_la_foto(foto_ruta, status_code=303)
     raise HTTPException(status_code=404, detail="Ese vale no tiene foto")
+
+
+@app.get("/administracion/vales/{vale_id}/fotos/{foto_id}/ver")
+@app.get("/gerencia/vales/{vale_id}/fotos/{foto_id}/ver")
+def ver_foto_anexada_de_vale(request: Request, vale_id: int, foto_id: int):
+    """Una foto ANEXADA, si es de ESTE vale. Un id ajeno es un 404."""
+    sin_clave = _sin_clave_de_vales(request)
+    if sin_clave is not None:
+        return sin_clave
+    foto_ruta = foto_anexada_del_vale(vale_id, foto_id)
+    if foto_ruta:
+        return _ir_a_la_foto(foto_ruta, status_code=303)
+    raise HTTPException(status_code=404, detail="Esa foto no es de este vale")
+
+
+@app.post("/administracion/vales/{vale_id}/fotos")
+@app.post("/gerencia/vales/{vale_id}/fotos")
+async def anexar_fotos_al_vale_ruta(request: Request, vale_id: int):
+    """Anexar una o varias fotos a un vale, en cualquier estado (dueño, 30/09).
+
+    Administración la cierra su middleware; Gerencia pregunta su clave acá,
+    como toda escritura de /gerencia. Se validan TODAS antes de subir la
+    primera, y se guardan todas o ninguna: si la base rebota, lo que ya se
+    subió al Storage se borra (no tiene fila que lo nombre). Ninguna foto del
+    vale se borra desde ninguna pantalla.
+    """
+    camino = _camino_de_vales(request)
+    if camino["sector"] == "gerencia":
+        puerta = _puerta_de_gerencia_para_escribir(request)
+        if puerta is not None:
+            return puerta
+    formulario = await request.form()
+    comprimidas = []
+    for archivo in formulario.getlist("fotos"):
+        if not hasattr(archivo, "read") or not getattr(archivo, "filename", ""):
+            continue
+        crudo = await archivo.read()
+        comprimida = _comprimir_foto_jpeg(crudo) if crudo else None
+        if comprimida is None:
+            return _renderizar_vale(
+                request, vale_id, status_code=400,
+                error=f"«{archivo.filename or 'Un archivo'}» no es una foto. No se anexó ninguna.")
+        comprimidas.append(comprimida)
+    if not comprimidas:
+        return _renderizar_vale(request, vale_id, error="No llegó ninguna foto.", status_code=400)
+    rutas: list[str] = []
+    try:
+        for comprimida in comprimidas:
+            rutas.append(subir_foto_comanda(comprimida, f"vale-{vale_id}", prefijo=PREFIJO_VALE))
+        cantidad = anexar_fotos_al_vale(vale_id, rutas, sector=camino["sector"])
+    except Exception as error:
+        for ruta in rutas:
+            try:
+                borrar_foto_comanda(ruta)
+            except Exception:
+                logger.exception("No se pudo borrar la foto huérfana del vale %s", ruta)
+        if isinstance(error, ValueError):
+            raise HTTPException(status_code=404, detail=str(error)) from error
+        logger.exception("No se pudieron anexar las fotos al vale %s", vale_id)
+        return _renderizar_vale(request, vale_id, error=f"No se pudo guardar: {error}", status_code=500)
+    aviso = "Foto anexada." if cantidad == 1 else f"{cantidad} fotos anexadas."
+    return RedirectResponse(url=f"{camino['base']}/vales/{vale_id}?" + urlencode({"aviso": aviso}) + "#fotos",
+                            status_code=303)
 
 
 def _importe_del_form(texto: str) -> float | None:
@@ -22370,11 +22492,7 @@ def ver_foto_pedido_ruta(pedido_id: int, foto_id: int):
     foto = next((f for f in fotos if f["id"] == foto_id), None)
     if foto is None:
         raise HTTPException(status_code=404, detail="Esa captura no es de este pedido")
-    try:
-        url_firmada = obtener_url_foto(foto["foto_ruta"])
-    except Exception as error_storage:
-        raise HTTPException(status_code=500, detail=f"No se pudo generar el link: {error_storage}") from error_storage
-    return RedirectResponse(url=url_firmada, status_code=307)
+    return _ir_a_la_foto(foto["foto_ruta"])
 
 
 @app.post("/deposito/pedido/{pedido_id}/fotos/{foto_id}/borrar")

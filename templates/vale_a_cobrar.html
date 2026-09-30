@@ -56,6 +56,19 @@
     font-weight: 600; font-size: 1rem; }
   .salida button.peligro { background: #dc2626; }
   .diferencia { font-weight: 700; }
+  /* LAS FOTOS DEL VALE (dueño, 30/09): la original y las anexadas, en orden,
+     cada una con su origen. Ninguna tiene botón de borrar. */
+  .fotos-vale { display: flex; flex-wrap: wrap; gap: 0.6rem; }
+  .foto-vale { flex: 1 1 9rem; max-width: 12rem; }
+  .foto-vale a { display: block; }
+  .foto-vale img { width: 100%; height: 9rem; object-fit: cover; border-radius: 8px; background: #eee; display: block; }
+  .foto-vale-origen { display: block; font-size: 0.82rem; color: #555; margin-top: 0.25rem; }
+  .anexar input[type=file] { position: absolute; width: 1px; height: 1px; opacity: 0; }
+  .anexar label.boton-anexar {
+    display: flex; align-items: center; justify-content: center; min-height: 48px; margin-top: 0.8rem;
+    border-radius: 8px; border: 1px solid #2563eb; color: #2563eb; background: #fff;
+    font-weight: 600; font-size: 1rem; cursor: pointer;
+  }
 </style>
 </head>
 <body>
@@ -80,7 +93,29 @@
         {%- if vale.diferencia %} · <span class="diferencia">diferencia {{ '+' if vale.diferencia > 0 }}{{ vale.diferencia|moneda }}</span>{% endif %}
       {%- else %} no había seña de esa pila para comparar{% endif %}</p>
     {% endif %}
-    {% if vale.foto_ruta %}<div class="acciones"><a href="{{ camino.base }}/vales/{{ vale.id }}/foto">Ver la foto del vale</a></div>{% endif %}
+  </div>
+
+  <div class="tarjeta" id="fotos">
+    <h2>Fotos ({{ fotos|length }})</h2>
+    {% if fotos %}
+    <div class="fotos-vale">
+      {% for f in fotos %}
+      {% set url = camino.base ~ "/vales/" ~ vale.id ~ ("/foto" if f.id is none else "/fotos/" ~ f.id ~ "/ver") %}
+      <div class="foto-vale">
+        <a href="{{ url }}" target="_blank" rel="noopener"><img src="{{ url }}" alt="Foto del vale" loading="lazy"></a>
+        <span class="foto-vale-origen">{{ texto_de_la_foto(f) }}</span>
+      </div>
+      {% endfor %}
+    </div>
+    {% else %}
+    <p class="vacio">Este vale no tiene ninguna foto.</p>
+    {% endif %}
+    {# Se anexa en CUALQUIER estado, y nada se borra (dueño, 30/09). #}
+    <form class="anexar" method="post" action="{{ camino.base }}/vales/{{ vale.id }}/fotos" enctype="multipart/form-data">
+      <input type="file" name="fotos" id="fotos-vale" accept="image/*" multiple
+             onchange="if (this.files.length) this.form.submit();">
+      <label class="boton-anexar" for="fotos-vale">＋ Anexar foto</label>
+    </form>
   </div>
 
   <div class="tarjeta">

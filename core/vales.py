@@ -72,6 +72,21 @@ def total_de(vales: list[dict]) -> float:
     return round(sum(v["importe"] or 0 for v in vales), 2)
 
 
+def texto_de_la_foto(foto: dict) -> str:
+    """De dónde viene una foto del vale (dueño, 30/09). La original va con su
+    fecha; la anexada con día, hora y el sector que la subió."""
+    if foto["que"] == "devolucion":
+        return f"Foto de la devolución ({_dia_argentino(foto['creado_en'])})"
+    if foto["que"] == "papel":
+        return f"Foto del vale en papel (cargado el {_dia_argentino(foto['creado_en'])})"
+    cuando = foto["creado_en"].astimezone(ZoneInfo("America/Argentina/Buenos_Aires")).strftime("%d/%m %H:%M")
+    return f"Anexada el {cuando} desde {TEXTO_DEL_SECTOR.get(foto['sector'], 'sin dato')}"
+
+
+def _dia_argentino(instante) -> str:
+    return instante.astimezone(ZoneInfo("America/Argentina/Buenos_Aires")).strftime("%d/%m/%Y")
+
+
 def texto_de_la_salida(vale: dict) -> str:
     """Una línea con lo que pasó en la salida, o vacía si sigue en cartera."""
     estado = vale["estado"]

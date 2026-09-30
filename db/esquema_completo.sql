@@ -497,15 +497,17 @@ comment on column compras_eliminadas.fila is 'La compra ENTERA, de to_jsonb(comp
 comment on column compras_eliminadas.origen is 'Por cual de las CUATRO superficies se borro. Se DERIVA del camino. La lista esta completa a proposito: el archivo se escribe en la MISMA sentencia que el DELETE, asi que un valor que falte no pierde un dato — revienta el borrado.';
 
 create table fotos_recepcion (
-    id         bigint generated always as identity primary key,
-    compra_id  bigint not null references compras (id),
-    foto_ruta  text not null,
-    creado_en  timestamptz not null default now(),
+    id            bigint generated always as identity primary key,
+    compra_id     bigint not null references compras (id),
+    foto_ruta     text not null,
+    creado_en     timestamptz not null default now(),
+    -- La FK a movimientos_stock va más abajo: esa tabla todavía no existe acá.
+    movimiento_id bigint,
     unique (compra_id, foto_ruta)
 );
 
-comment on table fotos_recepcion is 'Foto de la mercadería sobre la BALANZA al recepcionar, en el bucket "comandas". Una por ARTÍCULO: una fila de compras es un artículo. A diferencia de fotos_guia, el archivo NUNCA se comparte — es el pesaje de esta compra y de ninguna otra —, y por eso al borrar la compra se borra también el archivo del Storage (la FK va sin cascade a propósito: con cascade el archivo quedaría huérfano en el bucket).';
-comment on column fotos_recepcion.foto_ruta is 'Ruta del archivo en el bucket "comandas". Entra en la limpieza de fotos viejas con el MISMO corte que las comandas (3 años, una sola perilla): ver listar_fotos_para_limpiar en app/db.py.';
+comment on table fotos_recepcion is 'Foto de la mercadería sobre la BALANZA al recepcionar, en el bucket "comandas", y las fotos de una DEVOLUCIÓN desde depósito (movimiento_id). A diferencia de fotos_guia, el archivo NUNCA se comparte. Al borrar la compra las filas pasan a fotos_de_compras_borradas y el ARCHIVO QUEDA (dueño, 30/09): la FK va sin cascade a propósito.';
+comment on column fotos_recepcion.foto_ruta is 'Ruta del archivo en el bucket "comandas". Entra en la regla de 3 años (Gerencia → Fotos de más de 3 años), contada desde creado_en.';
 
 -- ----------------------------------------------------------------------------
 -- 8. PRECIOS_VENTA_HISTORIAL — precio de venta por artículo y cliente
@@ -1061,6 +1063,16 @@ create table vales_papel_listado (
   fila integer primary key,
   codigo text, fecha text, importe numeric, numero text, foto text
 );
+create table vales_a_cobrar_fotos (
+    id        bigint generated always as identity primary key,
+    vale_id   bigint not null references vales_a_cobrar (id),
+    foto_ruta text not null unique,
+    sector    text not null check (sector in ('administracion', 'gerencia')),
+    creado_en timestamptz not null default now()
+);
+create index vales_a_cobrar_fotos_vale on vales_a_cobrar_fotos (vale_id);
+comment on table vales_a_cobrar_fotos is 'Fotos ANEXADAS a un vale (dueño, 30/09), en cualquier estado, desde Administración o Gerencia. No se borran: la original (de la devolución o del vale en papel) no está acá. db/fotos_1_vales_anexadas.sql.';
+
 create view vales_papel_revision as
 select l.fila, upper(btrim(l.codigo)) as codigo, pr.nombre as proveedor,
        btrim(l.fecha) as fecha, l.importe, nullif(btrim(l.numero), '') as numero,
@@ -1909,3 +1921,31 @@ comment on column alertas_estado.error is
     'Si la consulta de esta alerta falló, el mensaje. La alerta queda con su valor viejo y su calculada_el vieja: se muestra vencida, no en cero.';
 
 commit;
+
+-- ----------------------------------------------------------------------------
+-- FOTOS (dueño, 30/09): la foto de la devolución, las de compras borradas y el
+-- registro de las borradas por antigüedad. db/fotos_2 a fotos_4.
+-- ----------------------------------------------------------------------------
+alter table fotos_recepcion add constraint fotos_recepcion_movimiento_id_fkey
+    foreign key (movimiento_id) references movimientos_stock (id);
+create index fotos_recepcion_movimiento on fotos_recepcion (movimiento_id);
+comment on column fotos_recepcion.movimiento_id is 'La DEVOLUCIÓN desde depósito de la que es esta foto (NULL = pesada). Con valor no se puede borrar desde el detalle de la compra: es respaldo, no un error de carga.';
+
+create table fotos_de_compras_borradas (
+    id                bigint generated always as identity primary key,
+    compra_id         bigint not null,
+    foto_ruta         text not null unique,
+    subida_el         timestamptz not null,
+    compra_borrada_el timestamptz not null default now()
+);
+create index fotos_de_compras_borradas_compra on fotos_de_compras_borradas (compra_id);
+comment on table fotos_de_compras_borradas is 'Fotos de pesada de una compra que se BORRÓ (dueño, 30/09). El archivo sigue en el bucket; compra_id va sin FK porque la compra ya no existe (su fila archivada está en compras_eliminadas). subida_el es el creado_en de la fila original.';
+
+create table fotos_borradas_por_antiguedad (
+    foto_ruta  text primary key,
+    tipo       text not null,
+    subida_el  timestamptz not null,
+    bytes      bigint,
+    borrada_el timestamptz not null default now()
+);
+comment on table fotos_borradas_por_antiguedad is 'REGISTRO de las fotos cuyo ARCHIVO se borró por tener más de 3 años (dueño, 30/09). La fila que la nombraba NO se toca: "Ver foto" muestra "Foto borrada por antigüedad el DD/MM/AAAA".';
