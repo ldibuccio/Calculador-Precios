@@ -626,6 +626,13 @@ bajó de 603 a 180 bultos.
 - **La regla**: una guía R cubre armados de su fecha y de hasta
   `DIAS_DE_MARGEN_DE_LA_GUIA_R` (3, en `core/stock.py`) días corridos antes.
   Pasado ese margen, la alerta "Armados esperando una guía R" lo muestra.
+- **La alerta cuenta SOLO lo que pasó el margen** (dueño, 30/09): un armado
+  de hace tres días o menos todavía lo cubre una guía que se cargue hoy, y
+  contarlo hacía que la alerta marcara todos los días lo del día anterior.
+  La regla es `armado_fuera_del_margen` (core/stock.py), contra la fecha del
+  armado. El detalle muestra los del margen abajo, en gris ("Esperando guía R
+  (normal)"), sin sumarlos. El bloque del Remanente sigue mostrando todo lo
+  que espera, margen incluido: ahí la pregunta es qué falta cargar.
 - **Primero las de antes**: la pasada va en orden de fecha, así que las guías
   anteriores o del mismo día se usan antes que las del margen. No hace falta
   una pasada aparte (medido: el canario que la pone primero no se mueve).
@@ -639,8 +646,9 @@ bajó de 603 a 180 bultos.
 
 **El detalle de la alerta** (Administración → Alertas, desde el 30/09) lista
 cada armado que espera: fecha de armado, artículo, pedido, cliente y
-sucursal, y cuántas cajas del artículo se llevaron renglones sin ficha. Sale del mismo rejuego que el número (`_rejuego_de_armados_con_caja`),
-así que la lista suma lo mismo que la alerta. Un rechazo que vuelve a stock
+sucursal, y cuántas cajas del artículo se llevaron renglones sin ficha. Sale
+de la misma lista que el número (`armados_esperando_guia_r`), así que las
+filas que cuentan suman lo mismo que la alerta. Un rechazo que vuelve a stock
 entra al reparto como lote de cajas (`reingreso_rechazo`), con el costo
 congelado del listado del día del pedido.
 

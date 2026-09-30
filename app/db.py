@@ -13395,8 +13395,14 @@ def bultos_esperando_guia_r_por_articulo() -> dict:
     return por_id
 
 
-def armados_esperando_guia_r() -> list[dict]:
+def armados_esperando_guia_r(hoy: date) -> list[dict]:
     """CADA armado que espera una guía R, con su pedido: el detalle de la alerta.
+
+    `fuera_del_margen` dice si la alerta lo cuenta: pasados
+    DIAS_DE_MARGEN_DE_LA_GUIA_R días ninguna guía que se cargue hoy lo cubre
+    (`armado_fuera_del_margen`). Adentro del margen esperar es lo normal
+    —la guía se carga al día siguiente— y la fila viene igual, marcada, para
+    que el detalle la muestre aparte sin sumarla (dueño, 30/09).
 
     Sale del MISMO rejuego que el conteo (`_rejuego_de_armados_con_caja`), no
     de una consulta propia: la suma de `esperan` de esta lista es, por
@@ -13413,7 +13419,7 @@ def armados_esperando_guia_r() -> list[dict]:
 
     El más viejo arriba: es una cola de trabajo, no un aviso que envejece.
     """
-    from core.stock import TIPOS_LOTE_TRABAJADO
+    from core.stock import TIPOS_LOTE_TRABAJADO, armado_fuera_del_margen
 
     nombres, rejuego = _rejuego_de_armados_con_caja()
     filas = []
@@ -13437,6 +13443,7 @@ def armados_esperando_guia_r() -> list[dict]:
                 "renglon_id": salida.get("renglon_id"),
                 "esperan": round(esperan, 2),
                 "cajas_a_armados_sin_ficha": round(a_sin_ficha, 2),
+                "fuera_del_margen": armado_fuera_del_margen(salida["fecha_orden"], hoy),
             })
     renglones = [f["renglon_id"] for f in filas if f["renglon_id"] is not None]
     datos = {}
@@ -13518,23 +13525,30 @@ def _rejuego_de_armados_con_caja() -> tuple[dict, dict]:
     }
 
 
-def contar_bultos_esperando_guia_r() -> dict:
-    """El TOTAL de lo de arriba, para la alerta. Una cuenta, dos lectores.
+def contar_bultos_esperando_guia_r(hoy: date) -> dict:
+    """El número de la alerta: lo que sigue esperando PASADO el margen.
 
-    La alerta y el Remanente salen de la misma función a propósito: con dos
-    consultas, un día una diría un número y la otra otro, y la alerta
-    mandaría a mirar donde el problema no está. Ya nos costó una vez.
+    Sale de `armados_esperando_guia_r`, la misma lista que muestra el
+    detalle, así la suma de las filas que cuentan es este número por
+    construcción. Lo que está adentro de los DIAS_DE_MARGEN_DE_LA_GUIA_R días
+    no suma (dueño, 30/09): el armado de ayer se cubre con la guía de hoy, y
+    contarlo haría que la alerta marque todos los días lo del día anterior.
+
+    El bloque del Remanente sigue mostrando TODO lo que espera, margen
+    incluido (`bultos_esperando_guia_r_por_articulo`): ahí la pregunta es qué
+    falta cargar, no qué está atrasado.
+
+    `hoy` es obligatorio: sin él la cuenta dependería del reloj de quien la
+    llame, y un test anclado en hoy no puede fallar (corolario 95).
     """
-    por_articulo = bultos_esperando_guia_r_por_articulo()
-    if not por_articulo:
+    fuera = [f for f in armados_esperando_guia_r(hoy) if f["fuera_del_margen"]]
+    if not fuera:
         return {"casos": 0, "mas_viejo": None}
-    fechas = [f["mas_viejo"] for f in por_articulo.values() if f["mas_viejo"] is not None]
+    fechas = [f["fecha_armado"] for f in fuera if f["fecha_armado"] is not None]
     # SIN `mas_nuevo`: `guardar_estado_alerta` persiste solo `casos` y
-    # `mas_viejo`, así que una clave más acá no la lee nadie — sería el campo
-    # sin consecuencia, escrito por mí en el mismo commit que lo agregó a la
-    # pantalla, que sí lo muestra. El par de fechas vive donde se mira.
+    # `mas_viejo`, así que una clave más acá no la lee nadie.
     return {
-        "casos": round(sum(f["bultos"] for f in por_articulo.values()), 2),
+        "casos": round(sum(f["esperan"] for f in fuera), 2),
         "mas_viejo": min(fechas) if fechas else None,
     }
 

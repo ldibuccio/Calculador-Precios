@@ -16418,9 +16418,10 @@ def _detalle_armados_esperando_guia_r() -> dict:
     o de un rechazo que volvió) que se llevaron renglones sin ficha, que son
     los únicos que todavía pueden sacarle la caja a uno de Día.
     """
-    filas = armados_esperando_guia_r()
-    renglones = [
-        [
+    todas = armados_esperando_guia_r(_hoy_argentina())
+
+    def renglon(fila):
+        return [
             _formatear_fecha_corta(fila["fecha_armado"]),
             fila["articulo"],
             f"#{fila['pedido_id']} del {_formatear_fecha_corta(fila['fecha_pedido'])}"
@@ -16429,17 +16430,28 @@ def _detalle_armados_esperando_guia_r() -> dict:
             _formatear_numero(fila["esperan"]),
             _formatear_numero(fila["cajas_a_armados_sin_ficha"]),
         ]
-        for fila in filas
-    ]
+
+    # LAS QUE CUENTAN y LAS DEL MARGEN salen de la MISMA lista, partida por
+    # `fuera_del_margen`: las primeras son la alerta y suman; las segundas
+    # van aparte, en gris, porque esperar la guía de hoy es lo normal.
+    filas = [f for f in todas if f["fuera_del_margen"]]
+    en_margen = [f for f in todas if not f["fuera_del_margen"]]
     articulos = len({f["articulo_id"] for f in filas})
     total = round(sum(f["esperan"] for f in filas), 2)
+    total_margen = round(sum(f["esperan"] for f in en_margen), 2)
     return {
         "columnas": ["Armado", "Artículo", "Pedido", "Cliente", "Esperan",
                      "Cajas a renglones sin ficha"],
-        "filas": renglones,
-        "resumen": f"{_formatear_numero(total)} bultos en {len(renglones)} "
-                   f"{'renglón' if len(renglones) == 1 else 'renglones'} de {articulos} artículo"
+        "filas": [renglon(f) for f in filas],
+        "resumen": f"{_formatear_numero(total)} bultos en {len(filas)} "
+                   f"{'renglón' if len(filas) == 1 else 'renglones'} de {articulos} artículo"
                    f"{'s' if articulos != 1 else ''}",
+        "nota": f"cuenta solo lo armado hace más de {DIAS_DE_MARGEN_DE_LA_GUIA_R} días",
+        "filas_aparte": [renglon(f) for f in en_margen],
+        "titulo_aparte": (
+            f"Esperando guía R (normal): {_formatear_numero(total_margen)} bultos "
+            f"armados en los últimos {DIAS_DE_MARGEN_DE_LA_GUIA_R} días. No suman."
+        ) if en_margen else None,
     }
 
 
@@ -16860,7 +16872,11 @@ ALERTAS = [
         # recalcula entero en cada corrida. Cargada la guía R —con la fecha
         # del día que armó, o de hasta DIAS_DE_MARGEN_DE_LA_GUIA_R días
         # después— la siguiente corrida da cero. Sin botón.
-        contar=lambda: contar_bultos_esperando_guia_r(),
+        #
+        # Y SOLO CUENTA LO QUE PASÓ EL MARGEN (dueño, 30/09): el armado de
+        # ayer se cubre con la guía de hoy, y contarlo haría que la alerta
+        # marque todos los días lo del día anterior como un problema.
+        contar=lambda: contar_bultos_esperando_guia_r(_hoy_argentina()),
         detallar=_detalle_armados_esperando_guia_r,
     ),
     DefinicionAlerta(
@@ -17241,7 +17257,8 @@ def _bloques_de_alertas(modulo: str) -> list[dict]:
     bloques = []
     for alerta in para_mostrar(ALERTAS, estado, modulo):
         bloque = dict(alerta, columnas=None, filas=None, resumen=None,
-                      en_vivo=False, error_detalle=None)
+                      en_vivo=False, error_detalle=None, filas_aparte=[],
+                      titulo_aparte=None)
         detallar = getattr(por_codigo.get(alerta["codigo"]), "detallar", None)
         if detallar is not None:
             try:
@@ -17258,6 +17275,11 @@ def _bloques_de_alertas(modulo: str) -> list[dict]:
                 # chica y no en el resumen porque el resumen es el titular —
                 # una oración ahí sale en cuerpo 22 y en cuatro renglones.
                 bloque["nota"] = detalle.get("nota")
+                # OPCIONAL también: filas que se muestran en gris debajo de
+                # la tabla y NO son casos (hoy, los armados adentro del margen
+                # de la guía R). `casos` sigue siendo len(filas).
+                bloque["filas_aparte"] = detalle.get("filas_aparte") or []
+                bloque["titulo_aparte"] = detalle.get("titulo_aparte")
                 bloque["casos"] = len(detalle["filas"])
                 bloque["en_vivo"] = True
         bloques.append(bloque)

@@ -382,6 +382,27 @@ def pasadas_con_margen(lotes: list[dict], salida: dict) -> list[tuple[list[dict]
     return [(pasada, margen) for pasada in pasadas_de_lotes(lotes, salida)]
 
 
+def armado_fuera_del_margen(fecha_armado, hoy) -> bool:
+    """¿Este armado ya no puede cubrirlo una guía R que se cargue hoy?
+
+    Una guía R cubre armados de hasta `DIAS_DE_MARGEN_DE_LA_GUIA_R` días
+    antes de su fecha (`lote_posterior_a_la_salida`). Así que un armado del
+    26 lo puede cubrir una guía del 29, y recién el 30 queda afuera. Antes de
+    eso, esperar la guía es lo normal (dueño, 30/09): Depósito la carga al día
+    siguiente, o el lunes.
+
+    Es la misma cuenta que la del reparto, dicha desde hoy: `fecha + margen`
+    es la última fecha de guía que todavía lo cubre, y si esa fecha ya pasó,
+    no hay guía que se pueda cargar hoy para cubrirlo.
+
+    Sin fecha no se puede afirmar que esté adentro, y cuenta: un armado que
+    espera y no se sabe de cuándo es algo que hay que mirar.
+    """
+    if fecha_armado is None:
+        return True
+    return fecha_armado + timedelta(days=DIAS_DE_MARGEN_DE_LA_GUIA_R) < hoy
+
+
 def lotes_ofrecidos(lotes: list[dict], salida: dict) -> list[dict]:
     """Los lotes que la pared le OFRECE a esta salida, en orden y sin repetir.
 
