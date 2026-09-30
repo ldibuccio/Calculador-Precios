@@ -20,6 +20,9 @@ TEXTO_DEL_TIPO = {
     "arranque": "Conteo físico",
     "entrada": "Compra con seña",
     "devolucion": "Devolución",
+    # Los cajones que se van llenos con una devolución de mercadería de una
+    # compra con seña (30/09): por rechazo o desde depósito.
+    "devolucion_llena": "Volvió llena",
     "ajuste": "Ajuste",
     "asignacion": "Pase",
 }
@@ -32,6 +35,7 @@ TEXTO_DE_LA_PUERTA = {
     "deposito": "Depósito",
     "administracion": "Administración",
     "compras": "Compras",
+    "rechazo": "Rechazo",
     None: "sin dato",
 }
 
@@ -110,7 +114,7 @@ def generar_excel_movimientos_vacios_deposito(desde: date, hasta: date, filtro: 
             # va sin signo, igual que en la pantalla.
             int(m["cantidad"]),
             TEXTO_DE_LA_PUERTA.get(m["cargada_desde"], m["cargada_desde"]),
-            m["compra_id"] if m["tipo"] == "entrada" else None,
+            m["compra_id"] if m["tipo"] in ("entrada", "devolucion_llena") else None,
             m["motivo"] if m["tipo"] == "ajuste" else None,
             float(m["importe"]) if m["tipo"] == "devolucion" and m["importe"] is not None else None,
             estado(m),
@@ -135,7 +139,7 @@ def propuesta_desde_el_cotejo(filas: list[dict], proveedor_id: int,
     """
     fila = next((f for f in filas if f["proveedor_id"] == proveedor_id
                  and f["marca_id"] == marca_id), None)
-    if fila is None or fila["diferencia"] == 0:
+    if fila is None or not fila["diferencia"]:
         return None
     return {"marca_id": marca_id, "contado": fila["contado"], "fecha": fila["fecha"],
             "sistema": fila["sistema"],

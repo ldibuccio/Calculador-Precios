@@ -75,6 +75,7 @@
   .sin-marca-total.hay { background: #fff7ed; border-left: 4px solid #f97316;
                          padding: .45rem .6rem; color: #9a3412; }
   .pila-stock { font-weight: 600; white-space: nowrap; }
+  .pila-stock.negativo { color: #dc2626; }
   /* LA FOTO ES OBLIGATORIA y se dice ARRIBA del botón, no en letra chica:
      el que no tiene vale no tiene una devolución, tiene un ajuste. */
   .obligatoria { background: #eff6ff; color: #1e3a8a; border-radius: 8px;
@@ -127,16 +128,24 @@
 
 {% include "_origen_vacios.html" %}
 
+{# LO QUE ESTÁ EN CERO NO SE MUESTRA (dueño, 30/09): una marca en 0 no aparece,
+   y "Sin marca" tampoco cuando está en 0; si tiene cajones sale siempre, para
+   ir a asignarlos. Un negativo sí sale: es un número que hay que ver. Las
+   listas para ELEGIR marca, más abajo, siguen con todas: sin la marca en cero
+   no hay a dónde pasar los cajones sin asignar. #}
+{% set pilas_con_cajones = p.pilas | rejectattr("stock", "equalto", 0) | list %}
 <div class="tarjeta">
+  {% if pilas_con_cajones %}
   <div class="stock">{{ p.stock|numero }} cajones</div>
-  {% for pila in p.pilas %}
-  <div class="pila{% if not pila.marca and pila.stock %} sin-marca{% endif %}">
+  {% for pila in pilas_con_cajones %}
+  <div class="pila{% if not pila.marca %} sin-marca{% endif %}">
     <span class="pila-marca {% if not pila.marca %}sin-asignar{% endif %}">{{ pila.marca or "Sin marca" }}</span>
-    <span class="pila-stock">{{ pila.stock|numero }}</span>
+    <span class="pila-stock{% if pila.stock < 0 %} negativo{% endif %}">{{ pila.stock|numero }}</span>
   </div>
-  {% else %}
-  <p class="vacio">No tiene cajones en el galpón.</p>
   {% endfor %}
+  {% else %}
+  <div class="stock">Sin vacíos</div>
+  {% endif %}
 </div>
 
 {# LAS ACCIONES, DE A UNA POR VEZ (dueño, 29/09): cuatro botones que despliegan
@@ -269,7 +278,8 @@
 </details>
 
 {# DESDE EL COTEJO (dueño, 29/09): "Ajustar" abre esto con la marca, el sentido
-   y la cantidad del último conteo de esa pila contra el sistema de AHORA,
+   y la cantidad del último conteo de esa pila contra el sistema AL CIERRE DE
+   ESE DÍA (desde el 30/09),
    calculados en el server y no leídos de la URL. El motivo no se precarga: es
    lo único que dice por qué no cerró. #}
 <details class="accion" id="ajustar" name="accion"{% if abierta == "ajustar" %} open{% endif %}>
@@ -277,7 +287,7 @@
     <span class="que-hace">Sumar o restar cajones, con el motivo.</span></summary>
   {% if propuesta %}
   <p class="propuesta">Del Cotejo: contados {{ propuesta.contado|numero }} el {{ propuesta.fecha.strftime('%d/%m') }},
-    el sistema dice {{ propuesta.sistema|numero }}. {{ "Faltan" if propuesta.sentido == "faltan" else "Sobran" }} {{ propuesta.cantidad|numero }}.</p>
+    ese día el sistema decía {{ propuesta.sistema|numero }}. {{ "Faltan" if propuesta.sentido == "faltan" else "Sobran" }} {{ propuesta.cantidad|numero }}.</p>
   {% endif %}
   <form method="post" action="/administracion/vacios/{{ p.id }}/ajuste">
     <div class="fila">

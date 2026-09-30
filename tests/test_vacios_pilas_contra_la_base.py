@@ -219,13 +219,42 @@ def test_las_MARCAS_no_se_repiten_por_proveedor_pero_si_entre_proveedores(base):
     assert db.crear_marca_vacio(903, "EJ Roja")
 
 
-def test_el_COTEJO_compara_el_ultimo_conteo_contra_el_stock_de_AHORA(base):
+def test_el_COTEJO_compara_el_ultimo_conteo_contra_el_CIERRE_DEL_DIA_en_que_se_conto(base):
+    """Dueño, 30/09: un conteo del 27/09 va contra el sistema al cierre del 27/09,
+    no contra el de hoy. El ajuste (+2 Roja) y el pase (4 de sin asignar a Roja)
+    del fixture son de HOY, así que al cierre del 27 no estaban:
+
+        Roja        al 27/09 = 5 (la recepción del 26 con seña)      hoy 11
+        sin asignar al 27/09 = 10 de la foto − 3 devueltos el 27 = 7  hoy 3
+
+    Contra el stock de hoy (la regla vieja) daba Roja +2 y sin asignar 0: el
+    trabajo posterior al conteo aparecía como diferencia, o la tapaba."""
     import app.db as db
     db.crear_conteo_vacios_deposito(901, 911, 20, date(2026, 9, 26))
     db.crear_conteo_vacios_deposito(901, 911, 9, date(2026, 9, 27))
     db.crear_conteo_vacios_deposito(901, None, 3, date(2026, 9, 27))
-    filas = {(f["marca"], f["contado"]): f["diferencia"] for f in db.cotejo_de_vacios_deposito()}
-    assert filas == {("EJ Roja", 9): 2, (None, 3): 0}
+    filas = {(f["marca"], f["contado"]): (f["sistema"], f["diferencia"])
+             for f in db.cotejo_de_vacios_deposito()}
+    assert filas == {("EJ Roja", 9): (5, -4), (None, 3): (7, 4)}
+    assert _pilas(901) == ({None: 3, "EJ Roja": 11}, 14), "el stock de hoy no se movió"
+
+
+def test_el_COTEJO_de_un_dia_ANTERIOR_a_la_foto_no_tiene_contra_que(base):
+    """Antes de la primera referencia de la cuenta no hay sistema: un cero ahí
+    sería un número inventado, y pediría un ajuste que nadie puede verificar."""
+    import app.db as db
+    db.crear_conteo_vacios_deposito(901, None, 8, date(2026, 2, 27))
+    fila, = db.cotejo_de_vacios_deposito()
+    assert (fila["sistema"], fila["diferencia"]) == (None, None)
+
+
+def test_el_COTEJO_del_dia_de_la_foto_cuenta_lo_de_ESE_dia_despues_de_la_foto(base):
+    """El cierre incluye todo el día: lo recibido a las 16 del día de la foto
+    (sacada a las 12) está al cierre de ese día."""
+    import app.db as db
+    db.crear_conteo_vacios_deposito(904, None, 7, date(2026, 3, 5))
+    fila, = db.cotejo_de_vacios_deposito()
+    assert (fila["sistema"], fila["diferencia"]) == (7, 0)
 
 
 def test_la_SENA_por_cajon_de_la_ultima_recepcion_por_pila(base):

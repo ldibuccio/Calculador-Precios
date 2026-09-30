@@ -1290,7 +1290,8 @@ create table movimientos_stock (
     id bigint generated always as identity primary key,
     articulo_id bigint not null references articulos (id),
     tipo text not null check (tipo in ('ajuste', 'merma', 'reingreso_rechazo', 'stock_inicial',
-                                       'cierre_modelo_viejo', 'pase_a_segunda')),
+                                       'cierre_modelo_viejo', 'pase_a_segunda',
+                                       'devolucion_deposito')),
     cantidad numeric not null check (cantidad <> 0),
     motivo text not null check (btrim(motivo) <> ''),
     cliente_id bigint references clientes (id),
@@ -1327,7 +1328,14 @@ create table movimientos_stock (
         -- comparación da NULL y un CHECK que evalúa NULL PASA. Medido: una
         -- merma con compra_devolucion_id entraba. Ver db/envases_5_*.sql.
         check (compra_devolucion_id is null
-               or destino_rechazo is not distinct from 'devolucion_proveedor'),
+               or destino_rechazo is not distinct from 'devolucion_proveedor'
+               or tipo = 'devolucion_deposito'),
+    -- LA DEVOLUCIÓN DESDE DEPÓSITO (30/09): lo que queda en el piso y se le
+    -- devuelve al proveedor sin pasar por un rechazo. Sale del stock y
+    -- siempre dice de qué compra. Ver db/devolucion_deposito_1_tipo.sql.
+    constraint movimientos_stock_devolucion_deposito_completa
+        check (tipo <> 'devolucion_deposito'
+               or (compra_devolucion_id is not null and cantidad < 0)),
     -- Y NO PUEDEN CONVIVIR: con la compra elegida el proveedor se lee de
     -- ella; sin compra queda el proveedor suelto. Escritos los dos serían la
     -- misma cosa dos veces, y se pueden contradecir.

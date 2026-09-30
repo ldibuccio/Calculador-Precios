@@ -1,0 +1,113 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Movimientos del Depósito</title>
+<style>
+  :root { font-family: -apple-system, system-ui, sans-serif; }
+  body { margin: 0; padding: 1rem; background: #f5f5f5; color: #222; }
+  .tarjeta {
+    background: #fff; border-radius: 10px; padding: 1rem; margin-bottom: 1rem;
+    box-shadow: 0 1px 3px rgba(0, 0, 0, 0.1); overflow-wrap: anywhere;
+  }
+  .error { background: #fee2e2; color: #991b1b; padding: 0.75rem 1rem; border-radius: 8px; margin-bottom: 1rem; }
+  .filtros { display: flex; flex-wrap: wrap; gap: 0.6rem; }
+  .filtros label { flex: 1 1 9rem; font-size: 0.85rem; color: #444; }
+  .filtros select, .filtros input {
+    display: block; width: 100%; box-sizing: border-box; margin-top: 0.2rem; padding: 0.6rem;
+    border: 1px solid #ccc; border-radius: 8px; font-size: 1rem; background: #fff; min-height: 44px;
+  }
+  .acciones { display: flex; flex-wrap: wrap; gap: 0.6rem; margin-top: 0.8rem; }
+  .acciones button, .acciones a {
+    flex: 1 1 9rem; min-height: 48px; padding: 0.7rem; border-radius: 8px; font-size: 1rem;
+    font-weight: 600; text-align: center; text-decoration: none; box-sizing: border-box;
+  }
+  .acciones button { background: #2563eb; color: #fff; border: none; }
+  .acciones a { background: #fff; color: #2563eb; border: 1px solid #2563eb; }
+  h2 { font-size: 1.05rem; margin: 0 0 0.3rem; }
+  .cuenta { color: #444; font-size: 0.9rem; margin: 0 0 0.6rem; }
+  .fila { padding: 0.55rem 0; border-top: 1px solid #eee; }
+  .fila-cabeza { display: flex; justify-content: space-between; gap: 0.6rem; }
+  .fila-que { font-weight: 600; }
+  .fila-dato { color: #555; font-size: 0.88rem; }
+  .suma { color: #15803d; font-weight: 700; white-space: nowrap; }
+  .resta { color: #dc2626; font-weight: 700; white-space: nowrap; }
+  .vacio { color: #666; font-style: italic; }
+</style>
+</head>
+<body>
+  {% set barra_sector = "administracion" %}
+  {% set barra_titulo = "Movimientos del depósito" %}
+  {% set barra_atras = "/administracion" %}
+  {% include "_barra_navegacion.html" %}
+
+  {% if filtros.error %}<div class="error">{{ filtros.error }}</div>{% endif %}
+
+  <form class="tarjeta" method="get" action="/administracion/ingresos">
+    <div class="filtros">
+      <label>Desde<input type="date" name="desde" value="{{ filtros.desde.isoformat() }}"></label>
+      <label>Hasta<input type="date" name="hasta" value="{{ filtros.hasta.isoformat() }}"></label>
+      <label>Tipo
+        <select name="tipo">
+          {% for valor, texto in opciones_de_tipo %}
+          <option value="{{ valor }}" {% if (filtros.tipo or '') == valor %}selected{% endif %}>{{ texto }}</option>
+          {% endfor %}
+        </select>
+      </label>
+      <label>Proveedor
+        <select name="proveedor_id">
+          <option value="">Todos</option>
+          {% for p in proveedores %}
+          <option value="{{ p.id }}" {% if filtros.proveedor_id == p.id %}selected{% endif %}>{{ p.nombre }}</option>
+          {% endfor %}
+        </select>
+      </label>
+      <label>Artículo
+        <select name="articulo_id">
+          <option value="">Todos</option>
+          {% for a in articulos %}
+          <option value="{{ a.id }}" {% if filtros.articulo_id == a.id %}selected{% endif %}>{{ a.nombre }}</option>
+          {% endfor %}
+        </select>
+      </label>
+    </div>
+    <div class="acciones">
+      <button type="submit">Filtrar</button>
+      <a href="/administracion/ingresos/movimientos-excel?desde={{ filtros.desde.isoformat() }}&amp;hasta={{ filtros.hasta.isoformat() }}&amp;tipo={{ filtros.tipo or '' }}&amp;proveedor_id={{ filtros.proveedor_id if filtros.proveedor_id is not none else '' }}&amp;articulo_id={{ filtros.articulo_id if filtros.articulo_id is not none else '' }}">Exportar Excel</a>
+      {# LA PLANILLA PARA PAGAR sigue: lo que hay que depositarle a cada
+         proveedor, con sus señas, su PDF y su Excel. #}
+      <a href="/administracion/ingresos/pagar?fecha_desde={{ filtros.desde.isoformat() }}&amp;fecha_hasta={{ filtros.hasta.isoformat() }}">Planilla para pagar</a>
+    </div>
+  </form>
+
+  {% for g in grupos %}
+  <div class="tarjeta grupo">
+    <h2>{{ g.proveedor }}</h2>
+    {% if g.proveedor_id is not none %}
+    <p class="cuenta">Entraron {{ g.entraron|numero }} · se devolvieron {{ g.salieron|numero }} · neto {{ g.neto|numero }} bultos
+      {%- if g.valor_entrado or g.valor_salido %} · ${{ '{:,.0f}'.format(g.valor_neto).replace(',', '.') }} netos{% endif %}
+      {%- if g.valor_incompleto %} (falta el precio de alguna compra){% endif %}</p>
+    {% else %}
+    <p class="cuenta">Se mandaron {{ g.salieron|numero }} bultos de segunda al puesto.</p>
+    {% endif %}
+    {% for m in g.filas %}
+    <div class="fila">
+      <div class="fila-cabeza">
+        <span class="fila-que">{{ texto_del_tipo[m.tipo] }} · {{ m.articulo }}</span>
+        <span class="{{ 'suma' if m.bultos > 0 else 'resta' }}">{{ '+' if m.bultos > 0 }}{{ m.bultos|numero }}</span>
+      </div>
+      <div class="fila-dato">{{ m.fecha.strftime('%d/%m/%Y') }}
+        {%- if m.compra_id %} · compra #{{ m.compra_id }}{% endif %}
+        {%- if m.valor is not none %} · {{ '-' if m.valor < 0 }}${{ '{:,.0f}'.format(m.valor|abs).replace(',', '.') }}{% elif m.tipo != 'segunda' %} · sin precio{% endif %}
+        {%- if m.motivo %} · {{ m.motivo }}{% endif %}</div>
+    </div>
+    {% endfor %}
+  </div>
+  {% else %}
+  {% if not filtros.error %}<div class="tarjeta vacio">No hay movimientos en esas fechas con esos filtros.</div>{% endif %}
+  {% endfor %}
+
+{% include "_pie_version.html" %}
+</body>
+</html>

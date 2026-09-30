@@ -66,6 +66,8 @@ ETIQUETAS_MOVIMIENTO = {
     "pase_a_segunda": "Pasó a 2ª",
     "stock_inicial": "Stock inicial",
     "cierre_modelo_viejo": "Cierre del modelo viejo",
+    # Lo que queda en el piso y se le devuelve al proveedor (30/09).
+    "devolucion_deposito": "Devuelto al proveedor",
 }
 
 

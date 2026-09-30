@@ -584,7 +584,10 @@ def test_la_SALIDA_trae_la_ficha_desde_la_consulta_y_no_un_NULL():
         l for l in _SQL_SALIDAS_STOCK.splitlines() if not l.strip().startswith("--")
     )
     rama = sql[sql.index("FROM movimientos_stock m") - 400:sql.index("FROM movimientos_stock m")]
-    assert "m.lote_tipo, m.lote_origen_id, m.ficha_id, FALSE" in rama, rama[-200:]
+    # Desde el 30/09 el lote viaja en un CASE (la devolución desde depósito
+    # se dirige a su compra), y la ficha sigue detrás, con el FALSE.
+    assert re.search(r"ELSE m\.lote_tipo END,\s+CASE .*?ELSE m\.lote_origen_id END,\s+m\.ficha_id, FALSE",
+                     rama, re.S), rama[-300:]
     # Y `ficha_con_envase` SIGUE EN FALSE: esa columna es la pared del ARMADO
     # —con envase, un armado no puede salir de un cajón— y un movimiento no es
     # un armado. Cambiarla acá movería una regla que no es de esta salida.

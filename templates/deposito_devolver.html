@@ -1,0 +1,111 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Devolver Mercadería</title>
+{% import "_fotos_para_subir.html" as fotos_para_subir %}
+<style>
+  :root { font-family: -apple-system, system-ui, sans-serif; }
+  body { margin: 0; padding: 1rem; background: #f5f5f5; color: #222; }
+  .tarjeta {
+    background: #fff; border-radius: 10px; padding: 1rem; margin-bottom: 1rem;
+    box-shadow: 0 1px 3px rgba(0, 0, 0, 0.1);
+  }
+  h2 { font-size: 1.05rem; margin: 0 0 0.4rem; }
+  .error { background: #fee2e2; color: #991b1b; padding: 0.75rem 1rem; border-radius: 8px; margin-bottom: 1rem; }
+  .aviso { background: #dcfce7; color: #14532d; padding: 0.75rem 1rem; border-radius: 8px; margin-bottom: 1rem; }
+  label { display: block; margin-top: 0.75rem; font-size: 0.9rem; color: #444; }
+  select, input[type=number], input[type=text] {
+    width: 100%; padding: 0.65rem; margin-top: 0.25rem; border: 1px solid #ccc;
+    border-radius: 8px; font-size: 1rem; box-sizing: border-box; background: #fff;
+  }
+  button, .boton {
+    margin-top: 1.1rem; width: 100%; min-height: 52px; padding: 0.8rem; background: #2563eb;
+    color: #fff; border: none; border-radius: 8px; font-size: 1rem; font-weight: 600;
+    text-align: center; text-decoration: none; display: block; box-sizing: border-box;
+  }
+  .boton-secundario { background: #fff; color: #444; border: 1px solid #ccc; }
+  .ayuda { color: #666; font-size: 0.9rem; margin: 0.3rem 0 0; }
+  .compras { display: flex; flex-direction: column; gap: 0.5rem; margin-top: 0.4rem; }
+  .compra {
+    display: flex; gap: 0.6rem; align-items: flex-start; border: 1px solid #ddd; border-radius: 10px;
+    padding: 0.75rem; min-height: 44px; margin: 0; overflow-wrap: anywhere;
+  }
+  .compra input { margin-top: 0.2rem; width: 1.3rem; height: 1.3rem; flex: none; }
+  .compra .titulo { font-weight: 600; display: block; }
+  .compra .detalle { color: #555; font-size: 0.9rem; display: block; }
+  .compra .resto { color: #14532d; font-weight: 600; }
+  .vacio { color: #666; font-style: italic; }
+{{ fotos_para_subir.estilos() }}</style>
+</head>
+<body>
+  {% set barra_sector = "deposito" %}
+  {% set barra_titulo = "Devolver Mercadería" %}
+  {% set barra_atras = "/deposito" %}
+  {% from "_info.html" import info %}
+  {% include "_barra_navegacion.html" %}
+
+  {% if error %}<div class="error">{{ error }}</div>{% endif %}
+  {% if aviso %}<div class="aviso">{{ aviso }}</div>{% endif %}
+
+  {# PRIMERO EL PROVEEDOR: un GET, así la lista de compras de abajo es la de
+     ese proveedor y nada más. Solo los que tienen compras recibidas en los
+     últimos días: uno sin compras no tiene qué devolver. #}
+  <form class="tarjeta" method="get" action="/deposito/devolver" id="form-proveedor">
+    <label for="proveedor_id">¿A qué proveedor le devolvés?</label>
+    <select id="proveedor_id" name="proveedor_id" onchange="this.form.submit()">
+      <option value="">Elegí el proveedor...</option>
+      {% for p in proveedores %}
+      <option value="{{ p.id }}" {% if proveedor and proveedor.id == p.id %}selected{% endif %}>{{ p.nombre }} ({{ p.codigo_puesto }})</option>
+      {% endfor %}
+    </select>
+    <noscript><button type="submit">Ver sus compras</button></noscript>
+  </form>
+
+  {% if proveedor %}
+  <form method="post" action="/deposito/devolver" id="form-devolver" enctype="multipart/form-data">
+    <input type="hidden" name="proveedor_id" value="{{ proveedor.id }}">
+    <div class="tarjeta">
+      <h2>¿De qué compra sale?</h2>
+      {% if compras %}
+      <p class="ayuda">Lo que queda de cada compra en el piso. No se puede devolver más que eso. {% call info("Qué pasa al devolver") %}Esos bultos salen del stock y ya no están para guías R ni armados. El costo se cancela: la Rentabilidad no lo cuenta. Si la compra dejó seña, sus cajones vuelven llenos y salen de Vacíos.{% endcall %}</p>
+      <div class="compras">
+        {% for c in compras %}
+        <label class="compra">
+          <input type="radio" name="compra_id" value="{{ c.compra_id }}" required
+                 {% if precarga.compra_id|string == c.compra_id|string %}checked{% endif %}>
+          <span>
+            <span class="titulo">{{ c.articulo_nombre }}</span>
+            <span class="detalle">Compra del {{ c.fecha_operacion.strftime("%d/%m") }}{% if c.marca %} · {{ c.marca }}{% endif %}{% if c.con_sena %} · con seña{% endif %}</span>
+            <span class="detalle">quedan <span class="resto">{{ c.resto|numero }}</span> de {{ c.cajones_de_la_compra|numero }} bultos</span>
+          </span>
+        </label>
+        {% endfor %}
+      </div>
+      {% else %}
+      <p class="vacio">No queda nada de las compras de {{ proveedor.nombre }} en el piso.</p>
+      {% endif %}
+    </div>
+
+    {% if compras %}
+    <div class="tarjeta">
+      <label for="cantidad">¿Cuántos bultos devolvés?</label>
+      <input type="number" id="cantidad" name="cantidad" min="1" step="1" inputmode="numeric" required
+             value="{{ precarga.cantidad or '' }}">
+      <label for="motivo">¿Por qué?</label>
+      <input type="text" id="motivo" name="motivo" maxlength="200" required
+             placeholder="Se puso fea, vino de más…" value="{{ precarga.motivo or '' }}">
+    </div>
+    {{ fotos_para_subir.tarjeta("Fotos (opcional)", "＋ Agregar foto") }}
+    <div class="tarjeta">
+      <button type="submit" id="boton-devolver">Guardar la devolución</button>
+      <a class="boton boton-secundario" href="/deposito">Volver a Depósito</a>
+    </div>
+    {% endif %}
+  </form>
+  {% endif %}
+
+{% include "_pie_version.html" %}
+</body>
+</html>

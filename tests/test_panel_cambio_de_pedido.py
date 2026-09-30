@@ -261,7 +261,8 @@ def test_cada_boton_del_menu_LLEVA_la_clase_de_su_bloque():
     botones = re.findall(r'<a class="boton ([a-z]+)"', marcado)
     assert len(botones) == len(re.findall(r'<a class="boton', marcado)), \
         "hay botones del menú sin clase de bloque"
-    assert botones.count("ingresos") == 4
+    # Cinco desde el 30/09: "Devolver mercadería" es la vuelta de lo que entra.
+    assert botones.count("ingresos") == 5
     assert botones.count("pedidos") == 1
     assert botones.count("stock") == 7
 
@@ -290,11 +291,15 @@ def test_ningun_assert_NUMERICO_por_la_negativa_mira_la_pagina_CON_EL_PIE():
         if not isinstance(nodo, _ast.FunctionDef):
             continue
         cuerpo = _ast.unparse(nodo)
-        for m in re.finditer(r"assert\s+'(\d{1,4})'\s+not in\s+(\w+)(\.lower\(\))?\b", cuerpo):
+        for m in re.finditer(r"assert\s+'(\d{1,4})'\s+not in\s+(\w+)(\.text)?(\.lower\(\))?\b", cuerpo):
             variable = m.group(2)
+            # `not in respuesta.text` DIRECTO también: se escapó así el 30/09
+            # (el "105" de Logística matcheó el v1050 del pie).
+            if m.group(3):
+                encontrados.add((nodo.name, m.group(1)))
             # La variable sale DERECHO de la respuesta (sin filtrar por regex
             # ni recortar): ahí adentro viaja el pie.
-            if re.search(rf"\b{variable}\s*=\s*[\w.()\[\]]*\.text\b", cuerpo):
+            elif re.search(rf"\b{variable}\s*=\s*[\w.()\[\]]*\.text\b", cuerpo):
                 encontrados.add((nodo.name, m.group(1)))
 
     # NINGUNO: el del remanente pasó a `sin_pie(texto)`, que es la forma. Si

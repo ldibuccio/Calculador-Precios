@@ -1,0 +1,106 @@
+{#- LAS FOTOS DE LA PESADA PARA SUBIR CON UN FORMULARIO, escritas UNA vez (30/09):
+    las usan el ingreso directo y "Devolver mercadería" de Depósito. Van a
+    `fotos_recepcion`, las mismas del detalle de la compra y de Recepción.
+
+    Son dos macros y no un include con su <style>: un <style> en el medio de
+    la página hace que `split("</style>")[-1]` de los tests se lleve la
+    pantalla (corolario 50). `estilos()` va adentro del <style> de la página y
+    `tarjeta()` adentro del <form> multipart. -#}
+{% macro estilos() %}
+  /* LAS FOTOS DE LA PESADA, antes de guardar. El input va escondido y lo
+     abre el botón; cada foto elegida se ve en miniatura con su Borrar. Se
+     envuelven en filas: en celular sobra alto y falta ancho. */
+  .input-foto-pesada { display: none; }
+  .fotos-elegidas { display: flex; flex-wrap: wrap; gap: 0.6rem; margin-top: 0.6rem; }
+  .foto-elegida { display: flex; flex-direction: column; align-items: center; gap: 0.3rem; }
+  .foto-elegida img {
+    width: 6.5rem; height: 6.5rem; object-fit: cover; border-radius: 8px; border: 1px solid #ddd;
+  }
+  .foto-elegida button.borrar-foto {
+    margin: 0; width: auto; min-height: 44px; min-width: 6.5rem; padding: 0 0.7rem;
+    background: #fff; color: #dc2626; border: 1px solid #dc2626; font-size: 0.9rem;
+  }
+  button.agregar-foto { background: #fff; color: #2563eb; border: 1px solid #2563eb; min-height: 52px; }
+{% endmacro %}
+
+{% macro tarjeta(titulo="Fotos de la pesada (opcional)", boton="＋ Agregar foto de pesada") %}
+  <div class="tarjeta" id="pesada">
+    <h2>{{ titulo }}</h2>
+    {# LAS MISMAS FOTOS del detalle de la compra y de Recepción
+       (fotos_recepcion): lo que se sube acá se ve desde Compras y al revés.
+       Cada toque del botón agrega un campo de archivo nuevo, así se pueden
+       sumar fotos de a una o varias juntas. Sin `capture`: en el celular
+       ofrece la cámara Y la galería. #}
+    <div id="campos-fotos-pesada"></div>
+    <div class="fotos-elegidas" id="fotos-elegidas"></div>
+    <button type="button" class="agregar-foto" id="boton-agregar-foto">{{ boton }}</button>
+  </div>
+  <script>
+    // LAS FOTOS DE LA PESADA. Cada toque crea un campo de archivo nuevo y lo
+    // abre; lo elegido se ve en miniatura con su Borrar, que pregunta antes.
+    // Borrar una de varias elegidas juntas rearma ese campo sin ella.
+    (function () {
+      const campos = document.getElementById("campos-fotos-pesada");
+      const vista = document.getElementById("fotos-elegidas");
+      const boton = document.getElementById("boton-agregar-foto");
+      if (!campos || !vista || !boton) return;
+
+      function dibujar() {
+        vista.innerHTML = "";
+        campos.querySelectorAll("input[type=file]").forEach(function (input) {
+          Array.prototype.forEach.call(input.files, function (archivo, indice) {
+            const item = document.createElement("div");
+            item.className = "foto-elegida";
+            const img = document.createElement("img");
+            img.alt = "Foto de la pesada elegida";
+            img.src = URL.createObjectURL(archivo);
+            const borrar = document.createElement("button");
+            borrar.type = "button";
+            borrar.className = "borrar-foto";
+            borrar.textContent = "Borrar";
+            borrar.addEventListener("click", function () {
+              if (!confirm("¿Borrar esta foto de la pesada?")) return;
+              sacarArchivo(input, indice);
+            });
+            item.appendChild(img);
+            item.appendChild(borrar);
+            vista.appendChild(item);
+          });
+        });
+      }
+
+      function sacarArchivo(input, indice) {
+        if (input.files.length <= 1) {
+          input.remove();
+        } else {
+          const quedan = new DataTransfer();
+          Array.prototype.forEach.call(input.files, function (archivo, i) {
+            if (i !== indice) quedan.items.add(archivo);
+          });
+          input.files = quedan.files;
+        }
+        dibujar();
+      }
+
+      boton.addEventListener("click", function () {
+        const input = document.createElement("input");
+        input.type = "file";
+        input.name = "fotos";
+        input.accept = "image/*";
+        input.multiple = true;
+        input.className = "input-foto-pesada";
+        input.addEventListener("change", dibujar);
+        campos.appendChild(input);
+        input.click();
+      });
+
+      // Un campo que se abrió y se canceló no manda nada.
+      boton.form.addEventListener("submit", function () {
+        campos.querySelectorAll("input[type=file]").forEach(function (input) {
+          if (!input.files.length) input.remove();
+        });
+      });
+    })();
+
+  </script>
+{% endmacro %}

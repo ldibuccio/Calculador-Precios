@@ -1430,3 +1430,41 @@ def test_el_INDICE_de_Administracion_tiene_los_TRES_botones():
     assert botones == [("/administracion/vacios/stock", "Exportar"),
                        ("/administracion/vacios/cotejo", "Cotejo"),
                        ("/administracion/vacios/movimientos", "Movimientos")]
+
+
+# ── El detalle sin lo que está en cero (dueño, 30/09) ──────────────────────
+
+def _resumen(marcado):
+    """La tarjeta del resumen: de la primera tarjeta hasta las acciones."""
+    return marcado.split('<details class="accion"')[0].rsplit('<div class="tarjeta">', 1)[1]
+
+
+def test_el_detalle_NO_muestra_las_pilas_en_cero_y_SI_la_sin_marca_con_cajones():
+    proveedor = [{"id": 7, "nombre": "Puesto EJEMPLO", "stock": 17, "pilas": [
+        _pila(None, None, 12), _pila(71, "EJ Roja", 0), _pila(72, "EJ Azul", 5)]}]
+    with _con(_parches_del_detalle(proveedores=proveedor)):
+        marcado = cliente.get("/administracion/vacios/7").text.split("</style>")[-1]
+    resumen = _resumen(marcado)
+    assert re.findall(r'class="pila-marca[^"]*">([^<]+)<', resumen) == ["Sin marca", "EJ Azul"]
+    assert "Sin vacíos" not in resumen
+    # Las listas para ELEGIR siguen con la roja en cero: es a dónde se pasan
+    # los cajones sin marca.
+    assert re.search(r'<option value="71"[^>]*>[^<]*EJ Roja', marcado)
+
+
+def test_la_SIN_MARCA_en_cero_no_aparece_y_un_NEGATIVO_si_en_rojo():
+    proveedor = [{"id": 7, "nombre": "Puesto EJEMPLO", "stock": -2, "pilas": [
+        _pila(None, None, 0), _pila(71, "EJ Roja", -2)]}]
+    with _con(_parches_del_detalle(proveedores=proveedor)):
+        resumen = _resumen(cliente.get("/administracion/vacios/7").text.split("</style>")[-1])
+    assert re.findall(r'class="pila-marca[^"]*">([^<]+)<', resumen) == ["EJ Roja"]
+    assert '<span class="pila-stock negativo">-2</span>' in resumen
+
+
+def test_un_proveedor_SIN_NADA_dice_Sin_vacios():
+    proveedor = [{"id": 7, "nombre": "Puesto EJEMPLO", "stock": 0, "pilas": [
+        _pila(None, None, 0), _pila(71, "EJ Roja", 0)]}]
+    with _con(_parches_del_detalle(proveedores=proveedor)):
+        resumen = _resumen(cliente.get("/administracion/vacios/7").text.split("</style>")[-1])
+    assert '<div class="stock">Sin vacíos</div>' in resumen
+    assert "pila-marca" not in resumen

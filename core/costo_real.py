@@ -601,6 +601,12 @@ def calcular_rentabilidad_real(
         # el MISMO kilaje con el que se facturó lo enviado.
         unidades = kilos / armados * bultos
         costo = _numero(devolucion.get("costo_por_bulto"))
+        if devolucion.get("destino_rechazo") == "devolucion_proveedor":
+            # AL PROVEEDOR se cancela al costo por bulto de LA COMPRA de la que
+            # salió (dueño, 30/09), cuando la consulta lo pudo decir: ver
+            # `_SQL_COSTO_DE_LA_COMPRA_DEVUELTA`. Si no, el congelado, que es
+            # como se cancelaron siempre (los nueve de antes del 30/09).
+            costo = _numero(devolucion.get("costo_bulto_compra")) or costo
         envase_unidad = _numero(margen.get("costo_envase_unidad_venta")) or 0.0
         perdido = devolucion.get("destino_rechazo") in DESTINOS_RECHAZO_PERDIDO
         al_proveedor = devolucion.get("destino_rechazo") == "devolucion_proveedor"

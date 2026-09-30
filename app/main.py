@@ -104,6 +104,10 @@ from app.db import (
     cambiar_articulo_de_ficha,
     cambiar_fecha_activacion_casilla,
     compras_que_alimentaron_el_renglon,
+    compras_recibidas_del_articulo,
+    compras_recibidas_del_proveedor,
+    proveedores_con_compras_recibidas,
+    crear_devolucion_deposito,
     contar_compras_buscadas,
     contar_diferencia_de_kilos,
     contar_ingresos_deposito,
@@ -413,6 +417,7 @@ from app.db import (
     borrar_foto_recepcion,
     listar_fotos_de_recepcion,
     fotos_de_recepcion_por_compra,
+    movimientos_del_deposito,
     marca_en_origen_de_la_compra,
     cambiar_proveedor_de_compra,
     frenos_para_cambiar_proveedor,
@@ -485,6 +490,12 @@ from core.movimientos_vacios import (
     texto_de_cantidad as texto_de_cantidad_vacio,
     texto_de_la_marca as texto_de_la_marca_vacio,
     ventana as ventana_de_movimientos_vacios,
+)
+from core.movimientos_deposito import (
+    OPCIONES_DE_TIPO as OPCIONES_DE_TIPO_DEPOSITO,
+    TEXTO_DEL_TIPO as TEXTO_DEL_TIPO_DEPOSITO,
+    agrupar as agrupar_movimientos_deposito,
+    generar_excel_movimientos_deposito,
 )
 from core.exportar_vacios_deposito import (
     filas_del_stock as filas_del_stock_de_vacios,
@@ -6679,7 +6690,7 @@ def exportar_stock_de_vacios_pdf():
 
 @app.get("/administracion/vacios/cotejo")
 def ver_cotejo_de_vacios(request: Request):
-    """El último conteo físico de cada pila contra lo que el sistema dice AHORA."""
+    """El último conteo físico de cada pila contra el sistema al cierre del día en que se contó."""
     try:
         filas = cotejo_de_vacios_deposito()
     except Exception as error_db:
@@ -11504,6 +11515,140 @@ async def ingresar_mercaderia(
     return RedirectResponse(url=f"/deposito/ingresar?{parametros_proveedor}&{parametros}", status_code=303)
 
 
+# ── DEVOLVER MERCADERÍA (dueño, 30/09) ──────────────────────────────────────
+# Lo que queda en el piso y se le devuelve al proveedor, sin pasar por un
+# rechazo. Sale del suelto de UNA compra, nunca más de lo que queda de ella,
+# y cancela el costo: la Rentabilidad no la cuenta en ningún lado.
+
+
+def _compras_con_resto_del_proveedor(proveedor_id: int) -> list[dict]:
+    """Las compras recibidas del proveedor con lo que QUEDA de cada una en el piso.
+
+    "Lo que queda" es el restante del lote de esa compra en el reparto, que es
+    el mismo número que usa la merma dirigida (`_lotes_con_resto`): nada
+    guardado, se rejuega. Un lote de compra es siempre suelto —las cajas de
+    una ficha son lotes de guía R o de rechazo—, así que es lo que queda en el
+    suelto. Las que no tienen resto no se ofrecen: no hay qué devolver.
+    """
+    compras = compras_recibidas_del_proveedor(proveedor_id, _hoy_argentina())
+    resto_por_compra: dict[int, float] = {}
+    for articulo_id in {c["articulo_id"] for c in compras}:
+        for lote in _lotes_con_resto(articulo_id):
+            if lote["tipo"] == "guia":
+                resto_por_compra[lote["origen_id"]] = lote["restante"]
+    con_resto = []
+    for compra in compras:
+        resto = round(resto_por_compra.get(compra["compra_id"], 0.0), 2)
+        if resto > 0:
+            con_resto.append(dict(compra, resto=resto))
+    return con_resto
+
+
+def _renderizar_devolver_mercaderia(request: Request, *, proveedor_id: int | None = None,
+                                    precarga: dict | None = None, error: str | None = None,
+                                    aviso: str | None = None, status_code: int = 200):
+    try:
+        proveedores = proveedores_con_compras_recibidas(_hoy_argentina())
+        compras = _compras_con_resto_del_proveedor(proveedor_id) if proveedor_id else []
+    except Exception as error_db:
+        raise HTTPException(status_code=500, detail=f"Error al conectar con la base de datos: {error_db}") from error_db
+    proveedor = next((p for p in proveedores if p["id"] == proveedor_id), None)
+    return templates.TemplateResponse(
+        request, "deposito_devolver.html",
+        {"proveedores": proveedores, "proveedor": proveedor, "compras": compras,
+         "precarga": precarga or {}, "error": error, "aviso": aviso},
+        status_code=status_code,
+    )
+
+
+@app.get("/deposito/devolver")
+def ver_devolver_mercaderia(request: Request, proveedor_id: str | None = None, aviso: str | None = None):
+    """Devolver mercadería al proveedor: primero el proveedor, después sus compras con lo que queda."""
+    return _renderizar_devolver_mercaderia(
+        request, proveedor_id=_id_opcional_desde_query(proveedor_id), aviso=aviso)
+
+
+@app.post("/deposito/devolver")
+async def devolver_mercaderia_ruta(
+    request: Request,
+    proveedor_id: str = Form(""),
+    compra_id: str = Form(""),
+    cantidad: str = Form(""),
+    motivo: str = Form(""),
+):
+    """Guarda la devolución desde depósito, con sus fotos.
+
+    TODO LO QUE PUEDE REBOTAR SE VALIDA ANTES DE ESCRIBIR: la compra es de
+    ese proveedor y tiene resto, la cantidad no pasa lo que queda, hay motivo
+    y las fotos son fotos. El tope se vuelve a calcular acá, con el reparto de
+    ahora: no se lee de la pantalla. Las fotos se leen del formulario a mano,
+    igual que en el ingreso (un campo de archivo vacío llega como texto).
+    """
+    fotos = [f for f in (await request.form()).getlist("fotos") if isinstance(f, StarletteUploadFile)]
+    fotos_elegidas = sum(1 for f in fotos if f.filename)
+    proveedor_valor = _id_opcional_desde_query(proveedor_id)
+    precarga = {"compra_id": compra_id, "cantidad": cantidad, "motivo": motivo}
+
+    def rebote(error: str, status_code: int = 400):
+        if fotos_elegidas:
+            error = f"{error} Las fotos no se guardaron: agregalas de nuevo."
+        return _renderizar_devolver_mercaderia(request, proveedor_id=proveedor_valor, precarga=precarga,
+                                               error=error, status_code=status_code)
+
+    if proveedor_valor is None:
+        return rebote("Elegí el proveedor.")
+    try:
+        compras = {c["compra_id"]: c for c in _compras_con_resto_del_proveedor(proveedor_valor)}
+    except Exception as error_db:
+        return rebote(f"No se pudieron leer las compras: {error_db}", 500)
+    compra = compras.get(int(compra_id)) if compra_id.strip().isdigit() else None
+    if compra is None:
+        return rebote("Elegí de qué compra sale lo que devolvés.")
+    error, cantidad_valor = _validar_bultos_positivos(cantidad, "devueltos")
+    if error:
+        return rebote(error)
+    if cantidad_valor > compra["resto"]:
+        return rebote(
+            f"De la compra del {compra['fecha_operacion'].strftime('%d/%m')} de "
+            f"{compra['articulo_nombre']} quedan {_formatear_numero(compra['resto'])} bultos: "
+            "no se puede devolver más de lo que queda."
+        )
+    motivo_limpio = re.sub(r"\s+", " ", motivo).strip()
+    if not motivo_limpio:
+        return rebote("El motivo es obligatorio.")
+    error, comprimidas = await _fotos_de_pesada_comprimidas(fotos)
+    if error:
+        return rebote(error)
+
+    rutas: list[str] = []
+    try:
+        for comprimida in comprimidas:
+            rutas.append(subir_foto_comanda(comprimida, f"devolucion-{compra['compra_id']}",
+                                            prefijo=PREFIJO_PESAJE))
+        crear_devolucion_deposito(compra["compra_id"], cantidad_valor, motivo_limpio,
+                                  _hoy_argentina(), fotos_pesada=rutas)
+    except Exception as error_db:
+        for ruta in rutas:
+            try:
+                borrar_foto_comanda(ruta)
+            except Exception:
+                logger.exception("No se pudo borrar la foto huérfana %s", ruta)
+        mensaje = str(error_db) if isinstance(error_db, ValueError) else f"No se pudo guardar: {error_db}"
+        return rebote(mensaje, 400 if isinstance(error_db, ValueError) else 500)
+
+    aviso = (
+        f"Devolución guardada: {_formatear_numero(cantidad_valor)} bultos de {compra['articulo_nombre']} "
+        f"de la compra del {compra['fecha_operacion'].strftime('%d/%m')} a {compra['proveedor_nombre']}. "
+        "Salen del stock y el costo se cancela."
+    )
+    if compra["con_sena"]:
+        aviso += " La compra dejó seña: esos cajones salen de Vacíos."
+    if rutas:
+        aviso += " Con 1 foto." if len(rutas) == 1 else f" Con {len(rutas)} fotos."
+    parametros = urlencode({"proveedor_id": proveedor_valor, "aviso": aviso})
+    return RedirectResponse(url=f"/deposito/devolver?{parametros}", status_code=303)
+
+
 def _validar_cantidad_cajones_real(texto: str) -> tuple[str | None, float | None]:
     """Valida la cantidad de cajones real cargada en Recepción: obligatoria, número positivo."""
     texto = texto.strip()
@@ -14229,6 +14374,25 @@ def _compras_del_renglon_para_devolucion(renglon_id: int) -> dict:
         return {}
 
 
+def _compras_para_devolver_el_renglon(renglon: dict) -> tuple[list[dict], list[dict]]:
+    """(sugeridas, otras): las compras que se ofrecen para la devolución por rechazo.
+
+    Dueño, 30/09: viene PRESELECCIONADA la que el sistema dice que alimentó el
+    armado (la primera de `sugeridas`), y se puede cambiar por CUALQUIER otra
+    compra recibida de ese artículo (`otras`). Las dos listas no se repiten.
+    Las mismas dos listas usan la pantalla y la validación del POST: lo que se
+    puede elegir es exactamente lo que se acepta.
+    """
+    sugeridas = list(_compras_del_renglon_para_devolucion(renglon["id"]).values())
+    try:
+        recibidas = compras_recibidas_del_articulo(renglon["articulo_id"], _hoy_argentina())
+    except Exception:
+        logger.exception("No se pudieron leer las compras del artículo %s", renglon["articulo_id"])
+        recibidas = []
+    ya = {c["compra_id"] for c in sugeridas}
+    return sugeridas, [c for c in recibidas if c["compra_id"] not in ya]
+
+
 def _renderizar_form_reingreso(request: Request, renglon: dict, *, precarga=None, error=None, status_code: int = 200):
     """El paso 3 (la carga en sí) con el tope calculado por el server: armado − ya devuelto."""
     # La lista suelta de proveedores es el CAMINO DE ABAJO: solo se ofrece
@@ -14251,10 +14415,16 @@ def _renderizar_form_reingreso(request: Request, renglon: dict, *, precarga=None
     #
     # Se traga el error igual que los proveedores: que no se pueda rejugar el
     # FIFO no puede dejar sin CARGAR una devolución.
-    compras_del_renglon = list(_compras_del_renglon_para_devolucion(renglon["id"]).values())
+    compras_del_renglon, otras_compras = _compras_para_devolver_el_renglon(renglon)
+    precarga = dict(precarga or {})
+    # LA SUGERIDA VIENE ELEGIDA (dueño, 30/09): casi siempre es un toque. Si
+    # el reintento trae otra, gana la que eligió la persona.
+    if not precarga.get("compra_devolucion_id") and compras_del_renglon:
+        precarga["compra_devolucion_id"] = compras_del_renglon[0]["compra_id"]
 
     contexto = {
         "compras_del_renglon": compras_del_renglon,
+        "otras_compras": otras_compras,
         "paso": "form",
         "renglon": renglon,
         "tope": float(renglon["bultos_armados"]) - float(renglon["ya_devuelto"]),
@@ -14262,7 +14432,7 @@ def _renderizar_form_reingreso(request: Request, renglon: dict, *, precarga=None
         # del destino, porque es lo que decide que 'stock' no se puede. Es
         # un dato del propio armado, no del sistema.
         "segunda_pendiente": _segunda_que_vuelve(renglon, float("inf")),
-        "precarga": precarga or {},
+        "precarga": precarga,
         "hoy": _hoy_argentina().isoformat(),
         "proveedores": proveedores,
         "aviso": None,
@@ -14421,15 +14591,17 @@ def cargar_reingreso_stock_ruta(
         # formulario armado a mano entra sin ver el atributo. Sin una de las
         # dos, la devolución no dice de dónde salió y el registro no sirve
         # para lo único que existe, que es el reclamo.
-        compras_ofrecidas = _compras_del_renglon_para_devolucion(renglon["id"])
+        sugeridas, otras = _compras_para_devolver_el_renglon(renglon)
+        compras_ofrecidas = {c["compra_id"]: c for c in sugeridas + otras}
         if compras_ofrecidas:
             if compra_devolucion_id.strip().isdigit() and int(compra_devolucion_id) in compras_ofrecidas:
                 compra_valor = int(compra_devolucion_id)
                 compra_elegida = compras_ofrecidas[compra_valor]
             else:
-                # SOLO LAS DEL RENGLÓN: una compra de otro artículo o de otro
-                # día no puede ser de donde salió esto, y aceptarla por un POST
-                # a mano dejaría un reclamo apuntando a la compra equivocada.
+                # SOLO LAS OFRECIDAS: las del renglón y las recibidas de ESTE
+                # artículo. Una compra de otro artículo no puede ser de donde
+                # salió esto, y aceptarla por un POST a mano dejaría el costo
+                # cancelado contra la compra equivocada.
                 error = "Elegí de qué compra salió la mercadería que se devolvió."
         elif proveedor_id.strip().isdigit():
             proveedor_valor = int(proveedor_id)
@@ -18936,13 +19108,81 @@ def ver_facturacion_url_vieja():
 
 @app.get("/facturacion/ingresos")
 def ver_ingresos_url_vieja(request: Request):
-    """Ídem: el link viejo de Ingresos a Depósito, con sus filtros si los traía."""
+    """Ídem: el link viejo de Ingresos a Depósito, con sus filtros si los traía.
+
+    Va a la PLANILLA PARA PAGAR, que es la pantalla que ese link abría: sus
+    filtros (`fecha_desde`, `estado`) son de ella. Desde el 30/09
+    `/administracion/ingresos` es Movimientos del depósito.
+    """
     consulta = request.url.query
-    return RedirectResponse(url="/administracion/ingresos" + (f"?{consulta}" if consulta else ""),
+    return RedirectResponse(url="/administracion/ingresos/pagar" + (f"?{consulta}" if consulta else ""),
                             status_code=301)
 
 
+def _filtros_de_movimientos_deposito(desde: str, hasta: str, tipo: str, proveedor_id: str,
+                                     articulo_id: str) -> dict:
+    """Los filtros de Movimientos del depósito leídos UNA vez: los usan la
+    pantalla y el Excel, así el archivo baja exactamente lo que se ve. La
+    ventana es la de Movimientos de vacíos: 30 días por defecto, hasta 90."""
+    inicio, fin, error = ventana_de_movimientos_vacios(desde, hasta, _hoy_argentina())
+    return {
+        "desde": inicio, "hasta": fin, "error": error,
+        "tipo": tipo if tipo in TEXTO_DEL_TIPO_DEPOSITO else None,
+        "proveedor_id": _id_opcional_desde_query(proveedor_id),
+        "articulo_id": _id_opcional_desde_query(articulo_id),
+    }
+
+
 @app.get("/administracion/ingresos")
+def ver_movimientos_deposito(request: Request, desde: str = "", hasta: str = "", tipo: str = "",
+                             proveedor_id: str = "", articulo_id: str = ""):
+    """Movimientos del depósito (dueño, 30/09): lo que entró y salió, por proveedor.
+
+    Sirve para conciliar la cuenta de un proveedor y para ver cuánta segunda
+    se mandó al puesto. La planilla para pagar (lo que hay que depositarle a
+    cada proveedor) sigue en `/administracion/ingresos/pagar`, linkeada desde acá.
+    """
+    filtros = _filtros_de_movimientos_deposito(desde, hasta, tipo, proveedor_id, articulo_id)
+    try:
+        proveedores = listar_proveedores()
+        articulos = listar_articulos()
+        movimientos = [] if filtros["error"] else movimientos_del_deposito(
+            filtros["desde"], filtros["hasta"], filtros["tipo"], filtros["proveedor_id"],
+            filtros["articulo_id"])
+    except Exception as error_db:
+        raise HTTPException(status_code=500, detail=f"Error al conectar con la base de datos: {error_db}") from error_db
+    return templates.TemplateResponse(request, "administracion_movimientos_deposito.html", {
+        "filtros": filtros, "proveedores": proveedores, "articulos": articulos,
+        "grupos": agrupar_movimientos_deposito(movimientos), "cantidad": len(movimientos),
+        "opciones_de_tipo": OPCIONES_DE_TIPO_DEPOSITO, "texto_del_tipo": TEXTO_DEL_TIPO_DEPOSITO,
+    })
+
+
+@app.get("/administracion/ingresos/movimientos-excel")
+def exportar_movimientos_deposito_excel(desde: str = "", hasta: str = "", tipo: str = "",
+                                        proveedor_id: str = "", articulo_id: str = ""):
+    filtros = _filtros_de_movimientos_deposito(desde, hasta, tipo, proveedor_id, articulo_id)
+    if filtros["error"]:
+        raise HTTPException(status_code=400, detail=filtros["error"])
+    try:
+        movimientos = movimientos_del_deposito(filtros["desde"], filtros["hasta"], filtros["tipo"],
+                                               filtros["proveedor_id"], filtros["articulo_id"])
+    except Exception as error_db:
+        raise HTTPException(status_code=500, detail=f"Error al conectar con la base de datos: {error_db}") from error_db
+    partes = [TEXTO_DEL_TIPO_DEPOSITO[filtros["tipo"]] if filtros["tipo"] else "todos los tipos"]
+    if filtros["proveedor_id"] is not None:
+        partes.append(next((m["proveedor"] for m in movimientos if m["proveedor"]), "proveedor elegido"))
+    if filtros["articulo_id"] is not None:
+        partes.append(next((m["articulo"] for m in movimientos), "artículo elegido"))
+    contenido = generar_excel_movimientos_deposito(filtros["desde"], filtros["hasta"], " · ".join(partes),
+                                                   movimientos)
+    nombre = f"Movimientos_Deposito_{filtros['desde'].isoformat()}_a_{filtros['hasta'].isoformat()}.xlsx"
+    return Response(content=contenido,
+                    media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                    headers={"Content-Disposition": f'attachment; filename="{nombre}"'})
+
+
+@app.get("/administracion/ingresos/pagar")
 def ver_ingresos_deposito(
     request: Request,
     fecha_desde: str | None = None,

@@ -4,6 +4,7 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Ingresar Mercadería</title>
+{% import "_fotos_para_subir.html" as fotos_para_subir %}
 <style>
   :root { font-family: -apple-system, system-ui, sans-serif; }
   body {
@@ -104,22 +105,10 @@
   .opcion-proveedor:active { background: #f0f5ff; }
   .opcion-proveedor span { color: #666; font-size: 0.85rem; }
   h2 { font-size: 1.05rem; margin: 0 0 0.4rem; }
-  /* LAS FOTOS DE LA PESADA, antes de guardar. El input va escondido y lo
-     abre el botón; cada foto elegida se ve en miniatura con su Borrar. Se
-     envuelven en filas: en celular sobra alto y falta ancho. */
-  .input-foto-pesada { display: none; }
-  .fotos-elegidas { display: flex; flex-wrap: wrap; gap: 0.6rem; margin-top: 0.6rem; }
-  .foto-elegida { display: flex; flex-direction: column; align-items: center; gap: 0.3rem; }
-  .foto-elegida img, .foto-guardada img {
-    width: 6.5rem; height: 6.5rem; object-fit: cover; border-radius: 8px; border: 1px solid #ddd;
+{{ fotos_para_subir.estilos() }}  .foto-guardada img {
+    width: 3.5rem; height: 3.5rem; object-fit: cover; border-radius: 8px; border: 1px solid #ddd;
   }
-  .foto-elegida button.borrar-foto {
-    margin: 0; width: auto; min-height: 44px; min-width: 6.5rem; padding: 0 0.7rem;
-    background: #fff; color: #dc2626; border: 1px solid #dc2626; font-size: 0.9rem;
-  }
-  button.agregar-foto { background: #fff; color: #2563eb; border: 1px solid #2563eb; min-height: 52px; }
   .fotos-guardadas { display: flex; flex-wrap: wrap; gap: 0.4rem; margin-top: 0.3rem; }
-  .foto-guardada img { width: 3.5rem; height: 3.5rem; }
   .renglon-hoy { padding: 0.6rem 0; border-bottom: 1px solid #eee; }
   .renglon-hoy:last-child { border-bottom: none; }
   .renglon-hoy .detalle { color: #555; font-size: 0.9rem; }
@@ -236,17 +225,7 @@
       <p class="ayuda">Cómo llegó al depósito — queda como dato en el Detalle, aunque esta compra ya nace retirada.</p>
   </div>
 
-  <div class="tarjeta" id="pesada">
-    <h2>Fotos de la pesada (opcional)</h2>
-    {# LAS MISMAS FOTOS del detalle de la compra y de Recepción
-       (fotos_recepcion): lo que se sube acá se ve desde Compras y al revés.
-       Cada toque del botón agrega un campo de archivo nuevo, así se pueden
-       sumar fotos de a una o varias juntas. Sin `capture`: en el celular
-       ofrece la cámara Y la galería. #}
-    <div id="campos-fotos-pesada"></div>
-    <div class="fotos-elegidas" id="fotos-elegidas"></div>
-    <button type="button" class="agregar-foto" id="boton-agregar-foto">＋ Agregar foto de pesada</button>
-  </div>
+  {{ fotos_para_subir.tarjeta() }}
 
   <div class="tarjeta">
       <button type="submit" name="accion" value="terminar" formnovalidate class="boton-exito" id="boton-terminar-carga">Guardar</button>
@@ -350,72 +329,6 @@
       const campo = document.getElementById("codigo_puesto");
       campo.value = campo.value.trim().toUpperCase();
     }
-
-    // LAS FOTOS DE LA PESADA. Cada toque crea un campo de archivo nuevo y lo
-    // abre; lo elegido se ve en miniatura con su Borrar, que pregunta antes.
-    // Borrar una de varias elegidas juntas rearma ese campo sin ella.
-    (function () {
-      const campos = document.getElementById("campos-fotos-pesada");
-      const vista = document.getElementById("fotos-elegidas");
-      const boton = document.getElementById("boton-agregar-foto");
-      if (!campos || !vista || !boton) return;
-
-      function dibujar() {
-        vista.innerHTML = "";
-        campos.querySelectorAll("input[type=file]").forEach(function (input) {
-          Array.prototype.forEach.call(input.files, function (archivo, indice) {
-            const item = document.createElement("div");
-            item.className = "foto-elegida";
-            const img = document.createElement("img");
-            img.alt = "Foto de la pesada elegida";
-            img.src = URL.createObjectURL(archivo);
-            const borrar = document.createElement("button");
-            borrar.type = "button";
-            borrar.className = "borrar-foto";
-            borrar.textContent = "Borrar";
-            borrar.addEventListener("click", function () {
-              if (!confirm("¿Borrar esta foto de la pesada?")) return;
-              sacarArchivo(input, indice);
-            });
-            item.appendChild(img);
-            item.appendChild(borrar);
-            vista.appendChild(item);
-          });
-        });
-      }
-
-      function sacarArchivo(input, indice) {
-        if (input.files.length <= 1) {
-          input.remove();
-        } else {
-          const quedan = new DataTransfer();
-          Array.prototype.forEach.call(input.files, function (archivo, i) {
-            if (i !== indice) quedan.items.add(archivo);
-          });
-          input.files = quedan.files;
-        }
-        dibujar();
-      }
-
-      boton.addEventListener("click", function () {
-        const input = document.createElement("input");
-        input.type = "file";
-        input.name = "fotos";
-        input.accept = "image/*";
-        input.multiple = true;
-        input.className = "input-foto-pesada";
-        input.addEventListener("change", dibujar);
-        campos.appendChild(input);
-        input.click();
-      });
-
-      // Un campo que se abrió y se canceló no manda nada.
-      document.getElementById("form-ingresar").addEventListener("submit", function () {
-        campos.querySelectorAll("input[type=file]").forEach(function (input) {
-          if (!input.files.length) input.remove();
-        });
-      });
-    })();
 
     // EL MODAL DE NOMBRES PARECIDOS, ANTES de enviar. Si el código no es de
     // nadie, se le pregunta al servidor —con la misma regla de Compras →

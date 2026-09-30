@@ -5138,6 +5138,112 @@ def _condiciones_buscar_ingresos(fecha_desde, fecha_hasta, proveedor_id, articul
     return condiciones, parametros
 
 
+# EL COSTO CON QUE SE CANCELA UNA DEVOLUCIÓN POR RECHAZO (dueño, 30/09): el
+# costo por bulto de la COMPRA de la que salió, cuando lo que volvió iba en el
+# cajón de esa compra (ficha sin caja nuestra, o renglón sin ficha: un bulto
+# es un cajón). Si iba en caja de Día, un bulto no es un cajón de la compra
+# —10 cajas de 6 kg no son 10 cajones de 16— y queda el costo congelado del
+# rechazo. Sin compra (los viejos) o sin precio en la compra, también.
+# Espera los alias `m` (movimiento), `cd` (compra) y `fd` (ficha del renglón).
+_SQL_COSTO_DE_LA_COMPRA_DEVUELTA = """
+    CASE WHEN m.compra_devolucion_id IS NOT NULL AND fd.envase_id IS NULL
+         THEN cd.importe END"""
+
+
+# MOVIMIENTOS DEL DEPÓSITO (dueño, 30/09): lo que ENTRA y lo que SALE, en una
+# lista, para conciliar la cuenta de un proveedor ("el 01 entraron 50; el 02
+# salieron 10 por rechazo y 40 por devolución desde depósito") y para ver
+# cuánta segunda se mandó al puesto. Cuatro tipos:
+#
+#   entrada      una compra recibida, por el día de la RECEPCIÓN. Bultos: los
+#                reales. Valor: bultos × el costo por bulto de la compra.
+#   rechazo      una devolución al proveedor por un rechazo del cliente. Valor:
+#                el costo con que se canceló en la Rentabilidad (el de la
+#                compra si la tiene y volvió en su cajón; si no, el congelado).
+#   deposito     una devolución desde depósito. Valor: bultos × el de la compra.
+#   segunda      segunda remitida al puesto. No tiene proveedor ni valor.
+#
+# Las salidas van con los bultos y el valor en NEGATIVO. Lo anulado no está.
+TIPOS_DE_MOVIMIENTO_DEL_DEPOSITO = ("entrada", "rechazo", "deposito", "segunda")
+
+COLUMNAS_MOVIMIENTOS_DEL_DEPOSITO = (
+    "tipo", "id", "fecha", "proveedor_id", "proveedor", "articulo_id", "articulo",
+    "compra_id", "bultos", "valor", "motivo",
+)
+
+_SQL_MOVIMIENTOS_DEL_DEPOSITO = """
+    SELECT * FROM (
+        SELECT 'entrada' AS tipo, c.id, (c.procesada_el AT TIME ZONE 'America/Argentina/Buenos_Aires')::date AS fecha,
+               c.proveedor_id, p.nombre AS proveedor, c.articulo_id, a.nombre AS articulo, c.id AS compra_id,
+               COALESCE(c.cantidad_cajones_real, c.cantidad_cajones) AS bultos,
+               COALESCE(c.cantidad_cajones_real, c.cantidad_cajones) * c.importe AS valor, NULL AS motivo
+          FROM compras c
+          JOIN proveedores p ON p.id = c.proveedor_id
+          JOIN articulos a ON a.id = c.articulo_id
+         WHERE c.estado = 'recepcionado' AND c.procesada_el IS NOT NULL
+        UNION ALL
+        SELECT CASE WHEN m.tipo = 'devolucion_deposito' THEN 'deposito' ELSE 'rechazo' END,
+               m.id, m.fecha_operacion,
+               COALESCE(cd.proveedor_id, m.proveedor_devolucion_id), COALESCE(pc.nombre, ps.nombre),
+               m.articulo_id, a.nombre, m.compra_devolucion_id,
+               -ABS(m.cantidad),
+               -ABS(m.cantidad) * CASE WHEN m.tipo = 'devolucion_deposito' THEN cd.importe
+                                       ELSE COALESCE(""" + _SQL_COSTO_DE_LA_COMPRA_DEVUELTA + """,
+                                                     m.costo_por_bulto) END,
+               m.motivo
+          FROM movimientos_stock m
+          JOIN articulos a ON a.id = m.articulo_id
+          LEFT JOIN compras cd ON cd.id = m.compra_devolucion_id
+          LEFT JOIN proveedores pc ON pc.id = cd.proveedor_id
+          LEFT JOIN proveedores ps ON ps.id = m.proveedor_devolucion_id
+          LEFT JOIN pedidos_renglones r ON r.id = m.pedido_renglon_id
+          LEFT JOIN fichas_logistica fd ON fd.id = r.ficha_id
+         WHERE m.anulado_el IS NULL
+           AND (m.tipo = 'devolucion_deposito' OR m.destino_rechazo = 'devolucion_proveedor')
+        UNION ALL
+        SELECT 'segunda', rs.id, rs.fecha_operacion, NULL, NULL, rs.articulo_id, a.nombre, NULL,
+               -rs.bultos, NULL, NULL
+          FROM remitos_segunda rs
+          JOIN articulos a ON a.id = rs.articulo_id
+         WHERE rs.anulado_el IS NULL AND rs.destino = 'puesto'
+    ) x
+    WHERE x.fecha BETWEEN %(desde)s AND %(hasta)s
+      AND (%(tipo)s::text IS NULL OR x.tipo = %(tipo)s)
+      AND (%(proveedor_id)s::bigint IS NULL OR x.proveedor_id = %(proveedor_id)s)
+      AND (%(articulo_id)s::bigint IS NULL OR x.articulo_id = %(articulo_id)s)
+    ORDER BY x.proveedor IS NULL, x.proveedor, x.fecha,
+             CASE x.tipo WHEN 'entrada' THEN 0 WHEN 'rechazo' THEN 1 WHEN 'deposito' THEN 2 ELSE 3 END,
+             x.id
+    LIMIT %(limite)s
+"""
+
+
+def movimientos_del_deposito(desde, hasta, tipo: str | None = None, proveedor_id: int | None = None,
+                             articulo_id: int | None = None, limite: int = 100000) -> list[dict]:
+    """Lo que entró y salió del depósito en el rango, ordenado por proveedor y fecha.
+
+    La segunda remitida no tiene proveedor y va al final. Filtrar por
+    proveedor la deja afuera, que es lo que el filtro dice.
+    """
+    conexion = obtener_conexion()
+    try:
+        with conexion.cursor() as cursor:
+            cursor.execute(_SQL_MOVIMIENTOS_DEL_DEPOSITO, {
+                "desde": desde, "hasta": hasta, "tipo": tipo, "proveedor_id": proveedor_id,
+                "articulo_id": articulo_id, "limite": limite,
+            })
+            filas = cursor.fetchall()
+    finally:
+        conexion.close()
+    movimientos = []
+    for fila in filas:
+        m = dict(zip(COLUMNAS_MOVIMIENTOS_DEL_DEPOSITO, fila))
+        m["bultos"] = float(m["bultos"]) if m["bultos"] is not None else 0.0
+        m["valor"] = float(m["valor"]) if m["valor"] is not None else None
+        movimientos.append(m)
+    return movimientos
+
+
 def buscar_ingresos_deposito(
     fecha_desde,
     fecha_hasta,
@@ -8856,6 +8962,137 @@ def desglose_de_renglon_armado(renglon_id: int) -> dict | None:
     }
 
 
+# Hasta cuántos días para atrás se ofrecen compras de un artículo para una
+# devolución (dueño, 30/09). Lo que se devuelve es mercadería que todavía está
+# o estuvo hace poco en el galpón; una compra de hace tres meses no puede ser.
+DIAS_DE_COMPRAS_PARA_DEVOLVER = 60
+
+
+def _compras_recibidas(hasta, dias: int, articulo_id: int | None = None,
+                       proveedor_id: int | None = None) -> list[dict]:
+    """Las compras RECIBIDAS en los `dias` anteriores a `hasta`, las más nuevas
+    primero, filtradas por artículo y/o proveedor. `importe` es el costo por
+    bulto de la compra, que es con el que se cancela el costo de lo devuelto.
+    """
+    conexion = obtener_conexion()
+    try:
+        with conexion.cursor() as cursor:
+            cursor.execute(
+                """
+                SELECT c.id, c.fecha_operacion, p.id, p.nombre,
+                       COALESCE(c.codigo_llegada, p.codigo_puesto),
+                       COALESCE(c.cantidad_cajones_real, c.cantidad_cajones), c.importe,
+                       c.articulo_id, a.nombre, COALESCE(c.sena, 0) > 0, c.marca
+                  FROM compras c
+                  JOIN proveedores p ON p.id = c.proveedor_id
+                  JOIN articulos a ON a.id = c.articulo_id
+                 WHERE c.estado = 'recepcionado'
+                   AND c.fecha_operacion <= %(hasta)s
+                   AND c.fecha_operacion > %(hasta)s::date - %(dias)s
+                   AND (%(articulo)s::bigint IS NULL OR c.articulo_id = %(articulo)s)
+                   AND (%(proveedor)s::bigint IS NULL OR c.proveedor_id = %(proveedor)s)
+                 ORDER BY c.fecha_operacion DESC, c.id DESC
+                """,
+                {"articulo": articulo_id, "hasta": hasta, "dias": dias, "proveedor": proveedor_id},
+            )
+            filas = cursor.fetchall()
+    finally:
+        conexion.close()
+    return [
+        {"compra_id": f[0], "fecha_operacion": f[1], "proveedor_id": f[2], "proveedor_nombre": f[3],
+         "codigo_puesto": f[4], "cajones_de_la_compra": float(f[5]) if f[5] is not None else None,
+         "importe": float(f[6]) if f[6] is not None else None, "articulo_id": f[7],
+         "articulo_nombre": f[8], "con_sena": bool(f[9]), "marca": f[10]}
+        for f in filas
+    ]
+
+
+def compras_recibidas_del_articulo(articulo_id: int, hasta,
+                                   dias: int = DIAS_DE_COMPRAS_PARA_DEVOLVER) -> list[dict]:
+    """Las compras recibidas de UN artículo: la lista de "cualquier otra compra"
+    que ofrece la devolución por rechazo (dueño, 30/09). La sugerida es la que
+    el FIFO dice que alimentó el armado; ésta es la de cambiarla."""
+    return _compras_recibidas(hasta, dias, articulo_id=articulo_id)
+
+
+def compras_recibidas_del_proveedor(proveedor_id: int, hasta,
+                                    dias: int = DIAS_DE_COMPRAS_PARA_DEVOLVER) -> list[dict]:
+    """Las compras recibidas de UN proveedor, de todos sus artículos: las que
+    ofrece "Devolver mercadería" en Depósito (dueño, 30/09)."""
+    return _compras_recibidas(hasta, dias, proveedor_id=proveedor_id)
+
+
+def proveedores_con_compras_recibidas(hasta, dias: int = DIAS_DE_COMPRAS_PARA_DEVOLVER) -> list[dict]:
+    """Los proveedores con alguna compra recibida en la ventana, por nombre: el
+    selector de "Devolver mercadería". Uno sin compras no tiene qué devolver."""
+    conexion = obtener_conexion()
+    try:
+        with conexion.cursor() as cursor:
+            cursor.execute(
+                """
+                SELECT DISTINCT p.id, p.nombre, p.codigo_puesto
+                  FROM compras c JOIN proveedores p ON p.id = c.proveedor_id
+                 WHERE c.estado = 'recepcionado'
+                   AND c.fecha_operacion <= %(hasta)s
+                   AND c.fecha_operacion > %(hasta)s::date - %(dias)s
+                 ORDER BY p.nombre
+                """,
+                {"hasta": hasta, "dias": dias},
+            )
+            return [{"id": f[0], "nombre": f[1], "codigo_puesto": f[2]} for f in cursor.fetchall()]
+    finally:
+        conexion.close()
+
+
+def crear_devolucion_deposito(compra_id: int, cantidad: float, motivo: str, fecha_operacion,
+                              fotos_pesada: tuple[str, ...] | list[str] = ()) -> int:
+    """Lo que queda en el piso y se le devuelve al proveedor (dueño, 30/09). Devuelve el id.
+
+    Un movimiento `devolucion_deposito` con la cantidad NEGATIVA —sale del
+    stock— y la compra de la que sale: el reparto la dirige al lote de esa
+    compra y a ningún otro, y la Rentabilidad no la cuenta en ningún lado,
+    que es lo que "cancelar el costo" quiere decir. Si la compra dejó seña,
+    sus cajones vuelven llenos y salen de Vacíos (`_SQL_DEVOLUCIONES_LLENAS`).
+
+    Las fotos van a `fotos_recepcion` —las de la compra— en la MISMA
+    transacción. Que no se devuelva más de lo que queda de la compra lo
+    controla la ruta con el reparto, antes de llamar: esta función no rejuega
+    el FIFO. Una compra que no está recibida la rechaza acá.
+    """
+    conexion = obtener_conexion()
+    try:
+        with conexion.cursor() as cursor:
+            cursor.execute(
+                "SELECT articulo_id FROM compras WHERE id = %s AND estado = 'recepcionado' FOR UPDATE",
+                (compra_id,),
+            )
+            fila = cursor.fetchone()
+            if fila is None:
+                raise ValueError("Esa compra no está recibida: no hay nada que devolver de ella.")
+            articulo_id = fila[0]
+            stock_sistema = _stock_deposito_actual(cursor, articulo_id)
+            cursor.execute(
+                """
+                INSERT INTO movimientos_stock
+                    (articulo_id, tipo, cantidad, motivo, fecha_operacion, stock_sistema,
+                     compra_devolucion_id)
+                VALUES (%s, 'devolucion_deposito', %s, %s, %s, %s, %s)
+                RETURNING id
+                """,
+                (articulo_id, -float(cantidad), motivo, fecha_operacion, stock_sistema, compra_id),
+            )
+            (movimiento_id,) = cursor.fetchone()
+            for foto_ruta in fotos_pesada:
+                cursor.execute(
+                    "INSERT INTO fotos_recepcion (compra_id, foto_ruta) VALUES (%s, %s) ON CONFLICT DO NOTHING",
+                    (compra_id, foto_ruta),
+                )
+        conexion.commit()
+        return movimiento_id
+    finally:
+        conexion.close()
+
+
 def compras_que_alimentaron_el_renglon(renglon_id: int) -> list[dict]:
     """De qué COMPRAS salió la mercadería de este renglón, SEGÚN EL FIFO, con cuántos bultos puso cada una.
 
@@ -12163,11 +12400,14 @@ def devoluciones_vinculadas_por_rango(cliente_id: int, fecha_desde, fecha_hasta)
                        m.destino_rechazo, r.ficha_id,
                        r.kilos_enviados, COALESCE(r.cantidad_armada, r.cantidad) AS bultos_armados,
                        p.fecha_operacion AS fecha_pedido,
-                       a.id AS articulo_id, a.nombre AS articulo_nombre, a.grupo
+                       a.id AS articulo_id, a.nombre AS articulo_nombre, a.grupo,
+                       """ + _SQL_COSTO_DE_LA_COMPRA_DEVUELTA + """ AS costo_bulto_compra
                 FROM movimientos_stock m
                 JOIN pedidos_renglones r ON r.id = m.pedido_renglon_id
                 JOIN pedidos p ON p.id = r.pedido_id
                 JOIN articulos a ON a.id = m.articulo_id
+                LEFT JOIN compras cd ON cd.id = m.compra_devolucion_id
+                LEFT JOIN fichas_logistica fd ON fd.id = r.ficha_id
                 WHERE m.anulado_el IS NULL AND m.pedido_renglon_id IS NOT NULL
                   AND p.cliente_id = %s
                   AND m.fecha_operacion >= %s AND m.fecha_operacion <= %s
@@ -15191,9 +15431,15 @@ _SQL_SALIDAS_STOCK = """
         -- `ficha_con_envase` SIGUE EN FALSE a propósito: esa columna es la
         -- pared del ARMADO (con envase, el armado no puede salir de un
         -- cajón) y un movimiento no es un armado.
+        -- LA DEVOLUCIÓN DESDE DEPÓSITO (30/09) es una salida DIRIGIDA al
+        -- lote de su compra: sale de esa compra y de ninguna otra
+        -- (`pasadas_de_lotes` no le da FIFO de respaldo).
         SELECT m.fecha_operacion, m.creado_en, m.tipo, m.fecha_operacion,
                -m.cantidad, 0, NULL, NULL, m.motivo, NULL,
-               m.lote_tipo, m.lote_origen_id, m.ficha_id, FALSE, NULL::bigint, m.articulo_id
+               CASE WHEN m.tipo = 'devolucion_deposito' THEN 'guia' ELSE m.lote_tipo END,
+               CASE WHEN m.tipo = 'devolucion_deposito' THEN m.compra_devolucion_id
+                    ELSE m.lote_origen_id END,
+               m.ficha_id, FALSE, NULL::bigint, m.articulo_id
         FROM movimientos_stock m
         WHERE m.anulado_el IS NULL AND m.cantidad < 0 AND m.articulo_id = ANY(%s)
           AND m.fecha_operacion > %s
@@ -16779,14 +17025,48 @@ _SQL_ARRANQUE_VIGENTE = """
      ORDER BY creado_en DESC, id DESC LIMIT 1
 """
 
-_SQL_PILAS_DE_VACIOS = f"""
-    WITH arr AS ({_SQL_ARRANQUE_VIGENTE}),
+# LOS CAJONES QUE VUELVEN LLENOS al proveedor (dueño, 30/09): una devolución
+# de mercadería de una compra CON SEÑA se lleva sus cajones, así que salen de
+# la pila de ese proveedor y de la marca con que llegó la compra. Son dos
+# caminos: la devolución DESDE DEPÓSITO (sale del suelto, que es cajón) y la
+# devolución POR RECHAZO cuando lo rechazado iba en el cajón del proveedor
+# —ficha sin caja nuestra o renglón sin ficha—. Un rechazo que iba en caja de
+# Día no devuelve ningún cajón: el suyo quedó vacío en el galpón al armar.
+# Escrito UNA vez: lo leen la cuenta de las pilas y la lista de movimientos.
+_SQL_DEVOLUCIONES_LLENAS = """
+          FROM movimientos_stock ml
+          JOIN compras cl ON cl.id = ml.compra_devolucion_id
+          LEFT JOIN pedidos_renglones prl ON prl.id = ml.pedido_renglon_id
+          LEFT JOIN fichas_logistica fll ON fll.id = prl.ficha_id
+         WHERE COALESCE(cl.sena, 0) > 0
+           AND (ml.tipo = 'devolucion_deposito'
+                OR (ml.destino_rechazo = 'devolucion_proveedor' AND fll.envase_id IS NULL))
+"""
+
+
+def _sql_pilas_de_vacios(tope: str | None = None) -> str:
+    """La cuenta de las pilas. Con `tope` (una expresión SQL de un INSTANTE),
+    la de ese momento: solo lo cargado antes, contra el arranque que ya existía.
+
+    El tope es lo que usa el Cotejo para comparar cada conteo contra el cierre
+    del día en que se contó (dueño, 30/09). Sin tope es la de ahora, y el texto
+    es el mismo que tuvo siempre.
+    """
+    def antes(columna: str) -> str:
+        return f"\n           AND {columna} < {tope}" if tope else ""
+    arranque = (_SQL_ARRANQUE_VIGENTE if not tope else f"""
+    SELECT id, motivo, creado_en FROM vacios_deposito_arranques
+     WHERE creado_en < {tope}
+     ORDER BY creado_en DESC, id DESC LIMIT 1
+""")
+    return f"""
+    WITH arr AS ({arranque}),
     mov AS (
         SELECT f.proveedor_id, NULL::bigint AS marca_id,
                f.cantidad AS arranque, 0 AS recibidos, 0 AS devueltos,
                0 AS ajustes, 0 AS asignados
           FROM vacios_deposito_foto f
-         WHERE NOT EXISTS (SELECT 1 FROM arr)
+         WHERE NOT EXISTS (SELECT 1 FROM arr){antes("f.creado_en")}
         UNION ALL
         SELECT ap.proveedor_id, ap.marca_vacio_id, ap.cantidad, 0, 0, 0, 0
           FROM vacios_deposito_arranque_pilas ap
@@ -16799,28 +17079,34 @@ _SQL_PILAS_DE_VACIOS = f"""
          WHERE co.estado = 'recepcionado'
            AND co.procesada_el IS NOT NULL
            AND COALESCE(co.sena, 0) > 0
-           AND co.procesada_el > COALESCE((SELECT creado_en FROM arr), f.creado_en, '-infinity')
+           AND co.procesada_el > COALESCE((SELECT creado_en FROM arr), f.creado_en, '-infinity'){antes("co.procesada_el")}
         UNION ALL
         SELECT d.proveedor_id, d.marca_vacio_id, 0, 0, d.cantidad, 0, 0
           FROM vacios_deposito_devoluciones d
           LEFT JOIN vacios_deposito_foto f ON f.proveedor_id = d.proveedor_id
          WHERE d.anulado_el IS NULL
-           AND d.creado_en > COALESCE((SELECT creado_en FROM arr), f.creado_en, '-infinity')
+           AND d.creado_en > COALESCE((SELECT creado_en FROM arr), f.creado_en, '-infinity'){antes("d.creado_en")}
+        UNION ALL
+        SELECT cl.proveedor_id, cl.marca_vacio_id, 0, 0, ABS(ml.cantidad), 0, 0{_SQL_DEVOLUCIONES_LLENAS}
+           AND ml.anulado_el IS NULL
+           AND ml.creado_en > COALESCE((SELECT creado_en FROM arr),
+                                       (SELECT f.creado_en FROM vacios_deposito_foto f
+                                         WHERE f.proveedor_id = cl.proveedor_id), '-infinity'){antes("ml.creado_en")}
         UNION ALL
         SELECT a.proveedor_id, a.marca_vacio_id, 0, 0, 0, a.cantidad, 0
           FROM vacios_deposito_ajustes a
          WHERE a.anulado_el IS NULL
-           AND a.creado_en > COALESCE((SELECT creado_en FROM arr), '-infinity')
+           AND a.creado_en > COALESCE((SELECT creado_en FROM arr), '-infinity'){antes("a.creado_en")}
         UNION ALL
         SELECT s.proveedor_id, s.marca_desde_id, 0, 0, 0, 0, -s.cantidad
           FROM vacios_deposito_asignaciones s
          WHERE s.anulado_el IS NULL
-           AND s.creado_en > COALESCE((SELECT creado_en FROM arr), '-infinity')
+           AND s.creado_en > COALESCE((SELECT creado_en FROM arr), '-infinity'){antes("s.creado_en")}
         UNION ALL
         SELECT s.proveedor_id, s.marca_hasta_id, 0, 0, 0, 0, s.cantidad
           FROM vacios_deposito_asignaciones s
          WHERE s.anulado_el IS NULL
-           AND s.creado_en > COALESCE((SELECT creado_en FROM arr), '-infinity')
+           AND s.creado_en > COALESCE((SELECT creado_en FROM arr), '-infinity'){antes("s.creado_en")}
     )
     SELECT p.id AS proveedor_id, p.nombre AS proveedor,
            m.marca_id AS marca_id, mv.nombre AS marca,
@@ -16835,6 +17121,9 @@ _SQL_PILAS_DE_VACIOS = f"""
      WHERE p.activo = true
      GROUP BY p.id, p.nombre, m.marca_id, mv.nombre
 """
+
+
+_SQL_PILAS_DE_VACIOS = _sql_pilas_de_vacios()
 
 
 def arranque_de_vacios() -> dict | None:
@@ -17367,7 +17656,8 @@ def _anular(tabla: str, fila_id: int, que: str, anulado: str) -> None:
 # `cantidad` va con el signo de su efecto sobre la pila: la entrada suma, la
 # devolución resta, el ajuste trae el suyo. El PASE no tiene signo —resta de
 # una marca y suma a otra— y el ARRANQUE es lo contado, no un movimiento.
-TIPOS_DE_MOVIMIENTO_DE_VACIOS = ("arranque", "entrada", "devolucion", "ajuste", "asignacion")
+TIPOS_DE_MOVIMIENTO_DE_VACIOS = ("arranque", "entrada", "devolucion", "devolucion_llena", "ajuste",
+                                 "asignacion")
 
 _SQL_MOVIMIENTOS_DE_VACIOS = f"""
     WITH arr AS ({_SQL_ARRANQUE_VIGENTE}),
@@ -17396,6 +17686,12 @@ _SQL_MOVIMIENTOS_DE_VACIOS = f"""
                COALESCE(d.creado_en <= (SELECT creado_en FROM arr), false),
                d.cargada_desde
           FROM vacios_deposito_devoluciones d
+        UNION ALL
+        SELECT 'devolucion_llena', ml.id, ml.creado_en, cl.proveedor_id, cl.marca_vacio_id, NULL,
+               -ABS(ml.cantidad), ml.motivo, cl.id, NULL, NULL,
+               ml.anulado_el IS NOT NULL,
+               COALESCE(ml.creado_en <= (SELECT creado_en FROM arr), false),
+               CASE WHEN ml.tipo = 'devolucion_deposito' THEN 'deposito' ELSE 'rechazo' END{_SQL_DEVOLUCIONES_LLENAS}
         UNION ALL
         SELECT 'ajuste', a.id, a.creado_en, a.proveedor_id, a.marca_vacio_id, NULL,
                a.cantidad, a.motivo, NULL, NULL, NULL, a.anulado_el IS NOT NULL,
@@ -17619,43 +17915,69 @@ def crear_conteo_vacios_deposito(proveedor_id: int, marca_vacio_id: int | None,
         conexion.close()
 
 
-def cotejo_de_vacios_deposito() -> list[dict]:
-    """El ÚLTIMO conteo de cada pila contra lo que el sistema dice AHORA.
+# El cierre del día `%(dia)s` en Argentina: el primer instante del día siguiente.
+_SQL_CIERRE_DEL_DIA = (
+    "((%(dia)s::date + 1)::timestamp AT TIME ZONE 'America/Argentina/Buenos_Aires')"
+)
 
-    Sistema − Físico, igual que el Cotejo de stock (corolario 25): comparar
-    contra la foto congelada del conteo mete adentro un trabajo del día que
-    se carga después. Acá se compara el stock de hoy con lo contado.
+
+def cotejo_de_vacios_deposito() -> list[dict]:
+    """El ÚLTIMO conteo de cada pila contra lo que el sistema decía AL CIERRE DEL
+    DÍA EN QUE SE CONTÓ (dueño, 30/09).
+
+    Hasta ese día comparaba contra el stock de ahora, así que un conteo del
+    24/09 se restaba contra el piso del 30/09 y todo lo que entró y salió en el
+    medio aparecía como diferencia. Es lo mismo que se arregló en el Cotejo de
+    mercadería el 25/09 (`_sistema_por_porcion_al_cierre`): un conteo se toma a
+    la tarde, y el cierre de ese día incluye lo cargado ese día y nada de lo
+    que vino después. Sistema − contado, como siempre.
+
+    `sistema` es None cuando el día del conteo es anterior a la primera
+    referencia de la cuenta (la foto del 25/09 o un conteo físico de arranque):
+    ahí no hay contra qué comparar, y un cero sería un número inventado.
     """
     conexion = obtener_conexion()
     try:
         with conexion.cursor() as cursor:
             cursor.execute(
-                f"""
-                WITH ultimo AS (
-                    SELECT DISTINCT ON (c.proveedor_id, c.marca_vacio_id)
-                           c.proveedor_id, c.marca_vacio_id, c.cantidad, c.fecha
-                      FROM conteos_vacios_deposito c
-                     ORDER BY c.proveedor_id, c.marca_vacio_id, c.fecha DESC, c.id DESC
-                )
-                SELECT u.proveedor_id, p.nombre, u.marca_vacio_id, mv.nombre,
-                       u.cantidad, u.fecha, pilas.stock
-                  FROM ultimo u
-                  JOIN proveedores p ON p.id = u.proveedor_id
-                  LEFT JOIN marcas_vacio mv ON mv.id = u.marca_vacio_id
-                  LEFT JOIN ({_SQL_PILAS_DE_VACIOS}) pilas
-                         ON pilas.proveedor_id = u.proveedor_id
-                        AND pilas.marca_id IS NOT DISTINCT FROM u.marca_vacio_id
+                """
+                SELECT DISTINCT ON (c.proveedor_id, c.marca_vacio_id)
+                       c.proveedor_id, p.nombre, c.marca_vacio_id, mv.nombre, c.cantidad, c.fecha
+                  FROM conteos_vacios_deposito c
+                  JOIN proveedores p ON p.id = c.proveedor_id
+                  LEFT JOIN marcas_vacio mv ON mv.id = c.marca_vacio_id
+                 ORDER BY c.proveedor_id, c.marca_vacio_id, c.fecha DESC, c.id DESC
                 """
             )
-            filas = cursor.fetchall()
+            conteos = cursor.fetchall()
+            pilas_al_cierre: dict = {}
+            con_referencia: dict = {}
+            for dia in sorted({f[5] for f in conteos}):
+                cursor.execute(
+                    f"SELECT proveedor_id, marca_id, stock "
+                    f"FROM ({_sql_pilas_de_vacios(_SQL_CIERRE_DEL_DIA)}) pilas",
+                    {"dia": dia},
+                )
+                pilas_al_cierre[dia] = {(f[0], f[1]): int(f[2] or 0) for f in cursor.fetchall()}
+                cursor.execute(
+                    f"""SELECT EXISTS (SELECT 1 FROM vacios_deposito_arranques
+                                        WHERE creado_en < {_SQL_CIERRE_DEL_DIA})
+                            OR EXISTS (SELECT 1 FROM vacios_deposito_foto
+                                        WHERE creado_en < {_SQL_CIERRE_DEL_DIA})""",
+                    {"dia": dia},
+                )
+                con_referencia[dia] = bool(cursor.fetchone()[0])
     finally:
         conexion.close()
     resultado = []
-    for f in filas:
-        sistema = int(f[6] or 0)
+    for proveedor_id, proveedor, marca_id, marca, contado, dia in conteos:
+        sistema = (pilas_al_cierre[dia].get((proveedor_id, marca_id), 0)
+                   if con_referencia[dia] else None)
         resultado.append({
-            "proveedor_id": f[0], "proveedor": f[1], "marca_id": f[2], "marca": f[3],
-            "contado": int(f[4]), "fecha": f[5], "sistema": sistema,
-            "diferencia": sistema - int(f[4]),
+            "proveedor_id": proveedor_id, "proveedor": proveedor, "marca_id": marca_id,
+            "marca": marca, "contado": int(contado), "fecha": dia, "sistema": sistema,
+            "diferencia": None if sistema is None else sistema - int(contado),
         })
-    return sorted(resultado, key=lambda x: (-abs(x["diferencia"]), x["proveedor"].lower()))
+    # Los que no tienen contra qué van al final: no piden nada.
+    return sorted(resultado, key=lambda x: (x["diferencia"] is None,
+                                            -abs(x["diferencia"] or 0), x["proveedor"].lower()))
