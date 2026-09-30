@@ -56,14 +56,17 @@ OBLIGATORIO = os.environ.get("HUMO_OBLIGATORIO") == "1"
 #   08/09  una guía R toma 5 y arma 10 cajas a $300 <- ANTES de la ventana
 #   11/09  3 cajas ARMADAS pasan a segunda          -> $900 + 3 cajas
 #   12/09  2 cajas ARMADAS se tiran                 -> $600 + 2 cajas
-#   13/09  8 bultos SUELTOS se tiran                -> 5 del cajón + 3 de la
-#                                                      primera = $1400, SIN caja
+#   13/09  8 bultos SUELTOS se tiran                -> 5 del cajón = $500, y 3
+#                                                      SIN LOTE: la primera es
+#                                                      de la ficha, no suelta
 #   05/10  1 caja armada se tira                    <- DESPUÉS de la ventana
 #
 # El suelto del 13/09 es el que hace que el orden importe: le quedan 5 del
-# cajón porque la guía R se llevó los otros 5, así que se desborda a la
-# primera. Con el rejuego recortado a la ventana el cajón tendría 10 y el
-# número sería otro.
+# cajón porque la guía R se llevó los otros 5. Con el rejuego recortado a la
+# ventana el cajón tendría 10 y el número sería otro. Hasta el 30/09 los 3 que
+# faltan se desbordaban a la primera de la guía R; desde ese día no, porque
+# esa primera son cajas de la ficha 1 y la merma es de los sueltos (lo mismo
+# que dice la cuenta del stock: los sueltos quedan en −3).
 SIEMBRA = """
 -- EL CORTE YA VIENE EN EL ESQUEMA (31/08) y no se toca: es el mismo dato
 -- que `_fecha_corte` lee en produccion, y re-escribirlo aca seria una segunda
@@ -187,34 +190,39 @@ def test_la_MERMA_de_caja_armada_pierde_los_kilos_MAS_la_caja(base):
     r = _perdidas(base, DESDE, HASTA)
     merma = r["renglones"]["merma"]
 
-    # 2 armadas a $300 + 8 sueltos (5 del cajón a $100 + 3 de la primera a
-    # $300) + los 5 de Palta, que no tienen precio y por eso no suman pesos.
+    # 2 armadas a $300 + 8 sueltos (5 del cajón y 3 sin lote: la salida queda
+    # con `costo` None y no suma pesos) + los 5 de Palta, sin precio.
     assert merma["bultos"] == 15.0
-    assert merma["mercaderia"] == 2000.0
+    assert merma["mercaderia"] == 600.0
     assert merma["cajas"] == 2.0, "las sueltas no llevan caja nuestra"
     assert merma["caja_pesos"] == 100.0
-    assert merma["total"] == 2100.0
+    assert merma["total"] == 700.0
 
 
-def test_los_SUELTOS_se_costean_por_FIFO_PURO_y_se_desbordan_al_lote_siguiente(base):
-    """8 sueltos contra un cajón al que le quedan 5: 5×$100 + 3×$300 = $1400.
+def test_los_SUELTOS_salen_del_CAJON_y_no_pasan_a_las_cajas_de_la_ficha(base):
+    """8 sueltos contra un cajón al que le quedan 5: 5×$100 y 3 sin lote.
 
     Éste es el que necesita el REJUEGO COMPLETO. Al cajón le quedan 5 porque
     la guía R del 08/09 —anterior a la ventana— se llevó los otros 5. Con el
     rejuego recortado a la ventana el cajón tendría los 10 puestos y los 8
-    saldrían a $800, o directamente sin costear.
+    saldrían a $800.
+
+    Y LOS 3 QUE FALTAN NO SE LLEVAN LAS CAJAS DE DÍA (30/09): la primera de
+    la guía R es de la ficha 1, así que una merma de sueltos no la toca.
+    Hasta ese día se desbordaba a ella ($1400) y dejaba a los armados de Día
+    esperando una guía R que ya estaba cargada.
     """
     r = _perdidas(base, DESDE, HASTA)
     merma = r["renglones"]["merma"]
 
-    # $2000 en total − los $600 de las dos armadas = $1400 de los ocho sueltos
-    assert merma["mercaderia"] - 600.0 == 1400.0
+    # Una salida con una porción sin lote queda con `costo` None
+    # (`atribuir_costos_fifo`), así que los 5 del cajón tampoco suman pesos:
+    # es la misma regla que la Rentabilidad Real. Lo que se afirma acá es el
+    # reparto: 3 sin lote, no 0 (que era llevarse las cajas de Día).
+    assert merma["mercaderia"] == 600.0
 
-    # Y LOS OCHO SE COSTEARON ENTEROS: los únicos sin costo son los 5 de
-    # Palta. Sin esta mitad, un rejuego que arrancara tarde dejaría los ocho
-    # sin lote y el `- 600 == 1400` de arriba fallaría por otro motivo.
     detalle = {(d["destino"], d["articulo"]): d for d in r["detalle"]}
-    assert detalle[("merma", "EJEMPLO Tomate")]["bultos_sin_costo"] == 0.0
+    assert detalle[("merma", "EJEMPLO Tomate")]["bultos_sin_costo"] == 3.0
 
 
 def test_la_VENTANA_deja_afuera_la_merma_de_OCTUBRE(base):
@@ -238,7 +246,7 @@ def test_el_DETALLE_por_articulo_suma_lo_mismo_que_los_dos_RENGLONES(base):
     """
     r = _perdidas(base, DESDE, HASTA)
 
-    assert sum(d["total"] for d in r["detalle"]) == r["total"] == 3150.0
+    assert sum(d["total"] for d in r["detalle"]) == r["total"] == 1750.0
     assert {(d["destino"], d["articulo"]) for d in r["detalle"]} == {
         ("merma", "EJEMPLO Tomate"), ("segunda", "EJEMPLO Tomate"),
         ("merma", "EJEMPLO Palta")}
@@ -247,7 +255,7 @@ def test_el_DETALLE_por_articulo_suma_lo_mismo_que_los_dos_RENGLONES(base):
     # lista de trabajo — y de paso deja a la vista que un renglón con bultos
     # y sin plata existe.
     assert [(d["destino"], d["articulo"]) for d in r["detalle"]] == [
-        ("merma", "EJEMPLO Tomate"), ("segunda", "EJEMPLO Tomate"),
+        ("segunda", "EJEMPLO Tomate"), ("merma", "EJEMPLO Tomate"),
         ("merma", "EJEMPLO Palta")]
 
 
@@ -264,8 +272,9 @@ def test_los_BULTOS_SIN_COSTEAR_llegan_del_FIFO_al_renglon_y_no_suman_pesos(base
     """
     r = _perdidas(base, DESDE, HASTA)
 
-    assert r["bultos_sin_costo"] == 5.0
-    assert r["renglones"]["merma"]["bultos_sin_costo"] == 5.0
+    # 5 de Palta y 3 sueltos de Tomate que no tienen cajón.
+    assert r["bultos_sin_costo"] == 8.0
+    assert r["renglones"]["merma"]["bultos_sin_costo"] == 8.0
     assert r["renglones"]["segunda"]["bultos_sin_costo"] == 0.0
 
     palta = [d for d in r["detalle"] if d["articulo"] == "EJEMPLO Palta"]
@@ -275,4 +284,4 @@ def test_los_BULTOS_SIN_COSTEAR_llegan_del_FIFO_al_renglon_y_no_suman_pesos(base
     assert palta[0]["total"] == 0.0
 
     # Y EL TOTAL NO SE MOVIÓ: los 5 aportan bultos y cero pesos.
-    assert r["total"] == 3150.0
+    assert r["total"] == 1750.0

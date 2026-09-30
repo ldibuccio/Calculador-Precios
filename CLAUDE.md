@@ -534,6 +534,8 @@ de cajón quedaba costeado a precio de caja.
 - **También lo elegido a mano**: `lotes_senalados` descarta un lote que
   `lote_ofrecido` no ofrece. `guardar_lotes_elegidos` ya lo rechazaba al
   escribir; esto cubre una corrección guardada antes de la regla.
+- **La toma de una guía R tampoco se come cajas al rejugar**, y lo que sale
+  de los sueltos tampoco. Ver la sección de abajo.
 - **El renglón SIN ficha sigue con la preferencia vieja**: no hay ficha que
   respetar. Es el único que todavía puede sacarle la caja a uno de Día, y por
   eso el detalle de la alerta cuenta cuántas cajas se llevaron.
@@ -542,6 +544,32 @@ de cajón quedaba costeado a precio de caja.
   `en_cajon` (lo pone `_entradas_y_salidas_stock_varios`): es un cajón que
   vuelve, lo toma un armado en cajón y no uno de caja. Lo decide
   `es_caja_armada` (core/stock.py). Sin renglón o sin ficha queda como caja.
+
+### Y la guía R no se come cajas al REJUGAR (30/09, dueño)
+
+La alerta marcaba 57 bultos del pedido #38 (29/09) como esperando guía R, con
+21 guías R de ese día cargadas y cajas de sobra. La causa: la pared de la guía
+R (`lotes_permitidos`) se aplicaba solo al CARGARLA (el freno y el desglose) y
+no en el rejuego. Cada guía R, en cada lectura, se llevaba por FIFO la caja más
+vieja que quedara. Las del 29/09, cargadas a las 16:18 y antes del armado, se
+comían las cajas que la guía R del día anterior había dejado para Día.
+
+- **La toma pasa por `lotes_permitidos` en `pasadas_de_lotes`**, que es la
+  misma función del freno: las dos ya no se pueden separar. Lo que el 08/09 se
+  decidió al revés (no contradecir el congelado de diez guías R del 06 y
+  07/09) se dio vuelta: esas diez quedan contradiciendo su
+  `reprocesos_consumos`, que es un error de aquellos días (corolario 74).
+- **Una merma, un pase o un ajuste SIN ficha salen de los sueltos** y no
+  tocan las cajas de una ficha. La porción la parte `es_de_una_ficha`
+  (core/stock.py), con la columna `de_una_ficha` que trae la consulta de lotes:
+  la misma pregunta que `_SQL_STOCK_PARTIDO` hace para partir el stock. Una
+  guía R SIN ficha y un rechazo sin renglón con ficha son sueltos. Con ficha,
+  la merma y el pase siguen prefiriendo la caja.
+- **Una merma sin ficha DIRIGIDA a una caja de una ficha se ignora**: pasa por
+  `lote_ofrecido`, igual que el armado en cajón.
+- El margen de 3 días no lo tapa: el caso lo cuida
+  `test_la_TOMA_de_una_guia_R_no_se_come_la_CAJA_y_el_armado_NO_espera`, con
+  las tomas del mismo día antes del armado.
 
 **LA CONDICIÓN ES UNA SOLA Y TIENE UN SOLO NOMBRE**: `envase_id IS NOT NULL`
 en `fichas_logistica`, que viaja con la salida como `ficha_con_envase` desde
@@ -3184,7 +3212,7 @@ adentro. Eso no es una cuenta nueva — es una línea en `prioridad_de_lote`
 
 ```
 merma o pase CON ficha   -> prefiere ('reproceso', 'reingreso_rechazo')
-merma o pase SIN ficha   -> FIFO puro: no se sabe de qué cajón salió
+merma, pase o ajuste SIN ficha -> de los SUELTOS: nunca las cajas de una ficha (30/09)
 ```
 
 **Y la preferencia es por TIPO, no por la ficha exacta**, decisión del dueño:
@@ -3234,9 +3262,12 @@ costearía contra los lotes equivocados **y devolvería un número plausible**.
 
 Lo cuida `tests/test_perdidas_contra_la_base.py`, que corre contra Postgres con
 el esquema real: el caso está armado para que el ORDEN decida —a un cajón le
-quedan 5 porque una guía R anterior a la ventana se llevó los otros 5, así que
-los 8 sueltos se desbordan al lote siguiente— y con el rejuego recortado el
-número cambia. Un fixture donde las entradas caen todas adentro de la ventana
+quedan 5 porque una guía R anterior a la ventana se llevó los otros 5— y con
+el rejuego recortado el número cambia. Desde el 30/09 los 8 sueltos se llevan
+esos 5 y 3 quedan sin lote: la primera de la guía R es de la ficha, no suelta.
+**Y una salida con UNA porción sin lote queda con `costo` None**
+(`atribuir_costos_fifo`), así que ahí los 5 del cajón tampoco suman pesos. Es
+la misma regla que la Rentabilidad Real, y no se tocó. Un fixture donde las entradas caen todas adentro de la ventana
 da lo mismo con las dos reglas y no prueba nada.
 
 ### Y LA RENTABILIDAD REAL TIENE SU PROPIA COLUMNA (22/09)
