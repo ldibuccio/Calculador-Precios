@@ -13360,6 +13360,106 @@ def bultos_esperando_guia_r_por_articulo() -> dict:
     `sin_lote` de verdad —salió más de lo que había— no entra: ése no se
     arregla con una guía R y haría que el número no baje nunca.
     """
+    nombres, rejuego = _rejuego_de_armados_con_caja()
+    por_id = {}
+    for articulo_id, salidas in rejuego.items():
+        for salida in salidas:
+            esperando = salida["motivos_sin_costo"].get("falta_cargar_guia_r", 0.0)
+            if esperando <= 0:
+                continue
+            fila = por_id.setdefault(
+                articulo_id,
+                {"nombre": nombres.get(articulo_id, "?"), "bultos": 0.0,
+                 "mas_viejo": None, "mas_nuevo": None},
+            )
+            fila["bultos"] += esperando
+            fecha = salida.get("fecha")
+            if fecha is not None:
+                if fila["mas_viejo"] is None or fecha < fila["mas_viejo"]:
+                    fila["mas_viejo"] = fecha
+                if fila["mas_nuevo"] is None or fecha > fila["mas_nuevo"]:
+                    fila["mas_nuevo"] = fecha
+    for fila in por_id.values():
+        fila["bultos"] = round(fila["bultos"], 2)
+    return por_id
+
+
+def armados_esperando_guia_r() -> list[dict]:
+    """CADA armado que espera una guía R, con su pedido: el detalle de la alerta.
+
+    Sale del MISMO rejuego que el conteo (`_rejuego_de_armados_con_caja`), no
+    de una consulta propia: la suma de `esperan` de esta lista es, por
+    construcción, el número de la alerta. Escrita en SQL sería una segunda
+    versión del FIFO, y la primera vez que se intentó (arandano_2) dio 192
+    donde la regla daba 45 (corolario 85).
+
+    `cajas_a_salidas_sin_caja` es por ARTÍCULO y va en cada fila: cuántos
+    bultos de CAJAS (guía R o rechazo que volvió) se llevaron armados de
+    fichas SIN envase. El armado prefiere caja armada sin mirar si su ficha
+    lleva caja, así que un armado en cajón puede consumir las cajas que
+    después le faltan a uno de Día. Está para poder cotejarlo con los datos,
+    no para decidir nada solo.
+
+    El más viejo arriba: es una cola de trabajo, no un aviso que envejece.
+    """
+    from core.stock import TIPOS_LOTE_TRABAJADO
+
+    nombres, rejuego = _rejuego_de_armados_con_caja()
+    filas = []
+    for articulo_id, salidas in rejuego.items():
+        a_sin_caja = sum(
+            consumo["bultos"]
+            for salida in salidas
+            if salida.get("tipo") == "armado" and not salida.get("ficha_con_envase")
+            for consumo in salida["consumos_lotes"]
+            if consumo["tipo_lote"] in TIPOS_LOTE_TRABAJADO
+        )
+        for salida in salidas:
+            esperan = salida["motivos_sin_costo"].get("falta_cargar_guia_r", 0.0)
+            if esperan <= 0:
+                continue
+            filas.append({
+                "articulo_id": articulo_id,
+                "articulo": nombres.get(articulo_id, "?"),
+                "fecha_armado": salida["fecha_orden"],
+                "fecha_pedido": salida.get("fecha"),
+                "renglon_id": salida.get("renglon_id"),
+                "esperan": round(esperan, 2),
+                "cajas_a_salidas_sin_caja": round(a_sin_caja, 2),
+            })
+    renglones = [f["renglon_id"] for f in filas if f["renglon_id"] is not None]
+    datos = {}
+    if renglones:
+        conexion = obtener_conexion()
+        try:
+            with conexion.cursor() as cursor:
+                cursor.execute(
+                    """
+                    SELECT r.id, r.pedido_id, cl.nombre, r.sucursal
+                    FROM pedidos_renglones r
+                    JOIN pedidos p ON p.id = r.pedido_id
+                    JOIN clientes cl ON cl.id = p.cliente_id
+                    WHERE r.id = ANY(%s)
+                    """,
+                    (renglones,),
+                )
+                datos = {fila[0]: fila[1:] for fila in cursor.fetchall()}
+        finally:
+            conexion.close()
+    for fila in filas:
+        pedido_id, cliente, sucursal = datos.get(fila["renglon_id"], (None, None, None))
+        fila.update(pedido_id=pedido_id, cliente=cliente, sucursal=sucursal)
+    filas.sort(key=lambda f: (f["fecha_armado"], f["articulo"], f["pedido_id"] or 0))
+    return filas
+
+
+def _rejuego_de_armados_con_caja() -> tuple[dict, dict]:
+    """({articulo_id: nombre}, {articulo_id: salidas costeadas}) de los candidatos.
+
+    El rejuego que comparten el conteo de la alerta y su detalle: una sola
+    lectura de candidatos y un solo `atribuir_costos_fifo`, así los dos no
+    pueden contar distinto.
+    """
     from core.costo_real import atribuir_costos_fifo
 
     conexion = obtener_conexion()
@@ -13395,33 +13495,16 @@ def bultos_esperando_guia_r_por_articulo() -> dict:
             nombres = dict(cursor.fetchall())
             ids = list(nombres)
             if not ids:
-                return {}
+                return {}, {}
 
             por_articulo = _entradas_y_salidas_stock_varios(cursor, ids, corte)
     finally:
         conexion.close()
 
-    por_id = {}
-    for articulo_id, (entradas, salidas) in por_articulo.items():
-        for salida in atribuir_costos_fifo(entradas, salidas):
-            esperando = salida["motivos_sin_costo"].get("falta_cargar_guia_r", 0.0)
-            if esperando <= 0:
-                continue
-            fila = por_id.setdefault(
-                articulo_id,
-                {"nombre": nombres.get(articulo_id, "?"), "bultos": 0.0,
-                 "mas_viejo": None, "mas_nuevo": None},
-            )
-            fila["bultos"] += esperando
-            fecha = salida.get("fecha")
-            if fecha is not None:
-                if fila["mas_viejo"] is None or fecha < fila["mas_viejo"]:
-                    fila["mas_viejo"] = fecha
-                if fila["mas_nuevo"] is None or fecha > fila["mas_nuevo"]:
-                    fila["mas_nuevo"] = fecha
-    for fila in por_id.values():
-        fila["bultos"] = round(fila["bultos"], 2)
-    return por_id
+    return nombres, {
+        articulo_id: atribuir_costos_fifo(entradas, salidas)
+        for articulo_id, (entradas, salidas) in por_articulo.items()
+    }
 
 
 def contar_bultos_esperando_guia_r() -> dict:
