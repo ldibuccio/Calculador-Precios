@@ -18,6 +18,7 @@
              font-size: .95rem; }
   .numeros span { white-space: nowrap; }
   .diferencia { font-weight: 700; font-size: 1.2rem; }
+  .sin-referencia { color: #666; font-size: 0.9rem; }
   .cierra { color: #166534; }
   .no-cierra { color: #b91c1c; }
   .ayuda { font-size: .88rem; color: #1e3a8a; background: #eff6ff;
@@ -42,7 +43,7 @@
    Movimientos. El conteo sigue en SU pantalla, que no muestra el stock. #}
 <a class="contar" href="{{ camino.base }}/vacios/conteo">Cargar un conteo</a>
 
-<p class="ayuda"><strong>Diferencia = sistema − contado</strong>: <strong>positiva, el sistema dice que hay más de los que hay</strong>. {% call info("Cómo se compara") %}El último conteo de cada marca contra lo que el sistema dice <strong>hoy</strong>.{% endcall %}</p>
+<p class="ayuda"><strong>Diferencia = sistema − contado</strong>: <strong>positiva, el sistema dice que hay más de los que hay</strong>. {% call info("Cómo se compara") %}El último conteo de cada marca contra lo que el sistema decía <strong>al cierre del día en que se contó</strong>. Así lo que entró o salió después no aparece como diferencia. Ajustar aplica hoy la diferencia de ese día.{% endcall %}</p>
 
 {% for f in filas %}
 <div class="tarjeta" data-pila="{{ f.proveedor_id }}-{{ f.marca_id or '' }}">
@@ -52,15 +53,19 @@
   </div>
   <div class="numeros">
     <span>contados {{ f.contado }} el {{ f.fecha.strftime('%d/%m') }}</span>
-    <span>sistema {{ f.sistema }}</span>
+    {% if f.sistema is none %}
+    <span class="sin-referencia">antes del primer conteo del sistema: no hay contra qué comparar</span>
+    {% else %}
+    <span>sistema ese día {{ f.sistema }}</span>
     <span class="diferencia {% if f.diferencia == 0 %}cierra{% else %}no-cierra{% endif %}">
       {% if f.diferencia == 0 %}cierra{% else %}{{ "+" if f.diferencia > 0 }}{{ f.diferencia }}{% endif %}
     </span>
+    {% endif %}
   </div>
   {# AJUSTAR (dueño, 29/09): abre el proveedor con el ajuste desplegado y la
      diferencia precargada. La cuenta la rehace el server con `?pila=`: la URL
      no lleva números. #}
-  {% if f.diferencia != 0 %}
+  {% if f.diferencia %}
   <a class="ajustar" href="/administracion/vacios/{{ f.proveedor_id }}?abrir=ajustar&amp;pila={{ f.marca_id if f.marca_id is not none else 'sin' }}">Ajustar</a>
   {% endif %}
 </div>

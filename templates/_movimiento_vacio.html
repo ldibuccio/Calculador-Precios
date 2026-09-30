@@ -7,7 +7,7 @@
    dice de quién es en la barra. #}
 {% macro renglon(m, con_proveedor=False) %}
 <div class="vale-cabeza">
-  <span class="vale-cantidad {% if m.tipo in ('entrada', 'devolucion', 'ajuste') %}{{ 'suma' if m.cantidad > 0 else 'resta' }}{% endif %}">
+  <span class="vale-cantidad {% if m.tipo in ('entrada', 'devolucion', 'devolucion_llena', 'ajuste') %}{{ 'suma' if m.cantidad > 0 else 'resta' }}{% endif %}">
     {{- texto_de_cantidad_vacio(m) }}</span>
   <span class="vale-que">{{ texto_del_tipo_vacio[m.tipo] }}
     {%- if con_proveedor %} · {{ m.proveedor }}{% endif %} · {{ texto_de_la_marca_vacio(m) }}</span>
@@ -18,5 +18,6 @@
   {%- if m.tipo == "arranque" and m.motivo %} · {{ m.motivo }}
   {%- elif m.tipo == "entrada" %} · compra #{{ m.compra_id }}{% if m.articulo %} · {{ m.articulo }}{% endif %} · se corrige desde la compra
   {%- elif m.tipo == "devolucion" %}{% if m.importe is not none %} · ${{ '{:,.0f}'.format(m.importe).replace(',', '.') }}{% endif %}{% if m.foto_ruta %} · vale cargado{% endif %}{% if m.compra_id and m.articulo %} · contra {{ m.articulo }}{% endif %}
+  {%- elif m.tipo == "devolucion_llena" %} · compra #{{ m.compra_id }}{% if m.articulo %} · {{ m.articulo }}{% endif %} · se va con la mercadería
   {%- elif m.tipo == "ajuste" %} · {{ m.motivo }}{% endif %}</div>
 {% endmacro %}

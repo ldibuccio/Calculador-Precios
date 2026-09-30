@@ -131,6 +131,10 @@
        la pregunta que contesta es la de este bloque —¿qué está entrando?— y
        no la de Stock, que es qué hacer con lo que ya está adentro. #}
     <a class="boton ingresos" href="/deposito/stock/reingreso">{{ ICONOS_DEPOSITO['reingreso']|safe }}<span>Reingresos Rechazos</span></a>
+    {# "Devolver mercadería" (dueño, 30/09): lo que queda en el piso y se le
+       devuelve al proveedor, sin pasar por un rechazo. Va en este recuadro
+       porque es la vuelta de lo que entró por "Compras Mercadería". #}
+    <a class="boton ingresos" href="/deposito/devolver">{{ ICONOS_DEPOSITO['remitir']|safe }}<span>Devolver mercadería</span></a>
   </div>
 
   {# UN SOLO BOTÓN, decidido por el dueño el 20/09. "Pedido" y "Armar Pedido"

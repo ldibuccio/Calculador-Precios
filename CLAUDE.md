@@ -391,7 +391,8 @@ De acá en adelante, después de cualquier push que se dé por desplegado:
    Y del lado del test, la otra mitad: **un assert numérico por la negativa
    sobre una página va con `sin_pie(...)`**. Lo cuida un barrido que compara
    el conjunto ENCONTRADO contra el DECIDIDO, así que el próximo no depende
-   de que alguien se acuerde.
+   de que alguien se acuerde. (El 30/09 se le escaparon dos: miraba `not in variable` y
+   no `not in respuesta.text` directo. El "105" de Logística cayó con v1050.)
 
    **Y LOS PR SE MERGEAN POR REBASE O FAST-FORWARD, NUNCA CON COMMIT DE
    MERGE (28/09, dueño).** El sello es la cantidad de commits de la
@@ -4251,7 +4252,14 @@ arrancó", sus "esperando" y la regla de la fecha— **se fue**.
   que la base rechaza, y dentro de una sola pila no movían nada. Un test que
   lee `pg_constraint` compara las FK a `marcas_vacio` contra esa lista.
 - **El conteo físico ya no arranca nada: va al COTEJO**, el último conteo de
-  cada pila contra lo que el sistema dice ahora. Solo ofrece proveedores y
+  cada pila contra lo que el sistema decía AL CIERRE DEL DÍA en que se contó
+  (dueño, 30/09; hasta ese día era contra el sistema de ahora, y un conteo de
+  hace una semana se comía todo lo que se movió en el medio). Es la cuenta de
+  las pilas con un tope (`_sql_pilas_de_vacios(tope)`, `_SQL_CIERRE_DEL_DIA`):
+  solo lo cargado antes de las 24 de ese día, contra el arranque que ya
+  existía. Si antes de ese instante no había arranque ni foto, la fila dice
+  que no hay contra qué comparar. "Ajustar" propone la diferencia de ESE día,
+  aplicada hoy. Solo ofrece proveedores y
   marcas ya cargados. **Y se carga en SU pantalla** (`/vacios/conteo`, dueño,
   27/09): hasta ese día el formulario estaba en el índice, arriba del stock de
   cada pila, y el que cuenta veía el número. La pantalla nueva no LEE el stock,
@@ -4270,7 +4278,9 @@ arrancó", sus "esperando" y la regla de la fecha— **se fue**.
   una fila por marca ("Sin marca" incluida); cuatro acciones que se despliegan
   de a una (Devolver, Pasar a otra marca, Corregir una marca, Ajustar); y el
   historial cerrado, "Ver
-  movimientos de este proveedor". `?abrir=` despliega una, y un formulario que
+  movimientos de este proveedor". **Las pilas en cero no se muestran** (dueño,
+  30/09), "Sin marca" incluida; un negativo sí, en rojo. Si no queda ninguna,
+  dice "Sin vacíos". `?abrir=` despliega una, y un formulario que
   rebota vuelve con la suya abierta. **El historial sale de
   `movimientos_de_vacios`**: las mismas cinco patas que `_SQL_PILAS_DE_VACIOS`,
   con lo anulado y lo de antes del conteo marcados. Lo ata a la tarjeta un test
@@ -4339,6 +4349,53 @@ arrancó", sus "esperando" y la regla de la fecha— **se fue**.
 Los números van contra Postgres en `tests/test_vacios_pilas_contra_la_base.py`,
 con la foto EN MARZO a propósito (corolario 95) y un proveedor cuya recepción
 cae el mismo día que su foto, antes y después de la hora.
+
+## DEVOLUCIONES DE MERCADERÍA AL PROVEEDOR (30/09, dueño)
+
+Son DOS operaciones y se registran separadas; en las dos el COSTO SE CANCELA
+(sale de la Rentabilidad Real) y el valor se ve en Movimientos del depósito.
+
+- **Por rechazo** (Reingreso, destino "devolución al proveedor"): pide la
+  compra. Viene elegida la que el sistema dice que alimentó el armado, y se
+  puede cambiar por cualquier otra compra recibida de ESE artículo
+  (`_compras_para_devolver_el_renglon`: la pantalla y el POST leen las mismas
+  dos listas). Si el renglón iba en el cajón (ficha sin envase), se cancela al
+  costo por bulto de la compra (`_SQL_COSTO_DE_LA_COMPRA_DEVUELTA`); en caja de
+  Día, o sin compra (las 9 viejas, 125 bultos), queda el costo congelado.
+  La caja de Día se devuelve en la caja de Día, como antes.
+- **Desde depósito** (`/deposito/devolver`, sin clave): proveedor → sus
+  compras con lo que QUEDA en el piso (el restante del lote de la compra en el
+  reparto de ahora, `_compras_con_resto_del_proveedor`) → cantidad, motivo y
+  fotos opcionales, que van a las fotos de la compra (`fotos_recepcion`). Nunca
+  más de lo que queda: el tope se recalcula en el POST. Es un movimiento
+  `devolucion_deposito` (migración `db/devolucion_deposito_1`, verificación en
+  `_2`), con cantidad negativa y la compra obligatoria (CHECK).
+- **Sale del lote de SU compra y de ningún otro**: `_SQL_SALIDAS_STOCK` le
+  dirige el lote a la compra, y `pasadas_de_lotes` no le da pasada de FIFO. Lo
+  que la compra no cubra queda sin lote, a la vista; nunca se lleva otra
+  compra. El costo se cancela porque `costo_real` no cuenta esa salida.
+- **Con seña, los cajones vuelven LLENOS y salen de Vacíos**, de ese proveedor
+  y esa marca (`_SQL_DEVOLUCIONES_LLENAS`, pata "devueltos" de la cuenta y
+  "Volvió llena" en los movimientos). En un rechazo, solo si iba en el cajón.
+- **Nada de esto mueve el stock de hoy**: los rechazos nunca volvieron al
+  stock, y lo nuevo solo cuenta desde que se carga.
+
+**Movimientos del depósito** (`/administracion/ingresos`, dueño, 30/09):
+entradas de compra, devoluciones por rechazo, devoluciones desde depósito y
+segunda remitida al puesto, filtrados por fecha (30 días por defecto, 90
+máximo), tipo, proveedor y artículo, con Excel. Agrupado por proveedor con la
+cuenta arriba ("Entraron · se devolvieron · neto", en bultos y en plata; si una
+compra no tiene precio lo dice), para conciliar. La planilla para pagar que
+vivía ahí pasó a `/administracion/ingresos/pagar`, linkeada desde la pantalla.
+Los textos y el Excel están en `core/movimientos_deposito.py`.
+
+Las fotos de la devolución usan el mismo parcial que el ingreso directo
+(`templates/_fotos_para_subir.html`, dos macros: `estilos()` va en el
+`<style>` de la pantalla, así no queda un `<style>` en el medio que corte el
+`split` de los tests).
+
+Lo cuida `tests/test_devoluciones_al_proveedor.py`, contra Postgres, con la
+compra más vieja de rival.
 
 ## Buscar compras: la SEÑA (28/09, dueño)
 

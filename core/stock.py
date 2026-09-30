@@ -228,6 +228,12 @@ _PRIORIDAD_POR_SALIDA = {
     # lo agarró porque db/esquema_completo.sql estaba atrasado — la guarda
     # estaba puesta y miraba una lista vieja.
     "pase_a_segunda": SIN_PREFERENCIA,
+    # LA DEVOLUCIÓN DESDE DEPÓSITO (dueño, 30/09): sale del lote de SU compra
+    # —viaja dirigida, ver `_SQL_SALIDAS_STOCK`— y de ningún otro. La tabla
+    # dice sin preferencia porque la pared está en `pasadas_de_lotes`, que no
+    # le da pasada de FIFO: lo que su compra no cubre queda sin lote, a la
+    # vista, en vez de llevarse mercadería de otra compra.
+    "devolucion_deposito": SIN_PREFERENCIA,
 }
 
 
@@ -334,6 +340,9 @@ def pasadas_de_lotes(lotes: list[dict], salida: dict) -> list[list[dict]]:
     prefieren las cajas armadas (`prioridad_de_lote`).
     """
     lotes = lotes_permitidos(lotes, salida)
+    if salida.get("tipo") == "devolucion_deposito":
+        # Solo su compra, y esa ya la tomó `lotes_senalados`: no hay FIFO.
+        return [[]]
     if salida.get("tipo") in SALIDAS_DE_LA_PORCION and salida.get("ficha_id") is None:
         return [[lote for lote in lotes if not es_de_una_ficha(lote)]]
     prefiere = prioridad_de_lote(salida).prefiere

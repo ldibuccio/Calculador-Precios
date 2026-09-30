@@ -391,6 +391,20 @@ def test_la_LISTA_de_movimientos_SUMADA_da_el_MISMO_stock_que_la_tarjeta(base):
     anulado = d.crear_ajuste_vacios_deposito(ids["MRC"], None, 6, "error")
     d.anular_ajuste_vacios_deposito(anulado)
     d.crear_asignacion_vacios(ids["Herederos N7"], marcas["la union"], marcas["vieja"], 4)
+    # LOS CAJONES QUE VUELVEN LLENOS (30/09): una devolución desde depósito y
+    # una por rechazo de un renglón sin ficha, las dos de compras con seña.
+    (herederos,), = sql("SELECT max(id) FROM compras WHERE proveedor_id = %s", (ids["Herederos N7"],))
+    (dimimax,), = sql("SELECT max(id) FROM compras WHERE proveedor_id = %s AND sena IS NOT NULL",
+                      (ids["DIMIMAX"],))
+    (art,), = sql("SELECT articulo_id FROM compras WHERE id = %s", (herederos,))
+    sql("""INSERT INTO movimientos_stock (articulo_id, tipo, cantidad, motivo, fecha_operacion,
+               stock_sistema, compra_devolucion_id, creado_en)
+           VALUES (%s, 'devolucion_deposito', -2, 'EJ se puso fea', '2099-01-01', 0, %s,
+                   '2099-01-01 11:00-03')""", (art, herederos))
+    sql("""INSERT INTO movimientos_stock (articulo_id, tipo, cantidad, motivo, fecha_operacion,
+               stock_sistema, destino_rechazo, compra_devolucion_id, creado_en)
+           VALUES (%s, 'reingreso_rechazo', 1, 'EJ rechazo', '2099-01-01', 0,
+                   'devolucion_proveedor', %s, '2099-01-01 11:00-03')""", (art, dimimax))
 
     movimientos = d.movimientos_de_vacios(limite=100000)
     assert set(m["tipo"] for m in movimientos) == set(d.TIPOS_DE_MOVIMIENTO_DE_VACIOS)

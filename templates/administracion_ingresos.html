@@ -226,12 +226,12 @@
 <body>
   {% set barra_sector = "administracion" %}
   {% set barra_titulo = "Ingresos a Depósito" %}
-  {% set barra_atras = "/administracion" %}
+  {% set barra_atras = "/administracion/ingresos" %}
   {% from "_info.html" import info %}
   {% include "_barra_navegacion.html" %}
 
   <div class="tarjeta">
-    <form method="get" action="/administracion/ingresos">
+    <form method="get" action="/administracion/ingresos/pagar">
       <div class="fila-fechas">
         <div>
           <label for="fecha_desde">Desde</label>

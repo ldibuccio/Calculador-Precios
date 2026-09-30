@@ -7417,7 +7417,7 @@ def test_ver_compras_pendientes_muestra_la_lista():
     # Regresión: misma pantalla compacta que /compras — fecha dd/mm y
     # números sin decimales de sobra.
     assert "06/08" in respuesta.text
-    assert "2026" not in respuesta.text
+    assert "2026" not in sin_pie(respuesta.text)
     assert "<td>10</td>" in respuesta.text
     # Regresión: letra de unidad pegada al contenido por cajón.
     # El contenido ahora viaja adentro del macro de las dos magnitudes, así
@@ -11378,7 +11378,7 @@ def test_ver_logistica_retiro_agrupa_por_guia_sin_mostrar_el_numero():
     assert respuesta.status_code == 200
     mock_listar.assert_called_once_with("Clark")
     assert "Guía" not in respuesta.text
-    assert "105" not in respuesta.text
+    assert "105" not in sin_pie(respuesta.text)
     # Puesto grande primero, proveedor chico debajo (busca antes por dónde
     # ir que confirma quién es).
     assert '<p class="puesto-nombre">N07P41</p>' in respuesta.text
@@ -12472,7 +12472,7 @@ def test_la_url_vieja_de_ingresos_conserva_los_filtros_al_redirigir():
     )
     assert respuesta.status_code == 301
     destino = respuesta.headers["location"]
-    assert destino.startswith("/administracion/ingresos?")
+    assert destino.startswith("/administracion/ingresos/pagar?")
     assert "fecha_desde=2026-08-01" in destino
     assert "proveedor_id=5" in destino
 
@@ -12482,8 +12482,7 @@ def test_ver_administracion_es_un_hub_con_ingresos_a_deposito():
 
     assert respuesta.status_code == 200
     assert "Administración" in respuesta.text
-    assert 'href="/administracion/ingresos"' in respuesta.text
-    assert "Ingresos a Depósito" in respuesta.text
+    assert 'href="/administracion/ingresos">Movimientos del depósito<' in respuesta.text
     assert "En construcción" not in respuesta.text
     assert 'href="/inicio"' in respuesta.text
 
@@ -12525,7 +12524,7 @@ def test_ver_ingresos_deposito_agrupa_por_proveedor_con_subtotales_y_total():
         patch("app.main.listar_articulos", return_value=ARTICULOS_CON_UNIDAD_COMPRA),
         patch("app.main.buscar_ingresos_deposito", return_value=INGRESOS_DEPOSITO_DE_PRUEBA) as mock_buscar,
     ):
-        respuesta = cliente.get("/administracion/ingresos")
+        respuesta = cliente.get("/administracion/ingresos/pagar")
 
     assert respuesta.status_code == 200
     # Default: últimas 48hs y SOLO lo que hay que pagar (recepcionadas,
@@ -12572,7 +12571,7 @@ def test_ver_ingresos_deposito_estado_todas_pasa_none_a_la_consulta():
         patch("app.main.buscar_ingresos_deposito", return_value=[]) as mock_buscar,
     ):
         respuesta = cliente.get(
-            "/administracion/ingresos?fecha_desde=2026-08-10&fecha_hasta=2026-08-12&estado=todas&proveedor_id=7"
+            "/administracion/ingresos/pagar?fecha_desde=2026-08-10&fecha_hasta=2026-08-12&estado=todas&proveedor_id=7"
         )
 
     assert respuesta.status_code == 200
@@ -12591,7 +12590,7 @@ def test_ver_ingresos_deposito_cortada_por_el_tope_avisa_y_oculta_totales():
         patch("app.main.buscar_ingresos_deposito", return_value=muchos),
         patch("app.main.contar_ingresos_deposito", return_value=1200) as mock_contar,
     ):
-        respuesta = cliente.get("/administracion/ingresos")
+        respuesta = cliente.get("/administracion/ingresos/pagar")
 
     assert respuesta.status_code == 200
     assert f"Se muestran los primeros {TOPE_FILAS_BUSQUEDA} ingresos de 1200" in respuesta.text
@@ -22455,6 +22454,69 @@ def test_con_compras_el_proveedor_suelto_NO_alcanza_para_guardar():
     mock_crear.assert_not_called()
 
 
+OTRA_COMPRA_DEL_ARTICULO = {
+    "compra_id": 600, "fecha_operacion": date(2026, 8, 20),
+    "proveedor_id": 202, "proveedor_nombre": "Proveedor de EJEMPLO Tres", "codigo_puesto": "N01P01",
+    "cajones_de_la_compra": 12.0, "articulo_id": 2,
+}
+
+
+def test_la_devolucion_por_rechazo_acepta_OTRA_compra_recibida_del_articulo():
+    """Dueño, 30/09: viene elegida la que usó el armado, y se puede cambiar
+    por cualquier otra compra recibida de ESE artículo. Lo que la pantalla
+    ofrece es lo que el POST acepta: las dos salen de la misma función."""
+    with (
+        patch("app.main.obtener_renglon_para_reingreso", return_value=dict(RENGLON_REINGRESO_DE_PRUEBA)),
+        patch("app.main._costo_congelado_para_reingreso", return_value=2000.0),
+        patch("app.main.crear_movimiento_stock") as mock_crear,
+        patch("app.main.compras_que_alimentaron_el_renglon", return_value=COMPRAS_DEL_RENGLON_DE_PRUEBA),
+        patch("app.main.compras_recibidas_del_articulo", return_value=[OTRA_COMPRA_DEL_ARTICULO]) as recibidas,
+        patch("app.main._hoy_argentina", return_value=date(2026, 8, 25)),
+    ):
+        respuesta = cliente.post(
+            "/deposito/stock/reingreso",
+            data={"renglon_id": "77", "cantidad": "4", "motivo": "rechazado por calidad",
+                  "fecha": "2026-08-24", "destino": "devolucion_proveedor",
+                  "compra_devolucion_id": "600"},
+            follow_redirects=False,
+        )
+
+    assert respuesta.status_code == 303
+    assert mock_crear.call_args.kwargs["compra_devolucion_id"] == 600
+    # Las del ARTÍCULO del renglón, no de cualquiera.
+    assert recibidas.call_args.args[0] == RENGLON_REINGRESO_DE_PRUEBA["articulo_id"]
+    legible = urllib.parse.unquote_plus(respuesta.headers["location"])
+    assert "Proveedor de EJEMPLO Tres (compra del 20/08)" in legible
+
+
+def test_la_pantalla_del_rechazo_PRESELECCIONA_la_del_armado_y_lista_las_OTRAS_aparte():
+    with (
+        patch("app.main.obtener_renglon_para_reingreso", return_value=dict(RENGLON_REINGRESO_DE_PRUEBA)),
+        patch("app.main._costo_congelado_para_reingreso", return_value=2000.0),
+        patch("app.main.crear_movimiento_stock"),
+        patch("app.main.listar_todos_los_proveedores", return_value=PROVEEDORES_DE_PRUEBA),
+        patch("app.main.compras_que_alimentaron_el_renglon", return_value=COMPRAS_DEL_RENGLON_DE_PRUEBA),
+        patch("app.main.compras_recibidas_del_articulo",
+              return_value=[OTRA_COMPRA_DEL_ARTICULO, dict(COMPRAS_DEL_RENGLON_DE_PRUEBA[0])]),
+        patch("app.main._hoy_argentina", return_value=date(2026, 8, 25)),
+    ):
+        respuesta = cliente.post(
+            "/deposito/stock/reingreso",
+            data={"renglon_id": "77", "cantidad": "4", "motivo": "",
+                  "destino": "devolucion_proveedor"},
+            follow_redirects=False,
+        )
+
+    assert respuesta.status_code == 400
+    marcado = respuesta.text.split("</style>")[-1]
+    assert re.search(r'<option value="501" selected>', marcado)
+    otras = marcado.split('<optgroup label="Otras compras de')[1].split("</optgroup>")[0]
+    assert '<option value="600" >' in otras
+    # La que ya está arriba no se repite abajo.
+    assert 'value="501"' not in otras
+    assert marcado.count('value="501"') == 1
+
+
 def test_la_pantalla_de_devolucion_OFRECE_las_compras_con_sus_bultos_y_esconde_el_select():
     """Lo que el operario tiene adelante. Las dos mitades hacen falta: que
     las compras estén Y que el select suelto NO — dejarlo a la vista sería
@@ -22481,12 +22543,10 @@ def test_la_pantalla_de_devolucion_OFRECE_las_compras_con_sus_bultos_y_esconde_e
     marcado = respuesta.text.split("</style>")[-1]
     # Por el ATRIBUTO y no por el texto: un comentario que explique la
     # pantalla nombra las mismas palabras (corolario 38).
-    assert 'name="compra_devolucion_id" value="501"' in marcado
-    assert 'name="compra_devolucion_id" value="502"' in marcado
-    # Con sus bultos a la vista, y contra el total armado: un "20" solo no
-    # se puede leer.
-    assert "puso 20 de los 25 bultos armados" in marcado
-    assert "puso 5 de los 25 bultos armados" in marcado
+    assert '<select id="compra_devolucion_id" name="compra_devolucion_id">' in marcado
+    # LA SUGERIDA VIENE ELEGIDA (dueño, 30/09): la que más bultos puso.
+    assert re.search(r'<option value="501" selected>[^<]*puso 20 de 25', marcado)
+    assert re.search(r'<option value="502" >[^<]*puso 5 de 25', marcado)
     assert "Proveedor de EJEMPLO Uno (N07P41)" in marcado
     assert "Proveedor de EJEMPLO Dos (N09P37)" in marcado
     # Y el select suelto NO está: con compras, el proveedor sale de la compra.
@@ -22551,18 +22611,9 @@ def test_el_reintento_de_la_devolucion_NO_pierde_la_compra_elegida():
 
     assert respuesta.status_code == 400
     marcado = respuesta.text.split("</style>")[-1]
-    # Por regex y no por substring: el `checked` va en la línea de abajo del
-    # value, y un assert que los pide pegados falla por el salto de línea.
-    assert re.search(r'value="502"\s+checked', marcado)
-    assert not re.search(r'value="501"\s+checked', marcado)
-    # Y el tilde llega a la TARJETA, no solo al radio: el estado de un
-    # control es CSS (corolario 32), y el borde azul es lo que se ve.
-    # Pegado al radio del 502, no un conteo: la tarjeta del DESTINO también
-    # está elegida, así que contar "elegido" a secas pasaría igual con el
-    # tilde puesto en la compra equivocada.
-    assert re.search(r'class="destino elegido"[^>]*>\s*<input type="radio" '
-                     r'name="compra_devolucion_id" value="502"', marcado)
-
+    # Gana la que ELIGIÓ la persona, no la sugerida.
+    assert re.search(r'<option value="502" selected>', marcado)
+    assert not re.search(r'<option value="501" selected>', marcado)
 
 def test_reingreso_a_segunda_manda_los_bultos_al_pool_y_lo_dice_en_el_aviso():
     # El destino se elige al cargar: "pasa a segunda tal cual" manda los
@@ -28477,6 +28528,9 @@ def test_todos_los_tipos_de_salida_posibles_tienen_prioridad_DECIDIDA():
         # cambia un COMPORTAMIENTO no agrega ninguna columna— mordiendo al
         # test que existe justo para esto.
         "pase_a_segunda",
+        # 30/09: lo que queda en el piso y se le devuelve al proveedor. Es
+        # salida (cantidad negativa) y va DIRIGIDA a su compra.
+        "devolucion_deposito",
     }, del_check
 
     # Los otros dos tipos de salida son literales de la consulta.

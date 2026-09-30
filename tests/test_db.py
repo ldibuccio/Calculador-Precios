@@ -5633,7 +5633,10 @@ def test_entradas_y_salidas_para_fifo_ordena_por_fecha_real_del_hecho():
     consulta_salidas = _consulta_con(cursor, "'reproceso_toma'")
     assert "DISTINCT ON (cliente_id, fecha_operacion)" in consulta_salidas
     assert "m.cantidad < 0" in consulta_salidas
-    assert "m.lote_tipo, m.lote_origen_id" in consulta_salidas
+    # Las dirigidas viajan con su lote; la devolución desde depósito (30/09)
+    # se dirige a SU compra con el mismo par de columnas.
+    assert "ELSE m.lote_tipo END" in consulta_salidas
+    assert "ELSE m.lote_origen_id END" in consulta_salidas
     assert salidas == []
 
     # Y la entrada viaja con su "orden" ya armado, para que ninguna pantalla
