@@ -4316,7 +4316,11 @@ arrancó", sus "esperando" y la regla de la fecha— **se fue**.
   La frase la arma el campo `texto` de `DefinicionAlerta`. Gerencia y
   Administración estrenaron su pantalla de Alertas (`/gerencia/alertas`,
   `/administracion/alertas`), y los cuatro hubs dicen en el botón cuántas
-  tienen casos (`templates/_boton_alertas.html`). Desde Compras y Gerencia el
+  tienen casos (`templates/_boton_alertas.html`). Las cuatro pantallas de
+  Alertas traen "Recalcular ahora" desde el 30/09 (dueño): hasta ese día el
+  botón estaba solo en Auditoría. Recalcula TODAS con la misma función que
+  Auditoría (`_recalcular_alertas_a_pedido`) y vuelve a la pantalla del
+  sector; la de Gerencia pregunta su clave en la ruta. Desde Compras y Gerencia el
   link va a su propia pantalla de Alertas, que lista los proveedores: Vacíos
   está detrás de la clave de Administración (corolario 56). Y una alerta
   que el registro tiene y la foto no se calcula en el tick siguiente, sin

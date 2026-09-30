@@ -17654,6 +17654,10 @@ def _pantalla_de_alertas(request: Request, sector: str, nombre: str, volver: str
             "sector": sector,
             "modulo_nombre": nombre,
             "volver": volver,
+            # Lo que dejó el botón de recalcular. Se lee acá y no en cada
+            # ruta: un `?error=` que el GET no lee es un error mudo.
+            "aviso": request.query_params.get("aviso"),
+            "error": request.query_params.get("error"),
         },
     )
 
@@ -17725,6 +17729,28 @@ def ver_auditoria(request: Request, aviso: str | None = None, error: str | None 
     )
 
 
+def _recalcular_alertas_a_pedido() -> dict:
+    """Recalcula TODAS las alertas ahora y devuelve el mensaje para la pantalla.
+
+    La usan Auditoría y las Alertas de cada sector: el mismo botón en cinco
+    lugares, y el cálculo y sus tres mensajes escritos UNA vez. Devuelve
+    {"aviso": ...} o {"error": ...}, listo para el `?` del redirect.
+
+    Recalcula todas y no solo las del sector: son una sola corrida con un
+    solo candado, y el banner de los otros sectores también se refresca.
+    """
+    try:
+        resumen = recalcular(ALERTAS)
+    except Exception as error_db:
+        return {"error": f"No se pudieron recalcular las alertas: {error_db}"}
+    if not resumen["corrio"]:
+        return {"aviso": "Ya se estaban recalculando en este momento. Probá de nuevo en un rato."}
+    if resumen["fallaron"]:
+        return {"error": f"Se recalcularon {resumen['ok']}, pero {resumen['fallaron']} "
+                         "no se pudieron calcular (quedaron con su valor viejo)."}
+    return {"aviso": f"Listo: {resumen['ok']} controles recalculados."}
+
+
 @app.post("/auditoria/recalcular")
 def recalcular_alertas_ruta():
     """Recalcula las alertas ahora, a pedido: arreglé algo y quiero confirmarlo sin esperar.
@@ -17733,29 +17759,29 @@ def recalcular_alertas_ruta():
     Si el bucle de fondo ya está recalculando, el candado lo detecta y avisa en
     vez de duplicar el trabajo.
     """
-    try:
-        resumen = recalcular(ALERTAS)
-    except Exception as error_db:
-        return RedirectResponse(
-            url="/auditoria?" + urlencode({"error": f"No se pudieron recalcular las alertas: {error_db}"}),
-            status_code=303,
-        )
-    if not resumen["corrio"]:
-        return RedirectResponse(
-            url="/auditoria?" + urlencode({"aviso": "Ya se estaban recalculando en este momento. Probá de nuevo en un rato."}),
-            status_code=303,
-        )
-    if resumen["fallaron"]:
-        return RedirectResponse(
-            url="/auditoria?" + urlencode({
-                "error": f"Se recalcularon {resumen['ok']}, pero {resumen['fallaron']} no se pudieron calcular (quedaron con su valor viejo)."
-            }),
-            status_code=303,
-        )
-    return RedirectResponse(
-        url="/auditoria?" + urlencode({"aviso": f"Listo: {resumen['ok']} controles recalculados."}),
-        status_code=303,
-    )
+    return RedirectResponse(url="/auditoria?" + urlencode(_recalcular_alertas_a_pedido()),
+                            status_code=303)
+
+
+# EL MISMO BOTÓN EN LAS ALERTAS DE CADA SECTOR (dueño, 30/09): desde que
+# Gerencia y Administración tienen su pantalla de Alertas, el que las mira ahí
+# no tenía cómo recalcular sin ir a Auditoría. Una ruta por sector y no una
+# sola con `?volver=`: el sector sale del prefijo, igual que la puerta
+# (corolario 63). Compras y Administración las cierra el middleware de su
+# prefijo; Gerencia no tiene middleware, y la puerta se pregunta acá.
+@app.post("/compras/alertas/recalcular")
+@app.post("/comercial/alertas/recalcular")
+@app.post("/gerencia/alertas/recalcular")
+@app.post("/administracion/alertas/recalcular")
+def recalcular_alertas_del_sector(request: Request):
+    """Recalcula y vuelve a las Alertas del sector desde el que se apretó."""
+    sector = request.url.path.split("/")[1]
+    if sector == "gerencia":
+        bloqueo = _puerta_de_gerencia_para_escribir(request)
+        if bloqueo is not None:
+            return bloqueo
+    return RedirectResponse(url=f"/{sector}/alertas?" + urlencode(_recalcular_alertas_a_pedido()),
+                            status_code=303)
 
 
 def _margenes_por_fecha(cliente_id: int, fechas) -> dict:
