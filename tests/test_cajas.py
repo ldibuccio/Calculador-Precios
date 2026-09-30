@@ -772,11 +772,15 @@ def test_la_alerta_manda_a_CAJAS_que_es_donde_se_repone():
     from app.main import ALERTAS
 
     alerta = next(a for a in ALERTAS if a.codigo == "cajas_a_reponer")
-    assert alerta.modulos == ("compras",)
-    # UN SOLO SECTOR, así que no necesita destinos_por_sector: la acción
-    # (comprar cajas) vive en Compras y no se mueve.
-    assert alerta.destinos_por_sector == {}
+    # TRES SECTORES desde el 30/09 (dueño): hasta ese día era solo Compras y
+    # en las Alertas de Gerencia y Administración no aparecía nunca.
+    assert alerta.modulos == ("compras", "gerencia", "administracion")
     assert alerta.url == "/compras/cajas"
+    # Cada uno a SU puerta: el link de Compras choca contra una clave ajena.
+    assert alerta.destinos_por_sector == {
+        "gerencia": ("/gerencia/alertas", "Ver cuál es"),
+        "administracion": ("/administracion/cajas", "Ver en Cajas"),
+    }
 
 
 def test_el_detalle_dice_CUANTAS_FALTAN_y_no_solo_cuales():
