@@ -23,6 +23,7 @@ from datetime import date, datetime, time, timedelta, timezone
 from urllib.parse import urlencode
 from uuid import uuid4
 
+from starlette.datastructures import UploadFile as StarletteUploadFile
 from fastapi import FastAPI, File, Form, HTTPException, Query, Request, UploadFile
 from fastapi.responses import JSONResponse, RedirectResponse, Response
 from fastapi.templating import Jinja2Templates
@@ -411,6 +412,7 @@ from app.db import (
     agregar_foto_recepcion,
     borrar_foto_recepcion,
     listar_fotos_de_recepcion,
+    fotos_de_recepcion_por_compra,
     marca_en_origen_de_la_compra,
     cambiar_proveedor_de_compra,
     frenos_para_cambiar_proveedor,
@@ -11150,10 +11152,12 @@ AVISO_INGRESO_DIRECTO_SIN_PRECIO = "Ingresada sin precio. El comprador tiene que
 
 
 def _con_codigo_llegada(proveedor: dict, codigo: str | None) -> dict:
-    """Le pone al proveedor del ingreso directo el puesto por el que llegó.
+    """Le pone al proveedor el puesto por el que llegó.
 
-    El ingreso directo es de dos pasos, y el segundo solo sabe el proveedor:
-    el código tipeado en el primero viaja en la URL y en un campo escondido.
+    `/compras/nueva` es de dos pasos, y el segundo solo sabe el proveedor: el
+    código tipeado en el primero viaja en la URL y en un campo escondido. El
+    ingreso directo lo usa para precargar el puesto al volver de "Guardar y
+    agregar otro artículo".
     Viaja ADENTRO del dict del proveedor y no aparte porque así lo llevan
     solas todas las ramas que vuelven a dibujar el formulario (corolario 43).
     Devuelve una COPIA: el que lo pidió puede estar compartiendo ese dict.
@@ -11163,6 +11167,78 @@ def _con_codigo_llegada(proveedor: dict, codigo: str | None) -> dict:
     return {**proveedor, "codigo_llegada": (codigo or "").strip().upper() or proveedor["codigo_puesto"]}
 
 
+# CAMPOS DEL FORMULARIO del ingreso directo que vuelven cargados cuando el
+# guardado rebota (corolario 43: el que corrige el campo señalado no vuelve a
+# revisar los demás). Una sola lista para todas las ramas de error.
+CAMPOS_INGRESO_DIRECTO = (
+    "codigo_puesto", "nombre", "articulo_id", "cantidad_cajones", "contenido_por_cajon",
+    "segunda_por_cajon", "tipo_retiro", "ficha_en_origen_id", "sena", "marca",
+)
+
+
+def _renderizar_ingreso_directo(
+    request: Request, *, proveedor: dict | None = None, form: dict | None = None,
+    error: str | None = None, aviso: str | None = None, parecidos: list[dict] | None = None,
+    status_code: int = 200,
+):
+    """La pantalla ÚNICA del ingreso directo: proveedor arriba, mercadería abajo, un Guardar.
+
+    Hasta el 30/09 eran dos (elegir el proveedor, y después cargar), igual
+    que la carga manual de Compras antes de unirse. Con `proveedor` —el que
+    vuelve de "Guardar y agregar otro", o el que el código tipeado ya
+    nombra— se precargan sus dos campos y se muestra lo cargado hoy.
+    """
+    form = form or {}
+    if proveedor is None and form.get("codigo_puesto"):
+        # El que rebotó por un campo de la mercadería sigue viendo lo que ya
+        # cargó hoy de ese proveedor. Es un extra: si no se puede leer, no.
+        try:
+            error_codigo, codigo = _validar_codigo_puesto(form["codigo_puesto"])
+            proveedor = None if error_codigo else buscar_proveedor_por_codigo(codigo)
+        except Exception:
+            logger.exception("No se pudo leer el proveedor para mostrar lo cargado hoy")
+            proveedor = None
+    try:
+        proveedores = listar_proveedores()
+        articulos = listar_articulos()
+        renglones_hoy = (
+            listar_compras_por_fecha_y_proveedor(_hoy_argentina(), proveedor["id"]) if proveedor else []
+        )
+        fotos = fotos_de_recepcion_por_compra([r["id"] for r in renglones_hoy])
+    except Exception as error_db:
+        raise HTTPException(status_code=500, detail=f"Error al conectar con la base de datos: {error_db}") from error_db
+    for renglon in renglones_hoy:
+        renglon["fotos_pesada"] = fotos.get(renglon["id"], [])
+
+    compra = None
+    if any(form.get(campo) for campo in CAMPOS_INGRESO_DIRECTO if campo not in ("codigo_puesto", "nombre")):
+        compra = {campo: form.get(campo, "") for campo in CAMPOS_INGRESO_DIRECTO}
+        try:
+            compra["articulo_id"] = int(compra["articulo_id"])
+        except (TypeError, ValueError):
+            compra["articulo_id"] = None
+
+    return templates.TemplateResponse(
+        request,
+        "deposito_ingresar.html",
+        {
+            "proveedores": proveedores,
+            "articulos": articulos,
+            "compra": compra,
+            "proveedor": proveedor,
+            "codigo_puesto_sugerido": form.get("codigo_puesto") or (proveedor or {}).get("codigo_llegada")
+                                      or (proveedor or {}).get("codigo_puesto") or "",
+            "nombre_sugerido": form.get("nombre") or (proveedor or {}).get("nombre") or "",
+            "renglones_hoy": renglones_hoy,
+            "marcas_vacio": _marcas_sugeridas(proveedor["id"]) if proveedor else [],
+            "parecidos": parecidos or [],
+            "error": error,
+            "aviso": aviso,
+        },
+        status_code=status_code,
+    )
+
+
 @app.get("/deposito/ingresar")
 def ver_ingresar_mercaderia(
     request: Request, proveedor_id: int | None = None, error: str | None = None, aviso: str | None = None,
@@ -11170,99 +11246,56 @@ def ver_ingresar_mercaderia(
 ):
     """Ingreso directo de mercadería que ya está en el depósito, sin pasar por Logística ni Recepción.
 
-    Mismo patrón de dos pasos que /compras/nueva (elegir o cargar
-    proveedor, después sumar artículos uno a la vez) — pero pantalla
-    propia, sin campo de precio: eso lo carga el comprador después (ver
-    ingresar_mercaderia).
+    UNA SOLA PANTALLA desde el 30/09 (dueño): proveedor arriba y mercadería
+    abajo, como la carga manual de Compras. Sin campo de precio: eso lo
+    carga el comprador después (ver ingresar_mercaderia). `proveedor_id` y
+    `codigo` solo precargan el proveedor, que es como vuelve "Guardar y
+    agregar otro artículo".
     """
-    if proveedor_id is None:
+    proveedor = None
+    if proveedor_id is not None:
         try:
-            proveedores = listar_proveedores()
+            proveedor = obtener_proveedor(proveedor_id)
         except Exception as error_db:
             raise HTTPException(status_code=500, detail=f"Error al conectar con la base de datos: {error_db}") from error_db
-
-        return templates.TemplateResponse(
-            request,
-            "deposito_ingresar_proveedor.html",
-            {"proveedores": proveedores, "error": error},
-        )
-
-    try:
-        proveedor = obtener_proveedor(proveedor_id)
-    except Exception as error_db:
-        raise HTTPException(status_code=500, detail=f"Error al conectar con la base de datos: {error_db}") from error_db
-
-    if proveedor is None:
-        raise HTTPException(status_code=404, detail="Proveedor no encontrado")
-    proveedor = _con_codigo_llegada(proveedor, codigo)
-
-    try:
-        articulos = listar_articulos()
-        renglones_hoy = listar_compras_por_fecha_y_proveedor(_hoy_argentina(), proveedor_id)
-    except Exception as error_db:
-        raise HTTPException(status_code=500, detail=f"Error al conectar con la base de datos: {error_db}") from error_db
-
-    return templates.TemplateResponse(
-        request,
-        "deposito_ingresar.html",
-        {
-            "articulos": articulos,
-            "compra": None,
-            "proveedor": proveedor,
-            "renglones_hoy": renglones_hoy,
-            "marcas_vacio": _marcas_sugeridas(proveedor_id),
-            "error": error,
-            "aviso": aviso,
-        },
-    )
+        if proveedor is None:
+            raise HTTPException(status_code=404, detail="Proveedor no encontrado")
+        proveedor = _con_codigo_llegada(proveedor, codigo)
+    return _renderizar_ingreso_directo(request, proveedor=proveedor, error=error, aviso=aviso)
 
 
-@app.post("/deposito/ingresar/proveedor")
-def elegir_proveedor_ingreso_directo(request: Request, codigo_puesto: str = Form(""), nombre: str = Form("")):
-    """Confirma o crea el proveedor para /deposito/ingresar — mismo mecanismo que /compras/nueva/proveedor
-    (obtener_o_crear_proveedor_por_codigo): la mercadería que entra fuera de hora puede venir justo de
-    un proveedor que nunca se compró, así que Depósito tiene que poder cargarlo, no solo elegir uno
-    existente.
+@app.get("/deposito/ingresar/parecidos")
+def parecidos_del_ingreso_directo(codigo: str = "", nombre: str = ""):
+    """Los proveedores con un nombre parecido, para el modal ANTES de guardar.
+
+    Lo pregunta la pantalla al apretar Guardar, cuando el código tipeado no
+    es de nadie: así el modal sale sin perder las fotos elegidas, que un
+    formulario vuelto a dibujar por el servidor no puede conservar. La MISMA
+    pregunta la hace el POST (`_parecidos_si_el_codigo_es_nuevo`), que es el
+    que decide: un formulario armado a mano pasa por el modal igual.
     """
-    error, codigo_valor = _validar_codigo_puesto(codigo_puesto)
-
-    nombre_valor = nombre
-    if not error:
-        error, nombre_valor = _validar_nombre(nombre)
-
-    if error:
-        try:
-            proveedores = listar_proveedores()
-        except Exception:
-            proveedores = []
-        return templates.TemplateResponse(
-            request,
-            "deposito_ingresar_proveedor.html",
-            {"proveedores": proveedores, "error": error},
-            status_code=400,
-        )
-
+    error_codigo, codigo_valor = _validar_codigo_puesto(codigo)
+    nombre_limpio = re.sub(r"\s+", " ", nombre).strip()
+    if error_codigo or not nombre_limpio:
+        return {"parecidos": []}
     try:
-        proveedor_id, reactivado = obtener_o_crear_proveedor_por_codigo(codigo_valor, nombre_valor)
+        parecidos = _parecidos_si_el_codigo_es_nuevo(codigo_valor, nombre_limpio)
     except Exception as error_db:
-        try:
-            proveedores = listar_proveedores()
-        except Exception:
-            proveedores = []
-        return templates.TemplateResponse(
-            request,
-            "deposito_ingresar_proveedor.html",
-            {"proveedores": proveedores, "error": f"No se pudo guardar el proveedor: {error_db}"},
-            status_code=500,
-        )
+        raise HTTPException(status_code=500, detail=f"Error al conectar con la base de datos: {error_db}") from error_db
+    return {"parecidos": [{"id": p["id"], "nombre": p["nombre"], "codigo_puesto": p["codigo_puesto"]}
+                          for p in parecidos]}
 
-    # EL CÓDIGO VIAJA al paso siguiente: es el puesto por el que llegó, y los
-    # renglones se cargan en otra pantalla que solo sabe el proveedor.
-    parametros = {"proveedor_id": proveedor_id, "codigo": codigo_valor}
-    aviso_reactivado = _aviso_proveedor_reactivado(reactivado, nombre_valor)
-    if aviso_reactivado:
-        parametros["aviso"] = aviso_reactivado
-    return RedirectResponse(url=f"/deposito/ingresar?{urlencode(parametros)}", status_code=303)
+
+def _parecidos_si_el_codigo_es_nuevo(codigo: str, nombre: str) -> list[dict]:
+    """Los parecidos que justifican preguntar: SOLO si el código no es de nadie.
+
+    Un código que ya existe no crea ningún proveedor, así que no hay nada que
+    preguntar. La regla de "parecido" es la de Compras → Proveedores
+    (`nombres_parecidos`), no una copia.
+    """
+    if buscar_proveedor_por_codigo(codigo) is not None:
+        return []
+    return nombres_parecidos(nombre, listar_proveedores_para_abm())
 
 
 def _marcas_sugeridas(proveedor_id: int) -> list[dict]:
@@ -11277,10 +11310,32 @@ def _marcas_sugeridas(proveedor_id: int) -> list[dict]:
         return []
 
 
+async def _fotos_de_pesada_comprimidas(fotos: list[UploadFile]) -> tuple[str | None, list[bytes]]:
+    """(error, fotos comprimidas). Se validan TODAS antes de subir la primera.
+
+    Un campo de archivo que el navegador manda vacío no es una foto: se
+    saltea. Uno con contenido que no es imagen frena todo, así no queda una
+    compra con la mitad de sus fotos.
+    """
+    comprimidas = []
+    for foto in fotos or []:
+        crudo = await foto.read()
+        if not crudo:
+            continue
+        comprimida = _comprimir_foto_jpeg(crudo)
+        if comprimida is None:
+            return f"«{foto.filename or 'Un archivo'}» no es una foto. No se guardó nada.", []
+        comprimidas.append(comprimida)
+    return None, comprimidas
+
+
 @app.post("/deposito/ingresar")
-def ingresar_mercaderia(
+async def ingresar_mercaderia(
     request: Request,
-    proveedor_id: int = Form(...),
+    codigo_puesto: str = Form(""),
+    nombre: str = Form(""),
+    es_otro: str = Form(""),
+    mismo_que: str = Form(""),
     accion: str = Form("agregar"),
     articulo_id: str = Form(""),
     cantidad_cajones: str = Form(""),
@@ -11288,11 +11343,10 @@ def ingresar_mercaderia(
     segunda_por_cajon: str = Form(""),
     tipo_retiro: str = Form("Clark"),
     ficha_en_origen_id: str = Form(""),
-    codigo_llegada: str = Form(""),
     sena: str = Form(""),
     marca: str = Form(""),
 ):
-    """Agrega un artículo ya recibido en Depósito, sin pasar por Logística ni por Recepción.
+    """Guarda en UN paso el proveedor y un artículo ya recibido en Depósito, con sus fotos de la pesada.
 
     Mismos validadores que agregar_compra (_validar_compra_nueva_form),
     con el importe vacío siempre: el precio lo carga el comprador después.
@@ -11301,19 +11355,47 @@ def ingresar_mercaderia(
     crear_compra hace el resto con ingreso_directo_deposito=True:
     la compra nace 'recepcionado'/'retirado', con las cantidades reales
     iguales a las cargadas (no hay estimado previo).
+
+    EL ORDEN ES LO QUE IMPORTA: todo lo que puede rebotar (el proveedor, la
+    mercadería, las fotos, el modal de nombres parecidos) se valida ANTES de
+    escribir nada. Recién ahí se crea el proveedor si hace falta, se suben
+    las fotos y se guarda la compra con ellas en una transacción.
+
+    LAS FOTOS SON LAS DE SIEMPRE (dueño, 30/09): van a `fotos_recepcion`, la
+    tabla que ven Recepción y el detalle de la compra. No son obligatorias.
+    Se leen del formulario a mano y no con un parámetro `list[UploadFile]`:
+    un campo de archivo que el navegador manda sin nada elegido llega como
+    texto vacío, y el parámetro tipado lo rechazaba con un 422.
     """
+    fotos = [f for f in (await request.form()).getlist("fotos") if isinstance(f, StarletteUploadFile)]
     renglon_vacio = not any(campo.strip() for campo in (articulo_id, cantidad_cajones, contenido_por_cajon))
     if accion == "terminar" and renglon_vacio:
         return RedirectResponse(url="/deposito", status_code=303)
 
-    try:
-        proveedor = obtener_proveedor(proveedor_id)
-    except Exception as error_db:
-        raise HTTPException(status_code=500, detail=f"Error al conectar con la base de datos: {error_db}") from error_db
+    form = {
+        "codigo_puesto": codigo_puesto, "nombre": nombre, "articulo_id": articulo_id,
+        "cantidad_cajones": cantidad_cajones, "contenido_por_cajon": contenido_por_cajon,
+        "segunda_por_cajon": segunda_por_cajon, "tipo_retiro": tipo_retiro,
+        "ficha_en_origen_id": ficha_en_origen_id, "sena": sena, "marca": marca,
+    }
+    fotos_elegidas = sum(1 for f in fotos or [] if f.filename)
 
-    if proveedor is None:
-        raise HTTPException(status_code=404, detail="Proveedor no encontrado")
-    proveedor = _con_codigo_llegada(proveedor, codigo_llegada)
+    def rebote(error: str, status_code: int, parecidos: list[dict] | None = None):
+        # Un archivo no se puede volver a poner en un formulario dibujado por
+        # el servidor. Si había fotos elegidas se dice, en vez de dejar que
+        # el que corrige crea que siguen ahí.
+        if fotos_elegidas and not parecidos:
+            error = f"{error} Las fotos de la pesada no se guardaron: agregalas de nuevo."
+        return _renderizar_ingreso_directo(
+            request, form=form, error=error, parecidos=parecidos, status_code=status_code
+        )
+
+    error, codigo_valor = _validar_codigo_puesto(codigo_puesto)
+    nombre_valor = nombre
+    if not error:
+        error, nombre_valor = _validar_nombre(nombre)
+    if error:
+        return rebote(error, 400)
 
     error, valores = _validar_compra_nueva_form(
         articulo_id, cantidad_cajones, contenido_por_cajon, "", sena, tipo_retiro, ficha_en_origen_id,
@@ -11325,32 +11407,7 @@ def ingresar_mercaderia(
         try:
             articulo = obtener_articulo(valores["articulo_id"])
         except Exception as error_db:
-            articulos = listar_articulos()
-            renglones_hoy = listar_compras_por_fecha_y_proveedor(_hoy_argentina(), proveedor_id)
-            compra = {
-                "id": None,
-                "articulo_id": valores["articulo_id"],
-                "cantidad_cajones": cantidad_cajones,
-                "contenido_por_cajon": contenido_por_cajon,
-                "segunda_por_cajon": segunda_por_cajon,
-                "tipo_retiro": tipo_retiro,
-                "ficha_en_origen_id": ficha_en_origen_id,
-                "sena": sena,
-                "marca": marca,
-            }
-            return templates.TemplateResponse(
-                request,
-                "deposito_ingresar.html",
-                {
-                    "articulos": articulos,
-                    "compra": compra,
-                    "proveedor": proveedor,
-                    "renglones_hoy": renglones_hoy,
-                    "error": f"No se pudo leer el artículo: {error_db}",
-                },
-                status_code=500,
-            )
-
+            return rebote(f"No se pudo leer el artículo: {error_db}", 500)
         if articulo is None:
             error = "El artículo elegido no es válido."
     # LA SEGUNDA MAGNITUD SE VALIDA ACÁ Y NO EN EL FORM, y es por el orden:
@@ -11360,39 +11417,48 @@ def ingresar_mercaderia(
         error, valores["segunda_por_cajon"] = _validar_segunda_magnitud(
             valores["segunda_por_cajon_texto"], segunda_magnitud_del_articulo(articulo)
         )
-
     if error:
-        articulos = listar_articulos()
-        renglones_hoy = listar_compras_por_fecha_y_proveedor(_hoy_argentina(), proveedor_id)
-        compra = {
-            "id": None,
-            "articulo_id": valores["articulo_id"],
-            "cantidad_cajones": cantidad_cajones,
-            "contenido_por_cajon": contenido_por_cajon,
-            "segunda_por_cajon": segunda_por_cajon,
-            "tipo_retiro": tipo_retiro,
-            "ficha_en_origen_id": ficha_en_origen_id,
-            "sena": sena,
-            "marca": marca,
-        }
-        return templates.TemplateResponse(
-            request,
-            "deposito_ingresar.html",
-            {
-                "articulos": articulos,
-                "compra": compra,
-                "proveedor": proveedor,
-                "renglones_hoy": renglones_hoy,
-                "error": error,
-            },
-            status_code=400,
-        )
+        return rebote(error, 400)
 
-    cantidad_kilos, cantidad_fraccion, segunda_por_cajon = magnitudes_de_la_compra(
+    error, comprimidas = await _fotos_de_pesada_comprimidas(fotos)
+    if error:
+        return rebote(error, 400)
+
+    # NOMBRES PARECIDOS: la misma guarda que el alta de Compras →
+    # Proveedores, en el POST y no solo en la pantalla. Un código que no es
+    # de nadie con un nombre como el de otro proveedor puede ser el mismo
+    # proveedor por otro puesto (FRUTAMAX, 27/09).
+    mismo_que_id = None
+    if mismo_que.strip():
+        try:
+            mismo_que_id = int(mismo_que)
+        except ValueError:
+            return rebote("El proveedor elegido no es válido.", 400)
+    if mismo_que_id is None and not es_otro:
+        try:
+            parecidos = _parecidos_si_el_codigo_es_nuevo(codigo_valor, nombre_valor)
+        except Exception as error_db:
+            return rebote(f"No se pudo leer los proveedores: {error_db}", 500)
+        if parecidos:
+            return rebote("", 409, parecidos=parecidos)
+
+    try:
+        if mismo_que_id is not None and buscar_proveedor_por_codigo(codigo_valor) is None:
+            asociar_codigo_a_proveedor(mismo_que_id, codigo_valor)
+        proveedor_id, reactivado = obtener_o_crear_proveedor_por_codigo(codigo_valor, nombre_valor)
+    except ValueError as rechazo:
+        return rebote(str(rechazo), 400)
+    except Exception as error_db:
+        return rebote(f"No se pudo guardar el proveedor: {error_db}", 500)
+
+    cantidad_kilos, cantidad_fraccion, segunda_por_cajon_total = magnitudes_de_la_compra(
         articulo, valores["cantidad_cajones"], valores["contenido_por_cajon"], valores["segunda_por_cajon"]
     )
 
+    rutas: list[str] = []
     try:
+        for comprimida in comprimidas:
+            rutas.append(subir_foto_comanda(comprimida, f"balanza-{codigo_valor}", prefijo=PREFIJO_PESAJE))
         crear_compra(
             _hoy_argentina(),
             valores["articulo_id"],
@@ -11410,42 +11476,31 @@ def ingresar_mercaderia(
             # camino para registrar una entrada que ya viene armada sería la
             # guía R a mano.
             ficha_en_origen_id=valores["ficha_en_origen_id"],
-            segunda_por_cajon=segunda_por_cajon,
-            codigo_llegada=proveedor["codigo_llegada"],
+            segunda_por_cajon=segunda_por_cajon_total,
+            codigo_llegada=codigo_valor,
             marca=marca,
+            fotos_pesada=rutas,
         )
     except Exception as error_db:
-        articulos = listar_articulos()
-        renglones_hoy = listar_compras_por_fecha_y_proveedor(_hoy_argentina(), proveedor_id)
-        compra = {
-            "id": None,
-            "articulo_id": valores["articulo_id"],
-            "cantidad_cajones": cantidad_cajones,
-            "contenido_por_cajon": contenido_por_cajon,
-            "segunda_por_cajon": segunda_por_cajon,
-            "tipo_retiro": tipo_retiro,
-            "ficha_en_origen_id": ficha_en_origen_id,
-            "sena": sena,
-            "marca": marca,
-        }
-        return templates.TemplateResponse(
-            request,
-            "deposito_ingresar.html",
-            {
-                "articulos": articulos,
-                "compra": compra,
-                "proveedor": proveedor,
-                "renglones_hoy": renglones_hoy,
-                "error": f"No se pudo guardar la compra: {error_db}",
-            },
-            status_code=500,
-        )
+        # Lo que ya se subió al Storage no tiene fila que lo nombre: se borra.
+        for ruta in rutas:
+            try:
+                borrar_foto_comanda(ruta)
+            except Exception:
+                logger.exception("No se pudo borrar la foto de pesada huérfana %s", ruta)
+        return rebote(f"No se pudo guardar la compra: {error_db}", 500)
 
-    parametros = urlencode({"aviso": AVISO_INGRESO_DIRECTO_SIN_PRECIO})
+    avisos = [AVISO_INGRESO_DIRECTO_SIN_PRECIO]
+    if rutas:
+        avisos.append("Con 1 foto de la pesada." if len(rutas) == 1 else f"Con {len(rutas)} fotos de la pesada.")
+    aviso_reactivado = _aviso_proveedor_reactivado(reactivado, nombre_valor)
+    if aviso_reactivado:
+        avisos.append(aviso_reactivado)
+    parametros = urlencode({"aviso": " ".join(avisos)})
     if accion == "terminar":
         return RedirectResponse(url=f"/deposito?{parametros}", status_code=303)
 
-    parametros_proveedor = urlencode({"proveedor_id": proveedor_id, "codigo": proveedor["codigo_llegada"]})
+    parametros_proveedor = urlencode({"proveedor_id": proveedor_id, "codigo": codigo_valor})
     return RedirectResponse(url=f"/deposito/ingresar?{parametros_proveedor}&{parametros}", status_code=303)
 
 

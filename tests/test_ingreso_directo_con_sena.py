@@ -93,11 +93,12 @@ def test_CON_SENA_y_sin_marca_suma_a_sin_asignar(base):
 # --- la ruta ------------------------------------------------------------
 
 def _post(**datos):
-    base_datos = {"proveedor_id": "200", "accion": "agregar", "articulo_id": "5",
-                  "cantidad_cajones": "10", "contenido_por_cajon": "18", "tipo_retiro": "Clark",
-                  "codigo_llegada": "N07P41"}
+    base_datos = {"codigo_puesto": "N07P41", "nombre": "Saturno", "accion": "agregar", "articulo_id": "5",
+                  "cantidad_cajones": "10", "contenido_por_cajon": "18", "tipo_retiro": "Clark"}
     base_datos.update(datos)
-    with patch("app.main.obtener_proveedor", return_value=PROVEEDORES_DE_PRUEBA[0]), \
+    with patch("app.main.buscar_proveedor_por_codigo", return_value=PROVEEDORES_DE_PRUEBA[0]), \
+         patch("app.main.obtener_o_crear_proveedor_por_codigo", return_value=(200, False)), \
+         patch("app.main.listar_proveedores", return_value=PROVEEDORES_DE_PRUEBA), \
          patch("app.main.obtener_articulo", return_value=ARTICULOS_CON_UNIDAD_COMPRA[0]), \
          patch("app.main.listar_articulos", return_value=ARTICULOS_CON_UNIDAD_COMPRA), \
          patch("app.main.listar_compras_por_fecha_y_proveedor", return_value=[]), \

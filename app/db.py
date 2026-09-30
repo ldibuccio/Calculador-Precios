@@ -2622,8 +2622,16 @@ def crear_compra(
     segunda_por_cajon: float | None,
     codigo_llegada: str | None,
     marca: str | None = None,
-) -> None:
-    """Inserta una compra cargada por el comprador, con su guía asignada.
+    fotos_pesada: tuple[str, ...] | list[str] = (),
+) -> int:
+    """Inserta una compra cargada por el comprador, con su guía asignada. Devuelve su id.
+
+    `fotos_pesada` son las rutas (ya subidas al Storage) de las fotos de la
+    pesada que Depósito saca en el ingreso directo (dueño, 30/09). Van a
+    `fotos_recepcion` —la MISMA tabla que Recepción y el detalle de la
+    compra— y en la MISMA transacción que el INSERT: si la compra rebota, no
+    queda ninguna foto colgando de una compra que no existe. El default
+    vacío es a propósito: los demás caminos de carga no tienen pesada.
 
     `marca` es la del INGRESO DIRECTO (dueño, 28/09), que nace recibida y no
     pasa por Recepción: es la misma marca que Recepción escribe al recibir,
@@ -2726,7 +2734,38 @@ def crear_compra(
                     "UPDATE compras SET marca = %s, marca_vacio_id = %s WHERE id = %s",
                     (marca, _marca_vacio_del_texto(cursor, compra_id, marca), compra_id),
                 )
+            for foto_ruta in fotos_pesada:
+                cursor.execute(
+                    "INSERT INTO fotos_recepcion (compra_id, foto_ruta) VALUES (%s, %s) ON CONFLICT DO NOTHING",
+                    (compra_id, foto_ruta),
+                )
         conexion.commit()
+        return compra_id
+    finally:
+        conexion.close()
+
+
+def fotos_de_recepcion_por_compra(compra_ids: list[int]) -> dict[int, list[dict]]:
+    """Las fotos de la pesada de varias compras en UNA consulta: {compra_id: [fotos]}.
+
+    Para el "Cargado hoy" del ingreso directo, que las muestra por renglón.
+    Una compra sin fotos no aparece en el dict.
+    """
+    if not compra_ids:
+        return {}
+    conexion = obtener_conexion()
+    try:
+        with conexion.cursor() as cursor:
+            cursor.execute(
+                "SELECT compra_id, id, creado_en FROM fotos_recepcion "
+                "WHERE compra_id = ANY(%s) ORDER BY creado_en, id",
+                (list(compra_ids),),
+            )
+            filas = cursor.fetchall()
+        resultado: dict[int, list[dict]] = {}
+        for compra_id, foto_id, creado_en in filas:
+            resultado.setdefault(compra_id, []).append({"id": foto_id, "creado_en": creado_en})
+        return resultado
     finally:
         conexion.close()
 
