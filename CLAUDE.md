@@ -214,6 +214,22 @@ con el código arriba, un corte rompe ruidosamente o no rompe nada; con los
 comentarios arriba, el caso silencioso existe. No cuesta nada y se elige una
 sola vez.
 
+### La base de Frutamax se LEE, nunca se escribe (30/09, dueño)
+
+Claude tiene acceso de **solo lectura** a Frutamax, con el usuario
+`lectura_claude` (`db/lectura_1_usuario_solo_lectura.sql`, verificación en
+`lectura_2`). La conexión viene en la variable de entorno
+`LECTURA_FRUTAMAX_URL`, y la clave no pasa nunca por el chat.
+
+- **Sirve para verificar consultas contra los datos reales** antes de
+  mandarlas o de citar un número (corolario 85: la colisión va ANTES de leer
+  el número). El resultado se cita con la base y la fecha al lado.
+- **Las migraciones las sigue corriendo el dueño**, en el editor de Supabase
+  y en las dos bases, igual que antes. Claude no escribe, aunque pudiera, y
+  el usuario no puede: solo tiene SELECT, y eso lo sostienen los permisos,
+  no el `default_transaction_read_only`, que el mismo usuario se puede sacar.
+- **Palmala no tiene este acceso.** Ahí sigue todo por el dueño.
+
 ## Un `if not exists` sobre CONTENIDO es una trampa, no una protección
 
 Del 09/09. El bloque 2 de la migración de la merma de segunda crea el CHECK
