@@ -403,6 +403,11 @@ De acá en adelante, después de cualquier push que se dé por desplegado:
    un commit chico REAL, sellado, mergeado por rebase, que vuelve a mandar el
    aviso. Nunca un commit vacío: suma un commit que el sello no contó.
 
+   **EL CI SE ESPERA EN EL MISMO TURNO, sin recordatorios (30/09, dueño).**
+   Nada de `send_later` ni de ningún recordatorio o tarea programada: cada
+   uno le pide permiso al dueño. Si el CI tarda demasiado, el mensaje cierra
+   diciendo **"CI pendiente"**, y lo revisa él cuando vuelve.
+
 6. **Y ANTES DE REPORTAR, SE ABRE UNA DE LAS PANTALLAS QUE SE TOCARON.** Del
    20/09, y es del dueño: *"hoy dos veces me dijiste 'hecho' sobre cosas que
    yo no podía ver"*.
