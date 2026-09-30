@@ -62,6 +62,14 @@
   .aparte { margin: 1rem 0 0; color: #6b7280; }
   .aparte h3 { margin: 0 0 0.4rem; font-size: 0.9rem; font-weight: 600; line-height: 1.4; }
   .aparte td { color: #6b7280; }
+  /* RECALCULAR, grande y tocable con el pulgar: es el mismo botón de
+     Auditoría, para no tener que ir hasta allá (dueño, 30/09). */
+  .recalcular { display: block; width: 100%; min-height: 52px; margin: 0 0 1rem;
+    padding: 0.9rem; background: #fff; color: #1d4ed8; border: 2px solid #1d4ed8;
+    border-radius: 10px; font-size: 1rem; font-weight: 700; font-family: inherit; cursor: pointer; }
+  .mensaje { padding: 0.8rem 1rem; border-radius: 10px; margin: 0 0 1rem; font-size: 0.92rem; line-height: 1.4; }
+  .mensaje.ok { background: #f0fdf4; border: 1px solid #bbf7d0; color: #166534; }
+  .mensaje.mal { background: #fef2f2; border: 1px solid #fecaca; color: #991b1b; }
   .volver { display: block; text-align: center; padding: 0.9rem; color: #1d4ed8; font-weight: 700; text-decoration: none; }
 
   /* EN CELULAR LA TABLA PASA A TARJETAS: siete columnas no entran en 390px
@@ -116,6 +124,13 @@
   {% include "_barra_navegacion.html" %}
 
   <p class="ayuda">Lo que hay que mirar hoy en {{ modulo_nombre }}, con el detalle de cada caso. {% call info("¿De dónde salen estos bloques?") %}Los bloques salen de las alertas del sector: si mañana aparece una alerta nueva, su bloque aparece solo.{% endcall %}</p>
+
+  {% if aviso %}<div class="mensaje ok">{{ aviso }}</div>{% endif %}
+  {% if error %}<div class="mensaje mal">{{ error }}</div>{% endif %}
+
+  <form method="post" action="/{{ sector }}/alertas/recalcular">
+    <button class="recalcular" type="submit">Recalcular ahora</button>
+  </form>
 
   {% if bloques %}
     {% for b in bloques %}
