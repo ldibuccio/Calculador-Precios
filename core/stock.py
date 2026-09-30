@@ -125,6 +125,12 @@ TIPOS_LOTE_TRABAJADO = ("reproceso", "reingreso_rechazo")
 # cuenta lo restaría de la ficha y el costeo lo mandaría al cajón más viejo.
 TIPOS_CON_FICHA_PROPIA = ("merma", "pase_a_segunda")
 
+# Las salidas que salen de UNA PORCIÓN del stock: con ficha, de las cajas
+# armadas; sin ficha, de los sueltos, que son cajón. El ajuste no puede
+# llevar ficha (CHECK `movimientos_stock_ficha_solo_merma_o_pase`), así que
+# siempre es de los sueltos.
+SALIDAS_DE_LA_PORCION = TIPOS_CON_FICHA_PROPIA + ("ajuste",)
+
 
 def es_lote_trabajado(tipo_lote) -> bool:
     """¿Este lote ya pasó por la mesa? (guía R o reingreso por rechazo)."""
@@ -141,6 +147,19 @@ def es_caja_armada(lote) -> bool:
     caja o cajón es la ficha del renglón del que volvió.
     """
     return lote["tipo_lote"] in TIPOS_LOTE_TRABAJADO and not lote.get("en_cajon")
+
+
+def es_de_una_ficha(lote) -> bool:
+    """¿Este lote está en las cajas de una FICHA, y no en los sueltos?
+
+    La misma pregunta que `_SQL_STOCK_PARTIDO` (app/db.py) contesta para
+    partir el stock: una guía R CON ficha y un rechazo que volvió de un
+    renglón CON ficha son de esa ficha; una compra, un ajuste, una guía R sin
+    ficha y un rechazo sin renglón son sueltos. Viaja desde la consulta de
+    lotes como `de_una_ficha`. Sin la clave (un lote armado a mano en un
+    test) cuenta como suelto.
+    """
+    return bool(lote.get("de_una_ficha"))
 
 
 class Prioridad(NamedTuple):
@@ -297,19 +316,26 @@ def pasadas_de_lotes(lotes: list[dict], salida: dict) -> list[list[dict]]:
     silencio. Adentro de cada pasada el orden sigue siendo la fecha, así que
     el corte sigue siendo correcto.
 
-    Aplica la PREFERENCIA y NO la prohibición, y es una decisión del 08/09,
-    no un olvido: la pared de la guía R vive donde se le OFRECEN los lotes
-    (`lotes_permitidos`, pieza 2) y no acá adentro. Dos razones:
+    LA PARED DE LA GUÍA R TAMBIÉN VALE ACÁ desde el 30/09 (dueño: "nunca se
+    cruzan"). Hasta ese día se aplicaba solo al CARGAR la guía
+    (`lotes_permitidos`, en el freno y el desglose) y no al rejugar, con el
+    argumento de que diez guías R del 06 y 07/09 se habían comido cajas y el
+    rejuego no tenía que contradecir su documento congelado. El precio de ese
+    argumento era que CADA guía R, en cada lectura, se comía la caja más
+    vieja que quedara: las 21 guías del 29/09, cargadas a las 16:18, dejaban
+    esperando al armado del pedido #38 aunque sobraban cajas. Ahora la toma
+    pasa por la MISMA función que el freno, así que las dos no se pueden
+    separar. Las diez viejas quedan contradiciendo su congelado, que es un
+    error de aquellos días y no una regla.
 
-    - Estas funciones REJUEGAN LA HISTORIA, y la historia de las 10 guías R
-      medidas es que sí se comieron cajas armadas: de ahí salieron los
-      $2.798.438,92, leídos de `reprocesos_consumos`, que está congelado. Un
-      reparto que se las negara pondría la pantalla de stock a contradecir
-      el documento congelado.
-    - El backtest que autorizó A (`frenan_con_a = 0`) modeló exactamente
-      esto. Cambiarlo acá invalidaría la medición que dejó mergear A sin
-      avisarle al galpón.
+    Y LO QUE SALE DE LOS SUELTOS NO TOMA LAS CAJAS DE UNA FICHA: una merma,
+    un pase o un ajuste SIN ficha son de la porción suelta, y la porción la
+    parte `es_de_una_ficha` igual que la cuenta del stock. Con ficha
+    prefieren las cajas armadas (`prioridad_de_lote`).
     """
+    lotes = lotes_permitidos(lotes, salida)
+    if salida.get("tipo") in SALIDAS_DE_LA_PORCION and salida.get("ficha_id") is None:
+        return [[lote for lote in lotes if not es_de_una_ficha(lote)]]
     prefiere = prioridad_de_lote(salida).prefiere
     if not prefiere:
         return [lotes]

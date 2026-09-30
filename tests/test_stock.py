@@ -1102,3 +1102,107 @@ def test_un_RECHAZO_que_volvio_en_CAJON_lo_toma_el_armado_en_cajon_y_NO_el_de_ca
 
     cajon = repartir_fifo([rechazo_en_cajon], [_armado_en_cajon()])
     assert cajon["sin_lote"] == 0.0, "el armado en cajón no pudo usar el cajón que volvió"
+
+
+# LA TOMA DE UNA GUÍA R NO SE COME CAJAS AL REJUGAR (30/09). El caso del
+# pedido #38: las guías R del 29/09 se cargaron a las 16:18, antes del armado,
+# y cada una se llevaba por FIFO la caja más vieja que quedara. La caja de la
+# guía R del 28 terminaba "tomada" por la guía del 29, y el armado quedaba
+# esperando una guía R con cajas de sobra en el piso.
+
+def _momento(dia, hora):
+    return (date(2026, 9, dia), datetime(2026, 9, dia, hora, 0))
+
+
+def _pedido_38():
+    entradas = [
+        {"orden": _momento(27, 8), "tipo_lote": "guia", "cantidad": 20.0,
+         "costo_bulto": 100.0, "origen_id": 1},
+        {"orden": _momento(28, 16), "tipo_lote": "reproceso", "cantidad": 25.0,
+         "costo_bulto": 150.0, "origen_id": 11, "de_una_ficha": True},
+        {"orden": _momento(29, 8), "tipo_lote": "guia", "cantidad": 30.0,
+         "costo_bulto": 100.0, "origen_id": 2},
+        {"orden": _momento(29, 16), "tipo_lote": "reproceso", "cantidad": 10.0,
+         "costo_bulto": 150.0, "origen_id": 12, "de_una_ficha": True},
+    ]
+    salidas = [
+        {"orden": _momento(28, 15), "tipo": "reproceso_toma", "cantidad": 20.0},
+        {"orden": _momento(29, 16), "tipo": "reproceso_toma", "cantidad": 30.0},
+        {"orden": _momento(29, 18), "tipo": "armado", "cantidad": 30.0,
+         "ficha_id": 3, "ficha_con_envase": True},
+    ]
+    return entradas, salidas
+
+
+def test_la_TOMA_de_una_guia_R_no_se_come_la_CAJA_y_el_armado_NO_espera():
+    entradas, salidas = _pedido_38()
+
+    reparto = repartir_fifo(entradas, salidas)
+    costeo = atribuir_costos_fifo(entradas, salidas)
+
+    restante = {(l["tipo_lote"], l["origen_id"]): l["restante"] for l in reparto["lotes"]}
+    assert restante == {("guia", 1): 0.0, ("reproceso", 11): 0.0,
+                        ("guia", 2): 0.0, ("reproceso", 12): 5.0}
+    assert reparto["sin_lote"] == 0.0
+    armado = costeo[2]
+    assert armado["motivos_sin_costo"] == {}, "el armado quedó esperando con cajas de sobra"
+    assert [(c["tipo_lote"], c["bultos"]) for c in armado["consumos_lotes"]] == \
+        [("reproceso", 25.0), ("reproceso", 5.0)]
+    # Las tomas salen solo de las compras.
+    assert [c["tipo_lote"] for c in costeo[0]["consumos_lotes"]] == ["guia"]
+    assert [c["tipo_lote"] for c in costeo[1]["consumos_lotes"]] == ["guia"]
+
+
+def test_una_TOMA_sin_cajon_queda_SIN_LOTE_y_la_caja_sigue_entera():
+    caja = {"orden": _momento(28, 16), "tipo_lote": "reproceso", "cantidad": 10.0,
+            "costo_bulto": 150.0, "origen_id": 11, "de_una_ficha": True}
+    toma = {"orden": _momento(29, 16), "tipo": "reproceso_toma", "cantidad": 4.0}
+
+    reparto = repartir_fifo([caja], [toma])
+
+    assert reparto["sin_lote"] == 4.0
+    assert reparto["lotes"][0]["restante"] == 10.0
+
+
+def _caja_de_ficha(**extra):
+    return dict({"orden": _momento(27, 16), "tipo_lote": "reproceso", "cantidad": 10.0,
+                 "costo_bulto": 150.0, "origen_id": 11, "de_una_ficha": True}, **extra)
+
+
+def _cajon_29(**extra):
+    return dict({"orden": _momento(28, 8), "tipo_lote": "guia", "cantidad": 10.0,
+                 "costo_bulto": 100.0, "origen_id": 1}, **extra)
+
+
+import pytest  # noqa: E402
+
+
+@pytest.mark.parametrize("tipo", ["merma", "pase_a_segunda", "ajuste"])
+def test_lo_que_sale_de_los_SUELTOS_no_toma_las_cajas_de_una_ficha(tipo):
+    salida = {"orden": _momento(29, 10), "tipo": tipo, "cantidad": 4.0}
+
+    reparto = repartir_fifo([_caja_de_ficha(), _cajon_29()], [salida])
+
+    restante = {l["tipo_lote"]: l["restante"] for l in reparto["lotes"]}
+    assert restante == {"reproceso": 10.0, "guia": 6.0}
+
+
+def test_una_guia_R_SIN_FICHA_es_de_los_sueltos_y_la_merma_suelta_la_toma():
+    """Igual que en la cuenta del stock: una guía R sin ficha suma a los sueltos."""
+    sin_ficha = _caja_de_ficha(de_una_ficha=False)
+    merma = {"orden": _momento(29, 10), "tipo": "merma", "cantidad": 4.0}
+
+    reparto = repartir_fifo([sin_ficha, _cajon_29()], [merma])
+
+    restante = {l["tipo_lote"]: l["restante"] for l in reparto["lotes"]}
+    assert restante == {"reproceso": 6.0, "guia": 10.0}
+
+
+@pytest.mark.parametrize("tipo", ["merma", "pase_a_segunda"])
+def test_la_merma_CON_ficha_sigue_prefiriendo_la_caja(tipo):
+    salida = {"orden": _momento(29, 10), "tipo": tipo, "cantidad": 4.0, "ficha_id": 3}
+
+    reparto = repartir_fifo([_cajon_29(orden=_momento(26, 8)), _caja_de_ficha()], [salida])
+
+    restante = {l["tipo_lote"]: l["restante"] for l in reparto["lotes"]}
+    assert restante == {"guia": 10.0, "reproceso": 6.0}

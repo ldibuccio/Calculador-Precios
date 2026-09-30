@@ -12249,6 +12249,12 @@ def _entradas_y_salidas_stock_varios(cursor, articulo_ids: list[int], corte=None
                    -- EN CAJÓN: solo lo dice el rechazo de una ficha SIN envase
                    -- (rama de abajo). Un armado de caja no lo toma como caja.
                    FALSE AS en_cajon,
+                   -- ¿SON CAJAS DE UNA FICHA? Es la misma pregunta que se hace
+                   -- `_SQL_STOCK_PARTIDO` para decidir si algo está en una
+                   -- ficha o en los sueltos: una guía R sin ficha y un rechazo
+                   -- sin renglón con ficha van a los sueltos. Lo lee
+                   -- `core.stock.es_de_una_ficha`.
+                   FALSE AS de_una_ficha,
                    c.articulo_id AS articulo_id
             FROM compras c
             JOIN proveedores p ON p.id = c.proveedor_id
@@ -12280,6 +12286,7 @@ def _entradas_y_salidas_stock_varios(cursor, articulo_ids: list[int], corte=None
                    cl.nombre, m.motivo, m.cantidad, m.costo_por_bulto, NULL::bigint,
                    (m.tipo = 'reingreso_rechazo' AND pr.ficha_id IS NOT NULL
                     AND fl.envase_id IS NULL) AS en_cajon,
+                   (m.tipo = 'reingreso_rechazo' AND pr.ficha_id IS NOT NULL),
                    m.articulo_id
             FROM movimientos_stock m
             LEFT JOIN clientes cl ON cl.id = m.cliente_id
@@ -12306,7 +12313,7 @@ def _entradas_y_salidas_stock_varios(cursor, articulo_ids: list[int], corte=None
             -- cruce y el detalle muestra "armada para X".
             SELECT rp.fecha_operacion, rp.creado_en, 'reproceso', rp.id, rp.fecha_operacion,
                    cl.nombre, NULL, rp.bultos_primera, rp.costo_por_bulto_primera, rp.cliente_id,
-                   FALSE, rp.articulo_id
+                   FALSE, rp.ficha_id IS NOT NULL, rp.articulo_id
             FROM reprocesos rp
             LEFT JOIN clientes cl ON cl.id = rp.cliente_id
             WHERE rp.anulado_el IS NULL AND rp.bultos_primera > 0 AND rp.articulo_id = ANY(%s)

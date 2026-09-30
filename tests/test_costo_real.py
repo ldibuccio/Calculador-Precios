@@ -917,23 +917,21 @@ def test_una_merma_sigue_en_FIFO_puro():
     assert [c["tipo_lote"] for c in salidas[0]["consumos_lotes"]] == ["guia"]
 
 
-def test_un_reproceso_toma_dentro_del_REPARTO_sigue_viendo_todos_los_lotes():
-    """Decisión, no olvido: la PARED de la guía R (pieza 2) vive donde se le
-    OFRECEN los lotes, no adentro del reparto.
+def test_un_reproceso_toma_dentro_del_REPARTO_NO_ve_las_cajas_armadas():
+    """La pared de la guía R vale también al rejugar (dueño, 30/09).
 
-    El reparto rejuega la historia, y la historia de las 10 guías R medidas es
-    que SÍ se comieron cajas armadas — de ahí salieron los $2.798.438,92, de
-    `reprocesos_consumos`, que está congelado. Si el reparto les negara esas
-    cajas, la pantalla de stock contradiría el documento congelado.
-
-    Y hay una segunda razón, más dura: el backtest que autorizó A
-    (`frenan_con_a = 0`) modeló exactamente esto. Cambiarlo acá invalidaría la
-    medición que dejó mergear A sin avisar al galpón.
+    Hasta ese día este test afirmaba lo contrario, con dos razones escritas:
+    diez guías R del 06 y 07/09 se habían comido cajas y el rejuego no tenía
+    que contradecir su documento congelado, y el backtest que autorizó A
+    modelaba eso. El precio era que CADA guía R, en cada lectura, se llevaba
+    la caja más vieja: las del 29/09, cargadas a las 16:18, dejaban esperando
+    al armado del pedido #38 con cajas de sobra. Las diez viejas quedan
+    contradiciendo su congelado, que es un error de aquellos días.
     """
     salidas = atribuir_costos_fifo([_caja(1, 10, 50.0), _cruda(2, 10, 100.0)],
                                    [_salida(3, 10, tipo="reproceso_toma")])
 
-    assert [c["tipo_lote"] for c in salidas[0]["consumos_lotes"]] == ["reproceso"]
+    assert [c["tipo_lote"] for c in salidas[0]["consumos_lotes"]] == ["guia"]
 
 
 def test_los_DOS_repartos_emparejan_igual_con_la_preferencia_puesta():
