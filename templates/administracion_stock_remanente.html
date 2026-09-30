@@ -409,12 +409,13 @@
        cargada con la fecha equivocada. #}
     <p class="intro">Se armaron cajas y salieron, pero al artículo le falta una guía R que las
       produzca. <strong>No falta mercadería:</strong> el cajón sigue entero en el galpón y estos
-      bultos se acomodan solos apenas entre el papel — con la fecha del día en que se armaron.</p>
+      bultos se acomodan solos apenas entre el papel — con la fecha del día en que se armaron o de
+      hasta {{ dias_margen_guia_r }} días después.</p>
     <p class="intro"><strong>Puede no ser la ficha que estás mirando.</strong> Las cajas que arma
       una guía R no quedan atadas a la ficha para la que se armaron: sirven para cualquier ficha
       del artículo. Una ficha puede cerrar exacta y aparecer acá porque falta la guía R de otra.
-      Y si la guía R está cargada, mirale la fecha: <strong>una guía R fechada después del armado
-      tampoco lo cubre</strong>.</p>
+      Y si la guía R está cargada, mirale la fecha: <strong>una guía R fechada más de
+      {{ dias_margen_guia_r }} días después del armado no lo cubre</strong>.</p>
     {% for p in porciones_esperando %}
     <a class="espera" href="/administracion/stock/sistema/{{ p.articulo_id }}">
       {# El nombre es el del ARTÍCULO (sale de `articulos.nombre`), no el de

@@ -10564,6 +10564,23 @@ def test_el_desglose_dice_CERO_cuando_todo_lo_anterior_tenia_lote():
     assert reparto["sin_lote_antes"] == 0
 
 
+def test_el_sin_lote_de_ANTES_no_cuenta_lo_que_esta_guia_CUBRE_con_su_margen():
+    """Desde el 30/09 una guía cubre armados de hasta tres días antes de su
+    fecha. Lo que salió sin lote en ese tramo lo va a cubrir la que se está
+    cargando: avisarlo mandaría a refechar una guía que ya está bien.
+
+    Pegado a la raya: con la guía del 18, lo del 15 está en el margen y lo
+    del 14 no. Y el aviso dice desde qué día cuenta, que ya no es la fecha
+    elegida.
+    """
+    en_el_margen = _desglose_a_la_fecha(date(2026, 9, 18), [], [_salida_fifo(date(2026, 9, 15), 10.0)])
+    assert en_el_margen["sin_lote_antes"] == 0
+    assert en_el_margen["sin_lote_antes_del"] == date(2026, 9, 15)
+
+    afuera = _desglose_a_la_fecha(date(2026, 9, 18), [], [_salida_fifo(date(2026, 9, 14), 10.0)])
+    assert afuera["sin_lote_antes"] == 10.0
+
+
 def test_el_sin_lote_de_ANTES_no_cuenta_las_salidas_DEL_DIA_que_se_esta_cargando():
     """"Antes de este día" y no "antes o durante".
 

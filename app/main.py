@@ -503,7 +503,7 @@ from core.extracto_porcion import ETIQUETAS_MOVIMIENTO, SIN_EXPLICAR, armar_extr
 from core.rentabilidad import ETIQUETAS_GRUPO, calcular_rentabilidad_de_pedidos
 from core.costo_real import atribuir_costos_fifo, calcular_rentabilidad_real
 from core.costos_fijos import calcular_costos_fijos
-from core.stock import reparto_a_la_fecha, repartir_fifo, salidas_para_reparto
+from core.stock import DIAS_DE_MARGEN_DE_LA_GUIA_R, reparto_a_la_fecha, repartir_fifo, salidas_para_reparto
 from core.exportar_rentabilidad import generar_excel_rentabilidad, generar_pdf_rentabilidad
 from core.exportar_rentabilidad_real import generar_excel_rentabilidad_real, generar_pdf_rentabilidad_real
 from core.exportar_pedidos import generar_excel_pedidos, generar_pdf_pedidos
@@ -1314,6 +1314,9 @@ templates.env.globals["cajas_en_origen_por_articulo"] = _cajas_en_origen_por_art
 # serían una segunda lista que se despega de la primera.
 templates.env.globals["etiqueta_vino_armada"] = etiqueta_del_boton
 templates.env.globals["se_muestra_vino_armada"] = se_muestra_el_boton
+# El margen de la guía R viaja a las pantallas como GLOBAL y no escrito en
+# cada texto: el día que cambie, las dos pantallas que lo dicen lo siguen.
+templates.env.globals["dias_margen_guia_r"] = DIAS_DE_MARGEN_DE_LA_GUIA_R
 templates.env.filters["fecha_hora"] = _formatear_fecha_hora
 
 
@@ -15373,12 +15376,17 @@ def desglose_reproceso(articulo_id: int, fecha: str = "", bultos: float = 0):
             "alcanza": round(float(bultos) - disponible, 2) <= 0,
             "propuesta": propuesta,
             "guias_de_hoy": _guias_de_hoy_para_pantalla(reparto.get("tomado_hoy", [])),
-            # CUÁNTO SALIÓ SIN LOTE ANTES DE ESTE DÍA. No es un freno ni
+            # CUÁNTO SALIÓ SIN LOTE ANTES DEL MARGEN. No es un freno ni
             # depende de `alcanza`: es el síntoma de que unas cajas se
             # armaron antes y la guía que las explica falta —o está fechada
-            # el día que se cargó—, y se muestra MIENTRAS se elige la fecha,
-            # que es el único momento en que sirve.
+            # más tarde que el margen—, y se muestra MIENTRAS se elige la
+            # fecha, que es el único momento en que sirve. `_del` es el día
+            # desde el que ya no alcanza el margen, para que el aviso lo diga.
             "sin_lote_antes": reparto.get("sin_lote_antes", 0),
+            "sin_lote_antes_del": (
+                reparto["sin_lote_antes_del"].isoformat()
+                if reparto.get("sin_lote_antes_del") else None
+            ),
         }
     )
 
@@ -16815,7 +16823,8 @@ ALERTAS = [
         modulos=("administracion",),
         # SE APAGA SOLA: el conteo sale del rejuego del FIFO, que se
         # recalcula entero en cada corrida. Cargada la guía R —con la fecha
-        # del día que armó— la siguiente corrida da cero. Sin botón.
+        # del día que armó, o de hasta DIAS_DE_MARGEN_DE_LA_GUIA_R días
+        # después— la siguiente corrida da cero. Sin botón.
         contar=lambda: contar_bultos_esperando_guia_r(),
     ),
     DefinicionAlerta(

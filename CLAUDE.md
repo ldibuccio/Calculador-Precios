@@ -496,7 +496,10 @@ Cuando se arma un pedido y **no hay stock de la ficha del cliente, la única
 opción es sin asignar.** No toma de ningún otro lado: ni de los sueltos, ni
 del cajón, ni de otra ficha. La ficha queda **en negativo, en el aire**,
 hasta que alguien cargue la guía R — y ahí se acomoda solo, porque el
-reparto se rejuega en cada lectura y la comparación es por FECHA.
+reparto se rejuega en cada lectura y la comparación es por FECHA. **Desde el
+30/09 con margen**: la guía puede estar fechada hasta
+`DIAS_DE_MARGEN_DE_LA_GUIA_R` (3) días corridos después del armado y lo
+cubre igual. Ver "El margen de la guía R", abajo de esta sección.
 
 **El hecho del mundo que la sostiene**, y por eso no es una preferencia:
 con envase, la mercadería sale en NUESTRA caja, y **una caja no puede salir
@@ -583,6 +586,33 @@ el piso"*. **Acá es la excepción, y es la única**: no se trata de quién sabe
 más, sino de algo que no puede haber pasado. El piso manda sobre lo que se
 puede observar; no sobre lo físicamente imposible. Si alguien dice que salió
 del cajón, lo que está describiendo es un reproceso que no se cargó.
+
+## El margen de la guía R: cubre armados de hasta 3 días antes (30/09, dueño)
+
+Depósito carga la guía R al día siguiente, o el lunes, y le deja la fecha del
+día de carga. Con la regla estricta (una guía cubre armados de su fecha para
+adelante) esos armados quedaban "esperando" para siempre, aunque las cajas
+existían. El 29/09 se corrigieron a mano 15 guías del 27 al 26 y la alerta
+bajó de 603 a 180 bultos.
+
+- **La regla**: una guía R cubre armados de su fecha y de hasta
+  `DIAS_DE_MARGEN_DE_LA_GUIA_R` (3, en `core/stock.py`) días corridos antes.
+  Pasado ese margen, la alerta "Armados esperando una guía R" lo muestra.
+- **Primero las de antes**: la pasada va en orden de fecha, así que las guías
+  anteriores o del mismo día se usan antes que las del margen. No hace falta
+  una pasada aparte (medido: el canario que la pone primero no se mueve).
+- **Solo el armado de una ficha con caja**, que es el único que espera una
+  guía R. Para el resto de las salidas un lote posterior sigue sin cubrirlas.
+- **Un solo lugar**: `pasadas_con_margen` (core/stock.py), que usan las dos
+  copias del FIFO. El costo del armado sale de la guía que lo cubre.
+- **El aviso de Reproceso** ("salieron N bultos sin lote antes del...") cuenta
+  solo lo anterior al margen: lo del tramo lo cubre la guía que se está
+  cargando.
+
+**Un armado que ninguna guía cubre sale ENTERO de la Rentabilidad Real**
+(venta y costo) al "afuera del cálculo", con el motivo "falta una guía R".
+No queda en cero ni con un costo inventado. Con el margen, los que entran en
+los tres días vuelven a la cuenta con el costo de su guía.
 
 ## Una guía R ANULADA no retiene nada (28/09)
 
@@ -8968,6 +8998,9 @@ desconfiar de las dos.
 
 **Lo accionable, y es una sola cosa**: al cargar estas guías, el único
 campo que hay que mirar es la fecha, y va **el día en que se armó**.
+
+(Desde el 30/09 el punto 1 vale solo pasados tres días: ver "El margen de
+la guía R". El 2 sigue igual.)
 
 ## Corolario 74: una respuesta CONGELADA y una DERIVADA a la misma pregunta se separan sin que ninguna esté rota
 

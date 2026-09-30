@@ -731,8 +731,11 @@ def test_la_pared_se_resuelve_SOLA_cuando_entra_la_guia_R():
 
     El reparto se rejuega en cada lectura y `lote_posterior_a_la_salida`
     compara FECHAS, no relojes: una guía R cargada hoy con fecha de ayer
-    cubre el armado de ayer. Lo único que hay que cuidar es la fecha, y eso
-    es procedimiento, no código.
+    cubre el armado de ayer.
+
+    Y desde el 30/09 (dueño) también la guía fechada HOY sobre el armado de
+    ayer: Depósito la carga al día siguiente con la fecha del día de carga,
+    y las cajas existían. Esto afirmaba lo contrario; era la regla vieja.
     """
     armado = _armado_pared(con_envase=True)
 
@@ -743,10 +746,89 @@ def test_la_pared_se_resuelve_SOLA_cuando_entra_la_guia_R():
     con_guia = repartir_fifo([_cajon_pared(), _caja_pared(dia=_AYER)], [armado])
     assert con_guia["sin_lote"] == 0.0
 
-    # Fechada HOY sobre un armado de AYER, en cambio, es posterior y no lo
-    # cubre. Ése es el caso que hay que evitar por procedimiento.
+    # Fechada HOY sobre un armado de AYER: entra en el margen y lo cubre.
     con_guia_de_hoy = repartir_fifo([_cajon_pared(), _caja_pared(dia=_HOY)], [armado])
-    assert con_guia_de_hoy["sin_lote"] == 10.0
+    assert con_guia_de_hoy["sin_lote"] == 0.0
+
+
+# EL MARGEN DE LA GUÍA R (dueño, 30/09): una guía cubre armados de hasta
+# DIAS_DE_MARGEN_DE_LA_GUIA_R días antes de su fecha. Los casos van pegados a
+# la raya —el día 3 cubre y el 4 no— porque un test con casos cómodos
+# verifica la aritmética y no el umbral.
+from datetime import timedelta  # noqa: E402
+
+from core.costo_real import atribuir_costos_fifo  # noqa: E402
+from core.stock import DIAS_DE_MARGEN_DE_LA_GUIA_R, fecha_de_orden  # noqa: E402
+
+
+def _dias_despues(n):
+    return _AYER + timedelta(days=n)
+
+
+def test_el_margen_es_de_TRES_dias_corridos():
+    assert DIAS_DE_MARGEN_DE_LA_GUIA_R == 3
+
+
+def test_una_guia_fechada_en_el_MARGEN_cubre_y_una_un_dia_despues_NO():
+    armado = _armado_pared(con_envase=True)
+    en_el_margen = repartir_fifo([_cajon_pared(), _caja_pared(dia=_dias_despues(3))], [armado])
+    assert en_el_margen["sin_lote"] == 0.0
+    pasado = repartir_fifo([_cajon_pared(), _caja_pared(dia=_dias_despues(4))], [armado])
+    assert pasado["sin_lote"] == 10.0
+    # El cajón sigue intacto en los dos: el margen no abre la pared.
+    assert pasado["lotes"][0]["restante"] == 10.0
+
+
+def test_PRIMERO_la_guia_anterior_o_igual_y_despues_la_del_margen():
+    """El rival plantado: una guía POSTERIOR más vieja en la lista que no
+    tiene que ganar. Con las dos alcanzando, sale de la de antes."""
+    armado = _armado_pared(con_envase=True, cantidad=6.0)
+    antes = _caja_pared(dia=_AYER - timedelta(days=5), cantidad=6.0)
+    despues = _caja_pared(dia=_dias_despues(1), cantidad=6.0)
+    reparto = repartir_fifo([_cajon_pared(), despues, antes], [armado])
+    por_dia = {fecha_de_orden(l["orden"]): l["restante"] for l in reparto["lotes"]}
+    assert por_dia[antes["orden"][0]] == 0.0
+    assert por_dia[despues["orden"][0]] == 6.0
+    # Y lo que la de antes no alcanza, recién ahí sale de la del margen.
+    armado_grande = _armado_pared(con_envase=True, cantidad=9.0)
+    reparto = repartir_fifo([_cajon_pared(), despues, antes], [armado_grande])
+    assert reparto["sin_lote"] == 0.0
+    por_dia = {fecha_de_orden(l["orden"]): l["restante"] for l in reparto["lotes"]}
+    assert por_dia[antes["orden"][0]] == 0.0
+    assert por_dia[despues["orden"][0]] == 3.0
+
+
+def test_el_margen_es_SOLO_del_armado_con_caja():
+    """Sin caja el armado sale del cajón, y una merma no espera ninguna guía:
+    para ellas un lote posterior sigue sin cubrir."""
+    sin_caja = _armado_pared(con_envase=False)
+    solo_caja_futura = repartir_fifo([_caja_pared(dia=_dias_despues(1))], [sin_caja])
+    assert solo_caja_futura["sin_lote"] == 10.0
+    merma = {"orden": (_AYER, datetime(2026, 9, 7, 12, 0)), "tipo": "merma", "cantidad": 4.0}
+    assert repartir_fifo([_caja_pared(dia=_dias_despues(1))], [merma])["sin_lote"] == 4.0
+
+
+def test_el_COSTO_sale_de_la_guia_que_lo_cubre_con_margen():
+    armado = _armado_pared(con_envase=True)
+    (costeada,) = atribuir_costos_fifo([_cajon_pared(), _caja_pared(dia=_dias_despues(2))], [armado])
+    assert costeada["costo"] == 800.0
+    assert costeada["motivos_sin_costo"] == {}
+    (sin_guia,) = atribuir_costos_fifo([_cajon_pared(), _caja_pared(dia=_dias_despues(4))], [armado])
+    assert sin_guia["costo"] is None
+    assert sin_guia["motivos_sin_costo"] == {"falta_cargar_guia_r": 10.0}
+
+
+def test_las_DOS_copias_del_FIFO_leen_el_margen_del_MISMO_lugar(monkeypatch):
+    """Con el margen en cero las dos vuelven a la regla estricta: si una
+    tuviera su propio número, ésta seguiría cubriendo."""
+    import core.stock as stock
+
+    monkeypatch.setattr(stock, "DIAS_DE_MARGEN_DE_LA_GUIA_R", 0)
+    armado = _armado_pared(con_envase=True)
+    lotes = [_cajon_pared(), _caja_pared(dia=_dias_despues(1))]
+    assert repartir_fifo(lotes, [armado])["sin_lote"] == 10.0
+    (salida,) = atribuir_costos_fifo(lotes, [armado])
+    assert salida["motivos_sin_costo"] == {"falta_cargar_guia_r": 10.0}
 
 
 def test_la_pared_no_toca_las_salidas_que_no_son_armado_pared():
