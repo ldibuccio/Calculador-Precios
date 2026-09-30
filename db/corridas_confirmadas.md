@@ -694,3 +694,19 @@ por dónde entraron, y deducirlo sería inventarlo. Palmala no tiene
 devoluciones: ahí la verificación solo confirma que la migración no explota.
 `db/esquema_completo.sql` ganó la columna y el CHECK en el mismo commit que
 el código que la escribe (parte 3 de Vacíos).
+
+## 30/09 — `devolucion_deposito_1`: el tipo de movimiento de la devolución desde depósito
+
+Corrida por el dueño en las dos bases. Agrega el tipo `devolucion_deposito` a
+`movimientos_stock` y sus dos guardas (la compra obligatoria y la cantidad
+negativa). Verificación (`devolucion_deposito_2_verificacion.sql`), corrida
+aparte del `do`, según el dueño:
+
+```
+FRUTAMAX  devolucion_deposito · tipo_nuevo 1 · compra_abierta 1 · guarda_nueva 1
+PALMALA   devolucion_deposito · tipo_nuevo 1 · compra_abierta 1 · guarda_nueva 1
+```
+
+Llegaron los tres chequeos en 1 de cada base; la población y el testigo no
+vinieron en el mensaje. Con esto "Devolver mercadería" (`/deposito/devolver`)
+anda en las dos.

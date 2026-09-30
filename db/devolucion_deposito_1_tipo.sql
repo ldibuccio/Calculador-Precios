@@ -1,4 +1,4 @@
--- devolucion_deposito_1_tipo.sql — PENDIENTE de correr en las dos bases.
+-- devolucion_deposito_1_tipo.sql — CORRIDA el 30/09 en las dos bases (ver db/corridas_confirmadas.md).
 do $$
 begin
     if exists (select 1 from movimientos_stock where tipo = 'devolucion_deposito') then

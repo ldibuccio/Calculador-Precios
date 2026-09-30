@@ -1,0 +1,129 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Vales a cobrar</title>
+<style>
+  :root { font-family: -apple-system, system-ui, sans-serif; }
+  body { margin: 0; padding: 1rem; background: #f5f5f5; color: #222; }
+  .tarjeta {
+    background: #fff; border-radius: 10px; padding: 1rem; margin-bottom: 1rem;
+    box-shadow: 0 1px 3px rgba(0, 0, 0, 0.1); overflow-wrap: anywhere;
+  }
+  .error { background: #fee2e2; color: #991b1b; padding: 0.75rem 1rem; border-radius: 8px; margin-bottom: 1rem; }
+  .filtros { display: flex; flex-wrap: wrap; gap: 0.6rem; }
+  .filtros label { flex: 1 1 9rem; font-size: 0.85rem; color: #444; }
+  .filtros select, .filtros input {
+    display: block; width: 100%; box-sizing: border-box; margin-top: 0.2rem; padding: 0.6rem;
+    border: 1px solid #ccc; border-radius: 8px; font-size: 1rem; background: #fff; min-height: 44px;
+  }
+  .acciones { display: flex; flex-wrap: wrap; gap: 0.6rem; margin-top: 0.8rem; }
+  .acciones button, .acciones a {
+    flex: 1 1 9rem; min-height: 48px; padding: 0.7rem; border-radius: 8px; font-size: 1rem;
+    font-weight: 600; text-align: center; text-decoration: none; box-sizing: border-box;
+  }
+  .acciones button { background: #2563eb; color: #fff; border: none; }
+  .acciones a { background: #fff; color: #2563eb; border: 1px solid #2563eb; }
+  h2 { font-size: 1.05rem; margin: 0 0 0.3rem; }
+  .cuenta { color: #444; font-size: 0.9rem; margin: 0 0 0.6rem; }
+  .fila { padding: 0.55rem 0; border-top: 1px solid #eee; }
+  .fila-cabeza { display: flex; justify-content: space-between; gap: 0.6rem; }
+  .fila-que { font-weight: 600; }
+  .fila-dato { color: #555; font-size: 0.88rem; }
+  .suma { color: #15803d; font-weight: 700; white-space: nowrap; }
+  .resta { color: #dc2626; font-weight: 700; white-space: nowrap; }
+  .vacio { color: #666; font-style: italic; }
+  .aviso { background: #dcfce7; color: #166534; padding: 0.75rem 1rem; border-radius: 8px; margin-bottom: 1rem; }
+  .total { font-size: 1.5rem; font-weight: 700; margin: 0; }
+  .total-dato { color: #444; margin: 0.2rem 0 0; }
+  .alerta-limite { color: #dc2626; font-weight: 700; }
+  .fila a.abrir { display: block; color: inherit; text-decoration: none; min-height: 44px; }
+  .viejo { color: #dc2626; font-weight: 700; }
+  .limites form { display: flex; flex-wrap: wrap; gap: 0.6rem; align-items: flex-end; }
+  .limites label { flex: 1 1 9rem; font-size: 0.85rem; color: #444; }
+  .limites input { display: block; width: 100%; box-sizing: border-box; margin-top: 0.2rem; padding: 0.6rem;
+    border: 1px solid #ccc; border-radius: 8px; font-size: 1rem; min-height: 44px; }
+  .limites button { flex: 1 1 9rem; min-height: 48px; border-radius: 8px; border: none; background: #2563eb;
+    color: #fff; font-weight: 600; font-size: 1rem; }
+</style>
+</head>
+<body>
+  {% set barra_sector = camino.sector %}
+  {% set barra_titulo = "Vales a cobrar" %}
+  {% set barra_atras = camino.base %}
+  {% include "_barra_navegacion.html" %}
+
+  {% if aviso %}<div class="aviso">{{ aviso }}</div>{% endif %}
+  {% if error %}<div class="error">{{ error }}</div>{% endif %}
+
+  <div class="tarjeta">
+    <p class="total{% if resumen.total > resumen.limites.monto %} alerta-limite{% endif %}">{{ resumen.total|moneda }} en cartera</p>
+    <p class="total-dato">{{ resumen.cantidad }} vale{{ '' if resumen.cantidad == 1 else 's' }} sin aplicar
+      {%- if resumen.viejos %} · <span class="viejo">{{ resumen.viejos }} con más de {{ resumen.limites.dias }} días</span>{% endif %}</p>
+    <p class="total-dato">Las alertas saltan con más de {{ resumen.limites.monto|moneda }} o con vales de más de {{ resumen.limites.dias }} días.</p>
+    <div class="acciones">
+      {# Los dos href escritos enteros, uno por sector: así el barrido de
+         pantallas sin link los ve (con `camino.base` no puede resolverlos). #}
+      {% if camino.sector == 'gerencia' %}<a href="/gerencia/vales/movimientos">Movimientos</a>
+      {% else %}<a href="/administracion/vales/movimientos">Movimientos</a>{% endif %}
+    </div>
+  </div>
+
+  <form class="tarjeta" method="get" action="{{ camino.base }}/vales">
+    <div class="filtros">
+      <label>Estado
+        <select name="estado">
+          {% for valor, texto in opciones_de_estado %}
+          <option value="{{ valor }}" {% if filtros.estado_texto == valor %}selected{% endif %}>{{ texto }}</option>
+          {% endfor %}
+        </select>
+      </label>
+      <label>Proveedor
+        <select name="proveedor_id">
+          <option value="">Todos</option>
+          {% for p in proveedores %}
+          <option value="{{ p.id }}" {% if filtros.proveedor_id == p.id %}selected{% endif %}>{{ p.nombre }}</option>
+          {% endfor %}
+        </select>
+      </label>
+      <label>Desde<input type="date" name="desde" value="{{ filtros.desde.isoformat() if filtros.desde else '' }}"></label>
+      <label>Hasta<input type="date" name="hasta" value="{{ filtros.hasta.isoformat() if filtros.hasta else '' }}"></label>
+      <label>Con más de (días)<input type="number" min="0" step="1" inputmode="numeric" name="mas_de" value="{{ filtros.mas_de if filtros.mas_de is not none else '' }}"></label>
+    </div>
+    <div class="acciones"><button type="submit">Filtrar</button></div>
+  </form>
+
+  <div class="tarjeta">
+    <h2>{{ vales|length }} vale{{ '' if vales|length == 1 else 's' }} · {{ total_filtrado|moneda }}</h2>
+    {% for v in vales %}
+    <div class="fila">
+      <a class="abrir" href="{{ camino.base }}/vales/{{ v.id }}">
+        <div class="fila-cabeza">
+          <span class="fila-que">{{ v.proveedor }}{% if v.numero %} · vale {{ v.numero }}{% endif %}</span>
+          <span>{{ v.importe|moneda }}</span>
+        </div>
+        <div class="fila-dato">{{ v.fecha.strftime('%d/%m/%Y') }} · {{ texto_del_origen[v.origen] }}
+          {%- if v.cajones %} · {{ v.cajones }} cajón{{ '' if v.cajones == 1 else 'es' }}{% endif %}
+          {%- if v.estado == 'en_cartera' %} · <span class="{{ 'viejo' if v.dias > resumen.limites.dias else '' }}">{{ v.dias }} días en cartera</span>
+          {%- else %} · {{ texto_de_la_salida(v) }}{% endif %}</div>
+      </a>
+    </div>
+    {% else %}
+    <p class="vacio">No hay vales con esos filtros.</p>
+    {% endfor %}
+  </div>
+
+  {% if camino.sector == 'gerencia' %}
+  <div class="tarjeta limites">
+    <h2>Límites de las alertas</h2>
+    <form method="post" action="/gerencia/vales/limites">
+      <label>Plata en cartera ($)<input name="monto" type="text" inputmode="decimal" value="{{ resumen.limites.monto|sin_decimales }}" required></label>
+      <label>Días sin aplicar<input name="dias" type="number" min="1" step="1" inputmode="numeric" value="{{ resumen.limites.dias }}" required></label>
+      <button type="submit">Guardar límites</button>
+    </form>
+  </div>
+  {% endif %}
+{% include "_pie_version.html" %}
+</body>
+</html>

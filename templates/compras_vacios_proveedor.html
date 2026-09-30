@@ -78,6 +78,7 @@
   .pila-stock.negativo { color: #dc2626; }
   /* LA FOTO ES OBLIGATORIA y se dice ARRIBA del botón, no en letra chica:
      el que no tiene vale no tiene una devolución, tiene un ajuste. */
+  .calculado { font-size: .9rem; color: #374151; margin: .3rem 0 0; }
   .obligatoria { background: #eff6ff; color: #1e3a8a; border-radius: 8px;
                  padding: .6rem .75rem; margin: .6rem 0 0; font-size: .88rem; }
   /* LAS ACCIONES Y EL HISTORIAL: cada <summary> es un botón de 44px que se
@@ -178,6 +179,11 @@
       compra</strong>: es plata de envase y va por su lado.
     {% endcall %}</label>
         <input id="importe" name="importe" type="text" inputmode="decimal">
+        <p class="calculado" id="importe_calculado" hidden></p>
+      </div>
+      <div class="campo">
+        <label for="numero_vale">Número del vale (si tiene)</label>
+        <input id="numero_vale" name="numero_vale" type="text" autocomplete="off">
       </div>
       <div class="campo">
         <label for="foto">Foto del vale</label>
@@ -370,12 +376,33 @@
     var importe = document.getElementById("importe");
     if (!pila || !cantidad || !importe) return;
     var tocado = false;
-    importe.addEventListener("input", function () { tocado = true; });
+    function senaActual() { return parseFloat(pila.options[pila.selectedIndex].getAttribute("data-sena")); }
+    // LO CALCULADO SE VE AL LADO (dueño, 30/09): seña × cajones, y si el
+    // importe tipeado es otro, la diferencia. El vale guarda el calculado del
+    // server, no éste: esto es para que se vea antes de guardar.
+    var aviso = document.getElementById("importe_calculado");
+    function pesos(n) { return "$" + Math.round(n).toLocaleString("es-AR"); }
+    function calculado() {
+      var sena = senaActual();
+      var n = parseInt(cantidad.value, 10);
+      if (!(sena > 0 && n > 0)) { aviso.hidden = true; aviso.textContent = ""; return; }
+      var calc = Math.round(sena * n);
+      var texto = "Calculado: " + pesos(calc) + " (" + n + " × " + pesos(sena) + ")";
+      var puesto = parseFloat(importe.value.replace(/\./g, "").replace(",", "."));
+      if (importe.value.trim() && puesto !== calc && !isNaN(puesto)) {
+        texto += " · diferencia " + (puesto > calc ? "+" : "−") + pesos(Math.abs(puesto - calc));
+      }
+      aviso.textContent = texto;
+      aviso.hidden = false;
+    }
+    importe.addEventListener("input", function () { tocado = true; calculado(); });
     function precargar() {
+      calculado();
       if (tocado) return;
-      var sena = parseFloat(pila.options[pila.selectedIndex].getAttribute("data-sena"));
+      var sena = senaActual();
       var n = parseInt(cantidad.value, 10);
       importe.value = (sena > 0 && n > 0) ? String(Math.round(sena * n)) : "";
+      calculado();
     }
     pila.addEventListener("change", precargar);
     cantidad.addEventListener("input", precargar);

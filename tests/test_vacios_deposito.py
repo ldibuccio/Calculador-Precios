@@ -199,7 +199,8 @@ def test_la_pila_se_lee_con_el_PROVEEDOR_BLOQUEADO_y_con_LA_MISMA_consulta():
 
 def test_el_INSERT_de_la_devolucion_guarda_la_ESTRUCTURA_ENTERA():
     """La tupla completa, y `stock_sistema` es lo que la pila tenía al devolver."""
-    conexion, cursor = _conexion_falsa(filas_fetchone=[(88,)])
+    # La devolución (88), la seña de la pila (ninguna) y el vale que deja (9).
+    conexion, cursor = _conexion_falsa(filas_fetchone=[(88,), None, (9,)])
     with patch("app.db.obtener_conexion", return_value=conexion), \
          patch("app.db._stock_de_la_pila", return_value=30):
         devolucion_id = crear_devolucion_vacios(
@@ -304,7 +305,7 @@ def test_la_DEVOLUCION_con_foto_escribe_la_PILA_elegida_y_la_ruta_subida():
     assert respuesta.headers["location"].startswith("/administracion/vacios/7?")
     # La puerta es la del prefijo, no una que tipee alguien.
     crear.assert_called_once_with(7, None, 3, foto_ruta="vacios/v.jpg", importe=2400.0,
-                                  cargada_desde="administracion")
+                                  cargada_desde="administracion", numero_vale="")
 
 
 def test_si_la_foto_NO_SE_SUBE_no_se_guarda_nada_y_lo_dice():
@@ -1225,7 +1226,8 @@ def test_una_DEVOLUCION_de_Deposito_guarda_por_la_misma_escritura_y_vuelve_a_dev
     assert respuesta.status_code == 303, respuesta.text[:300]
     assert respuesta.headers["location"].startswith("/deposito/vacios/devolucion?aviso=")
     mocks["crear_devolucion_vacios"].assert_called_once_with(
-        7, 71, 5, foto_ruta="vacios/vale.jpg", importe=4000.0, cargada_desde="deposito")
+        7, 71, 5, foto_ruta="vacios/vale.jpg", importe=4000.0, cargada_desde="deposito",
+        numero_vale="")
 
 
 def test_una_DEVOLUCION_de_Deposito_SIN_FOTO_no_se_guarda():

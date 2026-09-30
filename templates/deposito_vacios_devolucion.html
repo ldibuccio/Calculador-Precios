@@ -21,6 +21,7 @@
                   box-sizing: border-box; width: 100%; }
   button { font-size: 1rem; padding: .7rem 1.1rem; min-height: 44px; width: 100%;
            border: 0; border-radius: 8px; background: #2563eb; color: #fff; font-weight: 600; }
+  .calculado { font-size: .9rem; color: #374151; margin: .3rem 0 0; }
   .obligatoria { font-size: .85rem; color: #374151; margin: .6rem 0 0; }
 </style>
 </head>
@@ -67,6 +68,11 @@
       ninguna compra.
     {% endcall %}</label>
       <input id="importe" name="importe" type="text" inputmode="decimal">
+      <p class="calculado" id="importe_calculado" hidden></p>
+    </div>
+    <div class="campo">
+      <label for="numero_vale">Número del vale (si tiene)</label>
+      <input id="numero_vale" name="numero_vale" type="text" autocomplete="off">
     </div>
     <div class="campo">
       <label for="foto">Foto del vale</label>
@@ -90,12 +96,33 @@
     var cantidad = document.getElementById("cantidad");
     var importe = document.getElementById("importe");
     var tocado = false;
-    importe.addEventListener("input", function () { tocado = true; });
+    function senaActual() { return parseFloat((senas[proveedor.value] || {})[marca.value]); }
+    // LO CALCULADO SE VE AL LADO (dueño, 30/09): seña × cajones, y si el
+    // importe tipeado es otro, la diferencia. El vale guarda el calculado del
+    // server, no éste: esto es para que se vea antes de guardar.
+    var aviso = document.getElementById("importe_calculado");
+    function pesos(n) { return "$" + Math.round(n).toLocaleString("es-AR"); }
+    function calculado() {
+      var sena = senaActual();
+      var n = parseInt(cantidad.value, 10);
+      if (!(sena > 0 && n > 0)) { aviso.hidden = true; aviso.textContent = ""; return; }
+      var calc = Math.round(sena * n);
+      var texto = "Calculado: " + pesos(calc) + " (" + n + " × " + pesos(sena) + ")";
+      var puesto = parseFloat(importe.value.replace(/\./g, "").replace(",", "."));
+      if (importe.value.trim() && puesto !== calc && !isNaN(puesto)) {
+        texto += " · diferencia " + (puesto > calc ? "+" : "−") + pesos(Math.abs(puesto - calc));
+      }
+      aviso.textContent = texto;
+      aviso.hidden = false;
+    }
+    importe.addEventListener("input", function () { tocado = true; calculado(); });
     function precargar() {
+      calculado();
       if (tocado) return;
-      var sena = parseFloat((senas[proveedor.value] || {})[marca.value]);
+      var sena = senaActual();
       var n = parseInt(cantidad.value, 10);
       importe.value = (sena > 0 && n > 0) ? String(Math.round(sena * n)) : "";
+      calculado();
     }
     proveedor.addEventListener("change", function () {
       marca.innerHTML = "";

@@ -350,6 +350,17 @@ from app.db import (
     LIMITE_CAJONES_VACIOS_EN_GALPON,
     total_de_vacios_en_galpon,
     contar_vacios_para_devolver,
+    SECTOR_DE_LA_SALIDA,
+    contar_vales_plata_sin_aplicar,
+    contar_vales_viejos,
+    foto_del_vale,
+    guardar_limites_de_vales,
+    limites_de_vales,
+    listar_vales,
+    movimientos_de_vales,
+    registrar_salida_de_vale,
+    resumen_de_la_cartera,
+    vale_a_cobrar,
     arranque_de_vacios,
     proveedor_para_vacios,
     crear_conteo_vacios_deposito,
@@ -491,9 +502,23 @@ from core.movimientos_vacios import (
     texto_de_la_marca as texto_de_la_marca_vacio,
     ventana as ventana_de_movimientos_vacios,
 )
+from core.vales import (
+    OPCIONES_DE_ESTADO as OPCIONES_DE_ESTADO_VALE,
+    TEXTO_DEL_ESTADO as TEXTO_DEL_ESTADO_VALE,
+    TEXTO_DEL_MOVIMIENTO as TEXTO_DEL_MOVIMIENTO_VALE,
+    TEXTO_DEL_ORIGEN as TEXTO_DEL_ORIGEN_VALE,
+    TEXTO_DEL_SECTOR as TEXTO_DEL_SECTOR_VALE,
+    dias_del_filtro as dias_del_filtro_vales,
+    estado_del_filtro as estado_del_filtro_vales,
+    fecha_del_filtro as fecha_del_filtro_vales,
+    generar_excel_movimientos_vales,
+    texto_de_la_salida as texto_de_la_salida_vale,
+    total_de as total_de_vales,
+)
 from core.movimientos_deposito import (
     OPCIONES_DE_TIPO as OPCIONES_DE_TIPO_DEPOSITO,
     TEXTO_DEL_TIPO as TEXTO_DEL_TIPO_DEPOSITO,
+    texto_de_la_sena as texto_de_la_sena_deposito,
     agrupar as agrupar_movimientos_deposito,
     generar_excel_movimientos_deposito,
 )
@@ -6971,7 +6996,8 @@ def _entero_positivo(texto: str) -> int | None:
 
 async def _guardar_devolucion_de_vacios(proveedor_id: int, marca_vacio_id: str, cantidad: str,
                                        importe: str, foto: UploadFile | None, *,
-                                       cargada_desde: str) -> tuple[int | None, str | None, int]:
+                                       cargada_desde: str,
+                                       numero_vale: str) -> tuple[int | None, str | None, int]:
     """Valida y guarda una devolución. Las DOS puertas pasan por acá (Administración
     y Depósito), así la regla está escrita una vez.
 
@@ -6985,7 +7011,12 @@ async def _guardar_devolucion_de_vacios(proveedor_id: int, marca_vacio_id: str, 
     LA FOTO DEL VALE ES OBLIGATORIA: sin foto no es una devolución, es un ajuste.
     Si la foto no se puede leer o subir, NO se guarda nada y se dice.
     EL IMPORTE NO TOCA `compras.importe` NI EL COSTEO — es plata de envase.
+    CON IMPORTE, LA DEVOLUCIÓN DEJA UN VALE A COBRAR (dueño, 30/09): lo crea
+    `crear_devolucion_vacios` en la misma transacción, con el número si vino.
+    `numero_vale` no tiene default: las dos puertas lo pasan.
     """
+    if numero_vale.strip() and not importe.strip():
+        return None, "El número de vale va con el importe: sin importe no hay vale a cobrar.", 400
     cajones = _entero_positivo(cantidad)
     if cajones is None:
         return None, "Los cajones devueltos tienen que ser un número entero mayor que cero.", 400
@@ -7015,7 +7046,7 @@ async def _guardar_devolucion_de_vacios(proveedor_id: int, marca_vacio_id: str, 
     try:
         crear_devolucion_vacios(proveedor_id, _marca_del_form(marca_vacio_id), cajones,
                                 foto_ruta=foto_ruta, importe=valor_importe,
-                                cargada_desde=cargada_desde)
+                                cargada_desde=cargada_desde, numero_vale=numero_vale)
     except DevolucionDeMas as de_mas:
         if cargada_desde == "deposito":
             return None, ("El sistema no tiene tantos cajones de esa marca: "
@@ -7031,7 +7062,7 @@ async def _guardar_devolucion_de_vacios(proveedor_id: int, marca_vacio_id: str, 
 @app.post("/administracion/vacios/{proveedor_id}/devolucion")
 async def cargar_devolucion_vacios(request: Request, proveedor_id: int,
                                    marca_vacio_id: str = Form(""), cantidad: str = Form(""),
-                                   importe: str = Form(""),
+                                   importe: str = Form(""), numero_vale: str = Form(""),
                                    foto: UploadFile | None = File(None)):
     """Se le devuelven al proveedor cajones de UNA PILA (proveedor y marca).
 
@@ -7040,7 +7071,7 @@ async def cargar_devolucion_vacios(request: Request, proveedor_id: int,
     """
     cajones, error, status = await _guardar_devolucion_de_vacios(
         proveedor_id, marca_vacio_id, cantidad, importe, foto,
-        cargada_desde=_camino_de_cajas_y_vacios(request)["sector"])
+        cargada_desde=_camino_de_cajas_y_vacios(request)["sector"], numero_vale=numero_vale)
     if error:
         return _renderizar_vacios_proveedor(request, proveedor_id, abierta="devolver", error=error, status_code=status)
     return _volver_al_proveedor(request, proveedor_id, f"Devolución de {cajones} cajones guardada.")
@@ -7083,12 +7114,14 @@ def ver_devolucion_vacios_deposito(request: Request, aviso: str | None = None):
 async def cargar_devolucion_vacios_deposito(request: Request, proveedor_id: str = Form(""),
                                             marca_vacio_id: str = Form(""),
                                             cantidad: str = Form(""), importe: str = Form(""),
+                                            numero_vale: str = Form(""),
                                             foto: UploadFile | None = File(None)):
     """Guarda por la MISMA función que Administración, con el freno sin el número."""
     if not proveedor_id.strip().isdigit():
         return _renderizar_devolucion_deposito(request, error="Elegí un proveedor.", status_code=400)
     cajones, error, status = await _guardar_devolucion_de_vacios(
-        int(proveedor_id), marca_vacio_id, cantidad, importe, foto, cargada_desde="deposito")
+        int(proveedor_id), marca_vacio_id, cantidad, importe, foto, cargada_desde="deposito",
+        numero_vale=numero_vale)
     if error:
         return _renderizar_devolucion_deposito(request, error=error, status_code=status)
     return RedirectResponse(
@@ -17389,6 +17422,33 @@ ALERTAS = [
         detallar=lambda: _detalle_vacios_para_devolver(),
     ),
     DefinicionAlerta(
+        codigo="vales_plata_sin_aplicar",
+        # Dueño, 30/09: la plata de vales en cartera pasó el límite (arranca en
+        # $500.000, lo cambia Gerencia). Los casos son los PESOS: el banner los
+        # dice en la frase. Solo Gerencia y Administración.
+        titulo="Plata en vales sin aplicar",
+        texto=lambda casos: _texto_de_vales_plata(casos),
+        url="/administracion/vales",
+        texto_link="Ver Vales a cobrar",
+        modulos=("gerencia", "administracion"),
+        destinos_por_sector={"gerencia": ("/gerencia/vales", "Ver Vales a cobrar")},
+        contar=lambda: contar_vales_plata_sin_aplicar(_hoy_argentina()),
+        detallar=lambda: _detalle_de_vales(viejos=False),
+    ),
+    DefinicionAlerta(
+        codigo="vales_viejos",
+        # Dueño, 30/09: vales con más días en cartera que el límite (arranca en
+        # 14, lo cambia Gerencia). Los casos son los vales.
+        titulo="Vales con muchos días sin aplicar",
+        texto=lambda casos: _texto_de_vales_viejos(casos),
+        url="/administracion/vales",
+        texto_link="Ver Vales a cobrar",
+        modulos=("gerencia", "administracion"),
+        destinos_por_sector={"gerencia": ("/gerencia/vales", "Ver Vales a cobrar")},
+        contar=lambda: contar_vales_viejos(_hoy_argentina()),
+        detallar=lambda: _detalle_de_vales(viejos=True),
+    ),
+    DefinicionAlerta(
         codigo="modulos_inexistentes",
         # La alerta que vigila a las alertas. Sin módulos propios: vive solo en
         # Auditoría, que es donde se mira lo que le pasa al sistema.
@@ -17398,6 +17458,43 @@ ALERTAS = [
         contar=lambda: _contar_modulos_inexistentes(),
     ),
 ]
+
+
+def _texto_de_vales_plata(pesos) -> str:
+    return f"Hay {_formatear_moneda(pesos)} en vales sin aplicar"
+
+
+def _texto_de_vales_viejos(cantidad) -> str:
+    """El límite de días va en la frase. Si no se puede leer, la frase lo
+    dice sin el número en vez de inventarlo."""
+    try:
+        dias = f"{limites_de_vales()['dias']} días"
+    except Exception:
+        logger.exception("No se pudieron leer los límites de vales para el texto de la alerta")
+        dias = "los días del límite"
+    return f"Hay {_entero_con_miles(cantidad)} vale{'' if int(cantidad) == 1 else 's'} con más de {dias} sin aplicar"
+
+
+def _detalle_de_vales(*, viejos: bool) -> dict:
+    """Los vales en cartera (o solo los viejos), del más viejo al más nuevo.
+    El resumen sale de estas mismas filas y de la misma cartera que la pantalla."""
+    resumen = resumen_de_la_cartera(_hoy_argentina())
+    limites = resumen["limites"]
+    vales = [v for v in resumen["vales"] if not viejos or v["dias"] > limites["dias"]]
+    if viejos:
+        texto = _texto_de_vales_viejos(len(vales))
+        nota = f"el aviso salta con vales de más de {limites['dias']} días"
+    else:
+        texto = (_texto_de_vales_plata(resumen["total"]) if resumen["total"] > limites["monto"]
+                 else f"Hay {_formatear_moneda(resumen['total'])} en vales en cartera")
+        nota = f"el aviso salta con más de {_formatear_moneda(limites['monto'])}"
+    return {
+        "columnas": ["Proveedor", "Fecha", "Días", "Importe"],
+        "filas": [[v["proveedor"], v["fecha"].strftime("%d/%m/%Y"), str(v["dias"]),
+                   _formatear_moneda(v["importe"])] for v in vales],
+        "resumen": texto,
+        "nota": nota,
+    }
 
 
 def _texto_de_vacios_para_devolver(cajones) -> str:
@@ -19155,6 +19252,7 @@ def ver_movimientos_deposito(request: Request, desde: str = "", hasta: str = "",
         "filtros": filtros, "proveedores": proveedores, "articulos": articulos,
         "grupos": agrupar_movimientos_deposito(movimientos), "cantidad": len(movimientos),
         "opciones_de_tipo": OPCIONES_DE_TIPO_DEPOSITO, "texto_del_tipo": TEXTO_DEL_TIPO_DEPOSITO,
+        "texto_de_la_sena": texto_de_la_sena_deposito,
     })
 
 
@@ -19180,6 +19278,254 @@ def exportar_movimientos_deposito_excel(desde: str = "", hasta: str = "", tipo: 
     return Response(content=contenido,
                     media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
                     headers={"Content-Disposition": f'attachment; filename="{nombre}"'})
+
+
+# ============================================================================
+# VALES A COBRAR (dueño, 30/09)
+#
+# UNA pantalla, DOS entradas: Administración (cobra y cruza) y Gerencia
+# (anula y fija los límites de las alertas). El sector sale del PREFIJO, no
+# de la query (corolario 63): así el candado de la barra y la puerta que
+# aplica el middleware son el mismo hecho. Administración la cierra su
+# middleware; Gerencia pregunta la clave en cada GET, como toda /gerencia.
+# Las salidas y los límites viven en `registrar_salida_de_vale` y
+# `guardar_limites_de_vales` (app/db.py), donde se escribe.
+# ============================================================================
+
+_CAMINOS_DE_VALES = {
+    "administracion": {"sector": "administracion", "base": "/administracion", "titulo": "Administración"},
+    "gerencia": {"sector": "gerencia", "base": "/gerencia", "titulo": "Gerencia"},
+}
+
+
+def _camino_de_vales(request: Request) -> dict:
+    return _CAMINOS_DE_VALES["gerencia" if request.url.path.startswith("/gerencia") else "administracion"]
+
+
+def _sin_clave_de_vales(request: Request):
+    """La pantalla de la clave si es Gerencia y no está abierta; si no, None."""
+    if _camino_de_vales(request)["sector"] == "gerencia" and not _acceso_gerencia_valido(request):
+        return _pantalla_clave_gerencia(request)
+    return None
+
+
+def _filtros_de_vales(estado: str, proveedor_id: str, desde: str, hasta: str, mas_de: str) -> dict:
+    return {
+        "estado": estado_del_filtro_vales(estado),
+        "estado_texto": estado or "en_cartera",
+        "proveedor_id": _id_opcional_desde_query(proveedor_id),
+        "desde": fecha_del_filtro_vales(desde),
+        "hasta": fecha_del_filtro_vales(hasta),
+        "mas_de": dias_del_filtro_vales(mas_de),
+    }
+
+
+def _renderizar_vales(request: Request, filtros: dict, *, aviso: str | None = None,
+                      error: str | None = None, status_code: int = 200):
+    camino = _camino_de_vales(request)
+    hoy = _hoy_argentina()
+    try:
+        resumen = resumen_de_la_cartera(hoy)
+        vales = listar_vales(estado=filtros["estado"], proveedor_id=filtros["proveedor_id"],
+                             desde=filtros["desde"], hasta=filtros["hasta"],
+                             mas_de_dias=filtros["mas_de"], hoy=hoy)
+        proveedores = listar_proveedores()
+    except Exception as error_db:
+        raise HTTPException(status_code=500, detail=f"Error al conectar con la base de datos: {error_db}") from error_db
+    return templates.TemplateResponse(request, "vales_a_cobrar.html", {
+        "camino": camino, "resumen": resumen, "vales": vales, "total_filtrado": total_de_vales(vales),
+        "filtros": filtros, "proveedores": proveedores,
+        "opciones_de_estado": OPCIONES_DE_ESTADO_VALE, "texto_del_estado": TEXTO_DEL_ESTADO_VALE,
+        "texto_del_origen": TEXTO_DEL_ORIGEN_VALE, "texto_de_la_salida": texto_de_la_salida_vale,
+        "aviso": aviso, "error": error,
+    }, status_code=status_code)
+
+
+@app.get("/administracion/vales")
+@app.get("/gerencia/vales")
+def ver_vales_a_cobrar(request: Request, estado: str = "", proveedor_id: str = "", desde: str = "",
+                       hasta: str = "", mas_de: str = "", aviso: str | None = None,
+                       error: str | None = None):
+    """Vales a cobrar: el total en cartera arriba, y la lista filtrada abajo."""
+    sin_clave = _sin_clave_de_vales(request)
+    if sin_clave is not None:
+        return sin_clave
+    return _renderizar_vales(request, _filtros_de_vales(estado, proveedor_id, desde, hasta, mas_de),
+                             aviso=aviso, error=error)
+
+
+def _filtros_de_movimientos_de_vales(desde: str, hasta: str, proveedor_id: str) -> dict:
+    """Los mismos para la pantalla y el Excel. La ventana es la de Movimientos
+    de vacíos: 30 días por defecto, hasta 90."""
+    inicio, fin, error = ventana_de_movimientos_vacios(desde, hasta, _hoy_argentina())
+    return {"desde": inicio, "hasta": fin, "error": error,
+            "proveedor_id": _id_opcional_desde_query(proveedor_id)}
+
+
+@app.get("/administracion/vales/movimientos")
+@app.get("/gerencia/vales/movimientos")
+def ver_movimientos_de_vales(request: Request, desde: str = "", hasta: str = "", proveedor_id: str = ""):
+    """Lo que entró a la cartera y lo que salió, por fecha."""
+    sin_clave = _sin_clave_de_vales(request)
+    if sin_clave is not None:
+        return sin_clave
+    filtros = _filtros_de_movimientos_de_vales(desde, hasta, proveedor_id)
+    try:
+        movimientos = [] if filtros["error"] else movimientos_de_vales(
+            filtros["desde"], filtros["hasta"], proveedor_id=filtros["proveedor_id"], hoy=_hoy_argentina())
+        proveedores = listar_proveedores()
+    except Exception as error_db:
+        raise HTTPException(status_code=500, detail=f"Error al conectar con la base de datos: {error_db}") from error_db
+    return templates.TemplateResponse(request, "vales_movimientos.html", {
+        "camino": _camino_de_vales(request), "filtros": filtros, "movimientos": movimientos,
+        "proveedores": proveedores, "texto_del_movimiento": TEXTO_DEL_MOVIMIENTO_VALE,
+        "texto_de_la_salida": texto_de_la_salida_vale,
+    })
+
+
+@app.get("/administracion/vales/movimientos-excel")
+@app.get("/gerencia/vales/movimientos-excel")
+def exportar_movimientos_de_vales(request: Request, desde: str = "", hasta: str = "", proveedor_id: str = ""):
+    sin_clave = _sin_clave_de_vales(request)
+    if sin_clave is not None:
+        return sin_clave
+    filtros = _filtros_de_movimientos_de_vales(desde, hasta, proveedor_id)
+    if filtros["error"]:
+        raise HTTPException(status_code=400, detail=filtros["error"])
+    try:
+        movimientos = movimientos_de_vales(filtros["desde"], filtros["hasta"],
+                                           proveedor_id=filtros["proveedor_id"], hoy=_hoy_argentina())
+    except Exception as error_db:
+        raise HTTPException(status_code=500, detail=f"Error al conectar con la base de datos: {error_db}") from error_db
+    filtro = "todos los proveedores" if filtros["proveedor_id"] is None else next(
+        (m["vale"]["proveedor"] for m in movimientos), "proveedor elegido")
+    contenido = generar_excel_movimientos_vales(filtros["desde"], filtros["hasta"], filtro, movimientos)
+    nombre = f"Vales_a_cobrar_{filtros['desde'].isoformat()}_a_{filtros['hasta'].isoformat()}.xlsx"
+    return Response(content=contenido,
+                    media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                    headers={"Content-Disposition": f'attachment; filename="{nombre}"'})
+
+
+def _renderizar_vale(request: Request, vale_id: int, *, aviso: str | None = None,
+                     error: str | None = None, status_code: int = 200):
+    camino = _camino_de_vales(request)
+    hoy = _hoy_argentina()
+    try:
+        vale = vale_a_cobrar(vale_id, hoy)
+    except Exception as error_db:
+        raise HTTPException(status_code=500, detail=f"Error al conectar con la base de datos: {error_db}") from error_db
+    if vale is None:
+        raise HTTPException(status_code=404, detail="Ese vale no existe")
+    # LO QUE ESTE SECTOR PUEDE HACER con este vale: la misma regla que la base
+    # (SECTOR_DE_LA_SALIDA), así no se ofrece un botón que el POST rechaza.
+    salidas = [tipo for tipo, sector in SECTOR_DE_LA_SALIDA.items()
+               if sector == camino["sector"]] if vale["estado"] == "en_cartera" else []
+    return templates.TemplateResponse(request, "vale_a_cobrar.html", {
+        "camino": camino, "vale": vale, "salidas": salidas, "hoy": hoy,
+        "texto_del_estado": TEXTO_DEL_ESTADO_VALE, "texto_del_origen": TEXTO_DEL_ORIGEN_VALE,
+        "texto_del_sector": TEXTO_DEL_SECTOR_VALE, "texto_de_la_salida": texto_de_la_salida_vale,
+        "aviso": aviso, "error": error,
+    }, status_code=status_code)
+
+
+@app.get("/administracion/vales/{vale_id}")
+@app.get("/gerencia/vales/{vale_id}")
+def ver_vale_a_cobrar(request: Request, vale_id: int, aviso: str | None = None, error: str | None = None):
+    """El detalle de un vale, con su historia: de dónde nació y cómo salió."""
+    sin_clave = _sin_clave_de_vales(request)
+    if sin_clave is not None:
+        return sin_clave
+    return _renderizar_vale(request, vale_id, aviso=aviso, error=error)
+
+
+@app.get("/administracion/vales/{vale_id}/foto")
+@app.get("/gerencia/vales/{vale_id}/foto")
+def ver_foto_de_vale(request: Request, vale_id: int):
+    """La foto del vale (la de su devolución), bajo el prefijo de quien mira:
+    el link de la devolución vive en Administración y desde Gerencia chocaría
+    contra una clave ajena (corolario 56)."""
+    sin_clave = _sin_clave_de_vales(request)
+    if sin_clave is not None:
+        return sin_clave
+    foto_ruta = foto_del_vale(vale_id)
+    if foto_ruta:
+        return RedirectResponse(url=obtener_url_foto(foto_ruta), status_code=303)
+    raise HTTPException(status_code=404, detail="Ese vale no tiene foto")
+
+
+def _importe_del_form(texto: str) -> float | None:
+    texto = (texto or "").strip()
+    if not texto:
+        return None
+    try:
+        return float(texto.replace(".", "").replace(",", "."))
+    except ValueError:
+        return None
+
+
+def _salida_de_vale(request: Request, vale_id: int, tipo: str, fecha: str, **datos):
+    camino = _camino_de_vales(request)
+    dia = fecha_del_filtro_vales(fecha)
+    if dia is None:
+        return _renderizar_vale(request, vale_id, error="La fecha no se entiende.", status_code=400)
+    try:
+        registrar_salida_de_vale(vale_id, tipo, dia, sector=camino["sector"], hoy=_hoy_argentina(), **datos)
+    except ValueError as motivo:
+        return _renderizar_vale(request, vale_id, error=str(motivo), status_code=400)
+    except Exception as error_db:
+        logger.exception("No se pudo registrar la salida %s del vale %s", tipo, vale_id)
+        return _renderizar_vale(request, vale_id, error=f"No se pudo guardar: {error_db}", status_code=500)
+    return RedirectResponse(
+        url=f"{camino['base']}/vales/{vale_id}?" + urlencode(
+            {"aviso": f"Vale {TEXTO_DEL_ESTADO_VALE[tipo].lower()}. Ya no está en la cartera."}),
+        status_code=303)
+
+
+@app.post("/administracion/vales/{vale_id}/cobrar")
+def cobrar_vale(request: Request, vale_id: int, fecha: str = Form(""), importe_cobrado: str = Form(""),
+                ingreso_a_caja: str = Form("")):
+    """Cobrado: fecha, importe cobrado y, si se quiere, por dónde ingresó a caja."""
+    importe = _importe_del_form(importe_cobrado)
+    if importe is None:
+        return _renderizar_vale(request, vale_id, error="El importe cobrado no es un número.", status_code=400)
+    return _salida_de_vale(request, vale_id, "cobrado", fecha, importe_cobrado=importe,
+                           ingreso_a_caja=ingreso_a_caja)
+
+
+@app.post("/administracion/vales/{vale_id}/cruzar")
+def cruzar_vale(request: Request, vale_id: int, fecha: str = Form(""), referencia: str = Form("")):
+    """Cruzado con el proveedor: fecha y número de liquidación o referencia."""
+    return _salida_de_vale(request, vale_id, "cruzado", fecha, referencia=referencia)
+
+
+@app.post("/gerencia/vales/{vale_id}/anular")
+def anular_vale(request: Request, vale_id: int, fecha: str = Form(""), motivo: str = Form("")):
+    """Anulado: SOLO Gerencia, con motivo."""
+    puerta = _puerta_de_gerencia_para_escribir(request)
+    if puerta is not None:
+        return puerta
+    return _salida_de_vale(request, vale_id, "anulado", fecha, motivo=motivo)
+
+
+@app.post("/gerencia/vales/limites")
+def guardar_limites_de_vales_ruta(request: Request, monto: str = Form(""), dias: str = Form("")):
+    """Los límites de las dos alertas. Solo con la clave de Gerencia."""
+    puerta = _puerta_de_gerencia_para_escribir(request)
+    if puerta is not None:
+        return puerta
+    valor_monto = _importe_del_form(monto)
+    valor_dias = _entero_positivo(dias)
+    filtros = _filtros_de_vales("", "", "", "", "")
+    if valor_monto is None or valor_dias is None or valor_monto <= 0:
+        return _renderizar_vales(request, filtros,
+                                 error="Los límites son un importe y una cantidad de días, mayores que cero.",
+                                 status_code=400)
+    try:
+        guardar_limites_de_vales(valor_monto, valor_dias)
+    except ValueError as motivo:
+        return _renderizar_vales(request, filtros, error=str(motivo), status_code=400)
+    return RedirectResponse(url="/gerencia/vales?" + urlencode({"aviso": "Límites guardados."}),
+                            status_code=303)
 
 
 @app.get("/administracion/ingresos/pagar")

@@ -100,7 +100,8 @@
       <div class="fila-dato">{{ m.fecha.strftime('%d/%m/%Y') }}
         {%- if m.compra_id %} · compra #{{ m.compra_id }}{% endif %}
         {%- if m.valor is not none %} · {{ '-' if m.valor < 0 }}${{ '{:,.0f}'.format(m.valor|abs).replace(',', '.') }}{% elif m.tipo != 'segunda' %} · sin precio{% endif %}
-        {%- if m.motivo %} · {{ m.motivo }}{% endif %}</div>
+        {%- if m.motivo %} · {{ m.motivo }}{% endif %}
+        {%- if m.sena %} · <span class="sena">{{ texto_de_la_sena(m) }}</span>{% endif %}</div>
     </div>
     {% endfor %}
   </div>

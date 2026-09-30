@@ -112,6 +112,8 @@ def _sembrar_todo_en_el_que_se_va(g):
              " stock_sistema) VALUES (%s, %s, 1, '2026-09-26/vale.jpg', 5)", (g["va"], marca))
     g["sql"]("INSERT INTO vacios_deposito_foto (proveedor_id, cantidad, fecha) VALUES (%s, 40, %s)",
              (g["va"], date(2026, 9, 25)))
+    g["sql"]("INSERT INTO vales_a_cobrar (origen, proveedor_id, fecha, importe) "
+             "VALUES ('anterior_al_sistema', %s, %s, 1000)", (g["va"], date(2026, 8, 1)))
     g["sql"]("INSERT INTO movimientos_stock (articulo_id, tipo, cantidad, motivo, fecha_operacion, stock_sistema,"
              " destino_rechazo, proveedor_devolucion_id) VALUES (%s, 'reingreso_rechazo', 1, 'EJEMPLO',"
              " %s, 0, 'devolucion_proveedor', %s)", (g["articulo"], date(2026, 9, 20), g["va"]))
