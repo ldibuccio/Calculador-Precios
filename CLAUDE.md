@@ -609,6 +609,14 @@ bajó de 603 a 180 bultos.
   solo lo anterior al margen: lo del tramo lo cubre la guía que se está
   cargando.
 
+**El detalle de la alerta** (Administración → Alertas, desde el 30/09) lista
+cada armado que espera: fecha de armado, artículo, pedido, cliente y
+sucursal, y cuántas cajas del artículo se llevaron armados de fichas SIN
+envase. Sale del mismo rejuego que el número (`_rejuego_de_armados_con_caja`),
+así que la lista suma lo mismo que la alerta. Un rechazo que vuelve a stock
+entra al reparto como lote de cajas (`reingreso_rechazo`), con el costo
+congelado del listado del día del pedido.
+
 **Un armado que ninguna guía cubre sale ENTERO de la Rentabilidad Real**
 (venta y costo) al "afuera del cálculo", con el motivo "falta una guía R".
 No queda en cero ni con un costo inventado. Con el margen, los que entran en

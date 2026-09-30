@@ -159,6 +159,7 @@ from app.db import (
     contar_reprocesos_costo_incompleto,
     contar_reprocesos_sin_costo_posible,
     contar_bultos_esperando_guia_r,
+    armados_esperando_guia_r,
     bultos_esperando_guia_r_por_articulo,
     contar_dias_articulo_en_rojo,
     dias_articulo_en_rojo,
@@ -16408,6 +16409,40 @@ def _detalle_dias_articulo_en_rojo() -> dict:
     }
 
 
+def _detalle_armados_esperando_guia_r() -> dict:
+    """Cada armado que espera su guía R, con el pedido: para cotejar el número.
+
+    Sale de `armados_esperando_guia_r`, que rejuega el MISMO FIFO que el
+    conteo: la suma de "Esperan" es el número de la alerta. "Cajas a armados
+    sin caja" es del ARTÍCULO y se repite en sus filas: son cajas (de guía R
+    o de un rechazo que volvió) que se llevaron armados de fichas SIN envase,
+    y que después le faltan a uno de caja.
+    """
+    filas = armados_esperando_guia_r()
+    renglones = [
+        [
+            _formatear_fecha_corta(fila["fecha_armado"]),
+            fila["articulo"],
+            f"#{fila['pedido_id']} del {_formatear_fecha_corta(fila['fecha_pedido'])}"
+            if fila["pedido_id"] is not None else "?",
+            " · ".join(x for x in (fila["cliente"], fila["sucursal"]) if x) or "?",
+            _formatear_numero(fila["esperan"]),
+            _formatear_numero(fila["cajas_a_salidas_sin_caja"]),
+        ]
+        for fila in filas
+    ]
+    articulos = len({f["articulo_id"] for f in filas})
+    total = round(sum(f["esperan"] for f in filas), 2)
+    return {
+        "columnas": ["Armado", "Artículo", "Pedido", "Cliente", "Esperan",
+                     "Cajas a armados sin caja"],
+        "filas": renglones,
+        "resumen": f"{_formatear_numero(total)} bultos en {len(renglones)} "
+                   f"{'renglón' if len(renglones) == 1 else 'renglones'} de {articulos} artículo"
+                   f"{'s' if articulos != 1 else ''}",
+    }
+
+
 def _detalle_articulos_incotizables() -> dict:
     """Los artículos comprados que no se pueden cotizar, y CUÁL de las dos cosas falta.
 
@@ -16826,6 +16861,7 @@ ALERTAS = [
         # del día que armó, o de hasta DIAS_DE_MARGEN_DE_LA_GUIA_R días
         # después— la siguiente corrida da cero. Sin botón.
         contar=lambda: contar_bultos_esperando_guia_r(),
+        detallar=_detalle_armados_esperando_guia_r,
     ),
     DefinicionAlerta(
         codigo="guias_r_costo_incompleto",
