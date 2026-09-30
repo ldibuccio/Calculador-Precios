@@ -729,3 +729,20 @@ nada se backfilleó y las devoluciones del 25/09 son pruebas. La población y
 el testigo no vinieron en el mensaje. Palmala no vota: ahí la verificación
 solo confirma que las migraciones no explotan. Los vales en papel todavía no
 se cargaron (`vales_papel_1` a `4`).
+
+## 30/09 — `fotos_1` a `fotos_4`: fotos anexadas a los vales y regla de 3 años
+
+Corridas por el dueño en las dos bases: las fotos anexadas a un vale, la
+marca de la foto de una devolución (`fotos_recepcion.movimiento_id`), las
+fotos de pesada de compras borradas y el registro de las borradas por
+antigüedad. Verificación (`fotos_5_verificacion.sql`), corrida aparte de los
+`do`, según el dueño (la leyó el Claude con acceso de lectura):
+
+```
+FRUTAMAX  fotos · tablas 3 · columna 1 · devolucion_marcadas 0 · devolucion_sin_marcar 0 · población fotos_recepcion 323
+PALMALA   fotos · tablas 3 · columna 1 · devolucion_marcadas 0 · devolucion_sin_marcar 0 · población fotos_recepcion 202
+```
+
+No había ninguna foto de devolución que marcar en ninguna de las dos bases,
+así que el backfill no tocó nada. El testigo no vino en el mensaje. Palmala no
+vota: ahí la verificación solo confirma que las migraciones no explotan.
