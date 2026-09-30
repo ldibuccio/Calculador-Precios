@@ -1,0 +1,135 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Vale a cobrar</title>
+<style>
+  :root { font-family: -apple-system, system-ui, sans-serif; }
+  body { margin: 0; padding: 1rem; background: #f5f5f5; color: #222; }
+  .tarjeta {
+    background: #fff; border-radius: 10px; padding: 1rem; margin-bottom: 1rem;
+    box-shadow: 0 1px 3px rgba(0, 0, 0, 0.1); overflow-wrap: anywhere;
+  }
+  .error { background: #fee2e2; color: #991b1b; padding: 0.75rem 1rem; border-radius: 8px; margin-bottom: 1rem; }
+  .filtros { display: flex; flex-wrap: wrap; gap: 0.6rem; }
+  .filtros label { flex: 1 1 9rem; font-size: 0.85rem; color: #444; }
+  .filtros select, .filtros input {
+    display: block; width: 100%; box-sizing: border-box; margin-top: 0.2rem; padding: 0.6rem;
+    border: 1px solid #ccc; border-radius: 8px; font-size: 1rem; background: #fff; min-height: 44px;
+  }
+  .acciones { display: flex; flex-wrap: wrap; gap: 0.6rem; margin-top: 0.8rem; }
+  .acciones button, .acciones a {
+    flex: 1 1 9rem; min-height: 48px; padding: 0.7rem; border-radius: 8px; font-size: 1rem;
+    font-weight: 600; text-align: center; text-decoration: none; box-sizing: border-box;
+  }
+  .acciones button { background: #2563eb; color: #fff; border: none; }
+  .acciones a { background: #fff; color: #2563eb; border: 1px solid #2563eb; }
+  h2 { font-size: 1.05rem; margin: 0 0 0.3rem; }
+  .cuenta { color: #444; font-size: 0.9rem; margin: 0 0 0.6rem; }
+  .fila { padding: 0.55rem 0; border-top: 1px solid #eee; }
+  .fila-cabeza { display: flex; justify-content: space-between; gap: 0.6rem; }
+  .fila-que { font-weight: 600; }
+  .fila-dato { color: #555; font-size: 0.88rem; }
+  .suma { color: #15803d; font-weight: 700; white-space: nowrap; }
+  .resta { color: #dc2626; font-weight: 700; white-space: nowrap; }
+  .vacio { color: #666; font-style: italic; }
+  .aviso { background: #dcfce7; color: #166534; padding: 0.75rem 1rem; border-radius: 8px; margin-bottom: 1rem; }
+  .total { font-size: 1.5rem; font-weight: 700; margin: 0; }
+  .total-dato { color: #444; margin: 0.2rem 0 0; }
+  .alerta-limite { color: #dc2626; font-weight: 700; }
+  .fila a.abrir { display: block; color: inherit; text-decoration: none; min-height: 44px; }
+  .viejo { color: #dc2626; font-weight: 700; }
+  .limites form { display: flex; flex-wrap: wrap; gap: 0.6rem; align-items: flex-end; }
+  .limites label { flex: 1 1 9rem; font-size: 0.85rem; color: #444; }
+  .limites input { display: block; width: 100%; box-sizing: border-box; margin-top: 0.2rem; padding: 0.6rem;
+    border: 1px solid #ccc; border-radius: 8px; font-size: 1rem; min-height: 44px; }
+  .limites button { flex: 1 1 9rem; min-height: 48px; border-radius: 8px; border: none; background: #2563eb;
+    color: #fff; font-weight: 600; font-size: 1rem; }
+  .dato { margin: 0.25rem 0; }
+  .dato b { color: #333; }
+  .salida form { display: flex; flex-direction: column; gap: 0.6rem; }
+  .salida label { font-size: 0.85rem; color: #444; }
+  .salida input { display: block; width: 100%; box-sizing: border-box; margin-top: 0.2rem; padding: 0.6rem;
+    border: 1px solid #ccc; border-radius: 8px; font-size: 1rem; min-height: 44px; }
+  .salida button { min-height: 48px; border-radius: 8px; border: none; background: #2563eb; color: #fff;
+    font-weight: 600; font-size: 1rem; }
+  .salida button.peligro { background: #dc2626; }
+  .diferencia { font-weight: 700; }
+</style>
+</head>
+<body>
+  {% set barra_sector = camino.sector %}
+  {% set barra_titulo = "Vale a cobrar" %}
+  {% set barra_atras = camino.base ~ "/vales" %}
+  {% include "_barra_navegacion.html" %}
+
+  {% if aviso %}<div class="aviso">{{ aviso }}</div>{% endif %}
+  {% if error %}<div class="error">{{ error }}</div>{% endif %}
+
+  <div class="tarjeta">
+    <h2>{{ vale.proveedor }}{% if vale.numero %} · vale {{ vale.numero }}{% endif %}</h2>
+    <p class="total">{{ vale.importe|moneda }}</p>
+    <p class="dato"><b>Estado:</b> {{ texto_del_estado[vale.estado] }}
+      {%- if vale.estado == 'en_cartera' %} · {{ vale.dias }} días en cartera{% else %} · {{ texto_de_la_salida(vale) }}{% endif %}</p>
+    <p class="dato"><b>Fecha:</b> {{ vale.fecha.strftime('%d/%m/%Y') }} · {{ texto_del_origen[vale.origen] }}</p>
+    {% if vale.origen == 'devolucion' %}
+    <p class="dato"><b>Devolución:</b> {{ vale.cajones }} cajón{{ '' if vale.cajones == 1 else 'es' }} · {{ vale.marca or 'sin marca' }}</p>
+    <p class="dato"><b>Calculado:</b>
+      {%- if vale.importe_calculado is not none %} {{ vale.importe_calculado|moneda }} (seña × cajones)
+        {%- if vale.diferencia %} · <span class="diferencia">diferencia {{ '+' if vale.diferencia > 0 }}{{ vale.diferencia|moneda }}</span>{% endif %}
+      {%- else %} no había seña de esa pila para comparar{% endif %}</p>
+    {% endif %}
+    {% if vale.foto_ruta %}<div class="acciones"><a href="{{ camino.base }}/vales/{{ vale.id }}/foto">Ver la foto del vale</a></div>{% endif %}
+  </div>
+
+  <div class="tarjeta">
+    <h2>Historia</h2>
+    <div class="fila"><div class="fila-que">Entró a cartera</div>
+      <div class="fila-dato">{{ vale.fecha.strftime('%d/%m/%Y') }} ·
+        {%- if vale.origen == 'devolucion' %} devolución cargada por {{ texto_del_sector.get(vale.cargada_desde, 'sin dato') }}
+        {%- else %} cargado por SQL{% endif %} · {{ vale.creado_en|fecha_hora }}</div></div>
+    {% if vale.salida_fecha %}
+    <div class="fila"><div class="fila-que">{{ texto_del_estado[vale.estado] }}</div>
+      <div class="fila-dato">{{ vale.salida_fecha.strftime('%d/%m/%Y') }} · {{ texto_de_la_salida(vale) }} ·
+        {{ texto_del_sector[vale.salida_sector] }}, {{ vale.salida_creado_en|fecha_hora }}</div></div>
+    {% elif vale.devolucion_anulada_el %}
+    <div class="fila"><div class="fila-que">Se anuló la devolución</div>
+      <div class="fila-dato">{{ vale.devolucion_anulada_el|fecha_hora }}</div></div>
+    {% endif %}
+  </div>
+
+  {% if 'cobrado' in salidas %}
+  <div class="tarjeta salida">
+    <h2>Cobrado</h2>
+    <form method="post" action="/administracion/vales/{{ vale.id }}/cobrar">
+      <label>Fecha<input type="date" name="fecha" value="{{ hoy.isoformat() }}" max="{{ hoy.isoformat() }}" required></label>
+      <label>Importe cobrado<input type="text" inputmode="decimal" name="importe_cobrado" value="{{ vale.importe|sin_decimales }}" required></label>
+      <label>Ingreso a caja (opcional)<input type="text" name="ingreso_a_caja" autocomplete="off"></label>
+      <button type="submit">Registrar el cobro</button>
+    </form>
+  </div>
+  {% endif %}
+  {% if 'cruzado' in salidas %}
+  <div class="tarjeta salida">
+    <h2>Cruzado con el proveedor</h2>
+    <form method="post" action="/administracion/vales/{{ vale.id }}/cruzar">
+      <label>Fecha<input type="date" name="fecha" value="{{ hoy.isoformat() }}" max="{{ hoy.isoformat() }}" required></label>
+      <label>Nº de liquidación o referencia<input type="text" name="referencia" autocomplete="off" required></label>
+      <button type="submit">Registrar el cruce</button>
+    </form>
+  </div>
+  {% endif %}
+  {% if 'anulado' in salidas %}
+  <div class="tarjeta salida">
+    <h2>Anular</h2>
+    <form method="post" action="/gerencia/vales/{{ vale.id }}/anular">
+      <label>Fecha<input type="date" name="fecha" value="{{ hoy.isoformat() }}" max="{{ hoy.isoformat() }}" required></label>
+      <label>Motivo<input type="text" name="motivo" autocomplete="off" required></label>
+      <button type="submit" class="peligro">Anular el vale</button>
+    </form>
+  </div>
+  {% endif %}
+{% include "_pie_version.html" %}
+</body>
+</html>

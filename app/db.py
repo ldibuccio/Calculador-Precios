@@ -12,6 +12,7 @@ from contextlib import contextmanager
 
 import psycopg2
 import psycopg2.sql
+from zoneinfo import ZoneInfo
 
 from core.envases import (cajas_que_mueve_la_guia, como_queda_la_cuenta,
                           efecto_en_la_cuenta, envase_derivado_de_la_ficha,
@@ -1486,6 +1487,7 @@ TABLAS_QUE_APUNTAN_A_PROVEEDORES = frozenset({
     ("aprendizaje_articulos", "proveedor_id"),
     ("movimientos_stock", "proveedor_devolucion_id"),
     ("proveedores_codigos", "proveedor_id"),
+    ("vales_a_cobrar", "proveedor_id"),
 })
 
 # Las dos del diseño original que NO están en db/esquema_completo.sql: solo
@@ -1570,7 +1572,8 @@ def _resumen_para_juntar(cursor, queda_id: int, va_id: int) -> dict:
           + (SELECT count(*) FROM conteos_vacios_deposito WHERE proveedor_id = %(va)s)
           + (SELECT count(*) FROM vacios_deposito_ajustes WHERE proveedor_id = %(va)s)
           + (SELECT count(*) FROM vacios_deposito_asignaciones WHERE proveedor_id = %(va)s)
-          + (SELECT count(*) FROM vacios_deposito_arranque_pilas WHERE proveedor_id = %(va)s),
+          + (SELECT count(*) FROM vacios_deposito_arranque_pilas WHERE proveedor_id = %(va)s)
+          + (SELECT count(*) FROM vales_a_cobrar WHERE proveedor_id = %(va)s),
           (SELECT count(*) FROM movimientos_stock WHERE proveedor_devolucion_id = %(va)s),
           (SELECT count(*) FROM aprendizaje_articulos a WHERE a.proveedor_id = %(va)s
               AND NOT EXISTS (SELECT 1 FROM aprendizaje_articulos b
@@ -1694,6 +1697,12 @@ def juntar_proveedores(queda_id: int, va_id: int) -> dict:
                     "UPDATE vacios_deposito_foto SET proveedor_id = %(queda)s WHERE proveedor_id = %(va)s",
                     parametros,
                 )
+            # Los vales anteriores al sistema nombran al proveedor (los de una
+            # devolución lo leen de ella, que ya se movió arriba).
+            cursor.execute(
+                "UPDATE vales_a_cobrar SET proveedor_id = %(queda)s WHERE proveedor_id = %(va)s",
+                parametros,
+            )
             cursor.execute(
                 "UPDATE proveedores_codigos SET proveedor_id = %(queda)s WHERE proveedor_id = %(va)s",
                 parametros,
@@ -5163,12 +5172,20 @@ _SQL_COSTO_DE_LA_COMPRA_DEVUELTA = """
 #   deposito     una devolución desde depósito. Valor: bultos × el de la compra.
 #   segunda      segunda remitida al puesto. No tiene proveedor ni valor.
 #
+# LA SEÑA (dueño, 30/09): una compra con seña entró en cajones que se
+# devuelven, y la mercadería que vuelve al proveedor vuelve en esos cajones.
+# `sena` es la seña POR CAJÓN de la compra, en la entrada y en la devolución
+# desde depósito, y en el rechazo solo si iba en el cajón (sin caja de Día):
+# la misma regla que saca esos cajones de Vacíos. Los cajones son los bultos.
+# Esa devolución NO GENERA UN VALE: la mercadería vuelve en su envase por
+# cuenta corriente, como si nunca hubiera entrado.
+#
 # Las salidas van con los bultos y el valor en NEGATIVO. Lo anulado no está.
 TIPOS_DE_MOVIMIENTO_DEL_DEPOSITO = ("entrada", "rechazo", "deposito", "segunda")
 
 COLUMNAS_MOVIMIENTOS_DEL_DEPOSITO = (
     "tipo", "id", "fecha", "proveedor_id", "proveedor", "articulo_id", "articulo",
-    "compra_id", "bultos", "valor", "motivo",
+    "compra_id", "bultos", "valor", "motivo", "sena",
 )
 
 _SQL_MOVIMIENTOS_DEL_DEPOSITO = """
@@ -5176,7 +5193,8 @@ _SQL_MOVIMIENTOS_DEL_DEPOSITO = """
         SELECT 'entrada' AS tipo, c.id, (c.procesada_el AT TIME ZONE 'America/Argentina/Buenos_Aires')::date AS fecha,
                c.proveedor_id, p.nombre AS proveedor, c.articulo_id, a.nombre AS articulo, c.id AS compra_id,
                COALESCE(c.cantidad_cajones_real, c.cantidad_cajones) AS bultos,
-               COALESCE(c.cantidad_cajones_real, c.cantidad_cajones) * c.importe AS valor, NULL AS motivo
+               COALESCE(c.cantidad_cajones_real, c.cantidad_cajones) * c.importe AS valor, NULL AS motivo,
+               NULLIF(COALESCE(c.sena, 0), 0) AS sena
           FROM compras c
           JOIN proveedores p ON p.id = c.proveedor_id
           JOIN articulos a ON a.id = c.articulo_id
@@ -5190,7 +5208,9 @@ _SQL_MOVIMIENTOS_DEL_DEPOSITO = """
                -ABS(m.cantidad) * CASE WHEN m.tipo = 'devolucion_deposito' THEN cd.importe
                                        ELSE COALESCE(""" + _SQL_COSTO_DE_LA_COMPRA_DEVUELTA + """,
                                                      m.costo_por_bulto) END,
-               m.motivo
+               m.motivo,
+               CASE WHEN m.tipo = 'devolucion_deposito' OR fd.envase_id IS NULL
+                    THEN NULLIF(COALESCE(cd.sena, 0), 0) END
           FROM movimientos_stock m
           JOIN articulos a ON a.id = m.articulo_id
           LEFT JOIN compras cd ON cd.id = m.compra_devolucion_id
@@ -5202,7 +5222,7 @@ _SQL_MOVIMIENTOS_DEL_DEPOSITO = """
            AND (m.tipo = 'devolucion_deposito' OR m.destino_rechazo = 'devolucion_proveedor')
         UNION ALL
         SELECT 'segunda', rs.id, rs.fecha_operacion, NULL, NULL, rs.articulo_id, a.nombre, NULL,
-               -rs.bultos, NULL, NULL
+               -rs.bultos, NULL, NULL, NULL
           FROM remitos_segunda rs
           JOIN articulos a ON a.id = rs.articulo_id
          WHERE rs.anulado_el IS NULL AND rs.destino = 'puesto'
@@ -5240,6 +5260,7 @@ def movimientos_del_deposito(desde, hasta, tipo: str | None = None, proveedor_id
         m = dict(zip(COLUMNAS_MOVIMIENTOS_DEL_DEPOSITO, fila))
         m["bultos"] = float(m["bultos"]) if m["bultos"] is not None else 0.0
         m["valor"] = float(m["valor"]) if m["valor"] is not None else None
+        m["sena"] = float(m["sena"]) if m["sena"] is not None else None
         movimientos.append(m)
     return movimientos
 
@@ -17494,7 +17515,7 @@ PUERTAS_DE_LA_DEVOLUCION = ("deposito", "administracion", "compras")
 
 def crear_devolucion_vacios(proveedor_id: int, marca_vacio_id: int | None, cantidad: int,
                             foto_ruta: str, importe: float | None = None, *,
-                            cargada_desde: str) -> int:
+                            cargada_desde: str, numero_vale: str | None = None) -> int:
     """Le devuelve al proveedor cajones de UNA PILA. Devuelve su id.
 
     SIN COMPRA (dueño, 25/09): la devolución sale de una pila —proveedor y
@@ -17512,7 +17533,14 @@ def crear_devolucion_vacios(proveedor_id: int, marca_vacio_id: int | None, canti
     `cargada_desde` NO TIENE DEFAULT, a propósito: un camino nuevo que se
     olvide de decir por dónde entró revienta acá en vez de guardar un NULL que
     se lee igual que una devolución vieja.
+
+    EL VALE A COBRAR NACE ACÁ (dueño, 30/09), en la misma transacción: una
+    devolución con importe es plata que el proveedor nos debe. Sin importe no
+    hay vale, y un número de vale sin importe se rechaza en vez de perderse.
     """
+    numero_vale = (numero_vale or "").strip() or None
+    if numero_vale and not (importe and importe > 0):
+        raise ValueError("El número de vale va con el importe: sin importe no hay vale a cobrar.")
     if cargada_desde not in PUERTAS_DE_LA_DEVOLUCION:
         raise ValueError(f"Puerta desconocida para una devolución: {cargada_desde!r}.")
     if not (foto_ruta or "").strip():
@@ -17543,6 +17571,9 @@ def crear_devolucion_vacios(proveedor_id: int, marca_vacio_id: int | None, canti
                 conexion.rollback()
                 raise _traducir_marca_ajena(error) from error
             devolucion_id = cursor.fetchone()[0]
+            if importe and importe > 0:
+                _crear_vale_de_la_devolucion(cursor, devolucion_id, proveedor_id, marca_vacio_id,
+                                             cantidad, numero_vale)
         conexion.commit()
         return devolucion_id
     finally:
@@ -17611,10 +17642,33 @@ def anular_devolucion_vacios(devolucion_id: int) -> None:
     puede contestar "no hay". Y NO PISA UN `anulado_el` YA PUESTO: anular dos
     veces borraría cuándo se anuló de verdad.
     """
-    _anular("vacios_deposito_devoluciones", devolucion_id, "Esa devolución", "anulada")
+    _anular("vacios_deposito_devoluciones", devolucion_id, "Esa devolución", "anulada",
+            guarda=_negar_si_el_vale_ya_salio)
 
 
-def _anular(tabla: str, fila_id: int, que: str, anulado: str) -> None:
+def _negar_si_el_vale_ya_salio(cursor, devolucion_id: int) -> None:
+    """Una devolución cuyo vale ya se COBRÓ o se CRUZÓ no se anula (30/09).
+
+    Anularla dejaría una plata cobrada colgando de una devolución que el
+    sistema dice que no pasó. Con el vale EN CARTERA sí se anula, y el vale
+    sale de la cartera solo: su estado se deriva de la devolución
+    (`_SQL_ESTADO_DEL_VALE`). Con el vale ANULADO también, no hay nada que
+    contradecir. Va adentro de la misma transacción que el UPDATE, con la
+    fila de la salida bloqueada.
+    """
+    cursor.execute(
+        "SELECT s.tipo FROM vales_a_cobrar v "
+        "JOIN vales_a_cobrar_salidas s ON s.vale_id = v.id "
+        "WHERE v.devolucion_id = %s FOR UPDATE OF s",
+        (devolucion_id,),
+    )
+    fila = cursor.fetchone()
+    if fila is not None and fila[0] in ("cobrado", "cruzado"):
+        dicho = "se cobró" if fila[0] == "cobrado" else "se cruzó con el proveedor"
+        raise ValueError(f"El vale de esa devolución ya {dicho}: la devolución no se anula.")
+
+
+def _anular(tabla: str, fila_id: int, que: str, anulado: str, guarda=None) -> None:
     """El género viaja con el sujeto: "Ese ajuste ya estaba anulada" salía igual de prolijo.
 
     LO ANTERIOR AL ARRANQUE NO SE ANULA: ya no mueve el stock, así que anularlo
@@ -17640,10 +17694,347 @@ def _anular(tabla: str, fila_id: int, que: str, anulado: str) -> None:
                 raise ValueError(
                     f"{que} es anterior al {fila[2]}: el stock arranca de ese conteo, "
                     f"así que ya no lo mueve y {anularla} no cambiaría nada.")
+            if guarda is not None:
+                guarda(cursor, fila_id)
             cursor.execute(f"UPDATE {tabla} SET anulado_el = now() WHERE id = %s", (fila_id,))
         conexion.commit()
     finally:
         conexion.close()
+
+
+# ============================================================================
+# VALES A COBRAR (dueño, 30/09)
+#
+# La plata de envase que el proveedor nos debe. Un vale nace de DOS maneras
+# (db/vales_1_tabla.sql, CHECK `vales_origen_coherente`):
+#
+#   devolucion           una devolución de vacíos con importe. Proveedor,
+#                        fecha, importe, cajones, marca y foto se LEEN de la
+#                        devolución: escritos una vez.
+#   anterior_al_sistema  los vales en papel de antes, cargados por SQL
+#                        (db/vales_carga_2_cargar.sql). Traen lo suyo.
+#
+# Y sale de la cartera por UNA salida (cobrado, cruzado o anulado), o porque
+# se anuló la devolución de la que nació. NADA DE ESTO TOCA EL STOCK.
+# ============================================================================
+
+ORIGENES_DEL_VALE = ("devolucion", "anterior_al_sistema")
+TIPOS_DE_SALIDA_DEL_VALE = ("cobrado", "cruzado", "anulado")
+ESTADOS_DEL_VALE = ("en_cartera",) + TIPOS_DE_SALIDA_DEL_VALE + ("devolucion_anulada",)
+
+# QUIÉN PUEDE CADA SALIDA: es la regla de los CHECK de vales_2_salidas.sql,
+# escrita acá para que la pantalla no ofrezca lo que la base rechaza. Un test
+# compara las dos.
+SECTOR_DE_LA_SALIDA = {"cobrado": "administracion", "cruzado": "administracion",
+                       "anulado": "gerencia"}
+
+# El ESTADO se deriva, no se guarda: una salida manda; sin salida, la
+# devolución anulada lo saca de la cartera; si no, está en cartera.
+_SQL_ESTADO_DEL_VALE = """
+    CASE WHEN s.tipo IS NOT NULL THEN s.tipo
+         WHEN d.anulado_el IS NOT NULL THEN 'devolucion_anulada'
+         ELSE 'en_cartera' END"""
+
+COLUMNAS_DEL_VALE = (
+    "id", "origen", "devolucion_id", "proveedor_id", "proveedor", "marca", "cajones",
+    "fecha", "importe", "importe_calculado", "numero", "foto_ruta", "cargada_desde",
+    "devolucion_anulada_el", "creado_en", "estado",
+    "salida_fecha", "importe_cobrado", "ingreso_a_caja", "referencia", "motivo",
+    "salida_sector", "salida_creado_en", "dias",
+)
+
+_SQL_VALES = f"""
+    SELECT * FROM (
+        SELECT v.id, v.origen, v.devolucion_id,
+               COALESCE(v.proveedor_id, d.proveedor_id) AS proveedor_id, p.nombre AS proveedor,
+               mv.nombre AS marca, d.cantidad AS cajones,
+               COALESCE(v.fecha, (d.creado_en AT TIME ZONE 'America/Argentina/Buenos_Aires')::date)
+                   AS fecha,
+               COALESCE(v.importe, d.importe) AS importe, v.importe_calculado, v.numero,
+               COALESCE(v.foto_ruta, d.foto_ruta) AS foto_ruta, d.cargada_desde,
+               d.anulado_el AS devolucion_anulada_el, v.creado_en,
+               {_SQL_ESTADO_DEL_VALE} AS estado,
+               s.fecha AS salida_fecha, s.importe_cobrado, s.ingreso_a_caja, s.referencia,
+               s.motivo, s.sector AS salida_sector, s.creado_en AS salida_creado_en
+          FROM vales_a_cobrar v
+          LEFT JOIN vacios_deposito_devoluciones d ON d.id = v.devolucion_id
+          JOIN proveedores p ON p.id = COALESCE(v.proveedor_id, d.proveedor_id)
+          LEFT JOIN marcas_vacio mv ON mv.id = d.marca_vacio_id
+          LEFT JOIN vales_a_cobrar_salidas s ON s.vale_id = v.id
+    ) x
+"""
+
+
+def _crear_vale_de_la_devolucion(cursor, devolucion_id: int, proveedor_id: int,
+                                 marca_vacio_id: int | None, cajones: int,
+                                 numero: str | None) -> int:
+    """El vale de una devolución con importe. Anda adentro de la transacción
+    de la devolución: si el vale rebota, la devolución tampoco queda.
+
+    EL IMPORTE CALCULADO lo hace el server, no la pantalla: la seña por cajón
+    de la última recepción con seña de ESA pila (`_SQL_SENA_ULTIMA_POR_PILA`,
+    la misma que precarga el importe) por los cajones. Sin seña conocida
+    queda en NULL, y el detalle dice que no hay contra qué comparar.
+    """
+    cursor.execute(
+        _SQL_SENA_ULTIMA_POR_PILA.format(
+            filtro="AND c.proveedor_id = %s AND c.marca_vacio_id IS NOT DISTINCT FROM %s"),
+        (proveedor_id, marca_vacio_id),
+    )
+    fila = cursor.fetchone()
+    calculado = round(float(fila[2]) * cajones, 2) if fila is not None else None
+    cursor.execute(
+        "INSERT INTO vales_a_cobrar (origen, devolucion_id, importe_calculado, numero) "
+        "VALUES ('devolucion', %s, %s, %s) RETURNING id",
+        (devolucion_id, calculado, numero),
+    )
+    return cursor.fetchone()[0]
+
+
+def _vale_de_fila(fila, hoy: date) -> dict:
+    vale = dict(zip(COLUMNAS_DEL_VALE, tuple(fila) + (None,)))
+    for campo in ("importe", "importe_calculado", "importe_cobrado"):
+        if vale[campo] is not None:
+            vale[campo] = float(vale[campo])
+    # DÍAS EN CARTERA: hasta hoy si sigue; hasta la salida si salió.
+    hasta = vale["salida_fecha"] or hoy
+    vale["dias"] = (hasta - vale["fecha"]).days if vale["fecha"] else None
+    if vale["importe"] is not None and vale["importe_calculado"] is not None:
+        vale["diferencia"] = round(vale["importe"] - vale["importe_calculado"], 2)
+    else:
+        vale["diferencia"] = None
+    return vale
+
+
+def listar_vales(*, estado: str | None = "en_cartera", proveedor_id: int | None = None,
+                 desde: date | None = None, hasta: date | None = None,
+                 mas_de_dias: int | None = None, hoy: date) -> list[dict]:
+    """Los vales, del más viejo al más nuevo. `estado` None es todos.
+
+    `mas_de_dias` se mide contra `hoy` (los días en cartera), así que junto con
+    un estado que no sea "en_cartera" mide cuánto tardó en salir.
+    """
+    condiciones, parametros = ["true"], []
+    if estado is not None:
+        condiciones.append("x.estado = %s")
+        parametros.append(estado)
+    if proveedor_id is not None:
+        condiciones.append("x.proveedor_id = %s")
+        parametros.append(proveedor_id)
+    if desde is not None:
+        condiciones.append("x.fecha >= %s")
+        parametros.append(desde)
+    if hasta is not None:
+        condiciones.append("x.fecha <= %s")
+        parametros.append(hasta)
+    conexion = obtener_conexion()
+    try:
+        with conexion.cursor() as cursor:
+            cursor.execute(
+                _SQL_VALES + " WHERE " + " AND ".join(condiciones) + " ORDER BY x.fecha, x.id",
+                parametros,
+            )
+            filas = cursor.fetchall()
+    finally:
+        conexion.close()
+    vales = [_vale_de_fila(f, hoy) for f in filas]
+    if mas_de_dias is not None:
+        vales = [v for v in vales if v["dias"] is not None and v["dias"] > mas_de_dias]
+    return vales
+
+
+def vale_a_cobrar(vale_id: int, hoy: date) -> dict | None:
+    """Un vale con su historia, o None si no existe."""
+    conexion = obtener_conexion()
+    try:
+        with conexion.cursor() as cursor:
+            cursor.execute(_SQL_VALES + " WHERE x.id = %s", (vale_id,))
+            fila = cursor.fetchone()
+    finally:
+        conexion.close()
+    return None if fila is None else _vale_de_fila(fila, hoy)
+
+
+def limites_de_vales() -> dict:
+    """Los dos límites de las alertas: {"monto": float, "dias": int}.
+
+    Es UNA fila (`vales_a_cobrar_limites`, id 1). Si no está, la base quedó a
+    medio configurar y se dice, en vez de inventarle un límite.
+    """
+    conexion = obtener_conexion()
+    try:
+        with conexion.cursor() as cursor:
+            cursor.execute("SELECT monto, dias FROM vales_a_cobrar_limites WHERE id = 1")
+            fila = cursor.fetchone()
+    finally:
+        conexion.close()
+    if fila is None:
+        raise RuntimeError("Falta la fila de límites de vales: la base quedó a medio configurar "
+                           "(db/vales_3_limites.sql).")
+    return {"monto": float(fila[0]), "dias": int(fila[1])}
+
+
+def guardar_limites_de_vales(monto: float, dias: int) -> None:
+    """Cambia los dos límites. Solo Gerencia (lo cierra la puerta del prefijo).
+    La base rechaza un cero o un negativo; acá se dice antes."""
+    if not monto > 0 or not dias > 0:
+        raise ValueError("Los dos límites tienen que ser mayores que cero.")
+    conexion = obtener_conexion()
+    try:
+        with conexion.cursor() as cursor:
+            cursor.execute(
+                "UPDATE vales_a_cobrar_limites SET monto = %s, dias = %s, actualizado_en = now() "
+                "WHERE id = 1",
+                (monto, dias),
+            )
+            if cursor.rowcount != 1:
+                conexion.rollback()
+                raise RuntimeError("Falta la fila de límites de vales (db/vales_3_limites.sql).")
+        conexion.commit()
+    finally:
+        conexion.close()
+
+
+def resumen_de_la_cartera(hoy: date) -> dict:
+    """Lo que la pantalla dice arriba y lo que cuentan las dos alertas.
+
+    SALE DE `listar_vales`, no de otra consulta: el total de arriba, el número
+    de las alertas y la lista no pueden contar cosas distintas.
+    """
+    limites = limites_de_vales()
+    vales = listar_vales(estado="en_cartera", hoy=hoy)
+    total = round(sum(v["importe"] or 0 for v in vales), 2)
+    viejos = [v for v in vales if v["dias"] is not None and v["dias"] > limites["dias"]]
+    return {"total": total, "cantidad": len(vales), "viejos": len(viejos),
+            "limites": limites, "vales": vales,
+            "mas_viejo": vales[0]["fecha"] if vales else None}
+
+
+def registrar_salida_de_vale(vale_id: int, tipo: str, fecha: date, *, sector: str, hoy: date,
+                             importe_cobrado: float | None = None,
+                             ingreso_a_caja: str | None = None,
+                             referencia: str | None = None,
+                             motivo: str | None = None) -> None:
+    """Saca un vale de la cartera: cobrado, cruzado o anulado. UNA por vale.
+
+    `sector` NO TIENE DEFAULT: lo dice la ruta por la que entró, y la base lo
+    compara contra el tipo (`SECTOR_DE_LA_SALIDA`, los CHECK de vales_2).
+
+    Frena, con el vale bloqueado: que no exista, que ya haya salido, que su
+    devolución esté anulada (ya no está en cartera) y una fecha futura.
+    """
+    if tipo not in TIPOS_DE_SALIDA_DEL_VALE:
+        raise ValueError(f"Salida desconocida para un vale: {tipo!r}.")
+    if SECTOR_DE_LA_SALIDA[tipo] != sector:
+        raise ValueError("Esa salida no se carga desde este sector.")
+    if fecha > hoy:
+        raise ValueError("La fecha no puede ser posterior a hoy.")
+    ingreso_a_caja = (ingreso_a_caja or "").strip() or None
+    referencia = (referencia or "").strip() or None
+    motivo = (motivo or "").strip() or None
+    if tipo == "cobrado" and not (importe_cobrado and importe_cobrado > 0):
+        raise ValueError("El importe cobrado tiene que ser mayor que cero.")
+    if tipo == "cruzado" and not referencia:
+        raise ValueError("Falta el número de liquidación o la referencia del cruce.")
+    if tipo == "anulado" and not motivo:
+        raise ValueError("Para anular un vale hace falta el motivo.")
+    conexion = obtener_conexion()
+    try:
+        with conexion.cursor() as cursor:
+            cursor.execute(
+                "SELECT d.anulado_el FROM vales_a_cobrar v "
+                "LEFT JOIN vacios_deposito_devoluciones d ON d.id = v.devolucion_id "
+                "WHERE v.id = %s FOR UPDATE OF v",
+                (vale_id,),
+            )
+            fila = cursor.fetchone()
+            if fila is None:
+                conexion.rollback()
+                raise ValueError("Ese vale no existe.")
+            if fila[0] is not None:
+                conexion.rollback()
+                raise ValueError("La devolución de ese vale está anulada: el vale ya no está en cartera.")
+            try:
+                cursor.execute(
+                    "INSERT INTO vales_a_cobrar_salidas (vale_id, tipo, fecha, importe_cobrado, "
+                    "ingreso_a_caja, referencia, motivo, sector) "
+                    "VALUES (%s, %s, %s, %s, %s, %s, %s, %s)",
+                    (vale_id, tipo, fecha, importe_cobrado if tipo == "cobrado" else None,
+                     ingreso_a_caja if tipo == "cobrado" else None,
+                     referencia if tipo == "cruzado" else None,
+                     motivo if tipo == "anulado" else None, sector),
+                )
+            except psycopg2.errors.UniqueViolation as error:
+                conexion.rollback()
+                raise ValueError("Ese vale ya salió de la cartera.") from error
+        conexion.commit()
+    finally:
+        conexion.close()
+
+
+# LOS MOVIMIENTOS DE LA CARTERA: lo que entró (un vale nuevo, por su fecha) y
+# lo que salió (por la fecha de la salida). Sale de `_SQL_VALES`, así que un
+# vale y su movimiento no pueden decir cosas distintas.
+def movimientos_de_vales(desde: date, hasta: date, *, proveedor_id: int | None,
+                         hoy: date) -> list[dict]:
+    """Una fila por hecho en la ventana: "entrada" o la salida, del más viejo al más nuevo.
+
+    La devolución anulada es también un movimiento: saca el vale de la cartera.
+    """
+    vales = listar_vales(estado=None, proveedor_id=proveedor_id, hoy=hoy)
+    movimientos = []
+    for v in vales:
+        if v["fecha"] and desde <= v["fecha"] <= hasta:
+            movimientos.append({"que": "entrada", "fecha": v["fecha"], "vale": v,
+                                "importe": v["importe"]})
+        if v["salida_fecha"] and desde <= v["salida_fecha"] <= hasta:
+            importe = v["importe_cobrado"] if v["estado"] == "cobrado" else v["importe"]
+            movimientos.append({"que": v["estado"], "fecha": v["salida_fecha"], "vale": v,
+                                "importe": importe})
+        elif v["estado"] == "devolucion_anulada":
+            dia = _fecha_argentina(v["devolucion_anulada_el"])
+            if desde <= dia <= hasta:
+                movimientos.append({"que": "devolucion_anulada", "fecha": dia, "vale": v,
+                                    "importe": v["importe"]})
+    orden = {"entrada": 0}
+    movimientos.sort(key=lambda m: (m["fecha"], orden.get(m["que"], 1), m["vale"]["id"]))
+    return movimientos
+
+
+def _fecha_argentina(instante) -> date:
+    return instante.astimezone(ZoneInfo("America/Argentina/Buenos_Aires")).date()
+
+
+def foto_del_vale(vale_id: int) -> str | None:
+    """La ruta de la foto del vale: la de su devolución, o la suya si es anterior al sistema."""
+    conexion = obtener_conexion()
+    try:
+        with conexion.cursor() as cursor:
+            cursor.execute(
+                "SELECT COALESCE(v.foto_ruta, d.foto_ruta) FROM vales_a_cobrar v "
+                "LEFT JOIN vacios_deposito_devoluciones d ON d.id = v.devolucion_id WHERE v.id = %s",
+                (vale_id,),
+            )
+            fila = cursor.fetchone()
+    finally:
+        conexion.close()
+    return fila[0] if fila else None
+
+
+def contar_vales_plata_sin_aplicar(hoy: date) -> dict:
+    """La alerta de la PLATA: los casos son los PESOS en cartera, y solo pasa del
+    límite si el total lo supera. El banner dice el número en la frase."""
+    resumen = resumen_de_la_cartera(hoy)
+    total = resumen["total"]
+    casos = int(round(total)) if total > resumen["limites"]["monto"] else 0
+    return {"casos": casos, "mas_viejo": resumen["mas_viejo"] if casos else None}
+
+
+def contar_vales_viejos(hoy: date) -> dict:
+    """La alerta de los DÍAS: cuántos vales llevan más de los días del límite en cartera."""
+    resumen = resumen_de_la_cartera(hoy)
+    return {"casos": resumen["viejos"],
+            "mas_viejo": resumen["mas_viejo"] if resumen["viejos"] else None}
 
 
 # TODO LO QUE MOVIÓ UNA PILA, en UNA consulta (dueño, 29/09): el historial del

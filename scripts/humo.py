@@ -53,6 +53,8 @@ NO_SE_ABREN = {
     "/compras/{compra_id}/fotos/{foto_id}/ver": "idem",
     "/deposito/recepcion/{compra_id}/foto-balanza/{foto_id}/ver": "idem",
     "/administracion/vacios/devolucion/{devolucion_id}/foto": "idem",
+    "/administracion/vales/{vale_id}/foto": "idem",
+    "/gerencia/vales/{vale_id}/foto": "idem",
     "/deposito/pedido/{pedido_id}/fotos/{foto_id}/ver": "idem",
     "/deposito/recepcion/{compra_id}/foto-balanza/ver": "idem",
     # El mail necesita una casilla configurada con su credencial, que por
@@ -239,8 +241,14 @@ def siembra():
     insert into listados_compra_foto_cajas (listado_id, ficha_id, articulo_id, cajas, magnitud)
       select l.id, f.id, f.articulo_id, 1, null from listados_compra l, fichas_logistica f limit 1;
     insert into colegas (nombre, nombre_normalizado) values ('EJEMPLO Colega', 'ejemplo colega');
-    insert into vacios_deposito_devoluciones (proveedor_id, compra_id, cantidad, stock_sistema, foto_ruta)
-      select pr.id, co.id, 1, 1, 'vacios/EJEMPLO.jpg' from proveedores pr, compras co limit 1;
+    insert into vacios_deposito_devoluciones (proveedor_id, compra_id, cantidad, stock_sistema, foto_ruta,
+                                              importe)
+      select pr.id, co.id, 1, 1, 'vacios/EJEMPLO.jpg', 500 from proveedores pr, compras co limit 1;
+    -- Un vale de cada origen: el detalle lee el de la devolución por el join.
+    insert into vales_a_cobrar (origen, devolucion_id, importe_calculado, numero)
+      select 'devolucion', d.id, 500, 'EJ-1' from vacios_deposito_devoluciones d limit 1;
+    insert into vales_a_cobrar (origen, proveedor_id, fecha, importe)
+      select 'anterior_al_sistema', pr.id, '2026-08-01', 1000 from proveedores pr limit 1;
     """
 
 

@@ -349,4 +349,38 @@ def test_MOVIMIENTOS_en_la_pantalla_y_el_EXCEL_de_Administracion(base, monkeypat
     hoja = openpyxl.load_workbook(io.BytesIO(excel.content)).active
     filas = [tuple(c.value for c in fila) for fila in hoja.iter_rows(min_row=5)]
     assert filas == [("10/09/2026", "Devolución desde depósito", "EJ Uno", 12, "EJEMPLO Fruta",
-                      -3, -360, "EJ se puso fea")]
+                      -3, -360, "EJ se puso fea", None, None)]
+
+
+def test_MOVIMIENTOS_dicen_que_ENTRO_con_sena_y_VOLVIO_con_sena(base, monkeypatch):
+    """Dueño, 30/09: la devolución de mercadería con seña no genera un vale,
+    pero Movimientos tiene que mostrar los cajones y la seña en la entrada y
+    en la devolución. En un rechazo, solo si iba en el cajón."""
+    import io
+    import openpyxl
+    from unittest.mock import patch
+    from app.main import PUERTA_ADMINISTRACION
+    d, sql, rechazo = base
+    d.crear_devolucion_deposito(11, 2, "EJ se puso fea", date(2026, 9, 10))
+    rechazo(1, 1, compra_id=11)          # iba en el cajón: vuelve con seña
+    rechazo(2, 1, compra_id=11)          # iba en caja de Día: no
+    movs = {(m["tipo"], m["bultos"], m["sena"]) for m in d.movimientos_del_deposito(
+        date(2026, 9, 1), date(2026, 9, 30), proveedor_id=1)
+        if m["compra_id"] == 11}
+    assert movs == {("entrada", 10.0, 500.0), ("deposito", -2.0, 500.0),
+                    ("rechazo", -1.0, 500.0), ("rechazo", -1.0, None)}
+    # Nada de esto crea un vale.
+    assert sql("SELECT count(*) FROM vales_a_cobrar") == [(0,)]
+    monkeypatch.setenv("CLAVE_ADMINISTRACION", "admin-secreta")
+    cliente = _cliente()
+    cliente.cookies.set(PUERTA_ADMINISTRACION.cookie, PUERTA_ADMINISTRACION.firma("admin-secreta"))
+    with patch("app.main._hoy_argentina", return_value=date(2026, 9, 12)):
+        pantalla = cliente.get("/administracion/ingresos?proveedor_id=1")
+        excel = cliente.get("/administracion/ingresos/movimientos-excel?proveedor_id=1&tipo=deposito")
+    marcado = pantalla.text.split("</style>")[-1]
+    assert "entró con seña: 10 cajones × $500" in marcado
+    assert "volvió con seña: 2 cajones × $500" in marcado
+    assert marcado.count("con seña:") == 3
+    hoja = openpyxl.load_workbook(io.BytesIO(excel.content)).active
+    filas = [tuple(c.value for c in fila) for fila in hoja.iter_rows(min_row=5)]
+    assert [f[8:] for f in filas] == [(500, "volvió con seña: 2 cajones × $500")]

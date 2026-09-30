@@ -4379,6 +4379,13 @@ Son DOS operaciones y se registran separadas; en las dos el COSTO SE CANCELA
   "Volvió llena" en los movimientos). En un rechazo, solo si iba en el cajón.
 - **Nada de esto mueve el stock de hoy**: los rechazos nunca volvieron al
   stock, y lo nuevo solo cuenta desde que se carga.
+- **La devolución de mercadería con seña NO genera un vale** (dueño, 30/09):
+  vuelve en su envase por cuenta corriente, como si nunca hubiera entrado. Lo
+  que sí muestra Movimientos del depósito es la seña (`sena` en
+  `_SQL_MOVIMIENTOS_DEL_DEPOSITO`, `texto_de_la_sena` en la pantalla y en el
+  Excel): "entró con seña: N cajones × $X" en la entrada y "volvió con seña"
+  en la devolución. En un rechazo, solo si iba en el cajón, la misma regla que
+  saca esos cajones de Vacíos.
 
 **Movimientos del depósito** (`/administracion/ingresos`, dueño, 30/09):
 entradas de compra, devoluciones por rechazo, devoluciones desde depósito y
@@ -4396,6 +4403,57 @@ Las fotos de la devolución usan el mismo parcial que el ingreso directo
 
 Lo cuida `tests/test_devoluciones_al_proveedor.py`, contra Postgres, con la
 compra más vieja de rival.
+
+## VALES A COBRAR (30/09, dueño)
+
+La plata de envase que el proveedor nos debe. `/administracion/vales` y
+`/gerencia/vales` son la MISMA pantalla, con el sector sacado del prefijo
+(corolario 63). La lógica vive en app/db.py (sección VALES A COBRAR) y los
+textos y el Excel en `core/vales.py`.
+
+- **Un vale nace de DOS maneras**, y el CHECK `vales_origen_coherente` no
+  deja mezclarlas. **Devolución**: toda devolución de vacíos CON importe deja
+  un vale en la misma transacción (`crear_devolucion_vacios`). Proveedor,
+  fecha, importe, cajones, marca y foto se LEEN de la devolución, no se
+  copian. El vale guarda solo el número (opcional) y el **importe calculado**
+  (la seña por cajón de la última recepción con seña de esa pila, por los
+  cajones, calculada en el server), y la pantalla muestra la diferencia.
+  Sin importe no hay vale, y un número sin importe se rechaza. **Anterior al
+  sistema**: los vales en papel, cargados por SQL, con proveedor, fecha,
+  importe y número y foto opcionales.
+- **Nada se backfilleó**: las devoluciones del 25/09 son pruebas y no entran
+  a la cartera (dueño). En Frutamax eran las 13 que había (30/09).
+- **El estado se deriva** (`_SQL_ESTADO_DEL_VALE`): una salida manda; sin
+  salida, la devolución anulada lo saca de la cartera; si no, está en
+  cartera. Anular la devolución con el vale COBRADO o CRUZADO rebota
+  (`_negar_si_el_vale_ya_salio`, adentro de la misma transacción).
+- **Una salida por vale** (`vales_a_cobrar_salidas`, clave vale_id), con
+  sector y hora: **cobrado** (fecha, importe cobrado, ingreso a caja opcional)
+  y **cruzado** (fecha, referencia) son de Administración; **anulado** (motivo
+  obligatorio) es SOLO de Gerencia. La base lo hace cumplir con el sector, y
+  `SECTOR_DE_LA_SALIDA` es la misma regla escrita en Python para que la
+  pantalla no ofrezca lo que el POST rechaza: un test lee los CHECK del .sql.
+  **Una salida no se deshace**: no hay pantalla para volver un cobrado atrás.
+- **Las dos alertas** (`vales_plata_sin_aplicar` y `vales_viejos`, Gerencia y
+  Administración) salen de `resumen_de_la_cartera`, la misma cuenta que el
+  total de arriba. Los límites viven en `vales_a_cobrar_limites` (una fila,
+  arrancan en $500.000 y 14 días, sin default en la base) y se cambian desde
+  `/gerencia/vales`. Los días son MÁS de, no igual.
+- **Los CHECK con `importe > 0` van con `coalesce(..., false)`**: sin eso, un
+  importe vacío da NULL y el CHECK deja pasar (corolario 67). Lo agarró el
+  test que planta el caso, no la lectura.
+- **Vales en papel**: `vales_papel_listado` es donde se pega el listado
+  (`db/vales_papel_1_pegar.sql`, hasta 35 filas por corrida), y la vista
+  `vales_papel_revision` dice fila por fila a qué proveedor va y qué tiene
+  mal. La regla vive una vez, en la vista, y la leen la revisión (paso 2) y
+  la carga (paso 3, todo o nada, y vacía el listado). Volver a pegar lo mismo
+  dice "ya estaba cargado". La fecha se valida con `pg_input_is_valid`, así
+  un 30/02 se nombra en vez de reventar la revisión.
+- **Juntar proveedores** mueve los vales anteriores al sistema
+  (`TABLAS_QUE_APUNTAN_A_PROVEEDORES`); los de una devolución lo leen de ella.
+- **NADA DE ESTO TOCA EL STOCK.**
+
+Lo cuida `tests/test_vales_a_cobrar.py`, contra Postgres.
 
 ## Buscar compras: la SEÑA (28/09, dueño)
 

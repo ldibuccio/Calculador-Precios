@@ -994,6 +994,106 @@ create index vacios_arr_pilas_arranque_idx on vacios_deposito_arranque_pilas (ar
 comment on table vacios_deposito_arranques is 'Un CONTEO FÍSICO que reinicia el stock de vacíos del depósito. El último manda: desde su creado_en suma lo recibido con seña y resta lo devuelto; todo lo anterior (foto, recepciones, devoluciones, ajustes, asignaciones) queda como historia y no mueve el número.';
 comment on table vacios_deposito_arranque_pilas is 'Lo contado en cada PILA (proveedor y marca; NULL = sin asignar) en ese arranque. Un proveedor o una pila que no está acá arranca en cero.';
 
+
+-- VALES A COBRAR (dueño, 30/09). Ver db/vales_1..4.
+create table vales_a_cobrar (
+  id bigint generated always as identity primary key,
+  origen text not null check (origen in ('devolucion', 'anterior_al_sistema')),
+  devolucion_id bigint unique references vacios_deposito_devoluciones (id),
+  proveedor_id bigint references proveedores (id),
+  fecha date,
+  importe numeric(14, 2),
+  importe_calculado numeric(14, 2),
+  numero text,
+  foto_ruta text,
+  creado_en timestamptz not null default now(),
+  constraint vales_origen_coherente check (
+    (origen = 'devolucion' and devolucion_id is not null
+      and proveedor_id is null and fecha is null
+      and importe is null and foto_ruta is null)
+    or (origen = 'anterior_al_sistema' and devolucion_id is null
+      and proveedor_id is not null and fecha is not null
+      and coalesce(importe > 0, false) and importe_calculado is null)),
+  constraint vales_numero_no_vacio check (numero is null or btrim(numero) <> '')
+);
+create index vales_a_cobrar_proveedor on vales_a_cobrar (proveedor_id);
+comment on table vales_a_cobrar is
+  'Vales en cartera: plata de envase que el proveedor nos debe. Nace de una '
+  'devolucion de vacios con importe, o se carga por SQL (anterior al sistema).';
+
+create table vales_a_cobrar_salidas (
+  vale_id bigint primary key references vales_a_cobrar (id),
+  tipo text not null check (tipo in ('cobrado', 'cruzado', 'anulado')),
+  fecha date not null,
+  importe_cobrado numeric(14, 2),
+  ingreso_a_caja text,
+  referencia text,
+  motivo text,
+  sector text not null check (sector in ('administracion', 'gerencia')),
+  creado_en timestamptz not null default now(),
+  constraint vales_salida_cobrado check (tipo <> 'cobrado'
+    or (coalesce(importe_cobrado > 0, false) and sector = 'administracion')),
+  constraint vales_salida_cruzado check (tipo <> 'cruzado'
+    or (btrim(coalesce(referencia, '')) <> '' and sector = 'administracion')),
+  constraint vales_salida_anulado check (tipo <> 'anulado'
+    or (btrim(coalesce(motivo, '')) <> '' and sector = 'gerencia')),
+  constraint vales_salida_campos_de_su_tipo check (
+    (tipo = 'cobrado' or (importe_cobrado is null and ingreso_a_caja is null))
+    and (tipo = 'cruzado' or referencia is null)
+    and (tipo = 'anulado' or motivo is null))
+);
+comment on table vales_a_cobrar_salidas is
+  'Por donde salio un vale de la cartera: cobrado, cruzado con el proveedor '
+  'o anulado. UNA por vale (la clave es vale_id). Sector y hora dicen quien.';
+
+create table vales_a_cobrar_limites (
+  id integer primary key check (id = 1),
+  monto numeric(14, 2) not null check (monto > 0),
+  dias integer not null check (dias > 0),
+  actualizado_en timestamptz not null default now()
+);
+insert into vales_a_cobrar_limites (id, monto, dias) values (1, 500000, 14);
+comment on table vales_a_cobrar_limites is
+  'Los dos limites de las alertas de vales: plata en cartera y dias sin '
+  'aplicar. UNA fila. Se editan con la clave de Gerencia.';
+
+create table vales_papel_listado (
+  fila integer primary key,
+  codigo text, fecha text, importe numeric, numero text, foto text
+);
+create view vales_papel_revision as
+select l.fila, upper(btrim(l.codigo)) as codigo, pr.nombre as proveedor,
+       btrim(l.fecha) as fecha, l.importe, nullif(btrim(l.numero), '') as numero,
+       nullif(btrim(l.foto), '') as foto, pr.id as proveedor_id,
+       case
+    when upper(btrim(l.codigo)) !~ '^[A-Z][0-9]{2}P[0-9]{2}$' then 'el codigo no es de un puesto'
+    when pr.id is null then 'no hay proveedor con ese codigo'
+    when btrim(l.fecha) !~ '^[0-9]{2}/[0-9]{2}/[0-9]{4}$' then 'la fecha no es DD/MM/AAAA'
+    when not pg_input_is_valid(right(btrim(l.fecha), 4) || '-' || substr(btrim(l.fecha), 4, 2)
+      || '-' || left(btrim(l.fecha), 2), 'date') then 'esa fecha no existe'
+    when to_date(l.fecha, 'DD/MM/YYYY') > current_date then 'la fecha es futura'
+    when not coalesce(l.importe > 0, false) then 'el importe no es mayor que cero'
+    when l.foto is not null and btrim(l.foto) !~ '^[^ ]+[.](jpg|jpeg|png)$' then 'la foto no es una ruta'
+    when count(*) over (partition by pr.id, btrim(l.fecha), l.importe,
+                        nullif(btrim(l.numero), '')) > 1 then 'repetida en el listado'
+    when exists (select 1 from vales_a_cobrar v where v.origen = 'anterior_al_sistema'
+                   and v.proveedor_id = pr.id and v.fecha = to_date(l.fecha, 'DD/MM/YYYY')
+                   and v.importe = l.importe
+                   and v.numero is not distinct from nullif(btrim(l.numero), ''))
+      then 'ya estaba cargado'
+  end as problema
+  from vales_papel_listado l
+  left join lateral (
+    select p.id, p.nombre from proveedores p
+     where p.codigo_puesto = upper(btrim(l.codigo))
+        or exists (select 1 from proveedores_codigos pc where pc.proveedor_id = p.id
+                     and pc.codigo = upper(btrim(l.codigo)))
+     limit 1) pr on true;
+
+comment on column vales_a_cobrar.importe is 'Solo en los anteriores al sistema. En los de una devolución el importe es vacios_deposito_devoluciones.importe: escrito una vez.';
+comment on column vales_a_cobrar.importe_calculado is 'Seña × cajones de la última recepción de esa pila, al guardar la devolución. Contra el importe de la devolución da la diferencia.';
+comment on column vales_a_cobrar.numero is 'El número del vale en papel, si lo tiene. Opcional.';
+
 -- ----------------------------------------------------------------------------
 -- 12. ÍNDICES DE RENDIMIENTO
 -- Ver db/agregar_indices_rendimiento.sql para la justificación de cada uno
