@@ -131,6 +131,18 @@ def es_lote_trabajado(tipo_lote) -> bool:
     return tipo_lote in TIPOS_LOTE_TRABAJADO
 
 
+def es_caja_armada(lote) -> bool:
+    """¿Este lote son CAJAS armadas, que solo puede tomar un armado con caja?
+
+    Lo trabajado MENOS el rechazo que volvió de una ficha SIN envase
+    (`en_cajon`): eso es un cajón que vuelve, y el pedido se arma según la
+    ficha (dueño, 30/09). El tipo del lote sigue siendo `reingreso_rechazo`
+    —así lo nombran los consumos y las correcciones— y lo que dice si es
+    caja o cajón es la ficha del renglón del que volvió.
+    """
+    return lote["tipo_lote"] in TIPOS_LOTE_TRABAJADO and not lote.get("en_cajon")
+
+
 class Prioridad(NamedTuple):
     """Qué lotes prefiere una salida y cuáles tiene PROHIBIDOS.
 
@@ -301,7 +313,13 @@ def pasadas_de_lotes(lotes: list[dict], salida: dict) -> list[list[dict]]:
     prefiere = prioridad_de_lote(salida).prefiere
     if not prefiere:
         return [lotes]
-    preferidos = [lote for lote in lotes if lote["tipo_lote"] in prefiere]
+    es_armado = salida.get("tipo") == "armado"
+    if es_armado:
+        # Para un armado, lo preferido son las CAJAS: un rechazo que volvió en
+        # cajón no lo es, aunque su tipo sea trabajado.
+        preferidos = [lote for lote in lotes if es_caja_armada(lote)]
+    else:
+        preferidos = [lote for lote in lotes if lote["tipo_lote"] in prefiere]
 
     # LA PARED DEL ARMADO, y se expresa QUITANDO la pasada de respaldo en vez
     # de agregando una prohibición. Es la misma decisión escrita al revés, y
@@ -326,9 +344,19 @@ def pasadas_de_lotes(lotes: list[dict], salida: dict) -> list[list[dict]]:
     if salida.get("ficha_con_envase"):
         return [preferidos]
 
+    # Y LA PARED AL REVÉS (dueño, 30/09): el pedido se arma según la ficha
+    # del cliente. Una ficha SIN envase sale en el cajón del proveedor, así
+    # que su armado no toma NUNCA una caja armada —ni de guía R ni de un
+    # rechazo que volvió—: la dejaría sin caja a un armado de Día, que queda
+    # esperando una guía R, y a éste le pondría un costo de caja que no
+    # tiene. Sin ficha no hay regla que aplicar y sigue la preferencia.
+    if es_armado and salida.get("ficha_id") is not None:
+        return [[lote for lote in lotes if not es_caja_armada(lote)]]
+
     if not preferidos:
         return [lotes]
-    return [preferidos, [lote for lote in lotes if lote["tipo_lote"] not in prefiere]]
+    ids_preferidos = {id(lote) for lote in preferidos}
+    return [preferidos, [lote for lote in lotes if id(lote) not in ids_preferidos]]
 
 
 def pasadas_con_margen(lotes: list[dict], salida: dict) -> list[tuple[list[dict], int]]:
@@ -480,7 +508,12 @@ def lotes_senalados(lotes: list[dict], salida: dict) -> list[tuple[dict, float]]
         for fila in elegidos:
             lote = lote_dirigido(lotes, {"lote_tipo": fila["lote_tipo"],
                                          "lote_origen_id": fila["lote_origen_id"]})
-            if lote is not None:
+            # LA PARED DEL ARMADO VALE TAMBIÉN PARA LO ELEGIDO A MANO (30/09).
+            # `guardar_lotes_elegidos` ya rechaza un lote que la pared no
+            # ofrece, pero una corrección guardada antes de la pared seguía
+            # llevándose el lote en el rejuego. Un armado no sale de algo que
+            # su ficha no permite, lo diga quien lo diga.
+            if lote is not None and lote_ofrecido(lote, salida):
                 senalados.append((lote, float(fila["bultos"])))
         return senalados
 

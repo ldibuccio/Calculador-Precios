@@ -12246,6 +12246,9 @@ def _entradas_y_salidas_stock_varios(cursor, articulo_ids: list[int], corte=None
                    COALESCE(c.cantidad_cajones_real, 0) AS cantidad,
                    c.importe AS costo_bulto,
                    NULL::bigint AS cliente_lote_id,
+                   -- EN CAJÓN: solo lo dice el rechazo de una ficha SIN envase
+                   -- (rama de abajo). Un armado de caja no lo toma como caja.
+                   FALSE AS en_cajon,
                    c.articulo_id AS articulo_id
             FROM compras c
             JOIN proveedores p ON p.id = c.proveedor_id
@@ -12269,11 +12272,19 @@ def _entradas_y_salidas_stock_varios(cursor, articulo_ids: list[int], corte=None
             -- Un rechazo mandado a segunda NO es un lote de stock: salió del
             -- circuito normal al pool de segunda, y su costo ya se imputó
             -- entero como pérdida en la Rentabilidad Real.
+            -- El rechazo que volvió de un renglón cuya ficha NO lleva envase
+            -- es un CAJÓN que vuelve, no una caja (dueño, 30/09: el pedido se
+            -- arma según la ficha). Sin renglón o sin ficha no se sabe, y
+            -- queda como estaba: caja.
             SELECT m.fecha_operacion, m.creado_en, m.tipo, m.id, m.fecha_operacion,
                    cl.nombre, m.motivo, m.cantidad, m.costo_por_bulto, NULL::bigint,
+                   (m.tipo = 'reingreso_rechazo' AND pr.ficha_id IS NOT NULL
+                    AND fl.envase_id IS NULL) AS en_cajon,
                    m.articulo_id
             FROM movimientos_stock m
             LEFT JOIN clientes cl ON cl.id = m.cliente_id
+            LEFT JOIN pedidos_renglones pr ON pr.id = m.pedido_renglon_id
+            LEFT JOIN fichas_logistica fl ON fl.id = pr.ficha_id
             WHERE m.anulado_el IS NULL AND m.cantidad > 0 AND m.articulo_id = ANY(%s)
               AND (m.destino_rechazo IS NULL OR m.destino_rechazo = 'stock')
               -- EL DÍA DEL CORTE ES ASIMÉTRICO. El 'stock_inicial' DEL
@@ -12295,7 +12306,7 @@ def _entradas_y_salidas_stock_varios(cursor, articulo_ids: list[int], corte=None
             -- cruce y el detalle muestra "armada para X".
             SELECT rp.fecha_operacion, rp.creado_en, 'reproceso', rp.id, rp.fecha_operacion,
                    cl.nombre, NULL, rp.bultos_primera, rp.costo_por_bulto_primera, rp.cliente_id,
-                   rp.articulo_id
+                   FALSE, rp.articulo_id
             FROM reprocesos rp
             LEFT JOIN clientes cl ON cl.id = rp.cliente_id
             WHERE rp.anulado_el IS NULL AND rp.bultos_primera > 0 AND rp.articulo_id = ANY(%s)
@@ -13393,12 +13404,12 @@ def armados_esperando_guia_r() -> list[dict]:
     versión del FIFO, y la primera vez que se intentó (arandano_2) dio 192
     donde la regla daba 45 (corolario 85).
 
-    `cajas_a_salidas_sin_caja` es por ARTÍCULO y va en cada fila: cuántos
-    bultos de CAJAS (guía R o rechazo que volvió) se llevaron armados de
-    fichas SIN envase. El armado prefiere caja armada sin mirar si su ficha
-    lleva caja, así que un armado en cajón puede consumir las cajas que
-    después le faltan a uno de Día. Está para poder cotejarlo con los datos,
-    no para decidir nada solo.
+    `cajas_a_armados_sin_ficha` es por ARTÍCULO y va en cada fila: cuántos
+    bultos de CAJAS (guía R o rechazo que volvió) se llevaron renglones SIN
+    FICHA. Desde el 30/09 un armado de una ficha sin envase no toma cajas
+    (`pasadas_de_lotes`); el renglón sin ficha no tiene ficha que respetar y
+    sigue prefiriéndolas, así que es el único que todavía le puede sacar la
+    caja a uno de Día.
 
     El más viejo arriba: es una cola de trabajo, no un aviso que envejece.
     """
@@ -13407,10 +13418,10 @@ def armados_esperando_guia_r() -> list[dict]:
     nombres, rejuego = _rejuego_de_armados_con_caja()
     filas = []
     for articulo_id, salidas in rejuego.items():
-        a_sin_caja = sum(
+        a_sin_ficha = sum(
             consumo["bultos"]
             for salida in salidas
-            if salida.get("tipo") == "armado" and not salida.get("ficha_con_envase")
+            if salida.get("tipo") == "armado" and salida.get("ficha_id") is None
             for consumo in salida["consumos_lotes"]
             if consumo["tipo_lote"] in TIPOS_LOTE_TRABAJADO
         )
@@ -13425,7 +13436,7 @@ def armados_esperando_guia_r() -> list[dict]:
                 "fecha_pedido": salida.get("fecha"),
                 "renglon_id": salida.get("renglon_id"),
                 "esperan": round(esperan, 2),
-                "cajas_a_salidas_sin_caja": round(a_sin_caja, 2),
+                "cajas_a_armados_sin_ficha": round(a_sin_ficha, 2),
             })
     renglones = [f["renglon_id"] for f in filas if f["renglon_id"] is not None]
     datos = {}

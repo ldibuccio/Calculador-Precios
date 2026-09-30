@@ -231,6 +231,8 @@ def test_el_FIFO_costea_SOLO_la_primera_y_la_venta_cuenta_los_10(base):
 
     assert [(float(s["cantidad"]), float(s["de_segunda"])) for s in armados] == [(6.0, 4.0)]
     costeadas = [s for s in atribuir_costos_fifo(entradas, salidas) if s["tipo"] == "armado"]
-    # 6 bultos de la primera de la guía R, a $150 (un armado prefiere lo
-    # trabajado). Con los 10 costeados daría 8 x 150 + 2 x 100 = 1400.
-    assert costeadas[0]["costo"] == pytest.approx(900.0)
+    # 6 bultos del CAJÓN, a $100: la ficha del catering no tiene envase, así
+    # que su armado no toma las cajas de la guía R (dueño, 30/09 — hasta ese
+    # día este test esperaba 6 x 150, que era la regla equivocada). Con los
+    # 10 costeados daría 1000.
+    assert costeadas[0]["costo"] == pytest.approx(600.0)

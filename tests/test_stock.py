@@ -1013,3 +1013,92 @@ def test_mover_de_fecha_CONSERVA_el_momento_que_desempata_dentro_del_dia():
     # Los dos lotes quedan el 12/09 y juntos cubren la salida: nada sin lote.
     assert antes == 0
     assert despues == 0
+
+
+# LA PARED AL REVÉS (dueño, 30/09): el pedido se arma según la ficha del
+# cliente. Un armado de una ficha SIN envase sale en cajón y no toma NUNCA una
+# caja armada, ni de guía R ni de un rechazo que volvió. Hasta ese día la
+# preferencia del armado por lo trabajado no miraba la ficha, y un pedido en
+# cajón le sacaba las cajas a uno de Día, que quedaba esperando una guía R.
+
+def _armado_en_cajon(cantidad=10.0, **extra):
+    return dict(_armado_pared(con_envase=False, cantidad=cantidad), ficha_id=7, **extra)
+
+
+def _rechazo_pared(dia=_AYER, cantidad=10.0):
+    return {"orden": (dia, datetime(2026, 9, 7, 9, 0)), "tipo_lote": "reingreso_rechazo",
+            "cantidad": cantidad, "costo_bulto": 90.0, "origen_id": 5}
+
+
+def test_un_armado_EN_CAJON_no_toma_la_CAJA_aunque_este_mas_vieja():
+    """Con caja y cajón disponibles, el armado en cajón sale del cajón."""
+    for caja in (_caja_pared(), _rechazo_pared()):
+        reparto = repartir_fifo([_cajon_pared(), caja], [_armado_en_cajon()])
+
+        por_tipo = {lote["tipo_lote"]: lote["restante"] for lote in reparto["lotes"]}
+        assert por_tipo[caja["tipo_lote"]] == 10.0, f"se llevó la caja ({caja['tipo_lote']})"
+        assert por_tipo["guia"] == 0.0
+        assert reparto["sin_lote"] == 0.0
+
+
+def test_un_armado_EN_CAJON_sin_cajon_queda_SIN_LOTE_y_no_cae_a_la_caja():
+    """No es una preferencia: si no hay cajón, no hay caja de respaldo."""
+    reparto = repartir_fifo([_caja_pared()], [_armado_en_cajon()])
+    costeo = atribuir_costos_fifo([_caja_pared()], [_armado_en_cajon()])[0]
+
+    assert reparto["sin_lote"] == 10.0
+    assert reparto["lotes"][0]["restante"] == 10.0, "la caja tiene que quedar entera"
+    assert costeo["motivos_sin_costo"] == {"sin_lote": 10.0}
+
+
+def test_el_armado_en_cajon_ya_NO_le_saca_la_caja_a_uno_de_Dia():
+    """El caso del 30/09: la caja queda para el armado de Día que viene después."""
+    armado_dia = dict(_armado_pared(con_envase=True), ficha_id=3,
+                      orden=(_AYER, datetime(2026, 9, 7, 12, 0)))
+    salidas = [_armado_en_cajon(), armado_dia]
+
+    reparto = repartir_fifo([_cajon_pared(), _caja_pared()], salidas)
+    costeo = atribuir_costos_fifo([_cajon_pared(), _caja_pared()], salidas)
+
+    assert reparto["sin_lote"] == 0.0
+    assert all(c["bultos_sin_costo"] == 0.0 for c in costeo)
+    assert [c["tipo_lote"] for c in costeo[1]["consumos_lotes"]] == ["reproceso"]
+
+
+def test_una_CAJA_ELEGIDA_A_MANO_para_un_armado_en_cajon_no_se_respeta():
+    """Una corrección vieja que apunta a una caja no le gana a la ficha."""
+    elegida = [{"lote_tipo": "reproceso", "lote_origen_id": 9, "bultos": 10.0}]
+    caja = dict(_caja_pared(), origen_id=9)
+    salida = _armado_en_cajon(lotes_elegidos=elegida)
+
+    reparto = repartir_fifo([_cajon_pared(), caja], [salida])
+    costeo = atribuir_costos_fifo([_cajon_pared(), caja], [salida])[0]
+
+    por_tipo = {lote["tipo_lote"]: lote["restante"] for lote in reparto["lotes"]}
+    assert por_tipo["reproceso"] == 10.0
+    assert [c["tipo_lote"] for c in costeo["consumos_lotes"]] == ["guia"]
+
+
+def test_un_armado_SIN_FICHA_sigue_con_la_preferencia_de_siempre():
+    """Sin ficha no hay regla que aplicar: el armado prefiere la caja y cae al cajón."""
+    reparto = repartir_fifo([_cajon_pared(), _caja_pared()], [_armado_pared(con_envase=False)])
+
+    por_tipo = {lote["tipo_lote"]: lote["restante"] for lote in reparto["lotes"]}
+    assert por_tipo["reproceso"] == 0.0
+    assert por_tipo["guia"] == 10.0
+
+
+def test_un_RECHAZO_que_volvio_en_CAJON_lo_toma_el_armado_en_cajon_y_NO_el_de_caja():
+    """El lote de un rechazo lleva la ficha del renglón del que volvió.
+
+    Volvió de una ficha sin envase: es un cajón. Lo toma un armado en cajón
+    y no uno de caja, aunque el tipo del lote sea `reingreso_rechazo`.
+    """
+    rechazo_en_cajon = dict(_rechazo_pared(), en_cajon=True)
+    armado_caja = dict(_armado_pared(con_envase=True), ficha_id=3)
+
+    caja = repartir_fifo([rechazo_en_cajon], [armado_caja])
+    assert caja["sin_lote"] == 10.0, "el armado de caja se llevó un cajón"
+
+    cajon = repartir_fifo([rechazo_en_cajon], [_armado_en_cajon()])
+    assert cajon["sin_lote"] == 0.0, "el armado en cajón no pudo usar el cajón que volvió"
