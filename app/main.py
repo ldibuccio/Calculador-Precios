@@ -16780,7 +16780,17 @@ ALERTAS = [
         titulo_corto="Cajas por reponer",
         url="/compras/cajas",
         texto_link="Ver en Cajas",
-        modulos=("compras",),
+        # EN LOS TRES SECTORES QUE MIRAN LAS CAJAS (dueño, 30/09): Compras las
+        # repone, Administración lleva la cuenta y Gerencia la mira. Cajas
+        # vive bajo /compras y /administracion, cada una con su clave, así que
+        # cada sector va a SU puerta (corolario 56): Administración a su
+        # Cajas, y Gerencia —que no tiene Cajas— a su propia pantalla de
+        # Alertas, que trae la caja, las que quedan y el umbral.
+        modulos=("compras", "gerencia", "administracion"),
+        destinos_por_sector={
+            "gerencia": ("/gerencia/alertas", "Ver cuál es"),
+            "administracion": ("/administracion/cajas", "Ver en Cajas"),
+        },
         # LAMBDA Y NO LA REFERENCIA A SECAS, como las otras diecinueve: el
         # registro se construye al importar el módulo, así que una referencia
         # captura el objeto de ese momento y deja de seguir al nombre —

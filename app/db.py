@@ -16662,7 +16662,7 @@ def contar_envases_a_reponer() -> dict:
 
 
 def detallar_envases_a_reponer() -> dict:
-    """Cuáles son y cuántas faltan, para la pantalla de Alertas de Compras.
+    """Cuáles son y cuántas faltan, para las Alertas de Compras, Gerencia y Administración.
 
     CUENTA SUS PROPIAS FILAS: el número del banner sale de la foto de hasta
     seis horas atrás y éste sale de ahora. Que no coincidan no es un bug —son
