@@ -710,3 +710,22 @@ PALMALA   devolucion_deposito · tipo_nuevo 1 · compra_abierta 1 · guarda_nuev
 Llegaron los tres chequeos en 1 de cada base; la población y el testigo no
 vinieron en el mensaje. Con esto "Devolver mercadería" (`/deposito/devolver`)
 anda en las dos.
+
+## 30/09 — `vales_1` a `vales_4`: Vales a cobrar
+
+Corridas por el dueño en las dos bases: la tabla de vales, las salidas, los
+límites y el listado de los vales en papel con su vista de revisión.
+Verificación (`vales_5_verificacion.sql`), corrida aparte de los `do`, según
+el dueño:
+
+```
+FRUTAMAX  vales_a_cobrar · tablas 3 · listado_y_revision 2 · origen_null_safe 1 · salidas 4 · anular_gerencia 1 · cobro_null_safe 1 · 500000.00 / 14 · vales 0
+PALMALA   vales_a_cobrar · tablas 3 · listado_y_revision 2 · origen_null_safe 1 · salidas 4 · anular_gerencia 1 · cobro_null_safe 1 · 500000.00 / 14 · vales 0
+```
+
+Los dos CHECK con `importe > 0` quedaron con el `coalesce` (los
+`null_safe` en 1), y la cartera arranca vacía en las dos, que es lo esperado:
+nada se backfilleó y las devoluciones del 25/09 son pruebas. La población y
+el testigo no vinieron en el mensaje. Palmala no vota: ahí la verificación
+solo confirma que las migraciones no explotan. Los vales en papel todavía no
+se cargaron (`vales_papel_1` a `4`).
