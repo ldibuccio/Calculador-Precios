@@ -4367,9 +4367,11 @@ proveedor. Desde `codigos_1` a `codigos_4` (corridas en las dos bases):
   corrección manda" sigue valiendo, pero solo para el código principal.
 - **`compras.codigo_llegada` es el puesto por el que llegó.** Lo escriben todos
   los caminos de carga (sin default, así que olvidarlo es un TypeError, y un
-  test de `ast` lo mira porque la suite parchea `crear_compra`). En los flujos
-  de dos pasos —ingreso directo y `/compras/nueva`— el código viaja en la URL
-  y en un campo escondido. Cambiar el proveedor de una compra le pone el
+  test de `ast` lo mira porque la suite parchea `crear_compra`). En
+  `/compras/nueva`, que es de dos pasos, el código viaja en la URL y en un
+  campo escondido. El ingreso directo es de UNA pantalla desde el 30/09 y
+  guarda el código tipeado; "Guardar y agregar otro" vuelve con ese puesto
+  precargado (`?codigo=`). Cambiar el proveedor de una compra le pone el
   principal del nuevo. Lo muestran Logística, Recepción, Compras pendientes,
   el Detalle y los Excel. **Una guía junta los dos puestos**, porque es una por
   proveedor y día, así que su título los nombra a los dos y Logística dice de
@@ -5116,6 +5118,23 @@ confirmación. No toca ningún número de la compra. Dos consecuencias:
 - `recepciones_sin_pesaje` cuenta una foto subida tarde como evidencia, y la
   recepción sale de la alerta. Es lo que se quiere: el aviso existe para que
   alguien mire lo que se está yendo, y subir la foto es mirarlo.
+
+**Y el ingreso directo de Depósito también las sube, desde el 30/09** (dueño).
+Recepción ya las subía desde el 09/09; lo que no tenía fotos era el ingreso
+directo, que nace recibido y no pasa por Recepción. `/deposito/ingresar` es
+UNA pantalla desde ese día (proveedor arriba, mercadería abajo, un Guardar,
+como la carga manual de Compras; la de elegir el proveedor se borró). Tiene
+"Agregar foto de pesada": varias, en miniatura, y se borran con confirmación
+antes de guardar. No son obligatorias. Van a `fotos_recepcion` en la MISMA
+transacción que la compra (`crear_compra(..., fotos_pesada=)`): si la compra
+rebota, se borran del Storage y no queda ninguna fila. "Cargado hoy" muestra
+las de cada renglón, vengan de donde vengan. Un archivo que no es foto frena
+todo antes de escribir. Las fotos se leen del formulario a mano: el parámetro
+`list[UploadFile]` rechazaba con 422 un campo de archivo vacío. El modal de
+nombres parecidos de Compras → Proveedores también está ahí: la pantalla lo
+pregunta ANTES de enviar (`/deposito/ingresar/parecidos`), porque un
+formulario que vuelve del servidor no puede traer las fotos, y el POST lo
+vuelve a preguntar. Lo cuida `tests/test_ingreso_directo_una_pantalla.py`.
 
 Cada miniatura pide su foto por id (`/deposito/recepcion/{compra}/foto-balanza/{foto}/ver`).
 La ruta sin id devuelve la última, y hasta el 29/09 el detalle y Corregir

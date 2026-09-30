@@ -128,7 +128,7 @@ def test_una_comanda_leida_con_un_CODIGO_ALTERNATIVO_sugiere_ESE_proveedor_con_e
 
 CARGAS_CON_AUTOCOMPLETAR = {
     "compra_fotos_multiples.html", "compra_listado.html", "compra_manual.html",
-    "compra_revision_foto.html", "deposito_ingresar_proveedor.html",
+    "compra_revision_foto.html", "deposito_ingresar.html",
 }
 
 
@@ -550,40 +550,38 @@ def test_RECEPCION_y_COMPRAS_PENDIENTES_muestran_el_puesto_de_LLEGADA():
 # ------------------------------------------- los flujos de DOS pasos llevan el código
 
 
-def test_el_INGRESO_DIRECTO_lleva_el_codigo_tipeado_del_primer_paso_a_la_compra():
-    """El primer paso resuelve el proveedor; los renglones se cargan en otra
-    pantalla que solo sabe el id. Sin el código en la URL y en el campo
-    escondido, una compra del 39 se guardaría como del 41."""
+def test_el_INGRESO_DIRECTO_lleva_el_codigo_TIPEADO_a_la_compra_y_al_renglon_siguiente():
+    """Desde el 30/09 el proveedor se tipea en la misma pantalla que la
+    mercadería. El código que se tipeó —acá el alternativo N07P39— es el que
+    guarda la compra, y "Guardar y agregar otro" vuelve con ESE puesto
+    precargado, no con el principal: una compra del 39 no se guarda como del 41."""
     from tests.test_app import ARTICULO_KILO_DE_PRUEBA, HOY_DE_PRUEBA, PROVEEDOR_DE_PRUEBA
 
-    with patch("app.main.obtener_o_crear_proveedor_por_codigo", return_value=(200, False)):
-        paso_1 = cliente.post("/deposito/ingresar/proveedor",
-                              data={"codigo_puesto": "N07P39", "nombre": "Saturno"}, follow_redirects=False)
-    assert "codigo=N07P39" in paso_1.headers["location"]
+    with (
+        patch("app.main._hoy_argentina", return_value=HOY_DE_PRUEBA),
+        patch("app.main.buscar_proveedor_por_codigo", return_value=PROVEEDOR_DE_PRUEBA),
+        patch("app.main.obtener_o_crear_proveedor_por_codigo", return_value=(200, False)),
+        patch("app.main.obtener_articulo", return_value=ARTICULO_KILO_DE_PRUEBA),
+        patch("app.main.crear_compra") as crear,
+    ):
+        guardado = cliente.post("/deposito/ingresar", data={
+            "codigo_puesto": "n07p39", "nombre": "Saturno", "articulo_id": "5", "cantidad_cajones": "10",
+            "contenido_por_cajon": "18", "tipo_retiro": "Clark",
+        }, follow_redirects=False)
+    assert crear.call_args.kwargs["codigo_llegada"] == "N07P39"
+    assert "codigo=N07P39" in guardado.headers["location"], "el renglón siguiente es del mismo puesto"
 
     with (
         patch("app.main.obtener_proveedor", return_value=PROVEEDOR_DE_PRUEBA),
+        patch("app.main.listar_proveedores", return_value=[]),
         patch("app.main.listar_articulos", return_value=[]),
         patch("app.main.listar_compras_por_fecha_y_proveedor", return_value=[]),
     ):
         # Sin cortar por `</style>`: el modal de "vino armada" trae el suyo al
-        # final y el corte se llevaría la pantalla (corolario 50). Un input
-        # escondido entero solo puede ser marcado.
-        pantalla = cliente.get(paso_1.headers["location"]).text
-    assert '<input type="hidden" name="codigo_llegada" value="N07P39">' in pantalla
-
-    with (
-        patch("app.main._hoy_argentina", return_value=HOY_DE_PRUEBA),
-        patch("app.main.obtener_proveedor", return_value=PROVEEDOR_DE_PRUEBA),
-        patch("app.main.obtener_articulo", return_value=ARTICULO_KILO_DE_PRUEBA),
-        patch("app.main.crear_compra") as crear,
-    ):
-        paso_2 = cliente.post("/deposito/ingresar", data={
-            "proveedor_id": "200", "articulo_id": "5", "cantidad_cajones": "10",
-            "contenido_por_cajon": "18", "tipo_retiro": "Clark", "codigo_llegada": "N07P39",
-        }, follow_redirects=False)
-    assert crear.call_args.kwargs["codigo_llegada"] == "N07P39"
-    assert "codigo=N07P39" in paso_2.headers["location"], "el renglón siguiente es del mismo puesto"
+        # final y el corte se llevaría la pantalla (corolario 50).
+        pantalla = cliente.get(guardado.headers["location"]).text
+    import re
+    assert re.search(r'id="codigo_puesto" name="codigo_puesto"[^>]*value="N07P39"', pantalla, re.S)
     assert "codigo_llegada" not in PROVEEDOR_DE_PRUEBA, "no puede ensuciar el dict que le pasaron"
 
 

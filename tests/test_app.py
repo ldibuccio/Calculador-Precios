@@ -11783,22 +11783,37 @@ def test_ver_deposito_sin_aviso_no_muestra_el_cartel():
 
 # --- /deposito/ingresar: ingreso directo de mercadería, sin Logística ni Recepción ---
 
+DATOS_MERCADERIA_INGRESO = {
+    "articulo_id": "5", "cantidad_cajones": "10", "contenido_por_cajon": "18", "tipo_retiro": "Clark",
+}
 
-def test_ver_ingresar_mercaderia_sin_proveedor_muestra_formulario_de_proveedor():
-    with patch("app.main.listar_proveedores", return_value=PROVEEDORES_DE_PRUEBA):
+
+def test_ver_ingresar_mercaderia_sin_proveedor_muestra_proveedor_Y_mercaderia_en_UNA_pantalla():
+    """Desde el 30/09 (dueño) es UNA sola pantalla: proveedor arriba y
+    mercadería abajo, con un solo formulario."""
+    with (
+        patch("app.main.listar_proveedores", return_value=PROVEEDORES_DE_PRUEBA),
+        patch("app.main.listar_articulos", return_value=ARTICULOS_CON_UNIDAD_COMPRA),
+    ):
         respuesta = cliente.get("/deposito/ingresar")
 
     assert respuesta.status_code == 200
     assert "Código de puesto" in respuesta.text
     assert "N07P41" in respuesta.text
-    assert 'action="/deposito/ingresar/proveedor"' in respuesta.text
     assert "PROVEEDORES_LISTA" in respuesta.text
+    assert 'id="codigo_puesto" name="codigo_puesto"' in respuesta.text
+    assert 'id="articulo_id" name="articulo_id"' in respuesta.text
+    assert respuesta.text.count('<form method="post" action="/deposito/ingresar"') == 1
+    assert "/deposito/ingresar/proveedor" not in respuesta.text
     # Sin nada del flujo de foto (eso es del comprador, no de esta pantalla).
     assert 'id="form-leer-comanda"' not in respuesta.text
 
 
 def test_ver_ingresar_mercaderia_sin_proveedor_error_de_base_da_500():
-    with patch("app.main.listar_proveedores", side_effect=Exception("no se pudo conectar")):
+    with (
+        patch("app.main.listar_proveedores", side_effect=Exception("no se pudo conectar")),
+        patch("app.main.listar_articulos", return_value=ARTICULOS_CON_UNIDAD_COMPRA),
+    ):
         respuesta = cliente.get("/deposito/ingresar")
 
     assert respuesta.status_code == 500
@@ -11809,6 +11824,7 @@ def test_ver_ingresar_mercaderia_con_proveedor_muestra_formulario_de_renglon():
         patch("app.main.obtener_proveedor", return_value=PROVEEDOR_DE_PRUEBA),
         patch("app.main.listar_articulos", return_value=ARTICULOS_CON_UNIDAD_COMPRA),
         patch("app.main.listar_compras_por_fecha_y_proveedor", return_value=[]),
+        patch("app.main.listar_proveedores", return_value=PROVEEDORES_DE_PRUEBA),
     ):
         respuesta = cliente.get("/deposito/ingresar?proveedor_id=200")
 
@@ -11826,6 +11842,8 @@ def test_ver_ingresar_mercaderia_con_proveedor_muestra_formulario_de_renglon():
     assert 'name="sena"' in respuesta.text
     assert 'name="marca"' in respuesta.text
     assert 'action="/deposito/ingresar"' in respuesta.text
+    # El proveedor viene PRECARGADO en sus dos campos, no fijo en otra pantalla.
+    assert 'value="N07P41"' in respuesta.text and 'value="Saturno"' in respuesta.text
 
 
 def test_ver_ingresar_mercaderia_con_proveedor_tipo_retiro_clark_por_default():
@@ -11833,6 +11851,7 @@ def test_ver_ingresar_mercaderia_con_proveedor_tipo_retiro_clark_por_default():
         patch("app.main.obtener_proveedor", return_value=PROVEEDOR_DE_PRUEBA),
         patch("app.main.listar_articulos", return_value=ARTICULOS_CON_UNIDAD_COMPRA),
         patch("app.main.listar_compras_por_fecha_y_proveedor", return_value=[]),
+        patch("app.main.listar_proveedores", return_value=PROVEEDORES_DE_PRUEBA),
     ):
         respuesta = cliente.get("/deposito/ingresar?proveedor_id=200")
 
@@ -11880,6 +11899,7 @@ def test_ingreso_directo_preselecciona_el_default_de_la_empresa():
         patch("app.main.obtener_proveedor", return_value=PROVEEDOR_DE_PRUEBA),
         patch("app.main.listar_articulos", return_value=ARTICULOS_CON_UNIDAD_COMPRA),
         patch("app.main.listar_compras_por_fecha_y_proveedor", return_value=[]),
+        patch("app.main.listar_proveedores", return_value=PROVEEDORES_DE_PRUEBA),
     ):
         respuesta = cliente.get("/deposito/ingresar?proveedor_id=200")
 
@@ -11943,12 +11963,14 @@ def test_ver_ingresar_mercaderia_con_proveedor_muestra_cargado_hoy():
         patch("app.main.obtener_proveedor", return_value=PROVEEDOR_DE_PRUEBA),
         patch("app.main.listar_articulos", return_value=ARTICULOS_CON_UNIDAD_COMPRA),
         patch("app.main.listar_compras_por_fecha_y_proveedor", return_value=renglones_hoy),
+        patch("app.main.fotos_de_recepcion_por_compra", return_value={}),
+        patch("app.main.listar_proveedores", return_value=PROVEEDORES_DE_PRUEBA),
     ):
         respuesta = cliente.get("/deposito/ingresar?proveedor_id=200")
 
     assert respuesta.status_code == 200
     assert "Kiwi" in respuesta.text
-    assert "<td>19</td>" in respuesta.text  # contenido_por_cajon redondeado (18.6 -> 19)
+    assert "10 × 19" in respuesta.text  # contenido_por_cajon redondeado (18.6 -> 19)
 
 
 def test_ver_ingresar_mercaderia_con_proveedor_inexistente_da_404():
@@ -11965,63 +11987,65 @@ def test_ver_ingresar_mercaderia_con_proveedor_error_de_base_da_500():
     assert respuesta.status_code == 500
 
 
-def test_elegir_proveedor_ingreso_directo_exitoso_redirige_con_proveedor_id():
-    # Mismo mecanismo que /compras/nueva/proveedor: Depósito tiene que
-    # poder cargar un proveedor nuevo por código de puesto (mercadería
-    # que entra fuera de hora puede venir de un proveedor que nunca se
-    # compró), no solo elegir uno ya existente.
-    with patch("app.main.obtener_o_crear_proveedor_por_codigo", return_value=(200, False)) as mock_proveedor:
-        respuesta = cliente.post(
-            "/deposito/ingresar/proveedor",
-            data={"codigo_puesto": "n07p41", "nombre": "Saturno"},
-            follow_redirects=False,
-        )
-
-    assert respuesta.status_code == 303
-    assert respuesta.headers["location"] == "/deposito/ingresar?proveedor_id=200&codigo=N07P41"
-    mock_proveedor.assert_called_once_with("N07P41", "Saturno")
+def test_la_pantalla_vieja_de_ELEGIR_PROVEEDOR_ya_no_existe():
+    """Era el primer paso de dos; desde el 30/09 el proveedor va en la misma pantalla."""
+    respuesta = cliente.post("/deposito/ingresar/proveedor",
+                             data={"codigo_puesto": "N07P41", "nombre": "Saturno"}, follow_redirects=False)
+    assert respuesta.status_code in (404, 405)
 
 
-def test_elegir_proveedor_ingreso_directo_codigo_invalido_muestra_error():
+def test_ingresar_mercaderia_codigo_invalido_muestra_error_y_no_guarda_nada():
     with (
-        patch("app.main.obtener_o_crear_proveedor_por_codigo", return_value=(200, False)) as mock_proveedor,
+        patch("app.main.obtener_o_crear_proveedor_por_codigo") as mock_proveedor,
+        patch("app.main.crear_compra") as mock_crear,
         patch("app.main.listar_proveedores", return_value=[]),
+        patch("app.main.listar_articulos", return_value=ARTICULOS_CON_UNIDAD_COMPRA),
     ):
         respuesta = cliente.post(
-            "/deposito/ingresar/proveedor",
-            data={"codigo_puesto": "puesto15", "nombre": "Saturno"},
+            "/deposito/ingresar",
+            data={"codigo_puesto": "puesto15", "nombre": "Saturno", **DATOS_MERCADERIA_INGRESO},
         )
 
     assert respuesta.status_code == 400
     assert "formato NNNPNN" in respuesta.text
     mock_proveedor.assert_not_called()
+    mock_crear.assert_not_called()
 
 
-def test_elegir_proveedor_ingreso_directo_error_de_base_muestra_mensaje_claro():
+def test_ingresar_mercaderia_error_al_guardar_el_proveedor_muestra_mensaje_claro():
     with (
+        patch("app.main.obtener_articulo", return_value=ARTICULO_KILO_DE_PRUEBA),
+        patch("app.main.buscar_proveedor_por_codigo", return_value=PROVEEDOR_DE_PRUEBA),
         patch("app.main.obtener_o_crear_proveedor_por_codigo", side_effect=Exception("no se pudo conectar")),
+        patch("app.main.crear_compra") as mock_crear,
         patch("app.main.listar_proveedores", return_value=[]),
+        patch("app.main.listar_articulos", return_value=ARTICULOS_CON_UNIDAD_COMPRA),
+        patch("app.main.listar_compras_por_fecha_y_proveedor", return_value=[]),
     ):
         respuesta = cliente.post(
-            "/deposito/ingresar/proveedor",
-            data={"codigo_puesto": "N07P41", "nombre": "Saturno"},
+            "/deposito/ingresar",
+            data={"codigo_puesto": "N07P41", "nombre": "Saturno", **DATOS_MERCADERIA_INGRESO},
         )
 
     assert respuesta.status_code == 500
     assert "No se pudo guardar el proveedor" in respuesta.text
+    mock_crear.assert_not_called()
 
 
 def test_ingresar_mercaderia_exitoso_agregar_redirige_con_aviso():
     with (
         patch("app.main._hoy_argentina", return_value=HOY_DE_PRUEBA),
-        patch("app.main.obtener_proveedor", return_value=PROVEEDOR_DE_PRUEBA),
+        patch("app.main.buscar_proveedor_por_codigo", return_value=PROVEEDOR_DE_PRUEBA),
+        patch("app.main.obtener_o_crear_proveedor_por_codigo", return_value=(200, False)),
+        patch("app.main.listar_proveedores", return_value=PROVEEDORES_DE_PRUEBA),
         patch("app.main.obtener_articulo", return_value=ARTICULO_KILO_DE_PRUEBA),
         patch("app.main.crear_compra") as mock_crear,
     ):
         respuesta = cliente.post(
             "/deposito/ingresar",
             data={
-                "proveedor_id": "200",
+                "codigo_puesto": "N07P41",
+                "nombre": "Saturno",
                 "articulo_id": "5",
                 "cantidad_cajones": "10",
                 "contenido_por_cajon": "18",
@@ -12042,20 +12066,24 @@ def test_ingresar_mercaderia_exitoso_agregar_redirige_con_aviso():
         ingreso_directo_deposito=True,
         ficha_en_origen_id=None,
         segunda_por_cajon=None, codigo_llegada="N07P41", marca="",
+        fotos_pesada=[],
     )
 
 
 def test_ingresar_mercaderia_terminar_redirige_a_deposito_con_aviso():
     with (
         patch("app.main._hoy_argentina", return_value=HOY_DE_PRUEBA),
-        patch("app.main.obtener_proveedor", return_value=PROVEEDOR_DE_PRUEBA),
+        patch("app.main.buscar_proveedor_por_codigo", return_value=PROVEEDOR_DE_PRUEBA),
+        patch("app.main.obtener_o_crear_proveedor_por_codigo", return_value=(200, False)),
+        patch("app.main.listar_proveedores", return_value=PROVEEDORES_DE_PRUEBA),
         patch("app.main.obtener_articulo", return_value=ARTICULO_KILO_DE_PRUEBA),
         patch("app.main.crear_compra") as mock_crear,
     ):
         respuesta = cliente.post(
             "/deposito/ingresar",
             data={
-                "proveedor_id": "200",
+                "codigo_puesto": "N07P41",
+                "nombre": "Saturno",
                 "accion": "terminar",
                 "articulo_id": "5",
                 "cantidad_cajones": "10",
@@ -12074,13 +12102,14 @@ def test_ingresar_mercaderia_terminar_redirige_a_deposito_con_aviso():
 
 def test_ingresar_mercaderia_terminar_con_renglon_vacio_va_a_deposito_sin_guardar():
     with (
-        patch("app.main.obtener_proveedor") as mock_proveedor,
+        patch("app.main.obtener_o_crear_proveedor_por_codigo") as mock_proveedor,
         patch("app.main.crear_compra") as mock_crear,
     ):
         respuesta = cliente.post(
             "/deposito/ingresar",
             data={
-                "proveedor_id": "200",
+                "codigo_puesto": "N07P41",
+                "nombre": "Saturno",
                 "accion": "terminar",
                 "articulo_id": "",
                 "cantidad_cajones": "",
@@ -12096,25 +12125,11 @@ def test_ingresar_mercaderia_terminar_con_renglon_vacio_va_a_deposito_sin_guarda
     mock_crear.assert_not_called()
 
 
-def test_ingresar_mercaderia_proveedor_inexistente_da_404():
-    with patch("app.main.obtener_proveedor", return_value=None):
-        respuesta = cliente.post(
-            "/deposito/ingresar",
-            data={
-                "proveedor_id": "999",
-                "articulo_id": "5",
-                "cantidad_cajones": "10",
-                "contenido_por_cajon": "18",
-                "tipo_retiro": "Clark",
-            },
-        )
-
-    assert respuesta.status_code == 404
-
-
 def test_ingresar_mercaderia_sin_articulo_muestra_error():
     with (
-        patch("app.main.obtener_proveedor", return_value=PROVEEDOR_DE_PRUEBA),
+        patch("app.main.buscar_proveedor_por_codigo", return_value=PROVEEDOR_DE_PRUEBA),
+        patch("app.main.obtener_o_crear_proveedor_por_codigo", return_value=(200, False)),
+        patch("app.main.listar_proveedores", return_value=PROVEEDORES_DE_PRUEBA),
         patch("app.main.crear_compra") as mock_crear,
         patch("app.main.listar_articulos", return_value=ARTICULOS_CON_UNIDAD_COMPRA),
         patch("app.main.listar_compras_por_fecha_y_proveedor", return_value=[]),
@@ -12122,7 +12137,8 @@ def test_ingresar_mercaderia_sin_articulo_muestra_error():
         respuesta = cliente.post(
             "/deposito/ingresar",
             data={
-                "proveedor_id": "200",
+                "codigo_puesto": "N07P41",
+                "nombre": "Saturno",
                 "articulo_id": "",
                 "cantidad_cajones": "10",
                 "contenido_por_cajon": "18",
@@ -12137,7 +12153,9 @@ def test_ingresar_mercaderia_sin_articulo_muestra_error():
 
 def test_ingresar_mercaderia_sin_cantidad_cajones_muestra_error():
     with (
-        patch("app.main.obtener_proveedor", return_value=PROVEEDOR_DE_PRUEBA),
+        patch("app.main.buscar_proveedor_por_codigo", return_value=PROVEEDOR_DE_PRUEBA),
+        patch("app.main.obtener_o_crear_proveedor_por_codigo", return_value=(200, False)),
+        patch("app.main.listar_proveedores", return_value=PROVEEDORES_DE_PRUEBA),
         patch("app.main.crear_compra") as mock_crear,
         patch("app.main.listar_articulos", return_value=ARTICULOS_CON_UNIDAD_COMPRA),
         patch("app.main.listar_compras_por_fecha_y_proveedor", return_value=[]),
@@ -12145,7 +12163,8 @@ def test_ingresar_mercaderia_sin_cantidad_cajones_muestra_error():
         respuesta = cliente.post(
             "/deposito/ingresar",
             data={
-                "proveedor_id": "200",
+                "codigo_puesto": "N07P41",
+                "nombre": "Saturno",
                 "articulo_id": "5",
                 "cantidad_cajones": "",
                 "contenido_por_cajon": "18",
@@ -12161,7 +12180,9 @@ def test_ingresar_mercaderia_sin_cantidad_cajones_muestra_error():
 def test_ingresar_mercaderia_error_de_base_muestra_mensaje_claro():
     with (
         patch("app.main._hoy_argentina", return_value=HOY_DE_PRUEBA),
-        patch("app.main.obtener_proveedor", return_value=PROVEEDOR_DE_PRUEBA),
+        patch("app.main.buscar_proveedor_por_codigo", return_value=PROVEEDOR_DE_PRUEBA),
+        patch("app.main.obtener_o_crear_proveedor_por_codigo", return_value=(200, False)),
+        patch("app.main.listar_proveedores", return_value=PROVEEDORES_DE_PRUEBA),
         patch("app.main.obtener_articulo", return_value=ARTICULO_KILO_DE_PRUEBA),
         patch("app.main.crear_compra", side_effect=Exception("no se pudo conectar")),
         patch("app.main.listar_articulos", return_value=ARTICULOS_CON_UNIDAD_COMPRA),
@@ -12170,7 +12191,8 @@ def test_ingresar_mercaderia_error_de_base_muestra_mensaje_claro():
         respuesta = cliente.post(
             "/deposito/ingresar",
             data={
-                "proveedor_id": "200",
+                "codigo_puesto": "N07P41",
+                "nombre": "Saturno",
                 "articulo_id": "5",
                 "cantidad_cajones": "10",
                 "contenido_por_cajon": "18",
@@ -29526,14 +29548,15 @@ def test_el_ingreso_directo_le_pasa_la_marca_al_guardado():
     """
     with (
         patch("app.main._hoy_argentina", return_value=HOY_DE_PRUEBA),
-        patch("app.main.obtener_proveedor", return_value=PROVEEDOR_DE_PRUEBA),
+        patch("app.main.buscar_proveedor_por_codigo", return_value=PROVEEDOR_DE_PRUEBA),
+        patch("app.main.obtener_o_crear_proveedor_por_codigo", return_value=(200, False)),
         patch("app.main.obtener_articulo", return_value=ARTICULO_KILO_DE_PRUEBA),
         patch("app.main.listar_compras_por_fecha_y_proveedor", return_value=[]),
         patch("app.main.crear_compra") as mock_crear,
     ):
         respuesta = cliente.post(
             "/deposito/ingresar",
-            data={"proveedor_id": "200",
+            data={"codigo_puesto": "N07P41", "nombre": "Saturno",
                   "accion": "agregar", "articulo_id": "5", "cantidad_cajones": "10",
                   "contenido_por_cajon": "18", "tipo_retiro": "Clark",
                   "ficha_en_origen_id": "3"},
@@ -29966,6 +29989,7 @@ def test_la_marca_VUELVE_en_el_reintento_de_las_cinco_pantallas():
             patch("app.main.crear_compra", side_effect=Exception("se cayó la base")),
             patch("app.main.obtener_o_crear_proveedor_por_codigo",
                   return_value=(PROVEEDOR_DE_PRUEBA, False)),
+            patch("app.main.buscar_proveedor_por_codigo", return_value=PROVEEDOR_DE_PRUEBA),
         )
 
     campos = {"articulo_id": "5", "cantidad_cajones": "10", "contenido_por_cajon": "18",
@@ -29995,7 +30019,7 @@ def test_la_marca_VUELVE_en_el_reintento_de_las_cinco_pantallas():
             "la manual":
                 ("/compras/nueva/manual", dict(campos, codigo_puesto="N07P41", nombre="EJEMPLO Uno")),
             "el ingreso directo de Depósito":
-                ("/deposito/ingresar", {"proveedor_id": "200", "accion": "agregar",
+                ("/deposito/ingresar", {"codigo_puesto": "N07P41", "nombre": "Saturno", "accion": "agregar",
                                         "articulo_id": "5", "cantidad_cajones": "10",
                                         "contenido_por_cajon": "18", "tipo_retiro": "Clark",
                                         "ficha_en_origen_id": "3"}),
@@ -30686,6 +30710,7 @@ PANTALLAS_SIN_LINK_DECIDIDAS = {
     "/administracion/clave": "la puerta: el middleware manda acá, no se linkea",
     "/gerencia/auditoria": "301 a /auditoria — es la URL vieja, no una pantalla",
     "/deposito/stock/reproceso/desglose": "JSON que pide el JS, no es una pantalla",
+    "/deposito/ingresar/parecidos": "JSON que pide el JS del ingreso directo, no es una pantalla",
     "/compras/que-comprar/pdf":
         "llega por el 303 del POST: el botón guarda primero (test_que_comprar_pdf.py)",
     "/administracion/precios-por-periodo/exportar-excel":
