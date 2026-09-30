@@ -13332,8 +13332,9 @@ def bultos_esperando_guia_r_por_articulo() -> dict:
 
     SE APAGA SOLA, y no por un truco: sale del MISMO rejuego del FIFO que
     la Rentabilidad Real y la pantalla del artículo, y ese rejuego se
-    recalcula entero en cada lectura. Cuando entra la guía R —fechada en el
-    día que armó— la siguiente corrida cuenta cero. No hay nada persistido
+    recalcula entero en cada lectura. Cuando entra la guía R —fechada el
+    día que armó, o hasta DIAS_DE_MARGEN_DE_LA_GUIA_R días después— la
+    siguiente corrida cuenta cero. No hay nada persistido
     que limpiar ni botón que apretar.
 
     Sale de `atribuir_costos_fifo` y NO de una consulta propia: una segunda
@@ -13853,17 +13854,26 @@ def lotes_para_reproceso(articulo_id: int, fecha) -> dict:
             tomado_hoy = _lo_tomado_hoy(cursor, articulo_id, fecha)
     finally:
         conexion.close()
-    from core.stock import reparto_a_la_fecha, reparto_para_reproceso, salidas_para_reparto
+    from core.stock import (
+        DIAS_DE_MARGEN_DE_LA_GUIA_R, reparto_a_la_fecha, reparto_para_reproceso, salidas_para_reparto,
+    )
 
     salidas_fifo = salidas_para_reparto(salidas)
     reparto = reparto_para_reproceso(entradas, salidas_fifo, fecha)
     reparto["tomado_hoy"] = tomado_hoy
-    # La foto al CERRAR el día anterior: las dos puntas recortadas ahí, que
-    # es lo que hace que el número signifique "antes de este día" y no "antes
-    # o durante". Una guía del mismo día ya la está por cargar.
+    # La foto al CERRAR el día anterior, con las SALIDAS recortadas además
+    # por el margen de la guía R (30/09): una guía de este día cubre los
+    # armados de hasta DIAS_DE_MARGEN_DE_LA_GUIA_R días antes, así que lo
+    # que salió sin lote en ese tramo lo va a cubrir la que se está cargando
+    # y no es un aviso. Lo que queda es lo más viejo que el margen, que esta
+    # guía ya no puede cubrir. Recortar solo las salidas no cambia cómo se
+    # cubren las de antes: el FIFO atiende primero a las más viejas.
+    antes_del = fecha - timedelta(days=DIAS_DE_MARGEN_DE_LA_GUIA_R)
     reparto["sin_lote_antes"] = reparto_a_la_fecha(
-        entradas, salidas_fifo, fecha - timedelta(days=1)
+        entradas, salidas_fifo, fecha - timedelta(days=1),
+        salidas_hasta=antes_del - timedelta(days=1),
     )["sin_lote"]
+    reparto["sin_lote_antes_del"] = antes_del
     return reparto
 
 

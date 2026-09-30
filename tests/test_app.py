@@ -28882,10 +28882,12 @@ def test_el_remanente_muestra_los_armados_que_ESPERAN_la_guia_R():
     # el título solo ya lo dice a medias y el que perdió la tarde lo leyó.
     assert "Puede no ser la ficha que estás mirando" in cuerpo
     assert "todo el artículo" in cuerpo
-    # Y la fecha: una guía R cargada DESPUÉS del armado tampoco lo cubre
-    # (lote_posterior_a_la_salida compara fechas). Sin esto, el que la tiene
-    # cargada y mal fechada la busca sin encontrarla.
-    assert "fechada después del armado" in cuerpo
+    # Y la fecha: una guía R fechada MÁS DE tres días después del armado
+    # no lo cubre (margen del 30/09). Sin esto, el que la tiene cargada y mal
+    # fechada la busca sin encontrarla. El número sale de la constante.
+    from core.stock import DIAS_DE_MARGEN_DE_LA_GUIA_R
+    assert f"fechada más de\n      {DIAS_DE_MARGEN_DE_LA_GUIA_R} días después del armado" in cuerpo
+    assert "fechada después del armado" not in cuerpo
     # El link va al detalle del artículo, que es donde se ve de qué lotes salió.
     assert '/administracion/stock/sistema/41' in cuerpo
     # En dos mitades porque la plantilla parte la frase en dos líneas: un
@@ -32017,12 +32019,16 @@ def test_el_desglose_LLEVA_lo_que_ya_salio_sin_lote_antes_de_ese_dia():
     with (
         patch("app.main.contenido_por_bulto_de_lotes", return_value={}),
         patch("app.main.lotes_para_reproceso",
-              return_value={"lotes": [], "sin_lote": 0, "stock": 0, "sin_lote_antes": 16.0}),
+              return_value={"lotes": [], "sin_lote": 0, "stock": 0, "sin_lote_antes": 16.0,
+                            "sin_lote_antes_del": date(2026, 9, 15)}),
     ):
         datos = cliente.get("/deposito/stock/reproceso/desglose"
                             "?articulo_id=1&fecha=2026-09-18&bultos=5").json()
 
     assert datos["sin_lote_antes"] == 16.0
+    # EL DÍA viaja también (30/09): con el margen de la guía R el aviso cuenta
+    # lo anterior al 15 y no lo anterior al 18, y la pantalla tiene que decirlo.
+    assert datos["sin_lote_antes_del"] == "2026-09-15"
 
 
 def test_el_desglose_NO_INVENTA_el_aviso_cuando_la_consulta_no_lo_trae():
@@ -32037,6 +32043,7 @@ def test_el_desglose_NO_INVENTA_el_aviso_cuando_la_consulta_no_lo_trae():
                             "?articulo_id=1&fecha=2026-09-18&bultos=5").json()
 
     assert datos["sin_lote_antes"] == 0
+    assert datos["sin_lote_antes_del"] is None
 
 
 def test_la_pantalla_de_reproceso_DIBUJA_el_aviso_de_lo_que_salio_sin_lote():
@@ -32056,6 +32063,11 @@ def test_la_pantalla_de_reproceso_DIBUJA_el_aviso_de_lo_que_salio_sin_lote():
     # Y que el JS lo llame: el bloque solo es un div vacío para siempre.
     assert "dibujarAvisoSinLote(datos, campos);" in marcado
     assert "datos.sin_lote_antes" in marcado
+    # El aviso fecha con el día del MARGEN que manda el server, no con la
+    # fecha elegida, y el número de días sale de la constante.
+    from core.stock import DIAS_DE_MARGEN_DE_LA_GUIA_R
+    assert "const desde = datos.sin_lote_antes_del || campos.fecha" in marcado
+    assert f"o hasta {DIAS_DE_MARGEN_DE_LA_GUIA_R} días después." in marcado
 
 
 # ---------------------------------------------------------------------------

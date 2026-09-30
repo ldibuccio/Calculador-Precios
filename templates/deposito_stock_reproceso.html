@@ -492,10 +492,15 @@
       const caja = document.getElementById("aviso-sin-lote");
       const bultos = datos.sin_lote_antes || 0;
       if (!(bultos > 0)) { caja.hidden = true; return; }
-      const fecha = campos.fecha ? campos.fecha.split("-").reverse().slice(0, 2).join("/") : "";
+      // EL DÍA LO DICE EL SERVER: una guía cubre armados de hasta
+      // {{ dias_margen_guia_r }} días antes de su fecha, así que lo que
+      // avisa es lo anterior a ese margen, no lo anterior a la fecha elegida.
+      const desde = datos.sin_lote_antes_del || campos.fecha || "";
+      const fecha = desde ? desde.split("-").reverse().slice(0, 2).join("/") : "";
       caja.textContent = "Antes del " + fecha + " salieron " + bultos + " bultos de "
         + nombreArticulo() + " sin que ninguna guía R los cubra. "
-        + "Si estas cajas se armaron antes, poné acá el día en que se armaron.";
+        + "Si estas cajas se armaron antes, poné acá el día en que se armaron "
+        + "o hasta {{ dias_margen_guia_r }} días después.";
       caja.hidden = false;
     }
 

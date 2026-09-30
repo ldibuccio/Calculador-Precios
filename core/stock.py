@@ -27,6 +27,18 @@ Todo en BULTOS (lo que se cuenta en el piso).
 from datetime import timedelta
 from typing import NamedTuple
 
+# CUÁNTOS DÍAS DESPUÉS DEL ARMADO puede estar fechada la guía R que lo cubre
+# (dueño, 30/09). Depósito carga la guía al día siguiente —o el lunes— y le
+# deja la fecha del día de carga: las cajas existían, lo único mal es la
+# fecha. Tres días corridos alcanzan para un fin de semana. Pasado el margen,
+# ahí sí falta una guía, y la alerta lo muestra.
+#
+# Vale SOLO para el armado de una ficha con caja, que es el único que espera
+# una guía R: para el resto de las salidas un lote posterior sigue sin poder
+# cubrirlas. Las dos copias del FIFO la leen de acá, a través de
+# `pasadas_con_margen`.
+DIAS_DE_MARGEN_DE_LA_GUIA_R = 3
+
 
 def fecha_de_orden(orden):
     """La FECHA de un "orden" del FIFO, o None si ese orden no la trae.
@@ -302,7 +314,9 @@ def pasadas_de_lotes(lotes: list[dict], salida: dict) -> list[list[dict]]:
     # de un cajón sin pasar por una guía R. Si no hay caja, el bulto queda
     # SIN LOTE —que es información verdadera: salió y el papel no está— y se
     # asigna solo cuando la guía R aparece, porque el reparto se rejuega en
-    # cada lectura y `lote_posterior_a_la_salida` compara FECHAS.
+    # cada lectura y `lote_posterior_a_la_salida` compara FECHAS. La guía
+    # puede estar fechada hasta DIAS_DE_MARGEN_DE_LA_GUIA_R días después del
+    # armado: esa pasada la agrega `pasadas_con_margen`, no ésta.
     #
     # El cajón queda intacto A PROPÓSITO: no lo consumió el armado, lo va a
     # consumir el reproceso. Si el armado le bajara el restante, la guía R
@@ -315,6 +329,29 @@ def pasadas_de_lotes(lotes: list[dict], salida: dict) -> list[list[dict]]:
     if not preferidos:
         return [lotes]
     return [preferidos, [lote for lote in lotes if lote["tipo_lote"] not in prefiere]]
+
+
+def pasadas_con_margen(lotes: list[dict], salida: dict) -> list[tuple[list[dict], int]]:
+    """Las pasadas de `pasadas_de_lotes`, cada una con su margen de días.
+
+    Un lote posterior a la salida no la cubre (margen 0), salvo en el armado
+    de una ficha con caja: ahí la pasada de las cajas armadas lleva
+    `DIAS_DE_MARGEN_DE_LA_GUIA_R`, y la guía R cargada un día o un fin de
+    semana después del armado lo cubre.
+
+    "PRIMERO LA DE ANTES Y DESPUÉS LA DEL MARGEN", que es lo que pidió el
+    dueño, NO necesita una pasada aparte: la pasada va en orden de fecha, así
+    que las guías anteriores o del mismo día se consumen antes que las
+    posteriores. Una pasada extra al final daría exactamente lo mismo — medido
+    con el canario, que no se mueve — y sería código que no decide nada.
+
+    Es la ÚNICA fuente del margen para las dos copias del FIFO
+    (`repartir_fifo` para el stock y `atribuir_costos_fifo` para el costo):
+    escrito en cada una, la que se separe dejaría el stock diciendo que la
+    caja salió de una guía y el costo diciendo que no tiene lote.
+    """
+    margen = DIAS_DE_MARGEN_DE_LA_GUIA_R if salida.get("ficha_con_envase") else 0
+    return [(pasada, margen) for pasada in pasadas_de_lotes(lotes, salida)]
 
 
 def lotes_ofrecidos(lotes: list[dict], salida: dict) -> list[dict]:
@@ -362,12 +399,16 @@ def lote_ofrecido(lote: dict, salida: dict) -> bool:
     return bool(lotes_ofrecidos([lote], salida))
 
 
-def lote_posterior_a_la_salida(lote, salida) -> bool:
-    """¿Este lote entró DESPUÉS de que esta salida ocurrió?
+def lote_posterior_a_la_salida(lote, salida, dias_de_margen: int = 0) -> bool:
+    """¿Este lote entró DESPUÉS de que esta salida ocurrió (más el margen)?
 
     Un lote posterior no puede cubrir una salida anterior: la mercadería
     todavía no estaba en el galpón. Es la regla que separa el FIFO de "más
     viejo primero" de uno que viaja al futuro para tapar un faltante.
+
+    `dias_de_margen` corre ese límite: con 3, un lote fechado hasta tres días
+    después de la salida todavía la cubre. Lo usa SOLO la pasada del margen
+    de la guía R (`pasadas_con_margen`); el default 0 es la regla estricta.
 
     Sin fecha de un lado o del otro no se puede afirmar nada, y entonces no
     se restringe: la regla avisa por lo que sabe, nunca por lo que supone.
@@ -376,7 +417,7 @@ def lote_posterior_a_la_salida(lote, salida) -> bool:
     fecha_salida = fecha_de_orden(salida.get("orden"))
     if fecha_lote is None or fecha_salida is None:
         return False
-    return fecha_lote > fecha_salida
+    return fecha_lote > fecha_salida + timedelta(days=dias_de_margen)
 
 
 def salidas_para_reparto(salidas: list[dict]) -> list[dict]:
@@ -498,13 +539,13 @@ def repartir_fifo(entradas: list[dict], salidas: list[dict]) -> dict:
         pendiente = cantidad
         # Una pasada por tipo preferido y otra con el resto. Cada pasada
         # sigue ordenada por fecha, que es lo que hace válido el `break`.
-        for pasada in pasadas_de_lotes(lotes, salida):
+        for pasada, margen in pasadas_con_margen(lotes, salida):
             for lote in pasada:
                 if pendiente <= 0:
                     break
                 if lote["restante"] <= 0:
                     continue
-                if lote_posterior_a_la_salida(lote, salida):
+                if lote_posterior_a_la_salida(lote, salida, margen):
                     # Los lotes vienen ordenados: de acá en adelante son
                     # todos posteriores, no hay más que mirar EN ESTA
                     # pasada. La siguiente arranca de nuevo desde su

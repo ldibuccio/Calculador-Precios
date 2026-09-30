@@ -63,10 +63,11 @@ un número chico y cierto que uno grande y mentiroso.
 
 from core.rentabilidad import ETIQUETAS_GRUPO, ETIQUETA_SIN_GRUPO, ORDEN_GRUPOS
 from core.stock import (
+    DIAS_DE_MARGEN_DE_LA_GUIA_R,
     es_lote_trabajado,
     lote_posterior_a_la_salida,
     lotes_senalados,
-    pasadas_de_lotes,
+    pasadas_con_margen,
 )
 
 ETIQUETAS_MOTIVO_REAL = {
@@ -95,14 +96,16 @@ ETIQUETAS_MOTIVO_REAL = {
     # la suya cargada y cerrar exacta. Decir "la guía R que arma estas
     # cajas" mandaba a revisar un papel que ya estaba.
     #
-    # "CON FECHA DE ESE DÍA O ANTERIOR" es la otra mitad, y no sobra:
-    # `lote_posterior_a_la_salida` compara FECHAS, así que una guía R
-    # cargada con fecha posterior al armado tampoco lo cubre. Ahí no falta
-    # cargar nada — falta corregir la fecha—, y sin esta frase el que la
-    # tiene cargada y fechada mal la busca sin encontrarla.
+    # LA FECHA es la otra mitad, y no sobra. Desde el 30/09 (dueño) una guía
+    # R cubre armados de hasta DIAS_DE_MARGEN_DE_LA_GUIA_R días antes de su
+    # fecha, porque Depósito la carga al día siguiente con la fecha del día
+    # de carga. Pasado ese margen ya no lo cubre: ahí no falta cargar nada —
+    # falta corregir la fecha—, y sin esta frase el que la tiene cargada y
+    # fechada mal la busca sin encontrarla.
     "falta_cargar_guia_r": (
-        "Falta una guía R DE ESTE ARTÍCULO con fecha de ese día o anterior "
-        "(la mercadería salió y el papel que la arma no está, o está fechado después)"
+        "Falta una guía R DE ESTE ARTÍCULO con fecha de ese día o de hasta "
+        f"{DIAS_DE_MARGEN_DE_LA_GUIA_R} días después (la mercadería salió y el "
+        "papel que la arma no está, o está fechado más tarde)"
     ),
     "devolucion_sin_valor": "Devolución vinculada que no se pudo valuar (renglón sin kilaje o sin precio a la fecha del pedido)",
     "rechazo_sin_costo": "Rechazo mandado a segunda sin costo congelado (no se puede valuar la pérdida)",
@@ -291,13 +294,13 @@ def atribuir_costos_fifo(entradas: list[dict], salidas: list[dict]) -> list[dict
         cuenta = cuentas[id(salida)]
         while indice < len(lotes) and lotes[indice]["restante"] <= 0:
             indice += 1
-        for pasada in pasadas_de_lotes(lotes[indice:], salida):
+        for pasada, margen in pasadas_con_margen(lotes[indice:], salida):
             for lote in pasada:
                 if cuenta["pendiente"] <= 0:
                     break
                 if lote["restante"] <= 0:
                     continue
-                if lote_posterior_a_la_salida(lote, salida):
+                if lote_posterior_a_la_salida(lote, salida, margen):
                     # Ordenados por fecha: de acá en adelante son todos
                     # posteriores EN ESTA pasada. La siguiente arranca de
                     # nuevo, y su primer lote puede ser anterior a éste.
@@ -307,7 +310,8 @@ def atribuir_costos_fifo(entradas: list[dict], salidas: list[dict]) -> list[dict
             cuenta["sin_costo"] += cuenta["pendiente"]
             # Cuál de los dos motivos sale de la MISMA condición que arma la
             # pared (`pasadas_de_lotes`, core/stock.py): si la ficha tiene
-            # envase, lo que falta no es mercadería, es la guía R.
+            # envase, lo que falta no es mercadería, es la guía R — una que
+            # no está, o que está fechada después del margen.
             motivo = "falta_cargar_guia_r" if salida.get("ficha_con_envase") else "sin_lote"
             cuenta["motivos"][motivo] = cuenta["motivos"].get(motivo, 0.0) + cuenta["pendiente"]
 
