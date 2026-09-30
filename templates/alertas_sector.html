@@ -57,6 +57,11 @@
      un vistazo bajando la columna. */
   td:nth-last-child(-n+3), th:nth-last-child(-n+3) { text-align: right; white-space: nowrap; }
   tbody tr:last-child td { border-bottom: none; }
+  /* LO QUE NO ES UN CASO, en gris y abajo: se ve, pero no se confunde con
+     lo que la alerta cuenta. */
+  .aparte { margin: 1rem 0 0; color: #6b7280; }
+  .aparte h3 { margin: 0 0 0.4rem; font-size: 0.9rem; font-weight: 600; line-height: 1.4; }
+  .aparte td { color: #6b7280; }
   .volver { display: block; text-align: center; padding: 0.9rem; color: #1d4ed8; font-weight: 700; text-decoration: none; }
 
   /* EN CELULAR LA TABLA PASA A TARJETAS: siete columnas no entran en 390px
@@ -147,6 +152,22 @@
       </table>
       {% elif b.filas is not none %}
       <p class="sin-casos">✓ Ninguno ahora mismo.</p>
+      {% endif %}
+
+      {% if b.filas_aparte %}
+      <div class="aparte">
+        <h3>{{ b.titulo_aparte }}</h3>
+        <table>
+          <thead>
+            <tr>{% for c in b.columnas %}<th>{{ c }}</th>{% endfor %}</tr>
+          </thead>
+          <tbody>
+            {% for fila in b.filas_aparte %}
+            <tr>{% for celda in fila %}<td data-rotulo="{{ b.columnas[loop.index0] }}">{{ celda }}</td>{% endfor %}</tr>
+            {% endfor %}
+          </tbody>
+        </table>
+      </div>
       {% endif %}
 
       {# EL LINK VA SIEMPRE, TAMBIÉN CON TABLA. Era un `else` del detalle, de

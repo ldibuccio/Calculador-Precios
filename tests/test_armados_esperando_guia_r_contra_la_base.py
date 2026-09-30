@@ -96,10 +96,15 @@ def base():
     return url
 
 
-def _con(url, funcion):
+# LEJOS del 12/09 a propósito: el armado que espera queda afuera del margen
+# de la guía R, y el test no depende del reloj de quien lo corra (corolario 95).
+HOY = datetime.date(2026, 9, 20)
+
+
+def _con(url, funcion, hoy=HOY):
     import app.db as db
     with patch.dict(os.environ, {"DATABASE_URL": url}):
-        return getattr(db, funcion)()
+        return getattr(db, funcion)(hoy)
 
 
 def test_el_RECHAZO_que_vuelve_entra_como_CAJA_y_cubre_el_reenvio(base):
@@ -162,7 +167,7 @@ def test_la_columna_cuenta_las_cajas_que_se_llevan_renglones_SIN_FICHA(base):
                 " cantidad_armada, armado_el) overriding system value values"
                 " (5, 2, 'EJEMPLO Suc B', 1, 5, 5, '2026-09-11 15:00-03')")
         with patch.object(db, "obtener_conexion", return_value=_SinCerrar(conexion)):
-            filas = db.armados_esperando_guia_r()
+            filas = db.armados_esperando_guia_r(HOY)
     finally:
         conexion.rollback()
         conexion.close()
@@ -186,7 +191,7 @@ def test_CONTROL_sin_el_renglon_de_10_no_espera_nada(base):
         with conexion.cursor() as cursor:
             cursor.execute("update pedidos_renglones set anulado_el = now() where id = 4")
         with patch.object(db, "obtener_conexion", return_value=_SinCerrar(conexion)):
-            filas = db.armados_esperando_guia_r()
+            filas = db.armados_esperando_guia_r(HOY)
     finally:
         conexion.rollback()
         conexion.close()
@@ -216,6 +221,52 @@ def test_el_lote_del_rechazo_dice_EN_CAJON_segun_la_ficha_del_renglon(base):
                       for e in entradas if e["tipo_lote"] == "reingreso_rechazo")
     assert rechazos == [(5.0, True), (60.0, False)]
     assert all(e["en_cajon"] is False for e in entradas if e["tipo_lote"] != "reingreso_rechazo")
+
+
+# EL MARGEN (dueño, 30/09): la alerta cuenta solo lo que ninguna guía R que
+# se cargue hoy puede cubrir. El renglón 4 se armó el 12/09 y espera 10.
+# Los tres días van pegados a la raya, que es el único caso que dice DÓNDE
+# está el corte (corolario 53): el 15 todavía lo cubre una guía del 15.
+@pytest.mark.parametrize("hoy, cuenta", [
+    (datetime.date(2026, 9, 13), 0.0),   # armado AYER: normal, no suma
+    (datetime.date(2026, 9, 15), 0.0),   # hace 3 días: una guía de hoy lo cubre
+    (datetime.date(2026, 9, 16), 10.0),  # hace 4 días: ya no, y cuenta
+])
+def test_la_alerta_cuenta_SOLO_lo_que_paso_el_margen_de_la_guia_R(base, hoy, cuenta):
+    assert _con(base, "contar_bultos_esperando_guia_r", hoy)["casos"] == cuenta
+
+
+def test_la_lista_trae_TAMBIEN_los_del_margen_marcados_y_la_alerta_no_los_suma(base):
+    """El detalle los muestra aparte; la suma de los que cuentan es la alerta."""
+    ayer = datetime.date(2026, 9, 13)
+    filas = _con(base, "armados_esperando_guia_r", ayer)
+
+    assert [(f["renglon_id"], f["esperan"], f["fuera_del_margen"]) for f in filas] \
+        == [(4, 10.0, False)]
+    assert _con(base, "contar_bultos_esperando_guia_r", ayer) == {"casos": 0, "mas_viejo": None}
+
+
+def test_la_fecha_de_la_alerta_es_la_del_ARMADO_que_paso_el_margen(base):
+    assert _con(base, "contar_bultos_esperando_guia_r") == {
+        "casos": 10.0, "mas_viejo": datetime.date(2026, 9, 12)}
+
+
+def test_el_detalle_de_la_alerta_parte_en_LAS_QUE_CUENTAN_y_LAS_DEL_MARGEN(base):
+    """Lo que ve Administración: los de ayer abajo y en gris, sin sumar."""
+    import app.main as main
+
+    with patch.dict(os.environ, {"DATABASE_URL": base}), \
+            patch.object(main, "_hoy_argentina", return_value=datetime.date(2026, 9, 13)):
+        dentro = main._detalle_armados_esperando_guia_r()
+    with patch.dict(os.environ, {"DATABASE_URL": base}), \
+            patch.object(main, "_hoy_argentina", return_value=datetime.date(2026, 9, 16)):
+        fuera = main._detalle_armados_esperando_guia_r()
+
+    assert (len(dentro["filas"]), len(dentro["filas_aparte"])) == (0, 1)
+    assert dentro["titulo_aparte"].startswith("Esperando guía R (normal): 10 bultos")
+    assert (len(fuera["filas"]), len(fuera["filas_aparte"])) == (1, 0)
+    assert fuera["titulo_aparte"] is None
+    assert fuera["resumen"].startswith("10 bultos en 1 renglón")
 
 
 class _SinCerrar:

@@ -8372,8 +8372,11 @@ def test_la_alerta_de_la_guia_R_cuenta_BULTOS_y_SE_APAGA_SOLA():
              "cantidad": 10.0, "costo_bulto": 50.0}
     caja = {"orden": (date(2026, 9, 7), datetime(2026, 9, 7, 16, 0)), "tipo_lote": "reproceso",
             "cantidad": 10.0, "costo_bulto": 80.0}
+    # `fecha_orden` como en producción (la trae `_entradas_y_salidas_stock_varios`):
+    # es la fecha del armado, y contra ella se mide el margen de la guía R.
     armado = {"orden": (date(2026, 9, 7), datetime(2026, 9, 7, 11, 0)), "tipo": "armado",
-              "cantidad": 10.0, "ficha_con_envase": True, "fecha": date(2026, 9, 7)}
+              "cantidad": 10.0, "ficha_con_envase": True, "fecha": date(2026, 9, 7),
+              "fecha_orden": date(2026, 9, 7)}
 
     for etiqueta, lotes, esperado in (("sin la guía R", [cajon], 10.0),
                                       ("con la guía R", [cajon, caja], 0.0)):
@@ -8386,7 +8389,7 @@ def test_la_alerta_de_la_guia_R_cuenta_BULTOS_y_SE_APAGA_SOLA():
             patch("app.db._fecha_corte", return_value=date(2026, 9, 5)),
             patch("app.db._entradas_y_salidas_stock_varios", return_value=datos),
         ):
-            resultado = contar_bultos_esperando_guia_r()
+            resultado = contar_bultos_esperando_guia_r(date(2026, 9, 30))
         assert resultado["casos"] == esperado, f"{etiqueta}: dio {resultado['casos']}"
 
     # Y la fecha que muestra la alerta es la del armado que espera.
@@ -8445,7 +8448,8 @@ def test_la_alerta_no_cuenta_el_sin_lote_de_VERDAD():
 
     # Un armado SIN envase que salió sin lote: es sin_lote de verdad.
     armado = {"orden": (date(2026, 9, 7), datetime(2026, 9, 7, 11, 0)), "tipo": "armado",
-              "cantidad": 10.0, "ficha_con_envase": False, "fecha": date(2026, 9, 7)}
+              "cantidad": 10.0, "ficha_con_envase": False, "fecha": date(2026, 9, 7),
+              "fecha_orden": date(2026, 9, 7)}
     cursor, datos = _fifo_de_un_articulo([], [armado])
     conexion = MagicMock()
     conexion.cursor.return_value.__enter__ = MagicMock(return_value=cursor)
@@ -8455,7 +8459,7 @@ def test_la_alerta_no_cuenta_el_sin_lote_de_VERDAD():
         patch("app.db._fecha_corte", return_value=date(2026, 9, 5)),
         patch("app.db._entradas_y_salidas_stock_varios", return_value=datos),
     ):
-        resultado = contar_bultos_esperando_guia_r()
+        resultado = contar_bultos_esperando_guia_r(date(2026, 9, 30))
 
     assert resultado["casos"] == 0
 
