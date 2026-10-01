@@ -2532,7 +2532,9 @@ def test_ver_buscar_compras_error_de_base_da_500():
 
 
 def test_exportar_listado_compras_pdf_devuelve_archivo_adjunto():
-    with patch("app.main.buscar_compras", return_value=COMPRAS_BUSQUEDA_DE_PRUEBA) as mock_buscar:
+    with patch("app.main.buscar_compras", return_value=COMPRAS_BUSQUEDA_DE_PRUEBA) as mock_buscar, \
+         patch("app.main.listar_proveedores", return_value=[{"id": 200, "nombre": "EJEMPLO Proveedor"}]), \
+         patch("app.main.listar_articulos", return_value=[{"id": 5, "nombre": "EJEMPLO Fruta"}]):
         respuesta = cliente.get(
             "/compras/buscar/exportar-pdf?fecha_desde=2026-08-01&fecha_hasta=2026-08-06&proveedor_id=200&articulo_id=5"
         )
@@ -2545,6 +2547,9 @@ def test_exportar_listado_compras_pdf_devuelve_archivo_adjunto():
     # El export va SIN tope: un archivo cortado en silencio sería peor
     # que uno pesado.
     mock_buscar.assert_called_once_with(date(2026, 8, 1), date(2026, 8, 6), 200, 5)
+    # Y el encabezado dice qué se filtró (01/10).
+    texto = _texto_del_pdf_de_respuesta(respuesta.content)
+    assert "proveedor EJEMPLO Proveedor" in texto and "artículo EJEMPLO Fruta" in texto
 
 
 def test_exportar_listado_compras_pdf_agrupa_por_fecha_y_proveedor():

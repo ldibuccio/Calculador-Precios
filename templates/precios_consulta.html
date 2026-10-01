@@ -206,8 +206,8 @@
   <div class="tarjeta">
     <button type="button" class="boton" id="boton-exportar" onclick="mostrarOpcionesExportar()">Exportar</button>
     <div id="opciones-exportar" style="display: none;">
-      <a class="boton" href="/precios/consultar/exportar-pdf?cliente_id={{ cliente_id }}&fecha={{ fecha }}">Exportar PDF</a>
-      <a class="boton" href="/precios/consultar/exportar-excel?cliente_id={{ cliente_id }}&fecha={{ fecha }}">Exportar Excel</a>
+      <a class="boton" href="/precios/consultar/exportar-pdf?cliente_id={{ cliente_id }}&fecha={{ fecha }}&ficha_id={{ ficha_id if ficha_id is not none else '' }}">Exportar PDF</a>
+      <a class="boton" href="/precios/consultar/exportar-excel?cliente_id={{ cliente_id }}&fecha={{ fecha }}&ficha_id={{ ficha_id if ficha_id is not none else '' }}">Exportar Excel</a>
     </div>
   </div>
   {% endif %}

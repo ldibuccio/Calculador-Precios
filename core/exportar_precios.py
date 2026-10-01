@@ -94,7 +94,8 @@ OFFSET_LEYENDA = 38 * mm
 ALTURA_ENCABEZADO = 46 * mm  # topMargin: deja aire entre la leyenda y el cuerpo
 
 
-def _dibujar_encabezado(canvas, documento, cliente_nombre: str, fecha_texto: str, nombre_empresa: str):
+def _dibujar_encabezado(canvas, documento, cliente_nombre: str, fecha_texto: str, nombre_empresa: str,
+                        filtro: str | None = None):
     """Título, Cliente, Vigencia, filete verde y leyenda — directo en el canvas, en TODAS las páginas.
 
     Va en el canvas (no como Paragraph en el flujo normal) para que se
@@ -119,7 +120,10 @@ def _dibujar_encabezado(canvas, documento, cliente_nombre: str, fecha_texto: str
     canvas.drawString(x, alto_pagina - OFFSET_CLIENTE, f"Cliente: {cliente_nombre}")
 
     canvas.setFillColor(GRIS_TEXTO_AYUDA)
-    canvas.drawString(x, alto_pagina - OFFSET_VIGENCIA, f"Vigencia: {fecha_texto} · Precios + IVA")
+    # Con un artículo filtrado en la pantalla, el papel lo dice: una lista de
+    # un renglón sin esa aclaración se lee como la lista entera (01/10).
+    solo = f" · Solo: {filtro}" if filtro else ""
+    canvas.drawString(x, alto_pagina - OFFSET_VIGENCIA, f"Vigencia: {fecha_texto} · Precios + IVA{solo}")
 
     canvas.setStrokeColor(VERDE_ENCABEZADO)
     canvas.setLineWidth(1)
@@ -142,7 +146,7 @@ def _dibujar_encabezado(canvas, documento, cliente_nombre: str, fecha_texto: str
 
 
 def generar_pdf_lista_precios(
-    cliente_nombre: str, fecha: date, filas: list[dict], nombre_empresa: str
+    cliente_nombre: str, fecha: date, filas: list[dict], nombre_empresa: str, filtro: str | None = None
 ) -> bytes:
     """Arma el PDF de la Lista de Precios de un cliente a una fecha, con el formato ya definido.
 
@@ -167,7 +171,7 @@ def generar_pdf_lista_precios(
     ancho_util = documento.width
 
     def _dibujar_encabezado_pagina(canvas, documento):
-        _dibujar_encabezado(canvas, documento, cliente_nombre, fecha_texto, nombre_empresa)
+        _dibujar_encabezado(canvas, documento, cliente_nombre, fecha_texto, nombre_empresa, filtro)
 
     estilo_ayuda = ParagraphStyle(
         "ayuda", fontName="Helvetica-Oblique", fontSize=9, textColor=GRIS_TEXTO_AYUDA, spaceBefore=16
@@ -277,7 +281,8 @@ FORMATO_CONTABLE = '_("$"* #,##0.00_);_("$"* (#,##0.00);_("$"* "-"_);_(@_)'
 
 
 def generar_excel_lista_precios(
-    cliente_nombre: str, fecha: date, filas: list[dict], es_hoy: bool, nombre_empresa: str
+    cliente_nombre: str, fecha: date, filas: list[dict], es_hoy: bool, nombre_empresa: str,
+    filtro: str | None = None,
 ) -> bytes:
     """Arma el Excel de la Lista de Precios con el formato de planilla que el cliente ya conoce.
 
@@ -317,7 +322,10 @@ def generar_excel_lista_precios(
     # Fila 1: la fecha, sola, centrada sobre las tres columnas (21/8/2026,
     # sin ceros a la izquierda — igual que la planilla original).
     hoja.merge_cells(start_row=1, start_column=1, end_row=1, end_column=3)
-    celda_fecha = hoja.cell(row=1, column=1, value=f"{fecha.day}/{fecha.month}/{fecha.year}")
+    # Con un artículo filtrado, la misma fila lo dice ("· solo Anco"): sin
+    # filtro queda igual a la planilla original.
+    solo = f" · solo {filtro}" if filtro else ""
+    celda_fecha = hoja.cell(row=1, column=1, value=f"{fecha.day}/{fecha.month}/{fecha.year}{solo}")
     celda_fecha.alignment = centrado
     celda_fecha.font = fuente_encabezado
     for columna in range(1, 4):

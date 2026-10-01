@@ -90,6 +90,45 @@ tácito entre dos lugares — corolario 21 en una frase: el día que aparezca un
 conteo masculino hay dónde ponerlo, en vez de que el texto salga mal y nadie
 lo note porque nadie relee un rótulo.
 
+## Toda exportación sale con los filtros de la pantalla (01/10, dueño)
+
+Vale para toda pantalla que baja un PDF o un Excel. **El archivo sale con
+EXACTAMENTE los filtros que la pantalla tiene en ese momento** (fechas,
+proveedor, artículo, cliente, estado, tipo, sector y cualquier otro), **y su
+encabezado dice qué se filtró**. Un listado de un solo proveedor sin decirlo
+se lee como el listado entero.
+
+- **El link de exportar lleva TODOS los campos del formulario** de la
+  pantalla, con el valor con que se dibujó (no el que se tipeó sin apretar
+  Buscar: el archivo tiene que ser lo que se ve).
+- **La ruta de exportar aplica los mismos filtros** que la de la pantalla, y
+  el nombre del filtro se lee del catálogo (`_textos_de_filtros`), no de la
+  primera fila: sin filas, el encabezado igual dice qué se filtró.
+- **Un link que lleva de una pantalla a otra también lleva los filtros que
+  las dos comparten** (Movimientos del depósito → Planilla para pagar).
+
+El 01/10 se revisaron las 32 rutas que exportan. Tres tenían el error:
+
+- **Consultar precios**: filtrado por artículo, el PDF y el Excel bajaban
+  la lista entera (el link no llevaba `ficha_id` y la ruta no lo aplicaba).
+- **Movimientos del depósito → Planilla para pagar**: el link pasaba solo las
+  fechas, así que la planilla, y con ella su PDF y su Excel, salían con todos
+  los proveedores. Es el camino más probable del caso de Lionel.
+- **Buscar compras**: filtraba bien, pero el encabezado no decía el proveedor
+  ni el artículo. Movimientos del depósito y Vales sacaban el nombre de la
+  primera fila ("proveedor elegido" si no había ninguna).
+
+Lo cuida `tests/test_exportaciones_filtradas.py`:
+
+- toda ruta que exporta está en `EXPORTACIONES`, con cómo sigue los filtros
+  (el conjunto ENCONTRADO contra el DECIDIDO: una exportación nueva falla
+  hasta que alguien lo decida);
+- cada link de exportar escrito en una plantilla lleva todos los campos de su
+  formulario;
+- y, contra Postgres, cada pantalla se abre filtrada, se sigue el link QUE LA
+  PANTALLA DIBUJA y se lee el archivo: el otro proveedor, cliente o artículo
+  no puede aparecer, y el filtro tiene que estar en el encabezado.
+
 ## Lo que se ve y lo que va a la "i" (25/09, del dueño)
 
 Vale para toda pantalla, igual que el mobile-first:
@@ -419,6 +458,13 @@ De acá en adelante, después de cualquier push que se dé por desplegado:
    Railway ("Deploy Latest Commit" necesita la computadora), y la salida es
    un commit chico REAL, sellado, mergeado por rebase, que vuelve a mandar el
    aviso. Nunca un commit vacío: suma un commit que el sello no contó.
+
+   **CUANDO EL DUEÑO CIERRA ALGO, SE ABRE EL PR Y SE MERGEA SIN PREGUNTAR
+   (01/10, dueño)**, siempre que no haya una migración de por medio. El orden
+   es el de siempre: sello, suite y humo, push, PR, CI verde, merge por rebase,
+   y después la `conclusion` del CI de `main`. Si el PR trae una migración (un
+   `.sql` que cambia el esquema o los datos y lo corre Lionel), no se mergea
+   hasta que el dueño la verifique.
 
    **NADA DE HERRAMIENTAS QUE LE PIDAN PERMISO AL DUEÑO (01/10, dueño).**
    Ni búsqueda de documentación, ni `send_later`, ni ninguna otra que lo
