@@ -4462,14 +4462,17 @@ textos y el Excel en `core/vales.py`.
   (`_negar_si_el_vale_ya_salio`, adentro de la misma transacción).
 - **Una salida por vale** (`vales_a_cobrar_salidas`, clave vale_id), con
   sector y hora: **cobrado** (fecha, importe cobrado, ingreso a caja opcional)
-  y **cruzado** (fecha, referencia) son de Administración; **anulado** (motivo
-  obligatorio) es SOLO de Gerencia, y **solo para el vale de una devolución:
-  el vale en PAPEL (anterior al sistema) no se anula** (dueño, 01/10), sale
-  cobrado o cruzado. La regla es `salidas_del_vale`, y la leen la pantalla y la
-  escritura. La base lo hace cumplir con el sector, y
-  `SECTOR_DE_LA_SALIDA` es la misma regla escrita en Python para que la
-  pantalla no ofrezca lo que el POST rechaza: un test lee los CHECK del .sql.
-  **Una salida no se deshace**: no hay pantalla para volver un cobrado atrás.
+  y **cruzado** (fecha, referencia), los dos de Administración.
+  **NINGÚN VALE SE ANULA** (dueño, 01/10), ni el de papel ni el de una
+  devolución: el vale lo hace un tercero. Si una devolución de vacíos se cargó
+  mal, se anula la DEVOLUCIÓN y el vale sale de la cartera con ella (eso no
+  cambió). No hay ruta, botón ni escritura para anular: lo que se carga es
+  `SALIDAS_QUE_SE_CARGAN`, y la leen la pantalla (`salidas_del_vale`) y la
+  escritura, que rechaza "anulado" de cualquier sector. **La base todavía
+  acepta "anulado" de Gerencia** (el CHECK de `vales_2_salidas`), porque
+  sacarlo pide migración y ningún camino del código lo escribe;
+  `SECTOR_DE_LA_SALIDA` sigue siendo el espejo de esos CHECK y un test lee el
+  .sql. **Una salida no se deshace**: no hay pantalla para volver un cobrado atrás.
 - **Las dos alertas** (`vales_plata_sin_aplicar` y `vales_viejos`, Gerencia y
   Administración) salen de `resumen_de_la_cartera`, la misma cuenta que el
   total de arriba. Los límites viven en `vales_a_cobrar_limites` (una fila,
@@ -4631,7 +4634,7 @@ facturación y la cobranza no se hacen acá. La regla pura vive en
   y feriados.
 - `remitos_rechazo_distinto`: el papel y Depósito no dicen lo mismo.
 - `pedidos_sin_remito`: órdenes de compra armadas sin remito, **solo desde
-  `REMITOS_DESDE`** (la fecha del despliegue, `core/remitos.py`). Es lo único
+  `REMITOS_DESDE`** (01/10/2026, el día del merge, `core/remitos.py`). Es lo único
   para lo que sirve esa fecha, además del provisorio de la Rentabilidad. Lo
   anterior nunca tuvo remito en este sistema y no es un olvido.
 
@@ -4653,7 +4656,7 @@ Migraciones `db/remitos_1` a `remitos_4`, verificación en `remitos_5`. Lo cuida
   "Foto borrada el DD/MM/AAAA, por plazo / a mano". El renglón de la operación
   no se toca nunca.
 - **Nunca se borran** (se saltean, y la pantalla dice cuántas y por qué): las
-  fotos de un vale que no está cobrado, cruzado ni anulado, y las de un remito
+  fotos de un vale que está en cartera, y las de un remito
   sin facturar (un remito no se anula, así que la foto queda protegida hasta
   que se facture). Lo marca `_SQL_FOTOS_DE_RESPALDO` en la columna `protegida`,
   con el MISMO `_SQL_ESTADO_DEL_VALE` de la cartera. La foto de una devolución

@@ -155,15 +155,8 @@
     </form>
   </div>
   {% endif %}
-  {% if 'anulado' in salidas %}
-  <div class="tarjeta salida">
-    <h2>Anular</h2>
-    <form method="post" action="/gerencia/vales/{{ vale.id }}/anular">
-      <label>Fecha<input type="date" name="fecha" value="{{ hoy.isoformat() }}" max="{{ hoy.isoformat() }}" required></label>
-      <label>Motivo<input type="text" name="motivo" autocomplete="off" required></label>
-      <button type="submit" class="peligro">Anular el vale</button>
-    </form>
-  </div>
+  {% if vale.estado == 'en_cartera' and vale.origen == 'devolucion' %}
+  <p class="ayuda">Un vale no se anula. Si la devolución se cargó mal, se anula la devolución y el vale sale con ella.</p>
   {% endif %}
 {% include "_pie_version.html" %}
 </body>

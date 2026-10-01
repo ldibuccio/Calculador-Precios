@@ -20193,7 +20193,7 @@ def _renderizar_vale(request: Request, vale_id: int, *, aviso: str | None = None
         raise HTTPException(status_code=404, detail="Ese vale no existe")
     # LO QUE ESTE SECTOR PUEDE HACER con este vale: la misma regla que la base
     # (SECTOR_DE_LA_SALIDA), así no se ofrece un botón que el POST rechaza.
-    salidas = salidas_del_vale(vale["origen"], camino["sector"]) if vale["estado"] == "en_cartera" else []
+    salidas = salidas_del_vale(camino["sector"]) if vale["estado"] == "en_cartera" else []
     return templates.TemplateResponse(request, "vale_a_cobrar.html", {
         "camino": camino, "vale": vale, "salidas": salidas, "hoy": hoy, "fotos": fotos,
         "texto_de_la_foto": texto_de_la_foto_vale, "texto_del_estado": TEXTO_DEL_ESTADO_VALE, "texto_del_origen": TEXTO_DEL_ORIGEN_VALE,
@@ -20335,13 +20335,8 @@ def cruzar_vale(request: Request, vale_id: int, fecha: str = Form(""), referenci
     return _salida_de_vale(request, vale_id, "cruzado", fecha, referencia=referencia)
 
 
-@app.post("/gerencia/vales/{vale_id}/anular")
-def anular_vale(request: Request, vale_id: int, fecha: str = Form(""), motivo: str = Form("")):
-    """Anulado: SOLO Gerencia, con motivo."""
-    puerta = _puerta_de_gerencia_para_escribir(request)
-    if puerta is not None:
-        return puerta
-    return _salida_de_vale(request, vale_id, "anulado", fecha, motivo=motivo)
+# NO HAY RUTA PARA ANULAR UN VALE (dueño, 01/10): el vale lo hace un tercero.
+# Si la devolución se cargó mal, se anula la devolución y el vale sale con ella.
 
 
 @app.post("/gerencia/vales/limites")

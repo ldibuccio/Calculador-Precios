@@ -144,40 +144,41 @@ def test_COBRADO_saca_el_vale_del_total_y_no_se_puede_salir_dos_veces(base):
                                    hoy=HOY, referencia="L-1")
 
 
-def test_ANULAR_es_solo_de_GERENCIA_y_con_motivo_en_el_codigo_Y_en_la_base(base):
+def test_NINGUN_vale_se_ANULA_ni_el_de_papel_ni_el_de_una_devolucion(base):
+    """Dueño, 01/10: el vale lo hace un tercero. Ni Gerencia ni Administración
+    lo anulan; si la devolución se cargó mal, se anula la devolución."""
     d, sql = base
-    vid = _anterior(sql, 1000, date(2026, 8, 1))
-    with pytest.raises(ValueError, match="no se carga desde este sector"):
-        d.registrar_salida_de_vale(vid, "anulado", date(2026, 11, 30), sector="administracion", hoy=HOY,
-                                   motivo="EJ")
-    with pytest.raises(ValueError, match="motivo"):
-        d.registrar_salida_de_vale(vid, "anulado", date(2026, 11, 30), sector="gerencia", hoy=HOY, motivo=" ")
-    # La pared de la base, sin pasar por el código.
+    papel = _anterior(sql, 1000, date(2026, 8, 1))
+    _devolucion(d)
+    (de_devolucion,) = [v["id"] for v in d.listar_vales(hoy=HOY) if v["origen"] == "devolucion"]
+    for vid in (papel, de_devolucion):
+        for sector in ("gerencia", "administracion"):
+            with pytest.raises(ValueError, match="no se anula"):
+                d.registrar_salida_de_vale(vid, "anulado", date(2026, 11, 30), sector=sector, hoy=HOY)
+    assert sql("SELECT count(*) FROM vales_a_cobrar_salidas") == [(0,)]
+    # La pared de la base sigue puesta para lo que el código no escribe.
     import psycopg2
     with pytest.raises(psycopg2.errors.CheckViolation):
         sql("INSERT INTO vales_a_cobrar_salidas (vale_id, tipo, fecha, motivo, sector) "
-            "VALUES (%s, 'anulado', '2026-11-30', 'EJ', 'administracion')", (vid,))
+            "VALUES (%s, 'anulado', '2026-11-30', 'EJ', 'administracion')", (papel,))
     # Un cobrado SIN importe: `importe_cobrado > 0` da NULL, y sin el coalesce el CHECK lo dejaba pasar.
     with pytest.raises(psycopg2.errors.CheckViolation):
         sql("INSERT INTO vales_a_cobrar_salidas (vale_id, tipo, fecha, sector) "
-            "VALUES (%s, 'cobrado', '2026-11-30', 'administracion')", (vid,))
-    # El de PAPEL no se anula (dueño, 01/10): el de una devolución sí.
-    with pytest.raises(ValueError, match="en papel no se anula"):
-        d.registrar_salida_de_vale(vid, "anulado", date(2026, 11, 30), sector="gerencia", hoy=HOY,
-                                   motivo="EJ perdido")
-    assert sql("SELECT count(*) FROM vales_a_cobrar_salidas") == [(0,)]
-    _devolucion(d)
-    (de_devolucion,) = [v["id"] for v in d.listar_vales(hoy=HOY) if v["origen"] == "devolucion"]
-    d.registrar_salida_de_vale(de_devolucion, "anulado", date(2026, 11, 30), sector="gerencia", hoy=HOY,
-                               motivo="EJ perdido")
-    assert d.listar_vales(estado="anulado", hoy=HOY)[0]["motivo"] == "EJ perdido"
+            "VALUES (%s, 'cobrado', '2026-11-30', 'administracion')", (papel,))
 
 
-def test_el_vale_en_PAPEL_sale_cobrado_o_cruzado_y_nunca_anulado():
+def test_las_salidas_que_se_OFRECEN_no_incluyen_anular_en_ningun_sector():
     import app.db as d
-    assert d.salidas_del_vale("anterior_al_sistema", "gerencia") == []
-    assert d.salidas_del_vale("anterior_al_sistema", "administracion") == ["cobrado", "cruzado"]
-    assert d.salidas_del_vale("devolucion", "gerencia") == ["anulado"]
+    assert d.salidas_del_vale("gerencia") == []
+    assert d.salidas_del_vale("administracion") == ["cobrado", "cruzado"]
+    assert "anulado" not in d.SALIDAS_QUE_SE_CARGAN
+
+
+def test_ningun_codigo_ESCRIBE_una_salida_anulado():
+    """El INSERT de la salida es uno solo; ninguna otra sentencia nombra el tipo."""
+    texto = io.open(os.path.join(RAIZ, "app", "db.py"), encoding="utf-8").read()
+    assert texto.count("INSERT INTO vales_a_cobrar_salidas") == 1
+    assert "'anulado', " not in texto.split("def registrar_salida_de_vale")[1].split("\ndef ")[0]
 
 
 def test_CRUZADO_pide_referencia_y_la_fecha_no_puede_ser_futura(base):
@@ -319,7 +320,7 @@ def test_ADMINISTRACION_ve_el_total_y_cobra_desde_el_detalle(base, monkeypatch):
     assert d.listar_vales(estado="cobrado", hoy=HOY)[0]["importe_cobrado"] == 12000.0
 
 
-def test_GERENCIA_pide_su_clave_anula_y_fija_los_limites(base, monkeypatch):
+def test_GERENCIA_pide_su_clave_NO_anula_y_fija_los_limites(base, monkeypatch):
     from unittest.mock import patch
     d, sql = base
     papel = _anterior(sql, 1000, date(2026, 11, 1))
@@ -335,14 +336,18 @@ def test_GERENCIA_pide_su_clave_anula_y_fija_los_limites(base, monkeypatch):
         detalle_papel = cliente.get(f"/gerencia/vales/{papel}")
         anulado = cliente.post(f"/gerencia/vales/{vid}/anular", data={"fecha": "2026-11-30", "motivo": "EJ"},
                                follow_redirects=False)
+        anular_papel = cliente.post(f"/gerencia/vales/{papel}/anular", data={"fecha": "2026-11-30", "motivo": "EJ"},
+                                    follow_redirects=False)
         limites = cliente.post("/gerencia/vales/limites", data={"monto": "700.000", "dias": "20"},
                                follow_redirects=False)
         listado = cliente.get("/gerencia/vales")
     marcado = _marcado(detalle)
-    assert f'action="/gerencia/vales/{vid}/anular"' in marcado and "/cobrar" not in marcado
-    assert "/anular" not in _marcado(detalle_papel)          # el de papel no se anula
-    assert anulado.status_code == 303 and limites.status_code == 303
-    assert d.listar_vales(estado="anulado", hoy=HOY)[0]["salida_sector"] == "gerencia"
+    assert "/anular" not in marcado and "/cobrar" not in marcado
+    assert "se anula la devolución" in marcado            # a dónde ir si la devolución se cargó mal
+    assert "/anular" not in _marcado(detalle_papel)
+    assert anulado.status_code in (404, 405) and anular_papel.status_code in (404, 405)
+    assert limites.status_code == 303
+    assert d.listar_vales(estado="anulado", hoy=HOY) == []
     assert d.limites_de_vales() == {"monto": 700000.0, "dias": 20}
     assert 'action="/gerencia/vales/limites"' in _marcado(listado)
 

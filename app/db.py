@@ -17870,8 +17870,8 @@ def _anular(tabla: str, fila_id: int, que: str, anulado: str, guarda=None) -> No
 #   anterior_al_sistema  los vales en papel de antes, cargados por SQL
 #                        (db/vales_carga_2_cargar.sql). Traen lo suyo.
 #
-# Y sale de la cartera por UNA salida (cobrado, cruzado o anulado), o porque
-# se anuló la devolución de la que nació. NADA DE ESTO TOCA EL STOCK.
+# Y sale de la cartera por UNA salida (cobrado o cruzado), o porque se anuló
+# la devolución de la que nació. Un vale NO se anula (dueño, 01/10). NADA DE ESTO TOCA EL STOCK.
 # ============================================================================
 
 ORIGENES_DEL_VALE = ("devolucion", "anterior_al_sistema")
@@ -17880,21 +17880,24 @@ ESTADOS_DEL_VALE = ("en_cartera",) + TIPOS_DE_SALIDA_DEL_VALE + ("devolucion_anu
 
 # QUIÉN PUEDE CADA SALIDA: es la regla de los CHECK de vales_2_salidas.sql,
 # escrita acá para que la pantalla no ofrezca lo que la base rechaza. Un test
-# compara las dos.
+# compara las dos. La base todavía acepta "anulado" de Gerencia, pero NINGÚN
+# camino del código lo escribe: ver SALIDAS_QUE_SE_CARGAN.
 SECTOR_DE_LA_SALIDA = {"cobrado": "administracion", "cruzado": "administracion",
                        "anulado": "gerencia"}
 
+# NINGÚN VALE SE ANULA (dueño, 01/10): el vale lo hace un tercero, ni el de
+# papel ni el de una devolución. Si una devolución de vacíos se cargó mal, se
+# anula la DEVOLUCIÓN y el vale sale de la cartera con ella.
+SALIDAS_QUE_SE_CARGAN = ("cobrado", "cruzado")
 
-def salidas_del_vale(origen: str, sector: str) -> list[str]:
-    """Las salidas que ESTE sector puede cargarle a un vale de ESTE origen.
 
-    EL VALE EN PAPEL NO SE ANULA (dueño, 01/10): un vale anterior al sistema es
-    un papel que el proveedor firmó, y sale de la cartera cobrado o cruzado.
+def salidas_del_vale(sector: str) -> list[str]:
+    """Las salidas que ESTE sector puede cargarle a un vale.
+
     La pantalla y la escritura preguntan las dos acá, así no se ofrece un botón
     que el POST rechaza.
     """
-    return [tipo for tipo, quien in SECTOR_DE_LA_SALIDA.items()
-            if quien == sector and not (tipo == "anulado" and origen == "anterior_al_sistema")]
+    return [tipo for tipo in SALIDAS_QUE_SE_CARGAN if SECTOR_DE_LA_SALIDA[tipo] == sector]
 
 # El ESTADO se deriva, no se guarda: una salida manda; sin salida, la
 # devolución anulada lo saca de la cartera; si no, está en cartera.
@@ -18084,9 +18087,8 @@ def resumen_de_la_cartera(hoy: date) -> dict:
 def registrar_salida_de_vale(vale_id: int, tipo: str, fecha: date, *, sector: str, hoy: date,
                              importe_cobrado: float | None = None,
                              ingreso_a_caja: str | None = None,
-                             referencia: str | None = None,
-                             motivo: str | None = None) -> None:
-    """Saca un vale de la cartera: cobrado, cruzado o anulado. UNA por vale.
+                             referencia: str | None = None) -> None:
+    """Saca un vale de la cartera: cobrado o cruzado. UNA por vale. No se anula.
 
     `sector` NO TIENE DEFAULT: lo dice la ruta por la que entró, y la base lo
     compara contra el tipo (`SECTOR_DE_LA_SALIDA`, los CHECK de vales_2).
@@ -18094,26 +18096,26 @@ def registrar_salida_de_vale(vale_id: int, tipo: str, fecha: date, *, sector: st
     Frena, con el vale bloqueado: que no exista, que ya haya salido, que su
     devolución esté anulada (ya no está en cartera) y una fecha futura.
     """
-    if tipo not in TIPOS_DE_SALIDA_DEL_VALE:
+    if tipo == "anulado":
+        raise ValueError("Un vale no se anula: lo hace el proveedor. Si la devolución se "
+                         "cargó mal, se anula la devolución y el vale sale con ella.")
+    if tipo not in SALIDAS_QUE_SE_CARGAN:
         raise ValueError(f"Salida desconocida para un vale: {tipo!r}.")
-    if SECTOR_DE_LA_SALIDA[tipo] != sector:
+    if tipo not in salidas_del_vale(sector):
         raise ValueError("Esa salida no se carga desde este sector.")
     if fecha > hoy:
         raise ValueError("La fecha no puede ser posterior a hoy.")
     ingreso_a_caja = (ingreso_a_caja or "").strip() or None
     referencia = (referencia or "").strip() or None
-    motivo = (motivo or "").strip() or None
     if tipo == "cobrado" and not (importe_cobrado and importe_cobrado > 0):
         raise ValueError("El importe cobrado tiene que ser mayor que cero.")
     if tipo == "cruzado" and not referencia:
         raise ValueError("Falta el número de liquidación o la referencia del cruce.")
-    if tipo == "anulado" and not motivo:
-        raise ValueError("Para anular un vale hace falta el motivo.")
     conexion = obtener_conexion()
     try:
         with conexion.cursor() as cursor:
             cursor.execute(
-                "SELECT d.anulado_el, v.origen FROM vales_a_cobrar v "
+                "SELECT d.anulado_el FROM vales_a_cobrar v "
                 "LEFT JOIN vacios_deposito_devoluciones d ON d.id = v.devolucion_id "
                 "WHERE v.id = %s FOR UPDATE OF v",
                 (vale_id,),
@@ -18125,9 +18127,6 @@ def registrar_salida_de_vale(vale_id: int, tipo: str, fecha: date, *, sector: st
             if fila[0] is not None:
                 conexion.rollback()
                 raise ValueError("La devolución de ese vale está anulada: el vale ya no está en cartera.")
-            if tipo not in salidas_del_vale(fila[1], sector):
-                conexion.rollback()
-                raise ValueError("Un vale en papel no se anula: sale cobrado o cruzado.")
             try:
                 cursor.execute(
                     "INSERT INTO vales_a_cobrar_salidas (vale_id, tipo, fecha, importe_cobrado, "
@@ -18136,7 +18135,7 @@ def registrar_salida_de_vale(vale_id: int, tipo: str, fecha: date, *, sector: st
                     (vale_id, tipo, fecha, importe_cobrado if tipo == "cobrado" else None,
                      ingreso_a_caja if tipo == "cobrado" else None,
                      referencia if tipo == "cruzado" else None,
-                     motivo if tipo == "anulado" else None, sector),
+                     None, sector),
                 )
             except psycopg2.errors.UniqueViolation as error:
                 conexion.rollback()
