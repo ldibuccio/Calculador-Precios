@@ -339,6 +339,7 @@ TABLAS_CON_FOTO = {
     "fotos_guia": "comanda", "fotos_recepcion": "pesada", "fotos_de_compras_borradas": "compra_borrada",
     "fotos_pedido": "pedido", "precios_venta_historial": "precios", "fotos_merma": "merma",
     "vacios_deposito_devoluciones": "vacios", "vales_a_cobrar": "vale", "vales_a_cobrar_fotos": "vale",
+    "remitos_fotos": "remito",
     # no es una foto: es el registro de las borradas
     "fotos_borradas_por_antiguedad": None,
 }
@@ -360,7 +361,7 @@ def test_TODA_tabla_con_foto_entra_en_la_regla_de_3_anios():
             assert re.search(rf"FROM {tabla}\b", _SQL_FOTOS_DE_RESPALDO), tabla
 
 
-def test_los_NUEVE_tipos_salen_de_la_consulta_y_tienen_su_nombre(base):
+def test_los_DIEZ_tipos_salen_de_la_consulta_y_tienen_su_nombre(base):
     d, sql = base
     from core.fotos import TEXTO_DEL_TIPO
     d.crear_devolucion_deposito(21, 2, "EJ", date(2026, 11, 30), fotos_pesada=["pesaje/EJ-dev.jpg"])
@@ -379,6 +380,10 @@ def test_los_NUEVE_tipos_salen_de_la_consulta_y_tienen_su_nombre(base):
       insert into fotos_merma (movimiento_id, foto_ruta) values (500, 'merma/EJ.jpg');
       insert into vacios_deposito_devoluciones (proveedor_id, cantidad, stock_sistema, foto_ruta)
         values (1, 1, 1, 'vacios/EJ.jpg');
+      insert into pedidos_sucursales (id, pedido_id, sucursal) overriding system value values (1, 1, 'VL');
+      insert into remitos (id, pedido_sucursal_id, cliente_id, numero) overriding system value
+        values (1, 1, 1, 'EJ-1');
+      insert into remitos_fotos (remito_id, foto_ruta) values (1, 'remitos/EJ.jpg');
     """)
     tipos = {f["tipo"] for f in d.fotos_de_respaldo()}
     assert tipos == set(TEXTO_DEL_TIPO), tipos ^ set(TEXTO_DEL_TIPO)
@@ -446,15 +451,17 @@ def test_si_el_STORAGE_falla_no_queda_registro_y_la_foto_sigue(base, monkeypatch
 
 def test_VER_una_foto_borrada_dice_cuando_se_borro(base, monkeypatch):
     d, sql = base
-    sql("INSERT INTO fotos_borradas_por_antiguedad (foto_ruta, tipo, subida_el, borrada_el) "
-        "VALUES ('pesaje/EJ-21.jpg', 'pesada', '2023-01-01', '2029-10-02 12:00-03')")
+    sql("INSERT INTO fotos_borradas_por_antiguedad (foto_ruta, tipo, subida_el, borrada_el, como) "
+        "VALUES ('pesaje/EJ-21.jpg', 'pesada', '2023-01-01', '2029-10-02 12:00-03', 'a_mano')")
     (fid,), = sql("SELECT id FROM fotos_recepcion WHERE foto_ruta = 'pesaje/EJ-21.jpg'")
     cliente = _cliente(monkeypatch, "compras")
     with patch("app.main.obtener_url_foto") as firmar:
         respuesta = cliente.get(f"/deposito/recepcion/21/foto-balanza/{fid}/ver", follow_redirects=False)
     firmar.assert_not_called()
     assert respuesta.status_code == 200 and respuesta.headers["content-type"].startswith("image/svg+xml")
-    assert "Foto borrada por antigüedad" in respuesta.text and "el 02/10/2029" in respuesta.text
+    # Dueño, 01/10: "foto borrada el DD/MM/AAAA, por plazo / a mano".
+    assert "Foto borrada" in respuesta.text and "el 02/10/2029, a mano" in respuesta.text
+    assert "antigüedad" not in respuesta.text
 
 
 def test_la_GERENCIA_sin_clave_no_ve_ni_borra(base, monkeypatch):
@@ -562,8 +569,8 @@ def test_las_SUBIDAS_salen_de_storage_objects_de_TODOS_los_buckets_y_de_las_borr
     d, sql = base
     _objeto(sql, "pesaje/EJ-21.jpg", 5000, "2026-09-05 18:01-03")
     _objeto(sql, "otra/cosa.bin", 70, "2026-09-10 10:00-03", bucket="otro")
-    sql("INSERT INTO fotos_borradas_por_antiguedad (foto_ruta, tipo, subida_el, bytes) "
-        "VALUES ('pesaje/EJ-viejo.jpg', 'pesada', '2023-01-01 10:00-03', 300)")
+    sql("INSERT INTO fotos_borradas_por_antiguedad (foto_ruta, tipo, subida_el, bytes, como) "
+        "VALUES ('pesaje/EJ-viejo.jpg', 'pesada', '2023-01-01 10:00-03', 300, 'plazo')")
     subidas = sorted(d.subidas_al_storage(), key=lambda s: s["ruta"])
     assert [(s["bucket"], s["ruta"], s["bytes"], s["borrada"]) for s in subidas] == [
         ("otro", "otra/cosa.bin", 70, False),
@@ -620,8 +627,8 @@ def test_la_ALERTA_salta_con_MAS_del_80_por_ciento_y_dice_el_porcentaje(base, mo
     _objeto(sql, "pesaje/EJ-22.jpg", 50, "2026-09-11 10:00-03")
     assert d.contar_espacio_de_fotos() == {"casos": 85, "mas_viejo": None}
     # la borrada por antigüedad ya no ocupa
-    sql("INSERT INTO fotos_borradas_por_antiguedad (foto_ruta, tipo, subida_el, bytes) "
-        "VALUES ('pesaje/EJ-viejo.jpg', 'pesada', '2023-01-01', 5000)")
+    sql("INSERT INTO fotos_borradas_por_antiguedad (foto_ruta, tipo, subida_el, bytes, como) "
+        "VALUES ('pesaje/EJ-viejo.jpg', 'pesada', '2023-01-01', 5000, 'plazo')")
     assert d.contar_espacio_de_fotos()["casos"] == 85
 
 
@@ -636,3 +643,148 @@ def test_el_HUB_de_Gerencia_dice_Fotos_y_espacio():
     marcado = io.open(os.path.join(RAIZ, "templates", "gerencia.html"), encoding="utf-8").read()
     assert '<a class="boton" href="/gerencia/fotos">Fotos y espacio</a>' in marcado
     assert "Fotos de más de 3 años</a>" not in marcado
+
+
+# --- 5. el plazo por tipo, las protegidas y el borrado a mano (dueño, 01/10) ---
+
+def _hace(anios, dias=0):
+    return datetime(HOY.year - anios, HOY.month, HOY.day, 12, 0, tzinfo=ARG) - timedelta(days=dias)
+
+
+def test_cada_TIPO_vence_a_SU_plazo_y_las_compras_borradas_siguen_en_3(base):
+    d, sql = base
+    from core.fotos import cortes_por_tipo, fotos_para_borrar
+    sql("UPDATE fotos_recepcion SET creado_en = %s WHERE compra_id = 21", (_hace(2, 1),))
+    sql("INSERT INTO fotos_de_compras_borradas (compra_id, foto_ruta, subida_el) VALUES (99, 'pesaje/EJ-b.jpg', %s)",
+        (_hace(2, 1),))
+    assert fotos_para_borrar(d.fotos_de_respaldo(), cortes_por_tipo(HOY, d.plazos_de_fotos())) == []
+    d.guardar_plazo_de_fotos("pesada", 2)
+    d.guardar_plazo_de_fotos("compra_borrada", 1)          # no se lee: es la regla de v1054
+    vencidas = fotos_para_borrar(d.fotos_de_respaldo(), cortes_por_tipo(HOY, d.plazos_de_fotos()))
+    assert [f["ruta"] for f in vencidas] == ["pesaje/EJ-21.jpg"]
+    import psycopg2
+    with pytest.raises(psycopg2.errors.CheckViolation):
+        d.guardar_plazo_de_fotos("pesada", 0)
+
+
+def test_la_foto_de_un_VALE_EN_CARTERA_no_se_borra_y_al_cobrarlo_SI(base):
+    d, sql = base
+    from core.fotos import cortes_por_tipo, fotos_para_borrar, vencidas_protegidas
+    sql("UPDATE vales_a_cobrar SET creado_en = %s WHERE id = 1", (_hace(5),))
+    cortes = cortes_por_tipo(HOY, {})
+    fotos = d.fotos_de_respaldo()
+    assert fotos_para_borrar(fotos, cortes) == []
+    assert [(f["ruta"], f["protegida"]) for f in vencidas_protegidas(fotos, cortes)] == [("vales/EJ-papel.jpg", "vale")]
+    d.registrar_salida_de_vale(1, "cobrado", date(2026, 11, 1), sector="administracion", hoy=HOY,
+                               importe_cobrado=1000)
+    assert [f["ruta"] for f in fotos_para_borrar(d.fotos_de_respaldo(), cortes)] == ["vales/EJ-papel.jpg"]
+
+
+def test_la_foto_ANEXADA_a_un_vale_en_cartera_tambien_queda_protegida(base):
+    d, sql = base
+    d.anexar_fotos_al_vale(2, ["vales/EJ-anexada.jpg"], sector="administracion")
+    protegidas = {f["ruta"]: f["protegida"] for f in d.fotos_de_respaldo()}
+    assert protegidas["vales/EJ-anexada.jpg"] == "vale"
+    d.registrar_salida_de_vale(2, "anulado", date(2026, 11, 1), sector="gerencia", hoy=HOY, motivo="EJ")
+    assert {f["ruta"]: f["protegida"] for f in d.fotos_de_respaldo()}["vales/EJ-anexada.jpg"] is None
+
+
+def test_la_foto_de_un_REMITO_SIN_FACTURAR_no_se_borra(base):
+    d, sql = base
+    sql("""
+      insert into clientes (id, nombre) overriding system value values (1, 'EJ Cliente');
+      insert into pedidos (id, cliente_id, fecha_operacion, origen) overriding system value values (1, 1, '2026-09-05', 'texto');
+      insert into pedidos_sucursales (pedido_id, sucursal) values (1, 'VL');
+      insert into remitos (id, pedido_sucursal_id, cliente_id, numero, recibido_el) overriding system value
+        select 1, id, 1, 'EJ-1', now() from pedidos_sucursales;
+      insert into remitos_fotos (remito_id, foto_ruta) values (1, 'remitos/EJ.jpg');
+    """)
+    assert {f["ruta"]: f["protegida"] for f in d.fotos_de_respaldo()}["remitos/EJ.jpg"] == "remito"
+    sql("UPDATE remitos SET factura_numero = 'F-1', facturado_el = now() WHERE id = 1")
+    assert {f["ruta"]: f["protegida"] for f in d.fotos_de_respaldo()}["remitos/EJ.jpg"] is None
+
+
+def test_BORRAR_A_MANO_pide_la_cantidad_EXACTA_saltea_las_protegidas_y_deja_HISTORIAL(base, monkeypatch):
+    d, sql = base
+    # Dos vales con foto subida en 2025: el 1 en cartera (protegido) y el 2 cobrado.
+    sql("UPDATE vales_a_cobrar SET creado_en = '2025-03-01 10:00-03' WHERE id = 1")
+    sql("UPDATE vales_a_cobrar SET foto_ruta = 'vales/EJ-2.jpg', creado_en = '2025-03-02 10:00-03' WHERE id = 2")
+    d.registrar_salida_de_vale(2, "cobrado", date(2026, 11, 1), sector="administracion", hoy=HOY,
+                               importe_cobrado=2000)
+    _objeto(sql, "vales/EJ-2.jpg", 4000, "2025-03-02 10:00-03")
+    _objeto(sql, "vales/EJ-papel.jpg", 3000, "2025-03-01 10:00-03")
+    cliente = _cliente(monkeypatch, "gerencia")
+    elegido = {"tipo": "vale", "anteriores_a": "2025-06-01"}
+    with (patch("app.main._hoy_argentina", return_value=HOY),
+          patch("app.main.borrar_foto_comanda") as borrar):
+        previa = _marcado(cliente.get("/gerencia/fotos", params=elegido))
+        mal = cliente.post("/gerencia/fotos/borrar-a-mano", data={**elegido, "cantidad": "2"}, follow_redirects=False)
+        borrar.assert_not_called()
+        bien = cliente.post("/gerencia/fotos/borrar-a-mano", data={**elegido, "cantidad": "1"})
+    assert "1 foto</p>" in previa and "se liberan 4 KB" in previa
+    assert "Se saltean 1: 1 de un vale sin cobrar, cruzar ni anular" in previa
+    assert mal.status_code == 303 and "escribir+1" in mal.headers["location"]
+    borrar.assert_called_once_with("vales/EJ-2.jpg")
+    assert "Se saltearon 1" in bien.text
+    assert sql("SELECT foto_ruta, como FROM fotos_borradas_por_antiguedad") == [("vales/EJ-2.jpg", "a_mano")]
+    assert sql("SELECT como, tipo, anteriores_a, cantidad, bytes, salteadas FROM fotos_borrados") == [
+        ("a_mano", "vale", date(2025, 6, 1), 1, 4000, 1)]
+    assert "Vales a cobrar, a mano" in _marcado(bien)
+
+
+def test_BORRAR_A_MANO_no_toca_las_pesadas_de_compras_borradas(base, monkeypatch):
+    d, sql = base
+    from core.fotos import seleccion_a_mano
+    sql("INSERT INTO fotos_de_compras_borradas (compra_id, foto_ruta, subida_el) VALUES (99, 'pesaje/EJ-b.jpg', "
+        "'2024-01-01')")
+    assert seleccion_a_mano(d.fotos_de_respaldo(), "compra_borrada", date(2026, 1, 1)) == ([], [])
+    with patch("app.main._hoy_argentina", return_value=HOY), patch("app.main.borrar_foto_comanda") as borrar:
+        _cliente(monkeypatch, "gerencia").post("/gerencia/fotos/borrar-a-mano", data={
+            "tipo": "compra_borrada", "anteriores_a": "2026-01-01", "cantidad": "1"})
+    borrar.assert_not_called()
+
+
+def test_las_VENCIDAS_dejan_un_renglon_de_historial_por_tipo_marcado_por_plazo(base, monkeypatch):
+    d, sql = base
+    _foto_vieja(sql, 10)
+    with (patch("app.main._hoy_argentina", return_value=HOY), patch("app.main.borrar_foto_comanda")):
+        _cliente(monkeypatch, "gerencia").post("/gerencia/fotos/borrar-viejas", data={"confirmo": "si"})
+    assert sql("SELECT como FROM fotos_borradas_por_antiguedad") == [("plazo",)]
+    assert sql("SELECT como, tipo, anteriores_a, cantidad FROM fotos_borrados") == [
+        ("plazo", "pesada", date(HOY.year - 3, HOY.month, HOY.day), 1)]
+
+
+def test_si_el_STORAGE_falla_en_todas_no_queda_renglon_de_historial(base, monkeypatch):
+    d, sql = base
+    _foto_vieja(sql, 10)
+    with (patch("app.main._hoy_argentina", return_value=HOY),
+          patch("app.main.borrar_foto_comanda", side_effect=RuntimeError("sin red"))):
+        _cliente(monkeypatch, "gerencia").post("/gerencia/fotos/borrar-viejas", data={"confirmo": "si"})
+    assert sql("SELECT count(*) FROM fotos_borrados") == [(0,)]
+
+
+def test_el_PLAZO_se_edita_desde_Gerencia_y_valida(base, monkeypatch):
+    d, sql = base
+    cliente = _cliente(monkeypatch, "gerencia")
+    malo = cliente.post("/gerencia/fotos/plazo", data={"tipo": "comanda", "anios": "0"}, follow_redirects=False)
+    fijo = cliente.post("/gerencia/fotos/plazo", data={"tipo": "compra_borrada", "anios": "5"}, follow_redirects=False)
+    bueno = cliente.post("/gerencia/fotos/plazo", data={"tipo": "comanda", "anios": "5"}, follow_redirects=False)
+    assert "de+1+a+30" in malo.headers["location"] and "no+tiene+plazo" in fijo.headers["location"]
+    assert bueno.status_code == 303
+    assert d.plazos_de_fotos() == {"comanda": 5}
+    with patch("app.main._hoy_argentina", return_value=HOY):
+        marcado = _marcado(cliente.get("/gerencia/fotos"))
+    assert 'name="anios" min="1" max="30" step="1" value="5"' in marcado
+    assert "3 años, fijo." in marcado
+
+
+def test_sin_la_clave_de_GERENCIA_no_se_borra_a_mano_ni_se_cambia_el_plazo(base, monkeypatch):
+    d, sql = base
+    monkeypatch.setenv("CLAVE_GERENCIA", "clave-gerencia")
+    cliente = _cliente(monkeypatch)
+    with patch("app.main.borrar_foto_comanda") as borrar:
+        cliente.post("/gerencia/fotos/borrar-a-mano", data={"tipo": "pesada", "anteriores_a": "2026-12-01",
+                                                           "cantidad": "2"})
+        cliente.post("/gerencia/fotos/plazo", data={"tipo": "comanda", "anios": "5"})
+    borrar.assert_not_called()
+    assert d.plazos_de_fotos() == {}

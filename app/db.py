@@ -18,6 +18,7 @@ from core.envases import (cajas_que_mueve_la_guia, como_queda_la_cuenta,
                           efecto_en_la_cuenta, envase_derivado_de_la_ficha,
                           hay_que_reponer)
 from core.fotos import archivos_de_hoy, pasa_el_aviso, porcentaje_del_plan
+from core.remitos import rechazo_no_coincide, sin_factura_hace_mucho, sin_volver_hace_mucho
 from core.magnitudes import repartir_magnitudes
 from core.matcheo_comanda import normalizar_texto
 from core.vino_armada import motivo_para_no_marcar_armada, motivo_sin_lote_por_el_corte
@@ -6232,29 +6233,68 @@ def eliminar_compra(compra_id: int, forzar: bool = False, *, origen: str) -> lis
 # del Listado consolidado, compartida entre guías) cuenta desde su PRIMERA
 # subida. Una tabla nueva que guarde fotos va acá, o sus archivos no vencen
 # nunca y aparecen como "sin registro": lo cuida un test que lee el esquema.
-_SQL_FOTOS_DE_RESPALDO = """
+# El estado de un vale a cobrar, escrito UNA vez (dueño, 30/09): una salida
+# manda; sin salida, la devolución anulada lo saca de la cartera; si no, está
+# en cartera. Necesita `s` (vales_a_cobrar_salidas) y `d` (la devolución).
+# Vive acá y no en la sección de Vales porque la lista de fotos lo lee: las
+# fotos de un vale EN CARTERA no se borran nunca (dueño, 01/10).
+_SQL_ESTADO_DEL_VALE = """
+    CASE WHEN s.tipo IS NOT NULL THEN s.tipo
+         WHEN d.anulado_el IS NOT NULL THEN 'devolucion_anulada'
+         ELSE 'en_cartera' END"""
+
+# Lo que protege la foto de un vale: que esté en cartera. Con `v` el vale.
+_SQL_VALE_PROTEGE = f"""
+    (SELECT CASE WHEN {_SQL_ESTADO_DEL_VALE} = 'en_cartera' THEN 'vale' END
+       FROM vales_a_cobrar vp
+       LEFT JOIN vales_a_cobrar_salidas s ON s.vale_id = vp.id
+       LEFT JOIN vacios_deposito_devoluciones d ON d.id = vp.devolucion_id
+      WHERE vp.id = {{v}})"""
+
+# TODAS las fotos del sistema, una fila por ARCHIVO: tipo, ruta, cuándo se
+# subió y si está PROTEGIDA (dueño, 01/10: 'vale' si es de un vale en
+# cartera, 'remito' si es de un remito sin facturar; esas no se borran nunca).
+# Son DIEZ lugares y está escrito UNA vez: la pantalla, el borrado y "sin
+# registro" leen de acá. Un archivo que dos filas nombran (una comanda del
+# Listado consolidado, compartida entre guías) cuenta desde su PRIMERA subida,
+# y queda protegido si CUALQUIERA de sus filas lo protege. Una tabla nueva que
+# guarde fotos va acá, o sus archivos no vencen nunca y aparecen como "sin
+# registro": lo cuida un test que lee el esquema.
+_SQL_FOTOS_DE_RESPALDO = f"""
     SELECT DISTINCT ON (x.foto_ruta) x.tipo, x.foto_ruta, x.subida_el,
-           (b.foto_ruta IS NOT NULL) AS ya_borrada
+           (b.foto_ruta IS NOT NULL) AS ya_borrada,
+           max(x.protegida) OVER (PARTITION BY x.foto_ruta) AS protegida
       FROM (
-        SELECT 'comanda' AS tipo, foto_ruta, creado_en AS subida_el FROM fotos_guia
+        SELECT 'comanda' AS tipo, foto_ruta, creado_en AS subida_el, NULL::text AS protegida
+          FROM fotos_guia
         UNION ALL
         SELECT CASE WHEN movimiento_id IS NULL THEN 'pesada' ELSE 'devolucion_mercaderia' END,
-               foto_ruta, creado_en FROM fotos_recepcion
+               foto_ruta, creado_en, NULL FROM fotos_recepcion
         UNION ALL
-        SELECT 'compra_borrada', foto_ruta, subida_el FROM fotos_de_compras_borradas
+        SELECT 'compra_borrada', foto_ruta, subida_el, NULL FROM fotos_de_compras_borradas
         UNION ALL
-        SELECT 'pedido', foto_ruta, creado_en FROM fotos_pedido
+        SELECT 'pedido', foto_ruta, creado_en, NULL FROM fotos_pedido
         UNION ALL
-        SELECT 'precios', foto_ruta, creado_en FROM precios_venta_historial WHERE foto_ruta IS NOT NULL
+        SELECT 'precios', foto_ruta, creado_en, NULL FROM precios_venta_historial WHERE foto_ruta IS NOT NULL
         UNION ALL
-        SELECT 'merma', foto_ruta, creado_en FROM fotos_merma
+        SELECT 'merma', foto_ruta, creado_en, NULL FROM fotos_merma
         UNION ALL
-        SELECT 'vacios', foto_ruta, creado_en FROM vacios_deposito_devoluciones
-         WHERE btrim(coalesce(foto_ruta, '')) <> ''
+        -- La foto de la devolución de vacíos ES la del vale que nace de ella.
+        SELECT 'vacios', dv.foto_ruta, dv.creado_en,
+               {_SQL_VALE_PROTEGE.format(v="(SELECT id FROM vales_a_cobrar WHERE devolucion_id = dv.id)")}
+          FROM vacios_deposito_devoluciones dv
+         WHERE btrim(coalesce(dv.foto_ruta, '')) <> ''
         UNION ALL
-        SELECT 'vale', foto_ruta, creado_en FROM vales_a_cobrar WHERE foto_ruta IS NOT NULL
+        SELECT 'vale', va.foto_ruta, va.creado_en, {_SQL_VALE_PROTEGE.format(v="va.id")}
+          FROM vales_a_cobrar va WHERE va.foto_ruta IS NOT NULL
         UNION ALL
-        SELECT 'vale', foto_ruta, creado_en FROM vales_a_cobrar_fotos
+        SELECT 'vale', vf.foto_ruta, vf.creado_en, {_SQL_VALE_PROTEGE.format(v="vf.vale_id")}
+          FROM vales_a_cobrar_fotos vf
+        UNION ALL
+        SELECT 'remito', rf.foto_ruta, rf.creado_en,
+               (SELECT CASE WHEN re.factura_numero IS NULL THEN 'remito' END
+                  FROM remitos re WHERE re.id = rf.remito_id)
+          FROM remitos_fotos rf
       ) x
       LEFT JOIN fotos_borradas_por_antiguedad b ON b.foto_ruta = x.foto_ruta
      ORDER BY x.foto_ruta, x.subida_el
@@ -6262,7 +6302,7 @@ _SQL_FOTOS_DE_RESPALDO = """
 
 
 def fotos_de_respaldo() -> list[dict]:
-    """Todas las fotos del sistema: {tipo, ruta, subida_el, ya_borrada}."""
+    """Todas las fotos del sistema: {tipo, ruta, subida_el, ya_borrada, protegida}."""
     conexion = obtener_conexion()
     try:
         with conexion.cursor() as cursor:
@@ -6270,7 +6310,83 @@ def fotos_de_respaldo() -> list[dict]:
             filas = cursor.fetchall()
     finally:
         conexion.close()
-    return [{"tipo": f[0], "ruta": f[1], "subida_el": f[2], "ya_borrada": f[3]} for f in filas]
+    return [{"tipo": f[0], "ruta": f[1], "subida_el": f[2], "ya_borrada": f[3], "protegida": f[4]}
+            for f in filas]
+
+
+def plazos_de_fotos() -> dict:
+    """{tipo: años} de los tipos con plazo cargado. Los que no están, 3."""
+    conexion = obtener_conexion()
+    try:
+        with conexion.cursor() as cursor:
+            cursor.execute("SELECT tipo, anios FROM fotos_plazos")
+            return {f[0]: int(f[1]) for f in cursor.fetchall()}
+    finally:
+        conexion.close()
+
+
+def guardar_plazo_de_fotos(tipo: str, anios: int) -> None:
+    """Fija el plazo de un tipo. La base frena un número fuera de 1 a 30."""
+    conexion = obtener_conexion()
+    try:
+        with conexion.cursor() as cursor:
+            cursor.execute(
+                "INSERT INTO fotos_plazos (tipo, anios) VALUES (%s, %s) "
+                "ON CONFLICT (tipo) DO UPDATE SET anios = EXCLUDED.anios, actualizado_el = now()",
+                (tipo, anios))
+        conexion.commit()
+    finally:
+        conexion.close()
+
+
+def abrir_borrado_de_fotos(como: str, tipo: str, anteriores_a: date, salteadas: int) -> int:
+    """El renglón del historial de un borrado (dueño, 01/10). Nace en cero y lo
+    completa `cerrar_borrado_de_fotos` con lo que de verdad se borró: si una
+    foto falla en el Storage, el historial no la cuenta."""
+    conexion = obtener_conexion()
+    try:
+        with conexion.cursor() as cursor:
+            cursor.execute(
+                "INSERT INTO fotos_borrados (como, tipo, anteriores_a, cantidad, bytes, salteadas) "
+                "VALUES (%s, %s, %s, 0, 0, %s) RETURNING id", (como, tipo, anteriores_a, salteadas))
+            (borrado_id,) = cursor.fetchone()
+        conexion.commit()
+        return borrado_id
+    finally:
+        conexion.close()
+
+
+def cerrar_borrado_de_fotos(borrado_id: int) -> None:
+    """Cantidad y bytes del historial, contados de las fotos que lo nombran. Si
+    no se borró ninguna (el Storage falló en todas), el renglón se va: el
+    historial es de lo que se BORRÓ, no de los intentos."""
+    conexion = obtener_conexion()
+    try:
+        with conexion.cursor() as cursor:
+            cursor.execute(
+                """UPDATE fotos_borrados f
+                      SET cantidad = (SELECT count(*) FROM fotos_borradas_por_antiguedad b
+                                       WHERE b.borrado_id = f.id),
+                          bytes = (SELECT COALESCE(sum(b.bytes), 0) FROM fotos_borradas_por_antiguedad b
+                                    WHERE b.borrado_id = f.id)
+                    WHERE f.id = %s""", (borrado_id,))
+            cursor.execute("DELETE FROM fotos_borrados WHERE id = %s AND cantidad = 0", (borrado_id,))
+        conexion.commit()
+    finally:
+        conexion.close()
+
+
+def historial_de_borrados_de_fotos() -> list[dict]:
+    """Los borrados, el más nuevo primero."""
+    conexion = obtener_conexion()
+    try:
+        with conexion.cursor() as cursor:
+            cursor.execute("SELECT id, borrado_el, como, tipo, anteriores_a, cantidad, bytes, salteadas "
+                           "FROM fotos_borrados ORDER BY borrado_el DESC, id DESC")
+            columnas = [d[0] for d in cursor.description]
+            return [dict(zip(columnas, f)) for f in cursor.fetchall()]
+    finally:
+        conexion.close()
 
 
 # Lo que se SUBIÓ al Storage, una fila por archivo (dueño, 01/10): lo que está
@@ -6314,7 +6430,7 @@ def contar_espacio_de_fotos() -> dict:
 
 
 def registrar_foto_borrada_por_antiguedad(foto_ruta: str, tipo: str, subida_el, bytes_: int | None,
-                                          borrar_archivo) -> None:
+                                          borrar_archivo, *, como: str, borrado_id: int | None) -> None:
     """Deja el registro y borra el ARCHIVO, todo o nada (dueño, 30/09).
 
     El registro se escribe PRIMERO y se commitea DESPUÉS de borrar el archivo:
@@ -6330,9 +6446,9 @@ def registrar_foto_borrada_por_antiguedad(foto_ruta: str, tipo: str, subida_el, 
     try:
         with conexion.cursor() as cursor:
             cursor.execute(
-                "INSERT INTO fotos_borradas_por_antiguedad (foto_ruta, tipo, subida_el, bytes) "
-                "VALUES (%s, %s, %s, %s)",
-                (foto_ruta, tipo, subida_el, bytes_),
+                "INSERT INTO fotos_borradas_por_antiguedad (foto_ruta, tipo, subida_el, bytes, como, borrado_id) "
+                "VALUES (%s, %s, %s, %s, %s, %s)",
+                (foto_ruta, tipo, subida_el, bytes_, como, borrado_id),
             )
         borrar_archivo(foto_ruta)
         conexion.commit()
@@ -6360,7 +6476,8 @@ def listar_fotos_de_compras_borradas() -> list[dict]:
         with conexion.cursor() as cursor:
             cursor.execute(
                 """
-                SELECT f.id, f.compra_id, f.foto_ruta, f.subida_el, f.compra_borrada_el, b.borrada_el
+                SELECT f.id, f.compra_id, f.foto_ruta, f.subida_el, f.compra_borrada_el, b.borrada_el,
+                       b.como
                   FROM fotos_de_compras_borradas f
                   LEFT JOIN fotos_borradas_por_antiguedad b ON b.foto_ruta = f.foto_ruta
                  ORDER BY f.compra_borrada_el DESC, f.id
@@ -9464,7 +9581,11 @@ def buscar_renglones_pedidos(cliente_id: int, fecha_desde, fecha_hasta) -> list[
                        -- magnitud de LA FICHA: kilos, unidades o cubetas.
                        -- Sin esta columna la pantalla suma las tres en un
                        -- solo total y no hay nada que se vea raro.
-                       fl.unidad_venta
+                       fl.unidad_venta,
+                       -- EL REMITO VIVO de esa orden de compra (dueño, 01/10),
+                       -- para que el encabezado diga si ya se emitió. Uno solo
+                       -- por orden: lo garantiza remitos_uno_vivo_por_orden.
+                       re.id AS remito_id, re.numero AS remito_numero
                 FROM vigentes v
                 JOIN pedidos_renglones r ON r.pedido_id = v.id
                 LEFT JOIN articulos a ON a.id = r.articulo_id
@@ -9474,6 +9595,7 @@ def buscar_renglones_pedidos(cliente_id: int, fecha_desde, fecha_hasta) -> list[
                 LEFT JOIN fichas_logistica fl ON fl.id = r.ficha_id
                 LEFT JOIN pedidos_sucursales ps
                        ON ps.pedido_id = v.id AND ps.sucursal = r.sucursal
+                LEFT JOIN remitos re ON re.pedido_sucursal_id = ps.id AND re.anulado_el IS NULL
                 ORDER BY v.fecha_operacion DESC, r.sucursal,
                          (r.anulado_el IS NOT NULL),
                          COALESCE(a.nombre, r.texto_descripcion, r.texto_codigo)
@@ -12433,7 +12555,7 @@ def devoluciones_vinculadas_por_rango(cliente_id: int, fecha_desde, fecha_hasta)
             cursor.execute(
                 """
                 SELECT m.id, m.cantidad AS bultos, m.fecha_operacion, m.costo_por_bulto,
-                       m.destino_rechazo, r.ficha_id,
+                       m.destino_rechazo, r.ficha_id, m.pedido_renglon_id AS renglon_id,
                        r.kilos_enviados, COALESCE(r.cantidad_armada, r.cantidad) AS bultos_armados,
                        p.fecha_operacion AS fecha_pedido,
                        a.id AS articulo_id, a.nombre AS articulo_nombre, a.grupo,
@@ -17745,10 +17867,8 @@ SECTOR_DE_LA_SALIDA = {"cobrado": "administracion", "cruzado": "administracion",
 
 # El ESTADO se deriva, no se guarda: una salida manda; sin salida, la
 # devolución anulada lo saca de la cartera; si no, está en cartera.
-_SQL_ESTADO_DEL_VALE = """
-    CASE WHEN s.tipo IS NOT NULL THEN s.tipo
-         WHEN d.anulado_el IS NOT NULL THEN 'devolucion_anulada'
-         ELSE 'en_cartera' END"""
+# (_SQL_ESTADO_DEL_VALE vive más arriba, al lado de _SQL_FOTOS_DE_RESPALDO,
+# que también lo lee para no borrar las fotos de un vale en cartera.)
 
 COLUMNAS_DEL_VALE = (
     "id", "origen", "devolucion_id", "proveedor_id", "proveedor", "marca", "cajones",
@@ -18042,18 +18162,18 @@ def foto_del_vale(vale_id: int) -> str | None:
 
 
 def foto_borrada_por_antiguedad(foto_ruta: str):
-    """Cuándo se borró el ARCHIVO de esta foto por tener más de 3 años, o None
-    si sigue en el bucket (dueño, 30/09). Ver fotos_borradas_por_antiguedad."""
+    """(cuándo, cómo) se borró el ARCHIVO de esta foto —'plazo' o 'a_mano'—, o
+    None si sigue en el bucket (dueño, 30/09 y 01/10)."""
     conexion = obtener_conexion()
     try:
         with conexion.cursor() as cursor:
             cursor.execute(
-                "SELECT borrada_el FROM fotos_borradas_por_antiguedad WHERE foto_ruta = %s", (foto_ruta,)
+                "SELECT borrada_el, como FROM fotos_borradas_por_antiguedad WHERE foto_ruta = %s", (foto_ruta,)
             )
             fila = cursor.fetchone()
     finally:
         conexion.close()
-    return fila[0] if fila else None
+    return (fila[0], fila[1]) if fila else None
 
 
 def fotos_del_vale(vale_id: int) -> list[dict]:
@@ -18479,3 +18599,453 @@ def cotejo_de_vacios_deposito() -> list[dict]:
     # Los que no tienen contra qué van al final: no piden nada.
     return sorted(resultado, key=lambda x: (x["diferencia"] is None,
                                             -abs(x["diferencia"] or 0), x["proveedor"].lower()))
+
+
+# ============================================================================
+# REMITOS Y FACTURACIÓN (dueño, 01/10)
+#
+# UN REMITO POR ORDEN DE COMPRA (`pedidos_sucursales`): tres por pedido de Día.
+# El remito oficial sale de otro sistema; acá se anota su número, se CONGELA lo
+# que salió (bultos y kilos_enviados de cada renglón), se carga lo que el súper
+# firmó que recibió y el número de factura. La regla pura vive en
+# core/remitos.py; acá se lee y se escribe.
+#
+# LOS RECHAZOS NO SE VUELVEN A CARGAR: los carga Depósito, que es lo que mueve
+# el stock. El remito anota lo que dice el papel y se COTEJA con
+# `_SQL_RECHAZO_DE_DEPOSITO`.
+# ============================================================================
+
+# Lo que Depósito cargó como rechazo de un renglón: los reingresos vivos que
+# apuntan a él. `pedido_renglon_id` es exclusivo del reingreso_rechazo (CHECK
+# de movimientos_stock), así que no hace falta filtrar el tipo. Una sola vez:
+# el detalle, las listas y la alerta preguntan lo mismo.
+_SQL_RECHAZO_DE_DEPOSITO = """
+    (SELECT COALESCE(sum(m.cantidad), 0) FROM movimientos_stock m
+      WHERE m.pedido_renglon_id = rr.pedido_renglon_id AND m.anulado_el IS NULL)
+"""
+
+# El precio vigente de un renglón a la FECHA DEL PEDIDO: la fila de su ficha
+# con vigente_desde más reciente que ya había llegado ese día. El mismo
+# criterio que el listado de precios ("el vigente es la fila con
+# vigente_desde más reciente que ya llegó"). Un renglón sin ficha no tiene
+# precio y lo dice.
+_SQL_PRECIO_DEL_RENGLON = """
+    (SELECT pv.precio FROM precios_venta_historial pv
+      WHERE pv.ficha_id = r.ficha_id AND pv.cliente_id = p.cliente_id
+        AND pv.vigente_desde <= p.fecha_operacion
+      ORDER BY pv.vigente_desde DESC LIMIT 1)
+"""
+
+# Las órdenes de compra que tienen algo ARMADO y ningún remito vivo, de los
+# pedidos VIGENTES. Una sucursal sin fila en pedidos_sucursales (un pedido
+# cargado a mano) cuenta igual: al emitir se crea su fila. Un renglón sin
+# sucursal no tiene orden de compra posible y no entra.
+_SQL_ORDENES_SIN_REMITO = """
+    WITH vigentes AS (
+        SELECT DISTINCT ON (cliente_id, fecha_operacion) id, cliente_id, fecha_operacion
+          FROM pedidos WHERE anulado_el IS NULL
+         ORDER BY cliente_id, fecha_operacion, creado_en DESC
+    )
+    SELECT v.id AS pedido_id, v.fecha_operacion, v.cliente_id, cl.nombre AS cliente,
+           r.sucursal, ps.orden_compra, count(*) AS renglones,
+           count(*) FILTER (WHERE r.kilos_enviados IS NULL) AS sin_kilos
+      FROM vigentes v
+      JOIN clientes cl ON cl.id = v.cliente_id
+      JOIN pedidos_renglones r ON r.pedido_id = v.id
+      LEFT JOIN pedidos_sucursales ps ON ps.pedido_id = v.id AND ps.sucursal = r.sucursal
+     WHERE r.armado_el IS NOT NULL AND r.anulado_el IS NULL AND r.sucursal IS NOT NULL
+       AND v.fecha_operacion >= %(desde)s
+       AND NOT EXISTS (SELECT 1 FROM remitos re
+                        WHERE re.pedido_sucursal_id = ps.id AND re.anulado_el IS NULL)
+     GROUP BY v.id, v.fecha_operacion, v.cliente_id, cl.nombre, r.sucursal, ps.orden_compra
+     ORDER BY v.fecha_operacion, cl.nombre, r.sucursal
+"""
+
+
+class RemitoNoSePuede(ValueError):
+    """Una operación de remito que la regla no permite. El mensaje es para la pantalla."""
+
+
+def ordenes_sin_remito(desde: date) -> list[dict]:
+    """Las órdenes de compra armadas sin remito vivo, de pedidos desde `desde`."""
+    conexion = obtener_conexion()
+    try:
+        with conexion.cursor() as cursor:
+            cursor.execute(_SQL_ORDENES_SIN_REMITO, {"desde": desde})
+            columnas = [d[0] for d in cursor.description]
+            return [dict(zip(columnas, f)) for f in cursor.fetchall()]
+    finally:
+        conexion.close()
+
+
+def contar_ordenes_sin_remito(desde: date) -> dict:
+    ordenes = ordenes_sin_remito(desde)
+    return {"casos": len(ordenes),
+            "mas_viejo": min((o["fecha_operacion"] for o in ordenes), default=None)}
+
+
+def _renglones_para_emitir(cursor, pedido_id: int, sucursal: str) -> list[dict]:
+    cursor.execute(
+        """
+        SELECT r.id, COALESCE(a.nombre, r.texto_descripcion, r.texto_codigo) AS articulo_nombre,
+               COALESCE(r.cantidad_armada, r.cantidad) AS bultos, r.kilos_enviados,
+               fl.unidad_venta
+          FROM pedidos_renglones r
+          LEFT JOIN articulos a ON a.id = r.articulo_id
+          LEFT JOIN fichas_logistica fl ON fl.id = r.ficha_id
+         WHERE r.pedido_id = %s AND r.sucursal = %s
+           AND r.armado_el IS NOT NULL AND r.anulado_el IS NULL
+         ORDER BY COALESCE(a.nombre, r.texto_descripcion, r.texto_codigo), r.id
+        """,
+        (pedido_id, sucursal),
+    )
+    columnas = [d[0] for d in cursor.description]
+    return [dict(zip(columnas, f)) for f in cursor.fetchall()]
+
+
+def _pedido_vigente(cursor, pedido_id: int):
+    """(cliente_id, nombre, fecha, es_el_vigente) o None si no existe o está anulado."""
+    cursor.execute(
+        """
+        SELECT p.cliente_id, cl.nombre, p.fecha_operacion,
+               p.id = (SELECT q.id FROM pedidos q
+                        WHERE q.cliente_id = p.cliente_id AND q.fecha_operacion = p.fecha_operacion
+                          AND q.anulado_el IS NULL
+                        ORDER BY q.creado_en DESC LIMIT 1)
+          FROM pedidos p JOIN clientes cl ON cl.id = p.cliente_id
+         WHERE p.id = %s AND p.anulado_el IS NULL
+        """,
+        (pedido_id,),
+    )
+    return cursor.fetchone()
+
+
+def orden_para_emitir(pedido_id: int, sucursal: str) -> dict | None:
+    """Lo que la pantalla de emitir necesita: el pedido, la orden, los renglones
+    armados y el remito vivo si ya hay uno. None si el pedido no existe."""
+    conexion = obtener_conexion()
+    try:
+        with conexion.cursor() as cursor:
+            pedido = _pedido_vigente(cursor, pedido_id)
+            if pedido is None:
+                return None
+            cursor.execute(
+                """
+                SELECT ps.orden_compra, re.id, re.numero
+                  FROM pedidos_sucursales ps
+                  LEFT JOIN remitos re ON re.pedido_sucursal_id = ps.id AND re.anulado_el IS NULL
+                 WHERE ps.pedido_id = %s AND ps.sucursal = %s
+                """,
+                (pedido_id, sucursal),
+            )
+            fila = cursor.fetchone()
+            renglones = _renglones_para_emitir(cursor, pedido_id, sucursal)
+    finally:
+        conexion.close()
+    return {
+        "pedido_id": pedido_id, "cliente_id": pedido[0], "cliente": pedido[1], "fecha": pedido[2],
+        "es_el_vigente": pedido[3], "sucursal": sucursal,
+        "orden_compra": fila[0] if fila else None,
+        "remito_id": fila[1] if fila else None, "remito_numero": fila[2] if fila else None,
+        "renglones": renglones,
+    }
+
+
+def emitir_remito(pedido_id: int, sucursal: str, numero: str) -> int:
+    """Emite el remito de una orden de compra: anota el número y CONGELA lo que salió.
+
+    Todo en una transacción. La fila de la orden se bloquea (y se crea si el
+    pedido se cargó a mano y no la tiene), así dos emisiones a la vez no
+    pueden pasar las dos. Que haya uno solo vivo por orden y que el número no
+    se repita en el cliente lo DECIDE LA BASE (dos índices únicos); acá se
+    traduce el error. Devuelve el id del remito.
+    """
+    numero = re.sub(r"\s+", " ", numero or "").strip()
+    if not numero:
+        raise RemitoNoSePuede("El número de remito es obligatorio.")
+    conexion = obtener_conexion()
+    try:
+        with conexion.cursor() as cursor:
+            pedido = _pedido_vigente(cursor, pedido_id)
+            if pedido is None:
+                raise RemitoNoSePuede("Ese pedido no existe o está anulado.")
+            if not pedido[3]:
+                raise RemitoNoSePuede("Ese pedido fue reemplazado por otro del mismo día: "
+                                      "el remito va contra el vigente.")
+            cursor.execute(
+                "INSERT INTO pedidos_sucursales (pedido_id, sucursal) VALUES (%s, %s) "
+                "ON CONFLICT (pedido_id, sucursal) DO NOTHING", (pedido_id, sucursal))
+            cursor.execute("SELECT id FROM pedidos_sucursales WHERE pedido_id = %s AND sucursal = %s "
+                           "FOR UPDATE", (pedido_id, sucursal))
+            (orden_id,) = cursor.fetchone()
+            renglones = _renglones_para_emitir(cursor, pedido_id, sucursal)
+            if not renglones:
+                raise RemitoNoSePuede("Esa orden de compra no tiene nada armado: no hay qué remitir.")
+            sin_kilos = [r["articulo_nombre"] or "un renglón" for r in renglones if r["kilos_enviados"] is None]
+            if sin_kilos:
+                raise RemitoNoSePuede("Faltan los kilos enviados de " + ", ".join(sin_kilos)
+                                      + ": cargalos en Armar Pedido antes de emitir.")
+            try:
+                cursor.execute(
+                    "INSERT INTO remitos (pedido_sucursal_id, cliente_id, numero) VALUES (%s, %s, %s) "
+                    "RETURNING id", (orden_id, pedido[0], numero))
+            except psycopg2.errors.UniqueViolation as error:
+                conexion.rollback()
+                if error.diag.constraint_name == "remitos_numero_por_cliente":
+                    raise RemitoNoSePuede(f"El remito {numero} ya está cargado para {pedido[1]}.") from error
+                if error.diag.constraint_name == "remitos_uno_vivo_por_orden":
+                    raise RemitoNoSePuede("Esa orden de compra ya tiene su remito emitido.") from error
+                raise RemitoNoSePuede(f"La base rechazó el remito ({error.diag.constraint_name}) "
+                                      "y no se sabe por qué: avisá.") from error
+            (remito_id,) = cursor.fetchone()
+            for renglon in renglones:
+                cursor.execute(
+                    "INSERT INTO remitos_renglones (remito_id, pedido_renglon_id, bultos_enviados, "
+                    "kilos_enviados) VALUES (%s, %s, %s, %s)",
+                    (remito_id, renglon["id"], renglon["bultos"], renglon["kilos_enviados"]))
+        conexion.commit()
+        return remito_id
+    finally:
+        conexion.close()
+
+
+_SQL_REMITOS = """
+    SELECT re.id, re.numero, re.cliente_id, cl.nombre AS cliente, p.id AS pedido_id,
+           p.fecha_operacion AS fecha_pedido, ps.sucursal, ps.orden_compra,
+           re.emitido_el, re.recibido_el, re.factura_numero, re.facturado_el,
+           re.anulado_el, re.anulado_motivo
+      FROM remitos re
+      JOIN pedidos_sucursales ps ON ps.id = re.pedido_sucursal_id
+      JOIN pedidos p ON p.id = ps.pedido_id
+      JOIN clientes cl ON cl.id = re.cliente_id
+"""
+
+_SQL_RENGLONES_DEL_REMITO = f"""
+    SELECT rr.id, rr.remito_id, rr.pedido_renglon_id,
+           COALESCE(a.nombre, r.texto_descripcion, r.texto_codigo) AS articulo_nombre,
+           fl.unidad_venta, rr.bultos_enviados, rr.kilos_enviados,
+           rr.kilos_recibidos, rr.bultos_rechazados,
+           {_SQL_RECHAZO_DE_DEPOSITO} AS rechazo_deposito,
+           {_SQL_PRECIO_DEL_RENGLON} AS precio
+      FROM remitos_renglones rr
+      JOIN pedidos_renglones r ON r.id = rr.pedido_renglon_id
+      JOIN pedidos p ON p.id = r.pedido_id
+      LEFT JOIN articulos a ON a.id = r.articulo_id
+      LEFT JOIN fichas_logistica fl ON fl.id = r.ficha_id
+     WHERE rr.remito_id = ANY(%(ids)s)
+     ORDER BY COALESCE(a.nombre, r.texto_descripcion, r.texto_codigo), rr.id
+"""
+
+
+def _remitos_con_renglones(cursor, where: str, parametros: dict) -> list[dict]:
+    """Los remitos que cumplen `where`, cada uno con sus renglones (cotejo y
+    precio incluidos). Dos consultas y no una por remito."""
+    cursor.execute(_SQL_REMITOS + " WHERE " + where + " ORDER BY p.fecha_operacion, cl.nombre, ps.sucursal, re.id",
+                   parametros)
+    columnas = [d[0] for d in cursor.description]
+    remitos = [dict(zip(columnas, f)) for f in cursor.fetchall()]
+    if not remitos:
+        return []
+    cursor.execute(_SQL_RENGLONES_DEL_REMITO, {"ids": [r["id"] for r in remitos]})
+    columnas = [d[0] for d in cursor.description]
+    por_remito: dict = {}
+    for fila in cursor.fetchall():
+        renglon = dict(zip(columnas, fila))
+        por_remito.setdefault(renglon["remito_id"], []).append(renglon)
+    for remito in remitos:
+        remito["renglones"] = por_remito.get(remito["id"], [])
+    return remitos
+
+
+def listar_remitos(estado: str, desde: date | None = None, hasta: date | None = None) -> list[dict]:
+    """Los remitos de un estado: 'emitido', 'recibido' o 'facturado' (este con
+    el rango de la fecha de factura, en día argentino)."""
+    condiciones = {
+        "emitido": "re.anulado_el IS NULL AND re.recibido_el IS NULL",
+        "recibido": "re.anulado_el IS NULL AND re.recibido_el IS NOT NULL AND re.factura_numero IS NULL",
+        "facturado": ("re.factura_numero IS NOT NULL"
+                      " AND (re.facturado_el AT TIME ZONE 'America/Argentina/Buenos_Aires')::date"
+                      " BETWEEN %(desde)s AND %(hasta)s"),
+    }
+    conexion = obtener_conexion()
+    try:
+        with conexion.cursor() as cursor:
+            return _remitos_con_renglones(cursor, condiciones[estado], {"desde": desde, "hasta": hasta})
+    finally:
+        conexion.close()
+
+
+def remito_por_id(remito_id: int) -> dict | None:
+    conexion = obtener_conexion()
+    try:
+        with conexion.cursor() as cursor:
+            remitos = _remitos_con_renglones(cursor, "re.id = %(id)s", {"id": remito_id})
+            if not remitos:
+                return None
+            remito = remitos[0]
+            cursor.execute("SELECT id, foto_ruta, creado_en FROM remitos_fotos WHERE remito_id = %s "
+                           "ORDER BY creado_en, id", (remito_id,))
+            remito["fotos"] = [{"id": f[0], "ruta": f[1], "creado_en": f[2]} for f in cursor.fetchall()]
+            return remito
+    finally:
+        conexion.close()
+
+
+def buscar_remitos_por_numero(numero: str) -> list[dict]:
+    """Los remitos con ese número, plegado igual que el índice único
+    (`upper(btrim(...))`): vivos y anulados, de cualquier cliente."""
+    conexion = obtener_conexion()
+    try:
+        with conexion.cursor() as cursor:
+            return _remitos_con_renglones(cursor, "upper(btrim(re.numero)) = upper(btrim(%(numero)s))",
+                                          {"numero": numero or ""})
+    finally:
+        conexion.close()
+
+
+def _remito_bloqueado(cursor, remito_id: int):
+    cursor.execute("SELECT recibido_el, factura_numero, anulado_el, cliente_id FROM remitos "
+                   "WHERE id = %s FOR UPDATE", (remito_id,))
+    fila = cursor.fetchone()
+    if fila is None:
+        raise RemitoNoSePuede("Ese remito no existe.")
+    return fila
+
+
+def recibir_remito(remito_id: int, recepcion: dict, fotos_rutas: list[str]) -> None:
+    """Carga lo que el súper firmó: por renglón kilos recibidos y bultos
+    rechazados, y las fotos del remito firmado (al menos una). Todo o nada.
+
+    NO MUEVE STOCK: los rechazos los carga Depósito. Esto solo anota el papel
+    para cotejarlo. Tiene que venir TODO renglón del remito.
+    """
+    if not fotos_rutas:
+        raise RemitoNoSePuede("La foto del remito firmado es obligatoria.")
+    conexion = obtener_conexion()
+    try:
+        with conexion.cursor() as cursor:
+            recibido, factura, anulado, _ = _remito_bloqueado(cursor, remito_id)
+            if anulado is not None:
+                raise RemitoNoSePuede("Ese remito está anulado.")
+            if recibido is not None:
+                raise RemitoNoSePuede("Ese remito ya se recibió.")
+            cursor.execute("SELECT id FROM remitos_renglones WHERE remito_id = %s", (remito_id,))
+            ids = {f[0] for f in cursor.fetchall()}
+            if set(recepcion) != ids:
+                raise RemitoNoSePuede("Falta cargar algún renglón del remito.")
+            for renglon_id, (kilos, rechazados) in recepcion.items():
+                cursor.execute("UPDATE remitos_renglones SET kilos_recibidos = %s, bultos_rechazados = %s "
+                               "WHERE id = %s", (kilos, rechazados, renglon_id))
+            for ruta in fotos_rutas:
+                cursor.execute("INSERT INTO remitos_fotos (remito_id, foto_ruta) VALUES (%s, %s)",
+                               (remito_id, ruta))
+            cursor.execute("UPDATE remitos SET recibido_el = now() WHERE id = %s", (remito_id,))
+        conexion.commit()
+    finally:
+        conexion.close()
+
+
+def facturar_remitos(remito_ids: list[int], factura_numero: str) -> int:
+    """Anota UNA factura contra uno o más remitos recibidos del MISMO cliente.
+
+    Una factura puede cubrir varios remitos; un remito tiene una sola factura.
+    Se bloquean todos antes de mirar, así dos facturas a la vez no se pisan.
+    """
+    factura_numero = re.sub(r"\s+", " ", factura_numero or "").strip()
+    if not factura_numero:
+        raise RemitoNoSePuede("El número de factura es obligatorio.")
+    if not remito_ids:
+        raise RemitoNoSePuede("Elegí al menos un remito.")
+    conexion = obtener_conexion()
+    try:
+        with conexion.cursor() as cursor:
+            clientes = set()
+            for remito_id in sorted(set(remito_ids)):
+                recibido, factura, anulado, cliente_id = _remito_bloqueado(cursor, remito_id)
+                if anulado is not None or recibido is None or factura is not None:
+                    raise RemitoNoSePuede("Solo se factura un remito recibido y sin factura: "
+                                          "alguno de los elegidos cambió. Volvé a mirar la lista.")
+                clientes.add(cliente_id)
+            if len(clientes) > 1:
+                raise RemitoNoSePuede("Una factura es de un solo cliente: elegiste remitos de dos.")
+            cursor.execute("UPDATE remitos SET factura_numero = %s, facturado_el = now() WHERE id = ANY(%s)",
+                           (factura_numero, sorted(set(remito_ids))))
+            cantidad = cursor.rowcount
+        conexion.commit()
+        return cantidad
+    finally:
+        conexion.close()
+
+
+def anular_remito(remito_id: int, motivo: str) -> None:
+    """Gerencia anula un remito con error, con motivo. Se emite de nuevo. Uno
+    facturado no se anula (también lo frena la base)."""
+    motivo = re.sub(r"\s+", " ", motivo or "").strip()
+    if not motivo:
+        raise RemitoNoSePuede("El motivo es obligatorio.")
+    conexion = obtener_conexion()
+    try:
+        with conexion.cursor() as cursor:
+            recibido, factura, anulado, _ = _remito_bloqueado(cursor, remito_id)
+            if anulado is not None:
+                raise RemitoNoSePuede("Ese remito ya estaba anulado.")
+            if factura is not None:
+                raise RemitoNoSePuede("Ese remito ya está facturado: no se anula.")
+            cursor.execute("UPDATE remitos SET anulado_el = now(), anulado_motivo = %s WHERE id = %s",
+                           (motivo, remito_id))
+        conexion.commit()
+    finally:
+        conexion.close()
+
+
+def contar_remitos_sin_volver(hoy: date) -> dict:
+    """Emitidos hace más de DIAS_REMITO_SIN_VOLVER días corridos y sin recibir."""
+    vencidos = [r for r in listar_remitos("emitido") if sin_volver_hace_mucho(r, hoy)]
+    return {"casos": len(vencidos), "mas_viejo": min((r["emitido_el"] for r in vencidos), default=None)}
+
+
+def contar_remitos_sin_factura(hoy: date) -> dict:
+    """Recibidos hace más de DIAS_REMITO_SIN_FACTURA días corridos y sin factura."""
+    vencidos = [r for r in listar_remitos("recibido") if sin_factura_hace_mucho(r, hoy)]
+    return {"casos": len(vencidos), "mas_viejo": min((r["recibido_el"] for r in vencidos), default=None)}
+
+
+def remitos_con_rechazo_distinto() -> list[dict]:
+    """Los remitos vivos YA RECIBIDOS con algún renglón cuyo rechazo no
+    coincide con lo que cargó Depósito. Se recalcula en cada lectura: el día
+    que Depósito carga el reingreso que faltaba, el remito sale solo."""
+    conexion = obtener_conexion()
+    try:
+        with conexion.cursor() as cursor:
+            remitos = _remitos_con_renglones(cursor, "re.anulado_el IS NULL AND re.recibido_el IS NOT NULL", {})
+    finally:
+        conexion.close()
+    return [r for r in remitos if any(rechazo_no_coincide(x) for x in r["renglones"])]
+
+
+def contar_remitos_con_rechazo_distinto() -> dict:
+    distintos = remitos_con_rechazo_distinto()
+    return {"casos": len(distintos), "mas_viejo": min((r["recibido_el"] for r in distintos), default=None)}
+
+
+def kilos_recibidos_por_renglon(renglon_ids: list[int]) -> dict:
+    """{pedido_renglon_id: kilos_recibidos} de los renglones cuyo remito VIVO
+    ya volvió. La Rentabilidad Real cobra eso en vez de los enviados; un
+    renglón que no está acá sigue con los enviados y su día es provisorio."""
+    if not renglon_ids:
+        return {}
+    conexion = obtener_conexion()
+    try:
+        with conexion.cursor() as cursor:
+            cursor.execute(
+                """
+                SELECT rr.pedido_renglon_id, rr.kilos_recibidos
+                  FROM remitos_renglones rr JOIN remitos re ON re.id = rr.remito_id
+                 WHERE re.anulado_el IS NULL AND re.recibido_el IS NOT NULL
+                   AND rr.pedido_renglon_id = ANY(%s)
+                """,
+                (list(renglon_ids),),
+            )
+            return {f[0]: float(f[1]) for f in cursor.fetchall()}
+    finally:
+        conexion.close()

@@ -55,6 +55,8 @@ PREFIJO_MERMA = "merma"
 PREFIJO_VACIOS = "vacios"
 # Las fotos ANEXADAS a un vale a cobrar (dueño, 30/09).
 PREFIJO_VALE = "vales"
+# El remito FIRMADO que trae el camionero (dueño, 01/10).
+PREFIJO_REMITO = "remitos"
 EXPIRACION_URL_FIRMADA_SEGUNDOS = 3600  # 1 hora
 TIMEOUT_HTTP_SEGUNDOS = 30
 

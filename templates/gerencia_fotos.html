@@ -39,6 +39,14 @@
   .acumulado { color: #666; font-size: 0.82rem; }
   .proyeccion-numero { font-size: 1.25rem; font-weight: 700; margin: 0.2rem 0; }
   .fila a.ver { display: inline-flex; align-items: center; min-height: 44px; color: #2563eb; font-weight: 600; }
+  /* EL PLAZO y el borrado a mano: campos que se apilan en celular. */
+  form.plazo { display: flex; flex-wrap: wrap; gap: 0.6rem; align-items: flex-end; margin-top: 0.4rem; }
+  form.plazo label { flex: 1 1 8rem; font-size: 0.85rem; color: #444; }
+  form.plazo input, form.plazo select, .borrar input[type=text] {
+    display: block; width: 100%; box-sizing: border-box; margin-top: 0.2rem; padding: 0.6rem;
+    border: 1px solid #ccc; border-radius: 8px; font-size: 1rem; min-height: 44px; background: #fff; }
+  form.plazo button { flex: 1 1 8rem; min-height: 48px; border-radius: 8px; border: none; background: #2563eb;
+    color: #fff; font-weight: 600; font-size: 1rem; }
 </style>
 </head>
 <body>
@@ -120,14 +128,41 @@
   {% endif %}
   {% endif %}
 
+  <div class="tarjeta" id="plazos">
+    <h2>Cuánto se guarda cada tipo {% call info("Cómo funciona") %}Cada tipo de foto se guarda los años que diga
+      acá, contados desde que se <strong>subió</strong>. Pasado ese plazo la foto está <strong>vencida</strong> y se
+      puede borrar desde esta pantalla. Las pesadas de compras borradas se guardan siempre 3 años y no se
+      cambian.{% endcall %}</h2>
+    {% for p in plazos %}
+    <div class="fila">
+      <div class="fila-cabeza">
+        <span class="fila-que">{{ p.texto }}</span>
+        <span class="fila-dato">vencen las subidas antes del {{ p.corte.strftime('%d/%m/%Y') }}</span>
+      </div>
+      {% if p.fijo %}
+      <div class="fila-dato">{{ p.anios }} años, fijo.</div>
+      {% else %}
+      <form method="post" action="/gerencia/fotos/plazo" class="plazo">
+        <input type="hidden" name="tipo" value="{{ p.tipo }}">
+        <label>Años <input type="number" name="anios" min="1" max="30" step="1" value="{{ p.anios }}" required></label>
+        <button type="submit">Guardar</button>
+      </form>
+      {% endif %}
+    </div>
+    {% endfor %}
+  </div>
+
   <div class="tarjeta" id="viejas">
-    <h2>Más de 3 años {% call info("Cómo funciona") %}Una foto se puede borrar recién cuando pasaron
-      <strong>3 años desde que se subió</strong>, y solo desde acá, a mano. Se borra el archivo y
-      <strong>queda el registro</strong>: donde estaba la foto dice "Foto borrada por antigüedad el
-      DD/MM/AAAA". Las que se borran por error de carga en el momento siguen igual que antes.{% endcall %}</h2>
+    <h2>Fotos vencidas {% call info("Cómo funciona") %}Se borra el archivo y <strong>queda el registro</strong>:
+      donde estaba la foto dice "Foto borrada el DD/MM/AAAA, por plazo". Las que se borran por error de carga
+      en el momento siguen igual que antes.{% endcall %}</h2>
     <p class="total">{{ total_viejas }} foto{{ '' if total_viejas == 1 else 's' }}</p>
-    <p class="total-dato">Subidas antes del {{ corte.strftime('%d/%m/%Y') }} ·
+    <p class="total-dato">
       {% if total_bytes_viejas is none %}tamaño sin dato{% else %}{{ total_bytes_viejas|tamano }}{% endif %}</p>
+    {% if total_protegidas %}
+    <p class="cuenta">No se borran nunca {{ total_protegidas }} vencida{{ '' if total_protegidas == 1 else 's' }}:
+      {{ motivos_protegidas|join(', ') }}.</p>
+    {% endif %}
     {% for f in filas %}
     <div class="fila">
       <div class="fila-cabeza">
@@ -136,7 +171,8 @@
       </div>
       <div class="fila-dato">
         {%- if f.bytes is none %}tamaño sin dato
-        {%- else %}{{ f.bytes_viejas|tamano }} de más de 3 años · {{ f.bytes|tamano }} en total{% endif %}</div>
+        {%- else %}{{ f.bytes_viejas|tamano }} vencidas · {{ f.bytes|tamano }} en total{% endif %}
+        {%- if f.protegidas %} · {{ f.protegidas }} protegida{{ '' if f.protegidas == 1 else 's' }}{% endif %}</div>
     </div>
     {% endfor %}
     <p class="cuenta" style="margin-top: 0.6rem;">En total: {{ total_cantidad }} foto{{ '' if total_cantidad == 1 else 's' }}
@@ -145,7 +181,7 @@
 
   {% if total_viejas %}
   <div class="tarjeta borrar">
-    <h2>Borrar las fotos de más de 3 años</h2>
+    <h2>Borrar las fotos vencidas</h2>
     <p class="cuenta">Se borran los archivos de {{ total_viejas }} foto{{ '' if total_viejas == 1 else 's' }}. Esto no se deshace.</p>
     <form method="post" action="/gerencia/fotos/borrar-viejas">
       <label class="tilde"><input type="checkbox" name="confirmo" value="si" required>
@@ -155,6 +191,43 @@
   </div>
   {% endif %}
 
+  <div class="tarjeta borrar" id="a-mano">
+    <h2>Borrar a mano</h2>
+    <p class="cuenta">Un tipo de foto, las subidas antes de una fecha. No mira el plazo. Esto no se deshace.</p>
+    <form method="get" action="/gerencia/fotos#a-mano" class="plazo">
+      <label>De qué fotos
+        <select name="tipo" required>
+          <option value="">Elegí</option>
+          {% for t, x in tipos_a_mano %}<option value="{{ t }}" {% if previa and previa.tipo == t %}selected{% endif %}>{{ x }}</option>{% endfor %}
+        </select>
+      </label>
+      <label>Subidas antes del <input type="date" name="anteriores_a" max="{{ hoy.isoformat() }}"
+        value="{{ previa.anteriores_a.isoformat() if previa and previa.anteriores_a else '' }}" required></label>
+      <button type="submit">Ver cuántas son</button>
+    </form>
+    {% if previa %}
+      {% if previa.error %}
+      <div class="error" style="margin-top: 0.6rem;">{{ previa.error }}</div>
+      {% else %}
+      <p class="total" style="margin-top: 0.8rem;">{{ previa.cantidad }} foto{{ '' if previa.cantidad == 1 else 's' }}</p>
+      <p class="total-dato">{{ previa.texto }} subidas antes del {{ previa.anteriores_a.strftime('%d/%m/%Y') }} ·
+        se liberan {% if previa.bytes is none %}(tamaño sin dato){% else %}{{ previa.bytes|tamano }}{% endif %}</p>
+      {% if previa.salteadas %}
+      <p class="cuenta">Se saltean {{ previa.salteadas }}: {{ previa.motivos|join(', ') }}.</p>
+      {% endif %}
+      {% if previa.cantidad %}
+      <form method="post" action="/gerencia/fotos/borrar-a-mano">
+        <input type="hidden" name="tipo" value="{{ previa.tipo }}">
+        <input type="hidden" name="anteriores_a" value="{{ previa.anteriores_a.isoformat() }}">
+        <label>Para confirmar, escribí la cantidad de fotos ({{ previa.cantidad }})
+          <input type="text" inputmode="numeric" name="cantidad" required autocomplete="off"></label>
+        <button type="submit">Borrar {{ previa.cantidad }} foto{{ '' if previa.cantidad == 1 else 's' }}</button>
+      </form>
+      {% endif %}
+      {% endif %}
+    {% endif %}
+  </div>
+
   <div class="tarjeta" id="compras-borradas">
     <h2>Pesadas de compras borradas</h2>
     {% for f in de_compras_borradas %}
@@ -163,7 +236,7 @@
         <span class="fila-que">De la compra N° {{ f.compra_id }}, borrada el {{ f.compra_borrada_el|fecha_hora }}</span>
       </div>
       <div class="fila-dato">Subida el {{ f.subida_el|fecha_hora }}
-        {%- if f.borrada_el %} · {{ texto_de_foto_borrada(f.borrada_el) }}{% endif %}</div>
+        {%- if f.borrada_el %} · {{ texto_de_foto_borrada(f.borrada_el, f.como) }}{% endif %}</div>
       {% if not f.borrada_el %}
       <a class="ver" href="/gerencia/fotos/compras-borradas/{{ f.id }}/ver" target="_blank" rel="noopener">Ver foto</a>
       {% endif %}
@@ -183,10 +256,22 @@
     {% endif %}
   </div>
 
-  <div class="tarjeta">
-    <h2>Ya borradas por antigüedad</h2>
-    <p class="cuenta">{{ borradas.cantidad }} foto{{ '' if borradas.cantidad == 1 else 's' }}
+  <div class="tarjeta" id="historial">
+    <h2>Historial de borrados</h2>
+    <p class="cuenta">{{ borradas.cantidad }} foto{{ '' if borradas.cantidad == 1 else 's' }} borrada{{ '' if borradas.cantidad == 1 else 's' }} en total
       {%- if borradas.ultima %} · la última el {{ borradas.ultima|fecha_hora }}{% endif %}.</p>
+    {% for h in historial %}
+    <div class="fila">
+      <div class="fila-cabeza">
+        <span class="fila-que">{{ texto_del_tipo.get(h.tipo, h.tipo) }}, {{ texto_de_como[h.como] }}</span>
+        <span>{{ h.bytes|tamano }}</span>
+      </div>
+      <div class="fila-dato">{{ h.borrado_el|fecha_hora }} · subidas antes del {{ h.anteriores_a.strftime('%d/%m/%Y') }} ·
+        {{ h.cantidad }} foto{{ '' if h.cantidad == 1 else 's' }}{% if h.salteadas %} · {{ h.salteadas }} salteada{{ '' if h.salteadas == 1 else 's' }}{% endif %}</div>
+    </div>
+    {% else %}
+    <p class="vacio">Todavía no se borró nada desde esta pantalla.</p>
+    {% endfor %}
   </div>
 {% include "_pie_version.html" %}
 </body>

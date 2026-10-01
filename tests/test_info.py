@@ -217,7 +217,7 @@ PANTALLAS_CON_I = {
     "compras_cajas.html", "compras_cajas_colega.html", "compras_cajas_movimientos.html",
     "compras_carga.html", "compras_proveedores.html", "compras_vacios_cotejo.html",
     "compras_vacios_proveedor.html", "deposito_devolver.html", "deposito_ingresar.html",
-    "deposito_pedido_buscar.html",
+    "deposito_pedido_buscar.html", "facturacion.html",
     "deposito_pedido_cargar.html", "deposito_stock_ajustar.html",
     "deposito_stock_articulo.html", "deposito_stock_cotejo.html",
     "deposito_stock_guias_r.html", "deposito_stock_merma.html",
@@ -255,6 +255,9 @@ QUEDAN_A_LA_VISTA = [
     # y los dos "no se suma" que son reglas del dueño
     ("gerencia_perdidas.html", "<strong>no se suma</strong> con la de"),
     ("gerencia_cajas_perdidas.html", "<strong>ya se cobra</strong>"),
+    # remitos (dueño, 01/10): lo que cambia lo que se carga al recibir
+    ("remito_recibir.html", "descontá lo rechazado"),
+    ("remito.html", "el remito no mueve stock"),
 ]
 
 

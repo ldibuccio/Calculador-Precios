@@ -116,6 +116,14 @@
   /* En gris y sin alarma: un pedido cargado a mano no tiene orden de
      compra y eso no es un error, es un dato. */
   .encabezado-sucursal .sin-oc { color: #6b7280; font-weight: 400; font-style: italic; }
+  /* EL REMITO de la orden (dueño, 01/10): a la derecha, tocable con el
+     pulgar. Azul lleno si falta emitirlo; con borde si ya está. */
+  .encabezado-sucursal .remito-link {
+    margin-left: auto; display: inline-flex; align-items: center; min-height: 44px;
+    padding: 0 0.8rem; border-radius: 8px; border: 1px solid #2563eb; color: #2563eb;
+    font-weight: 600; font-size: 0.9rem; text-decoration: none;
+  }
+  .encabezado-sucursal .remito-link.emitir { background: #2563eb; color: #fff; }
   .subtotal-sucursal { border-top-width: 1px; font-size: 0.9rem; }
   /* El tilde del control: área grande para el pulgar, no un cuadradito.
      El label envuelve al input y se estira, así que se puede errar el
@@ -295,6 +303,12 @@
         <span class="oc">OC {{ s.orden_compra }}</span>
         {% else %}
         <span class="oc sin-oc">sin orden de compra</span>
+        {% endif %}
+        {# EL REMITO de esta orden de compra (dueño, 01/10): uno por sucursal. #}
+        {% if s.remito_id %}
+        <a class="remito-link" href="/administracion/facturacion/remito/{{ s.remito_id }}">Remito {{ s.remito_numero }}</a>
+        {% elif s.sucursal and s.filas %}
+        <a class="remito-link emitir" href="/administracion/facturacion/emitir?pedido_id={{ g.pedido_id }}&sucursal={{ s.sucursal|urlencode }}">Emitir remito</a>
         {% endif %}
       </div>
       {% for f in s.filas %}
