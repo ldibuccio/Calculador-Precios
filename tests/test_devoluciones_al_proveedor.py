@@ -121,7 +121,7 @@ def test_la_devolucion_desde_deposito_sale_de_SU_compra_y_no_de_la_mas_vieja(bas
     d, sql, _ = base
     antes, sin_lote_antes = _lotes(d)
     stock_antes = d.stock_deposito_de_articulo(1)
-    d.crear_devolucion_deposito(12, 3, "EJ se puso fea", date(2026, 9, 10))
+    d.crear_devolucion_deposito(12, 3, "EJ se puso fea", date(2026, 9, 10), cargada_desde="deposito")
     despues, sin_lote = _lotes(d)
     # El armado en cajón consumió la 11 (FIFO); la devolución sale de la 12.
     # El de caja de Día ya estaba sin lote (espera su guía R): no se mueve.
@@ -137,7 +137,7 @@ def test_lo_que_su_compra_no_cubre_queda_SIN_LOTE_y_no_sale_de_otra(base):
     de llevarse mercadería de otra compra."""
     d, sql, _ = base
     antes, sin_lote_antes = _lotes(d)
-    d.crear_devolucion_deposito(13, 7, "EJ de más", date(2026, 9, 10))
+    d.crear_devolucion_deposito(13, 7, "EJ de más", date(2026, 9, 10), cargada_desde="deposito")
     despues, sin_lote = _lotes(d)
     assert despues.get(13, 0) == 0
     assert despues[11] == antes[11] and despues[12] == antes[12]
@@ -146,7 +146,7 @@ def test_lo_que_su_compra_no_cubre_queda_SIN_LOTE_y_no_sale_de_otra(base):
 
 def test_la_devolucion_lleva_sus_FOTOS_a_las_de_la_compra(base):
     d, sql, _ = base
-    d.crear_devolucion_deposito(12, 1, "EJ", date(2026, 9, 10), fotos_pesada=["pesaje/x/a.jpg"])
+    d.crear_devolucion_deposito(12, 1, "EJ", date(2026, 9, 10), fotos_pesada=["pesaje/x/a.jpg"], cargada_desde="deposito")
     assert [f["foto_ruta"] for f in d.listar_fotos_de_recepcion(12)] == ["pesaje/x/a.jpg"]
 
 
@@ -154,7 +154,7 @@ def test_una_compra_que_NO_esta_recibida_no_se_puede_devolver(base):
     d, sql, _ = base
     sql("UPDATE compras SET estado = 'pendiente' WHERE id = 13")
     with pytest.raises(ValueError, match="no está recibida"):
-        d.crear_devolucion_deposito(13, 1, "EJ", date(2026, 9, 10))
+        d.crear_devolucion_deposito(13, 1, "EJ", date(2026, 9, 10), cargada_desde="deposito")
     assert sql("SELECT count(*) FROM movimientos_stock")[0][0] == 0
 
 
@@ -163,10 +163,10 @@ def test_una_compra_que_NO_esta_recibida_no_se_puede_devolver(base):
 def test_con_SENA_los_cajones_que_vuelven_llenos_salen_de_Vacios(base):
     d, sql, rechazo = base
     assert _pila(d, 1) == 10, "la compra 11 dejó seña por 10 cajones"
-    d.crear_devolucion_deposito(11, 3, "EJ", date(2026, 9, 10))
+    d.crear_devolucion_deposito(11, 3, "EJ", date(2026, 9, 10), cargada_desde="deposito")
     assert _pila(d, 1) == 7
     # Sin seña (la 12) no hay cajón que devolver.
-    d.crear_devolucion_deposito(12, 2, "EJ", date(2026, 9, 10))
+    d.crear_devolucion_deposito(12, 2, "EJ", date(2026, 9, 10), cargada_desde="deposito")
     assert _pila(d, 1) == 7
 
 
@@ -182,7 +182,7 @@ def test_el_RECHAZO_en_cajon_resta_y_el_que_iba_en_CAJA_DE_DIA_no(base):
 
 def test_la_LISTA_de_vacios_y_la_PILA_dicen_lo_mismo_con_las_devoluciones(base):
     d, sql, rechazo = base
-    d.crear_devolucion_deposito(11, 3, "EJ", date(2026, 9, 10))
+    d.crear_devolucion_deposito(11, 3, "EJ", date(2026, 9, 10), cargada_desde="deposito")
     rechazo(1, 2, compra_id=11)
     movimientos = [m for m in d.movimientos_de_vacios(1, limite=1000) if not m["anulada"]]
     llenas = [m["cantidad"] for m in movimientos if m["tipo"] == "devolucion_llena"]
@@ -215,7 +215,7 @@ def test_la_Rentabilidad_usa_el_costo_de_la_compra_y_si_no_el_congelado():
 
 def test_MOVIMIENTOS_del_deposito_trae_entradas_devoluciones_y_segunda(base):
     d, sql, rechazo = base
-    d.crear_devolucion_deposito(12, 3, "EJ se puso fea", date(2026, 9, 10))
+    d.crear_devolucion_deposito(12, 3, "EJ se puso fea", date(2026, 9, 10), cargada_desde="deposito")
     rechazo(1, 2, compra_id=11)
     sql("INSERT INTO remitos_segunda (articulo_id, bultos, fecha_operacion) VALUES (1, 4, '2026-09-11')")
     sql("INSERT INTO remitos_segunda (articulo_id, bultos, fecha_operacion, anulado_el) "
@@ -243,7 +243,7 @@ def test_la_CUENTA_de_un_proveedor_cierra_como_la_dice_el_duenio(base):
     from core.movimientos_deposito import agrupar
     d, sql, rechazo = base
     rechazo(1, 2, compra_id=11)
-    d.crear_devolucion_deposito(12, 3, "EJ", date(2026, 9, 10))
+    d.crear_devolucion_deposito(12, 3, "EJ", date(2026, 9, 10), cargada_desde="deposito")
     grupos = agrupar(d.movimientos_del_deposito(date(2026, 9, 1), date(2026, 9, 30), proveedor_id=1))
     uno, = grupos
     assert (uno["entraron"], uno["salieron"], uno["neto"]) == (18, 5, 13)
@@ -332,7 +332,7 @@ def test_MOVIMIENTOS_en_la_pantalla_y_el_EXCEL_de_Administracion(base, monkeypat
     from unittest.mock import patch
     from app.main import PUERTA_ADMINISTRACION
     d, sql, rechazo = base
-    d.crear_devolucion_deposito(12, 3, "EJ se puso fea", date(2026, 9, 10))
+    d.crear_devolucion_deposito(12, 3, "EJ se puso fea", date(2026, 9, 10), cargada_desde="deposito")
     monkeypatch.setenv("CLAVE_ADMINISTRACION", "admin-secreta")
     cliente = _cliente()
     cliente.cookies.set(PUERTA_ADMINISTRACION.cookie, PUERTA_ADMINISTRACION.firma("admin-secreta"))
@@ -349,7 +349,7 @@ def test_MOVIMIENTOS_en_la_pantalla_y_el_EXCEL_de_Administracion(base, monkeypat
     hoja = openpyxl.load_workbook(io.BytesIO(excel.content)).active
     filas = [tuple(c.value for c in fila) for fila in hoja.iter_rows(min_row=5)]
     assert filas == [("10/09/2026", "Devolución desde depósito", "EJ Uno", 12, "EJEMPLO Fruta",
-                      -3, -360, "EJ se puso fea", None, None)]
+                      -3, -360, "EJ se puso fea", None, None, "Depósito")]
 
 
 def test_MOVIMIENTOS_dicen_que_ENTRO_con_sena_y_VOLVIO_con_sena(base, monkeypatch):
@@ -361,7 +361,7 @@ def test_MOVIMIENTOS_dicen_que_ENTRO_con_sena_y_VOLVIO_con_sena(base, monkeypatc
     from unittest.mock import patch
     from app.main import PUERTA_ADMINISTRACION
     d, sql, rechazo = base
-    d.crear_devolucion_deposito(11, 2, "EJ se puso fea", date(2026, 9, 10))
+    d.crear_devolucion_deposito(11, 2, "EJ se puso fea", date(2026, 9, 10), cargada_desde="deposito")
     rechazo(1, 1, compra_id=11)          # iba en el cajón: vuelve con seña
     rechazo(2, 1, compra_id=11)          # iba en caja de Día: no
     movs = {(m["tipo"], m["bultos"], m["sena"]) for m in d.movimientos_del_deposito(
@@ -383,4 +383,116 @@ def test_MOVIMIENTOS_dicen_que_ENTRO_con_sena_y_VOLVIO_con_sena(base, monkeypatc
     assert marcado.count("con seña:") == 3
     hoja = openpyxl.load_workbook(io.BytesIO(excel.content)).active
     filas = [tuple(c.value for c in fila) for fila in hoja.iter_rows(min_row=5)]
-    assert [f[8:] for f in filas] == [(500, "volvió con seña: 2 cajones × $500")]
+    assert [f[8:] for f in filas] == [(500, "volvió con seña: 2 cajones × $500", "Depósito")]
+
+
+# --- DEVOLVER también desde ADMINISTRACIÓN (dueño, 01/10) --------------------
+
+def _cliente_administracion(monkeypatch):
+    from app.main import PUERTA_ADMINISTRACION
+    monkeypatch.setenv("CLAVE_ADMINISTRACION", "admin-secreta")
+    cliente = _cliente()
+    cliente.cookies.set(PUERTA_ADMINISTRACION.cookie, PUERTA_ADMINISTRACION.firma("admin-secreta"))
+    return cliente
+
+
+def test_la_MISMA_pantalla_en_ADMINISTRACION_se_queda_en_Administracion(base, monkeypatch):
+    from unittest.mock import patch
+    d, sql, _ = base
+    with patch("app.main._hoy_argentina", return_value=HOY):
+        respuesta = _cliente_administracion(monkeypatch).get("/administracion/devolver?proveedor_id=1")
+    assert respuesta.status_code == 200
+    marcado = respuesta.text.split("</style>")[-1]
+    # Las mismas compras con lo que queda, por la misma consulta.
+    assert re.search(r'value="11"[^>]*>.*?quedan <span class="resto">6</span> de 10', marcado, re.S)
+    # La barra, los dos formularios y el volver son de Administración: ninguna
+    # mitad del camino manda a Depósito (corolario 63).
+    assert marcado.count('action="/administracion/devolver"') == 2
+    assert "/deposito" not in marcado
+    # El atrás de la barra vive ANTES del último </style> (corolario 50): se
+    # mira sobre la página entera, anclado en el elemento (corolario 57).
+    assert 'href="/administracion" aria-label="Volver atrás"' in respuesta.text
+    assert 'href="/deposito"' not in respuesta.text
+    assert 'href="/administracion">Volver a Administración' in marcado
+
+
+def test_DEVOLVER_desde_ADMINISTRACION_guarda_su_SECTOR_y_vuelve_a_Administracion(base, monkeypatch):
+    from unittest.mock import patch
+    d, sql, _ = base
+    with patch("app.main._hoy_argentina", return_value=HOY):
+        respuesta = _cliente_administracion(monkeypatch).post(
+            "/administracion/devolver",
+            data={"proveedor_id": "1", "compra_id": "11", "cantidad": "2", "motivo": "EJ fea"},
+            follow_redirects=False)
+        deposito = _cliente().post(
+            "/deposito/devolver",
+            data={"proveedor_id": "1", "compra_id": "12", "cantidad": "1", "motivo": "EJ fea"},
+            follow_redirects=False)
+    assert respuesta.status_code == 303 and respuesta.headers["location"].startswith("/administracion/devolver?")
+    assert deposito.status_code == 303 and deposito.headers["location"].startswith("/deposito/devolver?")
+    assert sql("""SELECT compra_devolucion_id, cantidad, cargada_desde FROM movimientos_stock
+                  WHERE tipo = 'devolucion_deposito' ORDER BY id""") == [
+        (11, -2, "administracion"), (12, -1, "deposito")]
+
+
+def test_desde_ADMINISTRACION_tampoco_se_devuelve_MAS_de_lo_que_queda(base, monkeypatch):
+    from unittest.mock import patch
+    d, sql, _ = base
+    with patch("app.main._hoy_argentina", return_value=HOY):
+        respuesta = _cliente_administracion(monkeypatch).post("/administracion/devolver", data={
+            "proveedor_id": "1", "compra_id": "11", "cantidad": "7", "motivo": "EJ fea"})
+    assert respuesta.status_code == 400 and "quedan 6 bultos" in respuesta.text
+    assert sql("SELECT count(*) FROM movimientos_stock WHERE tipo = 'devolucion_deposito'") == [(0,)]
+
+
+def test_ADMINISTRACION_sin_su_clave_no_devuelve(base, monkeypatch):
+    d, sql, _ = base
+    monkeypatch.setenv("CLAVE_ADMINISTRACION", "admin-secreta")
+    _cliente().post("/administracion/devolver", data={
+        "proveedor_id": "1", "compra_id": "11", "cantidad": "1", "motivo": "EJ"})
+    assert sql("SELECT count(*) FROM movimientos_stock WHERE tipo = 'devolucion_deposito'") == [(0,)]
+
+
+def test_sin_SECTOR_no_se_escribe_y_la_base_tampoco_lo_deja(base):
+    d, sql, _ = base
+    import psycopg2
+    with pytest.raises(TypeError):
+        d.crear_devolucion_deposito(12, 1, "EJ", HOY)
+    with pytest.raises(ValueError):
+        d.crear_devolucion_deposito(12, 1, "EJ", HOY, cargada_desde="compras")
+    with pytest.raises(psycopg2.errors.CheckViolation):
+        sql("""INSERT INTO movimientos_stock (articulo_id, tipo, cantidad, motivo, fecha_operacion,
+                                              stock_sistema, compra_devolucion_id)
+               VALUES (1, 'devolucion_deposito', -1, 'EJ', '2026-09-10', 0, 12)""")
+
+
+def test_MOVIMIENTOS_dicen_el_SECTOR_y_se_FILTRAN_por_el(base, monkeypatch):
+    import io
+    import openpyxl
+    from unittest.mock import patch
+    d, sql, _ = base
+    d.crear_devolucion_deposito(11, 2, "EJ uno", date(2026, 9, 10), cargada_desde="administracion")
+    d.crear_devolucion_deposito(12, 1, "EJ dos", date(2026, 9, 10), cargada_desde="deposito")
+    assert [(m["motivo"], m["sector"]) for m in d.movimientos_del_deposito(
+        date(2026, 9, 1), date(2026, 9, 30), sector="administracion")] == [("EJ uno", "administracion")]
+    cliente = _cliente_administracion(monkeypatch)
+    with patch("app.main._hoy_argentina", return_value=date(2026, 9, 12)):
+        todo = cliente.get("/administracion/ingresos?proveedor_id=1").text.split("</style>")[-1]
+        filtrado = cliente.get("/administracion/ingresos?sector=deposito").text.split("</style>")[-1]
+        excel = cliente.get("/administracion/ingresos/movimientos-excel?sector=administracion")
+    assert '<span class="sector">cargada desde Administración</span>' in todo
+    assert '<span class="sector">cargada desde Depósito</span>' in todo
+    assert "EJ dos" in filtrado and "EJ uno" not in filtrado
+    assert '<option value="deposito" selected>Depósito</option>' in filtrado
+    hoja = openpyxl.load_workbook(io.BytesIO(excel.content)).active
+    filas = [tuple(c.value for c in fila) for fila in hoja.iter_rows(min_row=5)]
+    assert [(f[7], f[10]) for f in filas] == [("EJ uno", "Administración")]
+    assert "cargadas desde Administración" in hoja.cell(row=2, column=1).value
+
+
+def test_el_HUB_de_Administracion_tiene_Devolver_mercaderia_y_Deposito_sigue_igual():
+    import io as _io
+    admin = _io.open("templates/administracion.html", encoding="utf-8").read()
+    deposito = _io.open("templates/deposito.html", encoding="utf-8").read()
+    assert 'href="/administracion/devolver">Devolver mercadería</a>' in admin
+    assert 'href="/deposito/devolver">' in deposito

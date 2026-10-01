@@ -22,6 +22,18 @@ TEXTO_DEL_TIPO = {
 # El filtro de la pantalla: "" es todos.
 OPCIONES_DE_TIPO = (("", "Todos"),) + tuple(TEXTO_DEL_TIPO.items())
 
+# Desde qué sector se cargó una devolución desde depósito (dueño, 01/10). La
+# misma pantalla se abre en Depósito y en Administración. Solo esa fila lo
+# tiene: filtrar por sector deja únicamente esas devoluciones.
+TEXTO_DEL_SECTOR = {"deposito": "Depósito", "administracion": "Administración"}
+OPCIONES_DE_SECTOR = (("", "Todos"),) + tuple(TEXTO_DEL_SECTOR.items())
+
+
+def texto_del_sector(m: dict) -> str:
+    """"cargada desde Administración", o vacío si la fila no lo tiene."""
+    sector = m.get("sector")
+    return f"cargada desde {TEXTO_DEL_SECTOR[sector]}" if sector in TEXTO_DEL_SECTOR else ""
+
 
 def texto_de_la_sena(m: dict) -> str:
     """Cómo se dice la seña de una fila, igual en la pantalla y en el Excel.
@@ -87,7 +99,7 @@ def generar_excel_movimientos_deposito(desde, hasta, filtro: str, movimientos: l
               value=f"Del {desde.strftime('%d/%m/%Y')} al {hasta.strftime('%d/%m/%Y')} · {filtro}")
     relleno = PatternFill(start_color="DEEFE3", end_color="DEEFE3", fill_type="solid")
     encabezados = ("Fecha", "Tipo", "Proveedor", "Compra", "Artículo", "Bultos", "Valor", "Motivo",
-                   "Seña por cajón", "Seña")
+                   "Seña por cajón", "Seña", "Cargada desde")
     for columna, encabezado in enumerate(encabezados, start=1):
         celda = hoja.cell(row=4, column=columna, value=encabezado)
         celda.font = Font(bold=True, color=VERDE_ENCABEZADO_HEX)
@@ -104,10 +116,11 @@ def generar_excel_movimientos_deposito(desde, hasta, filtro: str, movimientos: l
             m["motivo"],
             m.get("sena"),
             texto_de_la_sena(m),
+            TEXTO_DEL_SECTOR.get(m.get("sector"), ""),
         )
         for columna, valor in enumerate(valores, start=1):
             hoja.cell(row=fila, column=columna, value=valor)
-    for letra, ancho in zip("ABCDEFGHIJ", (12, 24, 30, 10, 26, 10, 14, 30, 14, 34)):
+    for letra, ancho in zip("ABCDEFGHIJK", (12, 24, 30, 10, 26, 10, 14, 30, 14, 34, 16)):
         hoja.column_dimensions[letra].width = ancho
     salida = BytesIO()
     libro.save(salida)

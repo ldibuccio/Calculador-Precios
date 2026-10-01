@@ -40,9 +40,11 @@
 {{ fotos_para_subir.estilos() }}</style>
 </head>
 <body>
-  {% set barra_sector = "deposito" %}
+  {# La misma pantalla en Depósito y en Administración (dueño, 01/10): el
+     camino sale del prefijo, y con él la barra, el atrás y los formularios. #}
+  {% set barra_sector = camino.sector %}
   {% set barra_titulo = "Devolver Mercadería" %}
-  {% set barra_atras = "/deposito" %}
+  {% set barra_atras = camino.base %}
   {% from "_info.html" import info %}
   {% include "_barra_navegacion.html" %}
 
@@ -52,7 +54,7 @@
   {# PRIMERO EL PROVEEDOR: un GET, así la lista de compras de abajo es la de
      ese proveedor y nada más. Solo los que tienen compras recibidas en los
      últimos días: uno sin compras no tiene qué devolver. #}
-  <form class="tarjeta" method="get" action="/deposito/devolver" id="form-proveedor">
+  <form class="tarjeta" method="get" action="{{ camino.base }}/devolver" id="form-proveedor">
     <label for="proveedor_id">¿A qué proveedor le devolvés?</label>
     <select id="proveedor_id" name="proveedor_id" onchange="this.form.submit()">
       <option value="">Elegí el proveedor...</option>
@@ -64,7 +66,7 @@
   </form>
 
   {% if proveedor %}
-  <form method="post" action="/deposito/devolver" id="form-devolver" enctype="multipart/form-data">
+  <form method="post" action="{{ camino.base }}/devolver" id="form-devolver" enctype="multipart/form-data">
     <input type="hidden" name="proveedor_id" value="{{ proveedor.id }}">
     <div class="tarjeta">
       <h2>¿De qué compra sale?</h2>
@@ -100,7 +102,7 @@
     {{ fotos_para_subir.tarjeta("Fotos (opcional)", "＋ Agregar foto") }}
     <div class="tarjeta">
       <button type="submit" id="boton-devolver">Guardar la devolución</button>
-      <a class="boton boton-secundario" href="/deposito">Volver a Depósito</a>
+      <a class="boton boton-secundario" href="{{ camino.base }}">{{ camino.volver }}</a>
     </div>
     {% endif %}
   </form>

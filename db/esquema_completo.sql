@@ -1448,6 +1448,14 @@ create table movimientos_stock (
     constraint movimientos_stock_devolucion_deposito_completa
         check (tipo <> 'devolucion_deposito'
                or (compra_devolucion_id is not null and cantidad < 0)),
+    -- Desde qué SECTOR se cargó la devolución desde depósito (dueño, 01/10):
+    -- Depósito o Administración, con la misma pantalla. Solo la lleva ese
+    -- tipo. Ver db/devolucion_sector_1_columna.sql y _2_obligatoria.sql.
+    cargada_desde text
+        constraint movimientos_stock_cargada_desde_valida
+        check (cargada_desde is null or cargada_desde in ('deposito', 'administracion')),
+    constraint movimientos_stock_devolucion_con_sector
+        check ((tipo = 'devolucion_deposito') = (cargada_desde is not null)),
     -- Y NO PUEDEN CONVIVIR: con la compra elegida el proveedor se lee de
     -- ella; sin compra queda el proveedor suelto. Escritos los dos serían la
     -- misma cosa dos veces, y se pueden contradecir.

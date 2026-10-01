@@ -71,10 +71,19 @@
           {% endfor %}
         </select>
       </label>
+      {# DESDE QUÉ SECTOR se cargó la devolución desde depósito (dueño, 01/10).
+         Elegir uno deja solo esas devoluciones: es la única fila que lo dice. #}
+      <label>Cargada desde
+        <select name="sector">
+          {% for valor, texto in opciones_de_sector %}
+          <option value="{{ valor }}" {% if (filtros.sector or '') == valor %}selected{% endif %}>{{ texto }}</option>
+          {% endfor %}
+        </select>
+      </label>
     </div>
     <div class="acciones">
       <button type="submit">Filtrar</button>
-      <a href="/administracion/ingresos/movimientos-excel?desde={{ filtros.desde.isoformat() }}&amp;hasta={{ filtros.hasta.isoformat() }}&amp;tipo={{ filtros.tipo or '' }}&amp;proveedor_id={{ filtros.proveedor_id if filtros.proveedor_id is not none else '' }}&amp;articulo_id={{ filtros.articulo_id if filtros.articulo_id is not none else '' }}">Exportar Excel</a>
+      <a href="/administracion/ingresos/movimientos-excel?desde={{ filtros.desde.isoformat() }}&amp;hasta={{ filtros.hasta.isoformat() }}&amp;tipo={{ filtros.tipo or '' }}&amp;proveedor_id={{ filtros.proveedor_id if filtros.proveedor_id is not none else '' }}&amp;articulo_id={{ filtros.articulo_id if filtros.articulo_id is not none else '' }}&amp;sector={{ filtros.sector or '' }}">Exportar Excel</a>
       {# LA PLANILLA PARA PAGAR sigue: lo que hay que depositarle a cada
          proveedor, con sus señas, su PDF y su Excel. #}
       <a href="/administracion/ingresos/pagar?fecha_desde={{ filtros.desde.isoformat() }}&amp;fecha_hasta={{ filtros.hasta.isoformat() }}">Planilla para pagar</a>
@@ -101,7 +110,8 @@
         {%- if m.compra_id %} · compra #{{ m.compra_id }}{% endif %}
         {%- if m.valor is not none %} · {{ '-' if m.valor < 0 }}${{ '{:,.0f}'.format(m.valor|abs).replace(',', '.') }}{% elif m.tipo != 'segunda' %} · sin precio{% endif %}
         {%- if m.motivo %} · {{ m.motivo }}{% endif %}
-        {%- if m.sena %} · <span class="sena">{{ texto_de_la_sena(m) }}</span>{% endif %}</div>
+        {%- if m.sena %} · <span class="sena">{{ texto_de_la_sena(m) }}</span>{% endif %}
+        {%- if m.sector %} · <span class="sector">{{ texto_del_sector(m) }}</span>{% endif %}</div>
     </div>
     {% endfor %}
   </div>
