@@ -161,7 +161,9 @@ def test_ADMINISTRACION_anexa_VARIAS_fotos_y_el_detalle_las_muestra_en_orden_con
 
 def test_se_anexa_en_CUALQUIER_estado_y_desde_GERENCIA_queda_su_sector(base, monkeypatch):
     d, sql = base
-    d.registrar_salida_de_vale(2, "anulado", date(2026, 11, 30), sector="gerencia", hoy=HOY, motivo="EJ")
+    # El 2 es un vale en PAPEL: no se anula (dueño, 01/10), sale cruzado.
+    d.registrar_salida_de_vale(2, "cruzado", date(2026, 11, 30), sector="administracion", hoy=HOY,
+                               referencia="EJ-L1")
     rutas, subir = _subidas()
     cliente = _cliente(monkeypatch, "gerencia")
     with patch("app.main._hoy_argentina", return_value=HOY), patch("app.main.subir_foto_comanda", side_effect=subir):
@@ -685,7 +687,8 @@ def test_la_foto_ANEXADA_a_un_vale_en_cartera_tambien_queda_protegida(base):
     d.anexar_fotos_al_vale(2, ["vales/EJ-anexada.jpg"], sector="administracion")
     protegidas = {f["ruta"]: f["protegida"] for f in d.fotos_de_respaldo()}
     assert protegidas["vales/EJ-anexada.jpg"] == "vale"
-    d.registrar_salida_de_vale(2, "anulado", date(2026, 11, 1), sector="gerencia", hoy=HOY, motivo="EJ")
+    d.registrar_salida_de_vale(2, "cruzado", date(2026, 11, 1), sector="administracion", hoy=HOY,
+                               referencia="EJ-L1")
     assert {f["ruta"]: f["protegida"] for f in d.fotos_de_respaldo()}["vales/EJ-anexada.jpg"] is None
 
 

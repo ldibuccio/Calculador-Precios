@@ -13,6 +13,9 @@ la cuenta del proveedor sin sacar cuentas aparte; las dos partes van
 igual desglosadas en cada subtotal y en el total, para poder cruzarlas
 por separado.
 
+Las devoluciones al proveedor (dueño, 01/10) van como renglón NEGATIVO del
+día en que se devolvió: el subtotal es lo que entró menos lo devuelto.
+
 grupos/totales: los mismos que arma _grupos_ingresos_deposito en
 app/main.py — esto solo arma bytes en memoria, nunca guarda nada.
 """
@@ -62,17 +65,24 @@ def _formatear_moneda(valor) -> str:
 
 
 def _texto_recepcion(fila: dict) -> str:
+    if fila.get("devolucion"):
+        return fila["fecha"].strftime("%d/%m")
     return fila["procesada_el"].strftime("%d/%m %H:%M") if fila["procesada_el"] else "—"
 
 
 def _texto_guia(fila: dict) -> str:
+    if fila.get("devolucion"):
+        return f"Compra {fila['compra_id']}" if fila.get("compra_id") else "—"
     if fila["guia_id"] is None:
         return "—"
     return f"{fila['guia_id']}.{fila['guia_punto']}"
 
 
 def _texto_cantidad_real(fila: dict) -> str:
-    """"8 × 20k" con las columnas REALES; una rechazada total/no ingresada no tiene nada contado ("—")."""
+    """"8 × 20k" con las columnas REALES; una rechazada total/no ingresada no tiene nada contado ("—").
+    Una devolución al proveedor dice sus bultos, en negativo."""
+    if fila.get("devolucion"):
+        return f"{_formatear_numero(fila['bultos'])} bultos"
     if fila["cantidad_cajones_real"] is None:
         return "—"
     sufijo = SUFIJOS_UNIDAD_COMPRA.get(fila.get("unidad_compra"), "")
@@ -311,8 +321,15 @@ def generar_excel_ingresos_deposito(
         fila_actual += 1
 
         for fila in grupo["filas"]:
-            hoja.cell(row=fila_actual, column=1, value=fila["procesada_el"].strftime("%d/%m/%Y") if fila["procesada_el"] else "—")
-            hoja.cell(row=fila_actual, column=2, value=fila["procesada_el"].strftime("%H:%M") if fila["procesada_el"] else "—")
+            if fila.get("devolucion"):
+                # Devolución al proveedor (dueño, 01/10): el día en que se
+                # devolvió, la compra en "Guía" y los bultos en negativo.
+                hoja.cell(row=fila_actual, column=1, value=fila["fecha"].strftime("%d/%m/%Y"))
+                hoja.cell(row=fila_actual, column=2, value="—")
+                hoja.cell(row=fila_actual, column=5, value=float(fila["bultos"]))
+            else:
+                hoja.cell(row=fila_actual, column=1, value=fila["procesada_el"].strftime("%d/%m/%Y") if fila["procesada_el"] else "—")
+                hoja.cell(row=fila_actual, column=2, value=fila["procesada_el"].strftime("%H:%M") if fila["procesada_el"] else "—")
             hoja.cell(row=fila_actual, column=3, value=_texto_guia(fila))
             hoja.cell(row=fila_actual, column=4, value=fila["articulo_nombre"])
             if fila["cantidad_cajones_real"] is not None:

@@ -161,8 +161,23 @@ def test_ANULAR_es_solo_de_GERENCIA_y_con_motivo_en_el_codigo_Y_en_la_base(base)
     with pytest.raises(psycopg2.errors.CheckViolation):
         sql("INSERT INTO vales_a_cobrar_salidas (vale_id, tipo, fecha, sector) "
             "VALUES (%s, 'cobrado', '2026-11-30', 'administracion')", (vid,))
-    d.registrar_salida_de_vale(vid, "anulado", date(2026, 11, 30), sector="gerencia", hoy=HOY, motivo="EJ perdido")
+    # El de PAPEL no se anula (dueño, 01/10): el de una devolución sí.
+    with pytest.raises(ValueError, match="en papel no se anula"):
+        d.registrar_salida_de_vale(vid, "anulado", date(2026, 11, 30), sector="gerencia", hoy=HOY,
+                                   motivo="EJ perdido")
+    assert sql("SELECT count(*) FROM vales_a_cobrar_salidas") == [(0,)]
+    _devolucion(d)
+    (de_devolucion,) = [v["id"] for v in d.listar_vales(hoy=HOY) if v["origen"] == "devolucion"]
+    d.registrar_salida_de_vale(de_devolucion, "anulado", date(2026, 11, 30), sector="gerencia", hoy=HOY,
+                               motivo="EJ perdido")
     assert d.listar_vales(estado="anulado", hoy=HOY)[0]["motivo"] == "EJ perdido"
+
+
+def test_el_vale_en_PAPEL_sale_cobrado_o_cruzado_y_nunca_anulado():
+    import app.db as d
+    assert d.salidas_del_vale("anterior_al_sistema", "gerencia") == []
+    assert d.salidas_del_vale("anterior_al_sistema", "administracion") == ["cobrado", "cruzado"]
+    assert d.salidas_del_vale("devolucion", "gerencia") == ["anulado"]
 
 
 def test_CRUZADO_pide_referencia_y_la_fecha_no_puede_ser_futura(base):
@@ -307,7 +322,9 @@ def test_ADMINISTRACION_ve_el_total_y_cobra_desde_el_detalle(base, monkeypatch):
 def test_GERENCIA_pide_su_clave_anula_y_fija_los_limites(base, monkeypatch):
     from unittest.mock import patch
     d, sql = base
-    vid = _anterior(sql, 1000, date(2026, 11, 1))
+    papel = _anterior(sql, 1000, date(2026, 11, 1))
+    _devolucion(d)
+    (vid,) = [v["id"] for v in d.listar_vales(hoy=HOY) if v["origen"] == "devolucion"]
     sin_clave = _cliente(monkeypatch, "administracion")
     monkeypatch.setenv("CLAVE_GERENCIA", "clave-gerencia")     # con la clave puesta y sin la cookie
     with patch("app.main._hoy_argentina", return_value=HOY):
@@ -315,6 +332,7 @@ def test_GERENCIA_pide_su_clave_anula_y_fija_los_limites(base, monkeypatch):
         assert "en cartera" not in sin.text and "type=\"password\"" in sin.text
         cliente = _cliente(monkeypatch, "gerencia")
         detalle = cliente.get(f"/gerencia/vales/{vid}")
+        detalle_papel = cliente.get(f"/gerencia/vales/{papel}")
         anulado = cliente.post(f"/gerencia/vales/{vid}/anular", data={"fecha": "2026-11-30", "motivo": "EJ"},
                                follow_redirects=False)
         limites = cliente.post("/gerencia/vales/limites", data={"monto": "700.000", "dias": "20"},
@@ -322,6 +340,7 @@ def test_GERENCIA_pide_su_clave_anula_y_fija_los_limites(base, monkeypatch):
         listado = cliente.get("/gerencia/vales")
     marcado = _marcado(detalle)
     assert f'action="/gerencia/vales/{vid}/anular"' in marcado and "/cobrar" not in marcado
+    assert "/anular" not in _marcado(detalle_papel)          # el de papel no se anula
     assert anulado.status_code == 303 and limites.status_code == 303
     assert d.listar_vales(estado="anulado", hoy=HOY)[0]["salida_sector"] == "gerencia"
     assert d.limites_de_vales() == {"monto": 700000.0, "dias": 20}

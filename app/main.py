@@ -76,7 +76,8 @@ import psycopg2
 
 from app.db import (
     RemitoNoSePuede,
-    anular_remito,
+    correcciones_de_numero,
+    corregir_numero_de_remito,
     buscar_remitos_por_numero,
     contar_ordenes_sin_remito,
     contar_remitos_con_rechazo_distinto,
@@ -377,6 +378,7 @@ from app.db import (
     total_de_vacios_en_galpon,
     contar_vacios_para_devolver,
     SECTOR_DE_LA_SALIDA,
+    salidas_del_vale,
     contar_vales_plata_sin_aplicar,
     contar_vales_viejos,
     foto_del_vale,
@@ -644,7 +646,9 @@ from core.remitos import (
     importe_del_remito,
     importe_del_renglon,
     leer_recepcion,
+    rechazo_del_remito,
     rechazo_no_coincide,
+    renglon_cambio,
     sin_factura_hace_mucho,
     sin_volver_hace_mucho,
 )
@@ -17854,14 +17858,14 @@ def _detalle_de_rechazos_distintos() -> dict:
             if rechazo_no_coincide(renglon):
                 filas.append([f"{remito['numero']} · {remito['cliente']} · {remito['sucursal']}",
                               renglon["articulo_nombre"] or "(sin identificar)",
-                              _formatear_numero(renglon["bultos_rechazados"]),
+                              _formatear_numero(rechazo_del_remito(renglon)),
                               _formatear_numero(renglon["rechazo_deposito"])])
     return {
         "columnas": ["Remito", "Artículo", "Remito dice", "Depósito cargó"],
         "filas": filas,
         "resumen": f"{len(remitos)} remito{'s' if len(remitos) != 1 else ''}, {len(filas)} renglón"
                    f"{'es' if len(filas) != 1 else ''}",
-        "nota": "los rechazos se cargan en Depósito: el remito no mueve stock",
+        "nota": "rechazo del remito = enviados − recibidos; lo carga Depósito, el remito no mueve stock",
     }
 
 
@@ -19486,7 +19490,51 @@ ETIQUETAS_ESTADO_INGRESO = {
 }
 
 
-def _grupos_ingresos_deposito(ingresos: list[dict]) -> tuple[list[dict], dict]:
+TEXTO_DE_LA_DEVOLUCION_EN_LA_PLANILLA = {
+    "rechazo": "Devolución por rechazo",
+    "deposito": "Devolución desde depósito",
+}
+
+
+def _devoluciones_para_pagar(desde: date, hasta: date, proveedor_id: int | None,
+                             articulo_id: int | None) -> list[dict]:
+    """Las devoluciones de mercadería al proveedor del rango, por el DÍA en que
+    se devolvió (dueño, 01/10): las dos clases, por rechazo y desde depósito.
+    Salen de la MISMA consulta que Movimientos del depósito, así las dos
+    pantallas no pueden decir importes distintos."""
+    return [m for m in movimientos_del_deposito(desde, hasta, proveedor_id=proveedor_id,
+                                                articulo_id=articulo_id)
+            if m["tipo"] in TEXTO_DE_LA_DEVOLUCION_EN_LA_PLANILLA]
+
+
+def _fila_de_devolucion(devolucion: dict) -> dict:
+    """Una devolución como renglón NEGATIVO de la planilla para pagar.
+
+    Mercadería: los bultos devueltos al valor que cancela (el de la compra; en
+    un rechazo en caja de Día o sin compra, el costo congelado). Seña: la que
+    pagaron esos cajones, que vuelven llenos por cuenta corriente "como si
+    nunca hubiera entrado" (dueño, 30/09); viene en None si no corresponde.
+    """
+    bultos = float(devolucion["bultos"])                    # ya negativo
+    total = devolucion["valor"]                             # ya negativo, o None sin precio
+    sena = devolucion.get("sena")
+    total_sena = bultos * sena if sena is not None else None
+    total_a_depositar = None
+    if total is not None or total_sena is not None:
+        total_a_depositar = (total or 0.0) + (total_sena or 0.0)
+    return {
+        "devolucion": True, "fecha": devolucion["fecha"], "compra_id": devolucion["compra_id"],
+        "articulo_nombre": devolucion["articulo"], "bultos": bultos,
+        "importe": (total / bultos) if total is not None and bultos else None,
+        "total": total, "sin_precio": total is None, "sena": sena, "total_sena": total_sena,
+        "total_a_depositar": total_a_depositar,
+        "estado_etiqueta": TEXTO_DE_LA_DEVOLUCION_EN_LA_PLANILLA[devolucion["tipo"]],
+        "procesada_el": None, "guia_id": None, "cantidad_cajones_real": None,
+        "contenido_por_cajon_real": None, "cantidad_cajones_rechazada": None,
+    }
+
+
+def _grupos_ingresos_deposito(ingresos: list[dict], devoluciones: list[dict] = ()) -> tuple[list[dict], dict]:
     """Agrupa los ingresos por proveedor con su subtotal (así se factura), y arma el total general.
 
     Por fila: mercadería = cantidad_cajones_real × importe (el precio es
@@ -19495,6 +19543,10 @@ def _grupos_ingresos_deposito(ingresos: list[dict]) -> tuple[list[dict], dict]:
     de los cajones — con eso se concilia contra la cuenta del proveedor
     sin sacar cuentas aparte. Los subtotales y el total general llevan
     las dos partes desglosadas, para poder cruzarlas por separado.
+
+    LAS DEVOLUCIONES AL PROVEEDOR (dueño, 01/10) van como renglón NEGATIVO del
+    día en que se devolvió, en el grupo de su proveedor: al pagarle se ve lo
+    que entró menos lo que se le devolvió, y el subtotal ya es el neto.
 
     Sin precio cargado no hay total — la fila queda marcada (sin_precio)
     porque es lo que falta completar antes de facturar; una rechazada
@@ -19508,13 +19560,12 @@ def _grupos_ingresos_deposito(ingresos: list[dict]) -> tuple[list[dict], dict]:
     total_senas = 0.0
     cantidad_sin_precio = 0
 
-    for ingreso in ingresos:
-        clave = ingreso["proveedor_codigo_puesto"]
+    def _grupo(clave, nombre, codigo):
         grupo = grupos_por_proveedor.get(clave)
         if grupo is None:
             grupo = {
-                "proveedor_nombre": ingreso["proveedor_nombre"],
-                "proveedor_codigo_puesto": clave,
+                "proveedor_nombre": nombre,
+                "proveedor_codigo_puesto": codigo,
                 # Los puestos por los que llegaron (27/09): el grupo es el
                 # proveedor —a quien se le deposita—, y el título dice por
                 # cuáles de sus puestos entró la mercadería.
@@ -19527,6 +19578,13 @@ def _grupos_ingresos_deposito(ingresos: list[dict]) -> tuple[list[dict], dict]:
             }
             grupos_por_proveedor[clave] = grupo
             grupos.append(grupo)
+        return grupo
+
+    for ingreso in ingresos:
+        # Por el PROVEEDOR (a quien se le deposita), que es lo que una
+        # devolución también sabe; el código principal si no viene el id.
+        grupo = _grupo(ingreso.get("proveedor_id") or ingreso["proveedor_codigo_puesto"],
+                       ingreso["proveedor_nombre"], ingreso["proveedor_codigo_puesto"])
         if ingreso["codigo_llegada"] not in grupo["codigos_llegada"]:
             grupo["codigos_llegada"].append(ingreso["codigo_llegada"])
 
@@ -19564,6 +19622,33 @@ def _grupos_ingresos_deposito(ingresos: list[dict]) -> tuple[list[dict], dict]:
             {**ingreso, "total": total, "sin_precio": sin_precio, "estado_etiqueta": etiqueta,
              "sena": sena, "total_sena": total_sena, "total_a_depositar": total_a_depositar}
         )
+
+    for devolucion in devoluciones:
+        fila = _fila_de_devolucion(devolucion)
+        grupo = _grupo(devolucion["proveedor_id"], devolucion["proveedor"], devolucion.get("proveedor_codigo"))
+        if not grupo["codigos_llegada"] and devolucion.get("proveedor_codigo"):
+            grupo["codigos_llegada"].append(devolucion["proveedor_codigo"])
+        if fila["total"] is not None:
+            grupo["subtotal_mercaderia"] += fila["total"]
+            total_mercaderia += fila["total"]
+        if fila["total_sena"] is not None:
+            grupo["subtotal_senas"] += fila["total_sena"]
+            total_senas += fila["total_sena"]
+        if fila["total_a_depositar"] is not None:
+            grupo["subtotal"] += fila["total_a_depositar"]
+        if fila["sin_precio"]:
+            grupo["sin_precio"] += 1
+            cantidad_sin_precio += 1
+        grupo["devoluciones"] = grupo.get("devoluciones", 0) + 1
+        grupo["filas"].append(fila)
+
+    # Cada grupo en orden de DÍA: la devolución cae en el día en que se
+    # devolvió, entre las recepciones (sort estable: adentro de un día, las
+    # recepciones en su orden y después las devoluciones).
+    for grupo in grupos:
+        grupo["filas"].sort(key=lambda f: f["fecha"] if f.get("devolucion") else
+                            (f["procesada_el"].astimezone(ARGENTINA).date() if f.get("procesada_el")
+                             else date.max))
 
     totales = {
         "total_general": total_mercaderia + total_senas,
@@ -19694,6 +19779,8 @@ def _remito_para_mostrar(remito: dict, hoy: date) -> dict:
     for renglon in remito["renglones"]:
         renglon["diferencia_rechazo"] = diferencia_de_rechazo(renglon)
         renglon["rechazo_distinto"] = rechazo_no_coincide(renglon)
+        renglon["rechazo_remito"] = rechazo_del_remito(renglon)
+        renglon["cambio"] = renglon_cambio(renglon)
         renglon["importe"] = importe_del_renglon(renglon)
         renglon["sufijo"] = SUFIJOS_FICHA_REPROCESO.get(renglon.get("unidad_venta"), "")
     estado = estado_del_remito(remito)
@@ -19701,6 +19788,7 @@ def _remito_para_mostrar(remito: dict, hoy: date) -> dict:
     remito["estado_texto"] = TEXTO_DEL_ESTADO_REMITO[estado]
     remito["importe"] = importe_del_remito(remito["renglones"])
     remito["rechazos_distintos"] = sum(1 for r in remito["renglones"] if r["rechazo_distinto"])
+    remito["renglones_cambiados"] = sum(1 for r in remito["renglones"] if r["cambio"])
     remito["sin_volver"] = sin_volver_hace_mucho(remito, hoy)
     remito["sin_factura"] = sin_factura_hace_mucho(remito, hoy)
     remito["dias_emitido"] = (hoy - remito["emitido_el"].astimezone(ARGENTINA).date()).days
@@ -19708,9 +19796,13 @@ def _remito_para_mostrar(remito: dict, hoy: date) -> dict:
                                else (hoy - remito["recibido_el"].astimezone(ARGENTINA).date()).days)
     # Los días se muestran en hora ARGENTINA: lo convierte el que muestra
     # (corolario 21), no un filtro que no sabe de zonas.
-    for campo in ("emitido_el", "recibido_el", "facturado_el", "anulado_el"):
+    for campo in ("emitido_el", "recibido_el", "facturado_el"):
         valor = remito.get(campo)
         remito[campo.replace("_el", "_dia")] = None if valor is None else valor.astimezone(ARGENTINA).date()
+    remito["recibido_hora"] = (None if remito["recibido_el"] is None
+                               else remito["recibido_el"].astimezone(ARGENTINA).strftime("%d/%m/%Y %H:%M"))
+    for correccion in remito.get("numeros", []):
+        correccion["corregido_texto"] = correccion["corregido_el"].astimezone(ARGENTINA).strftime("%d/%m/%Y %H:%M")
     return remito
 
 
@@ -19836,8 +19928,8 @@ def _renderizar_recibir(request: Request, remito_id: int, *, cargado: dict | Non
 
 @app.get("/administracion/facturacion/remito/{remito_id}/recibir")
 def ver_recibir_remito(request: Request, remito_id: int):
-    """Los renglones con los kilos recibidos PRECARGADOS con los enviados: solo
-    se cambia lo que vino distinto. Los rechazos según el papel, y la foto del
+    """ESE MISMO remito, con los bultos y kilos recibidos PRECARGADOS con los
+    enviados: solo se cambia lo que el súper anotó distinto. La foto del
     remito firmado, obligatoria."""
     return _renderizar_recibir(request, remito_id)
 
@@ -19862,9 +19954,9 @@ async def recibir_remito_ruta(request: Request, remito_id: int):
         return rebote(f"No se pudo leer el remito: {error_db}", 500)
     if remito is None:
         raise HTTPException(status_code=404, detail="Ese remito no existe")
+    bultos = {r["id"]: formulario.get(f"bultos_{r['id']}") for r in remito["renglones"]}
     kilos = {r["id"]: formulario.get(f"kilos_{r['id']}") for r in remito["renglones"]}
-    rechazos = {r["id"]: formulario.get(f"rechazo_{r['id']}") for r in remito["renglones"]}
-    error, recepcion = leer_recepcion(remito["renglones"], kilos, rechazos)
+    error, recepcion = leer_recepcion(remito["renglones"], bultos, kilos)
     if error:
         return rebote(error)
     error, comprimidas = await _fotos_de_pesada_comprimidas(fotos)
@@ -19911,12 +20003,15 @@ async def facturar_remitos_ruta(request: Request):
 @app.get("/gerencia/facturacion/remito/{remito_id}")
 def ver_remito(request: Request, remito_id: int, aviso: str | None = None, error: str | None = None):
     """El remito entero: estado, lo que salió, lo recibido, el cotejo de los
-    rechazos contra Depósito, el importe a cobrar y las fotos del firmado."""
+    rechazos contra Depósito, el importe a cobrar, las fotos del firmado y las
+    correcciones del número."""
     sin_clave = _sin_clave_de_facturacion(request)
     if sin_clave is not None:
         return sin_clave
     try:
         remito = remito_por_id(remito_id)
+        if remito is not None:
+            remito["numeros"] = correcciones_de_numero(remito_id)
     except Exception as error_db:
         raise HTTPException(status_code=500, detail=f"Error al conectar con la base de datos: {error_db}") from error_db
     if remito is None:
@@ -19942,18 +20037,19 @@ def ver_foto_de_remito(request: Request, remito_id: int, foto_id: int):
     return _ir_a_la_foto(foto["ruta"], status_code=303)
 
 
-@app.post("/gerencia/facturacion/remito/{remito_id}/anular")
-def anular_remito_ruta(request: Request, remito_id: int, motivo: str = Form("")):
-    """Gerencia anula un remito con error, con motivo. Después se emite de nuevo."""
+@app.post("/gerencia/facturacion/remito/{remito_id}/numero")
+def corregir_numero_de_remito_ruta(request: Request, remito_id: int, numero: str = Form("")):
+    """Gerencia corrige el número de un remito (error de tipeo). Un remito no
+    se anula: vuelve con sus observaciones. Queda el registro del cambio."""
     puerta = _puerta_de_gerencia_para_escribir(request)
     if puerta is not None:
         return puerta
     try:
-        anular_remito(remito_id, motivo)
+        corregir_numero_de_remito(remito_id, numero)
     except RemitoNoSePuede as error:
         return RedirectResponse(url=f"/gerencia/facturacion/remito/{remito_id}?" + urlencode({"error": str(error)}),
                                 status_code=303)
-    aviso = "Remito anulado. La orden de compra vuelve a quedar sin remito: emitilo de nuevo."
+    aviso = "Número corregido. El anterior queda en el registro."
     return RedirectResponse(url=f"/gerencia/facturacion/remito/{remito_id}?" + urlencode({"aviso": aviso}),
                             status_code=303)
 
@@ -20097,8 +20193,7 @@ def _renderizar_vale(request: Request, vale_id: int, *, aviso: str | None = None
         raise HTTPException(status_code=404, detail="Ese vale no existe")
     # LO QUE ESTE SECTOR PUEDE HACER con este vale: la misma regla que la base
     # (SECTOR_DE_LA_SALIDA), así no se ofrece un botón que el POST rechaza.
-    salidas = [tipo for tipo, sector in SECTOR_DE_LA_SALIDA.items()
-               if sector == camino["sector"]] if vale["estado"] == "en_cartera" else []
+    salidas = salidas_del_vale(vale["origen"], camino["sector"]) if vale["estado"] == "en_cartera" else []
     return templates.TemplateResponse(request, "vale_a_cobrar.html", {
         "camino": camino, "vale": vale, "salidas": salidas, "hoy": hoy, "fotos": fotos,
         "texto_de_la_foto": texto_de_la_foto_vale, "texto_del_estado": TEXTO_DEL_ESTADO_VALE, "texto_del_origen": TEXTO_DEL_ORIGEN_VALE,
@@ -20329,10 +20424,13 @@ def ver_ingresos_deposito(
                 f"Se muestran los primeros {TOPE_FILAS_BUSQUEDA} ingresos de {total}, y por eso los totales "
                 "no se calculan (saldrían incompletos): achicá el rango o filtrá para ver todo."
             )
+        devoluciones = (_devoluciones_para_pagar(fecha_desde_valor, fecha_hasta_valor, proveedor_id_valor,
+                                                 articulo_id_valor)
+                        if estado_consulta in ("recepcionado", None) and error_fecha is None else [])
     except Exception as error_db:
         raise HTTPException(status_code=500, detail=f"Error al conectar con la base de datos: {error_db}") from error_db
 
-    grupos, totales = _grupos_ingresos_deposito(ingresos)
+    grupos, totales = _grupos_ingresos_deposito(ingresos, devoluciones)
 
     return templates.TemplateResponse(
         request,
@@ -20400,10 +20498,12 @@ def exportar_ingresos_deposito_pdf(
     )
     try:
         ingresos = buscar_ingresos_deposito(desde, hasta, proveedor_valor, articulo_valor, estado_consulta)
+        devoluciones = (_devoluciones_para_pagar(desde, hasta, proveedor_valor, articulo_valor)
+                        if estado_consulta in ("recepcionado", None) else [])
     except Exception as error_db:
         raise HTTPException(status_code=500, detail=f"Error al conectar con la base de datos: {error_db}") from error_db
 
-    grupos, totales = _grupos_ingresos_deposito(ingresos)
+    grupos, totales = _grupos_ingresos_deposito(ingresos, devoluciones)
     pdf_bytes = generar_pdf_ingresos_deposito(desde, hasta, filtros_texto, grupos, totales)
     nombre_archivo = f"Ingresos_Deposito_{desde.isoformat()}_a_{hasta.isoformat()}.pdf"
     return Response(
@@ -20423,10 +20523,12 @@ def exportar_ingresos_deposito_excel(
     )
     try:
         ingresos = buscar_ingresos_deposito(desde, hasta, proveedor_valor, articulo_valor, estado_consulta)
+        devoluciones = (_devoluciones_para_pagar(desde, hasta, proveedor_valor, articulo_valor)
+                        if estado_consulta in ("recepcionado", None) else [])
     except Exception as error_db:
         raise HTTPException(status_code=500, detail=f"Error al conectar con la base de datos: {error_db}") from error_db
 
-    grupos, totales = _grupos_ingresos_deposito(ingresos)
+    grupos, totales = _grupos_ingresos_deposito(ingresos, devoluciones)
     excel_bytes = generar_excel_ingresos_deposito(desde, hasta, filtros_texto, grupos, totales)
     nombre_archivo = f"Ingresos_Deposito_{desde.isoformat()}_a_{hasta.isoformat()}.xlsx"
     return Response(

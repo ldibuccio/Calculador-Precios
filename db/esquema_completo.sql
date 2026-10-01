@@ -1986,7 +1986,7 @@ comment on table fotos_borradas_por_antiguedad is 'REGISTRO de las fotos cuyo AR
 
 -- REMITOS (dueño, 01/10): uno por ORDEN DE COMPRA (pedidos_sucursales). El
 -- remito oficial sale de otro sistema; acá se anota su número, se congela lo
--- que salió, se carga lo recibido y la factura. Ver db/remitos_1..4.
+-- que salió, se carga lo recibido y la factura. NO SE ANULA. Ver db/remitos_1..5.
 create table remitos (
     id                 bigint generated always as identity primary key,
     pedido_sucursal_id bigint not null references pedidos_sucursales (id),
@@ -1996,18 +1996,13 @@ create table remitos (
     recibido_el        timestamptz,
     factura_numero     text check (factura_numero is null or btrim(factura_numero) <> ''),
     facturado_el       timestamptz,
-    anulado_el         timestamptz,
-    anulado_motivo     text check (anulado_motivo is null or btrim(anulado_motivo) <> ''),
     constraint remitos_factura_coherente check ((factura_numero is null) = (facturado_el is null)),
-    constraint remitos_factura_despues_de_recibir check (facturado_el is null or recibido_el is not null),
-    constraint remitos_anulado_con_motivo check ((anulado_el is null) = (anulado_motivo is null)),
-    constraint remitos_facturado_no_se_anula check (anulado_el is null or facturado_el is null)
+    constraint remitos_factura_despues_de_recibir check (facturado_el is null or recibido_el is not null)
 );
 create unique index remitos_numero_por_cliente
-    on remitos (cliente_id, upper(btrim(numero))) where anulado_el is null;
-create unique index remitos_uno_vivo_por_orden
-    on remitos (pedido_sucursal_id) where anulado_el is null;
-comment on table remitos is 'El remito OFICIAL de una orden de compra (pedidos_sucursales), dueño 01/10. Uno vivo por orden. Estados derivados: emitido, recibido (recibido_el), facturado (factura_numero). Anulado lo hace Gerencia con motivo; uno facturado no se anula.';
+    on remitos (cliente_id, upper(btrim(numero)));
+create unique index remitos_uno_por_orden on remitos (pedido_sucursal_id);
+comment on table remitos is 'Un remito por orden de compra (pedidos_sucursales). El remito oficial sale de otro sistema: aca se anota el numero, se congela lo que salio, lo que el super firmo y el numero de factura. NO SE ANULA: vuelve con sus observaciones. Gerencia puede corregir el numero (remitos_numeros).';
 
 create table remitos_renglones (
     id                bigint generated always as identity primary key,
@@ -2015,15 +2010,26 @@ create table remitos_renglones (
     pedido_renglon_id bigint not null references pedidos_renglones (id),
     bultos_enviados   numeric not null check (bultos_enviados > 0),
     kilos_enviados    numeric not null check (kilos_enviados >= 0),
+    bultos_recibidos  numeric check (bultos_recibidos >= 0),
     kilos_recibidos   numeric check (kilos_recibidos >= 0),
-    bultos_rechazados numeric check (bultos_rechazados >= 0),
-    constraint remitos_renglones_rechazo_tope check (coalesce(bultos_rechazados <= bultos_enviados, true)),
-    constraint remitos_renglones_recibido_entero check ((kilos_recibidos is null) = (bultos_rechazados is null)),
+    constraint remitos_renglones_recibidos_tope check (coalesce(bultos_recibidos <= bultos_enviados, true)),
+    constraint remitos_renglones_recibido_entero check ((kilos_recibidos is null) = (bultos_recibidos is null)),
     unique (remito_id, pedido_renglon_id)
 );
 create index remitos_renglones_por_renglon on remitos_renglones (pedido_renglon_id);
-comment on table remitos_renglones is 'Lo que salió en el remito, CONGELADO al emitir, y lo que el remito firmado dice que se recibió (kilos recibidos y bultos rechazados). Los rechazos NO mueven stock: se cotejan contra los que cargó depósito.';
+comment on table remitos_renglones is 'Lo que salio, CONGELADO al emitir (bultos y kilos enviados), y lo que el super firmo que recibio: bultos y kilos recibidos. No mueve stock: enviados - recibidos se coteja contra los rechazos de deposito.';
 comment on column remitos_renglones.kilos_enviados is 'La magnitud de la ficha (kilos, unidades o cubetas), igual que pedidos_renglones.kilos_enviados, de donde se copia.';
+
+create table remitos_numeros (
+    id              bigint generated always as identity primary key,
+    remito_id       bigint not null references remitos (id),
+    numero_anterior text not null check (btrim(numero_anterior) <> ''),
+    numero_nuevo    text not null check (btrim(numero_nuevo) <> ''),
+    corregido_el    timestamptz not null default now(),
+    constraint remitos_numeros_distinto check (upper(btrim(numero_anterior)) <> upper(btrim(numero_nuevo)))
+);
+create index remitos_numeros_por_remito on remitos_numeros (remito_id);
+comment on table remitos_numeros is 'Las correcciones del numero de un remito (error de tipeo), solo Gerencia: el anterior, el nuevo y cuando. remitos.numero tiene el ultimo; esto es el registro y no se borra.';
 
 create table remitos_fotos (
     id        bigint generated always as identity primary key,
@@ -2032,4 +2038,4 @@ create table remitos_fotos (
     creado_en timestamptz not null default now()
 );
 create index remitos_fotos_por_remito on remitos_fotos (remito_id);
-comment on table remitos_fotos is 'Las fotos del remito FIRMADO (una o más, obligatorias al recibir). Bucket "comandas", prefijo "remitos".';
+comment on table remitos_fotos is 'Las fotos del remito FIRMADO que trae el camionero (una o mas, obligatorias al recibir). Bucket "comandas", prefijo "remitos".';

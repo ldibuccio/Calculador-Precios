@@ -18,4 +18,4 @@ begin
     'obligatorias al recibir). Bucket "comandas", prefijo "remitos".';
 end $$;
 
--- REMITOS, bloque 3 de 3: las fotos del remito firmado.
+-- REMITOS, bloque 3 de 4: las fotos del remito firmado.

@@ -6,7 +6,8 @@ es la cuenta exacta, mirando lo que pasó:
 
     + venta real   = kilos/unidades RECIBIDOS según el remito que volvió
                      (lo que se cobra, dueño 01/10); mientras el remito
-                     no vuelve, los ENVIADOS y el día queda provisorio ×
+                     no vuelve, los ENVIADOS, y desde REMITOS_DESDE el
+                     día queda provisorio ×
                      precio de lista vigente a la fecha del pedido ×
                      (1 + Σ tasas del cliente) — MISMO listado anclado
                      que Márgenes y la teórica.
@@ -63,6 +64,7 @@ con UNA porción sin costo queda afuera ENTERA (venta incluida): mejor
 un número chico y cierto que uno grande y mentiroso.
 """
 
+from core.remitos import REMITOS_DESDE
 from core.rentabilidad import ETIQUETAS_GRUPO, ETIQUETA_SIN_GRUPO, ORDEN_GRUPOS
 from core.stock import (
     DIAS_DE_MARGEN_DE_LA_GUIA_R,
@@ -378,9 +380,11 @@ def calcular_rentabilidad_real(
     kilos recibidos y no con los enviados, y su devolución NO resta venta: lo
     rechazado ya está afuera de lo recibido, restarlo otra vez sería cobrarlo
     dos veces de menos. El costo se acredita igual. Un renglón que no está
-    sigue con los enviados y su DÍA queda "provisorio (remito sin volver)" en
-    `fechas_provisorias`. None (los llamadores viejos) es no saber nada de
-    remitos: no marca ningún día.
+    sigue con los enviados, y si su día es de REMITOS_DESDE en adelante, ese
+    DÍA queda "provisorio (remito sin volver)" en `fechas_provisorias`. Antes
+    de esa fecha no hubo remitos en este sistema: el día sigue como siempre,
+    con los enviados, y no es provisorio (dueño, 01/10). None (los llamadores
+    viejos) es no saber nada de remitos: no marca ningún día.
     """
     recibidos = kilos_recibidos or {}
     fechas_provisorias = set()
@@ -516,12 +520,13 @@ def calcular_rentabilidad_real(
                     denominador = 1.0
                 envase_unidad = _numero(margen.get("costo_envase_unidad_venta")) or 0.0
                 # LO QUE SE COBRA es lo recibido si el remito volvió; si no, lo
-                # enviado y el día queda provisorio. El envase sigue siendo el
-                # de lo ENVIADO: la caja salió igual.
+                # enviado, y el día queda provisorio solo desde REMITOS_DESDE:
+                # antes no había remitos acá y no falta nada. El envase sigue
+                # siendo el de lo ENVIADO: la caja salió igual.
                 cobrado = recibidos.get(salida.get("renglon_id"))
                 if cobrado is None:
                     cobrado = unidades
-                    if kilos_recibidos is not None:
+                    if kilos_recibidos is not None and salida["fecha"] >= REMITOS_DESDE:
                         fechas_provisorias.add(salida["fecha"])
                 fila = _fila(articulo)
                 fila["bultos"] += bultos

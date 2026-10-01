@@ -100,6 +100,10 @@
   tr.sin-precio td { background: #fef9c3; }
   .marca-sin-precio { color: #991b1b; font-weight: 700; font-size: 0.78rem; }
   .marca-estado { color: #991b1b; font-weight: 600; font-size: 0.78rem; }
+  /* La devolución al proveedor: negativa, en rojo, y con su tipo. */
+  tr.devolucion { background: #fef2f2; }
+  .negativo { color: #b91c1c; }
+  .marca-devolucion { color: #991b1b; font-weight: 700; font-size: 0.78rem; }
   .estado-ok { color: #666; font-size: 0.78rem; }
   .desglose-subtotal {
     text-align: right;
@@ -304,6 +308,20 @@
           </thead>
           <tbody>
             {% for f in g.filas %}
+            {% if f.devolucion %}
+            {# DEVOLUCIÓN AL PROVEEDOR (dueño, 01/10): renglón NEGATIVO del día en
+               que se devolvió. El subtotal ya es lo que entró menos esto. #}
+            <tr class="devolucion{% if f.sin_precio %} sin-precio{% endif %}">
+              <td>{{ f.fecha.strftime("%d/%m") }}</td>
+              <td>{% if f.compra_id %}Compra {{ f.compra_id }}{% else %}—{% endif %}</td>
+              <td>{{ f.articulo_nombre }}</td>
+              <td class="negativo">{{ f.bultos|numero }} bultos</td>
+              <td>{% if f.sin_precio %}<span class="marca-sin-precio">Sin precio</span>{% else %}{{ f.importe|moneda }}{% endif %}</td>
+              <td>{% if f.sena is not none %}{{ f.sena|moneda }}{% if f.total_sena is not none %} (<span class="negativo">{{ f.total_sena|moneda }}</span>){% endif %}{% else %}—{% endif %}</td>
+              <td class="numero negativo">{% if f.total_a_depositar is not none %}{{ f.total_a_depositar|moneda }}{% else %}—{% endif %}</td>
+              <td><span class="marca-devolucion">{{ f.estado_etiqueta }}</span></td>
+            </tr>
+            {% else %}
             <tr {% if f.sin_precio %}class="sin-precio"{% endif %}>
               <td>{% if f.procesada_el %}{{ f.procesada_el.strftime("%d/%m %H:%M") }}{% else %}—{% endif %}</td>
               <td>{% if f.guia_id %}{{ f.guia_id }}.{{ f.guia_punto }}{% else %}—{% endif %}</td>
@@ -319,12 +337,13 @@
                 {% else %}<span class="marca-estado">{{ f.estado_etiqueta }}{% if f.cantidad_cajones_rechazada is not none %} ({{ f.cantidad_cajones_rechazada|numero }} rech.){% endif %}</span>{% endif %}
               </td>
             </tr>
+            {% endif %}
             {% endfor %}
           </tbody>
         </table>
       </div>
       <div class="fila-subtotal">
-        <span>Subtotal {{ g.proveedor_nombre }}</span>
+        <span>Subtotal {{ g.proveedor_nombre }}{% if g.devoluciones %} (entró menos lo devuelto){% endif %}</span>
         <span>{{ g.subtotal|moneda }}</span>
       </div>
       {% if g.subtotal_senas %}
