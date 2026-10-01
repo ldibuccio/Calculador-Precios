@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Fotos de más de 3 años</title>
+<title>Fotos y espacio</title>
 <style>
   :root { font-family: -apple-system, system-ui, sans-serif; }
   body { margin: 0; padding: 1rem; background: #f5f5f5; color: #222; }
@@ -28,18 +28,97 @@
   .borrar label.tilde input { width: 1.4rem; height: 1.4rem; flex: none; }
   .borrar button { min-height: 48px; border-radius: 8px; border: none; background: #dc2626; color: #fff;
     font-weight: 600; font-size: 1rem; }
+  .medidor { height: 12px; background: #e5e7eb; border-radius: 6px; overflow: hidden; margin: 0.5rem 0 0.2rem; }
+  .medidor span { display: block; height: 100%; background: #2563eb; min-width: 2px; }
+  .medidor.alto span { background: #dc2626; }
+  .plan { color: #555; font-size: 0.85rem; margin: 0.3rem 0 0; }
+  .mes { padding: 0.45rem 0; border-top: 1px solid #eee; }
+  .mes-cabeza { display: flex; justify-content: space-between; gap: 0.6rem; font-size: 0.92rem; }
+  .barra-mes { height: 8px; background: #f1f5f9; border-radius: 4px; margin: 0.3rem 0 0.15rem; }
+  .barra-mes span { display: block; height: 100%; background: #60a5fa; border-radius: 4px; }
+  .acumulado { color: #666; font-size: 0.82rem; }
+  .proyeccion-numero { font-size: 1.25rem; font-weight: 700; margin: 0.2rem 0; }
   .fila a.ver { display: inline-flex; align-items: center; min-height: 44px; color: #2563eb; font-weight: 600; }
 </style>
 </head>
 <body>
   {% from "_info.html" import info %}
   {% set barra_sector = "gerencia" %}
-  {% set barra_titulo = "Fotos de más de 3 años" %}
+  {% set barra_titulo = "Fotos y espacio" %}
   {% set barra_atras = "/gerencia" %}
   {% include "_barra_navegacion.html" %}
 
   {% if aviso %}<div class="aviso">{{ aviso }}</div>{% endif %}
   {% if error %}<div class="error">{{ error }}</div>{% endif %}
+
+  <div class="tarjeta" id="espacio">
+    <h2>Espacio usado hoy {% call info("De dónde sale") %}Es lo que ocupan hoy los archivos del Storage
+      de <strong>esta base</strong>, leído de Supabase. Supabase cobra el espacio de todos los buckets.
+      El plan {{ plan }} incluye {{ limite_del_plan|tamano }} para <strong>toda la organización</strong>:
+      las otras bases suman contra la misma cuota, y cada una muestra solo lo suyo.
+      Con más del {{ umbral_del_aviso }}% salta un aviso en Gerencia.{% endcall %}</h2>
+    {% if espacio is none %}
+    <p class="vacio">No se pudo leer el Storage: sin dato.</p>
+    {% else %}
+    <p class="total">{{ espacio.bytes|tamano }}</p>
+    <p class="total-dato">{{ espacio.cantidad }} archivo{{ '' if espacio.cantidad == 1 else 's' }}</p>
+    <div class="medidor{{ ' alto' if espacio.porcentaje > umbral_del_aviso else '' }}"><span style="width: {{ [espacio.porcentaje, 100]|min }}%"></span></div>
+    <p class="plan">{{ '%.2f'|format(espacio.porcentaje)|replace('.', ',') }}% de los {{ limite_del_plan|tamano }} del plan {{ plan }},
+      compartidos con las otras bases</p>
+    {% for f in filas if f.cantidad %}
+    <div class="fila">
+      <div class="fila-cabeza">
+        <span class="fila-que">{{ f.texto }}</span>
+        <span>{{ f.bytes|tamano }}</span>
+      </div>
+      <div class="fila-dato">{{ f.cantidad }} archivo{{ '' if f.cantidad == 1 else 's' }}</div>
+    </div>
+    {% endfor %}
+    {% if sin_registro and sin_registro.cantidad %}
+    <div class="fila">
+      <div class="fila-cabeza"><span class="fila-que">Sin registro</span><span>{{ sin_registro.bytes|tamano }}</span></div>
+      <div class="fila-dato">{{ sin_registro.cantidad }} archivo{{ '' if sin_registro.cantidad == 1 else 's' }}</div>
+    </div>
+    {% endif %}
+    {% if espacio.otros_buckets.cantidad %}
+    <div class="fila">
+      <div class="fila-cabeza"><span class="fila-que">Otros buckets</span><span>{{ espacio.otros_buckets.bytes|tamano }}</span></div>
+      <div class="fila-dato">{{ espacio.otros_buckets.cantidad }} archivo{{ '' if espacio.otros_buckets.cantidad == 1 else 's' }}</div>
+    </div>
+    {% endif %}
+    {% endif %}
+  </div>
+
+  {% if espacio is not none %}
+  <div class="tarjeta" id="mes-a-mes">
+    <h2>Mes a mes {% call info("Cómo se cuenta") %}Cada foto cuenta en el mes en que se
+      <strong>subió</strong>. Las que se borraron por antigüedad siguen contando en su mes; las que se
+      borraron por error de carga en el momento, no.{% endcall %}</h2>
+    {% for m in espacio.meses|reverse %}
+    <div class="mes">
+      <div class="mes-cabeza"><strong>{{ m.mes }}</strong>
+        <span>+{{ m.bytes|tamano }} · {{ m.cantidad }} archivo{{ '' if m.cantidad == 1 else 's' }}</span></div>
+      <div class="barra-mes"><span style="width: {{ m.ancho }}%"></span></div>
+      <div class="acumulado">Acumulado: {{ m.acumulado_bytes|tamano }}</div>
+    </div>
+    {% else %}
+    <p class="vacio">Todavía no se subió ninguna foto.</p>
+    {% endfor %}
+  </div>
+
+  {% if espacio.proyeccion %}
+  {% set p = espacio.proyeccion %}
+  <div class="tarjeta" id="proyeccion">
+    <h2>En 12 meses {% call info("Cómo se calcula") %}Con lo que se subió en los últimos 90 días, o desde la
+      primera foto si hay menos historia, se calcula cuánto se sube por mes y se lo suma al espacio de hoy.
+      Supone que no se borra nada.{% endcall %}</h2>
+    <p class="proyeccion-numero">{{ p.en_12_meses|tamano }}</p>
+    <p class="cuenta">{{ '%.2f'|format(p.porcentaje_en_12_meses)|replace('.', ',') }}% del plan.
+      Ritmo: {{ p.por_mes|tamano }} por mes, medido sobre {{ p.dias }} día{{ '' if p.dias == 1 else 's' }}
+      (desde el {{ p.desde.strftime('%d/%m/%Y') }}).</p>
+  </div>
+  {% endif %}
+  {% endif %}
 
   <div class="tarjeta" id="viejas">
     <h2>Más de 3 años {% call info("Cómo funciona") %}Una foto se puede borrar recién cuando pasaron

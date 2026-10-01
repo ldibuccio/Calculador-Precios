@@ -17,6 +17,7 @@ from zoneinfo import ZoneInfo
 from core.envases import (cajas_que_mueve_la_guia, como_queda_la_cuenta,
                           efecto_en_la_cuenta, envase_derivado_de_la_ficha,
                           hay_que_reponer)
+from core.fotos import archivos_de_hoy, pasa_el_aviso, porcentaje_del_plan
 from core.magnitudes import repartir_magnitudes
 from core.matcheo_comanda import normalizar_texto
 from core.vino_armada import motivo_para_no_marcar_armada, motivo_sin_lote_por_el_corte
@@ -6220,7 +6221,7 @@ def eliminar_compra(compra_id: int, forzar: bool = False, *, origen: str) -> lis
 # olvidar_foto_borrada), que no pedía clave, BORRABA la fila que nombraba la
 # foto y contaba la antigüedad por la fecha de la compra o del pedido. Ahora:
 #   - la antigüedad se cuenta desde que se SUBIÓ el archivo;
-#   - se borra a mano, desde Gerencia → Fotos de más de 3 años;
+#   - se borra a mano, desde Gerencia → Fotos y espacio;
 #   - se va el ARCHIVO y la fila queda: fotos_borradas_por_antiguedad dice
 #     cuándo, y "Ver foto" lo muestra (_ir_a_la_foto, app/main.py).
 # ============================================================================
@@ -6272,21 +6273,44 @@ def fotos_de_respaldo() -> list[dict]:
     return [{"tipo": f[0], "ruta": f[1], "subida_el": f[2], "ya_borrada": f[3]} for f in filas]
 
 
-def tamanos_del_bucket(bucket_id: str) -> dict[str, int]:
-    """El tamaño de cada archivo del bucket, de storage.objects (misma base,
-    la misma conexión de DATABASE_URL: no pasa por la API de Storage). Lanza si no se puede leer:
-    quien llama decide mostrar "sin dato"."""
+# Lo que se SUBIÓ al Storage, una fila por archivo (dueño, 01/10): lo que está
+# hoy en storage.objects, de TODOS los buckets (el plan cobra todos), y las
+# fotos ya borradas por antigüedad, con su tamaño de cuando se borraron. La
+# pantalla de Fotos y espacio, el mes a mes, la proyección y la alerta leen de
+# acá: el espacio de hoy son las que no están borradas. Es la misma base y la
+# misma conexión de DATABASE_URL: no pasa por la API de Storage.
+_SQL_SUBIDAS_AL_STORAGE = """
+    SELECT o.bucket_id, o.name, COALESCE((o.metadata->>'size')::bigint, 0), o.created_at, false
+      FROM storage.objects o
+    UNION ALL
+    SELECT NULL, b.foto_ruta, COALESCE(b.bytes, 0), b.subida_el, true
+      FROM fotos_borradas_por_antiguedad b
+"""
+
+
+def subidas_al_storage() -> list[dict]:
+    """{bucket, ruta, bytes, subida_el, borrada}. Lanza si storage.objects no
+    se puede leer: quien llama decide mostrar "sin dato"."""
     conexion = obtener_conexion()
     try:
         with conexion.cursor() as cursor:
-            cursor.execute(
-                "SELECT name, COALESCE((metadata->>'size')::bigint, 0) FROM storage.objects WHERE bucket_id = %s",
-                (bucket_id,),
-            )
+            cursor.execute(_SQL_SUBIDAS_AL_STORAGE)
             filas = cursor.fetchall()
     finally:
         conexion.close()
-    return {f[0]: int(f[1]) for f in filas}
+    return [{"bucket": f[0], "ruta": f[1], "bytes": int(f[2]), "subida_el": f[3], "borrada": f[4]}
+            for f in filas]
+
+
+def contar_espacio_de_fotos() -> dict:
+    """La alerta del espacio (dueño, 01/10): los casos son el PORCENTAJE del
+    plan que usa esta base, y solo cuando pasa el umbral. El banner lo dice en
+    la frase. Sin poder leer el Storage, lanza: una alerta que no se pudo
+    calcular se ve como fallada, no como cero."""
+    usado = sum(s["bytes"] for s in archivos_de_hoy(subidas_al_storage()))
+    if not pasa_el_aviso(usado):
+        return {"casos": 0, "mas_viejo": None}
+    return {"casos": int(round(porcentaje_del_plan(usado))), "mas_viejo": None}
 
 
 def registrar_foto_borrada_por_antiguedad(foto_ruta: str, tipo: str, subida_el, bytes_: int | None,

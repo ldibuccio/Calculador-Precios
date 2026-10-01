@@ -1,7 +1,7 @@
 """FOTOS DE MÁS DE 3 AÑOS (dueño, 30/09): el corte, los tipos y el resumen — puro.
 
 Las fotos llegan de `fotos_de_respaldo` (app/db.py): una fila por ARCHIVO,
-con su tipo y cuándo se subió. Los tamaños, del bucket (`tamanos_del_bucket`).
+con su tipo y cuándo se subió. Los tamaños, de `subidas_al_storage`.
 Acá no se lee la base: se decide qué es "más de 3 años", cómo se llama cada
 tipo y cómo se suma, y la pantalla de Gerencia y el borrado usan lo mismo.
 
@@ -11,7 +11,7 @@ antigüedad se cuenta desde la subida y no desde la fecha de la compra o del
 pedido: lo que vence es el archivo.
 """
 
-from datetime import date
+from datetime import date, timedelta
 from zoneinfo import ZoneInfo
 
 ARGENTINA = ZoneInfo("America/Argentina/Buenos_Aires")
@@ -90,6 +90,100 @@ def resumen_por_tipo(fotos: list[dict], tamanos: dict[str, int] | None, corte: d
 def total_de(filas: list[dict], campo: str):
     valores = [f[campo] for f in filas]
     return None if any(v is None for v in valores) else sum(valores)
+
+
+# ============================================================================
+# EL ESPACIO (dueño, 01/10): cuánto ocupa el Storage hoy, cómo creció mes a
+# mes, a dónde va y cuánto del plan es.
+#
+# Las subidas llegan de `subidas_al_storage` (app/db.py): una fila por archivo
+# que está en el Storage, más las fotos ya borradas por antigüedad, con su
+# tamaño y cuándo se subieron. Las borradas NO suman al espacio de hoy, pero
+# SÍ al mes en que se subieron: la pregunta del mes a mes es cuánto se subió,
+# no cuánto queda. Lo que se borró por error de carga en el momento no está
+# en ningún lado y no cuenta.
+# ============================================================================
+
+# El plan Pro de Supabase incluye 100 GB de Storage por ORGANIZACIÓN, no por
+# base: Frutamax, Palmala y Ganadería suman contra la misma cuota (Supabase,
+# "Variable Usage Fees and Quotas", medido el 01/10). Cada app ve solo su
+# base, así que el porcentaje de acá es lo que pone ESTA base. Si cambia el
+# plan, cambia este número y nada más.
+PLAN_DE_SUPABASE = "Pro"
+LIMITE_DEL_PLAN_BYTES = 100 * 1024 ** 3
+UMBRAL_DEL_AVISO = 80          # %: más de esto, la alerta de Gerencia
+DIAS_DEL_RITMO = 90            # "los últimos 3 meses" de la proyección
+
+MESES = ("ene", "feb", "mar", "abr", "may", "jun", "jul", "ago", "sep", "oct", "nov", "dic")
+
+
+def archivos_de_hoy(subidas: list[dict]) -> list[dict]:
+    """Los archivos que están en el Storage ahora (las borradas no)."""
+    return [s for s in subidas if not s["borrada"]]
+
+
+def tamanos_del_bucket(subidas: list[dict], bucket: str) -> dict[str, int]:
+    """{ruta: bytes} de los archivos de hoy de un bucket."""
+    return {s["ruta"]: s["bytes"] for s in archivos_de_hoy(subidas) if s["bucket"] == bucket}
+
+
+def porcentaje_del_plan(bytes_) -> float:
+    return bytes_ * 100 / LIMITE_DEL_PLAN_BYTES
+
+
+def pasa_el_aviso(bytes_) -> bool:
+    return porcentaje_del_plan(bytes_) > UMBRAL_DEL_AVISO
+
+
+def evolucion_por_mes(subidas: list[dict], hoy: date) -> list[dict]:
+    """Un renglón por mes, desde el de la primera subida hasta el de hoy, con lo
+    que se subió ese mes y el acumulado. Un mes sin subidas sale en cero:
+    saltearlo haría parecer que el acumulado creció de golpe."""
+    if not subidas:
+        return []
+    por_mes: dict[tuple[int, int], list[int]] = {}
+    for s in subidas:
+        dia = dia_de_subida(s["subida_el"])
+        cuenta = por_mes.setdefault((dia.year, dia.month), [0, 0])
+        cuenta[0] += 1
+        cuenta[1] += s["bytes"]
+    anio, mes = min(por_mes)
+    fin = max(max(por_mes), (hoy.year, hoy.month))
+    filas = []
+    acumulado_cantidad = acumulado_bytes = 0
+    while (anio, mes) <= fin:
+        cantidad, bytes_ = por_mes.get((anio, mes), (0, 0))
+        acumulado_cantidad += cantidad
+        acumulado_bytes += bytes_
+        filas.append({"mes": f"{MESES[mes - 1]} {anio}", "cantidad": cantidad, "bytes": bytes_,
+                      "acumulado_cantidad": acumulado_cantidad, "acumulado_bytes": acumulado_bytes})
+        anio, mes = (anio + 1, 1) if mes == 12 else (anio, mes + 1)
+    mayor = max(f["bytes"] for f in filas)
+    for f in filas:
+        f["ancho"] = round(f["bytes"] * 100 / mayor) if mayor else 0
+    return filas
+
+
+def proyeccion(subidas: list[dict], hoy: date) -> dict | None:
+    """A dónde llega el espacio en 12 meses si se sigue subiendo al ritmo de
+    los últimos 90 días. Si la primera foto es más nueva, el ritmo se mide
+    desde ella y la pantalla dice sobre cuántos días: con 40 días de historia,
+    dividir por 90 daría un ritmo de menos de la mitad.
+
+    Supone que no se borra nada: lo de 3 años no empieza a vencer hasta 2029.
+    """
+    if not subidas:
+        return None
+    primer_dia = min(dia_de_subida(s["subida_el"]) for s in subidas)
+    desde = max(primer_dia, hoy - timedelta(days=DIAS_DEL_RITMO - 1))
+    dias = (hoy - desde).days + 1
+    en_la_ventana = sum(s["bytes"] for s in subidas
+                        if desde <= dia_de_subida(s["subida_el"]) <= hoy)
+    por_dia = en_la_ventana / dias
+    hoy_bytes = sum(s["bytes"] for s in archivos_de_hoy(subidas))
+    en_12_meses = hoy_bytes + por_dia * 365
+    return {"desde": desde, "dias": dias, "por_mes": por_dia * 365 / 12,
+            "en_12_meses": en_12_meses, "porcentaje_en_12_meses": porcentaje_del_plan(en_12_meses)}
 
 
 def archivos_sin_registro(fotos: list[dict], tamanos: dict[str, int] | None) -> dict | None:
