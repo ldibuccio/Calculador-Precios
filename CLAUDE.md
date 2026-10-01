@@ -420,6 +420,12 @@ De acá en adelante, después de cualquier push que se dé por desplegado:
    un commit chico REAL, sellado, mergeado por rebase, que vuelve a mandar el
    aviso. Nunca un commit vacío: suma un commit que el sello no contó.
 
+   **NADA DE HERRAMIENTAS QUE LE PIDAN PERMISO AL DUEÑO (01/10, dueño).**
+   Ni búsqueda de documentación, ni `send_later`, ni ninguna otra que lo
+   interrumpa para aprobar, salvo que sea imprescindible. Si falta un dato,
+   se dice en el mensaje final y lo resuelve él. Un dato que él ya dio (por
+   ejemplo, el plan de Supabase) se toma tal cual y no se sale a verificarlo.
+
    **EL CI SE ESPERA EN EL MISMO TURNO, sin recordatorios (30/09, dueño).**
    Nada de `send_later` ni de ningún recordatorio o tarea programada: cada
    uno le pide permiso al dueño. Si el CI tarda demasiado, el mensaje cierra
@@ -4511,12 +4517,12 @@ nuevo y lo de 3 años queda abajo, igual que estaba.
 - **Proyección**: el ritmo de los últimos 90 días, o desde la primera foto si
   hay menos historia (la pantalla dice sobre cuántos días), sumado a lo de
   hoy durante 365 días. Supone que no se borra nada.
-- **El límite es del PLAN y de la ORGANIZACIÓN**: Pro, 100 GB de Storage para
-  Frutamax, Palmala y Ganadería juntas (documentación de Supabase,
-  verificado el 01/10 con el plan de la organización). Cada app ve solo su
-  base, así que su porcentaje es su parte. Vive en `core/fotos.py`
-  (`LIMITE_DEL_PLAN_BYTES`, `PLAN_DE_SUPABASE`), sin migración: si cambia el
-  plan, cambia esa línea.
+- **El límite es del PLAN y de la ORGANIZACIÓN** (dueño, 01/10): plan Pro,
+  **100 GB de almacenamiento incluido por organización**, para Frutamax,
+  Palmala y Ganadería juntas. Es un dato del dueño y vive en UNA constante,
+  `LIMITE_DEL_PLAN_BYTES` en `core/fotos.py` (con `PLAN_DE_SUPABASE`), sin
+  migración ni consulta a Supabase: si cambia el plan, cambia esa línea. Cada
+  app ve solo su base, así que su porcentaje es su parte.
 - **Alerta `espacio_de_fotos`**, solo Gerencia: más del 80% (`UMBRAL_DEL_AVISO`),
   y los casos son el porcentaje. Si el Storage no se lee, la alerta falla
   en vez de dar cero, y la pantalla dice "sin dato".

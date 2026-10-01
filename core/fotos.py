@@ -104,11 +104,10 @@ def total_de(filas: list[dict], campo: str):
 # en ningún lado y no cuenta.
 # ============================================================================
 
-# El plan Pro de Supabase incluye 100 GB de Storage por ORGANIZACIÓN, no por
-# base: Frutamax, Palmala y Ganadería suman contra la misma cuota (Supabase,
-# "Variable Usage Fees and Quotas", medido el 01/10). Cada app ve solo su
-# base, así que el porcentaje de acá es lo que pone ESTA base. Si cambia el
-# plan, cambia este número y nada más.
+# Plan Pro: 100 GB de almacenamiento incluido por ORGANIZACIÓN, no por base
+# (dato del dueño, 01/10). Frutamax, Palmala y Ganadería suman contra la misma
+# cuota. Cada app ve solo su base, así que el porcentaje de acá es lo que pone
+# ESTA base. Si cambia el plan, cambia este número y nada más.
 PLAN_DE_SUPABASE = "Pro"
 LIMITE_DEL_PLAN_BYTES = 100 * 1024 ** 3
 UMBRAL_DEL_AVISO = 80          # %: más de esto, la alerta de Gerencia
