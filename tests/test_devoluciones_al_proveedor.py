@@ -192,23 +192,56 @@ def test_la_LISTA_de_vacios_y_la_PILA_dicen_lo_mismo_con_las_devoluciones(base):
 
 # --- el costo en la Rentabilidad Real ------------------------------------------
 
-def test_el_RECHAZO_con_compra_cancela_al_costo_de_la_compra_si_iba_en_su_cajon(base):
+def test_el_VALOR_de_la_devolucion_es_el_PRECIO_DE_SU_COMPRA_si_iba_en_su_cajon(base):
+    """Regla de Lionel (01/10): vale EXACTAMENTE el precio por cajón de la
+    compra (`compras.importe`), y no el costo del armado (77, el congelado).
+    En caja de Día y sin compra queda el congelado (decisión del 30/09). Una
+    compra SIN PRECIO da None, no el congelado: caer ahí sería la regla vieja."""
     d, sql, rechazo = base
+    sql("""INSERT INTO compras (id, proveedor_id, articulo_id, fecha_operacion, cantidad_cajones,
+               contenido_por_cajon, cantidad_kilos, importe, estado, procesada_el,
+               cantidad_cajones_real, contenido_por_cajon_real) OVERRIDING SYSTEM VALUE
+           VALUES (14, 1, 1, '2026-09-07', 3, 16, 48, NULL, 'recepcionado', '2026-09-07 18:00-03', 3, 16)""")
     rechazo(1, 2, compra_id=12)        # cajón: $120 de la compra 12
     rechazo(2, 2, compra_id=12)        # caja de Día: queda el congelado
     rechazo(1, 1, proveedor_id=1)      # viejo, sin compra: el congelado
+    rechazo(1, 1, compra_id=14)        # cajón, compra sin precio: None
     filas = d.devoluciones_vinculadas_por_rango(1, date(2026, 9, 1), date(2026, 9, 30))
-    def clave(par):
-        return (par[0], -1 if par[1] is None else float(par[1]))
-    assert sorted(((f["ficha_id"], f["costo_bulto_compra"]) for f in filas), key=clave) == sorted(
-        [(1, 120), (2, None), (1, None)], key=clave)
+    def clave(t):
+        return tuple(-1 if v is None else float(v) for v in t)
+    obtenido = sorted(((f["ficha_id"], f["valor_por_bulto"], f["vale_la_compra"]) for f in filas), key=clave)
+    assert obtenido == sorted([(1, 120, True), (2, 77, False), (1, 77, False), (1, None, True)], key=clave)
 
 
-def test_la_Rentabilidad_usa_el_costo_de_la_compra_y_si_no_el_congelado():
-    from core.costo_real import calcular_rentabilidad_real
+def test_MOVIMIENTOS_y_la_PLANILLA_valen_el_precio_de_la_compra_y_SIN_PRECIO_no_cae_al_armado(base):
+    d, sql, rechazo = base
+    sql("""INSERT INTO compras (id, proveedor_id, articulo_id, fecha_operacion, cantidad_cajones,
+               contenido_por_cajon, cantidad_kilos, importe, estado, procesada_el,
+               cantidad_cajones_real, contenido_por_cajon_real) OVERRIDING SYSTEM VALUE
+           VALUES (14, 1, 1, '2026-09-07', 3, 16, 48, NULL, 'recepcionado', '2026-09-07 18:00-03', 3, 16)""")
+    rechazo(1, 2, compra_id=12)
+    rechazo(2, 1, compra_id=12)
+    rechazo(1, 1, compra_id=14)
+    filas = d.movimientos_del_deposito(date(2026, 9, 1), date(2026, 9, 30), tipo="rechazo")
+    assert sorted(((m["compra_id"], m["bultos"], m["valor"]) for m in filas),
+                  key=lambda t: (t[0], t[1])) == [
+        (12, -2.0, -240.0),      # cajón: 2 × $120, no 2 × $77
+        (12, -1.0, -77.0),       # caja de Día: el congelado
+        (14, -1.0, None),        # sin precio: "sin precio", no $77
+    ]
+
+
+def test_la_Rentabilidad_lee_el_valor_de_la_MISMA_regla_que_Movimientos():
+    """Escrita una vez: la consulta de la Rentabilidad y la de Movimientos
+    nombran el MISMO fragmento, y la vieja (que caía al congelado con un
+    COALESCE) no está en ningún lado."""
     import inspect
-    fuente = inspect.getsource(calcular_rentabilidad_real)
-    assert 'costo = _numero(devolucion.get("costo_bulto_compra")) or costo' in fuente
+    import app.db as d
+    assert d._SQL_VALOR_POR_BULTO_DE_LA_DEVOLUCION in d._SQL_MOVIMIENTOS_DEL_DEPOSITO
+    fuente = inspect.getsource(d.devoluciones_vinculadas_por_rango)
+    assert "_SQL_VALOR_POR_BULTO_DE_LA_DEVOLUCION + \"\"\" AS valor_por_bulto" in fuente
+    assert "_SQL_DEVOLUCION_VALE_LA_COMPRA + \"\"\" AS vale_la_compra" in fuente
+    assert not hasattr(d, "_SQL_COSTO_DE_LA_COMPRA_DEVUELTA")
 
 
 # --- Movimientos del depósito --------------------------------------------------

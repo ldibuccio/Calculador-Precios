@@ -5149,16 +5149,32 @@ def _condiciones_buscar_ingresos(fecha_desde, fecha_hasta, proveedor_id, articul
     return condiciones, parametros
 
 
-# EL COSTO CON QUE SE CANCELA UNA DEVOLUCIÓN POR RECHAZO (dueño, 30/09): el
-# costo por bulto de la COMPRA de la que salió, cuando lo que volvió iba en el
-# cajón de esa compra (ficha sin caja nuestra, o renglón sin ficha: un bulto
-# es un cajón). Si iba en caja de Día, un bulto no es un cajón de la compra
-# —10 cajas de 6 kg no son 10 cajones de 16— y queda el costo congelado del
-# rechazo. Sin compra (los viejos) o sin precio en la compra, también.
+# LO QUE VALE UNA DEVOLUCIÓN AL PROVEEDOR, POR BULTO (regla de Lionel, 01/10):
+# EXACTAMENTE el precio por cajón de la compra a la que está atada
+# (`compras.importe`), por los DOS caminos —el rechazo con destino
+# "devolución al proveedor" y la devolución desde depósito—. Nunca el costo
+# del armado: ése sale del FIFO por kilo, mezcla compras con distinto peso por
+# cajón, y daba $59.822,75 por un cajón que se pagó $60.000.
+#
+# Si la compra no tiene precio, el valor es NULL ("sin precio"), y NO cae al
+# costo del armado: caer ahí sería volver a la regla que esto reemplaza.
+#
+# El rechazo en CAJA DE DÍA (ficha con envase) queda con el costo congelado
+# del rechazo, por la decisión del dueño del 30/09: un bulto ahí no es un
+# cajón de la compra —10 cajas de 6 kg no son 10 cajones de 16— y el precio
+# por cajón no se le puede aplicar. Sin compra (los viejos), también.
+#
+# Lo leen Movimientos del depósito, la planilla para pagar (que sale de la
+# misma consulta) y la Rentabilidad Real. Escrito una vez: la copia que se
+# separe diría un importe en una pantalla y otro en la otra.
 # Espera los alias `m` (movimiento), `cd` (compra) y `fd` (ficha del renglón).
-_SQL_COSTO_DE_LA_COMPRA_DEVUELTA = """
-    CASE WHEN m.compra_devolucion_id IS NOT NULL AND fd.envase_id IS NULL
-         THEN cd.importe END"""
+_SQL_DEVOLUCION_VALE_LA_COMPRA = """
+    (m.tipo = 'devolucion_deposito'
+     OR (m.compra_devolucion_id IS NOT NULL AND fd.envase_id IS NULL))"""
+
+_SQL_VALOR_POR_BULTO_DE_LA_DEVOLUCION = """
+    CASE WHEN """ + _SQL_DEVOLUCION_VALE_LA_COMPRA + """ THEN cd.importe
+         ELSE m.costo_por_bulto END"""
 
 
 # MOVIMIENTOS DEL DEPÓSITO (dueño, 30/09): lo que ENTRA y lo que SALE, en una
@@ -5169,8 +5185,9 @@ _SQL_COSTO_DE_LA_COMPRA_DEVUELTA = """
 #   entrada      una compra recibida, por el día de la RECEPCIÓN. Bultos: los
 #                reales. Valor: bultos × el costo por bulto de la compra.
 #   rechazo      una devolución al proveedor por un rechazo del cliente. Valor:
-#                el costo con que se canceló en la Rentabilidad (el de la
-#                compra si la tiene y volvió en su cajón; si no, el congelado).
+#                bultos × el precio de su compra (regla de Lionel, 01/10; ver
+#                `_SQL_VALOR_POR_BULTO_DE_LA_DEVOLUCION`). En caja de Día o sin
+#                compra, el costo congelado del rechazo.
 #   deposito     una devolución desde depósito. Valor: bultos × el de la compra.
 #   segunda      segunda remitida al puesto. No tiene proveedor ni valor.
 #
@@ -5208,9 +5225,7 @@ _SQL_MOVIMIENTOS_DEL_DEPOSITO = """
                COALESCE(cd.proveedor_id, m.proveedor_devolucion_id), COALESCE(pc.nombre, ps.nombre),
                m.articulo_id, a.nombre, m.compra_devolucion_id,
                -ABS(m.cantidad),
-               -ABS(m.cantidad) * CASE WHEN m.tipo = 'devolucion_deposito' THEN cd.importe
-                                       ELSE COALESCE(""" + _SQL_COSTO_DE_LA_COMPRA_DEVUELTA + """,
-                                                     m.costo_por_bulto) END,
+               -ABS(m.cantidad) * """ + _SQL_VALOR_POR_BULTO_DE_LA_DEVOLUCION + """,
                m.motivo,
                CASE WHEN m.tipo = 'devolucion_deposito' OR fd.envase_id IS NULL
                     THEN NULLIF(COALESCE(cd.sena, 0), 0) END,
@@ -12578,7 +12593,8 @@ def devoluciones_vinculadas_por_rango(cliente_id: int, fecha_desde, fecha_hasta)
                        r.kilos_enviados, COALESCE(r.cantidad_armada, r.cantidad) AS bultos_armados,
                        p.fecha_operacion AS fecha_pedido,
                        a.id AS articulo_id, a.nombre AS articulo_nombre, a.grupo,
-                       """ + _SQL_COSTO_DE_LA_COMPRA_DEVUELTA + """ AS costo_bulto_compra
+                       """ + _SQL_VALOR_POR_BULTO_DE_LA_DEVOLUCION + """ AS valor_por_bulto,
+                       """ + _SQL_DEVOLUCION_VALE_LA_COMPRA + """ AS vale_la_compra
                 FROM movimientos_stock m
                 JOIN pedidos_renglones r ON r.id = m.pedido_renglon_id
                 JOIN pedidos p ON p.id = r.pedido_id

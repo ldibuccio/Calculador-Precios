@@ -4366,9 +4366,7 @@ Son DOS operaciones y se registran separadas; en las dos el COSTO SE CANCELA
   compra. Viene elegida la que el sistema dice que alimentó el armado, y se
   puede cambiar por cualquier otra compra recibida de ESE artículo
   (`_compras_para_devolver_el_renglon`: la pantalla y el POST leen las mismas
-  dos listas). Si el renglón iba en el cajón (ficha sin envase), se cancela al
-  costo por bulto de la compra (`_SQL_COSTO_DE_LA_COMPRA_DEVUELTA`); en caja de
-  Día, o sin compra (las 9 viejas, 125 bultos), queda el costo congelado.
+  dos listas). Lo que vale está en "EL VALOR DE UNA DEVOLUCIÓN", abajo.
   La caja de Día se devuelve en la caja de Día, como antes.
 - **Desde depósito** (`/deposito/devolver`, sin clave): proveedor → sus
   compras con lo que QUEDA en el piso (el restante del lote de la compra en el
@@ -4408,6 +4406,43 @@ Son DOS operaciones y se registran separadas; en las dos el COSTO SE CANCELA
   Excel): "entró con seña: N cajones × $X" en la entrada y "volvió con seña"
   en la devolución. En un rechazo, solo si iba en el cajón, la misma regla que
   saca esos cajones de Vacíos.
+
+### EL VALOR DE UNA DEVOLUCIÓN: el precio por cajón de SU compra (01/10, regla de Lionel)
+
+**Una devolución al proveedor vale EXACTAMENTE `compras.importe` de la compra
+a la que está atada**, por los dos caminos, en la Rentabilidad Real, en
+Movimientos del depósito y en la planilla para pagar (pantalla, PDF y Excel).
+Nunca el costo del armado: ése sale del FIFO por kilo y mezcla compras con
+distinto peso por cajón (Frutamax, 28/09: $59.822,75 por un cajón de Granny
+pagado a $60.000).
+
+- **Escrita una vez**: `_SQL_VALOR_POR_BULTO_DE_LA_DEVOLUCION` y su condición
+  `_SQL_DEVOLUCION_VALE_LA_COMPRA` (app/db.py). La leen
+  `_SQL_MOVIMIENTOS_DEL_DEPOSITO` (y con ella la planilla) y
+  `devoluciones_vinculadas_por_rango` (la Rentabilidad).
+- **Compra sin precio**: el valor es NULL ("sin precio"). No cae al costo del
+  armado, que era volver a la regla vieja.
+- **Rechazo en caja de Día, o sin compra** (los viejos): queda el costo
+  congelado del rechazo. Un bulto ahí no es un cajón de la compra (decisión del
+  30/09). Ésta es la única excepción, y está abierta a que el dueño la cierre.
+- **La diferencia no desaparece**: en la Rentabilidad la mercadería se acredita
+  al costo CONGELADO del armado (lo que se le cargó al venderla), y
+  `bultos × (precio de la compra − costo del armado)` va a
+  `diferencia_devolucion_proveedor`, que RESTA del costo total (positiva: el
+  proveedor devuelve más de lo que costó el armado, y sube la renta). Se ve en
+  el chip del artículo ("devuelto al proveedor N bultos · al precio de la
+  compra · +$X contra el costo del armado"), en la línea del total, en el PDF y
+  en dos columnas al final del Excel. El crédito total de la devolución es
+  bultos × precio de la compra.
+- **`movimientos_stock.costo_por_bulto` NO se toca**: sigue siendo el costo
+  congelado del armado, y es el dato con el que se calcula la diferencia.
+- La devolución desde depósito no entra a la Rentabilidad como renglón: sale
+  del lote de su compra, que ya cuesta el precio de esa compra.
+
+`db/devolucion_valor_1` lista todas las devoluciones con el valor de antes y el
+de ahora (solo lee). `_2` ata el movimiento 170 a su compra, con guardas, y
+`_3` lo verifica. Lo cuidan `tests/test_devoluciones_al_proveedor.py` (contra
+Postgres) y `tests/test_costo_real.py`.
 
 **Movimientos del depósito** (`/administracion/ingresos`, dueño, 30/09):
 entradas de compra, devoluciones por rechazo, devoluciones desde depósito y

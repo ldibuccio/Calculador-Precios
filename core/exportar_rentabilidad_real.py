@@ -303,6 +303,12 @@ def generar_pdf_rentabilidad_real(
                     f"({_formatear_numero(totales['rechazos_bultos'])} bultos a segunda) "
                     if totales.get("rechazos_bultos") else ""
                 )
+                + (
+                    f"— devoluciones al proveedor {'+' if totales.get('diferencia_devolucion_proveedor', 0) > 0 else ''}"
+                    f"{_formatear_moneda(totales.get('diferencia_devolucion_proveedor', 0))} "
+                    f"(precio de compra contra costo del armado) "
+                    if round(totales.get("diferencia_devolucion_proveedor") or 0) else ""
+                )
                 + "— "
                 f"renta {_formatear_moneda(totales['renta_pesos'])} (utilidad {_formatear_pct(totales['utilidad_pct'])} sobre mercadería)."
                 + segunda,
@@ -394,6 +400,10 @@ def generar_excel_rentabilidad_real(
         # mermas crudas/trabajadas no suman a la de mermas y no hay forma de
         # reconstruir por que. Es el termino que hace cerrar la resta.
         "Caja de la merma $", "Caja de la merma cajas",
+        # Y AL FINAL TAMBIÉN, por lo mismo (01/10): la devolución al
+        # proveedor vale el precio de su compra, y esto es lo que ese precio
+        # tiene de más o de menos contra el costo del armado. Resta del costo.
+        "Devuelto al proveedor bultos", "Dif. devolución al proveedor $",
     )
     for grupo in grupos:
         hoja.cell(row=fila_actual, column=1, value=grupo["etiqueta"]).font = fuente_grupo
@@ -428,6 +438,9 @@ def generar_excel_rentabilidad_real(
             celda = hoja.cell(row=fila_actual, column=22, value=round(float(fila["cajas_mermadas_pesos"]), 2))
             celda.number_format = '"$"#,##0'
             hoja.cell(row=fila_actual, column=23, value=float(fila["cajas_mermadas"]))
+            hoja.cell(row=fila_actual, column=24, value=float(fila.get("devueltos_proveedor_bultos", 0)))
+            celda = hoja.cell(row=fila_actual, column=25, value=round(float(fila.get("diferencia_devolucion_proveedor", 0)), 2))
+            celda.number_format = '"$"#,##0'
             if fila["utilidad_pct"] is not None:
                 celda = hoja.cell(row=fila_actual, column=19, value=round(float(fila["utilidad_pct"]) / 100, 4))
                 celda.number_format = "0.0%"
@@ -461,6 +474,11 @@ def generar_excel_rentabilidad_real(
         celda.number_format = '"$"#,##0'
         hoja.cell(row=fila_actual, column=23,
                   value=float(subtotal["cajas_mermadas"])).font = fuente_subtotal
+        hoja.cell(row=fila_actual, column=24,
+                  value=float(subtotal.get("devueltos_proveedor_bultos", 0))).font = fuente_subtotal
+        celda = hoja.cell(row=fila_actual, column=25, value=round(float(subtotal.get("diferencia_devolucion_proveedor", 0)), 2))
+        celda.font = fuente_subtotal
+        celda.number_format = '"$"#,##0'
         if subtotal["utilidad_pct"] is not None:
             celda = hoja.cell(row=fila_actual, column=19, value=round(float(subtotal["utilidad_pct"]) / 100, 4))
             celda.font = fuente_subtotal
@@ -493,6 +511,11 @@ def generar_excel_rentabilidad_real(
         celda.number_format = '"$"#,##0'
         hoja.cell(row=fila_actual, column=23,
                   value=float(totales["cajas_mermadas"])).font = fuente_total
+        hoja.cell(row=fila_actual, column=24,
+                  value=float(totales.get("devueltos_proveedor_bultos", 0))).font = fuente_total
+        celda = hoja.cell(row=fila_actual, column=25, value=round(float(totales.get("diferencia_devolucion_proveedor", 0)), 2))
+        celda.font = fuente_total
+        celda.number_format = '"$"#,##0'
         if totales["utilidad_pct"] is not None:
             celda = hoja.cell(row=fila_actual, column=19, value=round(float(totales["utilidad_pct"]) / 100, 4))
             celda.font = fuente_total
