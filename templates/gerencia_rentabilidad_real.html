@@ -285,6 +285,8 @@
     font-size: 0.95rem;
   }
   .vacio { color: #888; font-style: italic; margin: 0; }
+  .provisorio { margin-top: 0.6rem; background: #fef3c7; color: #92400e; padding: 0.6rem 0.8rem;
+    border-radius: 8px; font-size: 0.9rem; }
 </style>
 </head>
 <body>
@@ -358,6 +360,15 @@
       {% if resultado.totales.segunda_bultos %}Segunda generada: {{ resultado.totales.segunda_bultos|numero }} bultos (vale cero).{% endif %}
       La utilidad % es sobre la mercadería.
     </div>
+    {# PROVISORIO (dueño, 01/10): esos días se cobran con lo ENVIADO porque su
+       remito todavía no volvió. Cuando vuelve, la venta pasa a lo recibido. #}
+    {% if resultado.fechas_provisorias %}
+    <div class="provisorio">
+      Provisorio (remito sin volver):
+      {% for f in resultado.fechas_provisorias %}{{ f.strftime("%d/%m") }}{% if not loop.last %}, {% endif %}{% endfor %}.
+      Esos días se cuentan con los kilos enviados.
+    </div>
+    {% endif %}
     {% if resultado.totales.cajas_perdidas %}
     {# DECÍA "Los rechazos se llevaron", y dejó de ser cierto en el mismo
        commit que le sumó la caja de los pases: desde el 22/09 este número

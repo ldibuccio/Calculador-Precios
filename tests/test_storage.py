@@ -68,7 +68,7 @@ def test_TODOS_los_prefijos_del_modulo_van_cada_uno_a_su_carpeta():
         for nombre in dir(storage)
         if nombre.startswith("PREFIJO_")
     }
-    decididos = {"comanda", "precios", "pedido", "pesaje", "merma", "vacios", "vales"}
+    decididos = {"comanda", "precios", "pedido", "pesaje", "merma", "vacios", "vales", "remitos"}
     assert encontrados == decididos, (
         "apareció (o se fue) un tipo de foto del bucket. Agregalo/sacalo también en "
         "_SQL_FOTOS_DE_RESPALDO (app/db.py), o sus archivos no vencen nunca y "

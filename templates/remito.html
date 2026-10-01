@@ -1,0 +1,151 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Remito</title>
+<style>
+  :root { font-family: -apple-system, system-ui, sans-serif; }
+  body { margin: 0; padding: 1rem; background: #f5f5f5; color: #222; }
+  .tarjeta {
+    background: #fff; border-radius: 10px; padding: 1rem; margin-bottom: 1rem;
+    box-shadow: 0 1px 3px rgba(0, 0, 0, 0.1); overflow-wrap: anywhere;
+  }
+  .aviso { background: #dcfce7; color: #166534; padding: 0.75rem 1rem; border-radius: 8px; margin-bottom: 1rem; }
+  .error { background: #fee2e2; color: #991b1b; padding: 0.75rem 1rem; border-radius: 8px; margin-bottom: 1rem; }
+  h2 { font-size: 1.05rem; margin: 0 0 0.3rem; }
+  .cuenta { color: #444; font-size: 0.9rem; margin: 0 0 0.6rem; }
+  .fila { padding: 0.6rem 0; border-top: 1px solid #eee; }
+  .fila-cabeza { display: flex; justify-content: space-between; gap: 0.6rem; align-items: baseline; }
+  .fila-que { font-weight: 600; }
+  .fila-dato { color: #555; font-size: 0.88rem; }
+  .vacio { color: #666; font-style: italic; }
+  .tarde { color: #dc2626; font-weight: 700; }
+  .marca-rechazo { color: #b45309; font-weight: 700; }
+  .importe { font-weight: 700; white-space: nowrap; }
+  .botones { display: flex; flex-wrap: wrap; gap: 0.5rem; margin-top: 0.5rem; }
+  .botones a, .botones button {
+    flex: 1 1 8rem; min-height: 44px; padding: 0.55rem 0.7rem; border-radius: 8px; font-size: 0.95rem;
+    font-weight: 600; text-align: center; text-decoration: none; box-sizing: border-box;
+    display: inline-flex; align-items: center; justify-content: center;
+  }
+  .primario { background: #2563eb; color: #fff; border: none; }
+  .secundario { background: #fff; color: #2563eb; border: 1px solid #2563eb; }
+  .campos { display: flex; flex-wrap: wrap; gap: 0.6rem; align-items: flex-end; }
+  .campos label { flex: 1 1 9rem; font-size: 0.85rem; color: #444; }
+  .campos input {
+    display: block; width: 100%; box-sizing: border-box; margin-top: 0.2rem; padding: 0.6rem;
+    border: 1px solid #ccc; border-radius: 8px; font-size: 1rem; min-height: 44px;
+  }
+  .campos button { flex: 1 1 9rem; min-height: 48px; border-radius: 8px; border: none; background: #2563eb;
+    color: #fff; font-weight: 600; font-size: 1rem; }
+  label.tilde { display: flex; gap: 0.6rem; align-items: flex-start; min-height: 44px; cursor: pointer; }
+  label.tilde input { width: 1.4rem; height: 1.4rem; margin-top: 0.1rem; flex: none; }
+  .total { font-weight: 700; margin: 0.6rem 0 0; }
+  .renglon { padding: 0.6rem 0; border-top: 1px solid #eee; }
+  .renglon-nombre { font-weight: 600; }
+  .numeros { display: flex; flex-wrap: wrap; gap: 0.3rem 1rem; color: #444; font-size: 0.9rem; }
+  .numeros b { color: #222; }
+  .pares { display: flex; flex-wrap: wrap; gap: 0.6rem; margin-top: 0.4rem; }
+  .pares label { flex: 1 1 8rem; font-size: 0.85rem; color: #444; }
+  .pares input {
+    display: block; width: 100%; box-sizing: border-box; margin-top: 0.2rem; padding: 0.6rem;
+    border: 1px solid #ccc; border-radius: 8px; font-size: 1rem; min-height: 44px;
+  }
+  .ojo { background: #fef3c7; color: #92400e; padding: 0.6rem 0.8rem; border-radius: 8px; margin: 0.4rem 0; }
+  .estado { display: inline-block; padding: 0.15rem 0.6rem; border-radius: 999px; background: #e0e7ff;
+    color: #3730a3; font-weight: 600; font-size: 0.85rem; }
+  .estado.anulado { background: #fee2e2; color: #991b1b; }
+  .estado.facturado { background: #dcfce7; color: #166534; }
+  .dato { margin: 0.25rem 0; }
+  .fotos { display: flex; flex-wrap: wrap; gap: 0.6rem; }
+  .fotos img { width: 6.5rem; height: 6.5rem; object-fit: cover; border-radius: 8px; border: 1px solid #ddd; }
+  textarea { display: block; width: 100%; box-sizing: border-box; margin-top: 0.2rem; padding: 0.6rem;
+    border: 1px solid #ccc; border-radius: 8px; font-size: 1rem; min-height: 4rem; font-family: inherit; }
+  button.peligro { background: #dc2626; color: #fff; border: none; min-height: 48px; border-radius: 8px;
+    font-weight: 600; font-size: 1rem; width: 100%; margin-top: 0.6rem; }
+</style>
+</head>
+<body>
+  {% set barra_sector = camino.sector %}
+  {% set barra_titulo = "Remito " ~ remito.numero %}
+  {% set barra_atras = camino.base ~ "/facturacion" %}
+  {% include "_barra_navegacion.html" %}
+
+  {% if aviso %}<div class="aviso">{{ aviso }}</div>{% endif %}
+  {% if error %}<div class="error">{{ error }}</div>{% endif %}
+
+  <div class="tarjeta">
+    <h2>Remito {{ remito.numero }} · <span class="estado {{ remito.estado }}">{{ remito.estado_texto }}</span></h2>
+    <p class="dato">{{ remito.cliente }} · {{ remito.sucursal }} · OC {{ remito.orden_compra or "sin orden de compra" }}</p>
+    <p class="dato">Pedido del {{ remito.fecha_pedido.strftime("%d/%m/%Y") }}</p>
+    <p class="dato">Emitido el {{ remito.emitido_dia.strftime("%d/%m/%Y") }}
+      {% if remito.sin_volver %}· <span class="tarde">hace {{ remito.dias_emitido }} días y no volvió</span>{% endif %}</p>
+    {% if remito.recibido_dia %}<p class="dato">Recibido el {{ remito.recibido_dia.strftime("%d/%m/%Y") }}
+      {% if remito.sin_factura %}· <span class="tarde">hace {{ remito.dias_recibido }} días sin factura</span>{% endif %}</p>{% endif %}
+    {% if remito.factura_numero %}<p class="dato">Factura {{ remito.factura_numero }}, anotada el {{ remito.facturado_dia.strftime("%d/%m/%Y") }}</p>{% endif %}
+    {% if remito.anulado_dia %}<div class="ojo">Anulado el {{ remito.anulado_dia.strftime("%d/%m/%Y") }} por Gerencia: {{ remito.anulado_motivo }}</div>{% endif %}
+    {% if remito.estado == "emitido" and camino.sector == "administracion" %}
+      <div class="botones"><a class="primario" href="/administracion/facturacion/remito/{{ remito.id }}/recibir">Recibir</a></div>
+    {% endif %}
+  </div>
+
+  <div class="tarjeta">
+    <h2>Renglones</h2>
+    {% if remito.rechazos_distintos %}
+      <div class="ojo">Los rechazos del remito no coinciden con los que cargó Depósito en {{ remito.rechazos_distintos }} renglón{{ "es" if remito.rechazos_distintos != 1 }}. Revisá el reingreso en Depósito: el remito no mueve stock.</div>
+    {% endif %}
+    {% for r in remito.renglones %}
+      <div class="renglon">
+        <div class="renglon-nombre">{{ r.articulo_nombre or "(sin identificar)" }}</div>
+        <div class="numeros">
+          <span>Salieron <b>{{ r.bultos_enviados|numero }}</b> bultos · <b>{{ r.kilos_enviados|numero }}</b> {{ r.sufijo or "sin unidad" }}</span>
+          {% if r.kilos_recibidos is not none %}
+            <span>Recibido <b>{{ r.kilos_recibidos|numero }}</b> {{ r.sufijo or "sin unidad" }}</span>
+            <span class="{{ 'marca-rechazo' if r.rechazo_distinto }}">Rechazados: remito <b>{{ r.bultos_rechazados|numero }}</b> · depósito <b>{{ r.rechazo_deposito|numero }}</b></span>
+            {% if r.importe is none %}<span class="tarde">sin precio</span>
+            {% else %}<span>{{ r.precio|moneda }} → <b>{{ r.importe|moneda }}</b></span>{% endif %}
+          {% endif %}
+        </div>
+      </div>
+    {% endfor %}
+    {% if remito.recibido_dia %}
+      <p class="total">A cobrar: {{ remito.importe.total|moneda }}</p>
+      {% if remito.importe.sin_precio %}<p class="fila-dato tarde">{{ remito.importe.sin_precio }} renglón{{ "es" if remito.importe.sin_precio != 1 }} sin precio no suma{{ "n" if remito.importe.sin_precio != 1 }}.</p>{% endif %}
+      <p class="cuenta">Kilos recibidos × precio de la lista vigente el día del pedido. Es para controlar la factura: la factura la hace el otro sistema.</p>
+    {% endif %}
+  </div>
+
+  {% if remito.fotos %}
+  <div class="tarjeta">
+    <h2>Remito firmado</h2>
+    <div class="fotos">
+      {% for f in remito.fotos %}
+        <a href="{{ camino.base }}/facturacion/remito/{{ remito.id }}/fotos/{{ f.id }}" target="_blank" rel="noopener">
+          <img src="{{ camino.base }}/facturacion/remito/{{ remito.id }}/fotos/{{ f.id }}" alt="Foto del remito firmado">
+        </a>
+      {% endfor %}
+    </div>
+  </div>
+  {% endif %}
+
+  {% if remito.estado in ("emitido", "recibido") %}
+  <div class="tarjeta">
+    {% if camino.sector == "gerencia" %}
+      <h2>Anular el remito</h2>
+      <form method="post" action="/gerencia/facturacion/remito/{{ remito.id }}/anular">
+        <label>Motivo (obligatorio)
+          <textarea name="motivo" required></textarea>
+        </label>
+        <button type="submit" class="peligro">Anular el remito</button>
+      </form>
+      <p class="cuenta">La orden de compra vuelve a quedar sin remito y se emite de nuevo.</p>
+    {% else %}
+      <p class="cuenta">Después de emitido no se edita. Si tiene un error, lo anula Gerencia y se emite de nuevo.</p>
+    {% endif %}
+  </div>
+  {% endif %}
+
+{% include "_pie_version.html" %}
+</body>
+</html>

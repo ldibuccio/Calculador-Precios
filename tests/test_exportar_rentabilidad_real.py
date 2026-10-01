@@ -72,7 +72,7 @@ def test_generar_excel_rentabilidad_real_lleva_la_cuenta_y_el_afuera():
     texto = "\n".join(valores)
     # El subtítulo lleva la regla de la cuenta REAL, para que el archivo
     # se explique solo.
-    assert "venta = lo ENVIADO" in texto
+    assert "venta = lo RECIBIDO según el remito (lo ENVIADO mientras el remito no volvió)" in texto
     assert "costo FIFO" in texto
     assert "la segunda vale cero" in texto
     # El AFUERA va incluido, con bultos y artículos por motivo — en el

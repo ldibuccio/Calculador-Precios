@@ -1941,11 +1941,87 @@ create table fotos_de_compras_borradas (
 create index fotos_de_compras_borradas_compra on fotos_de_compras_borradas (compra_id);
 comment on table fotos_de_compras_borradas is 'Fotos de pesada de una compra que se BORRÓ (dueño, 30/09). El archivo sigue en el bucket; compra_id va sin FK porque la compra ya no existe (su fila archivada está en compras_eliminadas). subida_el es el creado_en de la fila original.';
 
+-- El historial de los borrados (dueño, 01/10): una fila por tipo en cada
+-- borrado. Ver db/fotos_7_historial.sql.
+create table fotos_borrados (
+    id           bigint generated always as identity primary key,
+    borrado_el   timestamptz not null default now(),
+    como         text not null check (como in ('plazo', 'a_mano')),
+    tipo         text not null check (btrim(tipo) <> ''),
+    anteriores_a date not null,
+    cantidad     integer not null check (cantidad >= 0),
+    bytes        bigint not null check (bytes >= 0),
+    salteadas    integer not null check (salteadas >= 0)
+);
+comment on table fotos_borrados is 'HISTORIAL de los borrados de fotos (dueño, 01/10): una fila por tipo en cada borrado, con el rango (subidas antes de anteriores_a), cuántas, cuántos bytes y cuántas se saltearon por estar protegidas.';
+
+-- El plazo por tipo (dueño, 01/10). Nace vacía: un tipo sin fila vence a los
+-- 3 años, y el 3 vive en core/fotos.py. Ver db/fotos_6_plazos.sql.
+create table fotos_plazos (
+    tipo           text primary key check (btrim(tipo) <> ''),
+    anios          integer not null check (anios between 1 and 30),
+    actualizado_el timestamptz not null default now()
+);
+comment on table fotos_plazos is 'Cuántos años se guarda cada TIPO de foto antes de vencer (dueño, 01/10). Un tipo SIN fila vence a los 3 años.';
+
 create table fotos_borradas_por_antiguedad (
     foto_ruta  text primary key,
     tipo       text not null,
     subida_el  timestamptz not null,
     bytes      bigint,
-    borrada_el timestamptz not null default now()
+    borrada_el timestamptz not null default now(),
+    -- 'plazo' o 'a_mano' (dueño, 01/10). Sin default: el código dice cuál.
+    como       text not null constraint fotos_borradas_como check (como in ('plazo', 'a_mano')),
+    borrado_id bigint references fotos_borrados (id)
 );
 comment on table fotos_borradas_por_antiguedad is 'REGISTRO de las fotos cuyo ARCHIVO se borró por tener más de 3 años (dueño, 30/09). La fila que la nombraba NO se toca: "Ver foto" muestra "Foto borrada por antigüedad el DD/MM/AAAA".';
+
+-- REMITOS (dueño, 01/10): uno por ORDEN DE COMPRA (pedidos_sucursales). El
+-- remito oficial sale de otro sistema; acá se anota su número, se congela lo
+-- que salió, se carga lo recibido y la factura. Ver db/remitos_1..4.
+create table remitos (
+    id                 bigint generated always as identity primary key,
+    pedido_sucursal_id bigint not null references pedidos_sucursales (id),
+    cliente_id         bigint not null references clientes (id),
+    numero             text not null check (btrim(numero) <> ''),
+    emitido_el         timestamptz not null default now(),
+    recibido_el        timestamptz,
+    factura_numero     text check (factura_numero is null or btrim(factura_numero) <> ''),
+    facturado_el       timestamptz,
+    anulado_el         timestamptz,
+    anulado_motivo     text check (anulado_motivo is null or btrim(anulado_motivo) <> ''),
+    constraint remitos_factura_coherente check ((factura_numero is null) = (facturado_el is null)),
+    constraint remitos_factura_despues_de_recibir check (facturado_el is null or recibido_el is not null),
+    constraint remitos_anulado_con_motivo check ((anulado_el is null) = (anulado_motivo is null)),
+    constraint remitos_facturado_no_se_anula check (anulado_el is null or facturado_el is null)
+);
+create unique index remitos_numero_por_cliente
+    on remitos (cliente_id, upper(btrim(numero))) where anulado_el is null;
+create unique index remitos_uno_vivo_por_orden
+    on remitos (pedido_sucursal_id) where anulado_el is null;
+comment on table remitos is 'El remito OFICIAL de una orden de compra (pedidos_sucursales), dueño 01/10. Uno vivo por orden. Estados derivados: emitido, recibido (recibido_el), facturado (factura_numero). Anulado lo hace Gerencia con motivo; uno facturado no se anula.';
+
+create table remitos_renglones (
+    id                bigint generated always as identity primary key,
+    remito_id         bigint not null references remitos (id),
+    pedido_renglon_id bigint not null references pedidos_renglones (id),
+    bultos_enviados   numeric not null check (bultos_enviados > 0),
+    kilos_enviados    numeric not null check (kilos_enviados >= 0),
+    kilos_recibidos   numeric check (kilos_recibidos >= 0),
+    bultos_rechazados numeric check (bultos_rechazados >= 0),
+    constraint remitos_renglones_rechazo_tope check (coalesce(bultos_rechazados <= bultos_enviados, true)),
+    constraint remitos_renglones_recibido_entero check ((kilos_recibidos is null) = (bultos_rechazados is null)),
+    unique (remito_id, pedido_renglon_id)
+);
+create index remitos_renglones_por_renglon on remitos_renglones (pedido_renglon_id);
+comment on table remitos_renglones is 'Lo que salió en el remito, CONGELADO al emitir, y lo que el remito firmado dice que se recibió (kilos recibidos y bultos rechazados). Los rechazos NO mueven stock: se cotejan contra los que cargó depósito.';
+comment on column remitos_renglones.kilos_enviados is 'La magnitud de la ficha (kilos, unidades o cubetas), igual que pedidos_renglones.kilos_enviados, de donde se copia.';
+
+create table remitos_fotos (
+    id        bigint generated always as identity primary key,
+    remito_id bigint not null references remitos (id),
+    foto_ruta text not null check (btrim(foto_ruta) <> ''),
+    creado_en timestamptz not null default now()
+);
+create index remitos_fotos_por_remito on remitos_fotos (remito_id);
+comment on table remitos_fotos is 'Las fotos del remito FIRMADO (una o más, obligatorias al recibir). Bucket "comandas", prefijo "remitos".';

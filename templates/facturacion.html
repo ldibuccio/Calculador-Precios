@@ -1,0 +1,183 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Facturación</title>
+<style>
+  :root { font-family: -apple-system, system-ui, sans-serif; }
+  body { margin: 0; padding: 1rem; background: #f5f5f5; color: #222; }
+  .tarjeta {
+    background: #fff; border-radius: 10px; padding: 1rem; margin-bottom: 1rem;
+    box-shadow: 0 1px 3px rgba(0, 0, 0, 0.1); overflow-wrap: anywhere;
+  }
+  .aviso { background: #dcfce7; color: #166534; padding: 0.75rem 1rem; border-radius: 8px; margin-bottom: 1rem; }
+  .error { background: #fee2e2; color: #991b1b; padding: 0.75rem 1rem; border-radius: 8px; margin-bottom: 1rem; }
+  h2 { font-size: 1.05rem; margin: 0 0 0.3rem; }
+  .cuenta { color: #444; font-size: 0.9rem; margin: 0 0 0.6rem; }
+  .fila { padding: 0.6rem 0; border-top: 1px solid #eee; }
+  .fila-cabeza { display: flex; justify-content: space-between; gap: 0.6rem; align-items: baseline; }
+  .fila-que { font-weight: 600; }
+  .fila-dato { color: #555; font-size: 0.88rem; }
+  .vacio { color: #666; font-style: italic; }
+  .tarde { color: #dc2626; font-weight: 700; }
+  .marca-rechazo { color: #b45309; font-weight: 700; }
+  .importe { font-weight: 700; white-space: nowrap; }
+  .botones { display: flex; flex-wrap: wrap; gap: 0.5rem; margin-top: 0.5rem; }
+  .botones a, .botones button {
+    flex: 1 1 8rem; min-height: 44px; padding: 0.55rem 0.7rem; border-radius: 8px; font-size: 0.95rem;
+    font-weight: 600; text-align: center; text-decoration: none; box-sizing: border-box;
+    display: inline-flex; align-items: center; justify-content: center;
+  }
+  .primario { background: #2563eb; color: #fff; border: none; }
+  .secundario { background: #fff; color: #2563eb; border: 1px solid #2563eb; }
+  .campos { display: flex; flex-wrap: wrap; gap: 0.6rem; align-items: flex-end; }
+  .campos label { flex: 1 1 9rem; font-size: 0.85rem; color: #444; }
+  .campos input {
+    display: block; width: 100%; box-sizing: border-box; margin-top: 0.2rem; padding: 0.6rem;
+    border: 1px solid #ccc; border-radius: 8px; font-size: 1rem; min-height: 44px;
+  }
+  .campos button { flex: 1 1 9rem; min-height: 48px; border-radius: 8px; border: none; background: #2563eb;
+    color: #fff; font-weight: 600; font-size: 1rem; }
+  label.tilde { display: flex; gap: 0.6rem; align-items: flex-start; min-height: 44px; cursor: pointer; }
+  label.tilde input { width: 1.4rem; height: 1.4rem; margin-top: 0.1rem; flex: none; }
+  .total { font-weight: 700; margin: 0.6rem 0 0; }
+</style>
+</head>
+<body>
+  {% set barra_sector = camino.sector %}
+  {% set barra_titulo = "Facturación" %}
+  {% set barra_atras = camino.base %}
+  {% include "_barra_navegacion.html" %}
+  {% from "_info.html" import info %}
+  {% set es_admin = camino.sector == "administracion" %}
+
+  {% if aviso %}<div class="aviso">{{ aviso }}</div>{% endif %}
+  {% if error %}<div class="error">{{ error }}</div>{% endif %}
+
+  {% if es_admin %}
+  <div class="tarjeta">
+    <h2>Recibir un remito {% call info("Recibir un remito") %}Cuando el camionero trae el remito firmado, se busca por su número, se cargan los kilos que anotó el súper y los bultos rechazados, y se le saca foto. Los rechazos NO se cargan de nuevo: los carga Depósito, y acá se comparan.{% endcall %}</h2>
+    <form method="get" action="/administracion/facturacion/recibir" class="campos">
+      <label>Número de remito
+        <input type="text" name="numero" required autocomplete="off">
+      </label>
+      <button type="submit">Buscar</button>
+    </form>
+    <div class="botones">
+      <a class="secundario" href="/administracion/pedidos/buscar">Armar Remito</a>
+      <a class="secundario" href="/administracion/precios-por-periodo">Precios por Período</a>
+    </div>
+  </div>
+  {% endif %}
+
+  <div class="tarjeta" id="sin-remito">
+    <h2>Pedidos sin remito ({{ ordenes|length }}) {% call info("Pedidos sin remito") %}Una fila por orden de compra (cada sucursal del pedido) que tiene algo armado y todavía no tiene remito. Cuenta desde el {{ remitos_desde.strftime("%d/%m/%Y") }}: lo anterior se emite desde Armar Remito.{% endcall %}</h2>
+    {% for o in ordenes %}
+      <div class="fila">
+        <div class="fila-cabeza">
+          <span class="fila-que">{{ o.cliente }} · {{ o.sucursal }}</span>
+          <span class="fila-dato">{{ o.fecha_operacion.strftime("%d/%m") }}</span>
+        </div>
+        <div class="fila-dato">
+          OC {{ o.orden_compra or "sin orden de compra" }} · {{ o.renglones }} renglón{{ "es" if o.renglones != 1 }} armado{{ "s" if o.renglones != 1 }}
+          {% if o.sin_kilos %}· <span class="tarde">{{ o.sin_kilos }} sin kilos</span>{% endif %}
+        </div>
+        {% if es_admin %}
+        <div class="botones">
+          <a class="primario" href="/administracion/facturacion/emitir?pedido_id={{ o.pedido_id }}&sucursal={{ o.sucursal|urlencode }}">Emitir remito</a>
+        </div>
+        {% endif %}
+      </div>
+    {% else %}
+      <p class="vacio">No hay pedidos sin remito.</p>
+    {% endfor %}
+  </div>
+
+  <div class="tarjeta" id="en-viaje">
+    <h2>Remitos en viaje ({{ emitidos|length }})</h2>
+    <p class="cuenta">Emitidos y sin volver. En rojo, los de más de {{ dias_sin_volver }} días.</p>
+    {% for r in emitidos %}
+      <div class="fila">
+        <div class="fila-cabeza">
+          <a class="fila-que" href="{{ camino.base }}/facturacion/remito/{{ r.id }}">Remito {{ r.numero }}</a>
+          <span class="fila-dato {{ 'tarde' if r.sin_volver }}">hace {{ r.dias_emitido }} día{{ "s" if r.dias_emitido != 1 }}</span>
+        </div>
+        <div class="fila-dato">{{ r.cliente }} · {{ r.sucursal }} · pedido del {{ r.fecha_pedido.strftime("%d/%m") }}</div>
+        {% if es_admin %}
+        <div class="botones">
+          <a class="primario" href="/administracion/facturacion/remito/{{ r.id }}/recibir">Recibir</a>
+        </div>
+        {% endif %}
+      </div>
+    {% else %}
+      <p class="vacio">No hay remitos en viaje.</p>
+    {% endfor %}
+  </div>
+
+  <div class="tarjeta" id="recibidos">
+    <h2>Recibidos sin factura ({{ recibidos|length }})</h2>
+    <p class="cuenta">En rojo, los de más de {{ dias_sin_factura }} días. El importe es kilos recibidos × precio de la lista: sirve para controlar la factura.</p>
+    {% if recibidos and es_admin %}<form method="post" action="/administracion/facturacion/facturar">{% endif %}
+    {% for r in recibidos %}
+      <div class="fila">
+        {% if es_admin %}
+        <label class="tilde">
+          <input type="checkbox" name="remito_id" value="{{ r.id }}">
+          <span>
+            <span class="fila-que">Remito {{ r.numero }}</span> · {{ r.cliente }} · {{ r.sucursal }}<br>
+            <span class="fila-dato">pedido del {{ r.fecha_pedido.strftime("%d/%m") }} ·
+              <span class="{{ 'tarde' if r.sin_factura }}">recibido hace {{ r.dias_recibido }} día{{ "s" if r.dias_recibido != 1 }}</span></span>
+          </span>
+        </label>
+        {% else %}
+        <div class="fila-que">Remito {{ r.numero }} · {{ r.cliente }} · {{ r.sucursal }}</div>
+        <div class="fila-dato"><span class="{{ 'tarde' if r.sin_factura }}">recibido hace {{ r.dias_recibido }} día{{ "s" if r.dias_recibido != 1 }}</span></div>
+        {% endif %}
+        <div class="fila-cabeza">
+          <a class="fila-dato" href="{{ camino.base }}/facturacion/remito/{{ r.id }}">Ver el remito</a>
+          <span class="importe">{{ r.importe.total|moneda }}</span>
+        </div>
+        {% if r.importe.sin_precio %}<div class="fila-dato tarde">{{ r.importe.sin_precio }} renglón{{ "es" if r.importe.sin_precio != 1 }} sin precio: no suma{{ "n" if r.importe.sin_precio != 1 }}.</div>{% endif %}
+        {% if r.rechazos_distintos %}<div class="marca-rechazo">Los rechazos no coinciden con Depósito en {{ r.rechazos_distintos }} renglón{{ "es" if r.rechazos_distintos != 1 }}.</div>{% endif %}
+      </div>
+    {% else %}
+      <p class="vacio">No hay remitos recibidos sin factura.</p>
+    {% endfor %}
+    {% if recibidos and es_admin %}
+      <div class="campos" style="margin-top: 0.8rem;">
+        <label>Número de factura de los tildados
+          <input type="text" name="factura_numero" required autocomplete="off">
+        </label>
+        <button type="submit">Anotar factura</button>
+      </div>
+    </form>
+    {% endif %}
+  </div>
+
+  <div class="tarjeta" id="facturados">
+    <h2>Facturados ({{ facturados|length }})</h2>
+    <form method="get" action="{{ camino.base }}/facturacion#facturados" class="campos">
+      <label>Factura desde <input type="date" name="desde" value="{{ desde.isoformat() }}"></label>
+      <label>hasta <input type="date" name="hasta" value="{{ hasta.isoformat() }}"></label>
+      <button type="submit">Filtrar</button>
+    </form>
+    {% if error_fecha %}<div class="error" style="margin-top: 0.6rem;">{{ error_fecha }}</div>{% endif %}
+    {% for r in facturados %}
+      <div class="fila">
+        <div class="fila-cabeza">
+          <a class="fila-que" href="{{ camino.base }}/facturacion/remito/{{ r.id }}">Remito {{ r.numero }}</a>
+          <span class="importe">{{ r.importe.total|moneda }}</span>
+        </div>
+        <div class="fila-dato">Factura {{ r.factura_numero }} · {{ r.facturado_dia.strftime("%d/%m/%Y") }} · {{ r.cliente }} · {{ r.sucursal }}</div>
+        {% if r.rechazos_distintos %}<div class="marca-rechazo">Los rechazos no coinciden con Depósito.</div>{% endif %}
+      </div>
+    {% else %}
+      <p class="vacio">No hay remitos facturados en esas fechas.</p>
+    {% endfor %}
+    {% if facturados %}<p class="total">Total: {{ total_facturados|moneda }}</p>{% endif %}
+  </div>
+
+{% include "_pie_version.html" %}
+</body>
+</html>

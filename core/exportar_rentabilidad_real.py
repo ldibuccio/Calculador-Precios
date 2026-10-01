@@ -45,14 +45,19 @@ def _texto_bultos(cantidad) -> str:
     return f"{_formatear_numero(cantidad)} bulto{'s' if float(cantidad) != 1 else ''}"
 
 
-def _armar_subtitulo_real(fecha_desde: date, fecha_hasta: date, filtros_texto: list[str], cantidad_fechas: int) -> str:
+def _armar_subtitulo_real(fecha_desde: date, fecha_hasta: date, filtros_texto: list[str], cantidad_fechas: int,
+                          fechas_provisorias=()) -> str:
     subtitulo = (
         f"Envíos del {fecha_desde.strftime('%d/%m/%Y')} al {fecha_hasta.strftime('%d/%m/%Y')} "
         f"({cantidad_fechas} día{'s' if cantidad_fechas != 1 else ''} con envíos) — "
-        "la cuenta REAL: venta = lo ENVIADO × precio de lista vigente con las tasas del cliente; "
+        "la cuenta REAL: venta = lo RECIBIDO según el remito (lo ENVIADO mientras el remito no volvió) "
+        "× precio de lista vigente con las tasas del cliente; "
         "mercadería al costo FIFO del lote que salió; mermas del período a su costo; "
         "reproceso neutro; la segunda vale cero"
     )
+    if fechas_provisorias:
+        subtitulo += (" — provisorio (remito sin volver): "
+                      + ", ".join(f.strftime("%d/%m") for f in fechas_provisorias))
     if filtros_texto:
         subtitulo += " — " + ", ".join(filtros_texto)
     return subtitulo
@@ -88,7 +93,8 @@ def generar_pdf_rentabilidad_real(
 ) -> bytes:
     """Arma el PDF de Rentabilidad Real: el afuera por motivo primero, después una tabla por grupo y el total."""
     buffer = BytesIO()
-    subtitulo = _armar_subtitulo_real(fecha_desde, fecha_hasta, filtros_texto, len(resultado["fechas_incluidas"]))
+    subtitulo = _armar_subtitulo_real(fecha_desde, fecha_hasta, filtros_texto, len(resultado["fechas_incluidas"]),
+                                      resultado.get("fechas_provisorias", ()))
     documento = SimpleDocTemplate(
         buffer,
         pagesize=A4,
@@ -341,7 +347,8 @@ def generar_excel_rentabilidad_real(
 
     hoja.cell(
         row=fila_actual, column=1,
-        value=_armar_subtitulo_real(fecha_desde, fecha_hasta, filtros_texto, len(resultado["fechas_incluidas"])),
+        value=_armar_subtitulo_real(fecha_desde, fecha_hasta, filtros_texto, len(resultado["fechas_incluidas"]),
+                                      resultado.get("fechas_provisorias", ())),
     ).font = fuente_normal
     fila_actual += 2
 

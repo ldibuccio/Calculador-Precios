@@ -12698,6 +12698,10 @@ def test_recalcular_alertas_usa_las_ventanas_de_cada_control():
         "contar_vales_plata_sin_aplicar": VACIO,
         "contar_vales_viejos": VACIO,
         "contar_espacio_de_fotos": VACIO,
+        "contar_remitos_sin_volver": VACIO,
+        "contar_remitos_sin_factura": VACIO,
+        "contar_remitos_con_rechazo_distinto": VACIO,
+        "contar_ordenes_sin_remito": VACIO,
     }
     with ExitStack() as pila:
         pila.enter_context(patch("app.main._hoy_argentina", return_value=HOY_DE_PRUEBA))
@@ -30655,6 +30659,11 @@ PANTALLAS_SIN_LINK_DECIDIDAS = {
         "el href se arma con {{ camino.base }}, que un regex literal no ve",
     "/administracion/cajas/movimientos":
         "el href se arma con {{ camino.base }}, que un regex literal no ve",
+    # Se llega por el FORMULARIO de búsqueda de Facturación (un GET con su
+    # action), que el regex de href no ve. Lo afirma test_remitos.py sobre el
+    # marcado RENDERIZADO.
+    "/administracion/facturacion/recibir":
+        "se llega por el form GET 'Recibir un remito' de Facturación, no por un href",
 }
 
 

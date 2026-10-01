@@ -4,7 +4,9 @@ La contracara de core/rentabilidad.py (la TEÓRICA, que queda intacta
 como red del dueño: bultos = lo pedido, costo de compra anclado). Esta
 es la cuenta exacta, mirando lo que pasó:
 
-    + venta real   = kilos/unidades ENVIADOS (lo que se factura) ×
+    + venta real   = kilos/unidades RECIBIDOS según el remito que volvió
+                     (lo que se cobra, dueño 01/10); mientras el remito
+                     no vuelve, los ENVIADOS y el día queda provisorio ×
                      precio de lista vigente a la fecha del pedido ×
                      (1 + Σ tasas del cliente) — MISMO listado anclado
                      que Márgenes y la teórica.
@@ -332,6 +334,7 @@ def calcular_rentabilidad_real(
     fecha_hasta,
     devoluciones: list[dict] | None = None,
     cajas_del_deposito: dict | None = None,
+    kilos_recibidos: dict | None = None,
 ) -> dict:
     """Arma el reporte real a partir de datos ya traídos (puro, testeable sin base).
 
@@ -369,7 +372,18 @@ def calcular_rentabilidad_real(
     resta la venta ("mandé 25, devolvió 5: vendí 20") y acredita la
     mercadería al costo congelado; el que no se puede valuar va al
     "afuera" con motivo, jamás suma cero en silencio.
+
+    kilos_recibidos: {renglon_id: kilos} de los renglones cuyo REMITO YA
+    VOLVIÓ (dueño, 01/10: "le pagan lo recibido"). Esa venta se cobra con los
+    kilos recibidos y no con los enviados, y su devolución NO resta venta: lo
+    rechazado ya está afuera de lo recibido, restarlo otra vez sería cobrarlo
+    dos veces de menos. El costo se acredita igual. Un renglón que no está
+    sigue con los enviados y su DÍA queda "provisorio (remito sin volver)" en
+    `fechas_provisorias`. None (los llamadores viejos) es no saber nada de
+    remitos: no marca ningún día.
     """
+    recibidos = kilos_recibidos or {}
+    fechas_provisorias = set()
     acumulado: dict = {}
     afuera: dict = {}
     fechas_incluidas = set()
@@ -501,10 +515,18 @@ def calcular_rentabilidad_real(
                 if denominador is None:
                     denominador = 1.0
                 envase_unidad = _numero(margen.get("costo_envase_unidad_venta")) or 0.0
+                # LO QUE SE COBRA es lo recibido si el remito volvió; si no, lo
+                # enviado y el día queda provisorio. El envase sigue siendo el
+                # de lo ENVIADO: la caja salió igual.
+                cobrado = recibidos.get(salida.get("renglon_id"))
+                if cobrado is None:
+                    cobrado = unidades
+                    if kilos_recibidos is not None:
+                        fechas_provisorias.add(salida["fecha"])
                 fila = _fila(articulo)
                 fila["bultos"] += bultos
-                fila["unidades"] += unidades
-                fila["venta_neta"] += unidades * precio * denominador
+                fila["unidades"] += cobrado
+                fila["venta_neta"] += cobrado * precio * denominador
                 fila["costo_mercaderia"] += salida["costo"]
                 fila["costo_envase"] += unidades * envase_unidad
 
@@ -622,7 +644,9 @@ def calcular_rentabilidad_real(
 
         fila = _fila(articulo)
         fila["devoluciones_bultos"] += bultos
-        fila["devoluciones_venta"] += unidades * precio * denominador
+        # Con el remito de vuelta, lo rechazado ya no está en lo cobrado.
+        if devolucion.get("renglon_id") not in recibidos:
+            fila["devoluciones_venta"] += unidades * precio * denominador
         if perdido:
             # No vuelve al stock (va a segunda, con o sin cambio de
             # envase): no queda primera que absorba el costo, así que
@@ -785,4 +809,5 @@ def calcular_rentabilidad_real(
         "totales": totales,
         "afuera_por_motivo": afuera_por_motivo,
         "fechas_incluidas": sorted(fechas_incluidas),
+        "fechas_provisorias": sorted(fechas_provisorias),
     }

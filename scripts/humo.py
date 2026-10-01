@@ -60,6 +60,8 @@ NO_SE_ABREN = {
     "/administracion/vales/{vale_id}/fotos/{foto_id}/ver": "idem",
     "/gerencia/vales/{vale_id}/fotos/{foto_id}/ver": "idem",
     "/gerencia/fotos/compras-borradas/{foto_id}/ver": "idem",
+    "/administracion/facturacion/remito/{remito_id}/fotos/{foto_id}": "idem",
+    "/gerencia/facturacion/remito/{remito_id}/fotos/{foto_id}": "idem",
     # El mail necesita una casilla configurada con su credencial, que por
     # regla del proyecto no vive en la base.
     "/deposito/pedido/mails/{mail_id}/revisar": "necesita una casilla con credencial",
@@ -258,8 +260,22 @@ def siembra():
       select v.id, 'vales/EJEMPLO.jpg', 'gerencia' from vales_a_cobrar v limit 1;
     insert into fotos_de_compras_borradas (compra_id, foto_ruta, subida_el)
       values (999999, 'pesaje/EJEMPLO-BORRADA.jpg', now());
-    insert into fotos_borradas_por_antiguedad (foto_ruta, tipo, subida_el)
-      values ('vales/EJEMPLO.jpg', 'vale', now() - interval '4 years');
+    insert into fotos_borrados (como, tipo, anteriores_a, cantidad, bytes, salteadas)
+      values ('plazo', 'vale', current_date - 1095, 1, 100, 0);
+    insert into fotos_borradas_por_antiguedad (foto_ruta, tipo, subida_el, como, borrado_id)
+      select 'vales/EJEMPLO.jpg', 'vale', now() - interval '4 years', 'plazo', id from fotos_borrados;
+    insert into fotos_plazos (tipo, anios) values ('comanda', 2);
+    -- UN REMITO RECIBIDO (dueño, 01/10), con su renglón, su foto y un rechazo
+    -- distinto del de Depósito: así Facturación, el detalle, el cotejo y la
+    -- lista de fotos pasan por sus joins.
+    insert into remitos (pedido_sucursal_id, cliente_id, numero, recibido_el)
+      select ps.id, p.cliente_id, 'EJ-0001', now() from pedidos_sucursales ps
+        join pedidos p on p.id = ps.pedido_id limit 1;
+    insert into remitos_renglones (remito_id, pedido_renglon_id, bultos_enviados, kilos_enviados,
+                                   kilos_recibidos, bultos_rechazados)
+      select re.id, r.id, 10, 100, 95, 1 from remitos re, pedidos_renglones r
+       where r.armado_el is not null limit 1;
+    insert into remitos_fotos (remito_id, foto_ruta) select id, 'remitos/EJEMPLO.jpg' from remitos;
     """
 
 
@@ -290,6 +306,8 @@ def _valor_para(nombre):
     hoy = datetime.date.today()
     if nombre.endswith("_id"):
         return "1"          # la siembra deja la fila 1 de cada tabla
+    if nombre == "sucursal":
+        return "EJ"         # la sucursal que siembra la siembra
     if nombre == "tipo_retiro":
         return "Clark"      # el default de la columna en el esquema real
     if "desde" in nombre:

@@ -4465,8 +4465,9 @@ Lo cuida `tests/test_vales_a_cobrar.py`, contra Postgres.
 
 ## FOTOS: LA REGLA DE 3 AÑOS Y LAS ANEXADAS DE UN VALE (30/09, dueño)
 
-- **Una foto de respaldo no se borra antes de 3 años desde que se SUBIÓ.**
-  Vale para todas: pesadas, devoluciones de mercadería, comandas, capturas de
+- **Una foto de respaldo no se borra antes de su plazo desde que se SUBIÓ**:
+  3 años salvo que Gerencia le cambie el plazo al tipo (01/10, ver "EL PLAZO
+  POR TIPO" abajo). Vale para todas: pesadas, devoluciones de mercadería, comandas, capturas de
   pedido, archivos de precios, mermas, devoluciones de vacíos, vales y
   anexadas. Las que se borran por error de carga en el momento (una pesada o
   una comanda desde la compra, una captura del pedido) siguen igual.
@@ -4474,12 +4475,12 @@ Lo cuida `tests/test_vales_a_cobrar.py`, contra Postgres.
   (`/gerencia/fotos`): cuántas y cuánto ocupan por tipo, y un botón con tilde
   de confirmación. Se va el ARCHIVO y **la fila que lo nombraba queda**;
   `fotos_borradas_por_antiguedad` dice cuándo. Todo "Ver foto" pasa por
-  `_ir_a_la_foto` (app/main.py), que en ese caso muestra "Foto borrada por
-  antigüedad el DD/MM/AAAA". Un test exige que `obtener_url_foto` no se llame
+  `_ir_a_la_foto` (app/main.py), que en ese caso muestra "Foto borrada el
+  DD/MM/AAAA, por plazo" (o ", a mano", desde el 01/10). Un test exige que `obtener_url_foto` no se llame
   en ningún otro lado. El registro se escribe y se commitea DESPUÉS de borrar
   el archivo: si el Storage falla, la foto queda como estaba.
 - **La lista de todas las fotos está escrita UNA vez**: `_SQL_FOTOS_DE_RESPALDO`
-  (app/db.py), nueve patas. La regla (el corte, los tipos, el resumen) vive en
+  (app/db.py), diez patas desde el 01/10 (la décima son los remitos). La regla (el corte, los tipos, el resumen) vive en
   `core/fotos.py`. Un test compara las tablas del esquema con columna de foto
   contra las decididas: una tabla nueva que guarde fotos falla hasta entrar.
 - **Los archivos sin registro** (16 en Frutamax el 30/09) se muestran aparte
@@ -4528,6 +4529,98 @@ nuevo y lo de 3 años queda abajo, igual que estaba.
   en vez de dar cero, y la pantalla dice "sin dato".
 
 Medido el 30/09 en Frutamax: 622 archivos, 33,7 MB, del 15/08 en adelante.
+
+## REMITOS Y FACTURACIÓN (01/10, dueño)
+
+**El remito es UNO POR ORDEN DE COMPRA** (`pedidos_sucursales`): un pedido de Día
+lleva tres. El remito oficial sale de otro sistema; acá se anota su número, se
+congela lo que salió, se carga lo que firmó el súper y el número de factura. La
+facturación y la cobranza no se hacen acá. La regla pura vive en
+`core/remitos.py` y la escritura en `app/db.py` (sección REMITOS).
+
+- **Tres estados, derivados de las fechas** (no hay columna de estado):
+  emitido (`numero`), recibido (`recibido_el`), facturado (`factura_numero`).
+  Uno solo vivo por orden (`remitos_uno_vivo_por_orden`) y el número es único
+  por cliente entre los vivos (`remitos_numero_por_cliente`, plegado con
+  `upper(btrim())`): **lo decide la base y el código traduce el error**.
+- **Emitir congela** bultos y `kilos_enviados` de cada renglón armado de esa
+  sucursal (`remitos_renglones`). Después no se edita: si hay error, Gerencia
+  lo anula con motivo y se emite de nuevo (anular libera el número). Uno
+  facturado no se anula (CHECK). Sin kilos enviados no se emite: se cargan en
+  Armar Pedido. Un pedido reemplazado no se remite. Una sucursal sin fila en
+  `pedidos_sucursales` (pedido cargado a mano) la crea al emitir.
+- **Recibir** se busca por número. Los kilos recibidos vienen precargados con
+  los enviados y se cambia solo lo que vino distinto. **Kilos recibidos es lo
+  que se quedó el súper: si rechazaron bultos, lo rechazado se descuenta de los
+  kilos** (el aviso está a la vista en la pantalla). La foto del remito firmado
+  es obligatoria (bucket "comandas", prefijo `remitos`, tabla `remitos_fotos`).
+- **LOS RECHAZOS SE CARGAN SOLO EN DEPÓSITO** (`movimientos_stock` con
+  `pedido_renglon_id`), que es lo que mueve el stock. El remito anota lo que
+  dice el papel y lo COTEJA renglón por renglón (`_SQL_RECHAZO_DE_DEPOSITO`).
+  Si no coincide se ve en el remito y salta `remitos_rechazo_distinto`, que se
+  apaga sola cuando Depósito corrige el reingreso.
+- **El importe a cobrar** es kilos recibidos × precio vigente el DÍA DEL
+  PEDIDO (`_SQL_PRECIO_DEL_RENGLON`: la fila de la ficha con `vigente_desde`
+  más reciente que ya había llegado). Es informativo, para controlar la
+  factura. Un renglón sin precio no suma y se dice.
+- **Facturar**: una factura cubre uno o varios remitos recibidos del MISMO
+  cliente; un remito tiene una sola factura.
+- **Pantalla Administración → Facturación** (`/administracion/facturacion`,
+  botón "Remitos y facturas"): pedidos sin remito, en viaje, recibidos sin
+  factura y facturados (filtro por fecha de factura). La misma pantalla en
+  `/gerencia/facturacion`, sector por prefijo (corolario 63): Gerencia mira y
+  anula; Administración emite, recibe y factura. Armar Remito dice en cada
+  sucursal "Emitir remito" o el número del que ya está.
+- **Rentabilidad Real cobra lo RECIBIDO** cuando el remito volvió ("le pagan
+  lo recibido"), y su devolución ya no resta venta (lo rechazado está afuera de
+  lo recibido); el costo se acredita igual. Mientras no vuelve se usa lo
+  enviado y el día sale "Provisorio (remito sin volver)", en la pantalla, el
+  PDF y el Excel (`kilos_recibidos_por_renglon`, `fechas_provisorias`).
+
+**Las alertas** (Administración y Gerencia), con sus plazos en
+`core/remitos.py`:
+
+- `remitos_sin_volver`: emitido hace **más de 4 días corridos**
+  (`DIAS_REMITO_SIN_VOLVER`). El camión vuelve en el día; el 4 contempla un fin
+  de semana largo o un feriado.
+- `remitos_sin_factura`: recibido hace **más de 10 días corridos**
+  (`DIAS_REMITO_SIN_FACTURA`). Se factura una vez por semana, más fin de semana
+  y feriados.
+- `remitos_rechazo_distinto`: el papel y Depósito no dicen lo mismo.
+- `pedidos_sin_remito`: órdenes de compra armadas sin remito, **solo desde
+  `REMITOS_DESDE`** (la fecha del despliegue). Lo anterior nunca tuvo remito
+  en este sistema y no es un olvido; se emite desde Armar Remito.
+
+Migraciones `db/remitos_1` a `remitos_3`, verificación en `remitos_4`. Lo cuida
+`tests/test_remitos.py`, contra Postgres.
+
+## FOTOS: EL PLAZO POR TIPO Y EL BORRADO A MANO (01/10, dueño)
+
+- **Cada tipo de foto tiene su plazo** en años desde la subida, editable en
+  Gerencia → Fotos y espacio (`fotos_plazos`). La tabla nace VACÍA: un tipo
+  sin fila vence a los 3 años, y el 3 vive una vez, en `core/fotos.py`
+  (`ANIOS_DE_RESPALDO`). La lista "Fotos de más de 3 años" pasó a ser "Fotos
+  vencidas", cada tipo a su plazo.
+- **Borrado a mano**: un tipo y "anteriores a" una fecha. Antes se ve cuántas
+  fotos y cuánto se libera; para confirmar hay que escribir la cantidad EXACTA,
+  y el server la recalcula: si no coincide, no se borra nada.
+- **En los dos se borra el ARCHIVO y queda el registro**:
+  `fotos_borradas_por_antiguedad.como` ('plazo' o 'a_mano') y "Ver foto" dice
+  "Foto borrada el DD/MM/AAAA, por plazo / a mano". El renglón de la operación
+  no se toca nunca.
+- **Nunca se borran** (se saltean, y la pantalla dice cuántas y por qué): las
+  fotos de un vale que no está cobrado, cruzado ni anulado, y las de un remito
+  sin facturar. Lo marca `_SQL_FOTOS_DE_RESPALDO` en la columna `protegida`,
+  con el MISMO `_SQL_ESTADO_DEL_VALE` de la cartera. La foto de una devolución
+  de vacíos es la de su vale, y queda protegida igual.
+- **Cada borrado deja historial** (`fotos_borrados`): fecha, cómo, tipo,
+  rango (`anteriores_a`), cantidad, bytes y salteadas. Uno por tipo. Si el
+  Storage falla en todas, no queda renglón: el historial es de lo borrado.
+- **Las pesadas de compras borradas siguen la regla de v1054**: 3 años fijos
+  (`TIPOS_CON_PLAZO_FIJO`), sin plazo editable y fuera del borrado a mano.
+
+Migraciones `db/fotos_6` a `fotos_8`, verificación en `fotos_9`. Lo cuida
+`tests/test_fotos.py`, contra Postgres.
 
 ## Buscar compras: la SEÑA (28/09, dueño)
 

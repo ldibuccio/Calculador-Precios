@@ -75,6 +75,22 @@ from core.motor_costeo import (
 import psycopg2
 
 from app.db import (
+    RemitoNoSePuede,
+    anular_remito,
+    buscar_remitos_por_numero,
+    contar_ordenes_sin_remito,
+    contar_remitos_con_rechazo_distinto,
+    contar_remitos_sin_factura,
+    contar_remitos_sin_volver,
+    emitir_remito,
+    facturar_remitos,
+    kilos_recibidos_por_renglon,
+    listar_remitos,
+    orden_para_emitir,
+    ordenes_sin_remito,
+    recibir_remito,
+    remito_por_id,
+    remitos_con_rechazo_distinto,
     borrar_carga_de_compra,
     carga_de_compra,
     cargas_con_renglones,
@@ -288,6 +304,11 @@ from app.db import (
     subidas_al_storage,
     contar_espacio_de_fotos,
     registrar_foto_borrada_por_antiguedad,
+    abrir_borrado_de_fotos,
+    cerrar_borrado_de_fotos,
+    guardar_plazo_de_fotos,
+    historial_de_borrados_de_fotos,
+    plazos_de_fotos,
     contar_fotos_borradas_por_antiguedad,
     listar_fotos_de_compras_borradas,
     foto_de_compra_borrada,
@@ -516,9 +537,18 @@ from core.fotos import (
     UMBRAL_DEL_AVISO as UMBRAL_DEL_AVISO_DE_ESPACIO,
     archivos_de_hoy,
     archivos_sin_registro,
-    corte_de_respaldo,
+    TEXTO_DE_COMO,
+    TEXTO_DEL_TIPO as TEXTO_DEL_TIPO_DE_FOTO,
+    TIPOS_CON_PLAZO_FIJO,
+    bytes_de as bytes_de_fotos,
+    cortes_por_tipo,
     evolucion_por_mes,
     fotos_para_borrar,
+    leer_plazo,
+    motivos_de_las_salteadas,
+    plazo_del_tipo,
+    seleccion_a_mano,
+    vencidas_protegidas,
     porcentaje_del_plan,
     proyeccion,
     resumen_por_tipo,
@@ -599,6 +629,21 @@ from core.storage import (
     subir_foto_comanda,
     PREFIJO_VACIOS,
     PREFIJO_VALE,
+    PREFIJO_REMITO,
+)
+from core.remitos import (
+    DIAS_REMITO_SIN_FACTURA,
+    DIAS_REMITO_SIN_VOLVER,
+    REMITOS_DESDE,
+    TEXTO_DEL_ESTADO as TEXTO_DEL_ESTADO_REMITO,
+    diferencia_de_rechazo,
+    estado_del_remito,
+    importe_del_remito,
+    importe_del_renglon,
+    leer_recepcion,
+    rechazo_no_coincide,
+    sin_factura_hace_mucho,
+    sin_volver_hace_mucho,
 )
 
 UNIDADES_VENTA_VALIDAS = {"kilo", "unidad", "cubeta"}
@@ -7696,10 +7741,12 @@ def marcar_vino_armada(request: Request, compra_id: int, ficha_en_origen_id: str
     return RedirectResponse(url=f"/compras/buscar?{urlencode({'aviso': aviso})}", status_code=303)
 
 
-def texto_de_foto_borrada(borrada_el) -> str:
-    """Lo que queda a la vista de una foto cuyo archivo se borró por tener más
-    de 3 años (dueño, 30/09). Una sola frase para todas las pantallas."""
-    return f"Foto borrada por antigüedad el {borrada_el.astimezone(ARGENTINA).strftime('%d/%m/%Y')}"
+def texto_de_foto_borrada(borrada_el, como: str | None = None) -> str:
+    """Lo que queda a la vista de una foto cuyo archivo se borró (dueño, 30/09
+    y 01/10): "Foto borrada el DD/MM/AAAA, por plazo" o ", a mano". Una sola
+    frase para todas las pantallas."""
+    texto = f"Foto borrada el {borrada_el.astimezone(ARGENTINA).strftime('%d/%m/%Y')}"
+    return f"{texto}, {TEXTO_DE_COMO[como]}" if como in TEXTO_DE_COMO else texto
 
 
 def _ir_a_la_foto(foto_ruta: str, status_code: int = 307):
@@ -7715,12 +7762,12 @@ def _ir_a_la_foto(foto_ruta: str, status_code: int = 307):
     no se llame en ningún otro lado de app/main.py.
     """
     try:
-        borrada_el = foto_borrada_por_antiguedad(foto_ruta)
+        borrada = foto_borrada_por_antiguedad(foto_ruta)
     except Exception:
         logger.exception("No se pudo mirar si la foto %s se borró por antigüedad", foto_ruta)
-        borrada_el = None
-    if borrada_el is not None:
-        texto = texto_de_foto_borrada(borrada_el)
+        borrada = None
+    if borrada is not None:
+        texto = texto_de_foto_borrada(*borrada)
         # En dos renglones, cortado en " el ": entra en una miniatura angosta.
         arriba, _, abajo = texto.rpartition(" el ")
         svg = (
@@ -10637,11 +10684,14 @@ def ver_sistema(request: Request):
 
 
 def _estado_de_las_fotos() -> dict:
-    """Todo lo que la pantalla muestra y el borrado vuelve a calcular. El
+    """Todo lo que la pantalla muestra y los borrados vuelven a calcular. El
     Storage puede no leerse (permisos, base local): las subidas y los tamaños
-    van en None y la pantalla dice "sin dato", sin tapar las cantidades."""
+    van en None y la pantalla dice "sin dato", sin tapar las cantidades.
+
+    El corte es POR TIPO (dueño, 01/10): cada tipo vence a su plazo."""
     hoy = _hoy_argentina()
-    corte = corte_de_respaldo(hoy)
+    plazos = plazos_de_fotos()
+    cortes = cortes_por_tipo(hoy, plazos)
     fotos = fotos_de_respaldo()
     try:
         subidas = subidas_al_storage()
@@ -10649,8 +10699,9 @@ def _estado_de_las_fotos() -> dict:
         logger.exception("No se pudo leer el tamaño de los archivos del Storage")
         subidas = None
     tamanos = None if subidas is None else tamanos_del_bucket(subidas, BUCKET_COMANDAS)
-    return {"hoy": hoy, "corte": corte, "fotos": fotos, "subidas": subidas, "tamanos": tamanos,
-            "para_borrar": fotos_para_borrar(fotos, corte)}
+    return {"hoy": hoy, "plazos": plazos, "cortes": cortes, "fotos": fotos, "subidas": subidas,
+            "tamanos": tamanos, "para_borrar": fotos_para_borrar(fotos, cortes),
+            "protegidas": vencidas_protegidas(fotos, cortes)}
 
 
 def _espacio_usado(estado: dict) -> dict | None:
@@ -10672,39 +10723,106 @@ def _espacio_usado(estado: dict) -> dict | None:
     }
 
 
+def _fecha_de_formulario(texto: str):
+    try:
+        return date.fromisoformat((texto or "").strip())
+    except ValueError:
+        return None
+
+
+def _vista_previa_a_mano(estado: dict, tipo: str, anteriores_a: str) -> dict | None:
+    """Lo que se borraría a mano con ese tipo y esa fecha: cuántas, cuánto
+    ocupan y cuántas se saltean y por qué. None si falta elegir algo. El POST
+    lo vuelve a calcular igual: la pantalla y el borrado preguntan lo mismo."""
+    if not tipo and not anteriores_a:
+        return None
+    fecha = _fecha_de_formulario(anteriores_a)
+    if tipo not in TEXTO_DEL_TIPO_DE_FOTO or tipo in TIPOS_CON_PLAZO_FIJO:
+        return {"error": "Elegí de qué fotos."}
+    if fecha is None:
+        return {"error": "Elegí la fecha."}
+    if fecha > estado["hoy"]:
+        return {"error": "La fecha no puede ser después de hoy."}
+    borrables, salteadas = seleccion_a_mano(estado["fotos"], tipo, fecha)
+    return {"error": None, "tipo": tipo, "texto": TEXTO_DEL_TIPO_DE_FOTO[tipo], "anteriores_a": fecha,
+            "cantidad": len(borrables), "bytes": bytes_de_fotos(borrables, estado["tamanos"]),
+            "salteadas": len(salteadas), "motivos": motivos_de_las_salteadas(salteadas)}
+
+
 @app.get("/gerencia/fotos")
-def ver_fotos_de_mas_de_3_anios(request: Request, aviso: str | None = None, error: str | None = None):
-    """Fotos y espacio: cuánto ocupa el Storage, cómo crece y lo de 3 años."""
+def ver_fotos_de_mas_de_3_anios(request: Request, aviso: str | None = None, error: str | None = None,
+                                tipo: str = "", anteriores_a: str = ""):
+    """Fotos y espacio: cuánto ocupa el Storage, cómo crece, el plazo de cada
+    tipo, las vencidas y el borrado a mano (dueño, 30/09 y 01/10)."""
     if not _acceso_gerencia_valido(request):
         return _pantalla_clave_gerencia(request)
     try:
         estado = _estado_de_las_fotos()
         borradas = contar_fotos_borradas_por_antiguedad()
         de_compras_borradas = listar_fotos_de_compras_borradas()
+        historial = historial_de_borrados_de_fotos()
     except Exception as error_db:
         raise HTTPException(status_code=500, detail=f"Error al conectar con la base de datos: {error_db}") from error_db
-    filas = resumen_por_tipo(estado["fotos"], estado["tamanos"], estado["corte"])
+    filas = resumen_por_tipo(estado["fotos"], estado["tamanos"], estado["cortes"])
+    plazos = [{"tipo": t_, "texto": texto, "anios": plazo_del_tipo(t_, estado["plazos"]),
+               "fijo": t_ in TIPOS_CON_PLAZO_FIJO, "corte": estado["cortes"][t_]}
+              for t_, texto in TEXTO_DEL_TIPO_DE_FOTO.items()]
     return templates.TemplateResponse(request, "gerencia_fotos.html", {
-        "filas": filas, "corte": estado["corte"],
+        "filas": filas, "plazos": plazos,
         "total_cantidad": total_de_fotos(filas, "cantidad"), "total_bytes": total_de_fotos(filas, "bytes"),
         "total_viejas": total_de_fotos(filas, "viejas"), "total_bytes_viejas": total_de_fotos(filas, "bytes_viejas"),
+        "total_protegidas": len(estado["protegidas"]),
+        "motivos_protegidas": motivos_de_las_salteadas(estado["protegidas"]),
         "sin_registro": archivos_sin_registro(estado["fotos"], estado["tamanos"]),
         "espacio": _espacio_usado(estado), "plan": PLAN_DE_SUPABASE,
         "limite_del_plan": LIMITE_DEL_PLAN_BYTES, "umbral_del_aviso": UMBRAL_DEL_AVISO_DE_ESPACIO,
-        "borradas": borradas, "de_compras_borradas": de_compras_borradas,
-        "texto_de_foto_borrada": texto_de_foto_borrada,
+        "borradas": borradas, "de_compras_borradas": de_compras_borradas, "historial": historial,
+        "texto_de_foto_borrada": texto_de_foto_borrada, "texto_de_como": TEXTO_DE_COMO,
+        "texto_del_tipo": TEXTO_DEL_TIPO_DE_FOTO,
+        "tipos_a_mano": [(t_, x) for t_, x in TEXTO_DEL_TIPO_DE_FOTO.items() if t_ not in TIPOS_CON_PLAZO_FIJO],
+        "previa": _vista_previa_a_mano(estado, tipo, anteriores_a), "hoy": estado["hoy"],
         "aviso": aviso, "error": error,
     })
 
 
+def _borrar_fotos(estado: dict, fotos: list[dict], *, como: str, tipo: str, anteriores_a, salteadas: int) -> int:
+    """Borra el ARCHIVO de cada foto y deja su registro, atado a UN renglón del
+    historial. Cada foto es su propia transacción: si una falla en el Storage,
+    queda como estaba y se sigue. El historial cuenta solo lo que se borró."""
+    borrado_id = abrir_borrado_de_fotos(como, tipo, anteriores_a, salteadas)
+    borradas = 0
+    for foto in fotos:
+        tamano = None if estado["tamanos"] is None else estado["tamanos"].get(foto["ruta"])
+        try:
+            registrar_foto_borrada_por_antiguedad(foto["ruta"], foto["tipo"], foto["subida_el"], tamano,
+                                                  borrar_foto_comanda, como=como, borrado_id=borrado_id)
+        except Exception:
+            logger.exception("No se pudo borrar la foto %s: quedó como estaba", foto["ruta"])
+            continue
+        borradas += 1
+    cerrar_borrado_de_fotos(borrado_id)
+    return borradas
+
+
+def _aviso_de_borrado(borradas: int, intentadas: int, salteadas: int, motivos: list[str]) -> str:
+    if borradas == intentadas:
+        aviso = f"Se borraron {borradas} foto{'' if borradas == 1 else 's'}. Queda el registro de cada una."
+    else:
+        aviso = (f"Se borraron {borradas} de {intentadas} fotos. Las demás quedaron como estaban "
+                 "y se pueden volver a intentar.")
+    if salteadas:
+        aviso += f" Se saltearon {salteadas}: " + ", ".join(motivos) + "."
+    return aviso
+
+
 @app.post("/gerencia/fotos/borrar-viejas")
 def borrar_fotos_de_mas_de_3_anios(request: Request, confirmo: str = Form("")):
-    """Borra el ARCHIVO de las fotos de más de 3 años y deja el registro.
+    """Borra el ARCHIVO de las fotos VENCIDAS (cada tipo a su plazo) y deja el registro.
 
     La lista se vuelve a calcular acá, no viaja en el formulario: el que
-    confirma dice "sí", no cuáles. Sin el tilde no se borra nada. Cada foto
-    es su propia transacción (registrar_foto_borrada_por_antiguedad): si una
-    falla en el Storage, esa queda como estaba y se sigue con las demás.
+    confirma dice "sí", no cuáles. Sin el tilde no se borra nada. Las
+    protegidas (vale en cartera, remito sin facturar) se saltean. Un renglón
+    del historial por tipo, con su corte como rango.
     """
     puerta = _puerta_de_gerencia_para_escribir(request)
     if puerta is not None:
@@ -10719,23 +10837,68 @@ def borrar_fotos_de_mas_de_3_anios(request: Request, confirmo: str = Form("")):
     para_borrar = estado["para_borrar"]
     if not para_borrar:
         return RedirectResponse(url="/gerencia/fotos?" + urlencode(
-            {"aviso": "No hay fotos de más de 3 años para borrar."}), status_code=303)
+            {"aviso": "No hay fotos vencidas para borrar."}), status_code=303)
     borradas = 0
-    for foto in para_borrar:
-        tamano = None if estado["tamanos"] is None else estado["tamanos"].get(foto["ruta"])
-        try:
-            registrar_foto_borrada_por_antiguedad(foto["ruta"], foto["tipo"], foto["subida_el"], tamano,
-                                                  borrar_foto_comanda)
-        except Exception:
-            logger.exception("No se pudo borrar la foto vieja %s: quedó como estaba", foto["ruta"])
-            continue
-        borradas += 1
-    if borradas == len(para_borrar):
-        aviso = f"Se borraron {borradas} foto{'' if borradas == 1 else 's'}. Queda el registro de cada una."
-    else:
-        aviso = (f"Se borraron {borradas} de {len(para_borrar)} fotos. Las demás quedaron como estaban "
-                 "y se pueden volver a intentar.")
+    for tipo in sorted({f["tipo"] for f in para_borrar}):
+        del_tipo = [f for f in para_borrar if f["tipo"] == tipo]
+        salteadas_del_tipo = sum(1 for f in estado["protegidas"] if f["tipo"] == tipo)
+        borradas += _borrar_fotos(estado, del_tipo, como="plazo", tipo=tipo,
+                                  anteriores_a=estado["cortes"][tipo], salteadas=salteadas_del_tipo)
+    aviso = _aviso_de_borrado(borradas, len(para_borrar), len(estado["protegidas"]),
+                              motivos_de_las_salteadas(estado["protegidas"]))
     return RedirectResponse(url="/gerencia/fotos?" + urlencode({"aviso": aviso}), status_code=303)
+
+
+@app.post("/gerencia/fotos/borrar-a-mano")
+def borrar_fotos_a_mano(request: Request, tipo: str = Form(""), anteriores_a: str = Form(""),
+                        cantidad: str = Form("")):
+    """El borrado A MANO (dueño, 01/10): un tipo, "anteriores a" una fecha. Para
+    confirmar hay que escribir la cantidad EXACTA de fotos que se van a borrar;
+    se recalcula acá y si no coincide no se borra nada (algo cambió entre la
+    vista previa y el botón, o se tipeó mal)."""
+    puerta = _puerta_de_gerencia_para_escribir(request)
+    if puerta is not None:
+        return puerta
+    volver = {"tipo": tipo, "anteriores_a": anteriores_a}
+    try:
+        estado = _estado_de_las_fotos()
+    except Exception as error_db:
+        raise HTTPException(status_code=500, detail=f"Error al conectar con la base de datos: {error_db}") from error_db
+    previa = _vista_previa_a_mano(estado, tipo, anteriores_a)
+    if previa is None or previa["error"]:
+        return RedirectResponse(url="/gerencia/fotos?" + urlencode(
+            {**volver, "error": (previa or {}).get("error") or "Elegí de qué fotos y la fecha."}) + "#a-mano",
+            status_code=303)
+    if previa["cantidad"] == 0:
+        return RedirectResponse(url="/gerencia/fotos?" + urlencode(
+            {**volver, "aviso": "No hay fotos para borrar con ese tipo y esa fecha."}) + "#a-mano", status_code=303)
+    if (cantidad or "").strip() != str(previa["cantidad"]):
+        return RedirectResponse(url="/gerencia/fotos?" + urlencode(
+            {**volver, "error": f"Para confirmar hay que escribir {previa['cantidad']}, la cantidad exacta. "
+                                "No se borró nada."}) + "#a-mano", status_code=303)
+    borrables, salteadas = seleccion_a_mano(estado["fotos"], tipo, previa["anteriores_a"])
+    borradas = _borrar_fotos(estado, borrables, como="a_mano", tipo=tipo,
+                             anteriores_a=previa["anteriores_a"], salteadas=len(salteadas))
+    aviso = _aviso_de_borrado(borradas, len(borrables), len(salteadas), motivos_de_las_salteadas(salteadas))
+    return RedirectResponse(url="/gerencia/fotos?" + urlencode({"aviso": aviso}) + "#historial", status_code=303)
+
+
+@app.post("/gerencia/fotos/plazo")
+def guardar_plazo_de_fotos_ruta(request: Request, tipo: str = Form(""), anios: str = Form("")):
+    """Cambia el plazo de un tipo de foto. Las pesadas de compras borradas no:
+    siguen la regla de v1054, 3 años fijos."""
+    puerta = _puerta_de_gerencia_para_escribir(request)
+    if puerta is not None:
+        return puerta
+    if tipo not in TEXTO_DEL_TIPO_DE_FOTO or tipo in TIPOS_CON_PLAZO_FIJO:
+        return RedirectResponse(url="/gerencia/fotos?" + urlencode(
+            {"error": "Ese tipo de foto no tiene plazo editable."}) + "#plazos", status_code=303)
+    error, valor = leer_plazo(anios)
+    if error:
+        return RedirectResponse(url="/gerencia/fotos?" + urlencode({"error": error}) + "#plazos", status_code=303)
+    guardar_plazo_de_fotos(tipo, valor)
+    aviso = f"{TEXTO_DEL_TIPO_DE_FOTO[tipo]}: se guardan {valor} año{'' if valor == 1 else 's'}."
+    return RedirectResponse(url="/gerencia/fotos?" + urlencode({"aviso": aviso}) + "#plazos", status_code=303)
 
 
 @app.get("/gerencia/fotos/compras-borradas/{foto_id}/ver")
@@ -17540,6 +17703,57 @@ ALERTAS = [
         detallar=lambda: _detalle_de_vales(viejos=True),
     ),
     DefinicionAlerta(
+        codigo="remitos_sin_volver",
+        # Dueño, 01/10: emitido hace más de DIAS_REMITO_SIN_VOLVER días
+        # corridos y el remito firmado no volvió. El 4 contempla un fin de
+        # semana largo o un feriado (core/remitos.py).
+        titulo="Remitos que no volvieron",
+        texto=lambda casos: (f"{casos} remito{'s' if casos != 1 else ''} emitido{'s' if casos != 1 else ''} "
+                             f"hace más de {DIAS_REMITO_SIN_VOLVER} días sin volver"),
+        url="/administracion/facturacion#en-viaje",
+        texto_link="Ver Facturación",
+        modulos=("gerencia", "administracion"),
+        destinos_por_sector={"gerencia": ("/gerencia/facturacion#en-viaje", "Ver Facturación")},
+        contar=lambda: contar_remitos_sin_volver(_hoy_argentina()),
+    ),
+    DefinicionAlerta(
+        codigo="remitos_sin_factura",
+        # Dueño, 01/10: recibido hace más de DIAS_REMITO_SIN_FACTURA días
+        # corridos sin número de factura. Se factura una vez por semana.
+        titulo="Remitos recibidos sin factura",
+        texto=lambda casos: (f"{casos} remito{'s' if casos != 1 else ''} recibido{'s' if casos != 1 else ''} "
+                             f"hace más de {DIAS_REMITO_SIN_FACTURA} días sin factura"),
+        url="/administracion/facturacion#recibidos",
+        texto_link="Ver Facturación",
+        modulos=("gerencia", "administracion"),
+        destinos_por_sector={"gerencia": ("/gerencia/facturacion#recibidos", "Ver Facturación")},
+        contar=lambda: contar_remitos_sin_factura(_hoy_argentina()),
+    ),
+    DefinicionAlerta(
+        codigo="remitos_rechazo_distinto",
+        # Dueño, 01/10: el remito firmado dice un rechazo y Depósito cargó
+        # otro. Los rechazos se cargan SOLO en Depósito; el remito los coteja.
+        # Se apaga solo cuando Depósito corrige el reingreso.
+        titulo="Rechazos del remito distintos de Depósito",
+        url="/administracion/facturacion#recibidos",
+        texto_link="Ver Facturación",
+        modulos=("gerencia", "administracion"),
+        destinos_por_sector={"gerencia": ("/gerencia/facturacion#recibidos", "Ver Facturación")},
+        contar=lambda: contar_remitos_con_rechazo_distinto(),
+        detallar=lambda: _detalle_de_rechazos_distintos(),
+    ),
+    DefinicionAlerta(
+        codigo="pedidos_sin_remito",
+        # Dueño, 01/10: órdenes de compra armadas sin remito emitido. Solo
+        # desde REMITOS_DESDE: lo anterior nunca tuvo remito en este sistema.
+        titulo="Pedidos sin remito",
+        url="/administracion/facturacion#sin-remito",
+        texto_link="Ver Facturación",
+        modulos=("gerencia", "administracion"),
+        destinos_por_sector={"gerencia": ("/gerencia/facturacion#sin-remito", "Ver Facturación")},
+        contar=lambda: contar_ordenes_sin_remito(REMITOS_DESDE),
+    ),
+    DefinicionAlerta(
         codigo="espacio_de_fotos",
         # Dueño, 01/10: el Storage de ESTA base pasa el 80% de lo que incluye
         # el plan (core/fotos.py). Los casos son el porcentaje: el banner lo
@@ -17602,6 +17816,27 @@ def _detalle_de_vales(*, viejos: bool) -> dict:
                    _formatear_moneda(v["importe"])] for v in vales],
         "resumen": texto,
         "nota": nota,
+    }
+
+
+def _detalle_de_rechazos_distintos() -> dict:
+    """Un renglón por artículo cuyo rechazo no coincide: lo que dice el remito
+    y lo que cargó Depósito. El resumen sale de estas mismas filas."""
+    filas = []
+    remitos = remitos_con_rechazo_distinto()
+    for remito in remitos:
+        for renglon in remito["renglones"]:
+            if rechazo_no_coincide(renglon):
+                filas.append([f"{remito['numero']} · {remito['cliente']} · {remito['sucursal']}",
+                              renglon["articulo_nombre"] or "(sin identificar)",
+                              _formatear_numero(renglon["bultos_rechazados"]),
+                              _formatear_numero(renglon["rechazo_deposito"])])
+    return {
+        "columnas": ["Remito", "Artículo", "Remito dice", "Depósito cargó"],
+        "filas": filas,
+        "resumen": f"{len(remitos)} remito{'s' if len(remitos) != 1 else ''}, {len(filas)} renglón"
+                   f"{'es' if len(filas) != 1 else ''}",
+        "nota": "los rechazos se cargan en Depósito: el remito no mueve stock",
     }
 
 
@@ -18487,9 +18722,18 @@ def _datos_rentabilidad_real(cliente_id: int, fecha_desde, fecha_hasta, articulo
     # veces, y la copia que se separe deja una caja afuera sin que nada avise.
     cajas_del_deposito = cajas_perdidas_del_deposito_por_articulo(fecha_desde, fecha_hasta)
 
+    # LO RECIBIDO de los renglones cuyo remito volvió (dueño, 01/10): se cobra
+    # eso y no lo enviado. Los renglones de las ventas del rango y los de sus
+    # devoluciones, en una consulta.
+    renglones = {s.get("renglon_id") for a in articulos_datos for s in a["salidas"]
+                 if s["tipo"] == "armado" and s.get("cliente_id") == cliente_id}
+    renglones |= {d.get("renglon_id") for d in devoluciones}
+    recibidos = kilos_recibidos_por_renglon(sorted(r for r in renglones if r is not None))
+
     return calcular_rentabilidad_real(
         articulos_datos, margenes_por_fecha, cliente_id, fecha_desde, fecha_hasta,
         devoluciones=devoluciones, cajas_del_deposito=cajas_del_deposito,
+        kilos_recibidos=recibidos,
     )
 
 
@@ -19386,6 +19630,302 @@ def exportar_movimientos_deposito_excel(desde: str = "", hasta: str = "", tipo: 
     return Response(content=contenido,
                     media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
                     headers={"Content-Disposition": f'attachment; filename="{nombre}"'})
+
+
+# ============================================================================
+# REMITOS Y FACTURACIÓN (dueño, 01/10)
+#
+# UNA pantalla, DOS entradas, igual que Vales: Administración emite, recibe y
+# anota la factura; Gerencia mira y ANULA (con motivo). El sector sale del
+# PREFIJO (corolario 63). Las reglas viven en core/remitos.py y en app/db.py
+# (sección REMITOS), donde se escribe: acá solo se traduce.
+# ============================================================================
+
+_CAMINOS_DE_FACTURACION = {
+    "administracion": {"sector": "administracion", "base": "/administracion"},
+    "gerencia": {"sector": "gerencia", "base": "/gerencia"},
+}
+
+
+def _camino_de_facturacion(request: Request) -> dict:
+    return _CAMINOS_DE_FACTURACION["gerencia" if request.url.path.startswith("/gerencia") else "administracion"]
+
+
+def _sin_clave_de_facturacion(request: Request):
+    if _camino_de_facturacion(request)["sector"] == "gerencia" and not _acceso_gerencia_valido(request):
+        return _pantalla_clave_gerencia(request)
+    return None
+
+
+def _remito_para_mostrar(remito: dict, hoy: date) -> dict:
+    """El remito con lo que la pantalla dice: estado, días, importe y cotejo.
+    Todo sale de core/remitos.py: la lista, el detalle y la alerta preguntan
+    lo mismo."""
+    for renglon in remito["renglones"]:
+        renglon["diferencia_rechazo"] = diferencia_de_rechazo(renglon)
+        renglon["rechazo_distinto"] = rechazo_no_coincide(renglon)
+        renglon["importe"] = importe_del_renglon(renglon)
+        renglon["sufijo"] = SUFIJOS_FICHA_REPROCESO.get(renglon.get("unidad_venta"), "")
+    estado = estado_del_remito(remito)
+    remito["estado"] = estado
+    remito["estado_texto"] = TEXTO_DEL_ESTADO_REMITO[estado]
+    remito["importe"] = importe_del_remito(remito["renglones"])
+    remito["rechazos_distintos"] = sum(1 for r in remito["renglones"] if r["rechazo_distinto"])
+    remito["sin_volver"] = sin_volver_hace_mucho(remito, hoy)
+    remito["sin_factura"] = sin_factura_hace_mucho(remito, hoy)
+    remito["dias_emitido"] = (hoy - remito["emitido_el"].astimezone(ARGENTINA).date()).days
+    remito["dias_recibido"] = (None if remito["recibido_el"] is None
+                               else (hoy - remito["recibido_el"].astimezone(ARGENTINA).date()).days)
+    # Los días se muestran en hora ARGENTINA: lo convierte el que muestra
+    # (corolario 21), no un filtro que no sabe de zonas.
+    for campo in ("emitido_el", "recibido_el", "facturado_el", "anulado_el"):
+        valor = remito.get(campo)
+        remito[campo.replace("_el", "_dia")] = None if valor is None else valor.astimezone(ARGENTINA).date()
+    return remito
+
+
+def _filtro_de_facturados(desde: str, hasta: str, hoy: date):
+    """El rango de la lista de facturados, por fecha de factura: 30 días por
+    defecto. Una fecha mal escrita vuelve al defecto y lo dice."""
+    error = None
+    inicio, fin = hoy - timedelta(days=30), hoy
+    try:
+        if desde:
+            inicio = date.fromisoformat(desde)
+        if hasta:
+            fin = date.fromisoformat(hasta)
+    except ValueError:
+        inicio, fin, error = hoy - timedelta(days=30), hoy, "La fecha no es válida: van los últimos 30 días."
+    if inicio > fin:
+        inicio, fin, error = hoy - timedelta(days=30), hoy, "Desde no puede ser después de hasta."
+    return inicio, fin, error
+
+
+@app.get("/administracion/facturacion")
+@app.get("/gerencia/facturacion")
+def ver_facturacion(request: Request, desde: str = "", hasta: str = "", aviso: str | None = None,
+                    error: str | None = None):
+    """Facturación: las cuatro listas del circuito del remito, en orden.
+
+    1. Órdenes de compra armadas SIN remito (desde REMITOS_DESDE: lo anterior
+       nunca tuvo remito en este sistema).
+    2. Remitos en viaje: emitidos sin recibir.
+    3. Remitos recibidos sin factura: de acá se anota la factura.
+    4. Remitos facturados, filtrados por la fecha de la factura.
+    """
+    sin_clave = _sin_clave_de_facturacion(request)
+    if sin_clave is not None:
+        return sin_clave
+    hoy = _hoy_argentina()
+    inicio, fin, error_fecha = _filtro_de_facturados(desde, hasta, hoy)
+    try:
+        ordenes = ordenes_sin_remito(REMITOS_DESDE)
+        emitidos = [_remito_para_mostrar(r, hoy) for r in listar_remitos("emitido")]
+        recibidos = [_remito_para_mostrar(r, hoy) for r in listar_remitos("recibido")]
+        facturados = [_remito_para_mostrar(r, hoy) for r in listar_remitos("facturado", inicio, fin)]
+    except Exception as error_db:
+        raise HTTPException(status_code=500, detail=f"Error al conectar con la base de datos: {error_db}") from error_db
+    return templates.TemplateResponse(request, "facturacion.html", {
+        "camino": _camino_de_facturacion(request), "ordenes": ordenes, "emitidos": emitidos,
+        "recibidos": recibidos, "facturados": facturados, "desde": inicio, "hasta": fin,
+        "error_fecha": error_fecha, "remitos_desde": REMITOS_DESDE,
+        "dias_sin_volver": DIAS_REMITO_SIN_VOLVER, "dias_sin_factura": DIAS_REMITO_SIN_FACTURA,
+        "total_facturados": sum(r["importe"]["total"] for r in facturados),
+        "aviso": aviso, "error": error,
+    })
+
+
+def _renderizar_emitir(request: Request, pedido_id: int, sucursal: str, *, numero: str = "",
+                       error: str | None = None, status_code: int = 200):
+    try:
+        orden = orden_para_emitir(pedido_id, sucursal)
+    except Exception as error_db:
+        raise HTTPException(status_code=500, detail=f"Error al conectar con la base de datos: {error_db}") from error_db
+    if orden is None:
+        raise HTTPException(status_code=404, detail="Ese pedido no existe o está anulado")
+    for renglon in orden["renglones"]:
+        renglon["sufijo"] = SUFIJOS_FICHA_REPROCESO.get(renglon.get("unidad_venta"), "")
+    return templates.TemplateResponse(request, "remito_emitir.html", {
+        "orden": orden, "numero": numero, "error": error,
+        "sin_kilos": [r for r in orden["renglones"] if r["kilos_enviados"] is None],
+    }, status_code=status_code)
+
+
+@app.get("/administracion/facturacion/emitir")
+def ver_emitir_remito(request: Request, pedido_id: int, sucursal: str):
+    """Emitir el remito de UNA orden de compra: muestra lo que se va a congelar
+    y pide el número del remito oficial."""
+    return _renderizar_emitir(request, pedido_id, sucursal)
+
+
+@app.post("/administracion/facturacion/emitir")
+def emitir_remito_ruta(request: Request, pedido_id: int = Form(...), sucursal: str = Form(...),
+                       numero: str = Form("")):
+    try:
+        remito_id = emitir_remito(pedido_id, sucursal, numero)
+    except RemitoNoSePuede as error:
+        return _renderizar_emitir(request, pedido_id, sucursal, numero=numero, error=str(error), status_code=400)
+    aviso = "Remito emitido: lo que salió quedó congelado."
+    return RedirectResponse(url=f"/administracion/facturacion/remito/{remito_id}?" + urlencode({"aviso": aviso}),
+                            status_code=303)
+
+
+@app.get("/administracion/facturacion/recibir")
+def buscar_remito_para_recibir(request: Request, numero: str = ""):
+    """Recibir: se busca por el NÚMERO del remito. Si hay uno solo en viaje, va
+    directo a cargarlo; si no, la pantalla dice qué encontró."""
+    numero = (numero or "").strip()
+    encontrados = []
+    if numero:
+        try:
+            encontrados = [_remito_para_mostrar(r, _hoy_argentina()) for r in buscar_remitos_por_numero(numero)]
+        except Exception as error_db:
+            raise HTTPException(status_code=500, detail=f"Error al conectar con la base de datos: {error_db}") from error_db
+        en_viaje = [r for r in encontrados if r["estado"] == "emitido"]
+        if len(en_viaje) == 1:
+            return RedirectResponse(url=f"/administracion/facturacion/remito/{en_viaje[0]['id']}/recibir",
+                                    status_code=303)
+    return templates.TemplateResponse(request, "remito_buscar.html", {
+        "numero": numero, "encontrados": encontrados,
+    })
+
+
+def _renderizar_recibir(request: Request, remito_id: int, *, cargado: dict | None = None,
+                        error: str | None = None, status_code: int = 200):
+    try:
+        remito = remito_por_id(remito_id)
+    except Exception as error_db:
+        raise HTTPException(status_code=500, detail=f"Error al conectar con la base de datos: {error_db}") from error_db
+    if remito is None:
+        raise HTTPException(status_code=404, detail="Ese remito no existe")
+    remito = _remito_para_mostrar(remito, _hoy_argentina())
+    return templates.TemplateResponse(request, "remito_recibir.html", {
+        "remito": remito, "cargado": cargado or {}, "error": error,
+    }, status_code=status_code)
+
+
+@app.get("/administracion/facturacion/remito/{remito_id}/recibir")
+def ver_recibir_remito(request: Request, remito_id: int):
+    """Los renglones con los kilos recibidos PRECARGADOS con los enviados: solo
+    se cambia lo que vino distinto. Los rechazos según el papel, y la foto del
+    remito firmado, obligatoria."""
+    return _renderizar_recibir(request, remito_id)
+
+
+@app.post("/administracion/facturacion/remito/{remito_id}/recibir")
+async def recibir_remito_ruta(request: Request, remito_id: int):
+    """Guarda lo recibido. Se valida TODO antes de subir una sola foto, y si la
+    base rebota, las fotos subidas se borran (no tienen fila que las nombre)."""
+    formulario = await request.form()
+    fotos = [f for f in formulario.getlist("fotos") if isinstance(f, StarletteUploadFile)]
+    fotos_elegidas = sum(1 for f in fotos if f.filename)
+    cargado = {clave: str(valor) for clave, valor in formulario.items() if not isinstance(valor, StarletteUploadFile)}
+
+    def rebote(error: str, status_code: int = 400):
+        if fotos_elegidas:
+            error = f"{error} Las fotos no se guardaron: agregalas de nuevo."
+        return _renderizar_recibir(request, remito_id, cargado=cargado, error=error, status_code=status_code)
+
+    try:
+        remito = remito_por_id(remito_id)
+    except Exception as error_db:
+        return rebote(f"No se pudo leer el remito: {error_db}", 500)
+    if remito is None:
+        raise HTTPException(status_code=404, detail="Ese remito no existe")
+    kilos = {r["id"]: formulario.get(f"kilos_{r['id']}") for r in remito["renglones"]}
+    rechazos = {r["id"]: formulario.get(f"rechazo_{r['id']}") for r in remito["renglones"]}
+    error, recepcion = leer_recepcion(remito["renglones"], kilos, rechazos)
+    if error:
+        return rebote(error)
+    error, comprimidas = await _fotos_de_pesada_comprimidas(fotos)
+    if error:
+        return rebote(error)
+    if not comprimidas:
+        return rebote("Falta la foto del remito firmado: es obligatoria.")
+    rutas: list[str] = []
+    try:
+        for comprimida in comprimidas:
+            rutas.append(subir_foto_comanda(comprimida, f"remito-{remito_id}", prefijo=PREFIJO_REMITO))
+        recibir_remito(remito_id, recepcion, rutas)
+    except Exception as error_db:
+        for ruta in rutas:
+            try:
+                borrar_foto_comanda(ruta)
+            except Exception:
+                logger.exception("No se pudo borrar la foto huérfana del remito %s", ruta)
+        if isinstance(error_db, RemitoNoSePuede):
+            return rebote(str(error_db))
+        return rebote(f"No se pudo guardar: {error_db}", 500)
+    aviso = "Remito recibido." if len(rutas) == 1 else f"Remito recibido, con {len(rutas)} fotos."
+    return RedirectResponse(url=f"/administracion/facturacion/remito/{remito_id}?" + urlencode({"aviso": aviso}),
+                            status_code=303)
+
+
+@app.post("/administracion/facturacion/facturar")
+async def facturar_remitos_ruta(request: Request):
+    """Anota UNA factura contra los remitos tildados (recibidos, del mismo cliente)."""
+    formulario = await request.form()
+    ids = [int(v) for v in formulario.getlist("remito_id") if str(v).isdigit()]
+    try:
+        cantidad = facturar_remitos(ids, str(formulario.get("factura_numero") or ""))
+    except RemitoNoSePuede as error:
+        return RedirectResponse(url="/administracion/facturacion?" + urlencode({"error": str(error)}) + "#recibidos",
+                                status_code=303)
+    aviso = ("Factura anotada en 1 remito." if cantidad == 1
+             else f"Factura anotada en {cantidad} remitos.")
+    return RedirectResponse(url="/administracion/facturacion?" + urlencode({"aviso": aviso}) + "#facturados",
+                            status_code=303)
+
+
+@app.get("/administracion/facturacion/remito/{remito_id}")
+@app.get("/gerencia/facturacion/remito/{remito_id}")
+def ver_remito(request: Request, remito_id: int, aviso: str | None = None, error: str | None = None):
+    """El remito entero: estado, lo que salió, lo recibido, el cotejo de los
+    rechazos contra Depósito, el importe a cobrar y las fotos del firmado."""
+    sin_clave = _sin_clave_de_facturacion(request)
+    if sin_clave is not None:
+        return sin_clave
+    try:
+        remito = remito_por_id(remito_id)
+    except Exception as error_db:
+        raise HTTPException(status_code=500, detail=f"Error al conectar con la base de datos: {error_db}") from error_db
+    if remito is None:
+        raise HTTPException(status_code=404, detail="Ese remito no existe")
+    return templates.TemplateResponse(request, "remito.html", {
+        "camino": _camino_de_facturacion(request), "remito": _remito_para_mostrar(remito, _hoy_argentina()),
+        "dias_sin_volver": DIAS_REMITO_SIN_VOLVER, "dias_sin_factura": DIAS_REMITO_SIN_FACTURA,
+        "aviso": aviso, "error": error,
+    })
+
+
+@app.get("/administracion/facturacion/remito/{remito_id}/fotos/{foto_id}")
+@app.get("/gerencia/facturacion/remito/{remito_id}/fotos/{foto_id}")
+def ver_foto_de_remito(request: Request, remito_id: int, foto_id: int):
+    """Una foto del remito firmado, si es de ESTE remito. Un id ajeno es un 404."""
+    sin_clave = _sin_clave_de_facturacion(request)
+    if sin_clave is not None:
+        return sin_clave
+    remito = remito_por_id(remito_id)
+    foto = next((f for f in (remito or {}).get("fotos", []) if f["id"] == foto_id), None)
+    if foto is None:
+        raise HTTPException(status_code=404, detail="Esa foto no es de este remito")
+    return _ir_a_la_foto(foto["ruta"], status_code=303)
+
+
+@app.post("/gerencia/facturacion/remito/{remito_id}/anular")
+def anular_remito_ruta(request: Request, remito_id: int, motivo: str = Form("")):
+    """Gerencia anula un remito con error, con motivo. Después se emite de nuevo."""
+    puerta = _puerta_de_gerencia_para_escribir(request)
+    if puerta is not None:
+        return puerta
+    try:
+        anular_remito(remito_id, motivo)
+    except RemitoNoSePuede as error:
+        return RedirectResponse(url=f"/gerencia/facturacion/remito/{remito_id}?" + urlencode({"error": str(error)}),
+                                status_code=303)
+    aviso = "Remito anulado. La orden de compra vuelve a quedar sin remito: emitilo de nuevo."
+    return RedirectResponse(url=f"/gerencia/facturacion/remito/{remito_id}?" + urlencode({"aviso": aviso}),
+                            status_code=303)
 
 
 # ============================================================================
@@ -21885,6 +22425,8 @@ def _sucursal_del_grupo(grupo: dict, renglon: dict) -> dict:
         "sucursal": nombre,
         "sucursal_mostrar": nombre or "Sin sucursal",
         "orden_compra": renglon.get("orden_compra"),
+        "remito_id": renglon.get("remito_id"),
+        "remito_numero": renglon.get("remito_numero"),
         "filas": [],
         "kilos": 0.0,
         "bultos": 0.0,

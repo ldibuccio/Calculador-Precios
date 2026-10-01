@@ -1,14 +1,23 @@
-"""FOTOS DE MÁS DE 3 AÑOS (dueño, 30/09): el corte, los tipos y el resumen — puro.
+"""FOTOS: el plazo de cada tipo, los cortes, el resumen y el borrado — puro.
 
 Las fotos llegan de `fotos_de_respaldo` (app/db.py): una fila por ARCHIVO,
 con su tipo y cuándo se subió. Los tamaños, de `subidas_al_storage`.
 Acá no se lee la base: se decide qué es "más de 3 años", cómo se llama cada
 tipo y cómo se suma, y la pantalla de Gerencia y el borrado usan lo mismo.
 
-LA REGLA: una foto de respaldo no se borra antes de 3 años desde que se
-SUBIÓ. Después se puede, a mano, desde Gerencia, y queda el registro. La
-antigüedad se cuenta desde la subida y no desde la fecha de la compra o del
-pedido: lo que vence es el archivo.
+LA REGLA (dueño, 30/09 y 01/10): cada TIPO de foto tiene un plazo en años
+desde que se SUBIÓ (`fotos_plazos`, se edita en Gerencia; sin fila son 3).
+Pasado el plazo la foto está VENCIDA y se puede borrar desde Gerencia. Además
+Gerencia puede borrar A MANO un tipo "anterior a" una fecha. En los dos casos
+se borra el ARCHIVO y queda el registro ("foto borrada el DD/MM/AAAA, por
+plazo / a mano"), y cada borrado queda en un historial.
+
+NUNCA se borran (se saltean y se dice cuántas): las fotos de un vale que no
+está cobrado, cruzado ni anulado, ni las de un remito sin facturar. Eso lo
+marca la consulta (`protegida`); acá se separan.
+
+Las PESADAS DE COMPRAS BORRADAS siguen la regla de v1054 tal cual: 3 años
+fijos, sin plazo editable y fuera del borrado a mano.
 """
 
 from datetime import date, timedelta
@@ -31,17 +40,52 @@ TEXTO_DEL_TIPO = {
     "merma": "Mermas",
     "vacios": "Devoluciones de vacíos",
     "vale": "Vales a cobrar",
+    "remito": "Remitos firmados",
 }
 
+# Los que no se tocan: la regla de v1054 (dueño, 01/10: "no la cambies").
+TIPOS_CON_PLAZO_FIJO = ("compra_borrada",)
 
-def corte_de_respaldo(hoy: date) -> date:
-    """3 años antes de hoy. Una foto subida ANTES de este día tiene más de 3
-    años y se puede borrar; la de este día, todavía no."""
+# Por qué una foto no se borra nunca, aunque esté vencida o se elija a mano.
+TEXTO_DE_LA_PROTECCION = {
+    "vale": "de un vale sin cobrar, cruzar ni anular",
+    "remito": "de un remito sin facturar",
+}
+
+TEXTO_DE_COMO = {"plazo": "por plazo", "a_mano": "a mano"}
+
+PLAZO_MAXIMO_ANIOS = 30
+
+
+def corte_de_respaldo(hoy: date, anios: int = ANIOS_DE_RESPALDO) -> date:
+    """`anios` antes de hoy. Una foto subida ANTES de este día está vencida y
+    se puede borrar; la de este día, todavía no."""
     try:
-        return hoy.replace(year=hoy.year - ANIOS_DE_RESPALDO)
+        return hoy.replace(year=hoy.year - anios)
     except ValueError:
-        # 29 de febrero: hace 3 años no era bisiesto.
-        return hoy.replace(month=2, day=28, year=hoy.year - ANIOS_DE_RESPALDO)
+        # 29 de febrero: ese año no era bisiesto.
+        return hoy.replace(month=2, day=28, year=hoy.year - anios)
+
+
+def plazo_del_tipo(tipo: str, plazos: dict | None) -> int:
+    """Los años que se guarda un tipo. Sin fila, los 3 de siempre; y los de
+    plazo fijo no leen la tabla aunque alguien les haya cargado una fila."""
+    if tipo in TIPOS_CON_PLAZO_FIJO:
+        return ANIOS_DE_RESPALDO
+    return int((plazos or {}).get(tipo) or ANIOS_DE_RESPALDO)
+
+
+def cortes_por_tipo(hoy: date, plazos: dict | None) -> dict:
+    """{tipo: corte} para todos los tipos conocidos."""
+    return {tipo: corte_de_respaldo(hoy, plazo_del_tipo(tipo, plazos)) for tipo in TEXTO_DEL_TIPO}
+
+
+def leer_plazo(texto) -> tuple[str | None, int | None]:
+    """El plazo tipeado en Gerencia: años enteros, de 1 a 30."""
+    texto = str(texto or "").strip()
+    if not texto.isdigit() or not 1 <= int(texto) <= PLAZO_MAXIMO_ANIOS:
+        return f"El plazo va en años enteros, de 1 a {PLAZO_MAXIMO_ANIOS}.", None
+    return None, int(texto)
 
 
 def dia_de_subida(subida_el) -> date:
@@ -54,32 +98,81 @@ def es_de_mas_de_3_anios(foto: dict, corte: date) -> bool:
     return dia_de_subida(foto["subida_el"]) < corte
 
 
-def fotos_para_borrar(fotos: list[dict], corte: date) -> list[dict]:
-    """Las que se pueden borrar: más de 3 años y el archivo todavía está."""
-    return [f for f in fotos if not f["ya_borrada"] and es_de_mas_de_3_anios(f, corte)]
+def _corte_de(foto: dict, corte) -> date | None:
+    """`corte` puede ser una fecha (la misma para todos) o {tipo: fecha}. Un
+    tipo que el mapa no conoce no vence (y un test exige que no exista)."""
+    return corte.get(foto["tipo"]) if isinstance(corte, dict) else corte
 
 
-def resumen_por_tipo(fotos: list[dict], tamanos: dict[str, int] | None, corte: date) -> list[dict]:
-    """Una fila por tipo: cuántas hay y cuánto ocupan, y cuántas tienen más de
-    3 años. Las ya borradas no suman acá (su archivo no está): van aparte.
+def es_vencida(foto: dict, corte) -> bool:
+    limite = _corte_de(foto, corte)
+    return limite is not None and dia_de_subida(foto["subida_el"]) < limite
+
+
+def fotos_para_borrar(fotos: list[dict], corte) -> list[dict]:
+    """Las que se pueden borrar por PLAZO: vencidas, el archivo todavía está y
+    no están protegidas. `corte` es una fecha o {tipo: fecha}."""
+    return [f for f in fotos if not f["ya_borrada"] and not f.get("protegida") and es_vencida(f, corte)]
+
+
+def vencidas_protegidas(fotos: list[dict], corte) -> list[dict]:
+    """Las vencidas que NO se borran (vale en cartera, remito sin facturar)."""
+    return [f for f in fotos if not f["ya_borrada"] and f.get("protegida") and es_vencida(f, corte)]
+
+
+def seleccion_a_mano(fotos: list[dict], tipo: str, anteriores_a: date) -> tuple[list[dict], list[dict]]:
+    """El borrado a mano: las de un tipo subidas ANTES de `anteriores_a`, con
+    el archivo todavía. Devuelve (se borran, se saltean por protegidas). Los
+    tipos de plazo fijo no entran: vuelven las dos listas vacías."""
+    if tipo in TIPOS_CON_PLAZO_FIJO:
+        return [], []
+    elegidas = [f for f in fotos if f["tipo"] == tipo and not f["ya_borrada"]
+                and dia_de_subida(f["subida_el"]) < anteriores_a]
+    return ([f for f in elegidas if not f.get("protegida")],
+            [f for f in elegidas if f.get("protegida")])
+
+
+def motivos_de_las_salteadas(salteadas: list[dict]) -> list[str]:
+    """"3 de un vale sin cobrar, cruzar ni anular", uno por motivo."""
+    cuenta: dict = {}
+    for f in salteadas:
+        cuenta[f["protegida"]] = cuenta.get(f["protegida"], 0) + 1
+    return [f"{n} {TEXTO_DE_LA_PROTECCION.get(motivo, motivo)}" for motivo, n in sorted(cuenta.items())]
+
+
+def bytes_de(fotos: list[dict], tamanos: dict | None):
+    """Lo que ocupan, o None si el bucket no se pudo leer."""
+    if tamanos is None:
+        return None
+    return sum(tamanos.get(f["ruta"], 0) for f in fotos)
+
+
+def resumen_por_tipo(fotos: list[dict], tamanos: dict[str, int] | None, corte) -> list[dict]:
+    """Una fila por tipo: cuántas hay y cuánto ocupan, y cuántas están
+    VENCIDAS según el plazo de su tipo (`corte` es una fecha o {tipo: fecha}).
+    Las vencidas protegidas se cuentan aparte y no suman a "viejas", que es lo
+    que se borra. Las ya borradas no suman acá (su archivo no está).
 
     `tamanos` None es que el bucket no se pudo leer: los bytes van en None y
     la pantalla dice "sin dato" en vez de un cero que se lea como "vacío".
     """
-    filas = {tipo: {"tipo": tipo, "texto": texto, "cantidad": 0, "bytes": 0,
-                    "viejas": 0, "bytes_viejas": 0}
-             for tipo, texto in TEXTO_DEL_TIPO.items()}
+    def _nueva(tipo, texto):
+        return {"tipo": tipo, "texto": texto, "cantidad": 0, "bytes": 0, "viejas": 0, "bytes_viejas": 0,
+                "protegidas": 0, "corte": _corte_de({"tipo": tipo}, corte)}
+    filas = {tipo: _nueva(tipo, texto) for tipo, texto in TEXTO_DEL_TIPO.items()}
     for foto in fotos:
         if foto["ya_borrada"]:
             continue
-        fila = filas.setdefault(foto["tipo"], {"tipo": foto["tipo"], "texto": foto["tipo"], "cantidad": 0,
-                                               "bytes": 0, "viejas": 0, "bytes_viejas": 0})
+        fila = filas.setdefault(foto["tipo"], _nueva(foto["tipo"], foto["tipo"]))
         tamano = (tamanos or {}).get(foto["ruta"], 0)
         fila["cantidad"] += 1
         fila["bytes"] += tamano
-        if es_de_mas_de_3_anios(foto, corte):
-            fila["viejas"] += 1
-            fila["bytes_viejas"] += tamano
+        if es_vencida(foto, corte):
+            if foto.get("protegida"):
+                fila["protegidas"] += 1
+            else:
+                fila["viejas"] += 1
+                fila["bytes_viejas"] += tamano
     resultado = list(filas.values())
     if tamanos is None:
         for fila in resultado:
