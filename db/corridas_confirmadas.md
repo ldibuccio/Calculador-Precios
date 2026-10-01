@@ -763,8 +763,24 @@ PALMALA   devolucion_sector (tras el bloque 1) · columna 1 · valida 1 · coher
 
 `coherente 0` es lo esperado después del bloque 1: el CHECK de la devolución
 con sector lo agrega `devolucion_sector_2`, que se corre DESPUÉS del deploy
-(completa lo que cargue el código viejo en el medio). **Queda pendiente.**
+(completa lo que cargue el código viejo en el medio). Corrió el mismo día:
+ver la entrada de abajo.
 Población de devoluciones en 0 en las dos bases, así que el bloque 2 no tiene
 filas viejas que completar salvo las que entren antes del deploy. Las
 poblaciones de remitos y fotos y el testigo no vinieron en el mensaje.
 Palmala no vota: ahí solo confirma que las migraciones no explotan.
+
+## 01/10 — `devolucion_sector_2`: el CHECK de la devolución con sector
+
+Corrida por el dueño en las dos bases DESPUÉS del deploy de v1060 (PR #82),
+como pide su encabezado. Verificación (`devolucion_sector_3`), corrida aparte
+del `do`, la verificó el Claude con acceso de lectura:
+
+```
+FRUTAMAX  devolucion_sector (tras el bloque 2) · columna 1 · valida 1 · coherente 1 · sin_sector 0 · de_mas 0 · población 0
+PALMALA   devolucion_sector (tras el bloque 2) · columna 1 · valida 1 · coherente 1 · sin_sector 0 · de_mas 0 · población 0
+```
+
+`coherente 1` es el CHECK puesto. Con población 0 en las dos bases no hubo
+devoluciones que completar: el código viejo no cargó ninguna entre los dos
+bloques. La tanda de `devolucion_sector` queda cerrada. Palmala no vota.

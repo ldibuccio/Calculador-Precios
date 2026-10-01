@@ -4469,8 +4469,9 @@ textos y el Excel en `core/vales.py`.
   cambió). No hay ruta, botón ni escritura para anular: lo que se carga es
   `SALIDAS_QUE_SE_CARGAN`, y la leen la pantalla (`salidas_del_vale`) y la
   escritura, que rechaza "anulado" de cualquier sector. **La base todavía
-  acepta "anulado" de Gerencia** (el CHECK de `vales_2_salidas`), porque
-  sacarlo pide migración y ningún camino del código lo escribe;
+  acepta "anulado" de Gerencia** (el CHECK de `vales_2_salidas`), y se deja
+  así sin migración (dueño, 01/10): solo entra por SQL a mano, y ningún
+  camino del código lo escribe;
   `SECTOR_DE_LA_SALIDA` sigue siendo el espejo de esos CHECK y un test lee el
   .sql. **Una salida no se deshace**: no hay pantalla para volver un cobrado atrás.
 - **Las dos alertas** (`vales_plata_sin_aplicar` y `vales_viejos`, Gerencia y
