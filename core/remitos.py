@@ -36,7 +36,7 @@ DIAS_REMITO_SIN_VOLVER = 4
 DIAS_REMITO_SIN_FACTURA = 10
 # La alerta de "pedidos sin remito" solo cuenta desde el despliegue (dueño):
 # lo anterior nunca tuvo remito en este sistema y no es un olvido.
-REMITOS_DESDE = date(2026, 10, 2)
+REMITOS_DESDE = date(2026, 10, 1)   # el día del merge (dueño, 01/10)
 
 TEXTO_DEL_ESTADO = {
     "emitido": "En viaje",

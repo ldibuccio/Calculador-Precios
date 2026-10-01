@@ -746,3 +746,25 @@ PALMALA   fotos · tablas 3 · columna 1 · devolucion_marcadas 0 · devolucion_
 No había ninguna foto de devolución que marcar en ninguna de las dos bases,
 así que el backfill no tocó nada. El testigo no vino en el mensaje. Palmala no
 vota: ahí la verificación solo confirma que las migraciones no explotan.
+
+## 01/10 — `remitos_1` a `remitos_4`, `fotos_6` a `fotos_8` y `devolucion_sector_1`
+
+Corridas por el dueño en las dos bases. Las verificaciones van corridas aparte
+de los `do` y las verificó el Claude con acceso de lectura:
+
+```
+FRUTAMAX  remitos · tablas 4 · indices 5 · checks 5 · anulado 0
+PALMALA   remitos · tablas 4 · indices 5 · checks 5 · anulado 0
+FRUTAMAX  fotos_plazos · tablas 2 · columnas 2 · check 1 · sin_como 0 · plazos 0
+PALMALA   fotos_plazos · tablas 2 · columnas 2 · check 1 · sin_como 0 · plazos 0
+FRUTAMAX  devolucion_sector (tras el bloque 1) · columna 1 · valida 1 · coherente 0 · sin_sector 0 · de_mas 0 · población 0
+PALMALA   devolucion_sector (tras el bloque 1) · columna 1 · valida 1 · coherente 0 · sin_sector 0 · de_mas 0 · población 0
+```
+
+`coherente 0` es lo esperado después del bloque 1: el CHECK de la devolución
+con sector lo agrega `devolucion_sector_2`, que se corre DESPUÉS del deploy
+(completa lo que cargue el código viejo en el medio). **Queda pendiente.**
+Población de devoluciones en 0 en las dos bases, así que el bloque 2 no tiene
+filas viejas que completar salvo las que entren antes del deploy. Las
+poblaciones de remitos y fotos y el testigo no vinieron en el mensaje.
+Palmala no vota: ahí solo confirma que las migraciones no explotan.
