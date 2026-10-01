@@ -41,7 +41,7 @@ BUCKET_COMANDAS = "comandas"
 # sola en veinticuatro horas.
 #
 # Lo de ANTES del 08/09 queda plano y NO se mueve: la regla de 3 años
-# (Gerencia → Fotos de más de 3 años) lo borra a su tiempo, así que el bucket
+# (Gerencia → Fotos y espacio) lo borra a su tiempo, así que el bucket
 # converge sin migrar 262 archivos en dos bases. Eso vale mientras TODOS los
 # tipos entren en `_SQL_FOTOS_DE_RESPALDO` (app/db.py), que es la lista de
 # todas las fotos del sistema.

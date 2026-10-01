@@ -285,7 +285,8 @@ from app.db import (
     renombrar_tipo_envase_puesto,
     registrar_tick_revision,
     fotos_de_respaldo,
-    tamanos_del_bucket,
+    subidas_al_storage,
+    contar_espacio_de_fotos,
     registrar_foto_borrada_por_antiguedad,
     contar_fotos_borradas_por_antiguedad,
     listar_fotos_de_compras_borradas,
@@ -510,10 +511,18 @@ from core.movimientos_vacios import (
     ventana as ventana_de_movimientos_vacios,
 )
 from core.fotos import (
+    LIMITE_DEL_PLAN_BYTES,
+    PLAN_DE_SUPABASE,
+    UMBRAL_DEL_AVISO as UMBRAL_DEL_AVISO_DE_ESPACIO,
+    archivos_de_hoy,
     archivos_sin_registro,
     corte_de_respaldo,
+    evolucion_por_mes,
     fotos_para_borrar,
+    porcentaje_del_plan,
+    proyeccion,
     resumen_por_tipo,
+    tamanos_del_bucket,
     total_de as total_de_fotos,
 )
 from core.vales import (
@@ -10600,7 +10609,7 @@ def _renderizar_pantalla_sistema(request: Request):
     """La pantalla de Sistema. Las fotos viejas ya NO se limpian desde acá
     (dueño, 30/09): la limpieza de Sistema no pedía clave, borraba el registro
     y contaba la antigüedad por la fecha de la compra. Vive en Gerencia →
-    Fotos de más de 3 años."""
+    Fotos y espacio."""
     return templates.TemplateResponse(
         request,
         "sistema.html",
@@ -10614,7 +10623,9 @@ def ver_sistema(request: Request):
 
 
 # ============================================================================
-# FOTOS DE MÁS DE 3 AÑOS (dueño, 30/09): Gerencia, a mano y con confirmación.
+# FOTOS Y ESPACIO (dueño, 30/09 y 01/10): el espacio que ocupa el Storage, y
+# las fotos de más de 3 años, que se borran desde Gerencia, a mano y con
+# confirmación.
 #
 # Reemplaza a la limpieza de Sistema. Cuenta y mide por tipo, borra solo lo
 # que tiene más de 3 años DESDE QUE SE SUBIÓ, y deja el registro: la fila que
@@ -10627,23 +10638,43 @@ def ver_sistema(request: Request):
 
 def _estado_de_las_fotos() -> dict:
     """Todo lo que la pantalla muestra y el borrado vuelve a calcular. El
-    bucket puede no leerse (permisos, base local): los tamaños van en None y la
-    pantalla dice "sin dato", sin tapar las cantidades."""
+    Storage puede no leerse (permisos, base local): las subidas y los tamaños
+    van en None y la pantalla dice "sin dato", sin tapar las cantidades."""
     hoy = _hoy_argentina()
     corte = corte_de_respaldo(hoy)
     fotos = fotos_de_respaldo()
     try:
-        tamanos = tamanos_del_bucket(BUCKET_COMANDAS)
+        subidas = subidas_al_storage()
     except Exception:
-        logger.exception("No se pudo leer el tamaño de los archivos del bucket")
-        tamanos = None
-    return {"corte": corte, "fotos": fotos, "tamanos": tamanos,
+        logger.exception("No se pudo leer el tamaño de los archivos del Storage")
+        subidas = None
+    tamanos = None if subidas is None else tamanos_del_bucket(subidas, BUCKET_COMANDAS)
+    return {"hoy": hoy, "corte": corte, "fotos": fotos, "subidas": subidas, "tamanos": tamanos,
             "para_borrar": fotos_para_borrar(fotos, corte)}
+
+
+def _espacio_usado(estado: dict) -> dict | None:
+    """El espacio de hoy, el mes a mes y la proyección (dueño, 01/10). None
+    si el Storage no se pudo leer. `otros_buckets` es lo que el plan cobra y
+    no son fotos de este sistema: va aparte para que los tipos sumen el total."""
+    subidas = estado["subidas"]
+    if subidas is None:
+        return None
+    de_hoy = archivos_de_hoy(subidas)
+    usado = sum(s["bytes"] for s in de_hoy)
+    otros = [s for s in de_hoy if s["bucket"] != BUCKET_COMANDAS]
+    return {
+        "bytes": usado, "cantidad": len(de_hoy),
+        "porcentaje": porcentaje_del_plan(usado),
+        "otros_buckets": {"cantidad": len(otros), "bytes": sum(s["bytes"] for s in otros)},
+        "meses": evolucion_por_mes(subidas, estado["hoy"]),
+        "proyeccion": proyeccion(subidas, estado["hoy"]),
+    }
 
 
 @app.get("/gerencia/fotos")
 def ver_fotos_de_mas_de_3_anios(request: Request, aviso: str | None = None, error: str | None = None):
-    """Fotos de más de 3 años: cuántas hay y cuánto ocupan, por tipo."""
+    """Fotos y espacio: cuánto ocupa el Storage, cómo crece y lo de 3 años."""
     if not _acceso_gerencia_valido(request):
         return _pantalla_clave_gerencia(request)
     try:
@@ -10658,6 +10689,8 @@ def ver_fotos_de_mas_de_3_anios(request: Request, aviso: str | None = None, erro
         "total_cantidad": total_de_fotos(filas, "cantidad"), "total_bytes": total_de_fotos(filas, "bytes"),
         "total_viejas": total_de_fotos(filas, "viejas"), "total_bytes_viejas": total_de_fotos(filas, "bytes_viejas"),
         "sin_registro": archivos_sin_registro(estado["fotos"], estado["tamanos"]),
+        "espacio": _espacio_usado(estado), "plan": PLAN_DE_SUPABASE,
+        "limite_del_plan": LIMITE_DEL_PLAN_BYTES, "umbral_del_aviso": UMBRAL_DEL_AVISO_DE_ESPACIO,
         "borradas": borradas, "de_compras_borradas": de_compras_borradas,
         "texto_de_foto_borrada": texto_de_foto_borrada,
         "aviso": aviso, "error": error,
@@ -17507,6 +17540,18 @@ ALERTAS = [
         detallar=lambda: _detalle_de_vales(viejos=True),
     ),
     DefinicionAlerta(
+        codigo="espacio_de_fotos",
+        # Dueño, 01/10: el Storage de ESTA base pasa el 80% de lo que incluye
+        # el plan (core/fotos.py). Los casos son el porcentaje: el banner lo
+        # dice en la frase. Solo Gerencia.
+        titulo="El espacio de fotos se está llenando",
+        texto=lambda casos: _texto_de_espacio_de_fotos(casos),
+        url="/gerencia/fotos",
+        texto_link="Ver Fotos y espacio",
+        modulos=("gerencia",),
+        contar=lambda: contar_espacio_de_fotos(),
+    ),
+    DefinicionAlerta(
         codigo="modulos_inexistentes",
         # La alerta que vigila a las alertas. Sin módulos propios: vive solo en
         # Auditoría, que es donde se mira lo que le pasa al sistema.
@@ -17516,6 +17561,11 @@ ALERTAS = [
         contar=lambda: _contar_modulos_inexistentes(),
     ),
 ]
+
+
+def _texto_de_espacio_de_fotos(porcentaje) -> str:
+    return (f"Las fotos ya ocupan el {porcentaje}% de los {_formatear_bytes(LIMITE_DEL_PLAN_BYTES)} "
+            f"del plan {PLAN_DE_SUPABASE}")
 
 
 def _texto_de_vales_plata(pesos) -> str:

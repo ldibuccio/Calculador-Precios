@@ -4464,7 +4464,7 @@ Lo cuida `tests/test_vales_a_cobrar.py`, contra Postgres.
   pedido, archivos de precios, mermas, devoluciones de vacíos, vales y
   anexadas. Las que se borran por error de carga en el momento (una pesada o
   una comanda desde la compra, una captura del pedido) siguen igual.
-- **Después se borran a mano, desde Gerencia → "Fotos de más de 3 años"**
+- **Después se borran a mano, desde Gerencia → "Fotos y espacio"**
   (`/gerencia/fotos`): cuántas y cuánto ocupan por tipo, y un botón con tilde
   de confirmación. Se va el ARCHIVO y **la fila que lo nombraba queda**;
   `fotos_borradas_por_antiguedad` dice cuándo. Todo "Ver foto" pasa por
@@ -4495,6 +4495,33 @@ Lo cuida `tests/test_vales_a_cobrar.py`, contra Postgres.
   y marca el que no tiene ninguna.
 - Migraciones `db/fotos_1` a `fotos_4`, verificación en `fotos_5`. Lo cuida
   `tests/test_fotos.py`, contra Postgres.
+
+### Y el ESPACIO, en la misma pantalla (01/10, dueño)
+
+La pantalla se llama **"Fotos y espacio"** (`/gerencia/fotos`). Arriba va lo
+nuevo y lo de 3 años queda abajo, igual que estaba.
+
+- **Lo usado hoy**: todo `storage.objects` de ESTA base, de todos los buckets
+  porque el plan los cobra a todos, por tipo, más "Sin registro" y "Otros
+  buckets". Sale de `subidas_al_storage` (app/db.py), una consulta, y la
+  leen la pantalla, el mes a mes, la proyección y la alerta.
+- **Mes a mes**: cada archivo cuenta en el mes ARGENTINO en que se subió.
+  Las borradas por antigüedad siguen en su mes, con los bytes de su
+  registro, y no suman a lo de hoy. Un mes sin subidas sale en cero.
+- **Proyección**: el ritmo de los últimos 90 días, o desde la primera foto si
+  hay menos historia (la pantalla dice sobre cuántos días), sumado a lo de
+  hoy durante 365 días. Supone que no se borra nada.
+- **El límite es del PLAN y de la ORGANIZACIÓN**: Pro, 100 GB de Storage para
+  Frutamax, Palmala y Ganadería juntas (documentación de Supabase,
+  verificado el 01/10 con el plan de la organización). Cada app ve solo su
+  base, así que su porcentaje es su parte. Vive en `core/fotos.py`
+  (`LIMITE_DEL_PLAN_BYTES`, `PLAN_DE_SUPABASE`), sin migración: si cambia el
+  plan, cambia esa línea.
+- **Alerta `espacio_de_fotos`**, solo Gerencia: más del 80% (`UMBRAL_DEL_AVISO`),
+  y los casos son el porcentaje. Si el Storage no se lee, la alerta falla
+  en vez de dar cero, y la pantalla dice "sin dato".
+
+Medido el 30/09 en Frutamax: 622 archivos, 33,7 MB, del 15/08 en adelante.
 
 ## Buscar compras: la SEÑA (28/09, dueño)
 

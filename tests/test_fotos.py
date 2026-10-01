@@ -33,7 +33,12 @@ from scripts.humo import hay_postgres, preparar_base  # noqa: E402
 
 OBLIGATORIO = os.environ.get("HUMO_OBLIGATORIO") == "1"
 
+# storage.objects la crea Supabase y no está en el esquema del repo: acá va
+# una con las mismas columnas que lee la app, así la consulta del espacio
+# corre contra Postgres de verdad y no contra un mock (corolario 89).
 SIEMBRA = """
+create schema storage;
+create table storage.objects (bucket_id text, name text, metadata jsonb, created_at timestamptz);
 insert into articulos (id, nombre) overriding system value values (1, 'EJEMPLO Fruta');
 insert into proveedores (id, nombre, codigo_puesto) overriding system value
   values (1, 'EJ Uno', 'N93P01');
@@ -106,6 +111,12 @@ def _jpeg():
     buffer = io.BytesIO()
     Image.new("RGB", (20, 20), color="red").save(buffer, format="JPEG")
     return buffer.getvalue()
+
+
+def _objeto(sql, ruta, bytes_, creado, bucket="comandas"):
+    """Un archivo en el storage.objects de prueba."""
+    sql("INSERT INTO storage.objects (bucket_id, name, metadata, created_at) "
+        "VALUES (%s, %s, jsonb_build_object('size', %s), %s)", (bucket, ruta, bytes_, creado))
 
 
 def _subidas():
@@ -396,9 +407,10 @@ def test_se_cuenta_desde_que_se_SUBIO_y_el_dia_del_corte_TODAVIA_no_vence(base):
 def test_GERENCIA_borra_con_el_TILDE_deja_el_REGISTRO_y_la_fila_queda(base, monkeypatch):
     d, sql = base
     _foto_vieja(sql, 10)
+    _objeto(sql, "pesaje/EJ-21.jpg", 5000, "2023-01-01")
+    _objeto(sql, "suelto/EJ.jpg", 700, "2026-09-01")
     cliente = _cliente(monkeypatch, "gerencia")
     with (patch("app.main._hoy_argentina", return_value=HOY),
-          patch("app.main.tamanos_del_bucket", return_value={"pesaje/EJ-21.jpg": 5000, "suelto/EJ.jpg": 700}),
           patch("app.main.borrar_foto_comanda") as borrar):
         pantalla = cliente.get("/gerencia/fotos")
         sin_tilde = cliente.post("/gerencia/fotos/borrar-viejas", follow_redirects=False)
@@ -416,7 +428,6 @@ def test_GERENCIA_borra_con_el_TILDE_deja_el_REGISTRO_y_la_fila_queda(base, monk
     assert sql("SELECT count(*) FROM fotos_recepcion WHERE foto_ruta = 'pesaje/EJ-21.jpg'") == [(1,)]
     # y una segunda vuelta no la vuelve a borrar
     with (patch("app.main._hoy_argentina", return_value=HOY),
-          patch("app.main.tamanos_del_bucket", return_value={}),
           patch("app.main.borrar_foto_comanda") as borrar_otra):
         cliente.post("/gerencia/fotos/borrar-viejas", data={"confirmo": "si"}, follow_redirects=False)
     borrar_otra.assert_not_called()
@@ -427,7 +438,6 @@ def test_si_el_STORAGE_falla_no_queda_registro_y_la_foto_sigue(base, monkeypatch
     _foto_vieja(sql, 10)
     cliente = _cliente(monkeypatch, "gerencia")
     with (patch("app.main._hoy_argentina", return_value=HOY),
-          patch("app.main.tamanos_del_bucket", return_value={}),
           patch("app.main.borrar_foto_comanda", side_effect=RuntimeError("sin red"))):
         respuesta = cliente.post("/gerencia/fotos/borrar-viejas", data={"confirmo": "si"})
     assert "Se borraron 0 de 1" in respuesta.text
@@ -489,3 +499,140 @@ def test_TODA_pantalla_que_muestra_una_foto_pasa_por_ir_a_la_foto():
                         and nodo.func.id == "obtener_url_foto"):
                     llamadores.add(funcion.name)
     assert llamadores == {"_ir_a_la_foto"}, llamadores
+
+
+# --- 6. el espacio (dueño, 01/10) ----------------------------------------------
+
+def _subida(dia, bytes_, borrada=False, bucket="comandas"):
+    return {"bucket": None if borrada else bucket, "ruta": f"EJ-{dia}-{bytes_}", "bytes": bytes_,
+            "subida_el": datetime.combine(dia, datetime.min.time(), tzinfo=ARG).replace(hour=12),
+            "borrada": borrada}
+
+
+def test_el_MES_A_MES_va_del_primero_a_hoy_con_los_meses_vacios_en_CERO():
+    from core.fotos import evolucion_por_mes
+    subidas = [_subida(date(2026, 8, 15), 100), _subida(date(2026, 8, 20), 50),
+               _subida(date(2026, 10, 3), 30, borrada=True)]       # borrada: cuenta en su mes
+    filas = evolucion_por_mes(subidas, date(2026, 12, 1))
+    assert [(f["mes"], f["cantidad"], f["bytes"], f["acumulado_bytes"]) for f in filas] == [
+        ("ago 2026", 2, 150, 150), ("sep 2026", 0, 0, 150), ("oct 2026", 1, 30, 180),
+        ("nov 2026", 0, 0, 180), ("dic 2026", 0, 0, 180)]
+    assert [f["ancho"] for f in filas] == [100, 0, 20, 0, 0]
+    assert evolucion_por_mes([], date(2026, 12, 1)) == []
+
+
+def test_el_mes_es_el_ARGENTINO_de_la_subida():
+    from core.fotos import evolucion_por_mes
+    # 31/08 a las 23:30 de acá es 01/09 en UTC: va en agosto.
+    subida = {"bucket": "comandas", "ruta": "x", "bytes": 10, "borrada": False,
+              "subida_el": datetime(2026, 9, 1, 2, 30, tzinfo=timezone.utc)}
+    assert [f["mes"] for f in evolucion_por_mes([subida], date(2026, 9, 2))] == ["ago 2026", "sep 2026"]
+
+
+def test_la_PROYECCION_mide_desde_la_PRIMERA_foto_si_hay_menos_de_90_dias():
+    from core.fotos import proyeccion
+    hoy = date(2026, 10, 1)
+    # 1000 bytes en 10 días (22/09 a 01/10): 100 por día, 3650 en un año.
+    p = proyeccion([_subida(date(2026, 9, 22), 1000)], hoy)
+    assert p["dias"] == 10 and p["desde"] == date(2026, 9, 22)
+    assert p["en_12_meses"] == 1000 + 100 * 365
+    assert round(p["por_mes"]) == round(100 * 365 / 12)
+
+
+def test_la_PROYECCION_usa_los_ULTIMOS_90_dias_y_la_borrada_suma_al_ritmo_no_a_hoy():
+    from core.fotos import proyeccion
+    hoy = date(2026, 12, 31)
+    subidas = [_subida(date(2026, 1, 10), 5000),                    # fuera de la ventana
+               _subida(date(2026, 12, 1), 900, borrada=True)]       # dentro, pero ya no está
+    p = proyeccion(subidas, hoy)
+    assert p["dias"] == 90 and p["desde"] == date(2026, 10, 3)
+    assert p["en_12_meses"] == 5000 + 900 / 90 * 365
+    assert proyeccion([], hoy) is None
+
+
+def test_el_PORCENTAJE_es_contra_los_100_GB_del_plan_y_el_aviso_es_MAS_del_80():
+    from core.fotos import LIMITE_DEL_PLAN_BYTES, pasa_el_aviso, porcentaje_del_plan
+    assert LIMITE_DEL_PLAN_BYTES == 100 * 1024 ** 3
+    assert porcentaje_del_plan(LIMITE_DEL_PLAN_BYTES // 4) == 25
+    assert not pasa_el_aviso(LIMITE_DEL_PLAN_BYTES * 80 // 100)
+    assert pasa_el_aviso(LIMITE_DEL_PLAN_BYTES * 80 // 100 + 1)
+
+
+def test_las_SUBIDAS_salen_de_storage_objects_de_TODOS_los_buckets_y_de_las_borradas(base):
+    d, sql = base
+    _objeto(sql, "pesaje/EJ-21.jpg", 5000, "2026-09-05 18:01-03")
+    _objeto(sql, "otra/cosa.bin", 70, "2026-09-10 10:00-03", bucket="otro")
+    sql("INSERT INTO fotos_borradas_por_antiguedad (foto_ruta, tipo, subida_el, bytes) "
+        "VALUES ('pesaje/EJ-viejo.jpg', 'pesada', '2023-01-01 10:00-03', 300)")
+    subidas = sorted(d.subidas_al_storage(), key=lambda s: s["ruta"])
+    assert [(s["bucket"], s["ruta"], s["bytes"], s["borrada"]) for s in subidas] == [
+        ("otro", "otra/cosa.bin", 70, False),
+        ("comandas", "pesaje/EJ-21.jpg", 5000, False),
+        (None, "pesaje/EJ-viejo.jpg", 300, True)]
+
+
+def test_la_PANTALLA_dice_el_espacio_por_tipo_el_mes_a_mes_y_la_proyeccion(base, monkeypatch):
+    d, sql = base
+    _objeto(sql, "pesaje/EJ-21.jpg", 3 * 1024 * 1024, "2026-09-05 18:01-03")
+    _objeto(sql, "pesaje/EJ-22.jpg", 1024 * 1024, "2026-09-06 10:00-03")
+    _objeto(sql, "suelto/EJ.jpg", 2 * 1024 * 1024, "2026-11-20 10:00-03")
+    _objeto(sql, "otra/cosa.bin", 1024, "2026-11-21 10:00-03", bucket="otro")
+    cliente = _cliente(monkeypatch, "gerencia")
+    with patch("app.main._hoy_argentina", return_value=HOY):
+        respuesta = cliente.get("/gerencia/fotos")
+    marcado = _marcado(respuesta)
+    assert respuesta.status_code == 200 and "Fotos y espacio" in respuesta.text
+    espacio = marcado.split('id="espacio"')[1].split('id="mes-a-mes"')[0]
+    assert "6,0 MB" in espacio and "4 archivos" in espacio
+    assert "Pesadas de recepción" in espacio and "4,0 MB" in espacio and "2 archivos" in espacio
+    assert "Sin registro" in espacio and "Otros buckets" in espacio
+    assert "del plan Pro" in espacio and "100,0 GB" in espacio
+    meses = marcado.split('id="mes-a-mes"')[1].split('id="proyeccion"')[0]
+    # el más nuevo arriba, y octubre en cero aunque no se subió nada
+    assert meses.index("dic 2026") < meses.index("oct 2026") < meses.index("sep 2026")
+    assert "+4,0 MB · 2 archivos" in meses and "+0 bytes · 0 archivos" in meses
+    proyeccion_ = marcado.split('id="proyeccion"')[1].split('id="viejas"')[0]
+    assert "medido sobre 88 días" in proyeccion_            # desde el 05/09 a hoy, 01/12
+    # lo de 3 años queda abajo
+    assert marcado.index('id="espacio"') < marcado.index('id="viejas"')
+
+
+def test_sin_poder_leer_el_STORAGE_la_pantalla_dice_SIN_DATO_y_no_cero(base, monkeypatch):
+    d, sql = base
+    sql("DROP TABLE storage.objects")
+    cliente = _cliente(monkeypatch, "gerencia")
+    with patch("app.main._hoy_argentina", return_value=HOY):
+        respuesta = cliente.get("/gerencia/fotos")
+    marcado = _marcado(respuesta)
+    assert respuesta.status_code == 200
+    assert "No se pudo leer el Storage: sin dato." in marcado
+    assert 'id="mes-a-mes"' not in marcado and 'id="proyeccion"' not in marcado
+    assert "2 fotos" not in marcado.split('id="espacio"')[1].split('id="viejas"')[0]
+
+
+def test_la_ALERTA_salta_con_MAS_del_80_por_ciento_y_dice_el_porcentaje(base, monkeypatch):
+    d, sql = base
+    import core.fotos as f
+    monkeypatch.setattr(f, "LIMITE_DEL_PLAN_BYTES", 1000)
+    _objeto(sql, "pesaje/EJ-21.jpg", 500, "2026-09-05 18:01-03")
+    _objeto(sql, "otra/cosa.bin", 300, "2026-09-10 10:00-03", bucket="otro")   # el plan cobra todo
+    assert d.contar_espacio_de_fotos() == {"casos": 0, "mas_viejo": None}       # 80 justo: no
+    _objeto(sql, "pesaje/EJ-22.jpg", 50, "2026-09-11 10:00-03")
+    assert d.contar_espacio_de_fotos() == {"casos": 85, "mas_viejo": None}
+    # la borrada por antigüedad ya no ocupa
+    sql("INSERT INTO fotos_borradas_por_antiguedad (foto_ruta, tipo, subida_el, bytes) "
+        "VALUES ('pesaje/EJ-viejo.jpg', 'pesada', '2023-01-01', 5000)")
+    assert d.contar_espacio_de_fotos()["casos"] == 85
+
+
+def test_la_ALERTA_del_espacio_es_SOLO_de_Gerencia_y_lleva_a_Fotos_y_espacio():
+    from app.main import ALERTAS, _texto_de_espacio_de_fotos
+    (alerta,) = [a for a in ALERTAS if a.codigo == "espacio_de_fotos"]
+    assert alerta.modulos == ("gerencia",) and alerta.url == "/gerencia/fotos"
+    assert _texto_de_espacio_de_fotos(85) == "Las fotos ya ocupan el 85% de los 100,0 GB del plan Pro"
+
+
+def test_el_HUB_de_Gerencia_dice_Fotos_y_espacio():
+    marcado = io.open(os.path.join(RAIZ, "templates", "gerencia.html"), encoding="utf-8").read()
+    assert '<a class="boton" href="/gerencia/fotos">Fotos y espacio</a>' in marcado
+    assert "Fotos de más de 3 años</a>" not in marcado
