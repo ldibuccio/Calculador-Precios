@@ -477,6 +477,9 @@ def calcular_rentabilidad_real(
                 "cajas_mermadas_pesos": 0.0,
                 # Devueltos al proveedor: se muestran, no suman a ninguna cuenta.
                 "devueltos_proveedor_bultos": 0.0,
+                # Lo que el precio de la compra devuelta tiene de más (o de
+                # menos) contra el costo del armado. SÍ suma: resta del costo.
+                "diferencia_devolucion_proveedor": 0.0,
             }
             acumulado[articulo["articulo_id"]] = fila
         return fila
@@ -628,12 +631,23 @@ def calcular_rentabilidad_real(
         # el MISMO kilaje con el que se facturó lo enviado.
         unidades = kilos / armados * bultos
         costo = _numero(devolucion.get("costo_por_bulto"))
-        if devolucion.get("destino_rechazo") == "devolucion_proveedor":
-            # AL PROVEEDOR se cancela al costo por bulto de LA COMPRA de la que
-            # salió (dueño, 30/09), cuando la consulta lo pudo decir: ver
-            # `_SQL_COSTO_DE_LA_COMPRA_DEVUELTA`. Si no, el congelado, que es
-            # como se cancelaron siempre (los nueve de antes del 30/09).
-            costo = _numero(devolucion.get("costo_bulto_compra")) or costo
+        # AL PROVEEDOR VALE EXACTAMENTE EL PRECIO POR CAJÓN DE SU COMPRA (regla
+        # de Lionel, 01/10; ver `_SQL_VALOR_POR_BULTO_DE_LA_DEVOLUCION`). La
+        # mercadería se acredita al costo CONGELADO del armado —lo mismo que
+        # se le cargó al venderla— y la diferencia contra el precio de la
+        # compra va a su propio renglón, `diferencia_devolucion_proveedor`:
+        # la devolución vale el precio de la compra en total, y la diferencia
+        # no desaparece adentro de "Mercadería". Positiva: el proveedor
+        # devuelve más de lo que costó el armado (sube la renta).
+        diferencia_al_proveedor = 0.0
+        if devolucion.get("destino_rechazo") == "devolucion_proveedor" and devolucion.get("vale_la_compra"):
+            precio_compra = _numero(devolucion.get("valor_por_bulto"))
+            if precio_compra is not None and costo is not None:
+                diferencia_al_proveedor = bultos * (precio_compra - costo)
+            elif costo is None:
+                # Sin costo congelado: se acredita el precio de la compra
+                # entero, como se hacía.
+                costo = precio_compra
         envase_unidad = _numero(margen.get("costo_envase_unidad_venta")) or 0.0
         perdido = devolucion.get("destino_rechazo") in DESTINOS_RECHAZO_PERDIDO
         al_proveedor = devolucion.get("destino_rechazo") == "devolucion_proveedor"
@@ -674,6 +688,7 @@ def calcular_rentabilidad_real(
             # misma— sino que acá no hay nada que vuelva a salir. Queda en
             # cero de los dos lados, que es lo que se pidió.
             fila["costo_mercaderia"] -= bultos * costo
+            fila["diferencia_devolucion_proveedor"] += diferencia_al_proveedor
         if la_caja_se_va and envase_unidad:
             fila = _fila(articulo)
             fila["cajas_perdidas"] += bultos
@@ -693,6 +708,7 @@ def calcular_rentabilidad_real(
         fila["costo_total"] = (
             fila["costo_mercaderia"] + fila["costo_envase"] + fila["costo_mermas"]
             + fila["costo_segunda"] + fila["rechazos_perdidos"]
+            - fila["diferencia_devolucion_proveedor"]
         )
         fila["renta_pesos"] = fila["venta_neta"] - fila["devoluciones_venta"] - fila["costo_total"]
         fila["utilidad_pct"] = (
@@ -748,6 +764,8 @@ def calcular_rentabilidad_real(
             "devoluciones_venta": sum(f["devoluciones_venta"] for f in filas),
             "rechazos_perdidos": sum(f["rechazos_perdidos"] for f in filas),
             "rechazos_bultos": sum(f["rechazos_bultos"] for f in filas),
+            "devueltos_proveedor_bultos": sum(f["devueltos_proveedor_bultos"] for f in filas),
+            "diferencia_devolucion_proveedor": sum(f["diferencia_devolucion_proveedor"] for f in filas),
         }
         _cerrar_cuenta(subtotal)
         grupos.append(
@@ -797,6 +815,8 @@ def calcular_rentabilidad_real(
         "devoluciones_venta": sum(g["subtotal"]["devoluciones_venta"] for g in grupos),
         "rechazos_perdidos": sum(g["subtotal"]["rechazos_perdidos"] for g in grupos),
         "rechazos_bultos": sum(g["subtotal"]["rechazos_bultos"] for g in grupos),
+        "devueltos_proveedor_bultos": sum(g["subtotal"]["devueltos_proveedor_bultos"] for g in grupos),
+        "diferencia_devolucion_proveedor": sum(g["subtotal"]["diferencia_devolucion_proveedor"] for g in grupos),
         # Sale de las FILAS y no de los subtotales de grupo a propósito: es un
         # número que se lleva a una conversación con el cliente, así que tiene
         # que ser el del período entero y no depender de cómo estén agrupados

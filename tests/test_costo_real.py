@@ -1,3 +1,4 @@
+import pytest
 """Tests del motor de Rentabilidad Real (core/costo_real.py) — puro, sin base."""
 
 from datetime import date
@@ -673,6 +674,79 @@ def test_devolucion_al_proveedor_no_es_venta_NI_perdida():
     assert fila["devueltos_proveedor_bultos"] == 5.0
 
 
+def _al_proveedor(bultos, fecha, valor, vale_la_compra=True, costo=2000.0):
+    return dict(_devolucion(bultos, fecha, costo_por_bulto=costo, destino="devolucion_proveedor"),
+                valor_por_bulto=valor, vale_la_compra=vale_la_compra)
+
+
+@pytest.mark.parametrize("precio_compra, diferencia", [(2100.0, 500.0), (1900.0, -500.0)])
+def test_la_devolucion_al_proveedor_VALE_EL_PRECIO_DE_SU_COMPRA_y_la_diferencia_se_NOMBRA(
+        precio_compra, diferencia):
+    """Regla de Lionel (01/10): la devolución vale EXACTAMENTE el precio por
+    cajón de su compra. La mercadería se acredita al costo del armado (lo que
+    se le cargó al venderla) y lo que el precio de la compra tiene de más o de
+    menos va a `diferencia_devolucion_proveedor`, que resta del costo.
+
+    El crédito TOTAL de los 5 bultos tiene que ser 5 × el precio de la
+    compra, y se mide contra la corrida de CONTROL sin la devolución, no
+    restando dos números de la misma cuenta (corolario 76)."""
+    fecha = date(2026, 8, 25)
+    control = calcular_rentabilidad_real(
+        _datos([_armado(fecha, 25, 500.0)]), {fecha: {901: dict(MARGEN)}}, 1, fecha, fecha,
+    )["grupos"][0]["filas"][0]
+    fila = calcular_rentabilidad_real(
+        _datos([_armado(fecha, 25, 500.0)]), {fecha: {901: dict(MARGEN)}}, 1, fecha, fecha,
+        devoluciones=[_al_proveedor(5.0, fecha, precio_compra)],
+    )["grupos"][0]["filas"][0]
+    assert fila["costo_mercaderia"] == 25 * 500.0 - 5 * 2000.0
+    assert fila["diferencia_devolucion_proveedor"] == diferencia
+    assert control["costo_total"] - fila["costo_total"] == 5 * precio_compra
+    assert fila["renta_pesos"] == fila["venta_neta"] - fila["devoluciones_venta"] - fila["costo_total"]
+
+
+def test_en_CAJA_DE_DIA_o_SIN_COMPRA_no_hay_diferencia_queda_el_costo_congelado():
+    fecha = date(2026, 8, 25)
+    fila = calcular_rentabilidad_real(
+        _datos([_armado(fecha, 25, 500.0)]), {fecha: {901: dict(MARGEN)}}, 1, fecha, fecha,
+        devoluciones=[_al_proveedor(5.0, fecha, 2000.0, vale_la_compra=False)],
+    )["grupos"][0]["filas"][0]
+    assert fila["costo_mercaderia"] == 25 * 500.0 - 5 * 2000.0
+    assert fila["diferencia_devolucion_proveedor"] == 0.0
+
+
+def test_una_COMPRA_SIN_PRECIO_acredita_el_armado_y_no_inventa_diferencia():
+    fecha = date(2026, 8, 25)
+    fila = calcular_rentabilidad_real(
+        _datos([_armado(fecha, 25, 500.0)]), {fecha: {901: dict(MARGEN)}}, 1, fecha, fecha,
+        devoluciones=[_al_proveedor(5.0, fecha, None)],
+    )["grupos"][0]["filas"][0]
+    assert fila["costo_mercaderia"] == 25 * 500.0 - 5 * 2000.0
+    assert fila["diferencia_devolucion_proveedor"] == 0.0
+
+
+def test_SIN_COSTO_CONGELADO_se_acredita_el_precio_de_la_compra_entero():
+    fecha = date(2026, 8, 25)
+    fila = calcular_rentabilidad_real(
+        _datos([_armado(fecha, 25, 500.0)]), {fecha: {901: dict(MARGEN)}}, 1, fecha, fecha,
+        devoluciones=[_al_proveedor(5.0, fecha, 2100.0, costo=None)],
+    )["grupos"][0]["filas"][0]
+    assert fila["costo_mercaderia"] == 25 * 500.0 - 5 * 2100.0
+    assert fila["diferencia_devolucion_proveedor"] == 0.0
+
+
+def test_la_diferencia_llega_a_los_SUBTOTALES_y_al_TOTAL():
+    fecha = date(2026, 8, 25)
+    resultado = calcular_rentabilidad_real(
+        _datos([_armado(fecha, 25, 500.0)]), {fecha: {901: dict(MARGEN)}}, 1, fecha, fecha,
+        devoluciones=[_al_proveedor(5.0, fecha, 2100.0)],
+    )
+    assert resultado["grupos"][0]["subtotal"]["diferencia_devolucion_proveedor"] == 500.0
+    assert resultado["totales"]["diferencia_devolucion_proveedor"] == 500.0
+    assert resultado["totales"]["devueltos_proveedor_bultos"] == 5.0
+    fila = resultado["grupos"][0]["filas"][0]
+    assert resultado["totales"]["costo_total"] == fila["costo_total"]
+
+
 def test_la_devolucion_al_proveedor_NO_va_a_afuera_del_calculo():
     """"Afuera del cálculo" es la lista de cosas a ARREGLAR, y una devolución
     bien cargada no es una de ellas.
@@ -1208,6 +1282,43 @@ def test_SIN_cajas_perdidas_el_renglon_NO_aparece():
     tenga un número.
     """
     assert 'class="cajas-perdidas"' not in _pantalla_real({})
+
+
+@pytest.mark.parametrize("precio, esperado", [(2354.6, "+$1.773"), (1895.2, "$-524")])
+def test_la_pantalla_NOMBRA_la_diferencia_de_la_devolucion_al_proveedor_en_el_CHIP_y_el_TOTAL(
+        precio, esperado):
+    """La diferencia entre el precio de la compra y el costo del armado no
+    desaparece adentro de "Mercadería": se dice en el chip del artículo y en
+    la línea del total. Se renderiza con el resultado de la cuenta de verdad,
+    no con totales fabricados."""
+    import re
+    from app.main import templates
+    fecha = date(2026, 8, 25)
+    resultado = calcular_rentabilidad_real(
+        _datos([_armado(fecha, 25, 500.0)]), {fecha: {901: dict(MARGEN)}}, 1, fecha, fecha,
+        devoluciones=[_al_proveedor(5.0, fecha, precio)],
+    )
+    html = templates.env.get_template("gerencia_rentabilidad_real.html").render(
+        request=None, clientes=[], cliente_valor="", error=None, resultado=resultado)
+    chip = re.search(r'<span class="chip-devuelto-proveedor">(.*?)</span>', html, re.S)
+    assert chip is not None
+    assert f"{esperado} contra el costo del armado" in " ".join(chip.group(1).split())
+    total = re.search(r'<span class="dif-devolucion-proveedor">(.*?)</span>', html, re.S)
+    assert total is not None and esperado in total.group(1)
+
+
+def test_SIN_diferencia_el_total_no_la_nombra():
+    from app.main import templates
+    fecha = date(2026, 8, 25)
+    resultado = calcular_rentabilidad_real(
+        _datos([_armado(fecha, 25, 500.0)]), {fecha: {901: dict(MARGEN)}}, 1, fecha, fecha,
+        devoluciones=[_al_proveedor(5.0, fecha, 2000.0)],
+    )
+    html = templates.env.get_template("gerencia_rentabilidad_real.html").render(
+        request=None, clientes=[], cliente_valor="", error=None, resultado=resultado)
+    assert 'class="dif-devolucion-proveedor"' not in html
+    chip = html.split('<span class="chip-devuelto-proveedor">')[1].split("</span>")[0]
+    assert "contra el costo del armado" not in chip
 
 
 def test_lo_que_salio_de_SEGUNDA_se_vende_entero_y_no_cuesta_nada():

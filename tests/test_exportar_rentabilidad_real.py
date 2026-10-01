@@ -21,7 +21,7 @@ RESULTADO_REAL = {
                     "costo_mermas": 1800.0, "bultos_mermados": 3.0,
                     "costo_mermas_cruda": 700.0, "bultos_mermados_cruda": 2.0,
                     "costo_mermas_trabajada": 800.0, "bultos_mermados_trabajada": 1.0, "costo_segunda": 2100.0, "bultos_pasados_a_segunda": 4.0,
-                     "cajas_mermadas": 2.0, "cajas_mermadas_pesos": 300.0,
+                     "cajas_mermadas": 2.0, "cajas_mermadas_pesos": 300.0, "devueltos_proveedor_bultos": 5.0, "diferencia_devolucion_proveedor": -523.0,
                     "segunda_bultos": 2.0,
                     "devoluciones_bultos": 5.0, "devoluciones_venta": 4500.0,
                     "rechazos_perdidos": 900.0, "rechazos_bultos": 2.0,
@@ -32,7 +32,7 @@ RESULTADO_REAL = {
                          "costo_envase": 320.0, "costo_mermas": 1800.0, "costo_total": 9220.0, "bultos_mermados": 3.0,
                          "costo_mermas_cruda": 700.0, "bultos_mermados_cruda": 2.0,
                          "costo_mermas_trabajada": 800.0, "bultos_mermados_trabajada": 1.0, "costo_segunda": 2100.0, "bultos_pasados_a_segunda": 4.0,
-                     "cajas_mermadas": 2.0, "cajas_mermadas_pesos": 300.0,
+                     "cajas_mermadas": 2.0, "cajas_mermadas_pesos": 300.0, "devueltos_proveedor_bultos": 5.0, "diferencia_devolucion_proveedor": -523.0,
                          "devoluciones_bultos": 5.0, "devoluciones_venta": 4500.0,
                          "rechazos_perdidos": 900.0, "rechazos_bultos": 2.0,
                          "renta_pesos": 5180.0, "utilidad_pct": 103.6},
@@ -43,7 +43,7 @@ RESULTADO_REAL = {
         "costo_mermas": 1800.0, "segunda_bultos": 2.0, "costo_total": 9220.0, "bultos_mermados": 3.0,
         "costo_mermas_cruda": 700.0, "bultos_mermados_cruda": 2.0,
         "costo_mermas_trabajada": 800.0, "bultos_mermados_trabajada": 1.0, "costo_segunda": 2100.0, "bultos_pasados_a_segunda": 4.0,
-                     "cajas_mermadas": 2.0, "cajas_mermadas_pesos": 300.0,
+                     "cajas_mermadas": 2.0, "cajas_mermadas_pesos": 300.0, "devueltos_proveedor_bultos": 5.0, "diferencia_devolucion_proveedor": -523.0,
         "devoluciones_bultos": 5.0, "devoluciones_venta": 4500.0,
         "rechazos_perdidos": 900.0, "rechazos_bultos": 2.0,
         "renta_pesos": 5180.0, "utilidad_pct": 103.6, "afuera_bultos": 18.0, "afuera_motivos": 2,
@@ -225,8 +225,9 @@ def test_el_Excel_agrega_las_columnas_AL_FINAL_y_no_corre_las_que_ya_estaban():
         f for f in hoja.iter_rows() if f[0].value == "Artículo")
     titulos = [c.value for c in fila_encabezado]
 
-    assert titulos[-4:] == ["Pasado a segunda $", "Pasado a segunda bultos",
-                            "Caja de la merma $", "Caja de la merma cajas"]
+    assert titulos[-6:] == ["Pasado a segunda $", "Pasado a segunda bultos",
+                            "Caja de la merma $", "Caja de la merma cajas",
+                            "Devuelto al proveedor bultos", "Dif. devolución al proveedor $"]
     # Las que ya estaban, en su lugar de siempre.
     assert titulos[17] == "Renta $" and titulos[18] == "Utilidad %"
 
@@ -245,6 +246,8 @@ def test_el_Excel_agrega_las_columnas_AL_FINAL_y_no_corre_las_que_ya_estaban():
         assert fila[20].value == 4.0, (nombre, fila[20].value)
         assert fila[21].value == 300.0, (nombre, fila[21].value)
         assert fila[22].value == 2.0, (nombre, fila[22].value)
+        assert fila[23].value == 5.0, (nombre, fila[23].value)
+        assert fila[24].value == -523.0, (nombre, fila[24].value)
 
     # Y EL VECINO QUE LA INSERCIÓN EN EL MEDIO PISA: "Mermas bultos" es la
     # columna 8, que es adonde el canario mandaba el costo de la segunda.
