@@ -398,9 +398,9 @@ def test_la_LISTA_de_movimientos_SUMADA_da_el_MISMO_stock_que_la_tarjeta(base):
                       (ids["DIMIMAX"],))
     (art,), = sql("SELECT articulo_id FROM compras WHERE id = %s", (herederos,))
     sql("""INSERT INTO movimientos_stock (articulo_id, tipo, cantidad, motivo, fecha_operacion,
-               stock_sistema, compra_devolucion_id, creado_en)
+               stock_sistema, compra_devolucion_id, creado_en, cargada_desde)
            VALUES (%s, 'devolucion_deposito', -2, 'EJ se puso fea', '2099-01-01', 0, %s,
-                   '2099-01-01 11:00-03')""", (art, herederos))
+                   '2099-01-01 11:00-03', 'deposito')""", (art, herederos))
     sql("""INSERT INTO movimientos_stock (articulo_id, tipo, cantidad, motivo, fecha_operacion,
                stock_sistema, destino_rechazo, compra_devolucion_id, creado_en)
            VALUES (%s, 'reingreso_rechazo', 1, 'EJ rechazo', '2099-01-01', 0,

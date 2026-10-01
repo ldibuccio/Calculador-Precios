@@ -4378,6 +4378,20 @@ Son DOS operaciones y se registran separadas; en las dos el COSTO SE CANCELA
   más de lo que queda: el tope se recalcula en el POST. Es un movimiento
   `devolucion_deposito` (migración `db/devolucion_deposito_1`, verificación en
   `_2`), con cantidad negativa y la compra obligatoria (CHECK).
+- **La devolución de mercadería se puede cargar desde Depósito o desde
+  Administración** (dueño, 01/10). Es la MISMA pantalla y la misma escritura:
+  `/deposito/devolver` sin clave y `/administracion/devolver` detrás de la
+  clave de Administración (botón "Devolver mercadería" al lado de
+  "Movimientos del depósito"). El sector sale del prefijo (corolario 63) y se
+  guarda en `movimientos_stock.cargada_desde` ('deposito' o
+  'administracion'), sin default en la escritura: un camino que no lo diga es
+  un TypeError, y la base lo rechaza (`movimientos_stock_devolucion_con_sector`,
+  solo la devolución lo lleva). Las anteriores al 01/10 son de Depósito, la
+  única puerta que había. Movimientos del depósito dice "cargada desde …" en
+  cada devolución, la filtra por sector ("Cargada desde") y la lleva en el
+  Excel. Migración `db/devolucion_sector_1` (antes del deploy) y `_2` (después:
+  completa las que cargó el código viejo en el medio y agrega el CHECK),
+  verificación en `_3`.
 - **Sale del lote de SU compra y de ningún otro**: `_SQL_SALIDAS_STOCK` le
   dirige el lote a la compra, y `pasadas_de_lotes` no le da pasada de FIFO. Lo
   que la compra no cubra queda sin lote, a la vista; nunca se lleva otra

@@ -5187,7 +5187,7 @@ TIPOS_DE_MOVIMIENTO_DEL_DEPOSITO = ("entrada", "rechazo", "deposito", "segunda")
 
 COLUMNAS_MOVIMIENTOS_DEL_DEPOSITO = (
     "tipo", "id", "fecha", "proveedor_id", "proveedor", "articulo_id", "articulo",
-    "compra_id", "bultos", "valor", "motivo", "sena",
+    "compra_id", "bultos", "valor", "motivo", "sena", "sector",
 )
 
 _SQL_MOVIMIENTOS_DEL_DEPOSITO = """
@@ -5196,7 +5196,7 @@ _SQL_MOVIMIENTOS_DEL_DEPOSITO = """
                c.proveedor_id, p.nombre AS proveedor, c.articulo_id, a.nombre AS articulo, c.id AS compra_id,
                COALESCE(c.cantidad_cajones_real, c.cantidad_cajones) AS bultos,
                COALESCE(c.cantidad_cajones_real, c.cantidad_cajones) * c.importe AS valor, NULL AS motivo,
-               NULLIF(COALESCE(c.sena, 0), 0) AS sena
+               NULLIF(COALESCE(c.sena, 0), 0) AS sena, NULL::text AS sector
           FROM compras c
           JOIN proveedores p ON p.id = c.proveedor_id
           JOIN articulos a ON a.id = c.articulo_id
@@ -5212,7 +5212,8 @@ _SQL_MOVIMIENTOS_DEL_DEPOSITO = """
                                                      m.costo_por_bulto) END,
                m.motivo,
                CASE WHEN m.tipo = 'devolucion_deposito' OR fd.envase_id IS NULL
-                    THEN NULLIF(COALESCE(cd.sena, 0), 0) END
+                    THEN NULLIF(COALESCE(cd.sena, 0), 0) END,
+               m.cargada_desde
           FROM movimientos_stock m
           JOIN articulos a ON a.id = m.articulo_id
           LEFT JOIN compras cd ON cd.id = m.compra_devolucion_id
@@ -5224,7 +5225,7 @@ _SQL_MOVIMIENTOS_DEL_DEPOSITO = """
            AND (m.tipo = 'devolucion_deposito' OR m.destino_rechazo = 'devolucion_proveedor')
         UNION ALL
         SELECT 'segunda', rs.id, rs.fecha_operacion, NULL, NULL, rs.articulo_id, a.nombre, NULL,
-               -rs.bultos, NULL, NULL, NULL
+               -rs.bultos, NULL, NULL, NULL, NULL
           FROM remitos_segunda rs
           JOIN articulos a ON a.id = rs.articulo_id
          WHERE rs.anulado_el IS NULL AND rs.destino = 'puesto'
@@ -5233,6 +5234,7 @@ _SQL_MOVIMIENTOS_DEL_DEPOSITO = """
       AND (%(tipo)s::text IS NULL OR x.tipo = %(tipo)s)
       AND (%(proveedor_id)s::bigint IS NULL OR x.proveedor_id = %(proveedor_id)s)
       AND (%(articulo_id)s::bigint IS NULL OR x.articulo_id = %(articulo_id)s)
+      AND (%(sector)s::text IS NULL OR x.sector = %(sector)s)
     ORDER BY x.proveedor IS NULL, x.proveedor, x.fecha,
              CASE x.tipo WHEN 'entrada' THEN 0 WHEN 'rechazo' THEN 1 WHEN 'deposito' THEN 2 ELSE 3 END,
              x.id
@@ -5241,18 +5243,22 @@ _SQL_MOVIMIENTOS_DEL_DEPOSITO = """
 
 
 def movimientos_del_deposito(desde, hasta, tipo: str | None = None, proveedor_id: int | None = None,
-                             articulo_id: int | None = None, limite: int = 100000) -> list[dict]:
+                             articulo_id: int | None = None, limite: int = 100000,
+                             sector: str | None = None) -> list[dict]:
     """Lo que entró y salió del depósito en el rango, ordenado por proveedor y fecha.
 
     La segunda remitida no tiene proveedor y va al final. Filtrar por
     proveedor la deja afuera, que es lo que el filtro dice.
+
+    `sector` (dueño, 01/10) deja solo las devoluciones desde depósito que se
+    cargaron desde ese sector: es la única fila que lo tiene.
     """
     conexion = obtener_conexion()
     try:
         with conexion.cursor() as cursor:
             cursor.execute(_SQL_MOVIMIENTOS_DEL_DEPOSITO, {
                 "desde": desde, "hasta": hasta, "tipo": tipo, "proveedor_id": proveedor_id,
-                "articulo_id": articulo_id, "limite": limite,
+                "articulo_id": articulo_id, "limite": limite, "sector": sector,
             })
             filas = cursor.fetchall()
     finally:
@@ -9193,8 +9199,12 @@ def proveedores_con_compras_recibidas(hasta, dias: int = DIAS_DE_COMPRAS_PARA_DE
         conexion.close()
 
 
+SECTORES_DE_LA_DEVOLUCION = ("deposito", "administracion")
+
+
 def crear_devolucion_deposito(compra_id: int, cantidad: float, motivo: str, fecha_operacion,
-                              fotos_pesada: tuple[str, ...] | list[str] = ()) -> int:
+                              fotos_pesada: tuple[str, ...] | list[str] = (), *,
+                              cargada_desde: str) -> int:
     """Lo que queda en el piso y se le devuelve al proveedor (dueño, 30/09). Devuelve el id.
 
     Un movimiento `devolucion_deposito` con la cantidad NEGATIVA —sale del
@@ -9207,7 +9217,14 @@ def crear_devolucion_deposito(compra_id: int, cantidad: float, motivo: str, fech
     transacción. Que no se devuelva más de lo que queda de la compra lo
     controla la ruta con el reparto, antes de llamar: esta función no rejuega
     el FIFO. Una compra que no está recibida la rechaza acá.
+
+    `cargada_desde` es el SECTOR que la cargó (dueño, 01/10): Depósito o
+    Administración, que usan la misma pantalla. Sin default a propósito: un
+    camino nuevo que se olvide de decirlo es un TypeError, no una fila sin
+    sector (que además la base rechaza).
     """
+    if cargada_desde not in SECTORES_DE_LA_DEVOLUCION:
+        raise ValueError(f"Sector desconocido para la devolución: {cargada_desde!r}")
     conexion = obtener_conexion()
     try:
         with conexion.cursor() as cursor:
@@ -9224,11 +9241,12 @@ def crear_devolucion_deposito(compra_id: int, cantidad: float, motivo: str, fech
                 """
                 INSERT INTO movimientos_stock
                     (articulo_id, tipo, cantidad, motivo, fecha_operacion, stock_sistema,
-                     compra_devolucion_id)
-                VALUES (%s, 'devolucion_deposito', %s, %s, %s, %s, %s)
+                     compra_devolucion_id, cargada_desde)
+                VALUES (%s, 'devolucion_deposito', %s, %s, %s, %s, %s, %s)
                 RETURNING id
                 """,
-                (articulo_id, -float(cantidad), motivo, fecha_operacion, stock_sistema, compra_id),
+                (articulo_id, -float(cantidad), motivo, fecha_operacion, stock_sistema, compra_id,
+                 cargada_desde),
             )
             (movimiento_id,) = cursor.fetchone()
             # CON movimiento_id: es la foto de ESTA devolución, no una pesada.

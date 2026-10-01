@@ -570,6 +570,9 @@ from core.vales import (
     total_de as total_de_vales,
 )
 from core.movimientos_deposito import (
+    OPCIONES_DE_SECTOR as OPCIONES_DE_SECTOR_DEPOSITO,
+    TEXTO_DEL_SECTOR as TEXTO_DEL_SECTOR_DEPOSITO,
+    texto_del_sector as texto_del_sector_deposito,
     OPCIONES_DE_TIPO as OPCIONES_DE_TIPO_DEPOSITO,
     TEXTO_DEL_TIPO as TEXTO_DEL_TIPO_DEPOSITO,
     texto_de_la_sena as texto_de_la_sena_deposito,
@@ -11837,6 +11840,23 @@ def _compras_con_resto_del_proveedor(proveedor_id: int) -> list[dict]:
     return con_resto
 
 
+# DEVOLVER MERCADERÍA: UNA pantalla, DOS puertas (dueño, 01/10). Depósito la
+# tiene sin clave en /deposito/devolver; Administración, en /administracion/
+# devolver, detrás de su clave. El sector sale del PREFIJO (corolario 63) y
+# viaja a la escritura como `cargada_desde`: la regla —la compra, el tope de
+# lo que queda, el motivo, las fotos, cancelar el costo— es la misma función.
+_CAMINOS_DE_DEVOLVER = {
+    "deposito": {"sector": "deposito", "base": "/deposito", "volver": "Volver a Depósito"},
+    "administracion": {"sector": "administracion", "base": "/administracion",
+                       "volver": "Volver a Administración"},
+}
+
+
+def _camino_de_devolver(request: Request) -> dict:
+    return _CAMINOS_DE_DEVOLVER["administracion" if request.url.path.startswith("/administracion")
+                                else "deposito"]
+
+
 def _renderizar_devolver_mercaderia(request: Request, *, proveedor_id: int | None = None,
                                     precarga: dict | None = None, error: str | None = None,
                                     aviso: str | None = None, status_code: int = 200):
@@ -11849,12 +11869,14 @@ def _renderizar_devolver_mercaderia(request: Request, *, proveedor_id: int | Non
     return templates.TemplateResponse(
         request, "deposito_devolver.html",
         {"proveedores": proveedores, "proveedor": proveedor, "compras": compras,
-         "precarga": precarga or {}, "error": error, "aviso": aviso},
+         "precarga": precarga or {}, "error": error, "aviso": aviso,
+         "camino": _camino_de_devolver(request)},
         status_code=status_code,
     )
 
 
 @app.get("/deposito/devolver")
+@app.get("/administracion/devolver")
 def ver_devolver_mercaderia(request: Request, proveedor_id: str | None = None, aviso: str | None = None):
     """Devolver mercadería al proveedor: primero el proveedor, después sus compras con lo que queda."""
     return _renderizar_devolver_mercaderia(
@@ -11862,6 +11884,7 @@ def ver_devolver_mercaderia(request: Request, proveedor_id: str | None = None, a
 
 
 @app.post("/deposito/devolver")
+@app.post("/administracion/devolver")
 async def devolver_mercaderia_ruta(
     request: Request,
     proveedor_id: str = Form(""),
@@ -11919,7 +11942,8 @@ async def devolver_mercaderia_ruta(
             rutas.append(subir_foto_comanda(comprimida, f"devolucion-{compra['compra_id']}",
                                             prefijo=PREFIJO_PESAJE))
         crear_devolucion_deposito(compra["compra_id"], cantidad_valor, motivo_limpio,
-                                  _hoy_argentina(), fotos_pesada=rutas)
+                                  _hoy_argentina(), fotos_pesada=rutas,
+                                  cargada_desde=_camino_de_devolver(request)["sector"])
     except Exception as error_db:
         for ruta in rutas:
             try:
@@ -11939,7 +11963,8 @@ async def devolver_mercaderia_ruta(
     if rutas:
         aviso += " Con 1 foto." if len(rutas) == 1 else f" Con {len(rutas)} fotos."
     parametros = urlencode({"proveedor_id": proveedor_valor, "aviso": aviso})
-    return RedirectResponse(url=f"/deposito/devolver?{parametros}", status_code=303)
+    return RedirectResponse(url=f"{_camino_de_devolver(request)['base']}/devolver?{parametros}",
+                            status_code=303)
 
 
 def _validar_cantidad_cajones_real(texto: str) -> tuple[str | None, float | None]:
@@ -19569,7 +19594,7 @@ def ver_ingresos_url_vieja(request: Request):
 
 
 def _filtros_de_movimientos_deposito(desde: str, hasta: str, tipo: str, proveedor_id: str,
-                                     articulo_id: str) -> dict:
+                                     articulo_id: str, sector: str = "") -> dict:
     """Los filtros de Movimientos del depósito leídos UNA vez: los usan la
     pantalla y el Excel, así el archivo baja exactamente lo que se ve. La
     ventana es la de Movimientos de vacíos: 30 días por defecto, hasta 90."""
@@ -19579,25 +19604,26 @@ def _filtros_de_movimientos_deposito(desde: str, hasta: str, tipo: str, proveedo
         "tipo": tipo if tipo in TEXTO_DEL_TIPO_DEPOSITO else None,
         "proveedor_id": _id_opcional_desde_query(proveedor_id),
         "articulo_id": _id_opcional_desde_query(articulo_id),
+        "sector": sector if sector in TEXTO_DEL_SECTOR_DEPOSITO else None,
     }
 
 
 @app.get("/administracion/ingresos")
 def ver_movimientos_deposito(request: Request, desde: str = "", hasta: str = "", tipo: str = "",
-                             proveedor_id: str = "", articulo_id: str = ""):
+                             proveedor_id: str = "", articulo_id: str = "", sector: str = ""):
     """Movimientos del depósito (dueño, 30/09): lo que entró y salió, por proveedor.
 
     Sirve para conciliar la cuenta de un proveedor y para ver cuánta segunda
     se mandó al puesto. La planilla para pagar (lo que hay que depositarle a
     cada proveedor) sigue en `/administracion/ingresos/pagar`, linkeada desde acá.
     """
-    filtros = _filtros_de_movimientos_deposito(desde, hasta, tipo, proveedor_id, articulo_id)
+    filtros = _filtros_de_movimientos_deposito(desde, hasta, tipo, proveedor_id, articulo_id, sector)
     try:
         proveedores = listar_proveedores()
         articulos = listar_articulos()
         movimientos = [] if filtros["error"] else movimientos_del_deposito(
             filtros["desde"], filtros["hasta"], filtros["tipo"], filtros["proveedor_id"],
-            filtros["articulo_id"])
+            filtros["articulo_id"], sector=filtros["sector"])
     except Exception as error_db:
         raise HTTPException(status_code=500, detail=f"Error al conectar con la base de datos: {error_db}") from error_db
     return templates.TemplateResponse(request, "administracion_movimientos_deposito.html", {
@@ -19605,18 +19631,20 @@ def ver_movimientos_deposito(request: Request, desde: str = "", hasta: str = "",
         "grupos": agrupar_movimientos_deposito(movimientos), "cantidad": len(movimientos),
         "opciones_de_tipo": OPCIONES_DE_TIPO_DEPOSITO, "texto_del_tipo": TEXTO_DEL_TIPO_DEPOSITO,
         "texto_de_la_sena": texto_de_la_sena_deposito,
+        "opciones_de_sector": OPCIONES_DE_SECTOR_DEPOSITO, "texto_del_sector": texto_del_sector_deposito,
     })
 
 
 @app.get("/administracion/ingresos/movimientos-excel")
 def exportar_movimientos_deposito_excel(desde: str = "", hasta: str = "", tipo: str = "",
-                                        proveedor_id: str = "", articulo_id: str = ""):
-    filtros = _filtros_de_movimientos_deposito(desde, hasta, tipo, proveedor_id, articulo_id)
+                                        proveedor_id: str = "", articulo_id: str = "", sector: str = ""):
+    filtros = _filtros_de_movimientos_deposito(desde, hasta, tipo, proveedor_id, articulo_id, sector)
     if filtros["error"]:
         raise HTTPException(status_code=400, detail=filtros["error"])
     try:
         movimientos = movimientos_del_deposito(filtros["desde"], filtros["hasta"], filtros["tipo"],
-                                               filtros["proveedor_id"], filtros["articulo_id"])
+                                               filtros["proveedor_id"], filtros["articulo_id"],
+                                               sector=filtros["sector"])
     except Exception as error_db:
         raise HTTPException(status_code=500, detail=f"Error al conectar con la base de datos: {error_db}") from error_db
     partes = [TEXTO_DEL_TIPO_DEPOSITO[filtros["tipo"]] if filtros["tipo"] else "todos los tipos"]
@@ -19624,6 +19652,8 @@ def exportar_movimientos_deposito_excel(desde: str = "", hasta: str = "", tipo: 
         partes.append(next((m["proveedor"] for m in movimientos if m["proveedor"]), "proveedor elegido"))
     if filtros["articulo_id"] is not None:
         partes.append(next((m["articulo"] for m in movimientos), "artículo elegido"))
+    if filtros["sector"]:
+        partes.append(f"cargadas desde {TEXTO_DEL_SECTOR_DEPOSITO[filtros['sector']]}")
     contenido = generar_excel_movimientos_deposito(filtros["desde"], filtros["hasta"], " · ".join(partes),
                                                    movimientos)
     nombre = f"Movimientos_Deposito_{filtros['desde'].isoformat()}_a_{filtros['hasta'].isoformat()}.xlsx"

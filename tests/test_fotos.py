@@ -249,7 +249,7 @@ def test_NINGUNA_pantalla_borra_una_foto_de_un_vale():
 
 def test_la_foto_de_una_DEVOLUCION_queda_marcada_y_NO_se_borra_la_de_la_pesada_SI(base, monkeypatch):
     d, sql = base
-    mov = d.crear_devolucion_deposito(21, 2, "EJ motivo", date(2026, 11, 30), fotos_pesada=["pesaje/EJ-dev.jpg"])
+    mov = d.crear_devolucion_deposito(21, 2, "EJ motivo", date(2026, 11, 30), fotos_pesada=["pesaje/EJ-dev.jpg"], cargada_desde="deposito")
     (fid_dev,), = sql("SELECT id FROM fotos_recepcion WHERE foto_ruta = 'pesaje/EJ-dev.jpg'")
     assert sql("SELECT movimiento_id FROM fotos_recepcion WHERE id = %s", (fid_dev,)) == [(mov,)]
     # la de la devolución: la escritura la rechaza
@@ -262,7 +262,7 @@ def test_la_foto_de_una_DEVOLUCION_queda_marcada_y_NO_se_borra_la_de_la_pesada_S
 
 def test_el_DETALLE_no_ofrece_borrar_la_foto_de_la_devolucion(base, monkeypatch):
     d, sql = base
-    d.crear_devolucion_deposito(21, 2, "EJ motivo", date(2026, 11, 30), fotos_pesada=["pesaje/EJ-dev.jpg"])
+    d.crear_devolucion_deposito(21, 2, "EJ motivo", date(2026, 11, 30), fotos_pesada=["pesaje/EJ-dev.jpg"], cargada_desde="deposito")
     (fid_dev,), = sql("SELECT id FROM fotos_recepcion WHERE foto_ruta = 'pesaje/EJ-dev.jpg'")
     (fid_pes,), = sql("SELECT id FROM fotos_recepcion WHERE foto_ruta = 'pesaje/EJ-21.jpg'")
     cliente = _cliente(monkeypatch, "compras")
@@ -283,8 +283,8 @@ def test_la_migracion_MARCA_las_fotos_de_devolucion_que_ya_estaban(base):
     va a la devolución de SU compra; la pesada queda en NULL."""
     d, sql = base
     sql("INSERT INTO movimientos_stock (articulo_id, tipo, cantidad, motivo, fecha_operacion, "
-        "stock_sistema, compra_devolucion_id, creado_en) "
-        "VALUES (1, 'devolucion_deposito', -2, 'EJ', '2026-11-30', 10, 21, '2026-11-30 10:00-03')")
+        "stock_sistema, compra_devolucion_id, creado_en, cargada_desde) "
+        "VALUES (1, 'devolucion_deposito', -2, 'EJ', '2026-11-30', 10, 21, '2026-11-30 10:00-03', 'deposito')")
     sql("ALTER TABLE fotos_recepcion DROP COLUMN movimiento_id")
     sql("INSERT INTO fotos_recepcion (compra_id, foto_ruta, creado_en) "
         "VALUES (21, 'pesaje/2026-11-30/devolucion-21-1-ab.jpg', '2026-11-30 10:00-03')")
@@ -364,7 +364,7 @@ def test_TODA_tabla_con_foto_entra_en_la_regla_de_3_anios():
 def test_los_DIEZ_tipos_salen_de_la_consulta_y_tienen_su_nombre(base):
     d, sql = base
     from core.fotos import TEXTO_DEL_TIPO
-    d.crear_devolucion_deposito(21, 2, "EJ", date(2026, 11, 30), fotos_pesada=["pesaje/EJ-dev.jpg"])
+    d.crear_devolucion_deposito(21, 2, "EJ", date(2026, 11, 30), fotos_pesada=["pesaje/EJ-dev.jpg"], cargada_desde="deposito")
     d.anexar_fotos_al_vale(1, ["vales/EJ-anexada.jpg"], sector="administracion")
     sql("""
       insert into guias_compra (id, proveedor_id, fecha_operacion) overriding system value values (1, 1, '2026-09-05');
