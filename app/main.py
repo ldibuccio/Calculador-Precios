@@ -3349,6 +3349,21 @@ def _leer_filtros_buscar_compras(
     return fecha_desde, fecha_hasta, proveedor_id, articulo_id
 
 
+def _textos_de_filtros(proveedor_id: int | None = None, articulo_id: int | None = None) -> list[str]:
+    """Los filtros de una pantalla como texto para el encabezado de su PDF o
+    Excel ("proveedor FRUTAMAX S.R.L.", "artículo Mzn Granny"). El nombre se
+    lee del catálogo y no de la primera fila: sin filas, el encabezado igual
+    tiene que decir qué se filtró (01/10)."""
+    textos = []
+    if proveedor_id is not None:
+        nombre = next((p["nombre"] for p in listar_proveedores() if p["id"] == proveedor_id), None)
+        textos.append(f"proveedor {nombre or f'#{proveedor_id}'}")
+    if articulo_id is not None:
+        nombre = next((a["nombre"] for a in listar_articulos() if a["id"] == articulo_id), None)
+        textos.append(f"artículo {nombre or f'#{articulo_id}'}")
+    return textos
+
+
 @app.get("/compras/buscar/exportar-pdf")
 def exportar_listado_compras_pdf(fecha_desde: str = "", fecha_hasta: str = "", proveedor_id: str = "", articulo_id: str = ""):
     """Genera el Listado de Compras (con los mismos filtros de la búsqueda) en PDF — no se guarda en ningún lado."""
@@ -3361,7 +3376,8 @@ def exportar_listado_compras_pdf(fecha_desde: str = "", fecha_hasta: str = "", p
     except Exception as error_db:
         raise HTTPException(status_code=500, detail=f"Error al conectar con la base de datos: {error_db}") from error_db
 
-    pdf_bytes = generar_pdf_listado_compras(fecha_desde_valor, fecha_hasta_valor, compras)
+    pdf_bytes = generar_pdf_listado_compras(fecha_desde_valor, fecha_hasta_valor, compras,
+                                                _textos_de_filtros(proveedor_id_valor, articulo_id_valor))
     nombre_archivo = _nombre_archivo_exportacion_compras(fecha_desde_valor, fecha_hasta_valor, "pdf")
 
     return Response(
@@ -3383,7 +3399,8 @@ def exportar_listado_compras_excel(fecha_desde: str = "", fecha_hasta: str = "",
     except Exception as error_db:
         raise HTTPException(status_code=500, detail=f"Error al conectar con la base de datos: {error_db}") from error_db
 
-    excel_bytes = generar_excel_listado_compras(fecha_desde_valor, fecha_hasta_valor, compras)
+    excel_bytes = generar_excel_listado_compras(fecha_desde_valor, fecha_hasta_valor, compras,
+                                                _textos_de_filtros(proveedor_id_valor, articulo_id_valor))
     nombre_archivo = _nombre_archivo_exportacion_compras(fecha_desde_valor, fecha_hasta_valor, "xlsx")
 
     return Response(
@@ -9520,10 +9537,25 @@ def _armar_filas_exportacion_precios(cliente_id: int, fecha_consulta) -> tuple[l
             "precio_anterior": precio_anterior_por_articulo.get(precio["articulo_id"]),
             "unidad": unidad_por_articulo.get(precio["articulo_id"]),
             "es_nuevo": precio.get("vigente_desde") == fecha_consulta,
+            "ficha_id": precio.get("ficha_id"),
         }
         for precio in precios_vigentes
     ]
     return filas, es_hoy
+
+
+def _filtrar_exportacion_por_ficha(cliente_id: int, filas: list[dict], ficha_id_texto: str) -> tuple[list[dict], str | None]:
+    """El MISMO filtro de artículo que la pantalla (01/10): sin esto la pantalla
+    mostraba una ficha y el PDF y el Excel bajaban la lista entera. Devuelve
+    las filas de esa ficha y su nombre para el encabezado."""
+    ficha_id = _id_opcional_desde_query(ficha_id_texto)
+    if ficha_id is None:
+        return filas, None
+    fichas = listar_fichas_por_cliente(cliente_id)
+    ficha = next((f for f in fichas if f["id"] == ficha_id), None)
+    if ficha is None:
+        raise HTTPException(status_code=404, detail="Artículo no encontrado para este cliente")
+    return [f for f in filas if f.get("ficha_id") == ficha_id], _nombre_de_ficha(ficha)
 
 
 def _validar_cliente_y_fecha_para_exportar(cliente_id_texto: str, fecha_texto: str) -> tuple[dict, date]:
@@ -9566,16 +9598,19 @@ def _nombre_archivo_exportacion(cliente_nombre: str, fecha, extension: str) -> s
 
 
 @app.get("/precios/consultar/exportar-pdf")
-def exportar_precios_pdf(cliente_id: str = "", fecha: str = ""):
+def exportar_precios_pdf(cliente_id: str = "", fecha: str = "", ficha_id: str = ""):
     """Genera la Lista de Precios en PDF y la devuelve para descargar — no se guarda en ningún lado."""
     cliente, fecha_valor = _validar_cliente_y_fecha_para_exportar(cliente_id, fecha)
 
     try:
         filas, _ = _armar_filas_exportacion_precios(cliente["id"], fecha_valor)
+        filas, filtro = _filtrar_exportacion_por_ficha(cliente["id"], filas, ficha_id)
+    except HTTPException:
+        raise
     except Exception as error_db:
         raise HTTPException(status_code=500, detail=f"Error al conectar con la base de datos: {error_db}") from error_db
 
-    pdf_bytes = generar_pdf_lista_precios(cliente["nombre"], fecha_valor, filas, NOMBRE_EMPRESA)
+    pdf_bytes = generar_pdf_lista_precios(cliente["nombre"], fecha_valor, filas, NOMBRE_EMPRESA, filtro)
     nombre_archivo = _nombre_archivo_exportacion(cliente["nombre"], fecha_valor, "pdf")
 
     return Response(
@@ -9586,16 +9621,19 @@ def exportar_precios_pdf(cliente_id: str = "", fecha: str = ""):
 
 
 @app.get("/precios/consultar/exportar-excel")
-def exportar_precios_excel(cliente_id: str = "", fecha: str = ""):
+def exportar_precios_excel(cliente_id: str = "", fecha: str = "", ficha_id: str = ""):
     """Genera la Lista de Precios en Excel y la devuelve para descargar — no se guarda en ningún lado."""
     cliente, fecha_valor = _validar_cliente_y_fecha_para_exportar(cliente_id, fecha)
 
     try:
         filas, es_hoy = _armar_filas_exportacion_precios(cliente["id"], fecha_valor)
+        filas, filtro = _filtrar_exportacion_por_ficha(cliente["id"], filas, ficha_id)
+    except HTTPException:
+        raise
     except Exception as error_db:
         raise HTTPException(status_code=500, detail=f"Error al conectar con la base de datos: {error_db}") from error_db
 
-    excel_bytes = generar_excel_lista_precios(cliente["nombre"], fecha_valor, filas, es_hoy, NOMBRE_EMPRESA)
+    excel_bytes = generar_excel_lista_precios(cliente["nombre"], fecha_valor, filas, es_hoy, NOMBRE_EMPRESA, filtro)
     nombre_archivo = _nombre_archivo_exportacion(cliente["nombre"], fecha_valor, "xlsx")
 
     return Response(
@@ -19733,10 +19771,7 @@ def exportar_movimientos_deposito_excel(desde: str = "", hasta: str = "", tipo: 
     except Exception as error_db:
         raise HTTPException(status_code=500, detail=f"Error al conectar con la base de datos: {error_db}") from error_db
     partes = [TEXTO_DEL_TIPO_DEPOSITO[filtros["tipo"]] if filtros["tipo"] else "todos los tipos"]
-    if filtros["proveedor_id"] is not None:
-        partes.append(next((m["proveedor"] for m in movimientos if m["proveedor"]), "proveedor elegido"))
-    if filtros["articulo_id"] is not None:
-        partes.append(next((m["articulo"] for m in movimientos), "artículo elegido"))
+    partes += _textos_de_filtros(filtros["proveedor_id"], filtros["articulo_id"])
     if filtros["sector"]:
         partes.append(f"cargadas desde {TEXTO_DEL_SECTOR_DEPOSITO[filtros['sector']]}")
     contenido = generar_excel_movimientos_deposito(filtros["desde"], filtros["hasta"], " · ".join(partes),
@@ -20171,8 +20206,7 @@ def exportar_movimientos_de_vales(request: Request, desde: str = "", hasta: str 
                                            proveedor_id=filtros["proveedor_id"], hoy=_hoy_argentina())
     except Exception as error_db:
         raise HTTPException(status_code=500, detail=f"Error al conectar con la base de datos: {error_db}") from error_db
-    filtro = "todos los proveedores" if filtros["proveedor_id"] is None else next(
-        (m["vale"]["proveedor"] for m in movimientos), "proveedor elegido")
+    filtro = " · ".join(_textos_de_filtros(filtros["proveedor_id"])) or "todos los proveedores"
     contenido = generar_excel_movimientos_vales(filtros["desde"], filtros["hasta"], filtro, movimientos)
     nombre = f"Vales_a_cobrar_{filtros['desde'].isoformat()}_a_{filtros['hasta'].isoformat()}.xlsx"
     return Response(content=contenido,

@@ -168,7 +168,8 @@ def _dibujar_encabezado(canvas, documento, subtitulo: str):
     canvas.restoreState()
 
 
-def generar_pdf_listado_compras(fecha_desde: date, fecha_hasta: date, filas: list[dict]) -> bytes:
+def generar_pdf_listado_compras(fecha_desde: date, fecha_hasta: date, filas: list[dict],
+                                filtros_texto: list[str] = ()) -> bytes:
     """Arma el PDF del Listado de Compras entre dos fechas.
 
     filas: las mismas que devuelve app.db.buscar_compras (fecha_operacion, proveedor_nombre,
@@ -180,7 +181,10 @@ def generar_pdf_listado_compras(fecha_desde: date, fecha_hasta: date, filas: lis
     se repitan solos si ese proveedor tiene tantas compras que la tabla se corta sola entre páginas).
     """
     buffer = BytesIO()
-    subtitulo = f"Del {fecha_desde.strftime('%d/%m/%Y')} al {fecha_hasta.strftime('%d/%m/%Y')}"
+    # Los filtros de la pantalla van en el encabezado (01/10): un listado de
+    # un solo proveedor sin decirlo se lee como el listado entero.
+    subtitulo = f"Del {fecha_desde.strftime('%d/%m/%Y')} al {fecha_hasta.strftime('%d/%m/%Y')}" + "".join(
+        f" · {texto}" for texto in filtros_texto)
     documento = SimpleDocTemplate(
         buffer,
         pagesize=A4,
@@ -273,7 +277,8 @@ def generar_pdf_listado_compras(fecha_desde: date, fecha_hasta: date, filas: lis
     return buffer.getvalue()
 
 
-def generar_excel_listado_compras(fecha_desde: date, fecha_hasta: date, filas: list[dict]) -> bytes:
+def generar_excel_listado_compras(fecha_desde: date, fecha_hasta: date, filas: list[dict],
+                                  filtros_texto: list[str] = ()) -> bytes:
     """Arma el Excel del Listado de Compras entre dos fechas, mismas secciones y columnas que el PDF."""
     libro = Workbook()
     hoja = libro.active
@@ -296,7 +301,10 @@ def generar_excel_listado_compras(fecha_desde: date, fecha_hasta: date, filas: l
             celda.font = fuente_blanca_titulo
     fila_actual += 1
 
-    subtitulo = f"Del {fecha_desde.strftime('%d/%m/%Y')} al {fecha_hasta.strftime('%d/%m/%Y')}"
+    # Los filtros de la pantalla van en el encabezado (01/10): un listado de
+    # un solo proveedor sin decirlo se lee como el listado entero.
+    subtitulo = f"Del {fecha_desde.strftime('%d/%m/%Y')} al {fecha_hasta.strftime('%d/%m/%Y')}" + "".join(
+        f" · {texto}" for texto in filtros_texto)
     hoja.cell(row=fila_actual, column=1, value=subtitulo).font = fuente_normal
     fila_actual += 2
 
