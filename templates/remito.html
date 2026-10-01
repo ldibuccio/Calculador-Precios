@@ -55,13 +55,17 @@
   .ojo { background: #fef3c7; color: #92400e; padding: 0.6rem 0.8rem; border-radius: 8px; margin: 0.4rem 0; }
   .estado { display: inline-block; padding: 0.15rem 0.6rem; border-radius: 999px; background: #e0e7ff;
     color: #3730a3; font-weight: 600; font-size: 0.85rem; }
-  .estado.anulado { background: #fee2e2; color: #991b1b; }
   .estado.facturado { background: #dcfce7; color: #166534; }
   .dato { margin: 0.25rem 0; }
   .fotos { display: flex; flex-wrap: wrap; gap: 0.6rem; }
   .fotos img { width: 6.5rem; height: 6.5rem; object-fit: cover; border-radius: 8px; border: 1px solid #ddd; }
   textarea { display: block; width: 100%; box-sizing: border-box; margin-top: 0.2rem; padding: 0.6rem;
     border: 1px solid #ccc; border-radius: 8px; font-size: 1rem; min-height: 4rem; font-family: inherit; }
+  .cambio { color: #b45309; }
+  form input[type=text] { display: block; width: 100%; box-sizing: border-box; margin-top: 0.2rem; padding: 0.6rem;
+    border: 1px solid #ccc; border-radius: 8px; font-size: 1rem; min-height: 44px; }
+  form button.primario { min-height: 48px; border-radius: 8px; font-weight: 600; font-size: 1rem;
+    width: 100%; margin-top: 0.6rem; }
   button.peligro { background: #dc2626; color: #fff; border: none; min-height: 48px; border-radius: 8px;
     font-weight: 600; font-size: 1rem; width: 100%; margin-top: 0.6rem; }
 </style>
@@ -84,7 +88,7 @@
     {% if remito.recibido_dia %}<p class="dato">Recibido el {{ remito.recibido_dia.strftime("%d/%m/%Y") }}
       {% if remito.sin_factura %}· <span class="tarde">hace {{ remito.dias_recibido }} días sin factura</span>{% endif %}</p>{% endif %}
     {% if remito.factura_numero %}<p class="dato">Factura {{ remito.factura_numero }}, anotada el {{ remito.facturado_dia.strftime("%d/%m/%Y") }}</p>{% endif %}
-    {% if remito.anulado_dia %}<div class="ojo">Anulado el {{ remito.anulado_dia.strftime("%d/%m/%Y") }} por Gerencia: {{ remito.anulado_motivo }}</div>{% endif %}
+    {% if remito.recibido_dia %}<p class="dato">{% if remito.renglones_cambiados %}Volvió observado: {{ remito.renglones_cambiados }} renglón{{ "es" if remito.renglones_cambiados != 1 }} con cambios{% else %}Volvió sin observaciones{% endif %}.</p>{% endif %}
     {% if remito.estado == "emitido" and camino.sector == "administracion" %}
       <div class="botones"><a class="primario" href="/administracion/facturacion/remito/{{ remito.id }}/recibir">Recibir</a></div>
     {% endif %}
@@ -101,8 +105,8 @@
         <div class="numeros">
           <span>Salieron <b>{{ r.bultos_enviados|numero }}</b> bultos · <b>{{ r.kilos_enviados|numero }}</b> {{ r.sufijo or "sin unidad" }}</span>
           {% if r.kilos_recibidos is not none %}
-            <span>Recibido <b>{{ r.kilos_recibidos|numero }}</b> {{ r.sufijo or "sin unidad" }}</span>
-            <span class="{{ 'marca-rechazo' if r.rechazo_distinto }}">Rechazados: remito <b>{{ r.bultos_rechazados|numero }}</b> · depósito <b>{{ r.rechazo_deposito|numero }}</b></span>
+            <span class="{{ 'cambio' if r.cambio }}">Recibido <b>{{ r.bultos_recibidos|numero }}</b> bultos · <b>{{ r.kilos_recibidos|numero }}</b> {{ r.sufijo or "sin unidad" }}{% if r.cambio %} · cambió el {{ remito.recibido_hora }}{% endif %}</span>
+            <span class="{{ 'marca-rechazo' if r.rechazo_distinto }}">Rechazados: remito <b>{{ r.rechazo_remito|numero }}</b> · depósito <b>{{ r.rechazo_deposito|numero }}</b></span>
             {% if r.importe is none %}<span class="tarde">sin precio</span>
             {% else %}<span>{{ r.precio|moneda }} → <b>{{ r.importe|moneda }}</b></span>{% endif %}
           {% endif %}
@@ -129,22 +133,25 @@
   </div>
   {% endif %}
 
-  {% if remito.estado in ("emitido", "recibido") %}
   <div class="tarjeta">
+    <h2>Número del remito</h2>
+    {% if remito.numeros %}
+      {% for n in remito.numeros %}
+        <p class="dato">{{ n.anterior }} → <b>{{ n.nuevo }}</b>, corregido el {{ n.corregido_texto }}</p>
+      {% endfor %}
+    {% endif %}
     {% if camino.sector == "gerencia" %}
-      <h2>Anular el remito</h2>
-      <form method="post" action="/gerencia/facturacion/remito/{{ remito.id }}/anular">
-        <label>Motivo (obligatorio)
-          <textarea name="motivo" required></textarea>
+      <form method="post" action="/gerencia/facturacion/remito/{{ remito.id }}/numero">
+        <label>Número correcto
+          <input type="text" name="numero" required value="{{ remito.numero }}">
         </label>
-        <button type="submit" class="peligro">Anular el remito</button>
+        <button type="submit" class="primario">Corregir el número</button>
       </form>
-      <p class="cuenta">La orden de compra vuelve a quedar sin remito y se emite de nuevo.</p>
+      <p class="cuenta">Solo para un error de tipeo. Queda el registro del anterior, el nuevo y la hora.</p>
     {% else %}
-      <p class="cuenta">Después de emitido no se edita. Si tiene un error, lo anula Gerencia y se emite de nuevo.</p>
+      <p class="cuenta">Un remito no se anula: vuelve con sus observaciones. Si el número se tipeó mal, lo corrige Gerencia.</p>
     {% endif %}
   </div>
-  {% endif %}
 
 {% include "_pie_version.html" %}
 </body>

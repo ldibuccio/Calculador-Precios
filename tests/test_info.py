@@ -256,7 +256,7 @@ QUEDAN_A_LA_VISTA = [
     ("gerencia_perdidas.html", "<strong>no se suma</strong> con la de"),
     ("gerencia_cajas_perdidas.html", "<strong>ya se cobra</strong>"),
     # remitos (dueño, 01/10): lo que cambia lo que se carga al recibir
-    ("remito_recibir.html", "descontá lo rechazado"),
+    ("remito_recibir.html", "cambiá solo lo que el súper anotó distinto"),
     ("remito.html", "el remito no mueve stock"),
 ]
 

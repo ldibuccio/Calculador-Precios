@@ -1,10 +1,10 @@
 """REMITOS Y FACTURACIÓN (dueño, 01/10), contra Postgres.
 
 Un remito por ORDEN DE COMPRA (pedidos_sucursales). Se emite con el número
-del remito oficial y congela lo que salió; se recibe con los kilos que firmó
-el súper, los rechazos del papel y la foto; se le anota la factura. Gerencia
-lo anula con motivo. Los rechazos NO se cargan acá: se cotejan contra los de
-Depósito. Corre contra el esquema real (corolario 89): los índices únicos y
+del remito oficial y congela lo que salió; vuelve en ESE MISMO remito con los
+bultos y kilos que firmó el súper y la foto; se le anota la factura. NO SE
+ANULA: Gerencia solo corrige el número, con registro. El remito no mueve
+stock: enviados − recibidos se coteja contra los rechazos de Depósito. Corre contra el esquema real (corolario 89): los índices únicos y
 los CHECK son la mitad de la regla. Los nombres son de EJEMPLO.
 
   cliente 1 EJ Súper   pedido 1 (05/09): VL renglones 11 y 12 armados, 14 sin armar;
@@ -120,10 +120,13 @@ def _rechazo_de_deposito(sql, renglon_id, bultos, anulado=False):
              FROM pedidos_renglones WHERE id = %s""", (bultos, anulado, renglon_id))
 
 
-def _recibido(d, remito_id, kilos=None, rechazos=None):
+def _recibido(d, remito_id, kilos=None, bultos=None):
+    """Recibe el remito: por renglón, (bultos, kilos) recibidos. Lo que no se
+    nombra vuelve igual a lo enviado."""
     renglones = d.remito_por_id(remito_id)["renglones"]
-    recepcion = {r["id"]: ((kilos or {}).get(r["pedido_renglon_id"], float(r["kilos_enviados"])),
-                           (rechazos or {}).get(r["pedido_renglon_id"], 0.0)) for r in renglones}
+    recepcion = {r["id"]: ((bultos or {}).get(r["pedido_renglon_id"], float(r["bultos_enviados"])),
+                           (kilos or {}).get(r["pedido_renglon_id"], float(r["kilos_enviados"])))
+                 for r in renglones}
     d.recibir_remito(remito_id, recepcion, ["remitos/EJ.jpg"])
 
 
@@ -159,7 +162,7 @@ def test_el_NUMERO_es_unico_POR_CLIENTE_y_lo_decide_la_base(base):
     assert sql("SELECT count(*) FROM remitos") == [(2,)]
 
 
-def test_UNA_orden_tiene_UN_remito_vivo(base):
+def test_UNA_orden_tiene_UN_remito(base):
     d, sql = base
     from app.db import RemitoNoSePuede
     d.emitir_remito(1, "VL", "R-0001")
@@ -191,17 +194,31 @@ def test_sin_numero_no_se_emite(base):
 
 # --- 2. recibir y el cotejo ---------------------------------------------------
 
-def test_RECIBIR_guarda_kilos_rechazos_y_fotos_y_NO_mueve_stock(base):
+def test_RECIBIR_guarda_en_el_MISMO_remito_bultos_y_kilos_y_NO_mueve_stock(base):
     d, sql = base
     remito_id = d.emitir_remito(1, "VL", "R-0001")
     movimientos = sql("SELECT count(*) FROM movimientos_stock")
-    _recibido(d, remito_id, kilos={11: 45}, rechazos={11: 1})
+    # El 11: de 5 se quedó 4 y menos kilos. El 12: todo, con menos kilos por cajón.
+    _recibido(d, remito_id, bultos={11: 4}, kilos={11: 38, 12: 27})
     remito = d.remito_por_id(remito_id)
     assert remito["recibido_el"] is not None
-    assert {r["pedido_renglon_id"]: (float(r["kilos_recibidos"]), float(r["bultos_rechazados"]))
-            for r in remito["renglones"]} == {11: (45.0, 1.0), 12: (30.0, 0.0)}
+    assert sql("SELECT count(*) FROM remitos") == [(1,)]                 # el mismo remito
+    assert {r["pedido_renglon_id"]: (float(r["bultos_enviados"]), float(r["kilos_enviados"]),
+                                     float(r["bultos_recibidos"]), float(r["kilos_recibidos"]))
+            for r in remito["renglones"]} == {11: (5.0, 50.0, 4.0, 38.0), 12: (3.0, 30.0, 3.0, 27.0)}
     assert [f["ruta"] for f in remito["fotos"]] == ["remitos/EJ.jpg"]
     assert sql("SELECT count(*) FROM movimientos_stock") == movimientos
+
+
+def test_QUE_RENGLONES_CAMBIARON_sale_de_enviado_contra_recibido():
+    from core.remitos import rechazo_del_remito, renglon_cambio
+    enviado = {"bultos_enviados": 10, "kilos_enviados": 100}
+    assert not renglon_cambio({**enviado, "bultos_recibidos": None, "kilos_recibidos": None})
+    assert not renglon_cambio({**enviado, "bultos_recibidos": 10, "kilos_recibidos": 100})
+    assert renglon_cambio({**enviado, "bultos_recibidos": 8, "kilos_recibidos": 80})      # rechazó 2
+    assert renglon_cambio({**enviado, "bultos_recibidos": 10, "kilos_recibidos": 95})     # menos kilos
+    assert rechazo_del_remito({**enviado, "bultos_recibidos": 8, "kilos_recibidos": 80}) == 2.0
+    assert rechazo_del_remito({**enviado, "bultos_recibidos": None, "kilos_recibidos": None}) is None
 
 
 def test_RECIBIR_pide_foto_todos_los_renglones_y_una_sola_vez(base):
@@ -210,39 +227,42 @@ def test_RECIBIR_pide_foto_todos_los_renglones_y_una_sola_vez(base):
     remito_id = d.emitir_remito(1, "VL", "R-0001")
     ids = [r["id"] for r in d.remito_por_id(remito_id)["renglones"]]
     with pytest.raises(RemitoNoSePuede, match="foto"):
-        d.recibir_remito(remito_id, {i: (1, 0) for i in ids}, [])
+        d.recibir_remito(remito_id, {i: (1, 1) for i in ids}, [])
     with pytest.raises(RemitoNoSePuede, match="Falta cargar"):
-        d.recibir_remito(remito_id, {ids[0]: (1, 0)}, ["remitos/EJ.jpg"])
-    d.recibir_remito(remito_id, {i: (1, 0) for i in ids}, ["remitos/EJ.jpg"])
+        d.recibir_remito(remito_id, {ids[0]: (1, 1)}, ["remitos/EJ.jpg"])
+    d.recibir_remito(remito_id, {i: (1, 1) for i in ids}, ["remitos/EJ.jpg"])
     with pytest.raises(RemitoNoSePuede, match="ya se recibió"):
-        d.recibir_remito(remito_id, {i: (1, 0) for i in ids}, ["remitos/EJ.jpg"])
+        d.recibir_remito(remito_id, {i: (1, 1) for i in ids}, ["remitos/EJ.jpg"])
 
 
-def test_el_rechazo_no_pasa_de_lo_que_salio_lo_frena_la_base():
+def test_los_RECIBIDOS_no_pasan_de_lo_que_salio():
     from core.remitos import leer_recepcion
     renglones = [{"id": 1, "articulo_nombre": "EJ", "bultos_enviados": 5}]
-    assert leer_recepcion(renglones, {1: "40,5"}, {1: "2"}) == (None, {1: (40.5, 2.0)})
-    error, _ = leer_recepcion(renglones, {1: "40"}, {1: "6"})
-    assert "rechazaron 6 bultos y salieron 5" in error
-    error, _ = leer_recepcion(renglones, {1: ""}, {1: "0"})
-    assert "Falta lo recibido" in error
-    error, _ = leer_recepcion(renglones, {1: "40"}, {1: ""})
-    assert "si no hubo, 0" in error
+    assert leer_recepcion(renglones, {1: "4"}, {1: "40,5"}) == (None, {1: (4.0, 40.5)})
+    error, _ = leer_recepcion(renglones, {1: "6"}, {1: "40"})
+    assert "recibieron 6 bultos y salieron 5" in error
+    error, _ = leer_recepcion(renglones, {1: ""}, {1: "40"})
+    assert "Faltan los bultos recibidos" in error
+    error, _ = leer_recepcion(renglones, {1: "5"}, {1: ""})
+    assert "Faltan los kilos recibidos" in error
 
 
-def test_el_CHECK_del_tope_rechaza_mas_rechazo_que_lo_enviado(base):
+def test_el_CHECK_del_tope_rechaza_recibir_mas_bultos_que_los_enviados(base):
     d, sql = base
     import psycopg2
     remito_id = d.emitir_remito(1, "VL", "R-0001")
     with pytest.raises(psycopg2.errors.CheckViolation):
-        sql("UPDATE remitos_renglones SET kilos_recibidos = 1, bultos_rechazados = 6 "
+        sql("UPDATE remitos_renglones SET kilos_recibidos = 1, bultos_recibidos = 6 "
+            "WHERE remito_id = %s AND pedido_renglon_id = 11", (remito_id,))
+    with pytest.raises(psycopg2.errors.CheckViolation):          # los dos o ninguno
+        sql("UPDATE remitos_renglones SET kilos_recibidos = 1 "
             "WHERE remito_id = %s AND pedido_renglon_id = 11", (remito_id,))
 
 
 def test_el_COTEJO_compara_contra_lo_que_cargo_DEPOSITO_y_la_alerta_se_apaga_sola(base):
     d, sql = base
     remito_id = d.emitir_remito(1, "VL", "R-0001")
-    _recibido(d, remito_id, rechazos={11: 2})
+    _recibido(d, remito_id, bultos={11: 3}, kilos={11: 30})    # de 5 se quedó 3: rechazo 2
     _rechazo_de_deposito(sql, 11, 1)
     _rechazo_de_deposito(sql, 11, 5, anulado=True)       # anulado: no cuenta
     renglon = next(r for r in d.remito_por_id(remito_id)["renglones"] if r["pedido_renglon_id"] == 11)
@@ -281,7 +301,7 @@ def test_un_renglon_SIN_PRECIO_no_suma_y_se_cuenta():
     assert importe_del_remito(renglones) == {"total": 50.0, "sin_precio": 1}
 
 
-# --- 4. facturar y anular -----------------------------------------------------
+# --- 4. facturar y corregir el número -----------------------------------------
 
 def test_FACTURAR_una_factura_varios_remitos_del_mismo_cliente(base):
     d, sql = base
@@ -302,21 +322,37 @@ def test_FACTURAR_una_factura_varios_remitos_del_mismo_cliente(base):
         d.facturar_remitos([vl], "F-2")                  # un remito tiene UNA factura
 
 
-def test_ANULAR_pide_motivo_libera_el_numero_y_no_toca_un_facturado(base):
+def test_un_remito_NO_SE_ANULA_no_hay_funcion_ni_columna(base):
+    d, sql = base
+    assert not hasattr(d, "anular_remito")
+    assert sql("SELECT count(*) FROM information_schema.columns "
+               "WHERE table_name = 'remitos' AND column_name LIKE 'anulado%%'") == [(0,)]
+
+
+def test_CORREGIR_EL_NUMERO_deja_registro_y_respeta_el_unico(base):
     d, sql = base
     from app.db import RemitoNoSePuede
     remito_id = d.emitir_remito(1, "VL", "R-0001")
-    with pytest.raises(RemitoNoSePuede, match="motivo"):
-        d.anular_remito(remito_id, "  ")
-    d.anular_remito(remito_id, "número mal tipeado")
-    nuevo = d.emitir_remito(1, "VL", "R-0001")           # se emite de nuevo, con el mismo número
-    _recibido(d, nuevo)
-    d.facturar_remitos([nuevo], "F-1")
-    with pytest.raises(RemitoNoSePuede, match="facturado"):
-        d.anular_remito(nuevo, "EJ")
+    d.emitir_remito(1, "BZ", "R-0002")
+    with pytest.raises(RemitoNoSePuede, match="obligatorio"):
+        d.corregir_numero_de_remito(remito_id, "  ")
+    with pytest.raises(RemitoNoSePuede, match="mismo número"):
+        d.corregir_numero_de_remito(remito_id, "r-0001")
+    with pytest.raises(RemitoNoSePuede, match="ya está cargado"):
+        d.corregir_numero_de_remito(remito_id, "R-0002")
+    assert sql("SELECT count(*) FROM remitos_numeros") == [(0,)]      # el rebote no deja registro
+    _recibido(d, remito_id)
+    d.facturar_remitos([remito_id], "F-1")
+    d.corregir_numero_de_remito(remito_id, " R-0010 ")                # también facturado
+    d.corregir_numero_de_remito(remito_id, "R-0011")
+    assert sql("SELECT numero FROM remitos WHERE id = %s", (remito_id,)) == [("R-0011",)]
+    assert [(c["anterior"], c["nuevo"]) for c in d.correcciones_de_numero(remito_id)] == [
+        ("R-0001", "R-0010"), ("R-0010", "R-0011")]
+    assert all(c["corregido_el"] is not None for c in d.correcciones_de_numero(remito_id))
     import psycopg2
     with pytest.raises(psycopg2.errors.CheckViolation):
-        sql("UPDATE remitos SET anulado_el = now(), anulado_motivo = 'EJ' WHERE id = %s", (nuevo,))
+        sql("INSERT INTO remitos_numeros (remito_id, numero_anterior, numero_nuevo) VALUES (%s, 'A', ' a ')",
+            (remito_id,))
 
 
 # --- 5. las alertas y las listas ------------------------------------------------
@@ -378,7 +414,7 @@ def test_buscar_por_numero_pliega_como_el_indice(base):
 
 # --- 6. Rentabilidad: lo recibido -------------------------------------------------
 
-def test_KILOS_RECIBIDOS_solo_de_remitos_VIVOS_y_RECIBIDOS(base):
+def test_KILOS_RECIBIDOS_solo_de_remitos_RECIBIDOS(base):
     d, sql = base
     vl = d.emitir_remito(1, "VL", "R-VL")
     assert d.kilos_recibidos_por_renglon([11, 12, 13]) == {}
@@ -388,15 +424,16 @@ def test_KILOS_RECIBIDOS_solo_de_remitos_VIVOS_y_RECIBIDOS(base):
 
 def test_la_RENTABILIDAD_cobra_lo_RECIBIDO_y_marca_el_dia_PROVISORIO():
     from core.costo_real import calcular_rentabilidad_real
-    dia = date(2026, 9, 5)
-    otro_dia = date(2026, 9, 6)
+    from core.remitos import REMITOS_DESDE
+    dia = REMITOS_DESDE + timedelta(days=5)
+    otro_dia = dia + timedelta(days=1)
 
     def salida(renglon, fecha):
         return {"tipo": "armado", "fecha": fecha, "cantidad": 5, "unidades": 50, "cliente_id": 1,
                 "ficha_id": 1, "renglon_id": renglon, "orden": (fecha, renglon)}
 
     articulos = [{"articulo_id": 1, "nombre": "EJ", "grupo": "fruta",
-                  "entradas": [{"orden": (date(2026, 9, 1), 0), "cantidad": 20, "costo_bulto": 100,
+                  "entradas": [{"orden": (dia - timedelta(days=4), 0), "cantidad": 20, "costo_bulto": 100,
                                 "tipo_lote": "guia"}],
                   "salidas": [salida(11, dia), salida(12, otro_dia)]}]
     margenes = {f: {1: {"precio_vigente": 10, "denominador_tasas": 1, "costo_envase_unidad_venta": 0}}
@@ -416,6 +453,31 @@ def test_la_RENTABILIDAD_cobra_lo_RECIBIDO_y_marca_el_dia_PROVISORIO():
     viejo = calcular_rentabilidad_real(articulos, margenes, 1, dia, otro_dia, devoluciones=devoluciones)
     assert viejo["totales"]["venta_neta"] == 100 * 10 and viejo["totales"]["devoluciones_venta"] == 100
     assert viejo["fechas_provisorias"] == []
+
+
+def test_ANTES_de_REMITOS_DESDE_no_hay_provisorio_pero_un_remito_recibido_se_cobra():
+    """Dueño, 01/10: los días anteriores siguen como siempre (enviados), salvo
+    que tengan el remito recibido, y entonces cobran lo recibido."""
+    from core.costo_real import calcular_rentabilidad_real
+    from core.remitos import REMITOS_DESDE
+    antes = REMITOS_DESDE - timedelta(days=10)
+    justo = REMITOS_DESDE
+
+    def salida(renglon, fecha):
+        return {"tipo": "armado", "fecha": fecha, "cantidad": 5, "unidades": 50, "cliente_id": 1,
+                "ficha_id": 1, "renglon_id": renglon, "orden": (fecha, renglon)}
+
+    articulos = [{"articulo_id": 1, "nombre": "EJ", "grupo": "fruta",
+                  "entradas": [{"orden": (antes - timedelta(days=1), 0), "cantidad": 30, "costo_bulto": 100,
+                                "tipo_lote": "guia"}],
+                  "salidas": [salida(11, antes), salida(12, antes), salida(13, justo)]}]
+    margenes = {f: {1: {"precio_vigente": 10, "denominador_tasas": 1, "costo_envase_unidad_venta": 0}}
+                for f in (antes, justo)}
+    resultado = calcular_rentabilidad_real(articulos, margenes, 1, antes, justo, kilos_recibidos={12: 40})
+    # El 11 (antes, sin remito) con lo enviado y SIN provisorio; el 12 (antes, con
+    # remito recibido) con lo recibido; el 13 (desde la fecha) sin remito: provisorio.
+    assert resultado["totales"]["venta_neta"] == 50 * 10 + 40 * 10 + 50 * 10
+    assert resultado["fechas_provisorias"] == [justo]
 
 
 # --- 7. las pantallas ------------------------------------------------------------
@@ -442,7 +504,8 @@ def test_RECIBIR_por_la_pantalla_sube_la_foto_y_sin_foto_rebota(base, monkeypatc
     formulario = cliente.get(f"/administracion/facturacion/remito/{remito_id}/recibir")
     assert 'value="50"' in formulario.text                  # precargado con lo enviado
     ids = {r["pedido_renglon_id"]: r["id"] for r in d.remito_por_id(remito_id)["renglones"]}
-    datos = {f"kilos_{ids[11]}": "45", f"rechazo_{ids[11]}": "1", f"kilos_{ids[12]}": "30", f"rechazo_{ids[12]}": "0"}
+    assert f'name="bultos_{ids[11]}" required\n                     value="5"' in formulario.text
+    datos = {f"bultos_{ids[11]}": "4", f"kilos_{ids[11]}": "40", f"bultos_{ids[12]}": "3", f"kilos_{ids[12]}": "30"}
     with patch("app.main.subir_foto_comanda", return_value="remitos/EJ-subida.jpg") as subir:
         sin_foto = cliente.post(f"/administracion/facturacion/remito/{remito_id}/recibir", data=datos)
         subir.assert_not_called()
@@ -452,20 +515,21 @@ def test_RECIBIR_por_la_pantalla_sube_la_foto_y_sin_foto_rebota(base, monkeypatc
     assert con_foto.status_code == 303
     remito = d.remito_por_id(remito_id)
     assert remito["recibido_el"] is not None and [f["ruta"] for f in remito["fotos"]] == ["remitos/EJ-subida.jpg"]
+    assert {r["pedido_renglon_id"]: float(r["bultos_recibidos"]) for r in remito["renglones"]} == {11: 4.0, 12: 3.0}
 
 
 def test_si_la_base_rebota_la_foto_subida_se_borra(base, monkeypatch):
     d, sql = base
     remito_id = d.emitir_remito(1, "VL", "R-0001")
-    d.anular_remito(remito_id, "EJ")
     cliente = _cliente(monkeypatch, "administracion")
     ids = [r["id"] for r in d.remito_por_id(remito_id)["renglones"]]
-    datos = {**{f"kilos_{i}": "1" for i in ids}, **{f"rechazo_{i}": "0" for i in ids}}
+    datos = {**{f"bultos_{i}": "1" for i in ids}, **{f"kilos_{i}": "1" for i in ids}}
+    _recibido(d, remito_id)                  # otro lo recibió mientras: la base rebota
     with patch("app.main.subir_foto_comanda", return_value="remitos/EJ-huerfana.jpg"), \
          patch("app.main.borrar_foto_comanda") as borrar:
         respuesta = cliente.post(f"/administracion/facturacion/remito/{remito_id}/recibir", data=datos,
                                  files={"fotos": ("r.jpg", _jpeg(), "image/jpeg")})
-    assert respuesta.status_code == 400 and "anulado" in respuesta.text
+    assert respuesta.status_code == 400 and "ya se recibió" in respuesta.text
     borrar.assert_called_once_with("remitos/EJ-huerfana.jpg")
 
 
@@ -490,16 +554,34 @@ def test_FACTURACION_las_cuatro_listas_y_cada_puerta_lo_suyo(base, monkeypatch):
     assert "/administracion/" not in gerencia.split('id="sin-remito"')[1]
 
 
-def test_solo_GERENCIA_ve_y_puede_ANULAR(base, monkeypatch):
+def test_solo_GERENCIA_corrige_el_NUMERO_y_la_pantalla_muestra_el_registro(base, monkeypatch):
     d, sql = base
     remito_id = d.emitir_remito(1, "VL", "R-0001")
-    admin = _marcado(_cliente(monkeypatch, "administracion").get(f"/administracion/facturacion/remito/{remito_id}"))
-    assert "/anular" not in admin and "lo anula Gerencia" in admin
+    admin_cliente = _cliente(monkeypatch, "administracion")
+    admin = _marcado(admin_cliente.get(f"/administracion/facturacion/remito/{remito_id}"))
+    assert "/numero" not in admin and "lo corrige Gerencia" in admin
+    assert "anular" not in admin.lower()
     gerencia = _cliente(monkeypatch, "gerencia")
-    assert f'action="/gerencia/facturacion/remito/{remito_id}/anular"' in _marcado(
-        gerencia.get(f"/gerencia/facturacion/remito/{remito_id}"))
-    gerencia.post(f"/gerencia/facturacion/remito/{remito_id}/anular", data={"motivo": "EJ mal tipeado"})
-    assert sql("SELECT anulado_motivo FROM remitos") == [("EJ mal tipeado",)]
+    marcado = _marcado(gerencia.get(f"/gerencia/facturacion/remito/{remito_id}"))
+    assert f'action="/gerencia/facturacion/remito/{remito_id}/numero"' in marcado
+    assert "anular" not in marcado.lower()
+    gerencia.post(f"/gerencia/facturacion/remito/{remito_id}/numero", data={"numero": "R-0010"})
+    assert sql("SELECT numero FROM remitos") == [("R-0010",)]
+    marcado = _marcado(gerencia.get(f"/gerencia/facturacion/remito/{remito_id}"))
+    assert "R-0001 → <b>R-0010</b>, corregido el " in marcado
+    # Sin la clave de Gerencia, el POST no corrige.
+    admin_cliente.post(f"/gerencia/facturacion/remito/{remito_id}/numero", data={"numero": "R-0099"})
+    assert sql("SELECT numero FROM remitos") == [("R-0010",)]
+
+
+def test_el_remito_OBSERVADO_dice_que_renglones_cambiaron(base, monkeypatch):
+    d, sql = base
+    remito_id = d.emitir_remito(1, "VL", "R-0001")
+    _recibido(d, remito_id, bultos={11: 4}, kilos={11: 40})
+    marcado = _marcado(_cliente(monkeypatch, "administracion").get(f"/administracion/facturacion/remito/{remito_id}"))
+    assert "Volvió observado: 1 renglón con cambios." in marcado
+    assert marcado.count('class="cambio"') == 1 and " · cambió el " in marcado
+    assert "Rechazados: remito <b>1</b>" in marcado
 
 
 def test_ARMAR_REMITO_ofrece_emitir_o_muestra_el_remito_de_cada_sucursal(base, monkeypatch):
@@ -519,3 +601,57 @@ def test_el_hub_de_Administracion_y_el_de_Gerencia_llevan_a_Facturacion(monkeypa
                             ("gerencia.html", "/gerencia/facturacion")):
         texto = _io.open(os.path.join(RAIZ, "templates", plantilla), encoding="utf-8").read()
         assert f'href="{href}"' in texto
+
+
+def _que_se_sale(html, ancho):
+    """Cuánto se sale de su caja CADA elemento (corolario 53, sexto límite): el
+    desborde de página puede dar cero con una tarjeta absorbiéndolo."""
+    pytest.importorskip("playwright", reason="lo que desborda lo decide el navegador")
+    from playwright.sync_api import sync_playwright
+    from scripts.medir_layout import CHROMIUM
+    with sync_playwright() as p:
+        navegador = p.chromium.launch(executable_path=CHROMIUM)
+        pagina = navegador.new_page(viewport={"width": ancho, "height": 800})
+        pagina.set_content(html)
+        resultado = pagina.evaluate("""() => {
+            const raiz = document.documentElement;
+            const salidos = [];
+            for (const el of document.querySelectorAll('body *')) {
+                const r = el.getBoundingClientRect();
+                if (r.width > 0 && r.right > raiz.clientWidth + 0.5) {
+                    salidos.push((el.className || el.tagName) + ' +' + Math.round(r.right - raiz.clientWidth));
+                }
+            }
+            return {pagina: raiz.scrollWidth - raiz.clientWidth, salidos: salidos,
+                    renglones: document.querySelectorAll('.fila-renglon').length};
+        }""")
+        navegador.close()
+    return resultado
+
+
+def test_ARMAR_REMITO_no_desborda_a_313px_con_un_nombre_que_no_se_puede_partir(base, monkeypatch):
+    """Dueño, 01/10: a 313px se salía. El par: el nombre impartible y el normal."""
+    d, sql = base
+    sql("UPDATE articulos SET nombre = 'EJEMPLOARTICULOCONUNNOMBRESINESPACIOSQUENOENTRA' WHERE id = 1")
+    d.emitir_remito(1, "VL", "R-0001-EJEMPLO-LARGO")
+    cliente = _cliente(monkeypatch, "administracion")
+    html = cliente.get("/administracion/pedidos/buscar", params={
+        "cliente_id": 1, "fecha_desde": "2026-09-05", "fecha_hasta": "2026-09-05"}).text
+    for ancho in (313, 390):
+        medicion = _que_se_sale(html, ancho)
+        assert medicion["renglones"] >= 3                     # se midió la pantalla con renglones
+        assert medicion["pagina"] == 0 and medicion["salidos"] == [], (ancho, medicion)
+
+
+def test_DETALLE_y_RECIBIR_no_desbordan_a_390px(base, monkeypatch):
+    d, sql = base
+    sql("UPDATE articulos SET nombre = 'EJEMPLOARTICULOCONUNNOMBRESINESPACIOSQUENOENTRA' WHERE id = 1")
+    remito_id = d.emitir_remito(1, "VL", "R-0001")
+    gerencia = _cliente(monkeypatch, "gerencia", "administracion")
+    recibir = gerencia.get(f"/administracion/facturacion/remito/{remito_id}/recibir").text
+    _recibido(d, remito_id, bultos={11: 4}, kilos={11: 40})
+    d.corregir_numero_de_remito(remito_id, "R-0001-EJEMPLO-CORREGIDO")
+    detalle = gerencia.get(f"/gerencia/facturacion/remito/{remito_id}").text
+    for nombre, html in (("recibir", recibir), ("detalle", detalle)):
+        medicion = _que_se_sale(html, 390)
+        assert medicion["pagina"] == 0 and medicion["salidos"] == [], (nombre, medicion)

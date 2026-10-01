@@ -4381,8 +4381,8 @@ Son DOS operaciones y se registran separadas; en las dos el COSTO SE CANCELA
 - **La devolución de mercadería se puede cargar desde Depósito o desde
   Administración** (dueño, 01/10). Es la MISMA pantalla y la misma escritura:
   `/deposito/devolver` sin clave y `/administracion/devolver` detrás de la
-  clave de Administración (botón "Devolver mercadería" al lado de
-  "Movimientos del depósito"). El sector sale del prefijo (corolario 63) y se
+  clave de Administración (botón "Devolver mercadería" en la tarjeta "Control
+  de stock" del hub, desde el 01/10: saca mercadería del piso). El sector sale del prefijo (corolario 63) y se
   guarda en `movimientos_stock.cargada_desde` ('deposito' o
   'administracion'), sin default en la escritura: un camino que no lo diga es
   un TypeError, y la base lo rechaza (`movimientos_stock_devolucion_con_sector`,
@@ -4418,6 +4418,17 @@ compra no tiene precio lo dice), para conciliar. La planilla para pagar que
 vivía ahí pasó a `/administracion/ingresos/pagar`, linkeada desde la pantalla.
 Los textos y el Excel están en `core/movimientos_deposito.py`.
 
+**La planilla para pagar resta las devoluciones** (dueño, 01/10): cada
+devolución al proveedor (por rechazo o desde depósito) es un renglón NEGATIVO
+del día en que se devolvió, en el grupo de su proveedor, con la compra, el
+artículo, los bultos, el importe y el tipo. El subtotal y el total son lo que
+entró menos lo devuelto, en la pantalla, el PDF y el Excel. El importe sale de
+la MISMA consulta que Movimientos del depósito (`_devoluciones_para_pagar`),
+y si la devolución vuelve con seña, la seña de esos cajones también se resta.
+Solo con el estado "A pagar" o "Todas": los otros dos son para controlar.
+Lo cuida `test_la_PLANILLA_PARA_PAGAR_resta_las_devoluciones...`, contra
+Postgres.
+
 Las fotos de la devolución usan el mismo parcial que el ingreso directo
 (`templates/_fotos_para_subir.html`, dos macros: `estilos()` va en el
 `<style>` de la pantalla, así no queda un `<style>` en el medio que corte el
@@ -4452,7 +4463,10 @@ textos y el Excel en `core/vales.py`.
 - **Una salida por vale** (`vales_a_cobrar_salidas`, clave vale_id), con
   sector y hora: **cobrado** (fecha, importe cobrado, ingreso a caja opcional)
   y **cruzado** (fecha, referencia) son de Administración; **anulado** (motivo
-  obligatorio) es SOLO de Gerencia. La base lo hace cumplir con el sector, y
+  obligatorio) es SOLO de Gerencia, y **solo para el vale de una devolución:
+  el vale en PAPEL (anterior al sistema) no se anula** (dueño, 01/10), sale
+  cobrado o cruzado. La regla es `salidas_del_vale`, y la leen la pantalla y la
+  escritura. La base lo hace cumplir con el sector, y
   `SECTOR_DE_LA_SALIDA` es la misma regla escrita en Python para que la
   pantalla no ofrezca lo que el POST rechaza: un test lee los CHECK del .sql.
   **Una salida no se deshace**: no hay pantalla para volver un cobrado atrás.
@@ -4554,25 +4568,35 @@ facturación y la cobranza no se hacen acá. La regla pura vive en
 
 - **Tres estados, derivados de las fechas** (no hay columna de estado):
   emitido (`numero`), recibido (`recibido_el`), facturado (`factura_numero`).
-  Uno solo vivo por orden (`remitos_uno_vivo_por_orden`) y el número es único
-  por cliente entre los vivos (`remitos_numero_por_cliente`, plegado con
-  `upper(btrim())`): **lo decide la base y el código traduce el error**.
+  Uno solo por orden (`remitos_uno_por_orden`) y el número es único por
+  cliente (`remitos_numero_por_cliente`, plegado con `upper(btrim())`): **lo
+  decide la base y el código traduce el error**.
+- **UN REMITO NO SE ANULA** (dueño, 01/10): una vez que salió al súper, vuelve
+  con sus observaciones. No hay columna, función ni pantalla para anularlo.
+  **Gerencia solo puede CORREGIR EL NÚMERO** (error de tipeo), en cualquier
+  estado, en el detalle del remito: queda el registro en `remitos_numeros`
+  (anterior, nuevo, fecha y hora), y el detalle lo muestra.
 - **Emitir congela** bultos y `kilos_enviados` de cada renglón armado de esa
-  sucursal (`remitos_renglones`). Después no se edita: si hay error, Gerencia
-  lo anula con motivo y se emite de nuevo (anular libera el número). Uno
-  facturado no se anula (CHECK). Sin kilos enviados no se emite: se cargan en
-  Armar Pedido. Un pedido reemplazado no se remite. Una sucursal sin fila en
-  `pedidos_sucursales` (pedido cargado a mano) la crea al emitir.
-- **Recibir** se busca por número. Los kilos recibidos vienen precargados con
-  los enviados y se cambia solo lo que vino distinto. **Kilos recibidos es lo
-  que se quedó el súper: si rechazaron bultos, lo rechazado se descuenta de los
-  kilos** (el aviso está a la vista en la pantalla). La foto del remito firmado
-  es obligatoria (bucket "comandas", prefijo `remitos`, tabla `remitos_fotos`).
-- **LOS RECHAZOS SE CARGAN SOLO EN DEPÓSITO** (`movimientos_stock` con
-  `pedido_renglon_id`), que es lo que mueve el stock. El remito anota lo que
-  dice el papel y lo COTEJA renglón por renglón (`_SQL_RECHAZO_DE_DEPOSITO`).
-  Si no coincide se ve en el remito y salta `remitos_rechazo_distinto`, que se
-  apaga sola cuando Depósito corrige el reingreso.
+  sucursal (`remitos_renglones`), la totalidad del pedido. Eso no se toca
+  nunca. Sin kilos enviados no se emite: se cargan en Armar Pedido. Un pedido
+  reemplazado no se remite. Una sucursal sin fila en `pedidos_sucursales`
+  (pedido cargado a mano) la crea al emitir.
+- **EL REMITO OBSERVADO ES EL MISMO REMITO.** Recibir se busca por número y
+  abre ESE remito: por renglón, **bultos recibidos y kilos recibidos**,
+  precargados con lo enviado, y se cambia solo lo que anotó el súper (que tome
+  todo con menos kilos, que rechace bultos, o las dos cosas). Enviado y
+  recibido quedan lado a lado en la fila; un renglón cambió si difieren
+  (`renglon_cambio`), y la hora es `recibido_el`. El detalle dice "Volvió
+  observado: N renglones con cambios". La foto del remito firmado es
+  obligatoria (bucket "comandas", prefijo `remitos`, tabla `remitos_fotos`).
+  Hasta el 01/10 se cargaban kilos y bultos RECHAZADOS; se cambió a recibidos.
+- **EL REMITO RECIBIDO NO MUEVE STOCK.** Los bultos rechazados entran al
+  depósito por el circuito de rechazo de siempre (`movimientos_stock` con
+  `pedido_renglon_id`), que es independiente. El cotejo es aparte: rechazo
+  según el remito (enviados − recibidos, `rechazo_del_remito`) contra los
+  reingresos de Depósito de ese renglón (`_SQL_RECHAZO_DE_DEPOSITO`). Si no
+  coincide se ve en el remito y salta `remitos_rechazo_distinto`, que se apaga
+  sola cuando Depósito corrige el reingreso.
 - **El importe a cobrar** es kilos recibidos × precio vigente el DÍA DEL
   PEDIDO (`_SQL_PRECIO_DEL_RENGLON`: la fila de la ficha con `vigente_desde`
   más reciente que ya había llegado). Es informativo, para controlar la
@@ -4583,13 +4607,18 @@ facturación y la cobranza no se hacen acá. La regla pura vive en
   botón "Remitos y facturas"): pedidos sin remito, en viaje, recibidos sin
   factura y facturados (filtro por fecha de factura). La misma pantalla en
   `/gerencia/facturacion`, sector por prefijo (corolario 63): Gerencia mira y
-  anula; Administración emite, recibe y factura. Armar Remito dice en cada
-  sucursal "Emitir remito" o el número del que ya está.
+  corrige el número; Administración emite, recibe y factura. Armar Remito dice
+  en cada sucursal "Emitir remito" o el número del que ya está, y no desborda
+  a 313px (el nombre del artículo envuelve: `min-width: 0` + `overflow-wrap`).
+- **Se emiten, reciben y facturan remitos de pedidos de CUALQUIER fecha**,
+  también anteriores a `REMITOS_DESDE`, desde Armar Remito.
 - **Rentabilidad Real cobra lo RECIBIDO** cuando el remito volvió ("le pagan
-  lo recibido"), y su devolución ya no resta venta (lo rechazado está afuera de
-  lo recibido); el costo se acredita igual. Mientras no vuelve se usa lo
-  enviado y el día sale "Provisorio (remito sin volver)", en la pantalla, el
-  PDF y el Excel (`kilos_recibidos_por_renglon`, `fechas_provisorias`).
+  lo recibido": kilos recibidos × precio), y su devolución ya no resta venta
+  (lo rechazado está afuera de lo recibido); el costo se acredita igual.
+  Mientras no vuelve se usa lo enviado, y **solo desde `REMITOS_DESDE`** el día
+  sale "Provisorio (remito sin volver)", en la pantalla, el PDF y el Excel
+  (`kilos_recibidos_por_renglon`, `fechas_provisorias`). Los días anteriores
+  siguen como siempre, con lo enviado, salvo que tengan el remito recibido.
 
 **Las alertas** (Administración y Gerencia), con sus plazos en
 `core/remitos.py`:
@@ -4602,10 +4631,11 @@ facturación y la cobranza no se hacen acá. La regla pura vive en
   y feriados.
 - `remitos_rechazo_distinto`: el papel y Depósito no dicen lo mismo.
 - `pedidos_sin_remito`: órdenes de compra armadas sin remito, **solo desde
-  `REMITOS_DESDE`** (la fecha del despliegue). Lo anterior nunca tuvo remito
-  en este sistema y no es un olvido; se emite desde Armar Remito.
+  `REMITOS_DESDE`** (la fecha del despliegue, `core/remitos.py`). Es lo único
+  para lo que sirve esa fecha, además del provisorio de la Rentabilidad. Lo
+  anterior nunca tuvo remito en este sistema y no es un olvido.
 
-Migraciones `db/remitos_1` a `remitos_3`, verificación en `remitos_4`. Lo cuida
+Migraciones `db/remitos_1` a `remitos_4`, verificación en `remitos_5`. Lo cuida
 `tests/test_remitos.py`, contra Postgres.
 
 ## FOTOS: EL PLAZO POR TIPO Y EL BORRADO A MANO (01/10, dueño)
@@ -4624,7 +4654,8 @@ Migraciones `db/remitos_1` a `remitos_3`, verificación en `remitos_4`. Lo cuida
   no se toca nunca.
 - **Nunca se borran** (se saltean, y la pantalla dice cuántas y por qué): las
   fotos de un vale que no está cobrado, cruzado ni anulado, y las de un remito
-  sin facturar. Lo marca `_SQL_FOTOS_DE_RESPALDO` en la columna `protegida`,
+  sin facturar (un remito no se anula, así que la foto queda protegida hasta
+  que se facture). Lo marca `_SQL_FOTOS_DE_RESPALDO` en la columna `protegida`,
   con el MISMO `_SQL_ESTADO_DEL_VALE` de la cartera. La foto de una devolución
   de vacíos es la de su vale, y queda protegida igual.
 - **Cada borrado deja historial** (`fotos_borrados`): fecha, cómo, tipo,

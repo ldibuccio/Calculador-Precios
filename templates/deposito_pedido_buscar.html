@@ -90,7 +90,11 @@
     border-top: 1px solid #eee;
   }
   .fila-renglon:first-of-type { border-top: none; }
-  .fila-renglon .nombre { font-weight: 600; font-size: 0.95rem; }
+  /* El nombre cede y envuelve (dueño, 01/10: a 313px se salía 366px). Un
+     hijo de flex no baja de su ancho de contenido sin min-width: 0, y una
+     palabra sin espacios no tiene dónde partir sin overflow-wrap. */
+  .fila-renglon .nombre { font-weight: 600; font-size: 0.95rem; flex: 1 1 auto; min-width: 0;
+    overflow-wrap: anywhere; }
   .fila-renglon .detalle { display: block; color: #666; font-size: 0.82rem; font-weight: 400; margin-top: 0.1rem; }
   .fila-renglon .kilos { text-align: right; white-space: nowrap; font-weight: 800; font-size: 0.95rem; }
   .fila-renglon .kilos .bultos { display: block; font-size: 0.82rem; font-weight: 600; color: #666; }
@@ -122,6 +126,7 @@
     margin-left: auto; display: inline-flex; align-items: center; min-height: 44px;
     padding: 0 0.8rem; border-radius: 8px; border: 1px solid #2563eb; color: #2563eb;
     font-weight: 600; font-size: 0.9rem; text-decoration: none;
+    max-width: 100%; box-sizing: border-box; overflow-wrap: anywhere;
   }
   .encabezado-sucursal .remito-link.emitir { background: #2563eb; color: #fff; }
   .subtotal-sucursal { border-top-width: 1px; font-size: 0.9rem; }

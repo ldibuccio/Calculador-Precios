@@ -12383,6 +12383,7 @@ def test_ver_ingresos_deposito_agrupa_por_proveedor_con_subtotales_y_total():
         patch("app.main.listar_proveedores", return_value=PROVEEDORES_DE_PRUEBA),
         patch("app.main.listar_articulos", return_value=ARTICULOS_CON_UNIDAD_COMPRA),
         patch("app.main.buscar_ingresos_deposito", return_value=INGRESOS_DEPOSITO_DE_PRUEBA) as mock_buscar,
+        patch("app.main.movimientos_del_deposito", return_value=[]),
     ):
         respuesta = cliente.get("/administracion/ingresos/pagar")
 
@@ -12429,6 +12430,7 @@ def test_ver_ingresos_deposito_estado_todas_pasa_none_a_la_consulta():
         patch("app.main.listar_proveedores", return_value=PROVEEDORES_DE_PRUEBA),
         patch("app.main.listar_articulos", return_value=ARTICULOS_CON_UNIDAD_COMPRA),
         patch("app.main.buscar_ingresos_deposito", return_value=[]) as mock_buscar,
+        patch("app.main.movimientos_del_deposito", return_value=[]),
     ):
         respuesta = cliente.get(
             "/administracion/ingresos/pagar?fecha_desde=2026-08-10&fecha_hasta=2026-08-12&estado=todas&proveedor_id=7"
@@ -12448,6 +12450,7 @@ def test_ver_ingresos_deposito_cortada_por_el_tope_avisa_y_oculta_totales():
         patch("app.main.listar_proveedores", return_value=PROVEEDORES_DE_PRUEBA),
         patch("app.main.listar_articulos", return_value=ARTICULOS_CON_UNIDAD_COMPRA),
         patch("app.main.buscar_ingresos_deposito", return_value=muchos),
+        patch("app.main.movimientos_del_deposito", return_value=[]),
         patch("app.main.contar_ingresos_deposito", return_value=1200) as mock_contar,
     ):
         respuesta = cliente.get("/administracion/ingresos/pagar")
@@ -12463,6 +12466,7 @@ def test_exportar_ingresos_deposito_pdf_sin_tope_con_subtotales_y_marcas():
         patch("app.main.listar_proveedores", return_value=PROVEEDORES_DE_PRUEBA),
         patch("app.main.listar_articulos", return_value=ARTICULOS_CON_UNIDAD_COMPRA),
         patch("app.main.buscar_ingresos_deposito", return_value=INGRESOS_DEPOSITO_DE_PRUEBA) as mock_buscar,
+        patch("app.main.movimientos_del_deposito", return_value=[]),
     ):
         respuesta = cliente.get("/administracion/ingresos/exportar-pdf?fecha_desde=2026-08-17&fecha_hasta=2026-08-18")
 
@@ -12493,6 +12497,7 @@ def test_exportar_ingresos_deposito_excel_devuelve_archivo_adjunto():
         patch("app.main.listar_proveedores", return_value=PROVEEDORES_DE_PRUEBA),
         patch("app.main.listar_articulos", return_value=ARTICULOS_CON_UNIDAD_COMPRA),
         patch("app.main.buscar_ingresos_deposito", return_value=INGRESOS_DEPOSITO_DE_PRUEBA),
+        patch("app.main.movimientos_del_deposito", return_value=[]),
     ):
         respuesta = cliente.get("/administracion/ingresos/exportar-excel?fecha_desde=2026-08-17&fecha_hasta=2026-08-18")
 

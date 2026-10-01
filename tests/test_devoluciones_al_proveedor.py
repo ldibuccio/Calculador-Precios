@@ -495,4 +495,43 @@ def test_el_HUB_de_Administracion_tiene_Devolver_mercaderia_y_Deposito_sigue_igu
     admin = _io.open("templates/administracion.html", encoding="utf-8").read()
     deposito = _io.open("templates/deposito.html", encoding="utf-8").read()
     assert 'href="/administracion/devolver">Devolver mercadería</a>' in admin
+    # En la tarjeta "Control de stock" (dueño, 01/10), no en Facturación.
+    tarjetas = admin.split('<div class="tarjeta">')
+    control = next(c for c in tarjetas if "<h2>Control de stock</h2>" in c)
+    facturacion = next(c for c in tarjetas if "<h2>Facturación</h2>" in c)
+    assert 'href="/administracion/devolver"' in control
+    assert 'href="/administracion/devolver"' not in facturacion
     assert 'href="/deposito/devolver">' in deposito
+
+
+def test_la_PLANILLA_PARA_PAGAR_resta_las_devoluciones_del_dia_en_que_se_devolvieron(base, monkeypatch):
+    """Dueño, 01/10: al pagarle al proveedor se ve lo que entró menos lo que se
+    le devolvió, cada devolución como renglón NEGATIVO del día en que se devolvió."""
+    from fastapi.testclient import TestClient
+    from app.main import PUERTA_ADMINISTRACION, app
+    d, sql, rechazo = base
+    rechazo(1, 2, compra_id=11)                     # 09/09, en cajón, compra con seña $500
+    d.crear_devolucion_deposito(12, 3, "EJ fea", date(2026, 9, 10), cargada_desde="administracion")
+    monkeypatch.setenv(PUERTA_ADMINISTRACION.env_var, "clave-adm")
+    cliente = TestClient(app, base_url="https://testserver")
+    cliente.cookies.set(PUERTA_ADMINISTRACION.cookie, PUERTA_ADMINISTRACION.firma("clave-adm"))
+    respuesta = cliente.get("/administracion/ingresos/pagar",
+                            params={"fecha_desde": "2026-09-01", "fecha_hasta": "2026-09-30"})
+    assert respuesta.status_code == 200
+    marcado = respuesta.text.split("</style>")[-1]
+    tarjeta_uno = marcado.split('<p class="proveedor-encabezado">EJ Uno')[1].split('<div class="tarjeta">')[0]
+    filas = re.findall(r"<tr[^>]*>(.*?)</tr>", tarjeta_uno, re.S)[1:]         # sin el encabezado
+    celdas = [[re.sub(r"<[^>]+>", "", c).strip() for c in re.findall(r"<td[^>]*>(.*?)</td>", f, re.S)]
+              for f in filas]
+    # En orden de DÍA: 05/09 y 06/09 entran; 09/09 y 10/09 se devuelven.
+    assert [c[0][:5] for c in celdas] == ["05/09", "06/09", "09/09", "10/09"]
+    assert celdas[2][1:4] == ["Compra 11", "EJEMPLO Fruta", "-2 bultos"]
+    assert celdas[2][7] == "Devolución por rechazo"
+    assert celdas[3][1] == "Compra 12" and celdas[3][7] == "Devolución desde depósito"
+    # Entró 10×($100+$500) + 8×$120 = $6.960; se devolvieron 2×($100+$500) + 3×$120 = $1.560.
+    assert re.search(r"Subtotal EJ Uno \(entró menos lo devuelto\)</span>\s*<span>\$5\.400</span>",
+                     tarjeta_uno)
+    # El estado "No ingresó" es para controlar y no lleva devoluciones.
+    solo_rechazadas = cliente.get("/administracion/ingresos/pagar", params={
+        "fecha_desde": "2026-09-01", "fecha_hasta": "2026-09-30", "estado": "rechazado"})
+    assert "Devolución" not in solo_rechazadas.text.split("</style>")[-1]

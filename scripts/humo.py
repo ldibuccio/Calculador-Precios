@@ -272,10 +272,12 @@ def siembra():
       select ps.id, p.cliente_id, 'EJ-0001', now() from pedidos_sucursales ps
         join pedidos p on p.id = ps.pedido_id limit 1;
     insert into remitos_renglones (remito_id, pedido_renglon_id, bultos_enviados, kilos_enviados,
-                                   kilos_recibidos, bultos_rechazados)
-      select re.id, r.id, 10, 100, 95, 1 from remitos re, pedidos_renglones r
+                                   bultos_recibidos, kilos_recibidos)
+      select re.id, r.id, 10, 100, 9, 95 from remitos re, pedidos_renglones r
        where r.armado_el is not null limit 1;
     insert into remitos_fotos (remito_id, foto_ruta) select id, 'remitos/EJEMPLO.jpg' from remitos;
+    insert into remitos_numeros (remito_id, numero_anterior, numero_nuevo)
+      select id, 'EJ-0000', numero from remitos;
     """
 
 

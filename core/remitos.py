@@ -8,13 +8,15 @@ súper firmó que recibió y el número de factura.
 
 LOS ESTADOS NO SON UNA COLUMNA: salen de las fechas, igual que el estado de un
 vale. Emitido (tiene número), recibido (`recibido_el`), facturado
-(`factura_numero`). Anulado lo hace Gerencia con motivo, y uno facturado no
-se anula (lo frena la base).
+(`factura_numero`). UN REMITO NO SE ANULA (dueño, 01/10): vuelve con sus
+observaciones. Gerencia solo puede corregir el número.
 
-LOS RECHAZOS SE CARGAN UNA SOLA VEZ, en Depósito (`movimientos_stock` con
-`pedido_renglon_id`): ahí mueven stock. El remito NO los vuelve a cargar: los
-anota tal como dice el papel y los COTEJA contra lo de Depósito, renglón por
-renglón. Si no coinciden, se ve en la pantalla y salta una alerta.
+EL REMITO OBSERVADO ES EL MISMO REMITO: sale con todo lo armado, y cuando
+vuelve se carga en ese mismo remito, por renglón, los BULTOS y KILOS que el
+súper firmó. Lo enviado queda al lado y no se toca. NO MUEVE STOCK: los bultos
+rechazados (enviados − recibidos) entran al depósito por el circuito de
+rechazo de siempre (`movimientos_stock` con `pedido_renglon_id`), y el remito
+los COTEJA renglón por renglón. Si no coinciden, se ve y salta una alerta.
 
 LO QUE SE COBRA es kilos RECIBIDOS × precio vigente a la fecha del pedido
 (`precios_venta_historial`, por ficha). Es informativo: la factura la hace
@@ -40,14 +42,11 @@ TEXTO_DEL_ESTADO = {
     "emitido": "En viaje",
     "recibido": "Recibido, sin factura",
     "facturado": "Facturado",
-    "anulado": "Anulado",
 }
 
 
 def estado_del_remito(remito: dict) -> str:
-    """El estado sale de las fechas. Anulado manda sobre todo lo demás."""
-    if remito.get("anulado_el") is not None:
-        return "anulado"
+    """El estado sale de las fechas."""
     if remito.get("factura_numero"):
         return "facturado"
     if remito.get("recibido_el") is not None:
@@ -78,14 +77,32 @@ def _numero(valor):
     return None if valor is None else float(valor)
 
 
+def rechazo_del_remito(renglon: dict) -> float | None:
+    """Los bultos que el súper NO se quedó: enviados − recibidos. None
+    mientras el remito no volvió."""
+    recibidos = _numero(renglon.get("bultos_recibidos"))
+    if recibidos is None:
+        return None
+    return float(renglon["bultos_enviados"]) - recibidos
+
+
+def renglon_cambio(renglon: dict) -> bool:
+    """El súper anotó algo distinto de lo enviado en ese renglón: menos
+    bultos, otros kilos, o las dos cosas."""
+    if renglon.get("bultos_recibidos") is None:
+        return False
+    return (abs(float(renglon["bultos_recibidos"]) - float(renglon["bultos_enviados"])) > 1e-9
+            or abs(float(renglon["kilos_recibidos"]) - float(renglon["kilos_enviados"])) > 1e-9)
+
+
 def diferencia_de_rechazo(renglon: dict) -> float | None:
-    """Lo que dice el remito menos lo que cargó Depósito, en bultos.
+    """El rechazo según el remito menos lo que cargó Depósito, en bultos.
 
     None mientras el remito no volvió: sin el papel no hay contra qué cotejar.
     Positivo es que el remito dice MÁS rechazo que Depósito (falta cargar un
     reingreso); negativo, que Depósito cargó de más.
     """
-    remito = _numero(renglon.get("bultos_rechazados"))
+    remito = rechazo_del_remito(renglon)
     if remito is None:
         return None
     return remito - (_numero(renglon.get("rechazo_deposito")) or 0.0)
@@ -123,28 +140,28 @@ def importe_del_remito(renglones: list[dict]) -> dict:
     return {"total": total, "sin_precio": sin_precio}
 
 
-def leer_recepcion(renglones: list[dict], kilos_texto: dict, rechazo_texto: dict) -> tuple[str | None, dict]:
-    """Valida lo cargado al recibir y lo devuelve como {renglon_id: (kilos, rechazados)}.
+def leer_recepcion(renglones: list[dict], bultos_texto: dict, kilos_texto: dict) -> tuple[str | None, dict]:
+    """Valida lo cargado al recibir y lo devuelve como {renglon_id: (bultos, kilos)}.
 
     Todos los renglones del remito, sin excepción: un remito recibido a medias
     dejaría la Rentabilidad cobrando unos renglones por lo recibido y otros por
-    lo enviado. Los rechazados no pasan de los bultos que salieron (también lo
+    lo enviado. Los bultos recibidos no pasan de los que salieron (también lo
     frena la base). Con la coma o el punto como decimal, igual que el resto.
     """
     resultado = {}
     for renglon in renglones:
         rid = renglon["id"]
         nombre = renglon.get("articulo_nombre") or "un renglón"
+        bultos = _leer_numero(bultos_texto.get(rid))
+        if bultos is None or bultos < 0:
+            return f"Faltan los bultos recibidos de {nombre}, o no es un número.", {}
+        if bultos > float(renglon["bultos_enviados"]):
+            return (f"{nombre}: recibieron {_texto(bultos)} bultos y salieron "
+                    f"{_texto(renglon['bultos_enviados'])}."), {}
         kilos = _leer_numero(kilos_texto.get(rid))
         if kilos is None or kilos < 0:
-            return f"Falta lo recibido de {nombre}, o no es un número.", {}
-        rechazo = _leer_numero(rechazo_texto.get(rid))
-        if rechazo is None or rechazo < 0:
-            return f"Faltan los bultos rechazados de {nombre} (si no hubo, 0).", {}
-        if rechazo > float(renglon["bultos_enviados"]):
-            return (f"{nombre}: rechazaron {_texto(rechazo)} bultos y salieron "
-                    f"{_texto(renglon['bultos_enviados'])}."), {}
-        resultado[rid] = (kilos, rechazo)
+            return f"Faltan los kilos recibidos de {nombre}, o no es un número.", {}
+        resultado[rid] = (bultos, kilos)
     return None, resultado
 
 
