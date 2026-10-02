@@ -833,6 +833,23 @@ Las dos tablas, los dos CHECK y los dos triggers están en las dos bases. Los
 60 lotes de Frutamax arrancan todos pendientes (`cobros 0`). Palmala no tiene
 ningún lote al puesto y no vota: confirma solo que los bloques no explotan.
 
+## 02/10 — `vales_manual_1` a `_3`: Vales cargados a mano
+
+Corridos por Lionel en las dos bases, cada bloque solo. La verificación
+(`vales_manual_4`), corrida aparte:
+
+```
+FRUTAMAX  columnas 2 · origen 1 · coherente 1 · checks 3 · tabla 1 · triggers 2 · diferido 1 · marca_vieja 0 · manuales 0 · vales 8 · anteriores 0 · último vale 01/10
+PALMALA   columnas 2 · origen 1 · coherente 1 · checks 3 · tabla 1 · triggers 2 · diferido 1 · marca_vieja 0 · manuales 0 · vales 0
+```
+
+Las dos columnas, el origen `carga_manual`, los CHECK, la tabla de
+correcciones y los dos triggers (el de importe, número y fecha, y el
+diferido del proveedor) están en las dos bases. `marca_vieja 0`: ninguna
+función de la base lee ya `app.juntando_proveedores`. Todavía no hay vales
+cargados a mano. Palmala no tiene vales y no vota: confirma solo que los
+bloques no explotan.
+
 ## 02/10 — `vales_papel_1` a `4` quedan OBSOLETOS
 
 Decisión del dueño: los vales en papel se cargan desde la pantalla de Vales

@@ -4,6 +4,7 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Administración</title>
+{% import "_tareas_pendientes.html" as tareas_parcial %}
 <style>
   h2 { font-size: 1.05rem; margin: 0 0 0.75rem; }
   :root { font-family: -apple-system, system-ui, sans-serif; }
@@ -47,6 +48,7 @@
     font-size: 0.85rem;
     text-decoration: none;
   }
+  {{ tareas_parcial.estilos() }}
 </style>
 </head>
 <body>
@@ -58,6 +60,7 @@
   {# Para no dejar Administración abierta en un celular suelto. Solo aparece
      si hay clave configurada: sin ella no hay nada que bloquear. #}
   {% include "_banner_alertas.html" %}
+  {{ tareas_parcial.recuadro(tareas_hub) }}
   {% from "_boton_alertas.html" import cuantas_alertas %}
 
   {# PRIMERO, como en Compras: es lo que hay que mirar antes de hacer nada, y

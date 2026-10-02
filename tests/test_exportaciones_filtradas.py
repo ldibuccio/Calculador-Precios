@@ -62,6 +62,10 @@ EXPORTACIONES = {
     "/gerencia/cobranzas-segunda/exportar-excel": "tests/test_cobranzas_segunda.py",
     "/administracion/cobranzas-segunda/exportar-pdf": "misma función que la de Gerencia",
     "/administracion/cobranzas-segunda/exportar-excel": "misma función que la de Gerencia",
+    # Tareas (02/10): lo cuida tests/test_tareas.py, siguiendo el link que
+    # dibuja la pantalla.
+    "/gerencia/tareas/exportar-pdf": "tests/test_tareas.py",
+    "/gerencia/tareas/exportar-excel": "tests/test_tareas.py",
     # El mismo Excel que la de Gerencia, con la misma función y otra puerta.
     "/administracion/vales/movimientos-excel": "misma función que /gerencia/vales/movimientos-excel",
     # El filtro por tipo lo cuida tests/test_remanente_por_tipo.py.
