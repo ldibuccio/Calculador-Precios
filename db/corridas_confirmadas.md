@@ -850,6 +850,20 @@ función de la base lee ya `app.juntando_proveedores`. Todavía no hay vales
 cargados a mano. Palmala no tiene vales y no vota: confirma solo que los
 bloques no explotan.
 
+## 02/10 — `tareas_1` a `_3`: Tareas
+
+Corridos por Lionel en las dos bases, cada bloque solo. La verificación
+(`tareas_4`), corrida aparte, la hizo el Claude con acceso de lectura:
+
+```
+FRUTAMAX  tareas · tablas 3 · constraints 4 · indices 2 · tareas 0 · ocurrencias 0 · testigo 41 proveedores
+PALMALA   tareas · tablas 3 · constraints 4 · indices 2 · tareas 0 · ocurrencias 0 · testigo 45 proveedores
+```
+
+Las tres tablas, los cuatro constraints y los dos índices están en las dos
+bases, todavía sin ninguna tarea cargada. El testigo solo identifica la base.
+Palmala no vota: confirma solo que los bloques no explotan.
+
 ## 02/10 — `vales_papel_1` a `4` quedan OBSOLETOS
 
 Decisión del dueño: los vales en papel se cargan desde la pantalla de Vales
