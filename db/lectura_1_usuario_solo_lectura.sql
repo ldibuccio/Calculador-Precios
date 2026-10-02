@@ -8,20 +8,20 @@ begin
     raise exception 'Poné una clave de 24 o más letras y números, sin símbolos';
   end if;
 
-  if exists (select 1 from pg_roles where rolname = 'lectura_claude') then
-    execute format('alter role lectura_claude login password %L', clave);
+  if exists (select 1 from pg_roles where rolname = 'lectura_claudia') then
+    execute format('alter role lectura_claudia login password %L', clave);
   else
-    execute format('create role lectura_claude login password %L', clave);
+    execute format('create role lectura_claudia login password %L', clave);
   end if;
 
-  alter role lectura_claude nosuperuser nocreatedb nocreaterole bypassrls;
-  alter role lectura_claude set default_transaction_read_only = on;
-  alter role lectura_claude set statement_timeout = '30s';
+  alter role lectura_claudia nosuperuser nocreatedb nocreaterole bypassrls;
+  alter role lectura_claudia set default_transaction_read_only = on;
+  alter role lectura_claudia set statement_timeout = '30s';
 
-  grant usage on schema public to lectura_claude;
-  grant select on all tables in schema public to lectura_claude;
-  alter default privileges in schema public grant select on tables to lectura_claude;
-  revoke create on schema public from lectura_claude;
+  grant usage on schema public to lectura_claudia;
+  grant select on all tables in schema public to lectura_claudia;
+  alter default privileges in schema public grant select on tables to lectura_claudia;
+  revoke create on schema public from lectura_claudia;
 end $$;
 
 -- USUARIO DE SOLO LECTURA para Claude (30/09, dueño). Se corre solo, y la
