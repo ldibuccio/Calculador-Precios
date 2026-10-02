@@ -627,7 +627,7 @@ def test_el_vacio_NO_manda_a_Administracion_a_cargar_precios():
 
 def test_el_hub_de_administracion_lleva_a_la_pantalla_desde_FACTURACION():
     """En el bloque de Facturación y no en otro: es con lo que le factura al
-    supermercado, al lado de Ingresos a Depósito."""
+    supermercado, al lado de Resumen proveedores."""
     with patch("app.main._banner_alertas", return_value=None):
         respuesta = cliente.get("/administracion")
     assert respuesta.status_code == 200

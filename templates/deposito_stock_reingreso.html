@@ -186,7 +186,8 @@
   <div class="error">{{ error }}</div>
   {% endif %}
 
-  <div class="marca-rechazo">Esto es mercadería que <strong>volvió del cliente</strong>: entra al stock marcada como rechazo, nunca como compra nueva. Elegí de qué pedido volvió — el cliente y el artículo salen solos de ahí.</div>
+  {# LA EXPLICACIÓN VA A LA "i" (dueño, 02/10): arranca cerrada. #}
+  <div class="marca-rechazo">Mercadería que <strong>volvió del cliente</strong>. {% call info("Qué es un reingreso por rechazo") %}Entra al stock marcada como rechazo, nunca como compra nueva. Elegí de qué pedido volvió: el cliente y el artículo salen solos de ahí.{% endcall %}</div>
 
   {# Pantalla de OPERARIO: muestra solo lo que él ya maneja en Armar Pedido
      (fecha, sucursal, OC, renglones y bultos armados, lo ya devuelto por
@@ -260,11 +261,13 @@
          la etiqueta lo dice con todas las letras y la ayuda las contrasta. #}
       <label for="fecha">¿Qué día entró al depósito?</label>
       <input type="date" id="fecha" name="fecha" max="{{ hoy }}" value="{{ precarga.fecha or hoy }}">
-      <p class="ayuda">El pedido es del {{ renglon.fecha_pedido.strftime("%d/%m") }}. Esta fecha es la de la vuelta, y ordena el stock.</p>
+      <p class="ayuda">El pedido es del {{ renglon.fecha_pedido.strftime("%d/%m") }}. Esta fecha es la de la vuelta, y ordena el stock. {% call info("La fecha y cómo se corrige") %}Si el camión volvió ayer y lo cargás hoy, poné la fecha de ayer: con la fecha real no se desordena nada. Si te equivocaste, se anula desde Movimientos y se carga de nuevo.{% endcall %}</p>
 
       <label for="motivo">Motivo (obligatorio)</label>
+      {# VIENE ESCRITO (dueño, 02/10): "Rechazo por calidad", editable o
+         borrable. En un reintento vuelve lo que se mandó, aunque sea vacío. #}
       <input type="text" id="motivo" name="motivo" required placeholder="Ej: rechazado por calidad"
-             value="{{ precarga.motivo or "" }}">
+             value="{{ precarga.motivo if precarga.motivo is defined and precarga.motivo is not none else "Rechazo por calidad" }}">
 
       {# El DESTINO se decide acá, al cargar: qué se hace con lo que
          volvió. Botones grandes, uno debajo del otro, con la consecuencia
@@ -363,7 +366,6 @@
 
       <button type="submit" class="boton-guardar">Guardar reingreso</button>
     </form>
-    <p class="ayuda">Si el camión volvió ayer y lo cargás hoy, poné la fecha de ayer: con la fecha real no se desordena nada. Si te equivocaste, se anula desde Movimientos y se carga de nuevo.</p>
     <a class="volver" href="/deposito/stock/reingreso?{{ {'pedido_id': renglon.pedido_id, 'sucursal': renglon.sucursal}|urlencode }}">Volver a los renglones</a>
   </div>
 

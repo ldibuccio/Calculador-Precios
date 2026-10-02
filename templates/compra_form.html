@@ -87,6 +87,7 @@
   }
   .boton-exito { background: #16a34a; }
   .boton-peligro { background: #dc2626; }
+  .boton-gerencia { background: #fff; color: #444; border: 1px solid #ccc; }
   /* El bloque de "viene armada": informa y pregunta, no es un problema. Sin
      margen propio arriba se pega al selector de retiro y se lee como parte
      de él. */
@@ -318,7 +319,11 @@
     </form>
     {% endif %}
     {% if modo == "editar" %}
-    <a class="boton boton-peligro" href="/compras/buscar{% if request.url.query %}?{{ request.url.query }}{% endif %}" id="boton-volver" onclick="return confirmarVolver()">Volver</a>
+    {# LO QUE SOLO CAMBIA GERENCIA (dueño, 02/10): sigue pidiendo su clave.
+       Es la MISMA pantalla de Gerencia de siempre, colgada de acá: el
+       Detalle tiene un solo "Editar" y no cambia ningún permiso. #}
+    <a class="boton boton-gerencia" href="/gerencia/compras/{{ compra.id }}/editar" id="boton-gerencia">Fechas, proveedor, recepción o eliminar (pide la clave de Gerencia)</a>
+    <a class="boton boton-peligro" href="/compras/{{ compra.id }}/detalle{% if request.url.query %}?{{ request.url.query }}{% endif %}" id="boton-volver" onclick="return confirmarVolver()">Volver</a>
     {% endif %}
   </div>
 

@@ -584,7 +584,7 @@ def test_el_HUB_de_Administracion_tiene_Devolver_mercaderia_y_Deposito_sigue_igu
     assert 'href="/deposito/devolver">' in deposito
 
 
-def test_la_PLANILLA_PARA_PAGAR_resta_las_devoluciones_del_dia_en_que_se_devolvieron(base, monkeypatch):
+def test_el_RESUMEN_PROVEEDORES_resta_las_devoluciones_del_dia_en_que_se_devolvieron(base, monkeypatch):
     """Dueño, 01/10: al pagarle al proveedor se ve lo que entró menos lo que se
     le devolvió, cada devolución como renglón NEGATIVO del día en que se devolvió."""
     from fastapi.testclient import TestClient

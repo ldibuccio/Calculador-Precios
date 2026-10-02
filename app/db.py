@@ -5130,7 +5130,7 @@ def buscar_retiros(
 
 
 def _condiciones_buscar_ingresos(fecha_desde, fecha_hasta, proveedor_id, articulo_id, estado):
-    """Las condiciones de Ingresos a Depósito (ver /facturacion/ingresos), compartidas entre buscar y contar.
+    """Las condiciones del Resumen proveedores (ver /facturacion/ingresos), compartidas entre buscar y contar.
 
     El rango filtra por procesada_el (el día en que Depósito la procesó,
     patrón sargable sobre el índice de procesada_el): el listado es de lo
@@ -5173,7 +5173,7 @@ def _condiciones_buscar_ingresos(fecha_desde, fecha_hasta, proveedor_id, articul
 # Vacíos aunque la compra tenga seña (ver `_SQL_DEVOLUCIONES_LLENAS`). Sin
 # compra atada (los viejos), queda el costo congelado del rechazo.
 #
-# Lo leen Movimientos del depósito, la planilla para pagar (que sale de la
+# Lo leen Movimientos del depósito, el Resumen proveedores (que sale de la
 # misma consulta) y la Rentabilidad Real. Escrito una vez: la copia que se
 # separe diría un importe en una pantalla y otro en la otra.
 # Espera los alias `m` (movimiento) y `cd` (compra).

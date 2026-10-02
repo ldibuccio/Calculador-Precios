@@ -116,20 +116,11 @@
     margin-bottom: 1rem;
     font-size: 0.9rem;
   }
-  .boton-secundario {
-    display: block;
-    width: 100%;
-    margin-top: 0.75rem;
-    padding: 0.75rem;
-    background: #fff;
-    color: #444;
-    border: 1px solid #ccc;
-    border-radius: 8px;
-    font-size: 0.95rem;
-    font-weight: 600;
-    text-align: center;
-    text-decoration: none;
-    box-sizing: border-box;
+  .boton-editar-detalle {
+    display: flex; align-items: center; justify-content: center;
+    width: 100%; min-height: 48px; margin-top: 0.75rem; padding: 0.75rem;
+    background: #2563eb; color: #fff; border-radius: 8px;
+    font-size: 1rem; font-weight: 600; text-decoration: none; box-sizing: border-box;
   }
   .volver {
     display: block;
@@ -403,26 +394,12 @@
     </div>
   </div>
 
-  {# UNA SOLA PUERTA A GERENCIA, y es del dueño (19/09): "eso es una pantalla
-     partida en tres entradas". Acá había DOS botones —"Corregir recepción",
-     condicionado a la recepcionada, y "Mover de fecha"— y los dos terminaban
-     en la misma zona. El destino ya era un hub: /gerencia/compras/{id}/editar
-     mueve las dos fechas, elimina, y linkea Corregir recepción con la MISMA
-     condición que tenía este botón (estado == "recepcionado"), así que sacarlo
-     de acá no le cierra la puerta a nadie — le agrega un click.
+  {# DETALLE Y EDITAR SON UNA PANTALLA (dueño, 02/10): el Detalle se lee, y
+     "Editar" abre lo que se edita libre; lo de Gerencia sigue pidiendo su
+     clave, colgado de adentro de Editar. No cambia ningún permiso. #}
+  <a class="boton-editar-detalle" href="/compras/{{ compra.id }}/editar{% if request.url.query %}?{{ request.url.query }}{% endif %}">Editar</a>
 
-     Y va al hub por su URL REAL. El botón viejo apuntaba a /mover-fecha, que
-     desde que la pantalla creció es un 301 a /editar: andaba, y el nombre y la
-     URL decían los dos una pantalla que ya no existe.
-
-     SIGUE AFUERA del bloque de la recepción, y por la razón de siempre: ese
-     bloque solo se dibuja con la compra recepcionada y corregir o eliminar
-     aplica a CUALQUIERA. Adentro sería abrir la puerta para el subconjunto
-     equivocado — el barrido saldría en verde y no habría forma de llegar
-     desde la mayoría de las filas. #}
-  <a class="boton-secundario" href="/gerencia/compras/{{ compra.id }}/editar">Corregir o eliminar compra (Gerencia)</a>
-
-  <a class="volver" href="/compras/buscar">Volver a Buscar Compras</a>
+  <a class="volver" href="/compras/buscar{% if request.url.query %}?{{ request.url.query }}{% endif %}">Volver a Buscar Compras</a>
 {% include "_pie_version.html" %}
 </body>
 </html>

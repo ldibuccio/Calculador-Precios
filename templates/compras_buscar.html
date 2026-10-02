@@ -493,7 +493,7 @@
         </thead>
         <tbody>
           {% for c in compras %}
-          <tr data-detalle="/compras/{{ c.id }}/detalle">
+          <tr data-detalle="/compras/{{ c.id }}/detalle?fecha_desde={{ fecha_desde }}&fecha_hasta={{ fecha_hasta }}&proveedor_id={{ proveedor_id if proveedor_id is not none else '' }}&articulo_id={{ articulo_id if articulo_id is not none else '' }}">
             <td><input type="checkbox" name="compra_id" value="{{ c.id }}" class="check-fila" form="form-borrado-multiple"></td>
             <td>{{ c.fecha_operacion.strftime("%d/%m/%Y") }}</td>
             <td>{{ c.proveedor_nombre }} ({{ c.codigo_llegada }})</td>
@@ -502,7 +502,7 @@
                pero un renglón que navega sin ser un link no se alcanza con el
                teclado y no dice que se pueda tocar. El link lo hace visible y
                lo hace funcionar sin JS. #}
-            <td><a class="link-detalle" href="/compras/{{ c.id }}/detalle">{{ c.articulo_nombre }}</a></td>
+            <td><a class="link-detalle" href="/compras/{{ c.id }}/detalle?fecha_desde={{ fecha_desde }}&fecha_hasta={{ fecha_hasta }}&proveedor_id={{ proveedor_id if proveedor_id is not none else '' }}&articulo_id={{ articulo_id if articulo_id is not none else '' }}">{{ c.articulo_nombre }}</a></td>
             <td>{{ c.cantidad_cajones|numero }} cajones × {{ magnitudes_del_cajon(c) }}</td>
             <td>{% if c.importe is not none %}{{ c.importe|moneda }}{% else %}<span class="sin-precio">SIN PRECIO</span>{% endif %}</td>
             {# LA SEÑA, vacía si no dejó. En celular no hay cabecera, así que
@@ -546,9 +546,10 @@
               <details class="menu-acciones">
                 <summary>Acciones ▾</summary>
                 <div class="menu-cuerpo">
-                  <a class="boton boton-detalle" href="/compras/{{ c.id }}/detalle">Detalle</a>
-                  {# Los filtros viajan en la URL de editar para que Guardar/Volver vuelvan a ESTA búsqueda. #}
-                  <a class="boton boton-editar" href="/compras/{{ c.id }}/editar?fecha_desde={{ fecha_desde }}&fecha_hasta={{ fecha_hasta }}&proveedor_id={{ proveedor_id if proveedor_id is not none else '' }}&articulo_id={{ articulo_id if articulo_id is not none else '' }}">Editar</a>
+                  {# UN SOLO BOTÓN, "DETALLE" (dueño, 02/10): Editar salió de
+                     la lista y vive adentro del Detalle. Los filtros viajan en
+                     la URL para que Volver y Guardar vuelvan a ESTA búsqueda. #}
+                  <a class="boton boton-detalle" href="/compras/{{ c.id }}/detalle?fecha_desde={{ fecha_desde }}&fecha_hasta={{ fecha_hasta }}&proveedor_id={{ proveedor_id if proveedor_id is not none else '' }}&articulo_id={{ articulo_id if articulo_id is not none else '' }}">Detalle</a>
                   {% if c.tiene_comanda %}
                   <a class="boton boton-ver-foto" href="/compras/{{ c.id }}/foto" target="_blank" rel="noopener">Ver comanda</a>
                   {% endif %}

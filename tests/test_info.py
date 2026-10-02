@@ -229,6 +229,7 @@ PANTALLAS_CON_I = {
     "gerencia_ingreso_retroactivo.html", "gerencia_juntar_proveedores.html", "gerencia_perdidas.html",
     "gerencia_rentabilidad.html", "gerencia_rentabilidad_real.html", "negociar.html",
     "precios_cargar_foto.html", "precios_consulta.html", "precios_vigencias.html",
+    "remito_recibir.html",
     "sistema_casilla_pedidos.html", "vacios_ajustar.html", "vacios_clientes.html",
     "vacios_cotejo.html", "vacios_movimientos.html", "vacios_pendientes.html",
     "vacios_proveedores.html", "vacios_stock.html", "vacios_tipos.html",
@@ -245,7 +246,6 @@ QUEDAN_A_LA_VISTA = [
     ("vacios_tipos.html", "La fecha que elegiste es anterior"),
     ("administracion_stock_inicial.html", "queda sin costear para siempre"),
     ("administracion_stock_inicial.html", "Una caja armada siempre es de alguna ficha"),
-    ("deposito_stock_reingreso.html", "Si el camión volvió ayer"),
     ("deposito_stock_reingreso.html", "El pedido es del"),
     ("deposito_stock_fisico.html", "aunque te parezca que está mal"),
     ("vacios_stock_fisico.html", "Contá los cajones que hay físicamente"),
@@ -255,8 +255,8 @@ QUEDAN_A_LA_VISTA = [
     # y los dos "no se suma" que son reglas del dueño
     ("gerencia_perdidas.html", "<strong>no se suma</strong> con la de"),
     ("gerencia_cajas_perdidas.html", "<strong>ya se cobra</strong>"),
-    # remitos (dueño, 01/10): lo que cambia lo que se carga al recibir
-    ("remito_recibir.html", "cambiá solo lo que el súper anotó distinto"),
+    # (02/10, dueño: la explicación de Recibir remito y el "Si el camión
+    # volvió ayer" del Reingreso pasaron a la "i". Ver test_remito_precarga.)
     ("remito.html", "el remito no mueve stock"),
 ]
 

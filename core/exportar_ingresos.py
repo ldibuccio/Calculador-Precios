@@ -1,4 +1,4 @@
-"""Genera Ingresos a Depósito en PDF y Excel — puro, sin tocar la base.
+"""Genera Resumen proveedores en PDF y Excel — puro, sin tocar la base.
 
 Mismo criterio que core/exportar_retiros.py: banda de encabezado repetida
 en cada página, una tabla por proveedor con su subtotal (así se factura),
@@ -121,7 +121,7 @@ def _dibujar_encabezado(canvas, documento, subtitulo: str):
 
     canvas.setFillColor(colors.black)
     canvas.setFont("Helvetica-Bold", 22)
-    canvas.drawString(x, alto_pagina - OFFSET_TITULO, "Ingresos a Depósito")
+    canvas.drawString(x, alto_pagina - OFFSET_TITULO, "Resumen proveedores")
 
     canvas.setFillColor(GRIS_TEXTO_AYUDA)
     canvas.setFont("Helvetica", 10)
@@ -137,7 +137,7 @@ def _dibujar_encabezado(canvas, documento, subtitulo: str):
 def generar_pdf_ingresos_deposito(
     fecha_desde: date, fecha_hasta: date, filtros_texto: list[str], grupos: list[dict], totales: dict
 ) -> bytes:
-    """Arma el PDF de Ingresos a Depósito: una tabla por proveedor con subtotal + total general al final."""
+    """Arma el PDF del Resumen proveedores: una tabla por proveedor con subtotal + total general al final."""
     buffer = BytesIO()
     subtitulo = _armar_subtitulo(fecha_desde, fecha_hasta, filtros_texto)
     documento = SimpleDocTemplate(
@@ -273,10 +273,10 @@ def generar_pdf_ingresos_deposito(
 def generar_excel_ingresos_deposito(
     fecha_desde: date, fecha_hasta: date, filtros_texto: list[str], grupos: list[dict], totales: dict
 ) -> bytes:
-    """Arma el Excel de Ingresos a Depósito: secciones por proveedor con subtotal + total general al final."""
+    """Arma el Excel del Resumen proveedores: secciones por proveedor con subtotal + total general al final."""
     libro = Workbook()
     hoja = libro.active
-    hoja.title = "Ingresos a Depósito"
+    hoja.title = "Resumen proveedores"
 
     relleno_verde = PatternFill(start_color=VERDE_ENCABEZADO_HEX, end_color=VERDE_ENCABEZADO_HEX, fill_type="solid")
     relleno_verde_claro = PatternFill(start_color="DEEFE3", end_color="DEEFE3", fill_type="solid")
@@ -289,7 +289,7 @@ def generar_excel_ingresos_deposito(
     fuente_total = Font(bold=True, size=13)
 
     fila_actual = 1
-    hoja.cell(row=fila_actual, column=1, value="Ingresos a Depósito")
+    hoja.cell(row=fila_actual, column=1, value="Resumen proveedores")
     for columna in range(1, 14):
         celda = hoja.cell(row=fila_actual, column=columna)
         celda.fill = relleno_verde

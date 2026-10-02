@@ -105,13 +105,13 @@ se lee como el listado entero.
   el nombre del filtro se lee del catálogo (`_textos_de_filtros`), no de la
   primera fila: sin filas, el encabezado igual dice qué se filtró.
 - **Un link que lleva de una pantalla a otra también lleva los filtros que
-  las dos comparten** (Movimientos del depósito → Planilla para pagar).
+  las dos comparten** (Movimientos del depósito → Resumen proveedores).
 
 El 01/10 se revisaron las 32 rutas que exportan. Tres tenían el error:
 
 - **Consultar precios**: filtrado por artículo, el PDF y el Excel bajaban
   la lista entera (el link no llevaba `ficha_id` y la ruta no lo aplicaba).
-- **Movimientos del depósito → Planilla para pagar**: el link pasaba solo las
+- **Movimientos del depósito → Resumen proveedores**: el link pasaba solo las
   fechas, así que la planilla, y con ella su PDF y su Excel, salían con todos
   los proveedores. Es el camino más probable del caso de Lionel.
 - **Buscar compras**: filtraba bien, pero el encabezado no decía el proveedor
@@ -147,9 +147,14 @@ el listener va en `document` para que ande también en lo que llega por
   las consecuencias y los modales. También 14 avisos que tienen clase de
   ayuda pero cambian lo que se hace: el cierre de la ficha, el alias, "Ver qué
   pasa" y el corte al mover de fecha, la fecha anterior en tipos de envase,
-  los dos del stock inicial, los dos del reingreso, "contá lo que hay en el
+  los dos del stock inicial, la fecha del pedido en el reingreso, "contá lo que hay en el
   piso" en los dos conteos, "contalas a la mañana" en Cajas, la guía R de
   "vino armada" y el "Revisá la guía R, no ajustes el stock" del Cotejo.
+- **Recibir remito y Reingreso por rechazo, 02/10 (dueño)**: su texto
+  explicativo pasó a la "i", que arranca cerrada. Eso incluye la ayuda de
+  Recibir remito ("cambiá solo lo que el súper anotó distinto") y el "Si el
+  camión volvió ayer" del Reingreso, que hasta ese día estaban a la vista.
+  En el Reingreso queda a la vista el renglón de la fecha del pedido.
 - **Los de UN renglón quedan como están.** La "i" pide un toque para leer lo
   que ya ocupa 20px.
 - **Una ayuda que mezcla las dos cosas se parte**: lo que cambia la acción
@@ -3807,7 +3812,7 @@ mirar y no prohibir:
 |---|---|---|
 | Buscar Compras | 7 rótulos **+ `#check-todas`** | apagó el "seleccionar todas" |
 | Compras Pendientes | 6 rótulos, nada más | seguro |
-| Ingresos a Depósito | 8 rótulos, nada más | seguro |
+| Resumen proveedores | 8 rótulos, nada más | seguro |
 | Fichas | 8 rótulos, nada más | seguro |
 
 En Buscar Compras el "seleccionar todas" del borrado múltiple vive en la
@@ -4457,7 +4462,7 @@ Son DOS operaciones y se registran separadas; en las dos el COSTO SE CANCELA
 
 **Una devolución al proveedor vale EXACTAMENTE `compras.importe` de la compra
 a la que está atada**, por los dos caminos, en la Rentabilidad Real, en
-Movimientos del depósito y en la planilla para pagar (pantalla, PDF y Excel).
+Movimientos del depósito y en el Resumen proveedores (pantalla, PDF y Excel).
 Nunca el costo del armado: ése sale del FIFO por kilo y mezcla compras con
 distinto peso por cajón (Frutamax, 28/09: $59.822,75 por un cajón de Granny
 pagado a $60.000).
@@ -4504,11 +4509,11 @@ entradas de compra, devoluciones por rechazo, devoluciones desde depósito y
 segunda remitida al puesto, filtrados por fecha (30 días por defecto, 90
 máximo), tipo, proveedor y artículo, con Excel. Agrupado por proveedor con la
 cuenta arriba ("Entraron · se devolvieron · neto", en bultos y en plata; si una
-compra no tiene precio lo dice), para conciliar. La planilla para pagar que
+compra no tiene precio lo dice), para conciliar. El Resumen proveedores que
 vivía ahí pasó a `/administracion/ingresos/pagar`, linkeada desde la pantalla.
 Los textos y el Excel están en `core/movimientos_deposito.py`.
 
-**La planilla para pagar resta las devoluciones** (dueño, 01/10): cada
+**El Resumen proveedores resta las devoluciones** (dueño, 01/10): cada
 devolución al proveedor (por rechazo o desde depósito) es un renglón NEGATIVO
 del día en que se devolvió, en el grupo de su proveedor, con la compra, el
 artículo, los bultos, el importe y el tipo. El subtotal y el total son lo que
@@ -4516,7 +4521,7 @@ entró menos lo devuelto, en la pantalla, el PDF y el Excel. El importe sale de
 la MISMA consulta que Movimientos del depósito (`_devoluciones_para_pagar`),
 y si la devolución vuelve con seña, la seña de esos cajones también se resta.
 Solo con el estado "A pagar" o "Todas": los otros dos son para controlar.
-Lo cuida `test_la_PLANILLA_PARA_PAGAR_resta_las_devoluciones...`, contra
+Lo cuida `test_el_RESUMEN_PROVEEDORES_resta_las_devoluciones...`, contra
 Postgres.
 
 Las fotos de la devolución usan el mismo parcial que el ingreso directo
@@ -4908,6 +4913,26 @@ Migraciones `db/tareas_1` a `_3`, verificación en `_4`. Lo cuida
 
 Migraciones `db/fotos_6` a `fotos_8`, verificación en `fotos_9`. Lo cuida
 `tests/test_fotos.py`, contra Postgres.
+
+## Buscar compras: Detalle y Editar son UNA pantalla (02/10, dueño)
+
+- **En la lista hay un solo "Detalle"**: Editar salió del menú de acciones
+  (quedan Detalle, Vino armada y Eliminar). El Detalle se lee, y adentro
+  tiene un solo botón "Editar".
+- **Editar es la pantalla de siempre** (`/compras/{id}/editar`, sin clave):
+  artículo, cajones, contenido por cajón, la segunda magnitud, importe,
+  seña, tipo de retiro, "viene armada" y agregar artículo, con los mismos
+  bloqueos por estado de antes. Abajo cuelga la puerta a lo de Gerencia
+  (`/gerencia/compras/{id}/editar`, pide su clave): las dos fechas,
+  corregir recepción, deshacerla, cambiar el proveedor, desmarcar "vino
+  armada" y eliminar. **No cambió ningún permiso.**
+- Los filtros de la búsqueda viajan Buscar → Detalle → Editar, y Guardar
+  vuelve al Detalle; su Volver vuelve a la misma búsqueda.
+
+## Reingreso por rechazo: el motivo viene escrito (02/10, dueño)
+
+"Rechazo por calidad", editable o borrable. Vacío se comporta como siempre
+(obligatorio), y en un reintento vuelve lo que se mandó, aunque sea vacío.
 
 ## Buscar compras: la SEÑA (28/09, dueño)
 

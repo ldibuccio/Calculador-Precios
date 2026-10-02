@@ -2259,7 +2259,9 @@ def test_ver_buscar_compras_el_link_editar_lleva_los_filtros_activos():
         respuesta = cliente.get("/compras/buscar?fecha_desde=2026-07-28&fecha_hasta=2026-07-29&proveedor_id=200")
 
     assert respuesta.status_code == 200
-    assert "/editar?fecha_desde=2026-07-28&fecha_hasta=2026-07-29&proveedor_id=200" in respuesta.text
+    # Desde el 02/10 viajan en el link del DETALLE: Editar vive adentro.
+    assert "/detalle?fecha_desde=2026-07-28&fecha_hasta=2026-07-29&proveedor_id=200" in respuesta.text
+    assert "/editar?" not in respuesta.text.split("</style>")[-1]
 
 
 def test_pantallas_de_carga_multiple_cancelan_al_hub():
@@ -2798,8 +2800,10 @@ def test_la_tarjeta_entera_lleva_al_DETALLE_y_no_depende_solo_del_JS():
         texto = cliente.get("/compras/buscar").text
 
     marcado = texto.split("</style>")[-1]
-    assert '<tr data-detalle="/compras/1/detalle">' in marcado
-    assert '<a class="link-detalle" href="/compras/1/detalle">' in marcado
+    # Los tres llevan los filtros de la búsqueda (02/10): el Volver del
+    # Detalle vuelve a ELLA.
+    assert re.search(r'<tr data-detalle="/compras/1/detalle\?fecha_desde=[^"]*">', marcado)
+    assert re.search(r'<a class="link-detalle" href="/compras/1/detalle\?fecha_desde=[^"]*">', marcado)
     # Y el click NO se lleva puesto lo que ya hace algo: sin esta lista, abrir
     # el menú navegaría al Detalle en vez de abrirlo.
     assert 'closest("a, button, input, label, details, summary, form")' in texto
@@ -2807,7 +2811,7 @@ def test_la_tarjeta_entera_lleva_al_DETALLE_y_no_depende_solo_del_JS():
     # palabra "Detalle", que aparece en los comentarios de la plantilla
     # explicando justamente esto (corolario 38).
     cuerpo = marcado.split('<div class="menu-cuerpo">')[1].split("</details>")[0]
-    assert '<a class="boton boton-detalle" href="/compras/1/detalle">Detalle</a>' in cuerpo
+    assert re.search(r'<a class="boton boton-detalle" href="/compras/1/detalle\?fecha_desde=[^"]*">Detalle</a>', cuerpo)
 
 
 def test_el_menu_pone_DETALLE_PRIMERO_y_ELIMINAR_ULTIMO():
@@ -2832,7 +2836,8 @@ def test_el_menu_pone_DETALLE_PRIMERO_y_ELIMINAR_ULTIMO():
     # lista propia. La compra 1 del fixture es recepcionada y sin marca, así
     # que le toca "Vino armada"; no tiene ninguna de las dos fotos.
     encontrado = re.findall(r">([A-ZÁÉÍÓÚÑ][^<>]*?)</(?:a|button)>", cuerpo)
-    assert encontrado == ["Detalle", "Editar", "Vino armada", "Eliminar"], encontrado
+    # "Editar" salió de la lista el 02/10 (dueño): vive adentro del Detalle.
+    assert encontrado == ["Detalle", "Vino armada", "Eliminar"], encontrado
 
 
 def test_el_link_del_nombre_SE_VE_como_link():
@@ -2881,7 +2886,8 @@ def test_las_acciones_viven_ADENTRO_del_menu_y_los_indicadores_AFUERA():
         marcado = cliente.get("/compras/buscar").text.split("</style>")[-1]
 
     cuerpo = marcado.split('<div class="menu-cuerpo">')[1].split("</details>")[0]
-    assert ">Editar<" in cuerpo and ">Eliminar<" in cuerpo
+    # Editar salió de la lista el 02/10 (dueño): vive adentro del Detalle.
+    assert ">Detalle<" in cuerpo and ">Eliminar<" in cuerpo and ">Editar<" not in cuerpo
     # Los indicadores están en la celda pero ANTES del <details>.
     antes_del_menu = marcado.split('<details class="menu-acciones">')[0]
     assert 'class="indicadores"' in antes_del_menu
@@ -2943,7 +2949,8 @@ def test_buscar_compras_muestra_LAS_DOS_FOTOS_y_dice_cual_falta():
     # Recepción, que vive adentro del Detalle. El click de la fila anda, en
     # escritorio también; lo que no existía era algo que dijera que se puede
     # entrar.
-    assert texto.count(">Editar<") == 4
+    # Y desde el 02/10 (dueño) Editar salió de la lista: vive en el Detalle.
+    assert texto.count(">Editar<") == 0
     assert texto.count(">Detalle<") == 4
 
 
@@ -3958,56 +3965,48 @@ def test_ver_detalle_compra_ingreso_directo_muestra_etiqueta_propia():
     assert "Ingreso directo en Depósito" in respuesta.text
 
 
-def test_el_detalle_tiene_UNA_SOLA_puerta_a_gerencia():
-    """Del 19/09, y es del dueño: "eso es una pantalla partida en tres entradas".
-
-    El Detalle tenía DOS botones —"Corregir recepción", condicionado a la
-    recepcionada, y "Mover de fecha"— y los dos terminaban en la misma zona.
-    El destino ya era un hub y sigue ofreciendo Corregir recepción con la
-    MISMA condición, así que unificar no le cierra la puerta a nadie.
-
-    EL ASSERT ES EL CONTEO y no la presencia: afirmar que el hub está pasa
-    igual con los dos que sobran al lado (corolario 60, el conjunto
-    ENCONTRADO contra el DECIDIDO).
-    """
-    with (
-        patch("app.main.listar_fotos_de_recepcion", return_value=[]),
-        patch("app.main.obtener_detalle_compra", return_value=COMPRA_DETALLE_DE_PRUEBA),
-        patch("app.main.listar_fotos_de_guia", return_value=[]),
-        patch("app.main.listar_fotos_de_recepcion", return_value=[]),
-    ):
-        respuesta = cliente.get("/compras/30/detalle")
-
-    assert respuesta.status_code == 200
-    marcado = respuesta.text.split("</style>")[-1]
-    puertas = re.findall(r'href="(/gerencia/[^"]+)"', marcado)
-    assert puertas == ["/gerencia/compras/30/editar"], puertas
-    assert "Corregir o eliminar compra (Gerencia)" in marcado
-    # Y la URL VIEJA no vuelve: /mover-fecha es un 301 desde que la pantalla
-    # creció, así que un botón que apunte ahí anda y nombra lo que ya no es.
-    assert "/mover-fecha" not in marcado
-
-
-def test_la_puerta_a_gerencia_esta_TAMBIEN_en_la_compra_NO_recepcionada():
-    """Corregir o eliminar aplica a CUALQUIERA, y el botón viejo no.
-
-    "Corregir recepción" colgaba de `estado == "recepcionado"`. Si la puerta
-    única heredara esa condición, una compra pendiente se quedaría sin forma
-    de llegar a eliminarse — que es justo lo que el dueño fue a probar.
-    """
-    compra = dict(COMPRA_DETALLE_DE_PRUEBA, estado="pendiente")
+def _detalle_y_editar(estado):
+    compra = dict(COMPRA_DETALLE_DE_PRUEBA, estado=estado)
     with (
         patch("app.main.listar_fotos_de_recepcion", return_value=[]),
         patch("app.main.obtener_detalle_compra", return_value=compra),
         patch("app.main.listar_fotos_de_guia", return_value=[]),
-        patch("app.main.listar_fotos_de_recepcion", return_value=[]),
     ):
-        respuesta = cliente.get("/compras/30/detalle")
+        detalle = cliente.get("/compras/30/detalle?fecha_desde=2026-07-28")
+    with (
+        patch("app.main.obtener_compra", return_value=dict(COMPRA_DE_PRUEBA, estado=estado)),
+        patch("app.main.listar_articulos", return_value=ARTICULOS_DEL_CATALOGO),
+        patch("app.main.guias_r_congeladas_de_la_compra", return_value=[]),
+    ):
+        editar = cliente.get("/compras/30/editar?fecha_desde=2026-07-28")
+    return detalle, editar
 
-    assert respuesta.status_code == 200
-    marcado = respuesta.text.split("</style>")[-1]
-    assert 'href="/gerencia/compras/30/editar"' in marcado
-    assert "/corregir-recepcion" not in marcado
+
+@pytest.mark.parametrize("estado", ["recepcionado", "pendiente"])
+def test_el_detalle_tiene_UN_SOLO_Editar_y_la_puerta_a_gerencia_vive_ADENTRO(estado):
+    """Del 02/10, y es del dueño: Detalle y Editar son UNA pantalla. El Detalle
+    se lee y tiene un solo "Editar"; lo que solo cambia Gerencia sigue
+    pidiendo su clave, colgado de Editar. No cambia ningún permiso.
+
+    Con la compra recepcionada Y con la pendiente: corregir o eliminar aplica
+    a CUALQUIERA (19/09), así que la puerta no puede heredar una condición
+    de estado. EL ASSERT ES EL CONTEO, no la presencia (corolario 60).
+    """
+    detalle, editar = _detalle_y_editar(estado)
+    assert detalle.status_code == 200 and editar.status_code == 200
+    marcado = detalle.text.split("</style>")[-1]
+    assert re.findall(r'href="(/gerencia/[^"]+)"', marcado) == []
+    assert re.findall(r'<a class="boton-editar-detalle" href="([^"]+)">Editar</a>', marcado) == [
+        "/compras/30/editar?fecha_desde=2026-07-28"]
+    # La pantalla de Editar incluye parciales con su propio <style>, así que
+    # el corte por el último </style> se lleva el pie (corolario 50): se mira
+    # el documento entero, donde un href solo puede ser marcado.
+    marcado = editar.text
+    assert re.findall(r'href="(/gerencia/[^"]+)"', marcado) == ["/gerencia/compras/30/editar"]
+    # El aviso de la clave se mira EN EL BOTÓN (corolario 4).
+    boton = re.search(r'<a[^>]*href="/gerencia/compras/30/editar"[^>]*>(.*?)</a>', marcado, re.S)
+    assert "pide la clave de Gerencia" in boton.group(1)
+    assert "/mover-fecha" not in marcado and "/corregir-recepcion" not in marcado
 
 
 def test_ver_detalle_compra_con_rechazo_parcial_muestra_el_registro():
@@ -5451,7 +5450,8 @@ def test_editar_compra_exitosa_redirige_a_compras():
         )
 
     assert respuesta.status_code == 303
-    assert respuesta.headers["location"] == "/compras/buscar"
+    # Al guardar se vuelve al DETALLE (02/10: Detalle y Editar son una pantalla).
+    assert respuesta.headers["location"] == "/compras/30/detalle"
     # COMPRA_DE_PRUEBA está pendiente/pendiente: ni cantidad ni precio
     # están bloqueados, se actualizan los dos.
     # La estructura ENTERA, el None de la marca incluido: sin la marca en
@@ -5837,7 +5837,7 @@ def test_ver_editar_compra_muestra_boton_volver_rojo():
         respuesta = cliente.get("/compras/30/editar")
 
     assert respuesta.status_code == 200
-    assert '<a class="boton boton-peligro" href="/compras/buscar" id="boton-volver" onclick="return confirmarVolver()">Volver</a>' in respuesta.text
+    assert '<a class="boton boton-peligro" href="/compras/30/detalle" id="boton-volver" onclick="return confirmarVolver()">Volver</a>' in respuesta.text
     assert "Volver a compras" not in respuesta.text
     assert "confirmarVolver" in respuesta.text
 
@@ -5908,7 +5908,7 @@ def test_editar_compra_exitosa_conserva_los_filtros_de_la_busqueda():
 
     assert respuesta.status_code == 303
     location = respuesta.headers["location"]
-    assert location.startswith("/compras/buscar?")
+    assert location.startswith("/compras/30/detalle?")
     assert "fecha_desde=2026-07-28" in location
     assert "proveedor_id=7" in location
 
@@ -5924,8 +5924,8 @@ def test_ver_editar_compra_con_filtros_los_lleva_en_el_form_y_en_volver():
     # El form postea a la misma URL con query (los filtros sobreviven al
     # guardado y a los reintentos por error de validación).
     assert 'action="/compras/30/editar?fecha_desde=2026-07-28&amp;fecha_hasta=2026-07-29"' in respuesta.text
-    # Y el botón Volver vuelve a esa misma búsqueda.
-    assert 'href="/compras/buscar?fecha_desde=2026-07-28&amp;fecha_hasta=2026-07-29"' in respuesta.text
+    # Y el botón Volver vuelve al Detalle, con la búsqueda.
+    assert 'href="/compras/30/detalle?fecha_desde=2026-07-28&amp;fecha_hasta=2026-07-29"' in respuesta.text
 
 
 def test_eliminar_compra_con_foto_que_era_la_unica_referencia_la_borra_tambien_del_storage():
@@ -10766,7 +10766,7 @@ def test_ver_inicio_puesto_es_el_primer_boton():
 
 
 def test_ver_inicio_administracion_y_puesto_son_modulos_plenos():
-    # Administración ya es un módulo real (Ingresos a Depósito), igual que
+    # Administración ya es un módulo real (Resumen proveedores), igual que
     # Puesto: los dos van con botón pleno, sin "Próximamente".
     respuesta = cliente.get("/inicio")
 
@@ -12479,11 +12479,11 @@ def test_exportar_ingresos_deposito_pdf_sin_tope_con_subtotales_y_marcas():
 
     assert respuesta.status_code == 200
     assert respuesta.headers["content-type"] == "application/pdf"
-    assert "Ingresos_Deposito_2026-08-17_a_2026-08-18" in respuesta.headers["content-disposition"]
+    assert "Resumen_Proveedores_2026-08-17_a_2026-08-18" in respuesta.headers["content-disposition"]
     # SIN tope: el export no pasa limite.
     mock_buscar.assert_called_once_with(date(2026, 8, 17), date(2026, 8, 18), None, None, "recepcionado")
     texto = _texto_del_pdf_de_respuesta(respuesta.content)
-    assert "Ingresos a Depósito" in texto
+    assert "Resumen proveedores" in texto
     assert "Saturno (N07P41)" in texto
     # El subtotal del PDF es lo a depositar, con las dos partes al lado.
     assert "Subtotal" in texto
@@ -12510,7 +12510,7 @@ def test_exportar_ingresos_deposito_excel_devuelve_archivo_adjunto():
 
     assert respuesta.status_code == 200
     assert respuesta.headers["content-type"] == "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
-    assert "Ingresos_Deposito_2026-08-17_a_2026-08-18" in respuesta.headers["content-disposition"]
+    assert "Resumen_Proveedores_2026-08-17_a_2026-08-18" in respuesta.headers["content-disposition"]
     assert respuesta.content.startswith(b"PK")  # xlsx es un zip
 
     # La seña viaja en sus dos columnas propias: por bulto y el total señado.
@@ -27518,28 +27518,6 @@ def test_desde_el_detalle_se_llega_a_corregir_y_la_clave_devuelve_A_ESA_COMPRA()
             cliente.cookies.clear()
 
 
-def test_el_detalle_de_la_compra_sigue_teniendo_el_boton_y_avisa_que_pide_clave():
-    """Que el botón diga Gerencia no es decoración: sin eso, el que lo toca
-    se encuentra una pantalla de clave sin entender por qué."""
-    compra = dict(COMPRA_DETALLE_DE_PRUEBA, estado="recepcionado")
-    with (
-        patch("app.main.listar_fotos_de_recepcion", return_value=[]),
-        patch("app.main.obtener_detalle_compra", return_value=compra),
-        patch("app.main.listar_fotos_de_guia", return_value=[]),
-        patch("app.main.listar_fotos_de_recepcion", return_value=[]),
-    ):
-        respuesta = cliente.get("/compras/30/detalle")
-
-    marcado = respuesta.text.split("</style>")[-1]
-    # El 19/09 las dos puertas se unificaron en el hub. La RAZÓN de este test
-    # no envejeció —que el botón avise de la clave— pero la URL que nombraba
-    # sí: apuntaba a una de las dos que se fueron.
-    assert 'href="/gerencia/compras/30/editar"' in marcado
-    # Y el aviso se mira EN EL BOTÓN: un "Gerencia" suelto en la respuesta lo
-    # cumple la barra, un comentario o la pantalla de al lado (corolario 4).
-    boton = re.search(r'<a[^>]*href="/gerencia/compras/30/editar"[^>]*>(.*?)</a>', marcado, re.S)
-    assert boton is not None and "(Gerencia)" in boton.group(1)
-
 
 # --- Corregir Recepción: la lista de dependencias y el segundo toque ---
 
@@ -32363,29 +32341,33 @@ def test_mover_de_fecha_con_la_guia_R_EN_ORIGEN_viva_NO_DIBUJA_EL_FORMULARIO():
 
 
 def test_la_puerta_a_gerencia_no_cuelga_de_NINGUN_condicional():
-    """El link va AFUERA de todo `{% if %}`, y no solo del de la recepción.
+    """Corregir o eliminar aplica a CUALQUIERA: colgarlo de una condición es
+    abrir la puerta para el subconjunto equivocado.
 
-    Corregir o eliminar aplica a CUALQUIERA: colgarlo de una condición es
-    abrir la puerta para el subconjunto equivocado — el barrido de pantallas
-    linkeadas saldría en verde y no habría forma de llegar desde la mayoría
-    de las filas.
-
-    ESTE TEST SE REESCRIBIÓ EL 19/09 y no se reapuntó, que es la diferencia.
-    La versión vieja partía el marcado por
-    `{% if compra.estado == "recepcionado" %}` para exigir que el link no
-    estuviera adentro. Al unificar las dos puertas ese `if` se fue del
-    archivo, así que el split devolvía UNA sola parte, el link estaba en ella
-    y el assert pasaba SIEMPRE — un test que no puede fallar (corolario 47),
-    con el nombre del que sí podía. Contar el balance de if/endif sí puede.
+    Desde el 02/10 (dueño) el Detalle tiene UN "Editar" y la puerta a
+    Gerencia vive adentro de Editar. Se cuenta el balance de if/endif antes
+    de cada link (un split por un `if` que desaparece pasa siempre,
+    corolario 47): el Editar del Detalle no cuelga de nada, y la puerta de
+    Gerencia cuelga SOLO del `modo == "editar"` de la plantilla, que es la
+    pantalla de edición misma.
     """
-    marcado = io.open("templates/compra_detalle.html", encoding="utf-8").read()
-    marcado = marcado.split("</style>")[-1]
-    corte = marcado.find('href="/gerencia/compras/{{ compra.id }}/editar"')
-    assert corte != -1, "no está la puerta a Gerencia en el Detalle"
+    def condicionales_antes(archivo, ancla):
+        marcado = io.open(archivo, encoding="utf-8").read().split("</style>")[-1]
+        corte = marcado.find(ancla)
+        assert corte != -1, f"no está {ancla} en {archivo}"
+        antes = re.sub(r"\{#.*?#\}", "", marcado[:corte], flags=re.S)
+        abiertos = []
+        for m in re.finditer(r"\{%-?\s*(if|endif)\b([^%]*)%\}", antes):
+            if m.group(1) == "if":
+                abiertos.append(m.group(2).strip())
+            elif abiertos:
+                abiertos.pop()
+        return abiertos
 
-    antes = marcado[:corte]
-    abiertos = len(re.findall(r"\{%-?\s*if\b", antes)) - len(re.findall(r"\{%-?\s*endif\b", antes))
-    assert abiertos == 0, f"la puerta quedó adentro de {abiertos} condicional(es)"
+    assert condicionales_antes("templates/compra_detalle.html",
+                               'href="/compras/{{ compra.id }}/editar') == []
+    assert condicionales_antes("templates/compra_form.html",
+                               'href="/gerencia/compras/{{ compra.id }}/editar"') == ['modo == "editar"']
 
 
 def test_las_DOS_pantallas_de_compra_no_se_llaman_IGUAL():
