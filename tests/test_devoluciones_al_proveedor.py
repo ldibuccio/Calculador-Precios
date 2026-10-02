@@ -192,25 +192,26 @@ def test_la_LISTA_de_vacios_y_la_PILA_dicen_lo_mismo_con_las_devoluciones(base):
 
 # --- el costo en la Rentabilidad Real ------------------------------------------
 
-def test_el_VALOR_de_la_devolucion_es_el_PRECIO_DE_SU_COMPRA_si_iba_en_su_cajon(base):
+def test_el_VALOR_de_la_devolucion_es_el_PRECIO_DE_SU_COMPRA_en_cajon_y_en_caja_de_Dia(base):
     """Regla de Lionel (01/10): vale EXACTAMENTE el precio por cajón de la
     compra (`compras.importe`), y no el costo del armado (77, el congelado).
-    En caja de Día y sin compra queda el congelado (decisión del 30/09). Una
-    compra SIN PRECIO da None, no el congelado: caer ahí sería la regla vieja."""
+    En caja de Día con compra atada, también (opción B, 02/10). Sin compra
+    queda el congelado. Una compra SIN PRECIO da None, no el congelado: caer
+    ahí sería la regla vieja."""
     d, sql, rechazo = base
     sql("""INSERT INTO compras (id, proveedor_id, articulo_id, fecha_operacion, cantidad_cajones,
                contenido_por_cajon, cantidad_kilos, importe, estado, procesada_el,
                cantidad_cajones_real, contenido_por_cajon_real) OVERRIDING SYSTEM VALUE
            VALUES (14, 1, 1, '2026-09-07', 3, 16, 48, NULL, 'recepcionado', '2026-09-07 18:00-03', 3, 16)""")
     rechazo(1, 2, compra_id=12)        # cajón: $120 de la compra 12
-    rechazo(2, 2, compra_id=12)        # caja de Día: queda el congelado
+    rechazo(2, 2, compra_id=12)        # caja de Día: también $120 (opción B)
     rechazo(1, 1, proveedor_id=1)      # viejo, sin compra: el congelado
     rechazo(1, 1, compra_id=14)        # cajón, compra sin precio: None
     filas = d.devoluciones_vinculadas_por_rango(1, date(2026, 9, 1), date(2026, 9, 30))
     def clave(t):
         return tuple(-1 if v is None else float(v) for v in t)
     obtenido = sorted(((f["ficha_id"], f["valor_por_bulto"], f["vale_la_compra"]) for f in filas), key=clave)
-    assert obtenido == sorted([(1, 120, True), (2, 77, False), (1, 77, False), (1, None, True)], key=clave)
+    assert obtenido == sorted([(1, 120, True), (2, 120, True), (1, 77, False), (1, None, True)], key=clave)
 
 
 def test_MOVIMIENTOS_y_la_PLANILLA_valen_el_precio_de_la_compra_y_SIN_PRECIO_no_cae_al_armado(base):
@@ -226,9 +227,53 @@ def test_MOVIMIENTOS_y_la_PLANILLA_valen_el_precio_de_la_compra_y_SIN_PRECIO_no_
     assert sorted(((m["compra_id"], m["bultos"], m["valor"]) for m in filas),
                   key=lambda t: (t[0], t[1])) == [
         (12, -2.0, -240.0),      # cajón: 2 × $120, no 2 × $77
-        (12, -1.0, -77.0),       # caja de Día: el congelado
+        (12, -1.0, -120.0),      # caja de Día: también el precio (opción B)
         (14, -1.0, None),        # sin precio: "sin precio", no $77
     ]
+
+
+def test_CHERRY_en_caja_de_Dia_vale_2_cajones_de_su_compra_y_no_toca_VACIOS(base):
+    """Caso real de Frutamax (movimiento 199): 2 bultos de Tomate Cherry en
+    caja de Día, compra 826 a $30.000, costo del armado $30.523,26. Con la
+    opción B (Lionel, 02/10) vale 2 × $30.000 = $60.000 en Movimientos y en
+    la planilla, y la Rentabilidad nombra la diferencia contra el armado:
+    2 × (30.000 − 30.523,26) = −1.046,52.
+
+    Y la caja de Día NO es un cajón del proveedor: aunque la compra dejó seña,
+    ese rechazo no sale de Vacíos. El valor cambió; los cajones, no."""
+    from core.costo_real import calcular_rentabilidad_real
+    from tests.test_costo_real import MARGEN, _armado, _datos, _devolucion
+    d, sql, rechazo = base
+    sql("""INSERT INTO compras (id, proveedor_id, articulo_id, fecha_operacion, cantidad_cajones,
+               contenido_por_cajon, cantidad_kilos, importe, sena, estado, procesada_el,
+               cantidad_cajones_real, contenido_por_cajon_real) OVERRIDING SYSTEM VALUE
+           VALUES (826, 1, 1, '2026-09-07', 4, 16, 64, 30000, 500, 'recepcionado',
+                   '2026-09-07 18:00-03', 4, 16)""")
+    pila_antes = _pila(d, 1)
+    rechazo(2, 2, compra_id=826, costo=30523.26)
+    assert _pila(d, 1) == pila_antes, "la caja de Día no es un cajón del proveedor"
+    assert not [m for m in d.movimientos_de_vacios(1, limite=1000)
+                if m["tipo"] == "devolucion_llena" and not m["anulada"]]
+    movs = [m for m in d.movimientos_del_deposito(date(2026, 9, 1), date(2026, 9, 30), tipo="rechazo")
+            if m["compra_id"] == 826]
+    assert [(m["bultos"], m["valor"], m["sena"]) for m in movs] == [(-2.0, -60000.0, None)]
+    from app.main import _devoluciones_para_pagar, _fila_de_devolucion
+    para_pagar = [_fila_de_devolucion(m) for m in _devoluciones_para_pagar(
+        date(2026, 9, 1), date(2026, 9, 30), None, None) if m["compra_id"] == 826]
+    assert [(r["total"], r["importe"], r["total_sena"], r["total_a_depositar"]) for r in para_pagar] == [
+        (-60000.0, 30000.0, None, -60000.0)]
+    fila, = [f for f in d.devoluciones_vinculadas_por_rango(1, date(2026, 9, 1), date(2026, 9, 30))
+             if float(f["valor_por_bulto"] or 0) == 30000]
+    assert fila["vale_la_compra"] is True and float(fila["costo_por_bulto"]) == 30523.26
+    fecha = date(2026, 8, 25)
+    devolucion = dict(_devolucion(float(fila["bultos"]), fecha, costo_por_bulto=float(fila["costo_por_bulto"]),
+                                  destino=fila["destino_rechazo"]),
+                      valor_por_bulto=float(fila["valor_por_bulto"]), vale_la_compra=fila["vale_la_compra"])
+    renta = calcular_rentabilidad_real(
+        _datos([_armado(fecha, 25, 500.0)]), {fecha: {901: dict(MARGEN)}}, 1, fecha, fecha,
+        devoluciones=[devolucion],
+    )["grupos"][0]["filas"][0]
+    assert round(renta["diferencia_devolucion_proveedor"], 2) == -1046.52
 
 
 def test_la_Rentabilidad_lee_el_valor_de_la_MISMA_regla_que_Movimientos():
@@ -242,6 +287,8 @@ def test_la_Rentabilidad_lee_el_valor_de_la_MISMA_regla_que_Movimientos():
     assert "_SQL_VALOR_POR_BULTO_DE_LA_DEVOLUCION + \"\"\" AS valor_por_bulto" in fuente
     assert "_SQL_DEVOLUCION_VALE_LA_COMPRA + \"\"\" AS vale_la_compra" in fuente
     assert not hasattr(d, "_SQL_COSTO_DE_LA_COMPRA_DEVUELTA")
+    # Opción B (02/10): la regla del VALOR no pregunta por la caja de Día.
+    assert "envase_id" not in d._SQL_DEVOLUCION_VALE_LA_COMPRA
 
 
 # --- Movimientos del depósito --------------------------------------------------

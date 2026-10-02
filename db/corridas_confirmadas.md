@@ -784,3 +784,19 @@ PALMALA   devolucion_sector (tras el bloque 2) · columna 1 · valida 1 · coher
 `coherente 1` es el CHECK puesto. Con población 0 en las dos bases no hubo
 devoluciones que completar: el código viejo no cargó ninguna entre los dos
 bloques. La tanda de `devolucion_sector` queda cerrada. Palmala no vota.
+
+## 02/10 — `devolucion_valor_2`: el movimiento 170 atado a la compra 807
+
+Corrido por el dueño SOLO en Frutamax (el movimiento 170 es de esa base; en
+Palmala no aplica). La verificación (`devolucion_valor_3`, cuya fila se llama
+`devolucion_valor_2`), corrida aparte del `do`, la hizo el Claude con acceso de
+lectura:
+
+```
+FRUTAMAX  devolucion_valor_2 · atada 1 · sin_proveedor_suelto 1 · compra 807 · precio 60.000 · costo del armado 59.822,75 · valor nuevo 600.000 · población 10
+```
+
+`atada 1` y `sin_proveedor_suelto 1`: el rechazo ya no apunta al proveedor
+suelto sino a la compra 807. El valor nuevo es 10 × $60.000, el precio por
+cajón de la compra, y no 10 × $59.822,75 del armado. La población son los 10
+rechazos al proveedor no anulados de la base.
