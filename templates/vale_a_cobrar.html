@@ -57,13 +57,24 @@
   .salida button.peligro { background: #dc2626; }
   .diferencia { font-weight: 700; }
   /* LAS FOTOS DEL VALE (dueño, 30/09): la original y las anexadas, en orden,
-     cada una con su origen. Ninguna tiene botón de borrar. */
+     cada una con su origen. Gerencia las borra y reemplaza (dueño, 02/10). */
   .fotos-vale { display: flex; flex-wrap: wrap; gap: 0.6rem; }
   .foto-vale { flex: 1 1 9rem; max-width: 12rem; }
   .foto-vale a { display: block; }
   .foto-vale img { width: 100%; height: 9rem; object-fit: cover; border-radius: 8px; background: #eee; display: block; }
   .foto-vale-origen { display: block; font-size: 0.82rem; color: #555; margin-top: 0.25rem; }
-  .anexar input[type=file] { position: absolute; width: 1px; height: 1px; opacity: 0; }
+  .anexar input[type=file], .foto-accion input[type=file] { position: absolute; width: 1px; height: 1px; opacity: 0; }
+  .foto-accion { margin-top: 0.4rem; }
+  .foto-accion summary { min-height: 44px; display: flex; align-items: center; justify-content: center;
+    border: 1px solid #2563eb; border-radius: 8px; color: #2563eb; font-weight: 600; cursor: pointer; list-style: none; }
+  .foto-accion form { display: flex; flex-direction: column; gap: 0.4rem; margin-top: 0.4rem; }
+  .foto-accion label.chico { font-size: 0.85rem; display: flex; gap: 0.4rem; align-items: center; min-height: 44px; }
+  .foto-accion label.boton-anexar, .foto-accion button {
+    display: flex; align-items: center; justify-content: center; min-height: 44px; border-radius: 8px;
+    font-weight: 600; font-size: 0.95rem; cursor: pointer; }
+  .foto-accion label.boton-anexar { border: 1px solid #2563eb; color: #2563eb; background: #fff; }
+  .foto-accion button { border: none; background: #dc2626; color: #fff; }
+  .foto-borrada { display: block; font-size: 0.82rem; color: #991b1b; margin-top: 0.2rem; }
   .anexar label.boton-anexar {
     display: flex; align-items: center; justify-content: center; min-height: 48px; margin-top: 0.8rem;
     border-radius: 8px; border: 1px solid #2563eb; color: #2563eb; background: #fff;
@@ -82,13 +93,17 @@
 
   <div class="tarjeta">
     <h2>{{ vale.proveedor }}{% if vale.numero %} · vale {{ vale.numero }}{% endif %}</h2>
-    <p class="total">{{ vale.importe|moneda }}</p>
+    {# EL IMPORTE DEL VALE (dueño, 02/10): el del papel; es el que vale en
+       cartera, al cobrar y al cruzar. #}
+    <p class="total">{% if vale.importe is none %}sin importe{% else %}{{ vale.importe|moneda }}{% endif %}</p>
     <p class="dato"><b>Estado:</b> {{ texto_del_estado[vale.estado] }}
       {%- if vale.estado == 'en_cartera' %} · {{ vale.dias }} días en cartera{% else %} · {{ texto_de_la_salida(vale) }}{% endif %}</p>
     <p class="dato"><b>Fecha:</b> {{ vale.fecha.strftime('%d/%m/%Y') }} · {{ texto_del_origen[vale.origen] }}</p>
     {% if vale.nota %}<p class="dato"><b>Nota:</b> {{ vale.nota }}</p>{% endif %}
     {% if vale.origen == 'devolucion' %}
-    <p class="dato"><b>Devolución:</b> {{ vale.cajones }} cajón{{ '' if vale.cajones == 1 else 'es' }} · {{ vale.marca or 'sin marca' }}</p>
+    <p class="dato"><b>Devolución:</b> {{ vale.cajones }} cajón{{ '' if vale.cajones == 1 else 'es' }} · {{ vale.marca or 'sin marca' }}
+      {%- if vale.importe_devolucion is not none and vale.importe_devolucion != vale.importe %} · cargada por {{ vale.importe_devolucion|moneda }}{% endif %}
+      {%- if vale.fecha_devolucion and vale.fecha_devolucion != vale.fecha %} el {{ vale.fecha_devolucion.strftime('%d/%m/%Y') }}{% endif %}</p>
     <p class="dato"><b>Calculado:</b>
       {%- if vale.importe_calculado is not none %} {{ vale.importe_calculado|moneda }} (seña × cajones)
         {%- if vale.diferencia %} · <span class="diferencia">diferencia {{ '+' if vale.diferencia > 0 }}{{ vale.diferencia|moneda }}</span>{% endif %}
@@ -105,13 +120,31 @@
       <div class="foto-vale">
         <a href="{{ url }}" target="_blank" rel="noopener"><img src="{{ url }}" alt="Foto del vale" loading="lazy"></a>
         <span class="foto-vale-origen">{{ texto_de_la_foto(f) }}</span>
+        {% if f.borrada_el %}<span class="foto-borrada">Borrada el {{ f.borrada_el|fecha_hora }}{% if f.borrada_como == 'a_mano' %}, a mano{% else %}, por plazo{% endif %}</span>
+        {% elif maneja_fotos %}
+        {% set clave = 'original' if f.id is none else f.id %}
+        <details class="foto-accion">
+          <summary>Cambiar o borrar</summary>
+          <form method="post" action="/gerencia/vales/{{ vale.id }}/fotos/reemplazar" enctype="multipart/form-data">
+            <input type="hidden" name="foto" value="{{ clave }}">
+            <input type="file" name="nueva" id="reemplazar-{{ clave }}" accept="image/*"
+                   onchange="if (this.files.length) this.form.submit();">
+            <label class="boton-anexar" for="reemplazar-{{ clave }}">Reemplazar por otra</label>
+          </form>
+          <form method="post" action="/gerencia/vales/{{ vale.id }}/fotos/borrar">
+            <input type="hidden" name="foto" value="{{ clave }}">
+            <label class="chico"><input type="checkbox" name="confirmo" value="si" required> Sí, borrar esta foto</label>
+            <button type="submit">Borrar la foto</button>
+          </form>
+        </details>
+        {% endif %}
       </div>
       {% endfor %}
     </div>
     {% else %}
     <p class="vacio">Este vale no tiene ninguna foto.</p>
     {% endif %}
-    {# Se anexa en CUALQUIER estado, y nada se borra (dueño, 30/09). #}
+    {# Se anexa en CUALQUIER estado (dueño, 30/09); borrar es de Gerencia (02/10). #}
     <form class="anexar" method="post" action="{{ camino.base }}/vales/{{ vale.id }}/fotos" enctype="multipart/form-data">
       <input type="file" name="fotos" id="fotos-vale" accept="image/*" multiple
              onchange="if (this.files.length) this.form.submit();">
@@ -162,13 +195,14 @@
     </form>
   </div>
   {% endif %}
-  {# CORREGIR, solo Gerencia, solo un vale EN CARTERA con datos propios
-     (dueño, 02/10): la misma regla que `corregir_vale`, así no se ofrece lo
-     que el POST rechaza. Un vale no se anula: se corrige. #}
+  {# CORREGIR, solo Gerencia, CUALQUIER vale EN CARTERA (dueño, 02/10): la
+     misma regla que `corregir_vale`, así no se ofrece lo que el POST rechaza.
+     El proveedor solo si el vale lo trae propio. Un vale no se anula: se corrige. #}
   {% if puede_corregir %}
   <div class="tarjeta salida">
     <h2>Corregir el vale</h2>
     <form method="post" action="/gerencia/vales/{{ vale.id }}/corregir">
+      {% if corrige_proveedor %}
       <label>Proveedor
         <select name="proveedor_id" required>
           {% for p in proveedores %}
@@ -176,8 +210,11 @@
           {% endfor %}
         </select>
       </label>
+      {% else %}
+      <p class="dato"><b>Proveedor:</b> {{ vale.proveedor }} (el de la devolución)</p>
+      {% endif %}
       <label>Fecha del vale<input type="date" name="fecha" value="{{ vale.fecha.isoformat() }}" max="{{ hoy.isoformat() }}" required></label>
-      <label>Importe ($)<input type="text" inputmode="decimal" name="importe" value="{{ vale.importe|sin_decimales }}" required></label>
+      <label>Importe del vale ($)<input type="text" inputmode="decimal" name="importe" value="{{ vale.importe|sin_decimales if vale.importe is not none else '' }}" required></label>
       <label>Número (opcional)<input type="text" name="numero" value="{{ vale.numero or '' }}" autocomplete="off"></label>
       <button type="submit">Guardar la corrección</button>
     </form>

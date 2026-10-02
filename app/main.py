@@ -408,6 +408,8 @@ from app.db import (
     fotos_del_vale,
     anexar_fotos_al_vale,
     foto_anexada_del_vale,
+    borrar_foto_del_vale,
+    foto_del_vale_para_borrar,
     foto_borrada_por_antiguedad,
     guardar_limites_de_vales,
     limites_de_vales,
@@ -20748,17 +20750,20 @@ def _renderizar_vale(request: Request, vale_id: int, *, aviso: str | None = None
     # LO QUE ESTE SECTOR PUEDE HACER con este vale: la misma regla que la base
     # (SECTOR_DE_LA_SALIDA), así no se ofrece un botón que el POST rechaza.
     salidas = salidas_del_vale(camino["sector"]) if vale["estado"] == "en_cartera" else []
-    # CORREGIR (dueño, 02/10): solo Gerencia, solo en cartera y con datos
-    # propios. La misma pregunta que `corregir_vale`, para no ofrecer lo que
-    # la escritura rechaza.
-    puede_corregir = (camino["sector"] == "gerencia" and vale["estado"] == "en_cartera"
-                      and vale["origen"] in ORIGENES_CON_DATOS_PROPIOS)
-    proveedores = listar_proveedores() if puede_corregir else []
+    # CORREGIR (dueño, 02/10): solo Gerencia, y CUALQUIER vale en cartera.
+    # El proveedor solo en los que lo traen propio. La misma pregunta que
+    # `corregir_vale`, para no ofrecer lo que la escritura rechaza.
+    puede_corregir = camino["sector"] == "gerencia" and vale["estado"] == "en_cartera"
+    corrige_proveedor = puede_corregir and vale["origen"] in ORIGENES_CON_DATOS_PROPIOS
+    proveedores = listar_proveedores() if corrige_proveedor else []
     return templates.TemplateResponse(request, "vale_a_cobrar.html", {
         "camino": camino, "vale": vale, "salidas": salidas, "hoy": hoy, "fotos": fotos,
         "texto_de_la_foto": texto_de_la_foto_vale, "texto_del_estado": TEXTO_DEL_ESTADO_VALE, "texto_del_origen": TEXTO_DEL_ORIGEN_VALE,
         "texto_del_sector": TEXTO_DEL_SECTOR_VALE, "texto_de_la_salida": texto_de_la_salida_vale,
         "correcciones": correcciones, "puede_corregir": puede_corregir, "proveedores": proveedores,
+        "corrige_proveedor": corrige_proveedor,
+        # LAS FOTOS: Gerencia borra y reemplaza en cualquier estado (dueño, 02/10).
+        "maneja_fotos": camino["sector"] == "gerencia",
         "texto_del_campo": TEXTO_DEL_CAMPO_VALE, "texto_del_valor_corregido": texto_del_valor_corregido_vale,
         "aviso": aviso, "error": error,
     }, status_code=status_code)
@@ -20810,8 +20815,8 @@ async def anexar_fotos_al_vale_ruta(request: Request, vale_id: int):
     Administración la cierra su middleware; Gerencia pregunta su clave acá,
     como toda escritura de /gerencia. Se validan TODAS antes de subir la
     primera, y se guardan todas o ninguna: si la base rebota, lo que ya se
-    subió al Storage se borra (no tiene fila que lo nombre). Ninguna foto del
-    vale se borra desde ninguna pantalla.
+    subió al Storage se borra (no tiene fila que lo nombre). Borrar y
+    reemplazar son de Gerencia (dueño, 02/10): ver `borrar_foto_del_vale_ruta`.
     """
     camino = _camino_de_vales(request)
     if camino["sector"] == "gerencia":
@@ -20907,10 +20912,12 @@ def corregir_vale_ruta(request: Request, vale_id: int, proveedor_id: str = Form(
         return puerta
     dia = fecha_del_filtro_vales(fecha)
     valor = _importe_del_form(importe)
+    # El proveedor viene solo en los vales que lo traen propio: en el de una
+    # devolución el formulario no lo ofrece, y vacío es "no cambia".
     proveedor = _id_opcional_desde_query(proveedor_id)
-    if dia is None or valor is None or proveedor is None:
+    if dia is None or valor is None:
         return _renderizar_vale(request, vale_id, status_code=400,
-                                error="Faltan datos: proveedor, fecha e importe son obligatorios.")
+                                error="Faltan datos: la fecha y el importe son obligatorios.")
     try:
         cuantos = corregir_vale(vale_id, importe=valor, numero=numero, fecha=dia, proveedor_id=proveedor,
                                 hoy=_hoy_argentina())
@@ -20919,6 +20926,77 @@ def corregir_vale_ruta(request: Request, vale_id: int, proveedor_id: str = Form(
     aviso = "Corrección guardada." if cuantos == 1 else f"{cuantos} correcciones guardadas."
     return RedirectResponse(url=f"/gerencia/vales/{vale_id}?" + urlencode(
         {"aviso": aviso + " Lo anterior queda en la historia."}), status_code=303)
+
+
+def _foto_id_del_form(texto: str) -> int | None:
+    """"original" es la foto con la que nació el vale; un número, una anexada."""
+    texto = (texto or "").strip()
+    return None if texto in ("", "original") else _id_opcional_desde_query(texto)
+
+
+@app.post("/gerencia/vales/{vale_id}/fotos/borrar")
+def borrar_foto_del_vale_ruta(request: Request, vale_id: int, foto: str = Form(""), confirmo: str = Form("")):
+    """Gerencia borra una foto de un vale, en cualquier estado (dueño, 02/10).
+    Se va el ARCHIVO y queda registrada como borrada a mano, con la fecha."""
+    puerta = _puerta_de_gerencia_para_escribir(request)
+    if puerta is not None:
+        return puerta
+    if confirmo != "si":
+        return _renderizar_vale(request, vale_id, status_code=400,
+                                error="Para borrar la foto hay que tildar la confirmación.")
+    try:
+        borrar_foto_del_vale(vale_id, _foto_id_del_form(foto), borrar_foto_comanda, hoy=_hoy_argentina())
+    except ValueError as motivo:
+        return _renderizar_vale(request, vale_id, error=str(motivo), status_code=400)
+    except Exception as error:
+        logger.exception("No se pudo borrar la foto del vale %s", vale_id)
+        return _renderizar_vale(request, vale_id, error=f"No se pudo borrar: {error}", status_code=500)
+    return RedirectResponse(url=f"/gerencia/vales/{vale_id}?" + urlencode(
+        {"aviso": "Foto borrada. Queda registrado que se borró a mano."}) + "#fotos", status_code=303)
+
+
+@app.post("/gerencia/vales/{vale_id}/fotos/reemplazar")
+async def reemplazar_foto_del_vale_ruta(request: Request, vale_id: int):
+    """Reemplazar = anexar la nueva y DESPUÉS borrar la vieja (dueño, 02/10).
+    En ese orden: si el borrado falla, el vale queda con las dos y nunca sin
+    ninguna."""
+    puerta = _puerta_de_gerencia_para_escribir(request)
+    if puerta is not None:
+        return puerta
+    formulario = await request.form()
+    foto_id = _foto_id_del_form(formulario.get("foto") or "")
+    try:
+        vieja = foto_del_vale_para_borrar(vale_id, foto_id)
+    except Exception as error_db:
+        raise HTTPException(status_code=500, detail=f"Error al conectar con la base de datos: {error_db}") from error_db
+    if vieja is None or vieja["borrada_el"] is not None:
+        return _renderizar_vale(request, vale_id, status_code=400,
+                                error="Esa foto no es de este vale, o ya estaba borrada.")
+    archivo = formulario.get("nueva")
+    crudo = await archivo.read() if hasattr(archivo, "read") and getattr(archivo, "filename", "") else b""
+    comprimida = _comprimir_foto_jpeg(crudo) if crudo else None
+    if comprimida is None:
+        return _renderizar_vale(request, vale_id, status_code=400,
+                                error="No llegó una foto: no se reemplazó nada.")
+    ruta = subir_foto_comanda(comprimida, f"vale-{vale_id}", prefijo=PREFIJO_VALE)
+    try:
+        anexar_fotos_al_vale(vale_id, [ruta], sector="gerencia")
+    except Exception as error:
+        try:
+            borrar_foto_comanda(ruta)
+        except Exception:
+            logger.exception("No se pudo borrar la foto huérfana del vale %s", ruta)
+        logger.exception("No se pudo anexar la foto nueva al vale %s", vale_id)
+        return _renderizar_vale(request, vale_id, error=f"No se pudo guardar: {error}", status_code=500)
+    try:
+        borrar_foto_del_vale(vale_id, foto_id, borrar_foto_comanda, hoy=_hoy_argentina())
+    except Exception as error:
+        logger.exception("No se pudo borrar la foto vieja del vale %s", vale_id)
+        return _renderizar_vale(request, vale_id, status_code=500,
+                                error=f"La foto nueva quedó, pero la vieja no se pudo borrar: {error}")
+    return RedirectResponse(url=f"/gerencia/vales/{vale_id}?" + urlencode(
+        {"aviso": "Foto reemplazada. La vieja queda registrada como borrada a mano."}) + "#fotos",
+        status_code=303)
 
 
 # NO HAY RUTA PARA ANULAR UN VALE (dueño, 01/10): el vale lo hace un tercero.

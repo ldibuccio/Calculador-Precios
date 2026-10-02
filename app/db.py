@@ -17934,8 +17934,9 @@ def _anular(tabla: str, fila_id: int, que: str, anulado: str, guarda=None) -> No
 # ============================================================================
 
 ORIGENES_DEL_VALE = ("devolucion", "anterior_al_sistema", "carga_manual")
-# Los que traen sus propios datos (proveedor, fecha, importe): son los únicos
-# que Gerencia puede corregir. El de una devolución los lee de ella.
+# Los que traen su propio PROVEEDOR: son los únicos a los que Gerencia se lo
+# puede corregir. El de una devolución lo lee de ella. Importe, fecha y número
+# se corrigen en TODOS (dueño, 02/10): ver `corregir_vale`.
 ORIGENES_CON_DATOS_PROPIOS = ("anterior_al_sistema", "carga_manual")
 TIPOS_DE_SALIDA_DEL_VALE = ("cobrado", "cruzado", "anulado")
 ESTADOS_DEL_VALE = ("en_cartera",) + TIPOS_DE_SALIDA_DEL_VALE + ("devolucion_anulada",)
@@ -17971,8 +17972,15 @@ COLUMNAS_DEL_VALE = (
     "fecha", "importe", "importe_calculado", "numero", "foto_ruta", "cargada_desde",
     "devolucion_anulada_el", "creado_en", "estado",
     "salida_fecha", "importe_cobrado", "ingreso_a_caja", "referencia", "motivo",
-    "salida_sector", "salida_creado_en", "fotos_anexadas", "nota", "dias",
+    "salida_sector", "salida_creado_en", "fotos_anexadas", "nota",
+    "importe_devolucion", "fecha_devolucion", "foto_borrada", "dias",
 )
+
+# EL IMPORTE DEL VALE (dueño, 02/10): lo que dice el papel que firmó el
+# tercero, y es el que vale en cartera, al cobrar y al cruzar. En los de una
+# devolución, `v.importe` es la CORRECCIÓN de Gerencia y NULL quiere decir
+# "el de la devolución"; lo mismo la fecha. `importe_calculado` (seña ×
+# cajones) no cambia nunca: es contra qué se compara.
 
 _SQL_VALES = f"""
     SELECT * FROM (
@@ -17988,8 +17996,13 @@ _SQL_VALES = f"""
                {_SQL_ESTADO_DEL_VALE} AS estado,
                s.fecha AS salida_fecha, s.importe_cobrado, s.ingreso_a_caja, s.referencia,
                s.motivo, s.sector AS salida_sector, s.creado_en AS salida_creado_en,
-               (SELECT count(*) FROM vales_a_cobrar_fotos fa WHERE fa.vale_id = v.id) AS fotos_anexadas,
-               v.nota
+               (SELECT count(*) FROM vales_a_cobrar_fotos fa WHERE fa.vale_id = v.id
+                  AND NOT EXISTS (SELECT 1 FROM fotos_borradas_por_antiguedad b
+                                   WHERE b.foto_ruta = fa.foto_ruta)) AS fotos_anexadas,
+               v.nota, d.importe AS importe_devolucion,
+               (d.creado_en AT TIME ZONE 'America/Argentina/Buenos_Aires')::date AS fecha_devolucion,
+               EXISTS (SELECT 1 FROM fotos_borradas_por_antiguedad b
+                        WHERE b.foto_ruta = COALESCE(v.foto_ruta, d.foto_ruta)) AS foto_borrada
           FROM vales_a_cobrar v
           LEFT JOIN vacios_deposito_devoluciones d ON d.id = v.devolucion_id
           JOIN proveedores p ON p.id = COALESCE(v.proveedor_id, d.proveedor_id)
@@ -18027,7 +18040,7 @@ def _crear_vale_de_la_devolucion(cursor, devolucion_id: int, proveedor_id: int,
 
 def _vale_de_fila(fila, hoy: date) -> dict:
     vale = dict(zip(COLUMNAS_DEL_VALE, tuple(fila) + (None,)))
-    for campo in ("importe", "importe_calculado", "importe_cobrado"):
+    for campo in ("importe", "importe_calculado", "importe_cobrado", "importe_devolucion"):
         if vale[campo] is not None:
             vale[campo] = float(vale[campo])
     # DÍAS EN CARTERA: hasta hoy si sigue; hasta la salida si salió.
@@ -18040,7 +18053,9 @@ def _vale_de_fila(fila, hoy: date) -> dict:
     # CUÁNTAS FOTOS TIENE: la original (de la devolución o del vale en papel)
     # más las anexadas. Un vale en papel sin foto y sin anexadas da 0, y el
     # listado lo marca (dueño, 30/09).
-    vale["fotos"] = (1 if vale["foto_ruta"] else 0) + int(vale["fotos_anexadas"] or 0)
+    # Las borradas no cuentan: el listado marca el vale que no tiene NINGUNA a la vista.
+    vale["fotos"] = (1 if vale["foto_ruta"] and not vale["foto_borrada"] else 0) \
+        + int(vale["fotos_anexadas"] or 0)
     return vale
 
 
@@ -18289,23 +18304,64 @@ def fotos_del_vale(vale_id: int) -> list[dict]:
         with conexion.cursor() as cursor:
             cursor.execute(
                 """
-                SELECT CASE WHEN v.origen = 'devolucion' THEN 'devolucion' ELSE 'papel' END,
-                       NULL::bigint, COALESCE(v.foto_ruta, d.foto_ruta),
-                       COALESCE(d.creado_en, v.creado_en), NULL::text, 0
-                  FROM vales_a_cobrar v
-                  LEFT JOIN vacios_deposito_devoluciones d ON d.id = v.devolucion_id
-                 WHERE v.id = %s AND COALESCE(v.foto_ruta, d.foto_ruta) IS NOT NULL
-                UNION ALL
-                SELECT 'anexada', f.id, f.foto_ruta, f.creado_en, f.sector, 1
-                  FROM vales_a_cobrar_fotos f WHERE f.vale_id = %s
-                ORDER BY 6, 4, 2
+                SELECT x.que, x.id, x.ruta, x.creado_en, x.sector, b.borrada_el, b.como
+                  FROM (
+                    SELECT CASE WHEN v.origen = 'devolucion' THEN 'devolucion' ELSE 'papel' END AS que,
+                           NULL::bigint AS id, COALESCE(v.foto_ruta, d.foto_ruta) AS ruta,
+                           COALESCE(d.creado_en, v.creado_en) AS creado_en, NULL::text AS sector, 0 AS orden
+                      FROM vales_a_cobrar v
+                      LEFT JOIN vacios_deposito_devoluciones d ON d.id = v.devolucion_id
+                     WHERE v.id = %s AND COALESCE(v.foto_ruta, d.foto_ruta) IS NOT NULL
+                    UNION ALL
+                    SELECT 'anexada', f.id, f.foto_ruta, f.creado_en, f.sector, 1
+                      FROM vales_a_cobrar_fotos f WHERE f.vale_id = %s
+                  ) x
+                  LEFT JOIN fotos_borradas_por_antiguedad b ON b.foto_ruta = x.ruta
+                 ORDER BY x.orden, x.creado_en, x.id
                 """,
                 (vale_id, vale_id),
             )
             filas = cursor.fetchall()
     finally:
         conexion.close()
-    return [{"que": f[0], "id": f[1], "ruta": f[2], "creado_en": f[3], "sector": f[4]} for f in filas]
+    return [{"que": f[0], "id": f[1], "ruta": f[2], "creado_en": f[3], "sector": f[4],
+             "borrada_el": f[5], "borrada_como": f[6]} for f in filas]
+
+
+# El TIPO con que cada foto de un vale figura en la lista de fotos de
+# respaldo (`_SQL_FOTOS_DE_RESPALDO`): la de una devolución es 'vacios'.
+TIPO_DE_FOTO_DEL_VALE = {"devolucion": "vacios", "papel": "vale", "anexada": "vale"}
+
+
+def foto_del_vale_para_borrar(vale_id: int, foto_id: int | None) -> dict | None:
+    """La foto de ESTE vale que se va a borrar: la original (`foto_id` None) o
+    una anexada. None si no es de este vale."""
+    for foto in fotos_del_vale(vale_id):
+        if foto["id"] == foto_id:
+            return foto
+    return None
+
+
+def borrar_foto_del_vale(vale_id: int, foto_id: int | None, borrar_archivo, *, hoy: date) -> None:
+    """Gerencia borra una foto de un vale, salga o no de la cartera (dueño,
+    02/10). LA REGLA DE FOTOS: se va el ARCHIVO y la fila que lo nombraba
+    queda; queda registrada como borrada 'a_mano' con su fecha, y un renglón
+    en el historial de borrados. "Ver foto" dice "Foto borrada el …, a mano".
+
+    La original de una devolución también se puede borrar: su ruta sigue en la
+    devolución, así que `vacios_dev_con_foto` se cumple igual."""
+    foto = foto_del_vale_para_borrar(vale_id, foto_id)
+    if foto is None:
+        raise ValueError("Esa foto no es de este vale.")
+    if foto["borrada_el"] is not None:
+        raise ValueError("Esa foto ya estaba borrada.")
+    tipo = TIPO_DE_FOTO_DEL_VALE[foto["que"]]
+    borrado_id = abrir_borrado_de_fotos("a_mano", tipo, hoy, 0)
+    try:
+        registrar_foto_borrada_por_antiguedad(foto["ruta"], tipo, foto["creado_en"], None, borrar_archivo,
+                                              como="a_mano", borrado_id=borrado_id)
+    finally:
+        cerrar_borrado_de_fotos(borrado_id)
 
 
 # CARGA MANUAL DE UN VALE (dueño, 02/10): un vale en papel dado de alta desde
@@ -18375,14 +18431,21 @@ def _texto_del_valor(campo: str, valor, cursor) -> str | None:
 
 
 def corregir_vale(vale_id: int, *, importe: float, numero: str | None, fecha: date,
-                  proveedor_id: int, hoy: date) -> int:
-    """Gerencia corrige un vale cargado mal. Se pasan los cuatro valores como
-    tienen que quedar; se escribe lo que cambió, una fila de historial por
-    campo. Devuelve cuántos cambiaron. Un vale no se anula: se corrige.
+                  proveedor_id: int | None = None, hoy: date) -> int:
+    """Gerencia corrige un vale cargado mal. Se pasan los valores como tienen
+    que quedar; se escribe lo que cambió, una fila de historial por campo.
+    Devuelve cuántos cambiaron. Un vale no se anula: se corrige.
 
-    Solo un vale EN CARTERA con datos propios (anterior al sistema o carga
-    manual). Que no haya salido lo decide la base
-    (`vale_que_salio_no_se_corrige`, db/vales_manual_3) y acá se traduce."""
+    CUALQUIER VALE EN CARTERA (dueño, 02/10): importe, fecha y número en
+    todos. El PROVEEDOR solo en los que lo traen propio (anterior al sistema o
+    carga manual): el de una devolución es el de la devolución, y `None` es
+    "no cambia". En un vale de devolución el importe y la fecha se guardan
+    como CORRECCIÓN en el vale (la devolución no se toca), y volver al valor
+    de la devolución deja la corrección en NULL. El historial compara los
+    valores VIGENTES, que es lo que la pantalla mostraba.
+
+    Que no haya salido lo decide la base (`vale_que_salio_no_se_corrige`,
+    db/vales_manual_3) y acá se traduce."""
     if importe is None or importe <= 0:
         raise ValueError("El importe tiene que ser mayor que cero.")
     if fecha > hoy:
@@ -18392,30 +18455,48 @@ def corregir_vale(vale_id: int, *, importe: float, numero: str | None, fecha: da
     try:
         with conexion.cursor() as cursor:
             cursor.execute(
-                "SELECT v.origen, v.importe, v.numero, v.fecha, v.proveedor_id "
-                "FROM vales_a_cobrar v WHERE v.id = %s FOR UPDATE",
+                "SELECT v.origen, COALESCE(v.importe, d.importe), v.numero, "
+                "COALESCE(v.fecha, (d.creado_en AT TIME ZONE 'America/Argentina/Buenos_Aires')::date), "
+                "COALESCE(v.proveedor_id, d.proveedor_id), d.importe, "
+                "(d.creado_en AT TIME ZONE 'America/Argentina/Buenos_Aires')::date, d.anulado_el "
+                "FROM vales_a_cobrar v LEFT JOIN vacios_deposito_devoluciones d ON d.id = v.devolucion_id "
+                "WHERE v.id = %s FOR UPDATE OF v",
                 (vale_id,),
             )
             fila = cursor.fetchone()
             if fila is None:
                 raise ValueError("Ese vale no existe.")
-            origen, *antes = fila
-            if origen not in ORIGENES_CON_DATOS_PROPIOS:
-                raise ValeNoSeCorrige("Este vale nace de una devolución de vacíos: sus datos se "
-                                      "corrigen en la devolución, no acá.")
-            # Si ya salió de la cartera lo decide la BASE, no una pregunta
-            # previa: el UPDATE de abajo rebota y acá se traduce.
+            (origen, importe_antes, numero_antes, fecha_antes, proveedor_antes, de_la_dev, dia_de_la_dev,
+             devolucion_anulada) = fila
+            if devolucion_anulada is not None:
+                raise ValeNoSeCorrige("La devolución de este vale está anulada: el vale ya no está "
+                                      "en la cartera y no se corrige.")
+            if proveedor_id is None:
+                proveedor_id = proveedor_antes
+            if origen not in ORIGENES_CON_DATOS_PROPIOS and proveedor_id != proveedor_antes:
+                raise ValeNoSeCorrige("El proveedor de este vale es el de su devolución de vacíos: "
+                                      "no se cambia acá.")
             nuevos = (importe, numero, fecha, proveedor_id)
+            antes = (importe_antes, numero_antes, fecha_antes, proveedor_antes)
             campos = ("importe", "numero", "fecha", "proveedor")
             cambios = []
             for campo, viejo, nuevo in zip(campos, antes, nuevos):
-                igual = (round(float(viejo), 2) == round(float(nuevo), 2)) if campo == "importe" \
-                    else viejo == nuevo
+                if campo == "importe":
+                    igual = viejo is not None and round(float(viejo), 2) == round(float(nuevo), 2)
+                else:
+                    igual = viejo == nuevo
                 if not igual:
                     cambios.append((campo, _texto_del_valor(campo, viejo, cursor),
                                     _texto_del_valor(campo, nuevo, cursor)))
             if not cambios:
                 raise ValueError("No cambió nada.")
+            if origen in ORIGENES_CON_DATOS_PROPIOS:
+                columnas = (importe, numero, fecha, proveedor_id)
+            else:
+                # La corrección vive en el vale; igual a la devolución es NULL.
+                mismo_importe = de_la_dev is not None and round(float(de_la_dev), 2) == round(float(importe), 2)
+                columnas = (None if mismo_importe else importe, numero,
+                            None if fecha == dia_de_la_dev else fecha, None)
             try:
                 # El proveedor lo cuida un trigger DIFERIDO (salta al cerrar la
                 # transacción, para dejar pasar a juntar). Acá no se borra
@@ -18425,7 +18506,7 @@ def corregir_vale(vale_id: int, *, importe: float, numero: str | None, fecha: da
                 cursor.execute(
                     "UPDATE vales_a_cobrar SET importe = %s, numero = %s, fecha = %s, proveedor_id = %s "
                     "WHERE id = %s",
-                    (importe, numero, fecha, proveedor_id, vale_id),
+                    columnas + (vale_id,),
                 )
             except psycopg2.errors.CheckViolation as error:
                 conexion.rollback()

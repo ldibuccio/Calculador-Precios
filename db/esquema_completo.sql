@@ -1014,9 +1014,11 @@ create table vales_a_cobrar (
   cargado_desde text,
   nota text,
   constraint vales_origen_coherente check (
+    -- db/vales_editables_1 (02/10): en los de una devolución, importe y
+    -- fecha son la CORRECCIÓN de Gerencia; NULL es "el de la devolución".
     (origen = 'devolucion' and devolucion_id is not null
-      and proveedor_id is null and fecha is null
-      and importe is null and foto_ruta is null)
+      and proveedor_id is null and foto_ruta is null
+      and (importe is null or importe > 0))
     or (origen in ('anterior_al_sistema', 'carga_manual') and devolucion_id is null
       and proveedor_id is not null and fecha is not null
       and coalesce(importe > 0, false) and importe_calculado is null)),
@@ -1110,7 +1112,8 @@ select l.fila, upper(btrim(l.codigo)) as codigo, pr.nombre as proveedor,
                      and pc.codigo = upper(btrim(l.codigo)))
      limit 1) pr on true;
 
-comment on column vales_a_cobrar.importe is 'Solo en los anteriores al sistema. En los de una devolución el importe es vacios_deposito_devoluciones.importe: escrito una vez.';
+comment on column vales_a_cobrar.importe is 'El IMPORTE DEL VALE: lo que dice el papel. En los de una devolucion es NULL hasta que Gerencia lo corrige, y mientras tanto vale el importe de la devolucion. importe_calculado no cambia nunca.';
+comment on column vales_a_cobrar.fecha is 'La fecha del vale. En los de una devolucion es NULL hasta que Gerencia la corrige, y mientras tanto vale el dia de la devolucion.';
 comment on column vales_a_cobrar.importe_calculado is 'Seña × cajones de la última recepción de esa pila, al guardar la devolución. Contra el importe de la devolución da la diferencia.';
 comment on column vales_a_cobrar.numero is 'El número del vale en papel, si lo tiene. Opcional.';
 
