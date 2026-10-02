@@ -260,10 +260,11 @@ sola vez.
 
 ### La base de Frutamax se LEE, nunca se escribe (30/09, dueño)
 
-Claude tiene acceso de **solo lectura** a Frutamax, con el usuario
-`lectura_claude` (`db/lectura_1_usuario_solo_lectura.sql`, verificación en
-`lectura_2`). La conexión viene en la variable de entorno
-`LECTURA_FRUTAMAX_URL`, y la clave no pasa nunca por el chat.
+Claude tiene acceso de **solo lectura** a Frutamax. Desde la nube es el
+conector MCP "Supabase Lectura" (abajo). En una sesión local es la variable
+`LECTURA_FRUTAMAX_URL`, con el usuario de
+`db/lectura_1_usuario_solo_lectura.sql` (verificación en `lectura_2`), y la
+clave no pasa nunca por el chat.
 
 - **Sirve para verificar consultas contra los datos reales** antes de
   mandarlas o de citar un número (corolario 85: la colisión va ANTES de leer
@@ -273,6 +274,19 @@ Claude tiene acceso de **solo lectura** a Frutamax, con el usuario
   el usuario no puede: solo tiene SELECT, y eso lo sostienen los permisos,
   no el `default_transaction_read_only`, que el mismo usuario se puede sacar.
 - **Palmala no tiene este acceso.** Ahí sigue todo por el dueño.
+- **DESDE LA NUBE SE LEE POR EL CONECTOR MCP "Supabase Lectura"** (dueño,
+  02/10), proyecto `opivgeqpjgtlduxcozqz`. Es el MCP de Supabase en modo
+  `read_only`: corre como `supabase_read_only_user`, con
+  `transaction_read_only = on` y sin permiso de INSERT, UPDATE ni DELETE
+  (medido el 02/10 con `has_table_privilege` sobre `tareas`). Un INSERT
+  rebota con `25006: cannot execute INSERT in a read-only transaction`.
+- **El conector "Supabase" (el que ESCRIBE) no se usa nunca, ni para leer.**
+  Leer por el que escribe deja una escritura a un error de tipeo.
+- **`LECTURA_FRUTAMAX_URL` queda solo para sesiones LOCALES.** Desde la nube
+  no conecta: apunta al pooler por TCP al 5432 y el proxy del contenedor no
+  deja pasar bases de datos por TCP crudo. Su usuario es `lectura_claudia`,
+  y la migración crea `lectura_claude`: ese rol se creó por otro lado y
+  `lectura_2` no lo verifica.
 
 ## Un `if not exists` sobre CONTENIDO es una trampa, no una protección
 
