@@ -2124,9 +2124,8 @@ comment on table vales_correcciones is 'Lo que Gerencia le corrigio a un vale ca
 create or replace function vale_que_salio_no_se_corrige() returns trigger
 language plpgsql as $f$
 begin
-  if (new.importe, new.numero, new.fecha, new.proveedor_id)
-     is distinct from (old.importe, old.numero, old.fecha, old.proveedor_id)
-     and coalesce(current_setting('app.juntando_proveedores', true), '') <> 'si'
+  if (new.importe, new.numero, new.fecha)
+     is distinct from (old.importe, old.numero, old.fecha)
      and exists (select 1 from vales_a_cobrar_salidas where vale_id = new.id) then
     raise exception 'el vale % ya salio de la cartera: no se corrige', new.id
       using errcode = 'check_violation', constraint = 'vale_que_salio_no_se_corrige';
@@ -2136,3 +2135,20 @@ end $f$;
 create trigger vale_que_salio_no_se_corrige
   before update on vales_a_cobrar
   for each row execute function vale_que_salio_no_se_corrige();
+-- El proveedor de un vale que salio solo cambia si al cerrar la transaccion
+-- el viejo ya no existe: juntar dos proveedores (db/vales_manual_3).
+create or replace function vale_que_salio_cambia_de_proveedor() returns trigger
+language plpgsql as $f$
+begin
+  if new.proveedor_id is distinct from old.proveedor_id
+     and exists (select 1 from vales_a_cobrar_salidas where vale_id = new.id)
+     and exists (select 1 from proveedores where id = old.proveedor_id) then
+    raise exception 'el vale % ya salio de la cartera: no cambia de proveedor', new.id
+      using errcode = 'check_violation', constraint = 'vale_que_salio_no_se_corrige';
+  end if;
+  return null;
+end $f$;
+create constraint trigger vale_que_salio_cambia_de_proveedor
+  after update of proveedor_id on vales_a_cobrar
+  deferrable initially deferred
+  for each row execute function vale_que_salio_cambia_de_proveedor();
