@@ -19548,8 +19548,8 @@ def _devoluciones_para_pagar(desde: date, hasta: date, proveedor_id: int | None,
 def _fila_de_devolucion(devolucion: dict) -> dict:
     """Una devolución como renglón NEGATIVO de la planilla para pagar.
 
-    Mercadería: los bultos devueltos al valor que cancela (el de la compra; en
-    un rechazo en caja de Día o sin compra, el costo congelado). Seña: la que
+    Mercadería: los bultos devueltos al valor que cancela (el de la compra,
+    también en caja de Día; en un rechazo sin compra, el costo congelado). Seña: la que
     pagaron esos cajones, que vuelven llenos por cuenta corriente "como si
     nunca hubiera entrado" (dueño, 30/09); viene en None si no corresponde.
     """

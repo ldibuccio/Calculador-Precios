@@ -704,7 +704,10 @@ def test_la_devolucion_al_proveedor_VALE_EL_PRECIO_DE_SU_COMPRA_y_la_diferencia_
     assert fila["renta_pesos"] == fila["venta_neta"] - fila["devoluciones_venta"] - fila["costo_total"]
 
 
-def test_en_CAJA_DE_DIA_o_SIN_COMPRA_no_hay_diferencia_queda_el_costo_congelado():
+def test_SIN_COMPRA_no_hay_diferencia_queda_el_costo_congelado():
+    """Un rechazo viejo sin compra atada no vale la compra. Desde el 02/10
+    (opción B) la caja de Día CON compra sí la vale: eso lo decide la consulta
+    (`vale_la_compra`), y acá entra como cualquier otra."""
     fecha = date(2026, 8, 25)
     fila = calcular_rentabilidad_real(
         _datos([_armado(fecha, 25, 500.0)]), {fecha: {901: dict(MARGEN)}}, 1, fecha, fecha,

@@ -5159,18 +5159,18 @@ def _condiciones_buscar_ingresos(fecha_desde, fecha_hasta, proveedor_id, articul
 # Si la compra no tiene precio, el valor es NULL ("sin precio"), y NO cae al
 # costo del armado: caer ahí sería volver a la regla que esto reemplaza.
 #
-# El rechazo en CAJA DE DÍA (ficha con envase) queda con el costo congelado
-# del rechazo, por la decisión del dueño del 30/09: un bulto ahí no es un
-# cajón de la compra —10 cajas de 6 kg no son 10 cajones de 16— y el precio
-# por cajón no se le puede aplicar. Sin compra (los viejos), también.
+# El rechazo en CAJA DE DÍA con compra atada vale lo mismo (Lionel, 02/10,
+# opción B): cada caja se valúa como un cajón entero de esa compra. Eso es
+# solo PLATA: la caja de Día no es un cajón del proveedor, así que no sale de
+# Vacíos aunque la compra tenga seña (ver `_SQL_DEVOLUCIONES_LLENAS`). Sin
+# compra atada (los viejos), queda el costo congelado del rechazo.
 #
 # Lo leen Movimientos del depósito, la planilla para pagar (que sale de la
 # misma consulta) y la Rentabilidad Real. Escrito una vez: la copia que se
 # separe diría un importe en una pantalla y otro en la otra.
-# Espera los alias `m` (movimiento), `cd` (compra) y `fd` (ficha del renglón).
+# Espera los alias `m` (movimiento) y `cd` (compra).
 _SQL_DEVOLUCION_VALE_LA_COMPRA = """
-    (m.tipo = 'devolucion_deposito'
-     OR (m.compra_devolucion_id IS NOT NULL AND fd.envase_id IS NULL))"""
+    (m.tipo = 'devolucion_deposito' OR m.compra_devolucion_id IS NOT NULL)"""
 
 _SQL_VALOR_POR_BULTO_DE_LA_DEVOLUCION = """
     CASE WHEN """ + _SQL_DEVOLUCION_VALE_LA_COMPRA + """ THEN cd.importe
@@ -5186,8 +5186,8 @@ _SQL_VALOR_POR_BULTO_DE_LA_DEVOLUCION = """
 #                reales. Valor: bultos × el costo por bulto de la compra.
 #   rechazo      una devolución al proveedor por un rechazo del cliente. Valor:
 #                bultos × el precio de su compra (regla de Lionel, 01/10; ver
-#                `_SQL_VALOR_POR_BULTO_DE_LA_DEVOLUCION`). En caja de Día o sin
-#                compra, el costo congelado del rechazo.
+#                `_SQL_VALOR_POR_BULTO_DE_LA_DEVOLUCION`), también en caja de
+#                Día (opción B, 02/10). Sin compra, el costo congelado.
 #   deposito     una devolución desde depósito. Valor: bultos × el de la compra.
 #   segunda      segunda remitida al puesto. No tiene proveedor ni valor.
 #
@@ -12600,7 +12600,6 @@ def devoluciones_vinculadas_por_rango(cliente_id: int, fecha_desde, fecha_hasta)
                 JOIN pedidos p ON p.id = r.pedido_id
                 JOIN articulos a ON a.id = m.articulo_id
                 LEFT JOIN compras cd ON cd.id = m.compra_devolucion_id
-                LEFT JOIN fichas_logistica fd ON fd.id = r.ficha_id
                 WHERE m.anulado_el IS NULL AND m.pedido_renglon_id IS NOT NULL
                   AND p.cliente_id = %s
                   AND m.fecha_operacion >= %s AND m.fecha_operacion <= %s

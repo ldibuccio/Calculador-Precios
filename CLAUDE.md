@@ -4468,9 +4468,17 @@ pagado a $60.000).
   `devoluciones_vinculadas_por_rango` (la Rentabilidad).
 - **Compra sin precio**: el valor es NULL ("sin precio"). No cae al costo del
   armado, que era volver a la regla vieja.
-- **Rechazo en caja de Día, o sin compra** (los viejos): queda el costo
-  congelado del rechazo. Un bulto ahí no es un cajón de la compra (decisión del
-  30/09). Ésta es la única excepción, y está abierta a que el dueño la cierre.
+- **Rechazo en caja de Día CON compra atada: también el precio de la compra**
+  (Lionel, 02/10, opción B). Cada caja se valúa como un cajón entero de esa
+  compra, con la diferencia contra el armado en su renglón, igual que el
+  cajón. Es SOLO plata: la caja de Día no es un cajón del proveedor, así que
+  ese rechazo **no sale de Vacíos** aunque la compra tenga seña, y
+  Movimientos no le muestra seña (`_SQL_DEVOLUCIONES_LLENAS` y la `sena` de
+  `_SQL_MOVIMIENTOS_DEL_DEPOSITO` siguen preguntando por `envase_id`). Caso
+  real: movimiento 199, 2 Cherry, compra 826 a $30.000, vale $60.000 y la
+  diferencia es 2 × (30.000 − 30.523,26) = −1.046,52.
+- **Sin compra atada** (los viejos): queda el costo congelado del rechazo. Es
+  la única excepción.
 - **La diferencia no desaparece**: en la Rentabilidad la mercadería se acredita
   al costo CONGELADO del armado (lo que se le cargó al venderla), y
   `bultos × (precio de la compra − costo del armado)` va a
@@ -4485,9 +4493,10 @@ pagado a $60.000).
 - La devolución desde depósito no entra a la Rentabilidad como renglón: sale
   del lote de su compra, que ya cuesta el precio de esa compra.
 
-`db/devolucion_valor_1` lista todas las devoluciones con el valor de antes y el
-de ahora (solo lee). `_2` ata el movimiento 170 a su compra, con guardas, y
-`_3` lo verifica. Lo cuidan `tests/test_devoluciones_al_proveedor.py` (contra
+`db/devolucion_valor_1` lista todas las devoluciones con el valor de la regla
+del 01/10 y el de la opción B (solo lee). `_2` ata el movimiento 170 a su
+compra, con guardas, y `_3` lo verifica (corrida el 02/10 en Frutamax, ver
+`db/corridas_confirmadas.md`). Lo cuidan `tests/test_devoluciones_al_proveedor.py` (contra
 Postgres) y `tests/test_costo_real.py`.
 
 **Movimientos del depósito** (`/administracion/ingresos`, dueño, 30/09):
