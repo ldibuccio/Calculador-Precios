@@ -7986,13 +7986,13 @@ def editar_compra(
             status_code=500,
         )
 
-    # Los filtros de la búsqueda viajan en el query string de la URL de
-    # editar (los pone el link "Editar" de Buscar Compras, y el form
-    # postea a esa misma URL, así que sobreviven a los reintentos por
-    # error): al guardar se vuelve a la MISMA búsqueda que se estaba
-    # haciendo, no a la default de 48hs.
+    # AL GUARDAR SE VUELVE AL DETALLE (dueño, 02/10: Detalle y Editar son
+    # una pantalla). Los filtros de la búsqueda viajan en el query string
+    # (Buscar → Detalle → Editar, y el form postea a esa misma URL, así que
+    # sobreviven a los reintentos), y el Volver del Detalle los lleva a la
+    # MISMA búsqueda, no a la default de 48hs.
     filtros_query = request.url.query
-    destino = f"/compras/buscar?{filtros_query}" if filtros_query else "/compras/buscar"
+    destino = f"/compras/{compra_id}/detalle?{filtros_query}" if filtros_query else f"/compras/{compra_id}/detalle"
     return RedirectResponse(url=destino, status_code=303)
 
 
@@ -19928,7 +19928,7 @@ def _devoluciones_para_pagar(desde: date, hasta: date, proveedor_id: int | None,
 
 
 def _fila_de_devolucion(devolucion: dict) -> dict:
-    """Una devolución como renglón NEGATIVO de la planilla para pagar.
+    """Una devolución como renglón NEGATIVO del Resumen proveedores.
 
     Mercadería: los bultos devueltos al valor que cancela (el de la compra,
     también en caja de Día; en un rechazo sin compra, el costo congelado). Seña: la que
@@ -20087,9 +20087,9 @@ def ver_facturacion_url_vieja():
 
 @app.get("/facturacion/ingresos")
 def ver_ingresos_url_vieja(request: Request):
-    """Ídem: el link viejo de Ingresos a Depósito, con sus filtros si los traía.
+    """Ídem: el link viejo del Resumen proveedores, con sus filtros si los traía.
 
-    Va a la PLANILLA PARA PAGAR, que es la pantalla que ese link abría: sus
+    Va al RESUMEN PROVEEDORES, que es la pantalla que ese link abría: sus
     filtros (`fecha_desde`, `estado`) son de ella. Desde el 30/09
     `/administracion/ingresos` es Movimientos del depósito.
     """
@@ -20119,7 +20119,7 @@ def ver_movimientos_deposito(request: Request, desde: str = "", hasta: str = "",
     """Movimientos del depósito (dueño, 30/09): lo que entró y salió, por proveedor.
 
     Sirve para conciliar la cuenta de un proveedor y para ver cuánta segunda
-    se mandó al puesto. La planilla para pagar (lo que hay que depositarle a
+    se mandó al puesto. El Resumen proveedores (lo que hay que depositarle a
     cada proveedor) sigue en `/administracion/ingresos/pagar`, linkeada desde acá.
     """
     filtros = _filtros_de_movimientos_deposito(desde, hasta, tipo, proveedor_id, articulo_id, sector)
@@ -21157,7 +21157,7 @@ def ver_ingresos_deposito(
     articulo_id: str | None = None,
     estado: str | None = None,
 ):
-    """Ingresos a Depósito: lo que realmente entró, para cargarlo en facturación y pagarle a cada proveedor.
+    """Resumen proveedores: lo que realmente entró, para cargarlo en facturación y pagarle a cada proveedor.
 
     El rango filtra por el día de la RECEPCIÓN (procesada_el, default
     últimas 48 hs). Por default muestra solo lo recepcionado (incluidos
@@ -21275,7 +21275,7 @@ def _leer_filtros_exportar_ingresos(
 def exportar_ingresos_deposito_pdf(
     fecha_desde: str = "", fecha_hasta: str = "", proveedor_id: str = "", articulo_id: str = "", estado: str = ""
 ):
-    """Genera Ingresos a Depósito (mismos filtros que la pantalla) en PDF — SIN tope, aunque la pantalla corte."""
+    """Genera Resumen proveedores (mismos filtros que la pantalla) en PDF — SIN tope, aunque la pantalla corte."""
     desde, hasta, proveedor_valor, articulo_valor, estado_consulta, filtros_texto = _leer_filtros_exportar_ingresos(
         fecha_desde, fecha_hasta, proveedor_id, articulo_id, estado
     )
@@ -21288,7 +21288,7 @@ def exportar_ingresos_deposito_pdf(
 
     grupos, totales = _grupos_ingresos_deposito(ingresos, devoluciones)
     pdf_bytes = generar_pdf_ingresos_deposito(desde, hasta, filtros_texto, grupos, totales)
-    nombre_archivo = f"Ingresos_Deposito_{desde.isoformat()}_a_{hasta.isoformat()}.pdf"
+    nombre_archivo = f"Resumen_Proveedores_{desde.isoformat()}_a_{hasta.isoformat()}.pdf"
     return Response(
         content=pdf_bytes,
         media_type="application/pdf",
@@ -21300,7 +21300,7 @@ def exportar_ingresos_deposito_pdf(
 def exportar_ingresos_deposito_excel(
     fecha_desde: str = "", fecha_hasta: str = "", proveedor_id: str = "", articulo_id: str = "", estado: str = ""
 ):
-    """Genera Ingresos a Depósito (mismos filtros que la pantalla) en Excel — SIN tope, aunque la pantalla corte."""
+    """Genera Resumen proveedores (mismos filtros que la pantalla) en Excel — SIN tope, aunque la pantalla corte."""
     desde, hasta, proveedor_valor, articulo_valor, estado_consulta, filtros_texto = _leer_filtros_exportar_ingresos(
         fecha_desde, fecha_hasta, proveedor_id, articulo_id, estado
     )
@@ -21313,7 +21313,7 @@ def exportar_ingresos_deposito_excel(
 
     grupos, totales = _grupos_ingresos_deposito(ingresos, devoluciones)
     excel_bytes = generar_excel_ingresos_deposito(desde, hasta, filtros_texto, grupos, totales)
-    nombre_archivo = f"Ingresos_Deposito_{desde.isoformat()}_a_{hasta.isoformat()}.xlsx"
+    nombre_archivo = f"Resumen_Proveedores_{desde.isoformat()}_a_{hasta.isoformat()}.xlsx"
     return Response(
         content=excel_bytes,
         media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",

@@ -1,6 +1,6 @@
 """Toda exportación sale con los MISMOS filtros que la pantalla (01/10, dueño).
 
-Lionel filtró la planilla para pagar por FRUTAMAX S.R.L. y el PDF bajó todos
+Lionel filtró el Resumen proveedores por FRUTAMAX S.R.L. y el PDF bajó todos
 los proveedores. La regla: el PDF y el Excel salen con exactamente lo que la
 pantalla muestra en ese momento, y su encabezado dice qué se filtró.
 
@@ -222,7 +222,7 @@ CASOS = [
     pytest.param(f"/logistica/consultar?fecha_desde={DESDE}&fecha_hasta={HASTA}&proveedor_id=1&estado=todos",
                  "EJ Uno", "EJ Dos", "EJ Uno", id="consultar_retiros"),
     pytest.param(f"/administracion/ingresos/pagar?fecha_desde={DESDE}&fecha_hasta={HASTA}&proveedor_id=1",
-                 "EJ Uno", "EJ Dos", "proveedor EJ Uno", id="planilla_para_pagar"),
+                 "EJ Uno", "EJ Dos", "proveedor EJ Uno", id="resumen_proveedores"),
     pytest.param(f"/administracion/ingresos?desde={DESDE}&hasta={HASTA}&proveedor_id=1",
                  "EJ Uno", "EJ Dos", "proveedor EJ Uno", id="movimientos_del_deposito"),
     pytest.param(f"/administracion/vacios/movimientos?desde={DESDE}&hasta={HASTA}&proveedor_id=1",
@@ -262,9 +262,9 @@ def test_la_EXPORTACION_sale_con_los_filtros_de_la_PANTALLA(cliente, pantalla, e
             assert encabezado in texto, (link, encabezado)
 
 
-def test_la_PLANILLA_PARA_PAGAR_abierta_desde_MOVIMIENTOS_conserva_el_proveedor(cliente):
+def test_el_RESUMEN_PROVEEDORES_abierto_desde_MOVIMIENTOS_conserva_el_proveedor(cliente):
     """El camino que perdía el filtro: Movimientos del depósito filtrado por
-    proveedor → "Planilla para pagar" llegaba con las fechas y sin el
+    proveedor → "Resumen proveedores" llegaba con las fechas y sin el
     proveedor, y su PDF bajaba todos."""
     respuesta = cliente.get(f"/administracion/ingresos?desde={DESDE}&hasta={HASTA}&proveedor_id=1&articulo_id=1")
     link = re.search(r'href="(/administracion/ingresos/pagar\?[^"]*)"', respuesta.text).group(1)

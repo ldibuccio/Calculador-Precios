@@ -9916,7 +9916,7 @@ def test_el_FORMATO_del_codigo_de_puesto_de_Python_y_el_de_la_BASE_son_LA_MISMA_
 CONSULTAS_QUE_MUESTRAN_LAS_DOS_MAGNITUDES = {
     "obtener_detalle_compra": "Detalle de la compra (comprado y recepcionado)",
     "listar_compras_sin_precio": "Compras pendientes de precio",
-    "buscar_ingresos_deposito": "Ingresos a Depósito",
+    "buscar_ingresos_deposito": "Resumen proveedores",
     "listar_compras_procesadas_hoy_retiro": "Retiro, lo procesado hoy",
     "listar_compras_pendientes_retiro": "Retiro, lo pendiente",
     "buscar_compras": "Buscar compras",

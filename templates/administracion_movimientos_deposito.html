@@ -84,9 +84,9 @@
     <div class="acciones">
       <button type="submit">Filtrar</button>
       <a href="/administracion/ingresos/movimientos-excel?desde={{ filtros.desde.isoformat() }}&amp;hasta={{ filtros.hasta.isoformat() }}&amp;tipo={{ filtros.tipo or '' }}&amp;proveedor_id={{ filtros.proveedor_id if filtros.proveedor_id is not none else '' }}&amp;articulo_id={{ filtros.articulo_id if filtros.articulo_id is not none else '' }}&amp;sector={{ filtros.sector or '' }}">Exportar Excel</a>
-      {# LA PLANILLA PARA PAGAR sigue: lo que hay que depositarle a cada
+      {# EL RESUMEN PROVEEDORES sigue: lo que hay que depositarle a cada
          proveedor, con sus señas, su PDF y su Excel. #}
-      <a href="/administracion/ingresos/pagar?fecha_desde={{ filtros.desde.isoformat() }}&amp;fecha_hasta={{ filtros.hasta.isoformat() }}&amp;proveedor_id={{ filtros.proveedor_id if filtros.proveedor_id is not none else '' }}&amp;articulo_id={{ filtros.articulo_id if filtros.articulo_id is not none else '' }}">Planilla para pagar</a>
+      <a href="/administracion/ingresos/pagar?fecha_desde={{ filtros.desde.isoformat() }}&amp;fecha_hasta={{ filtros.hasta.isoformat() }}&amp;proveedor_id={{ filtros.proveedor_id if filtros.proveedor_id is not none else '' }}&amp;articulo_id={{ filtros.articulo_id if filtros.articulo_id is not none else '' }}">Resumen proveedores</a>
     </div>
   </form>
 

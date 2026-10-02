@@ -71,6 +71,7 @@
   {% set barra_sector = "administracion" %}
   {% set barra_titulo = "Recibir remito " ~ remito.numero %}
   {% set barra_atras = "/administracion/facturacion" %}
+  {% from "_info.html" import info %}
   {% include "_barra_navegacion.html" %}
 
   {% if error %}<div class="error">{{ error }}</div>{% endif %}
@@ -87,8 +88,8 @@
   {% else %}
   <form method="post" action="/administracion/facturacion/remito/{{ remito.id }}/recibir" enctype="multipart/form-data">
     <div class="tarjeta">
-      <h2>Lo que dice el remito firmado</h2>
-      <div class="ojo">Bultos y kilos vienen con lo que se envió menos lo que Depósito ya cargó como rechazado: cambiá solo lo que el súper anotó distinto. Si rechazó bultos, poné los que se quedó y los kilos de esos bultos. Esto no mueve stock: lo rechazado lo ingresa Depósito.</div>
+      {# LA EXPLICACIÓN VA A LA "i" (dueño, 02/10): arranca cerrada. #}
+      <h2>Lo que dice el remito firmado {% call info("Cómo se carga lo recibido") %}Bultos y kilos vienen con lo que se envió menos lo que Depósito ya cargó como rechazado: cambiá solo lo que el súper anotó distinto. Si rechazó bultos, poné los que se quedó y los kilos de esos bultos. Esto no mueve stock: lo rechazado lo ingresa Depósito.{% endcall %}</h2>
       {% for r in remito.renglones %}
         <div class="renglon">
           <div class="renglon-nombre">{{ r.articulo_nombre or "(sin identificar)" }}</div>
