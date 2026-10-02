@@ -50,7 +50,7 @@
   .dato b { color: #333; }
   .salida form { display: flex; flex-direction: column; gap: 0.6rem; }
   .salida label { font-size: 0.85rem; color: #444; }
-  .salida input { display: block; width: 100%; box-sizing: border-box; margin-top: 0.2rem; padding: 0.6rem;
+  .salida input, .salida select { display: block; width: 100%; box-sizing: border-box; margin-top: 0.2rem; padding: 0.6rem;
     border: 1px solid #ccc; border-radius: 8px; font-size: 1rem; min-height: 44px; }
   .salida button { min-height: 48px; border-radius: 8px; border: none; background: #2563eb; color: #fff;
     font-weight: 600; font-size: 1rem; }
@@ -86,6 +86,7 @@
     <p class="dato"><b>Estado:</b> {{ texto_del_estado[vale.estado] }}
       {%- if vale.estado == 'en_cartera' %} · {{ vale.dias }} días en cartera{% else %} · {{ texto_de_la_salida(vale) }}{% endif %}</p>
     <p class="dato"><b>Fecha:</b> {{ vale.fecha.strftime('%d/%m/%Y') }} · {{ texto_del_origen[vale.origen] }}</p>
+    {% if vale.nota %}<p class="dato"><b>Nota:</b> {{ vale.nota }}</p>{% endif %}
     {% if vale.origen == 'devolucion' %}
     <p class="dato"><b>Devolución:</b> {{ vale.cajones }} cajón{{ '' if vale.cajones == 1 else 'es' }} · {{ vale.marca or 'sin marca' }}</p>
     <p class="dato"><b>Calculado:</b>
@@ -123,7 +124,13 @@
     <div class="fila"><div class="fila-que">Entró a cartera</div>
       <div class="fila-dato">{{ vale.fecha.strftime('%d/%m/%Y') }} ·
         {%- if vale.origen == 'devolucion' %} devolución cargada por {{ texto_del_sector.get(vale.cargada_desde, 'sin dato') }}
+        {%- elif vale.origen == 'carga_manual' %} cargado a mano por {{ texto_del_sector.get(vale.cargada_desde, 'sin dato') }}
         {%- else %} cargado por SQL{% endif %} · {{ vale.creado_en|fecha_hora }}</div></div>
+    {% for c in correcciones %}
+    <div class="fila"><div class="fila-que">Corrigió {{ texto_del_campo[c.campo]|lower }}</div>
+      <div class="fila-dato">{{ texto_del_valor_corregido(c.campo, c.valor_anterior) }} → {{ texto_del_valor_corregido(c.campo, c.valor_nuevo) }} ·
+        {{ texto_del_sector[c.sector] }}, {{ c.creado_en|fecha_hora }}</div></div>
+    {% endfor %}
     {% if vale.salida_fecha %}
     <div class="fila"><div class="fila-que">{{ texto_del_estado[vale.estado] }}</div>
       <div class="fila-dato">{{ vale.salida_fecha.strftime('%d/%m/%Y') }} · {{ texto_de_la_salida(vale) }} ·
@@ -152,6 +159,27 @@
       <label>Fecha<input type="date" name="fecha" value="{{ hoy.isoformat() }}" max="{{ hoy.isoformat() }}" required></label>
       <label>Nº de liquidación o referencia<input type="text" name="referencia" autocomplete="off" required></label>
       <button type="submit">Registrar el cruce</button>
+    </form>
+  </div>
+  {% endif %}
+  {# CORREGIR, solo Gerencia, solo un vale EN CARTERA con datos propios
+     (dueño, 02/10): la misma regla que `corregir_vale`, así no se ofrece lo
+     que el POST rechaza. Un vale no se anula: se corrige. #}
+  {% if puede_corregir %}
+  <div class="tarjeta salida">
+    <h2>Corregir el vale</h2>
+    <form method="post" action="/gerencia/vales/{{ vale.id }}/corregir">
+      <label>Proveedor
+        <select name="proveedor_id" required>
+          {% for p in proveedores %}
+          <option value="{{ p.id }}" {% if p.id == vale.proveedor_id %}selected{% endif %}>{{ p.codigo_puesto }} · {{ p.nombre }}</option>
+          {% endfor %}
+        </select>
+      </label>
+      <label>Fecha del vale<input type="date" name="fecha" value="{{ vale.fecha.isoformat() }}" max="{{ hoy.isoformat() }}" required></label>
+      <label>Importe ($)<input type="text" inputmode="decimal" name="importe" value="{{ vale.importe|sin_decimales }}" required></label>
+      <label>Número (opcional)<input type="text" name="numero" value="{{ vale.numero or '' }}" autocomplete="off"></label>
+      <button type="submit">Guardar la corrección</button>
     </form>
   </div>
   {% endif %}

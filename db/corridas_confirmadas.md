@@ -832,3 +832,10 @@ PALMALA   cobranza_segunda · tablas 2 · checks 2 · triggers 2 · cobros 0 · 
 Las dos tablas, los dos CHECK y los dos triggers están en las dos bases. Los
 60 lotes de Frutamax arrancan todos pendientes (`cobros 0`). Palmala no tiene
 ningún lote al puesto y no vota: confirma solo que los bloques no explotan.
+
+## 02/10 — `vales_papel_1` a `4` quedan OBSOLETOS
+
+Decisión del dueño: los vales en papel se cargan desde la pantalla de Vales
+("Cargar vale", origen `carga_manual`). `db/vales_papel_1_pegar.sql` y los
+pasos que lo siguen no se corren más. Lo que ya se cargó por ese camino queda
+como `anterior_al_sistema`.

@@ -244,7 +244,10 @@ def test_NINGUNA_pantalla_borra_una_foto_de_un_vale():
     for archivo in ("app/main.py", "app/db.py"):
         texto = io.open(os.path.join(RAIZ, archivo), encoding="utf-8").read()
         assert not re.search(r"DELETE\s+FROM\s+vales_a_cobrar_fotos", texto, re.I), archivo
-        assert not re.search(r"UPDATE\s+vales_a_cobrar\b[^;]*foto_ruta", texto, re.I), archivo
+        # El UPDATE se busca ADENTRO de su cadena (hasta la comilla que la
+        # cierra): con `[^;]*` cruzaba de un UPDATE que corrige el importe
+        # (02/10) a un `foto_ruta` de otra función, cien líneas más abajo.
+        assert not re.search(r"UPDATE\s+vales_a_cobrar\b[^\"']*foto_ruta", texto, re.I), archivo
 
 
 # --- 2. la foto de una devolución de mercadería no se borra -------------------

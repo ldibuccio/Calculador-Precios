@@ -67,7 +67,9 @@
       {# Los dos href escritos enteros, uno por sector: así el barrido de
          pantallas sin link los ve (con `camino.base` no puede resolverlos). #}
       {% if camino.sector == 'gerencia' %}<a href="/gerencia/vales/movimientos">Movimientos</a>
-      {% else %}<a href="/administracion/vales/movimientos">Movimientos</a>{% endif %}
+      <a href="/gerencia/vales/cargar">Cargar vale</a>
+      {% else %}<a href="/administracion/vales/movimientos">Movimientos</a>
+      <a href="/administracion/vales/cargar">Cargar vale</a>{% endif %}
     </div>
   </div>
 
@@ -90,6 +92,13 @@
       </label>
       <label>Desde<input type="date" name="desde" value="{{ filtros.desde.isoformat() if filtros.desde else '' }}"></label>
       <label>Hasta<input type="date" name="hasta" value="{{ filtros.hasta.isoformat() if filtros.hasta else '' }}"></label>
+      <label>Origen
+        <select name="origen">
+          {% for valor, texto in opciones_de_origen %}
+          <option value="{{ valor }}" {% if (filtros.origen or '') == valor %}selected{% endif %}>{{ texto }}</option>
+          {% endfor %}
+        </select>
+      </label>
       <label>Con más de (días)<input type="number" min="0" step="1" inputmode="numeric" name="mas_de" value="{{ filtros.mas_de if filtros.mas_de is not none else '' }}"></label>
     </div>
     <div class="acciones"><button type="submit">Filtrar</button></div>

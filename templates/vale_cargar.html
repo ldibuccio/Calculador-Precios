@@ -1,0 +1,106 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Cargar vale</title>
+<style>
+  :root { font-family: -apple-system, system-ui, sans-serif; }
+  body { margin: 0; padding: 1rem; background: #f5f5f5; color: #222; }
+  .tarjeta {
+    background: #fff; border-radius: 10px; padding: 1rem; margin-bottom: 1rem;
+    box-shadow: 0 1px 3px rgba(0, 0, 0, 0.1); overflow-wrap: anywhere;
+  }
+  .error { background: #fee2e2; color: #991b1b; padding: 0.75rem 1rem; border-radius: 8px; margin-bottom: 1rem; }
+  .carga { display: flex; flex-direction: column; gap: 0.7rem; }
+  .carga label { font-size: 0.85rem; color: #444; }
+  .carga input, .carga select, .carga textarea {
+    display: block; width: 100%; box-sizing: border-box; margin-top: 0.2rem; padding: 0.6rem;
+    border: 1px solid #ccc; border-radius: 8px; font-size: 1rem; background: #fff; min-height: 44px;
+    font-family: inherit;
+  }
+  .carga button { min-height: 48px; border-radius: 8px; border: none; background: #2563eb; color: #fff;
+    font-weight: 600; font-size: 1rem; }
+  .o { text-align: center; color: #666; font-size: 0.85rem; }
+  .parecidos { background: #fef3c7; color: #92400e; padding: 0.75rem 1rem; border-radius: 8px; }
+  .parecidos ul { margin: 0.4rem 0; padding-left: 1.2rem; }
+  .parecidos button { width: 100%; background: #b45309; }
+  .ayuda { color: #555; font-size: 0.88rem; margin: 0 0 0.6rem; }
+</style>
+</head>
+<body>
+  {% set barra_sector = camino.sector %}
+  {% set barra_titulo = "Cargar vale" %}
+  {% set barra_atras = camino.base ~ "/vales" %}
+  {% include "_barra_navegacion.html" %}
+
+  {% if error %}<div class="error">{{ error }}</div>{% endif %}
+
+  <div class="tarjeta">
+    <p class="ayuda">Un vale en papel que entra a la cartera. No mueve stock, ni cajones, ni Vacíos.</p>
+    <form class="carga" id="carga-vale" method="post" action="{{ camino.base }}/vales/cargar" enctype="multipart/form-data">
+      <label>Código de puesto<input type="text" name="codigo_puesto" value="{{ valores.codigo_puesto or '' }}" autocomplete="off" placeholder="N09P41"></label>
+      <div class="o">o elegilo de la lista</div>
+      <label>Proveedor
+        <select name="proveedor_id">
+          <option value="">—</option>
+          {% for p in proveedores %}
+          <option value="{{ p.id }}" {% if valores.proveedor_id == p.id|string %}selected{% endif %}>{{ p.codigo_puesto }} · {{ p.nombre }}</option>
+          {% endfor %}
+        </select>
+      </label>
+      <label>Fecha del vale<input type="date" name="fecha" value="{{ valores.fecha or '' }}" max="{{ hoy.isoformat() }}" required></label>
+      <label>Importe ($)<input type="text" inputmode="decimal" name="importe" value="{{ valores.importe or '' }}" autocomplete="off" required></label>
+      <label>Número (opcional)<input type="text" name="numero" value="{{ valores.numero or '' }}" autocomplete="off"></label>
+      <label>Foto (opcional)<input type="file" name="foto" accept="image/*"></label>
+      <label>Nota (opcional)<textarea name="nota" rows="2">{{ valores.nota or '' }}</textarea></label>
+      <input type="hidden" name="confirmar_parecido" value="">
+      {# PARECIDOS (dueño, 02/10): se avisa y se pide confirmación, no se
+         frena. Se pregunta ANTES de enviar, porque un formulario que vuelve
+         del servidor no puede traer la foto elegida; el POST vuelve a
+         preguntar igual (la guarda va donde se escribe). #}
+      <div class="parecidos" id="parecidos" {% if not parecidos %}hidden{% endif %}>
+        <b>Ya hay un vale que puede ser el mismo:</b>
+        <ul id="lista-parecidos">
+          {% for v in parecidos %}<li>{{ v.proveedor }} · {{ v.fecha.strftime('%d/%m/%Y') }} · {{ v.importe|moneda }}{% if v.numero %} · vale {{ v.numero }}{% endif %} · {{ texto_del_estado[v.estado] }}</li>{% endfor %}
+        </ul>
+        <button type="button" id="confirmar-parecido">Es otro vale: cargarlo igual</button>
+      </div>
+      <button type="submit">Cargar el vale</button>
+    </form>
+  </div>
+<script>
+(function () {
+  var form = document.getElementById("carga-vale");
+  var caja = document.getElementById("parecidos");
+  var lista = document.getElementById("lista-parecidos");
+  var confirmado = form.elements["confirmar_parecido"];
+  document.getElementById("confirmar-parecido").addEventListener("click", function () {
+    confirmado.value = "si";
+    form.submit();
+  });
+  form.addEventListener("submit", function (evento) {
+    if (confirmado.value === "si") return;
+    evento.preventDefault();
+    var datos = new URLSearchParams();
+    ["codigo_puesto", "proveedor_id", "numero", "fecha", "importe"].forEach(function (n) {
+      datos.set(n, form.elements[n].value);
+    });
+    fetch(form.action + "/parecidos?" + datos.toString(), {credentials: "same-origin"})
+      .then(function (r) { return r.ok ? r.json() : {parecidos: []}; })
+      .then(function (respuesta) {
+        if (!respuesta.parecidos || !respuesta.parecidos.length) { confirmado.value = "no"; form.submit(); return; }
+        lista.innerHTML = "";
+        respuesta.parecidos.forEach(function (v) {
+          var li = document.createElement("li"); li.textContent = v.texto; lista.appendChild(li);
+        });
+        caja.hidden = false;
+        caja.scrollIntoView({block: "center"});
+      })
+      .catch(function () { form.submit(); });
+  });
+})();
+</script>
+{% include "_pie_version.html" %}
+</body>
+</html>
