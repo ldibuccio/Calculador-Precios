@@ -175,6 +175,13 @@ from app.db import (
     anular_movimiento_stock,
     articulos_con_salidas_stock,
     anular_remito_segunda,
+    LoteDeSegundaCobrado,
+    lotes_de_segunda,
+    historial_de_cobros_de_segunda,
+    registrar_cobros_de_segunda,
+    corregir_cobro_de_segunda,
+    volver_a_pendiente_lote_de_segunda,
+    contar_segunda_sin_cobrar,
     anular_reproceso,
     anular_renglon_stock_inicial,
     completar_costo_reproceso,
@@ -570,6 +577,19 @@ from core.vales import (
     texto_de_la_foto as texto_de_la_foto_vale,
     texto_de_la_salida as texto_de_la_salida_vale,
     total_de as total_de_vales,
+)
+from core.vales import hora_argentina as hora_argentina_vale
+from core.cobranzas_segunda import (
+    DIAS_SEGUNDA_SIN_COBRAR,
+    OPCIONES_DE_ESTADO as OPCIONES_DE_ESTADO_COBRANZAS,
+    dias_que_lleva as dias_que_lleva_el_lote,
+    estado_del_filtro as estado_del_filtro_cobranzas,
+    generar_excel_cobranzas,
+    generar_pdf_cobranzas,
+    importe_por_bulto as importe_por_bulto_de_segunda,
+    partir_por_estado as partir_lotes_de_segunda,
+    resumen as resumen_de_cobranzas,
+    texto_del_filtro as texto_del_filtro_cobranzas,
 )
 from core.movimientos_deposito import (
     OPCIONES_DE_SECTOR as OPCIONES_DE_SECTOR_DEPOSITO,
@@ -15045,7 +15065,8 @@ ETIQUETAS_MOVIMIENTO_STOCK = ETIQUETAS_MOVIMIENTO
 
 
 @app.get("/administracion/stock/movimientos")
-def ver_movimientos_stock(request: Request, fecha_desde: str | None = None, fecha_hasta: str | None = None):
+def ver_movimientos_stock(request: Request, fecha_desde: str | None = None, fecha_hasta: str | None = None,
+                          error: str | None = None):
     """Movimientos de stock (control): ajustes, mermas y reingresos de cualquier fecha, con anular por baja lógica.
 
     Corregir = anular el movimiento equivocado y cargarlo de nuevo bien
@@ -15071,6 +15092,7 @@ def ver_movimientos_stock(request: Request, fecha_desde: str | None = None, fech
         # ausencia porque `_ponerle_nombre_de_porcion` lo lee en las dos
         # listas y una clave que falta en una sola es como se separan.
         m["es_segunda"] = False
+        m["cobrado"] = False
     # Las salidas del pool de segunda entran al mismo listado, con su propia
     # pill y su propio anular: un solo lugar de control para todo lo cargado
     # a mano.
@@ -15108,6 +15130,7 @@ def ver_movimientos_stock(request: Request, fecha_desde: str | None = None, fech
             "movimientos": movimientos,
             "fecha_desde": desde.isoformat(),
             "fecha_hasta": hasta.isoformat(),
+            "error": error,
         },
     )
 
@@ -15137,6 +15160,13 @@ def anular_remito_segunda_ruta(
 ):
     try:
         anular_remito_segunda(remito_id)
+    except LoteDeSegundaCobrado as motivo:
+        # Un lote ya cobrado no se anula (dueño, 02/10): vuelve con el motivo.
+        return RedirectResponse(
+            url="/administracion/stock/movimientos?" + urlencode(
+                {"fecha_desde": fecha_desde, "fecha_hasta": fecha_hasta, "error": str(motivo)}),
+            status_code=303,
+        )
     except Exception as error_db:
         raise HTTPException(status_code=500, detail=f"No se pudo anular el remito: {error_db}") from error_db
 
@@ -17821,6 +17851,21 @@ ALERTAS = [
         contar=lambda: contar_ordenes_sin_remito(REMITOS_DESDE),
     ),
     DefinicionAlerta(
+        codigo="segunda_sin_cobrar",
+        # Dueño, 02/10: un lote de segunda (salida al puesto) con más de
+        # DIAS_SEGUNDA_SIN_COBRAR días corridos desde la salida y sin cobro
+        # (core/cobranzas_segunda.py). $0 es un cobro: no cuenta.
+        titulo="Segunda sin cobrar",
+        texto=lambda casos: (f"{casos} lote{'s' if casos != 1 else ''} de segunda con más de "
+                             f"{DIAS_SEGUNDA_SIN_COBRAR} días sin cobrar"),
+        url="/administracion/cobranzas-segunda?estado=pendiente",
+        texto_link="Ver Cobranzas de segunda",
+        modulos=("gerencia", "administracion"),
+        destinos_por_sector={"gerencia": ("/gerencia/cobranzas-segunda?estado=pendiente",
+                                          "Ver Cobranzas de segunda")},
+        contar=lambda: contar_segunda_sin_cobrar(_hoy_argentina()),
+    ),
+    DefinicionAlerta(
         codigo="espacio_de_fotos",
         # Dueño, 01/10: el Storage de ESTA base pasa el 80% de lo que incluye
         # el plan (core/fotos.py). Los casos son el porcentaje: el banner lo
@@ -18797,10 +18842,17 @@ def _datos_rentabilidad_real(cliente_id: int, fecha_desde, fecha_hasta, articulo
     renglones |= {d.get("renglon_id") for d in devoluciones}
     recibidos = kilos_recibidos_por_renglon(sorted(r for r in renglones if r is not None))
 
+    # LOS LOTES DE SEGUNDA AL PUESTO del rango (dueño, 02/10), por la fecha de
+    # la SALIDA y con los MISMOS filtros de artículo y grupo. Son del artículo,
+    # no del cliente, igual que la merma.
+    segunda = lotes_de_segunda(desde=fecha_desde, hasta=fecha_hasta, articulo_id=articulo_id)
+    if grupo is not None:
+        segunda = [l for l in segunda if l["grupo"] == grupo]
+
     return calcular_rentabilidad_real(
         articulos_datos, margenes_por_fecha, cliente_id, fecha_desde, fecha_hasta,
         devoluciones=devoluciones, cajas_del_deposito=cajas_del_deposito,
-        kilos_recibidos=recibidos,
+        kilos_recibidos=recibidos, segunda=segunda,
     )
 
 
@@ -18932,7 +18984,8 @@ def ver_rentabilidad_real(
 
     Venta = lo ENVIADO × precio de lista vigente (el precio que Día
     paga); mercadería al costo FIFO real; mermas del período al costo de
-    su lote; la segunda en bultos, sin plata. El "afuera del cálculo" es
+    su lote; la segunda en bultos, sin plata, salvo lo que pagó el puesto
+    (recupero de segunda, 02/10). El "afuera del cálculo" es
     PROTAGONISTA por pedido del dueño: motivo por motivo, con bultos y
     artículos — su hoja de ruta mientras la real se afina.
     """
@@ -20392,6 +20445,208 @@ def guardar_limites_de_vales_ruta(request: Request, monto: str = Form(""), dias:
         return _renderizar_vales(request, filtros, error=str(motivo), status_code=400)
     return RedirectResponse(url="/gerencia/vales?" + urlencode({"aviso": "Límites guardados."}),
                             status_code=303)
+
+
+# ============================================================================
+# COBRANZAS DE SEGUNDA (dueño, 02/10)
+#
+# UNA pantalla, DOS entradas, igual que Vales: Administración y Gerencia
+# cargan los cobros; SOLO Gerencia corrige un importe o vuelve un lote a
+# pendiente. El sector sale del PREFIJO (corolario 63). Lo que se escribe vive
+# en app/db.py (COBRANZAS DE SEGUNDA) y las palabras y los archivos en
+# core/cobranzas_segunda.py.
+# ============================================================================
+
+def _camino_de_cobranzas(request: Request) -> dict:
+    """El mismo reparto por prefijo que Vales a cobrar."""
+    return _camino_de_vales(request)
+
+
+def _filtros_de_cobranzas(desde: str, hasta: str, articulo_id: str, estado: str) -> dict:
+    return {
+        "desde": fecha_del_filtro_vales(desde),
+        "hasta": fecha_del_filtro_vales(hasta),
+        "articulo_id": _id_opcional_desde_query(articulo_id),
+        "estado": estado_del_filtro_cobranzas(estado),
+    }
+
+
+def _query_de_cobranzas(filtros: dict) -> str:
+    """Los filtros como se dibujaron: los links de exportar y la vuelta de
+    cada POST llevan TODOS (regla de v1063)."""
+    return urlencode({
+        "desde": filtros["desde"].isoformat() if filtros["desde"] else "",
+        "hasta": filtros["hasta"].isoformat() if filtros["hasta"] else "",
+        "articulo_id": filtros["articulo_id"] or "",
+        "estado": filtros["estado"] or "todos",
+    })
+
+
+def _lotes_filtrados(filtros: dict) -> list[dict]:
+    return lotes_de_segunda(desde=filtros["desde"], hasta=filtros["hasta"],
+                            articulo_id=filtros["articulo_id"], estado=filtros["estado"])
+
+
+def _renderizar_cobranzas(request: Request, filtros: dict, *, aviso: str | None = None,
+                          error: str | None = None, fecha_cobro: str | None = None, status_code: int = 200):
+    camino = _camino_de_cobranzas(request)
+    hoy = _hoy_argentina()
+    try:
+        lotes = _lotes_filtrados(filtros)
+        historial = historial_de_cobros_de_segunda([l["id"] for l in lotes if l["cambios"]])
+        articulos = listar_articulos()
+    except Exception as error_db:
+        raise HTTPException(status_code=500, detail=f"Error al conectar con la base de datos: {error_db}") from error_db
+    pendientes, cobrados = partir_lotes_de_segunda(lotes)
+    for lote in pendientes:
+        lote["dias"] = dias_que_lleva_el_lote(lote, hoy)
+        lote["viejo"] = lote["dias"] > DIAS_SEGUNDA_SIN_COBRAR
+    for lote in cobrados:
+        lote["por_bulto"] = importe_por_bulto_de_segunda(lote)
+    return templates.TemplateResponse(request, "cobranzas_segunda.html", {
+        "camino": camino, "filtros": filtros, "query": _query_de_cobranzas(filtros),
+        "pendientes": pendientes, "cobrados": cobrados, "resumen": resumen_de_cobranzas(lotes),
+        "historial": historial, "articulos": articulos, "hoy": hoy,
+        "fecha_cobro": fecha_cobro or hoy.isoformat(), "opciones_de_estado": OPCIONES_DE_ESTADO_COBRANZAS,
+        "texto_del_sector": TEXTO_DEL_SECTOR_VALE, "hora_argentina": hora_argentina_vale,
+        "dias_alerta": DIAS_SEGUNDA_SIN_COBRAR, "aviso": aviso, "error": error,
+    }, status_code=status_code)
+
+
+@app.get("/administracion/cobranzas-segunda")
+@app.get("/gerencia/cobranzas-segunda")
+def ver_cobranzas_de_segunda(request: Request, desde: str = "", hasta: str = "", articulo_id: str = "",
+                             estado: str = "", aviso: str | None = None, error: str | None = None):
+    """Los lotes de segunda: pendientes de cobro (con su campo de importe) y
+    cobrados. Se cargan de a muchos con un solo Guardar."""
+    sin_clave = _sin_clave_de_vales(request)
+    if sin_clave is not None:
+        return sin_clave
+    return _renderizar_cobranzas(request, _filtros_de_cobranzas(desde, hasta, articulo_id, estado),
+                                 aviso=aviso, error=error)
+
+
+def _volver_a_cobranzas(camino: dict, filtros: dict, **mensaje) -> RedirectResponse:
+    return RedirectResponse(url=f"{camino['base']}/cobranzas-segunda?{_query_de_cobranzas(filtros)}&"
+                            + urlencode(mensaje), status_code=303)
+
+
+@app.post("/administracion/cobranzas-segunda/cobrar")
+@app.post("/gerencia/cobranzas-segunda/cobrar")
+async def cobrar_lotes_de_segunda(request: Request):
+    """Graba TODOS los renglones que traen importe, con la fecha de cobro. Un
+    renglón vacío sigue pendiente; "0" es cobrado en cero."""
+    camino = _camino_de_cobranzas(request)
+    if camino["sector"] == "gerencia":
+        puerta = _puerta_de_gerencia_para_escribir(request)
+        if puerta is not None:
+            return puerta
+    formulario = await request.form()
+    filtros = _filtros_de_cobranzas(formulario.get("desde", ""), formulario.get("hasta", ""),
+                                    formulario.get("articulo_id", ""), formulario.get("estado", ""))
+    fecha_cobro = fecha_del_filtro_vales(formulario.get("fecha_cobro", ""))
+    if fecha_cobro is None:
+        return _renderizar_cobranzas(request, filtros, error="La fecha de cobro no se entiende.",
+                                     status_code=400)
+    cobros, malos = [], []
+    for clave, valor in formulario.items():
+        if not clave.startswith("importe_") or not str(valor).strip():
+            continue
+        importe = _importe_del_form(str(valor))
+        salida_id = _id_opcional_desde_query(clave.removeprefix("importe_"))
+        if importe is None or salida_id is None:
+            malos.append(str(valor))
+            continue
+        cobros.append((salida_id, importe))
+    if malos:
+        return _renderizar_cobranzas(request, filtros, fecha_cobro=fecha_cobro.isoformat(), status_code=400,
+                                     error=f"No se entiende el importe {malos[0]!r}: no se grabó nada.")
+    try:
+        cuantos = registrar_cobros_de_segunda(cobros, fecha_cobro, sector=camino["sector"],
+                                              hoy=_hoy_argentina())
+    except ValueError as motivo:
+        return _renderizar_cobranzas(request, filtros, error=str(motivo), fecha_cobro=fecha_cobro.isoformat(),
+                                     status_code=400)
+    return _volver_a_cobranzas(camino, filtros,
+                               aviso=f"{cuantos} lote{'s' if cuantos != 1 else ''} cobrado{'s' if cuantos != 1 else ''}.")
+
+
+@app.post("/gerencia/cobranzas-segunda/{salida_id}/corregir")
+def corregir_cobro_de_segunda_ruta(request: Request, salida_id: int, importe: str = Form(""),
+                                   desde: str = Form(""), hasta: str = Form(""),
+                                   articulo_id: str = Form(""), estado: str = Form("")):
+    """Solo Gerencia: un importe mal cargado. Queda el anterior en el historial."""
+    puerta = _puerta_de_gerencia_para_escribir(request)
+    if puerta is not None:
+        return puerta
+    filtros = _filtros_de_cobranzas(desde, hasta, articulo_id, estado)
+    valor = _importe_del_form(importe)
+    if valor is None:
+        return _renderizar_cobranzas(request, filtros, error="El importe no es un número.", status_code=400)
+    try:
+        corregir_cobro_de_segunda(salida_id, valor)
+    except ValueError as motivo:
+        return _renderizar_cobranzas(request, filtros, error=str(motivo), status_code=400)
+    return _volver_a_cobranzas(_camino_de_cobranzas(request), filtros,
+                               aviso="Importe corregido. El anterior queda en el historial.")
+
+
+@app.post("/gerencia/cobranzas-segunda/{salida_id}/pendiente")
+def volver_a_pendiente_lote_de_segunda_ruta(request: Request, salida_id: int, motivo: str = Form(""),
+                                            desde: str = Form(""), hasta: str = Form(""),
+                                            articulo_id: str = Form(""), estado: str = Form("")):
+    """Solo Gerencia, con motivo: el lote vuelve a pendiente y el cobro que
+    tenía queda en el historial."""
+    puerta = _puerta_de_gerencia_para_escribir(request)
+    if puerta is not None:
+        return puerta
+    filtros = _filtros_de_cobranzas(desde, hasta, articulo_id, estado)
+    try:
+        volver_a_pendiente_lote_de_segunda(salida_id, motivo)
+    except ValueError as error:
+        return _renderizar_cobranzas(request, filtros, error=str(error), status_code=400)
+    return _volver_a_cobranzas(_camino_de_cobranzas(request), filtros,
+                               aviso="El lote volvió a pendiente. El cobro anterior queda en el historial.")
+
+
+def _exportacion_de_cobranzas(request: Request, desde: str, hasta: str, articulo_id: str, estado: str):
+    filtros = _filtros_de_cobranzas(desde, hasta, articulo_id, estado)
+    try:
+        lotes = _lotes_filtrados(filtros)
+        articulo = " · ".join(_textos_de_filtros(articulo_id=filtros["articulo_id"])) or None
+    except Exception as error_db:
+        raise HTTPException(status_code=500, detail=f"Error al conectar con la base de datos: {error_db}") from error_db
+    filtro = texto_del_filtro_cobranzas(filtros["desde"], filtros["hasta"], articulo, filtros["estado"])
+    return lotes, filtro
+
+
+@app.get("/administracion/cobranzas-segunda/exportar-pdf")
+@app.get("/gerencia/cobranzas-segunda/exportar-pdf")
+def exportar_cobranzas_de_segunda_pdf(request: Request, desde: str = "", hasta: str = "",
+                                      articulo_id: str = "", estado: str = ""):
+    """Los mismos lotes que la pantalla, con los mismos filtros, en PDF."""
+    sin_clave = _sin_clave_de_vales(request)
+    if sin_clave is not None:
+        return sin_clave
+    lotes, filtro = _exportacion_de_cobranzas(request, desde, hasta, articulo_id, estado)
+    hoy = _hoy_argentina()
+    return Response(content=generar_pdf_cobranzas(filtro, lotes, hoy), media_type="application/pdf",
+                    headers={"Content-Disposition": f'attachment; filename="Cobranzas_segunda_{hoy.isoformat()}.pdf"'})
+
+
+@app.get("/administracion/cobranzas-segunda/exportar-excel")
+@app.get("/gerencia/cobranzas-segunda/exportar-excel")
+def exportar_cobranzas_de_segunda_excel(request: Request, desde: str = "", hasta: str = "",
+                                        articulo_id: str = "", estado: str = ""):
+    """Los mismos lotes que la pantalla, con los mismos filtros, en Excel."""
+    sin_clave = _sin_clave_de_vales(request)
+    if sin_clave is not None:
+        return sin_clave
+    lotes, filtro = _exportacion_de_cobranzas(request, desde, hasta, articulo_id, estado)
+    hoy = _hoy_argentina()
+    return Response(content=generar_excel_cobranzas(filtro, lotes, hoy),
+                    media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                    headers={"Content-Disposition": f'attachment; filename="Cobranzas_segunda_{hoy.isoformat()}.xlsx"'})
 
 
 @app.get("/administracion/ingresos/pagar")

@@ -1,0 +1,171 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Cobranzas de segunda</title>
+<style>
+  :root { font-family: -apple-system, system-ui, sans-serif; }
+  body { margin: 0; padding: 1rem; background: #f5f5f5; color: #222; }
+  .tarjeta {
+    background: #fff; border-radius: 10px; padding: 1rem; margin-bottom: 1rem;
+    box-shadow: 0 1px 3px rgba(0, 0, 0, 0.1); overflow-wrap: anywhere;
+  }
+  .error { background: #fee2e2; color: #991b1b; padding: 0.75rem 1rem; border-radius: 8px; margin-bottom: 1rem; }
+  .aviso { background: #dcfce7; color: #166534; padding: 0.75rem 1rem; border-radius: 8px; margin-bottom: 1rem; }
+  .filtros { display: flex; flex-wrap: wrap; gap: 0.6rem; }
+  .filtros label, .fecha-cobro { flex: 1 1 9rem; font-size: 0.85rem; color: #444; display: block; }
+  .filtros select, .filtros input, .fecha-cobro input, .lote input, .gerencia input {
+    display: block; width: 100%; box-sizing: border-box; margin-top: 0.2rem; padding: 0.6rem;
+    border: 1px solid #ccc; border-radius: 8px; font-size: 1rem; background: #fff; min-height: 44px;
+  }
+  .acciones { display: flex; flex-wrap: wrap; gap: 0.6rem; margin-top: 0.8rem; }
+  .acciones button, .acciones a, .gerencia button {
+    flex: 1 1 9rem; min-height: 48px; padding: 0.7rem; border-radius: 8px; font-size: 1rem;
+    font-weight: 600; text-align: center; text-decoration: none; box-sizing: border-box;
+  }
+  .acciones button, .gerencia button { background: #2563eb; color: #fff; border: none; }
+  .acciones a { background: #fff; color: #2563eb; border: 1px solid #2563eb; }
+  h2 { font-size: 1.05rem; margin: 0 0 0.3rem; }
+  .cuenta { color: #444; font-size: 0.9rem; margin: 0 0 0.6rem; }
+  .lote { padding: 0.6rem 0; border-top: 1px solid #eee; display: flex; flex-wrap: wrap; gap: 0.5rem;
+    align-items: center; }
+  .lote-dato { flex: 1 1 12rem; min-width: 0; }
+  .lote-que { font-weight: 600; }
+  .lote-detalle { color: #555; font-size: 0.88rem; }
+  .lote label { flex: 0 1 9rem; font-size: 0.85rem; color: #444; }
+  .viejo { color: #dc2626; font-weight: 700; }
+  .importe { font-weight: 700; white-space: nowrap; }
+  .vacio { color: #666; font-style: italic; }
+  .historial { width: 100%; color: #555; font-size: 0.85rem; margin: 0.2rem 0 0; padding-left: 1rem; }
+  details.gerencia { width: 100%; }
+  details.gerencia summary { min-height: 44px; display: flex; align-items: center; color: #2563eb;
+    font-weight: 600; cursor: pointer; }
+  .gerencia form { display: flex; flex-wrap: wrap; gap: 0.5rem; align-items: flex-end; margin: 0.4rem 0; }
+  .gerencia label { flex: 1 1 10rem; font-size: 0.85rem; color: #444; }
+  .gerencia button.peligro { background: #b45309; }
+</style>
+</head>
+<body>
+  {% set barra_sector = camino.sector %}
+  {% set barra_titulo = "Cobranzas de segunda" %}
+  {% set barra_atras = camino.base %}
+  {% include "_barra_navegacion.html" %}
+
+  {% if aviso %}<div class="aviso">{{ aviso }}</div>{% endif %}
+  {% if error %}<div class="error">{{ error }}</div>{% endif %}
+
+  <form class="tarjeta" method="get" action="{{ camino.base }}/cobranzas-segunda">
+    <div class="filtros">
+      <label>Salida desde<input type="date" name="desde" value="{{ filtros.desde.isoformat() if filtros.desde else '' }}"></label>
+      <label>Salida hasta<input type="date" name="hasta" value="{{ filtros.hasta.isoformat() if filtros.hasta else '' }}"></label>
+      <label>Artículo
+        <select name="articulo_id">
+          <option value="">Todos</option>
+          {% for a in articulos %}
+          <option value="{{ a.id }}" {% if filtros.articulo_id == a.id %}selected{% endif %}>{{ a.nombre }}</option>
+          {% endfor %}
+        </select>
+      </label>
+      <label>Estado
+        <select name="estado">
+          {% for valor, texto in opciones_de_estado %}
+          <option value="{{ valor }}" {% if (filtros.estado or 'todos') == valor %}selected{% endif %}>{{ texto }}</option>
+          {% endfor %}
+        </select>
+      </label>
+    </div>
+    <div class="acciones">
+      <button type="submit">Filtrar</button>
+      {# Los href escritos enteros, uno por sector, con TODOS los filtros como
+         se dibujaron (regla de v1063). #}
+      {% if camino.sector == 'gerencia' %}
+      <a href="/gerencia/cobranzas-segunda/exportar-pdf?desde={{ filtros.desde.isoformat() if filtros.desde else '' }}&amp;hasta={{ filtros.hasta.isoformat() if filtros.hasta else '' }}&amp;articulo_id={{ filtros.articulo_id or '' }}&amp;estado={{ filtros.estado or 'todos' }}">PDF</a>
+      <a href="/gerencia/cobranzas-segunda/exportar-excel?desde={{ filtros.desde.isoformat() if filtros.desde else '' }}&amp;hasta={{ filtros.hasta.isoformat() if filtros.hasta else '' }}&amp;articulo_id={{ filtros.articulo_id or '' }}&amp;estado={{ filtros.estado or 'todos' }}">Excel</a>
+      {% else %}
+      <a href="/administracion/cobranzas-segunda/exportar-pdf?desde={{ filtros.desde.isoformat() if filtros.desde else '' }}&amp;hasta={{ filtros.hasta.isoformat() if filtros.hasta else '' }}&amp;articulo_id={{ filtros.articulo_id or '' }}&amp;estado={{ filtros.estado or 'todos' }}">PDF</a>
+      <a href="/administracion/cobranzas-segunda/exportar-excel?desde={{ filtros.desde.isoformat() if filtros.desde else '' }}&amp;hasta={{ filtros.hasta.isoformat() if filtros.hasta else '' }}&amp;articulo_id={{ filtros.articulo_id or '' }}&amp;estado={{ filtros.estado or 'todos' }}">Excel</a>
+      {% endif %}
+    </div>
+  </form>
+
+  {% if filtros.estado != 'cobrado' %}
+  <form class="tarjeta" method="post" action="{{ camino.base }}/cobranzas-segunda/cobrar">
+    <h2>Pendientes de cobro</h2>
+    <p class="cuenta">{{ resumen.pendientes }} lote{{ '' if resumen.pendientes == 1 else 's' }} · {{ resumen.bultos_pendientes|numero }} bultos. Se graban los que tengan importe; $0 queda cobrado en cero.</p>
+    <input type="hidden" name="desde" value="{{ filtros.desde.isoformat() if filtros.desde else '' }}">
+    <input type="hidden" name="hasta" value="{{ filtros.hasta.isoformat() if filtros.hasta else '' }}">
+    <input type="hidden" name="articulo_id" value="{{ filtros.articulo_id or '' }}">
+    <input type="hidden" name="estado" value="{{ filtros.estado or 'todos' }}">
+    {% if pendientes %}
+    <label class="fecha-cobro">Fecha de cobro<input type="date" name="fecha_cobro" value="{{ fecha_cobro }}" max="{{ hoy.isoformat() }}" required></label>
+    {% endif %}
+    {% for l in pendientes %}
+    <div class="lote" data-lote="{{ l.id }}">
+      <div class="lote-dato">
+        <div class="lote-que">{{ l.articulo }}</div>
+        <div class="lote-detalle">Salió el {{ l.fecha.strftime('%d/%m/%Y') }} · {{ l.bultos|numero }} bultos ·
+          <span class="{{ 'viejo' if l.viejo else '' }}">{{ l.dias }} día{{ '' if l.dias == 1 else 's' }}</span></div>
+      </div>
+      <label>Importe ($)<input name="importe_{{ l.id }}" type="text" inputmode="decimal" autocomplete="off"></label>
+    </div>
+    {% else %}
+    <p class="vacio">No hay lotes pendientes con estos filtros.</p>
+    {% endfor %}
+    {% if pendientes %}
+    <div class="acciones"><button type="submit">Guardar cobros</button></div>
+    {% endif %}
+  </form>
+  {% endif %}
+
+  {% if filtros.estado != 'pendiente' %}
+  <div class="tarjeta">
+    <h2>Cobrados</h2>
+    <p class="cuenta">{{ resumen.cobrados }} lote{{ '' if resumen.cobrados == 1 else 's' }} · {{ resumen.bultos_cobrados|numero }} bultos · {{ resumen.total_cobrado|moneda }}</p>
+    {% for l in cobrados %}
+    <div class="lote" data-lote="{{ l.id }}">
+      <div class="lote-dato">
+        <div class="lote-que">{{ l.articulo }} · <span class="importe">{{ l.importe|moneda }}</span></div>
+        <div class="lote-detalle">Salió el {{ l.fecha.strftime('%d/%m/%Y') }} · {{ l.bultos|numero }} bultos
+          {%- if l.por_bulto is not none %} · {{ l.por_bulto|moneda }} por bulto{% endif %}
+          · cobrado el {{ l.fecha_cobro.strftime('%d/%m/%Y') }} · cargó {{ texto_del_sector[l.sector] }} ({{ hora_argentina(l.cobro_creado_en) }})</div>
+      </div>
+      {% if historial.get(l.id) %}
+      <ul class="historial">
+        {% for h in historial[l.id] %}
+        <li>{{ hora_argentina(h.creado_en) }} · {{ texto_del_sector[h.sector] }}:
+          {% if h.tipo == 'correccion' %}corrigió {{ h.importe_anterior|moneda }} → {{ h.importe_nuevo|moneda }}
+          {% else %}lo volvió a pendiente (tenía {{ h.importe_anterior|moneda }}): {{ h.motivo }}{% endif %}</li>
+        {% endfor %}
+      </ul>
+      {% endif %}
+      {% if camino.sector == 'gerencia' %}
+      <details class="gerencia">
+        <summary>Corregir</summary>
+        <form method="post" action="/gerencia/cobranzas-segunda/{{ l.id }}/corregir">
+          <input type="hidden" name="desde" value="{{ filtros.desde.isoformat() if filtros.desde else '' }}">
+          <input type="hidden" name="hasta" value="{{ filtros.hasta.isoformat() if filtros.hasta else '' }}">
+          <input type="hidden" name="articulo_id" value="{{ filtros.articulo_id or '' }}">
+          <input type="hidden" name="estado" value="{{ filtros.estado or 'todos' }}">
+          <label>Importe correcto ($)<input name="importe" type="text" inputmode="decimal" required></label>
+          <button type="submit">Corregir importe</button>
+        </form>
+        <form method="post" action="/gerencia/cobranzas-segunda/{{ l.id }}/pendiente">
+          <input type="hidden" name="desde" value="{{ filtros.desde.isoformat() if filtros.desde else '' }}">
+          <input type="hidden" name="hasta" value="{{ filtros.hasta.isoformat() if filtros.hasta else '' }}">
+          <input type="hidden" name="articulo_id" value="{{ filtros.articulo_id or '' }}">
+          <input type="hidden" name="estado" value="{{ filtros.estado or 'todos' }}">
+          <label>Motivo<input name="motivo" type="text" required></label>
+          <button type="submit" class="peligro">Volver a pendiente</button>
+        </form>
+      </details>
+      {% endif %}
+    </div>
+    {% else %}
+    <p class="vacio">No hay lotes cobrados con estos filtros.</p>
+    {% endfor %}
+  </div>
+  {% endif %}
+{% include "_pie_version.html" %}
+</body>
+</html>

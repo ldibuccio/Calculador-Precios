@@ -19,6 +19,7 @@ from core.envases import (cajas_que_mueve_la_guia, como_queda_la_cuenta,
                           hay_que_reponer)
 from core.fotos import archivos_de_hoy, pasa_el_aviso, porcentaje_del_plan
 from core.remitos import rechazo_no_coincide, sin_factura_hace_mucho, sin_volver_hace_mucho
+from core.cobranzas_segunda import sin_cobrar_hace_mucho
 from core.magnitudes import repartir_magnitudes
 from core.matcheo_comanda import normalizar_texto
 from core.vino_armada import motivo_para_no_marcar_armada, motivo_sin_lote_por_el_corte
@@ -15213,7 +15214,8 @@ def crear_salida_de_segunda(articulo_id: int, bultos: float, fecha_operacion,
     justo el agujero que la foto viene a tapar.
 
     A propósito no devuelve nada: la pantalla es de operario y el pool no
-    se le muestra. El recupero económico va aparte, más adelante.
+    se le muestra. El recupero económico va aparte: Cobranzas de segunda
+    (02/10), lote por lote.
     """
     conexion = obtener_conexion()
     try:
@@ -15252,7 +15254,10 @@ def listar_remitos_segunda_por_rango(fecha_desde, fecha_hasta) -> list[dict]:
                 SELECT r.id, r.bultos, r.fecha_operacion, r.creado_en, r.anulado_el,
                        r.destino, r.motivo,
                        a.nombre AS articulo_nombre,
-                       (SELECT COUNT(*) FROM fotos_merma f WHERE f.salida_segunda_id = r.id) AS fotos
+                       (SELECT COUNT(*) FROM fotos_merma f WHERE f.salida_segunda_id = r.id) AS fotos,
+                       -- Un lote cobrado NO se anula (pared en la base): la
+                       -- pantalla no ofrece el botón donde la escritura rebota.
+                       EXISTS (SELECT 1 FROM segunda_cobros c WHERE c.salida_id = r.id) AS cobrado
                 FROM remitos_segunda r
                 JOIN articulos a ON a.id = r.articulo_id
                 WHERE r.fecha_operacion >= %s AND r.fecha_operacion <= %s
@@ -15266,15 +15271,31 @@ def listar_remitos_segunda_por_rango(fecha_desde, fecha_hasta) -> list[dict]:
         conexion.close()
 
 
+class LoteDeSegundaCobrado(ValueError):
+    """Se quiso anular una salida al puesto que ya tiene cobro."""
+
+
 def anular_remito_segunda(remito_id: int) -> None:
-    """Anula un remito de segunda (baja lógica): la segunda vuelve al pool sola."""
+    """Anula un remito de segunda (baja lógica): la segunda vuelve al pool sola.
+
+    UNA SALIDA CON COBRO NO SE ANULA (dueño, 02/10): primero Gerencia la vuelve
+    a pendiente en Cobranzas de segunda. Lo decide la base (el trigger
+    `segunda_cobrada_no_se_anula`, db/cobranza_segunda_3); acá se traduce."""
     conexion = obtener_conexion()
     try:
         with conexion.cursor() as cursor:
-            cursor.execute(
-                "UPDATE remitos_segunda SET anulado_el = now() WHERE id = %s AND anulado_el IS NULL",
-                (remito_id,),
-            )
+            try:
+                cursor.execute(
+                    "UPDATE remitos_segunda SET anulado_el = now() WHERE id = %s AND anulado_el IS NULL",
+                    (remito_id,),
+                )
+            except psycopg2.errors.CheckViolation as error:
+                conexion.rollback()
+                if error.diag.constraint_name == "segunda_cobrada_no_se_anula":
+                    raise LoteDeSegundaCobrado(
+                        "Ese lote de segunda ya está cobrado: para anularlo, primero Gerencia "
+                        "lo vuelve a pendiente en Cobranzas de segunda.") from error
+                raise
         conexion.commit()
     finally:
         conexion.close()
@@ -19122,3 +19143,186 @@ def kilos_recibidos_por_renglon(renglon_ids: list[int]) -> dict:
             return {f[0]: float(f[1]) for f in cursor.fetchall()}
     finally:
         conexion.close()
+
+
+# ============================================================================
+# COBRANZAS DE SEGUNDA (dueño, 02/10)
+#
+# Cada salida al puesto de segunda (`remitos_segunda`, destino 'puesto', no
+# anulada) es un LOTE, y nace pendiente: sin fila en `segunda_cobros`. El
+# puesto liquida LOTE POR LOTE —no hay un total que repartir— y $0 es un
+# cobro. Solo Gerencia corrige un importe o vuelve un lote a pendiente, y las
+# dos cosas quedan en `segunda_cobros_historial`. Las reglas puras y los
+# archivos viven en core/cobranzas_segunda.py.
+#
+# LA BASE DECIDE (db/cobranza_segunda_1 a _3): la clave salida_id no deja
+# cobrar dos veces, el trigger solo deja cobrar un lote al puesto vigente, y
+# otro trigger no deja anular una salida cobrada. Acá se traducen.
+# ============================================================================
+
+_SQL_LOTES_DE_SEGUNDA = """
+    SELECT rs.id, rs.fecha_operacion AS fecha, rs.bultos, rs.articulo_id,
+           a.nombre AS articulo, a.grupo,
+           c.importe, c.fecha_cobro, c.sector, c.creado_en AS cobro_creado_en,
+           (SELECT count(*) FROM segunda_cobros_historial h WHERE h.salida_id = rs.id) AS cambios
+      FROM remitos_segunda rs
+      JOIN articulos a ON a.id = rs.articulo_id
+      LEFT JOIN segunda_cobros c ON c.salida_id = rs.id
+     WHERE rs.destino = 'puesto' AND rs.anulado_el IS NULL
+"""
+
+
+def lotes_de_segunda(desde: date | None = None, hasta: date | None = None,
+                     articulo_id: int | None = None, estado: str | None = None) -> list[dict]:
+    """Los lotes de segunda (las salidas al puesto vigentes), por la FECHA DE
+    LA SALIDA, con su cobro si lo tienen. `estado`: 'pendiente', 'cobrado' o
+    None (todos). La pantalla, el PDF, el Excel, la alerta y la Rentabilidad
+    leen esta misma consulta."""
+    condiciones, parametros = [], []
+    if desde is not None:
+        condiciones.append("rs.fecha_operacion >= %s")
+        parametros.append(desde)
+    if hasta is not None:
+        condiciones.append("rs.fecha_operacion <= %s")
+        parametros.append(hasta)
+    if articulo_id is not None:
+        condiciones.append("rs.articulo_id = %s")
+        parametros.append(articulo_id)
+    if estado == "pendiente":
+        condiciones.append("c.salida_id IS NULL")
+    elif estado == "cobrado":
+        condiciones.append("c.salida_id IS NOT NULL")
+    consulta = _SQL_LOTES_DE_SEGUNDA + "".join(f" AND {c}" for c in condiciones) \
+        + " ORDER BY rs.fecha_operacion, rs.id"
+    conexion = obtener_conexion()
+    try:
+        with conexion.cursor() as cursor:
+            cursor.execute(consulta, parametros)
+            columnas = [d[0] for d in cursor.description]
+            lotes = [dict(zip(columnas, fila)) for fila in cursor.fetchall()]
+    finally:
+        conexion.close()
+    for lote in lotes:
+        lote["bultos"] = float(lote["bultos"])
+        lote["importe"] = float(lote["importe"]) if lote["importe"] is not None else None
+    return lotes
+
+
+def historial_de_cobros_de_segunda(salida_ids: list[int]) -> dict:
+    """{salida_id: [cambios, del más viejo al más nuevo]} de Gerencia."""
+    if not salida_ids:
+        return {}
+    conexion = obtener_conexion()
+    try:
+        with conexion.cursor() as cursor:
+            cursor.execute(
+                """SELECT salida_id, tipo, importe_anterior, importe_nuevo, fecha_cobro_anterior,
+                          motivo, sector, creado_en
+                     FROM segunda_cobros_historial WHERE salida_id = ANY(%s)
+                    ORDER BY creado_en, id""",
+                (list(salida_ids),),
+            )
+            columnas = [d[0] for d in cursor.description]
+            historial: dict = {}
+            for fila in cursor.fetchall():
+                cambio = dict(zip(columnas, fila))
+                historial.setdefault(cambio["salida_id"], []).append(cambio)
+            return historial
+    finally:
+        conexion.close()
+
+
+def registrar_cobros_de_segunda(cobros: list[tuple[int, float]], fecha_cobro: date, *,
+                                sector: str, hoy: date) -> int:
+    """Graba de una vez los lotes que trajeron importe. Todo o nada: si uno
+    rebota, no se graba ninguno y el mensaje dice cuál. Devuelve cuántos."""
+    if not cobros:
+        raise ValueError("No hay ningún importe cargado.")
+    if fecha_cobro > hoy:
+        raise ValueError("La fecha de cobro no puede ser posterior a hoy.")
+    if any(importe < 0 for _, importe in cobros):
+        raise ValueError("Un importe no puede ser negativo. Si el puesto no pagó nada, va $0.")
+    conexion = obtener_conexion()
+    try:
+        with conexion.cursor() as cursor:
+            for salida_id, importe in cobros:
+                try:
+                    cursor.execute(
+                        "INSERT INTO segunda_cobros (salida_id, importe, fecha_cobro, sector) "
+                        "VALUES (%s, %s, %s, %s)",
+                        (salida_id, importe, fecha_cobro, sector),
+                    )
+                except psycopg2.errors.UniqueViolation as error:
+                    conexion.rollback()
+                    raise ValueError(f"El lote {salida_id} ya estaba cobrado: no se grabó nada.") from error
+                except psycopg2.errors.CheckViolation as error:
+                    conexion.rollback()
+                    if error.diag.constraint_name == "segunda_cobro_solo_lote_vigente":
+                        raise ValueError(f"El lote {salida_id} ya no es una salida al puesto vigente "
+                                         "(se anuló o es una merma): no se grabó nada.") from error
+                    raise
+        conexion.commit()
+    finally:
+        conexion.close()
+    return len(cobros)
+
+
+def _cobro_bloqueado(cursor, salida_id: int):
+    cursor.execute("SELECT importe, fecha_cobro FROM segunda_cobros WHERE salida_id = %s FOR UPDATE",
+                   (salida_id,))
+    return cursor.fetchone()
+
+
+def corregir_cobro_de_segunda(salida_id: int, importe_nuevo: float) -> None:
+    """Gerencia corrige un importe mal cargado. Queda el anterior, el nuevo y
+    cuándo en el historial (igual que el número de remito)."""
+    if importe_nuevo < 0:
+        raise ValueError("El importe no puede ser negativo.")
+    conexion = obtener_conexion()
+    try:
+        with conexion.cursor() as cursor:
+            cobro = _cobro_bloqueado(cursor, salida_id)
+            if cobro is None:
+                raise ValueError("Ese lote no está cobrado: no hay importe que corregir.")
+            anterior, fecha_cobro = float(cobro[0]), cobro[1]
+            if round(anterior, 2) == round(importe_nuevo, 2):
+                raise ValueError("Es el mismo importe que ya tenía.")
+            cursor.execute("UPDATE segunda_cobros SET importe = %s WHERE salida_id = %s",
+                           (importe_nuevo, salida_id))
+            cursor.execute(
+                "INSERT INTO segunda_cobros_historial (salida_id, tipo, importe_anterior, importe_nuevo, "
+                "fecha_cobro_anterior, sector) VALUES (%s, 'correccion', %s, %s, %s, 'gerencia')",
+                (salida_id, anterior, importe_nuevo, fecha_cobro),
+            )
+        conexion.commit()
+    finally:
+        conexion.close()
+
+
+def volver_a_pendiente_lote_de_segunda(salida_id: int, motivo: str) -> None:
+    """Gerencia saca el cobro de un lote, con motivo. El importe que tenía
+    queda en el historial; el lote vuelve a la lista de pendientes."""
+    motivo = (motivo or "").strip()
+    if not motivo:
+        raise ValueError("Para volver un lote a pendiente hace falta el motivo.")
+    conexion = obtener_conexion()
+    try:
+        with conexion.cursor() as cursor:
+            cobro = _cobro_bloqueado(cursor, salida_id)
+            if cobro is None:
+                raise ValueError("Ese lote ya está pendiente.")
+            cursor.execute("DELETE FROM segunda_cobros WHERE salida_id = %s", (salida_id,))
+            cursor.execute(
+                "INSERT INTO segunda_cobros_historial (salida_id, tipo, importe_anterior, "
+                "fecha_cobro_anterior, motivo, sector) VALUES (%s, 'a_pendiente', %s, %s, %s, 'gerencia')",
+                (salida_id, cobro[0], cobro[1], motivo),
+            )
+        conexion.commit()
+    finally:
+        conexion.close()
+
+
+def contar_segunda_sin_cobrar(hoy: date) -> dict:
+    """Lotes pendientes con más de DIAS_SEGUNDA_SIN_COBRAR días desde la salida."""
+    vencidos = [l for l in lotes_de_segunda(estado="pendiente") if sin_cobrar_hace_mucho(l, hoy)]
+    return {"casos": len(vencidos), "mas_viejo": min((l["fecha"] for l in vencidos), default=None)}
