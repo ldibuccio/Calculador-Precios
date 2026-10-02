@@ -48,7 +48,10 @@ FILAS = [
     _fila(4, "EJEMPLO Sin unidad", pide=None, falta=None, cajones=None, a_comprar=None,
           a_comprar_magnitud=None, en_camino=None, pide_bultos=None),
     _fila(5, "EJEMPLO Sin piso", en_piso=None, de_partida=None, falta=None, cajones=None,
-          a_comprar=None, a_comprar_magnitud=None, stock_bultos=None, en_camino_cajones=4.0),
+          a_comprar=None, a_comprar_magnitud=None, stock_bultos=None, en_camino_cajones=4.0,
+          stock_fisicos=6.0, stock_por_que="hay cajas armadas de una ficha sin contenido por caja"),
+    # Kilos ESTIMADOS (dueño, 02/10): los dos lo dicen.
+    _fila(6, "EJEMPLO Estimado", stock_estimado=True),
 ]
 
 CARGAS = [
@@ -121,8 +124,14 @@ def test_el_PDF_dice_en_cada_celda_LO_MISMO_que_la_pantalla():
             comparadas += 1
         magnitud = re.search(r'class="stock-magnitud">(.*?)</small>', tarjeta)
         assert (_visible(magnitud.group(1)) if magnitud else "") == textos["stock_magnitud"]
+        estimado = re.search(r'class="estimado">(.*?)</small>', tarjeta)
+        assert (_visible(estimado.group(1)) if estimado else "") == textos["stock_estimado"]
+        vistos.add(textos["stock_estimado"])
     assert comparadas == len(FILAS) * len(CELDAS)
-    assert {"OK", "poné el por bulto", "no se sabe la unidad", "no se puede saber", "—"} <= vistos
+    # "6 blt": sin kilos van los bultos, nunca "no se puede saber" (02/10).
+    assert {"OK", "poné el por bulto", "no se sabe la unidad", "6 blt", "—",
+            "kilos estimados"} <= vistos
+    assert "no se puede saber" not in vistos
 
 
 def test_el_PDF_trae_cada_ARTICULO_con_su_FALTA_y_de_quien_sale():

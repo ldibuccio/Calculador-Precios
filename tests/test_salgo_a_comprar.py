@@ -152,19 +152,32 @@ def test_la_foto_guarda_las_CAJAS_por_ficha_y_una_ficha_en_la_foto_NO_SE_BORRA(g
     assert "no se le puede cambiar el artículo" in str(rebote.value)
 
 
-def test_el_listado_abierto_es_UNO_sea_del_dia_que_sea(galpon):
-    """Atado al momento y no al reloj: un listado abierto ayer se sigue
-    guardando sobre sí mismo hoy, en vez de abrir otro.
+def test_un_listado_abierto_OTRO_DIA_se_CIERRA_al_guardar_y_se_abre_uno_nuevo(galpon):
+    """Dueño, 02/10: al entrar no hay nada tildado que no se haya tildado hoy.
+    El listado del 23/09 de Frutamax quedó abierto nueve días con una carga
+    tildada. Guardar con la fecha de hoy lo cierra (queda como historial) y
+    abre uno nuevo, en la misma transacción: el índice de uno solo abierto no
+    deja insertar antes.
 
-    El RIVAL es el de hasta el 23/09, un borrador por fecha: guardar con la
-    fecha de hoy abría uno nuevo y el de anoche quedaba huérfano."""
-    d, sql, _c, _t, _l = galpon
+    El RIVAL es la regla del 23/09 (atado al momento): el de ayer se seguía
+    guardando sobre sí mismo. Y guardar dos veces el MISMO día sigue siendo
+    el mismo listado."""
+    d, sql, cliente, _t, _l = galpon
     _cerrar_abiertos(sql)
-    ayer = d.guardar_borrador_de_compra(SALIDA.date(), set(), {})
+    d.guardar_carga_de_compra(cliente, SALIDA.date(), "manual", SALIDA.date(), 0)
+    (carga,), = sql("SELECT id FROM cargas_compra WHERE cliente_id = %s", (cliente,))
+    ayer = d.guardar_borrador_de_compra(SALIDA.date(), {carga}, {})
+    otra_vez = d.guardar_borrador_de_compra(SALIDA.date(), {carga}, {})
+    assert otra_vez == ayer
     hoy = d.guardar_borrador_de_compra(SALIDA.date() + timedelta(days=1), set(), {})
-    assert hoy == ayer
+    assert hoy != ayer
     borrador = d.borrador_de_compra()
-    assert borrador["id"] == ayer and borrador["fecha"] == SALIDA.date()
+    assert borrador["id"] == hoy and borrador["fecha"] == SALIDA.date() + timedelta(days=1)
+    assert borrador["cargas"] == set()
+    estado = sql("SELECT estado FROM listados_compra WHERE id = %s", (ayer,))
+    assert estado == [("cerrado",)]
+    # El de ayer queda como historial, con su carga.
+    assert sql("SELECT carga_id FROM listados_compra_cargas WHERE listado_id = %s", (ayer,)) == [(carga,)]
 
 
 def test_la_BASE_rechaza_un_SEGUNDO_abierto_aunque_sea_de_OTRO_dia(galpon):

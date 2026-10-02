@@ -11003,8 +11003,12 @@ def borrador_de_compra() -> dict | None:
 def guardar_borrador_de_compra(fecha, cargas: set, kilajes: dict) -> int:
     """Guarda el listado abierto entero, y devuelve su id. Si no hay uno, lo abre con `fecha`.
 
-    `fecha` SOLO SE USA PARA ABRIR: un listado abierto ayer se sigue
-    guardando sobre sí mismo hoy (atado al momento, no al reloj).
+    UN LISTADO ABIERTO OTRO DÍA SE CIERRA y se abre uno nuevo con `fecha`
+    (dueño, 02/10: al entrar no hay nada tildado que no se haya tildado hoy).
+    Hasta ese día un listado abierto ayer se seguía guardando sobre sí mismo
+    (atado al momento, 23/09), y el del 23/09 quedó abierto nueve días. Se
+    cierra en la MISMA transacción que el guardado nuevo: el índice de uno
+    solo abierto no deja insertar antes.
 
     TODO EN UNA TRANSACCIÓN Y BORRANDO ANTES DE ESCRIBIR. Las dos tablas
     hijas se reemplazan, no se mezclan: destildar una carga o borrar un
@@ -11020,12 +11024,20 @@ def guardar_borrador_de_compra(fecha, cargas: set, kilajes: dict) -> int:
         with conexion.cursor() as cursor:
             cursor.execute(
                 """
-                SELECT id FROM listados_compra
+                SELECT id, fecha FROM listados_compra
                 WHERE estado = 'borrador'
                 ORDER BY id DESC LIMIT 1
                 """
             )
             fila = cursor.fetchone()
+            if fila is not None and fila[1] < fecha:
+                cursor.execute(
+                    """
+                    UPDATE listados_compra SET estado = 'cerrado', actualizado_en = now()
+                     WHERE estado = 'borrador'
+                    """
+                )
+                fila = None
             if fila is None:
                 cursor.execute(
                     """

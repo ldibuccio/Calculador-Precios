@@ -274,6 +274,11 @@ en ningún lado de la fila. Eso cerró el listado atado al momento, abajo.
 
 ### El listado atado al momento de SALIR (dueño, 23/09)
 
+> **Corregido el 02/10 (dueño)**: el listado vale SOLO el día en que se abrió.
+> Uno abierto otro día no cuenta al entrar (nada tildado, ni foto, ni salida)
+> y el próximo guardado lo cierra. El "de las 22 a las 4" de abajo ya no
+> sobrevive a la medianoche. Ver CLAUDE.md, QUÉ COMPRAR HOY, punto 7.
+
 **CERRADA**: *"no hay una hora fija; atalo al listado, no al reloj"*. Hay un
 botón explícito, **"Salgo a comprar"**, porque armar la lista y salir pueden
 ser momentos distintos. Ese botón guarda el listado y deja

@@ -662,7 +662,7 @@ def test_ANTES_de_salir_el_stock_es_el_de_AHORA_y_no_el_de_ayer():
     se volvía a comprar."""
     from datetime import datetime
     from app.main import ARGENTINA
-    borrador = {"id": 3, "fecha": date(2026, 9, 23), "cargas": [1], "kilajes": {},
+    borrador = {"id": 3, "fecha": datetime.now(ARGENTINA).date(), "cargas": [1], "kilajes": {},
                 "generado_el": None}
     contexto, mocks = _contexto_real(borrador)
     assert mocks["en_vivo"].call_count == 1 and not mocks["guardada"].called
@@ -673,12 +673,14 @@ def test_ANTES_de_salir_el_stock_es_el_de_AHORA_y_no_el_de_ayer():
 
 
 def test_DESPUES_de_salir_el_stock_es_la_FOTO_GUARDADA_y_no_se_recalcula():
-    """El stock se cuenta por DÍA: el de las 22 no se puede recalcular a las
-    4. Si la pantalla lo recalculara, lo recepcionado entre medio entraría
-    al stock Y a "Compré"."""
-    from datetime import datetime, timezone
-    salida = datetime(2026, 9, 23, 1, 5, tzinfo=timezone.utc)   # 22:05 en Argentina
-    borrador = {"id": 3, "fecha": date(2026, 9, 22), "cargas": [1], "kilajes": {},
+    """Si la pantalla recalculara después de salir, lo recepcionado entre
+    medio entraría al stock Y a "Compré". El listado es de HOY: desde el
+    02/10 uno de otro día no cuenta (ver el test de abajo)."""
+    from datetime import datetime, timedelta
+    from app.main import ARGENTINA
+    hoy = datetime.now(ARGENTINA).date()
+    salida = datetime.combine(hoy, datetime.min.time(), tzinfo=ARGENTINA) + timedelta(hours=5, minutes=5)
+    borrador = {"id": 3, "fecha": hoy, "cargas": [1], "kilajes": {},
                 "generado_el": salida}
     foto = {"sueltos": {1: (5.0, 90.0)}, "cajas": {}}
     contexto, mocks = _contexto_real(borrador, foto_guardada=foto)
@@ -686,18 +688,31 @@ def test_DESPUES_de_salir_el_stock_es_la_FOTO_GUARDADA_y_no_se_recalcula():
     assert mocks["guardada"].call_args.args[0] == 3
     assert mocks["alrededor"].call_args.args[0] == salida
     assert contexto["filas"][0]["en_piso"] == 90.0
-    assert contexto["salio_el"].strftime("%d/%m %H:%M") == "22/09 22:05"
+    assert contexto["salio_el"].strftime("%H:%M") == "05:05"
 
 
-def test_un_listado_ABIERTO_AYER_sigue_ofreciendo_sus_cargas_de_antes_de_ayer():
-    """Atado al momento y no al reloj: el guardado REEMPLAZA las cargas, así
-    que una tildada que no se dibuja se destilda sola al próximo Guardar."""
-    from datetime import datetime, timedelta
+def test_un_listado_abierto_OTRO_DIA_no_cuenta_al_entrar_NADA_TILDADO():
+    """Dueño, 02/10: "al abrir no puede haber NADA tildado, ni por lo guardado
+    ayer". El listado del 23/09 de Frutamax siguió abierto nueve días con la
+    carga 28 tildada y la foto del 29/09 congelada.
+
+    El RIVAL es la regla del 23/09 (atado al momento): con ésa este listado
+    devolvía la carga tildada, su foto y su salida. La fecha está a tres días
+    de hoy a propósito, para que no pueda ser hoy (corolario 95)."""
+    from datetime import datetime, timedelta, timezone
     from app.main import ARGENTINA
-    abierto = datetime.now(ARGENTINA).date() - timedelta(days=3)
-    borrador = {"id": 3, "fecha": abierto, "cargas": [1], "kilajes": {}, "generado_el": None}
-    _contexto, mocks = _contexto_real(borrador)
-    assert mocks["ofrecidas"].call_args.args[0] == abierto - timedelta(days=1)
+    hoy = datetime.now(ARGENTINA).date()
+    abierto = hoy - timedelta(days=3)
+    borrador = {"id": 3, "fecha": abierto, "cargas": [1], "kilajes": {},
+                "generado_el": datetime(2026, 9, 29, 12, 34, tzinfo=timezone.utc)}
+    contexto, mocks = _contexto_real(borrador)
+    assert contexto["elegidas"] == set()
+    assert contexto["filas"] == [] and contexto["salio_el"] is None
+    assert contexto["hay_borrador"] is False
+    assert not mocks["guardada"].called and not mocks["en_vivo"].called
+    # Las cargas se ofrecen desde AYER, no desde el día en que se abrió.
+    assert mocks["ofrecidas"].call_args.args[0] == hoy - timedelta(days=1)
+    assert mocks["ofrecidas"].call_args.args[1] is None
 
 
 def test_las_VIEJAS_se_avisan_SOLO_las_de_los_articulos_del_listado():
@@ -707,7 +722,8 @@ def test_las_VIEJAS_se_avisan_SOLO_las_de_los_articulos_del_listado():
                   "desde": datetime(2026, 9, 10, 15, 0, tzinfo=timezone.utc)},
               9: {"cajones": 4.0, "kilos": 80.0, "conteo": None, "compras": 1,
                   "desde": datetime(2026, 9, 1, 15, 0, tzinfo=timezone.utc)}}
-    borrador = {"id": 3, "fecha": date(2026, 9, 23), "cargas": [1], "kilajes": {},
+    from app.main import ARGENTINA
+    borrador = {"id": 3, "fecha": datetime.now(ARGENTINA).date(), "cargas": [1], "kilajes": {},
                 "generado_el": None}
     contexto, _m = _contexto_real(borrador, compras=dict(_SIN_COMPRAS, viejas=viejas))
     assert contexto["viejas"] == [{"nombre": "TOMATE", "compras": 2, "cajones": 20.0,
