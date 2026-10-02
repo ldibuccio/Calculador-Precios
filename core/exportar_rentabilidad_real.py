@@ -46,18 +46,22 @@ def _texto_bultos(cantidad) -> str:
 
 
 def _armar_subtitulo_real(fecha_desde: date, fecha_hasta: date, filtros_texto: list[str], cantidad_fechas: int,
-                          fechas_provisorias=()) -> str:
+                          fechas_provisorias=(), segunda_sin_cobrar=()) -> str:
     subtitulo = (
         f"Envíos del {fecha_desde.strftime('%d/%m/%Y')} al {fecha_hasta.strftime('%d/%m/%Y')} "
         f"({cantidad_fechas} día{'s' if cantidad_fechas != 1 else ''} con envíos) — "
         "la cuenta REAL: venta = lo RECIBIDO según el remito (lo ENVIADO mientras el remito no volvió) "
         "× precio de lista vigente con las tasas del cliente; "
         "mercadería al costo FIFO del lote que salió; mermas del período a su costo; "
-        "reproceso neutro; la segunda vale cero"
+        "reproceso neutro; la segunda vale cero, salvo lo que pagó el puesto (recupero de segunda)"
     )
     if fechas_provisorias:
         subtitulo += (" — provisorio (remito sin volver): "
                       + ", ".join(f.strftime("%d/%m") for f in fechas_provisorias))
+    if segunda_sin_cobrar:
+        subtitulo += (" — segunda sin cobrar: " + ", ".join(
+            f"{d['fecha'].strftime('%d/%m')} ({d['lotes']} lote{'s' if d['lotes'] != 1 else ''})"
+            for d in segunda_sin_cobrar))
     if filtros_texto:
         subtitulo += " — " + ", ".join(filtros_texto)
     return subtitulo
@@ -93,6 +97,9 @@ def generar_pdf_rentabilidad_real(
 ) -> bytes:
     """Arma el PDF de Rentabilidad Real: el afuera por motivo primero, después una tabla por grupo y el total."""
     buffer = BytesIO()
+    # La segunda sin cobrar NO va en el subtítulo del PDF, que es UNA línea
+    # dibujada y se saldría de la hoja con varios días: va en un párrafo al
+    # final, que se acomoda solo. En el Excel sí va en el subtítulo (una celda).
     subtitulo = _armar_subtitulo_real(fecha_desde, fecha_hasta, filtros_texto, len(resultado["fechas_incluidas"]),
                                       resultado.get("fechas_provisorias", ()))
     documento = SimpleDocTemplate(
@@ -309,12 +316,26 @@ def generar_pdf_rentabilidad_real(
                     f"(precio de compra contra costo del armado) "
                     if round(totales.get("diferencia_devolucion_proveedor") or 0) else ""
                 )
+                + (
+                    f"— recupero de segunda +{_formatear_moneda(totales.get('recupero_segunda', 0))} "
+                    f"({_formatear_numero(totales.get('bultos_segunda_cobrados', 0))} bultos que pagó el puesto) "
+                    if totales.get("bultos_segunda_cobrados") else ""
+                )
                 + "— "
                 f"renta {_formatear_moneda(totales['renta_pesos'])} (utilidad {_formatear_pct(totales['utilidad_pct'])} sobre mercadería)."
                 + segunda,
                 estilo_total,
             )
         )
+
+    if resultado.get("segunda_sin_cobrar"):
+        elementos.append(Spacer(1, 8))
+        elementos.append(Paragraph(
+            "Segunda sin cobrar (el día no es provisorio: esos lotes todavía no los pagó el puesto): "
+            + ", ".join(f"{d['fecha'].strftime('%d/%m')} ({d['lotes']} lote{'s' if d['lotes'] != 1 else ''})"
+                        for d in resultado["segunda_sin_cobrar"]) + ".",
+            ParagraphStyle("segunda_sin_cobrar", fontName="Helvetica", fontSize=9, textColor=GRIS_TEXTO_AYUDA),
+        ))
 
     documento.build(elementos, onFirstPage=_encabezado_pagina, onLaterPages=_encabezado_pagina)
     return buffer.getvalue()
@@ -354,7 +375,8 @@ def generar_excel_rentabilidad_real(
     hoja.cell(
         row=fila_actual, column=1,
         value=_armar_subtitulo_real(fecha_desde, fecha_hasta, filtros_texto, len(resultado["fechas_incluidas"]),
-                                      resultado.get("fechas_provisorias", ())),
+                                      resultado.get("fechas_provisorias", ()),
+                                      resultado.get("segunda_sin_cobrar", ())),
     ).font = fuente_normal
     fila_actual += 2
 
@@ -404,6 +426,9 @@ def generar_excel_rentabilidad_real(
         # proveedor vale el precio de su compra, y esto es lo que ese precio
         # tiene de más o de menos contra el costo del armado. Resta del costo.
         "Devuelto al proveedor bultos", "Dif. devolución al proveedor $",
+        # Y AL FINAL, por lo mismo (02/10): lo que pagó el puesto por los
+        # lotes de segunda que salieron en el rango. SUMA a la renta.
+        "Recupero de segunda $", "Recupero de segunda bultos",
     )
     for grupo in grupos:
         hoja.cell(row=fila_actual, column=1, value=grupo["etiqueta"]).font = fuente_grupo
@@ -441,6 +466,9 @@ def generar_excel_rentabilidad_real(
             hoja.cell(row=fila_actual, column=24, value=float(fila.get("devueltos_proveedor_bultos", 0)))
             celda = hoja.cell(row=fila_actual, column=25, value=round(float(fila.get("diferencia_devolucion_proveedor", 0)), 2))
             celda.number_format = '"$"#,##0'
+            celda = hoja.cell(row=fila_actual, column=26, value=round(float(fila.get("recupero_segunda", 0)), 2))
+            celda.number_format = '"$"#,##0'
+            hoja.cell(row=fila_actual, column=27, value=float(fila.get("bultos_segunda_cobrados", 0)))
             if fila["utilidad_pct"] is not None:
                 celda = hoja.cell(row=fila_actual, column=19, value=round(float(fila["utilidad_pct"]) / 100, 4))
                 celda.number_format = "0.0%"
@@ -479,6 +507,11 @@ def generar_excel_rentabilidad_real(
         celda = hoja.cell(row=fila_actual, column=25, value=round(float(subtotal.get("diferencia_devolucion_proveedor", 0)), 2))
         celda.font = fuente_subtotal
         celda.number_format = '"$"#,##0'
+        celda = hoja.cell(row=fila_actual, column=26, value=round(float(subtotal.get("recupero_segunda", 0)), 2))
+        celda.font = fuente_subtotal
+        celda.number_format = '"$"#,##0'
+        hoja.cell(row=fila_actual, column=27,
+                  value=float(subtotal.get("bultos_segunda_cobrados", 0))).font = fuente_subtotal
         if subtotal["utilidad_pct"] is not None:
             celda = hoja.cell(row=fila_actual, column=19, value=round(float(subtotal["utilidad_pct"]) / 100, 4))
             celda.font = fuente_subtotal
@@ -516,6 +549,11 @@ def generar_excel_rentabilidad_real(
         celda = hoja.cell(row=fila_actual, column=25, value=round(float(totales.get("diferencia_devolucion_proveedor", 0)), 2))
         celda.font = fuente_total
         celda.number_format = '"$"#,##0'
+        celda = hoja.cell(row=fila_actual, column=26, value=round(float(totales.get("recupero_segunda", 0)), 2))
+        celda.font = fuente_total
+        celda.number_format = '"$"#,##0'
+        hoja.cell(row=fila_actual, column=27,
+                  value=float(totales.get("bultos_segunda_cobrados", 0))).font = fuente_total
         if totales["utilidad_pct"] is not None:
             celda = hoja.cell(row=fila_actual, column=19, value=round(float(totales["utilidad_pct"]) / 100, 4))
             celda.font = fuente_total

@@ -12712,6 +12712,7 @@ def test_recalcular_alertas_usa_las_ventanas_de_cada_control():
         "contar_remitos_sin_factura": VACIO,
         "contar_remitos_con_rechazo_distinto": VACIO,
         "contar_ordenes_sin_remito": VACIO,
+        "contar_segunda_sin_cobrar": VACIO,
     }
     with ExitStack() as pila:
         pila.enter_context(patch("app.main._hoy_argentina", return_value=HOY_DE_PRUEBA))
@@ -24965,6 +24966,8 @@ def test_rentabilidad_real_junta_historia_completa_y_ancla_precios_por_fecha():
         # pierda el test cae ruidosamente en vez de que un `except` amplio se
         # coma el NameError (corolario 51).
         patch("app.main.cajas_perdidas_del_deposito_por_articulo", return_value={}),
+        # Los lotes de segunda al puesto (02/10), con los MISMOS filtros.
+        patch("app.main.lotes_de_segunda", return_value=[]) as mock_segunda,
         patch("app.main.entradas_y_salidas_stock_articulos", return_value={1: (entradas, _salidas_fifo(4.0))}),
         patch("app.main.salidas_stock_articulos", return_value={1: salidas}),
         patch("app.main.calcular_listados_para_negociar_precios",
@@ -24979,6 +24982,7 @@ def test_rentabilidad_real_junta_historia_completa_y_ancla_precios_por_fecha():
         )
 
     mock_articulos.assert_called_once_with(1, date(2026, 8, 18), date(2026, 8, 25))
+    mock_segunda.assert_called_once_with(desde=date(2026, 8, 18), hasta=date(2026, 8, 25), articulo_id=None)
     # El listado sigue anclado a cada fecha con armados del rango, pero se
     # pide UNA sola vez con todas juntas.
     mock_listado.assert_called_once()

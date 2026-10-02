@@ -27,6 +27,8 @@ es la cuenta exacta, mirando lo que pasó:
     − rechazos     = los rechazos que NO volvieron al stock (fueron a
       perdidos      segunda, con o sin cambio de envase): mercadería al
                     costo congelado + envase, todo pérdida directa.
+    + recupero     = lo que pagó el puesto por los lotes de segunda que
+      de segunda    SALIERON en el rango (dueño, 02/10), aparte de la venta.
     = renta real   · utilidad % SOLO sobre mercadería (regla fija).
 
 El reproceso es NEUTRO acá: su toma consume lotes al costo y su primera
@@ -337,6 +339,7 @@ def calcular_rentabilidad_real(
     devoluciones: list[dict] | None = None,
     cajas_del_deposito: dict | None = None,
     kilos_recibidos: dict | None = None,
+    segunda: list[dict] | None = None,
 ) -> dict:
     """Arma el reporte real a partir de datos ya traídos (puro, testeable sin base).
 
@@ -385,9 +388,15 @@ def calcular_rentabilidad_real(
     de esa fecha no hubo remitos en este sistema: el día sigue como siempre,
     con los enviados, y no es provisorio (dueño, 01/10). None (los llamadores
     viejos) es no saber nada de remitos: no marca ningún día.
+
+    segunda: los lotes de segunda al puesto del rango (`lotes_de_segunda`),
+    ya filtrados por artículo y grupo. Lo cobrado suma "Recupero de segunda"
+    en la fila de su artículo, al día de la SALIDA; lo pendiente solo se
+    cuenta por día en `segunda_sin_cobrar` (dueño, 02/10).
     """
     recibidos = kilos_recibidos or {}
     fechas_provisorias = set()
+    segunda_sin_cobrar: dict = {}
     acumulado: dict = {}
     afuera: dict = {}
     fechas_incluidas = set()
@@ -480,6 +489,11 @@ def calcular_rentabilidad_real(
                 # Lo que el precio de la compra devuelta tiene de más (o de
                 # menos) contra el costo del armado. SÍ suma: resta del costo.
                 "diferencia_devolucion_proveedor": 0.0,
+                # LO QUE PAGÓ EL PUESTO por los lotes de segunda (dueño,
+                # 02/10): un renglón POSITIVO aparte de la venta al súper,
+                # imputado al día de la SALIDA del lote y a su artículo.
+                "recupero_segunda": 0.0,
+                "bultos_segunda_cobrados": 0.0,
             }
             acumulado[articulo["articulo_id"]] = fila
         return fila
@@ -704,13 +718,30 @@ def calcular_rentabilidad_real(
             fila = _fila(articulo)
             fila["devueltos_proveedor_bultos"] += bultos
 
+    # LOS LOTES DE SEGUNDA AL PUESTO (dueño, 02/10). Son del ARTÍCULO y no de
+    # un cliente, igual que la merma: entran en la fila del artículo. Lo
+    # cobrado suma como "Recupero de segunda" al día de la SALIDA, no al del
+    # cobro. Un lote sin cobrar no suma nada y no vuelve provisorio el día:
+    # solo se cuenta, para que el día diga "N lotes de segunda sin cobrar".
+    # $0 es un cobro, no un pendiente.
+    for lote in segunda or []:
+        if not (fecha_desde <= lote["fecha"] <= fecha_hasta):
+            continue
+        if lote["importe"] is None:
+            segunda_sin_cobrar[lote["fecha"]] = segunda_sin_cobrar.get(lote["fecha"], 0) + 1
+            continue
+        fila = _fila({"articulo_id": lote["articulo_id"], "nombre": lote["articulo"], "grupo": lote["grupo"]})
+        fila["recupero_segunda"] += float(lote["importe"])
+        fila["bultos_segunda_cobrados"] += float(lote["bultos"])
+
     def _cerrar_cuenta(fila):
         fila["costo_total"] = (
             fila["costo_mercaderia"] + fila["costo_envase"] + fila["costo_mermas"]
             + fila["costo_segunda"] + fila["rechazos_perdidos"]
             - fila["diferencia_devolucion_proveedor"]
         )
-        fila["renta_pesos"] = fila["venta_neta"] - fila["devoluciones_venta"] - fila["costo_total"]
+        fila["renta_pesos"] = (fila["venta_neta"] - fila["devoluciones_venta"] - fila["costo_total"]
+                               + fila["recupero_segunda"])
         fila["utilidad_pct"] = (
             fila["renta_pesos"] / fila["costo_mercaderia"] * 100 if fila["costo_mercaderia"] > 0 else None
         )
@@ -728,6 +759,9 @@ def calcular_rentabilidad_real(
         # Van los BULTOS y no el costo: un pase que no se pudo costear vale
         # cero pesos y sigue siendo mercadería que se fue.
         or f["bultos_pasados_a_segunda"]
+        # Un artículo cuyo único movimiento del rango es un lote de segunda
+        # cobrado (aunque sea en $0) tiene que verse con su recupero.
+        or f["bultos_segunda_cobrados"]
         # NO hace falta `or f["devueltos_proveedor_bultos"]`, y se probó: el
         # canario que lo borraba no hizo caer ningún test. Toda devolución
         # al proveedor pasa antes por `devoluciones_bultos += bultos`, así
@@ -766,6 +800,8 @@ def calcular_rentabilidad_real(
             "rechazos_bultos": sum(f["rechazos_bultos"] for f in filas),
             "devueltos_proveedor_bultos": sum(f["devueltos_proveedor_bultos"] for f in filas),
             "diferencia_devolucion_proveedor": sum(f["diferencia_devolucion_proveedor"] for f in filas),
+            "recupero_segunda": sum(f["recupero_segunda"] for f in filas),
+            "bultos_segunda_cobrados": sum(f["bultos_segunda_cobrados"] for f in filas),
         }
         _cerrar_cuenta(subtotal)
         grupos.append(
@@ -817,6 +853,8 @@ def calcular_rentabilidad_real(
         "rechazos_bultos": sum(g["subtotal"]["rechazos_bultos"] for g in grupos),
         "devueltos_proveedor_bultos": sum(g["subtotal"]["devueltos_proveedor_bultos"] for g in grupos),
         "diferencia_devolucion_proveedor": sum(g["subtotal"]["diferencia_devolucion_proveedor"] for g in grupos),
+        "recupero_segunda": sum(g["subtotal"]["recupero_segunda"] for g in grupos),
+        "bultos_segunda_cobrados": sum(g["subtotal"]["bultos_segunda_cobrados"] for g in grupos),
         # Sale de las FILAS y no de los subtotales de grupo a propósito: es un
         # número que se lleva a una conversación con el cliente, así que tiene
         # que ser el del período entero y no depender de cómo estén agrupados
@@ -835,4 +873,5 @@ def calcular_rentabilidad_real(
         "afuera_por_motivo": afuera_por_motivo,
         "fechas_incluidas": sorted(fechas_incluidas),
         "fechas_provisorias": sorted(fechas_provisorias),
+        "segunda_sin_cobrar": [{"fecha": f, "lotes": n} for f, n in sorted(segunda_sin_cobrar.items())],
     }

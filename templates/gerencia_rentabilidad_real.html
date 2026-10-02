@@ -285,6 +285,11 @@
     font-size: 0.95rem;
   }
   .vacio { color: #888; font-style: italic; margin: 0; }
+  .chip-recupero-segunda { display: inline-block; background: #dcfce7; color: #166534; border-radius: 999px;
+    padding: 0.1rem 0.5rem; font-size: 0.8rem; margin: 0.1rem 0; }
+  .recupero-segunda { color: #166534; }
+  .segunda-sin-cobrar { margin-top: 0.6rem; background: #f1f5f9; color: #334155; padding: 0.6rem 0.8rem;
+    border-radius: 8px; font-size: 0.9rem; }
   .provisorio { margin-top: 0.6rem; background: #fef3c7; color: #92400e; padding: 0.6rem 0.8rem;
     border-radius: 8px; font-size: 0.9rem; }
 </style>
@@ -342,7 +347,7 @@
     <a class="boton-exportar" href="/gerencia/rentabilidad-real/exportar-pdf?cliente_id={{ cliente_id }}&fecha_desde={{ fecha_desde }}&fecha_hasta={{ fecha_hasta }}&articulo_id={{ articulo_id if articulo_id is not none else '' }}&grupo={{ grupo or '' }}">Exportar PDF</a>
     <a class="boton-exportar" href="/gerencia/rentabilidad-real/exportar-excel?cliente_id={{ cliente_id }}&fecha_desde={{ fecha_desde }}&fecha_hasta={{ fecha_hasta }}&articulo_id={{ articulo_id if articulo_id is not none else '' }}&grupo={{ grupo or '' }}">Exportar Excel</a>
     {% endif %}
-    <p class="ayuda">¿Cómo se calcula? {% call info("Cómo se calcula la rentabilidad real") %}La cuenta <strong>real</strong>: venta = lo <strong>enviado</strong> × precio de lista vigente con las tasas del cliente; mercadería al <strong>costo FIFO del lote que salió</strong> (compras a su importe, guías R a su costo de primera); menos el <strong>envase</strong> y las <strong>mermas</strong> del período a su costo, abiertas en <strong>cruda</strong> (cajones de compra) y <strong>ya trabajada</strong> (guías R y rechazos que volvieron), para ver si se está tirando materia prima o trabajo. El reproceso es neutro (su costo viaja a la primera) y la segunda vale cero. Las <strong>devoluciones vinculadas a pedido restan su venta</strong> ("si le mandé 25 y me devolvió 5, vendí 20") al precio de la fecha del pedido de origen. La teórica sigue en su propia pantalla, intacta.{% endcall %}</p>
+    <p class="ayuda">¿Cómo se calcula? {% call info("Cómo se calcula la rentabilidad real") %}La cuenta <strong>real</strong>: venta = lo <strong>enviado</strong> × precio de lista vigente con las tasas del cliente; mercadería al <strong>costo FIFO del lote que salió</strong> (compras a su importe, guías R a su costo de primera); menos el <strong>envase</strong> y las <strong>mermas</strong> del período a su costo, abiertas en <strong>cruda</strong> (cajones de compra) y <strong>ya trabajada</strong> (guías R y rechazos que volvieron), para ver si se está tirando materia prima o trabajo. El reproceso es neutro (su costo viaja a la primera) y la segunda vale cero, salvo lo que pagó el puesto por cada lote: el <strong>recupero de segunda</strong>, al día en que salió el lote. Las <strong>devoluciones vinculadas a pedido restan su venta</strong> ("si le mandé 25 y me devolvió 5, vendí 20") al precio de la fecha del pedido de origen. La teórica sigue en su propia pantalla, intacta.{% endcall %}</p>
   </div>
 
   {% if resultado %}
@@ -355,7 +360,7 @@
     <div class="detalle">
       Renta REAL de {{ resultado.fechas_incluidas|length }} día{{ "s" if resultado.fechas_incluidas|length != 1 }} con envíos —
       venta {{ resultado.totales.venta_neta|moneda }}{% if resultado.totales.devoluciones_bultos %} − devoluciones {{ resultado.totales.devoluciones_venta|moneda }} ({{ resultado.totales.devoluciones_bultos|numero }} bultos que volvieron: se vendió lo enviado menos eso){% endif %}, mercadería {{ resultado.totales.costo_mercaderia|moneda }},
-      envase {{ resultado.totales.costo_envase|moneda }}, mermas {{ resultado.totales.costo_mermas|moneda }}{% if resultado.totales.bultos_pasados_a_segunda %}, pasado a segunda {{ resultado.totales.costo_segunda|moneda }} ({{ resultado.totales.bultos_pasados_a_segunda|numero }} bulto{{ "s" if resultado.totales.bultos_pasados_a_segunda != 1 }} de primera que dejaron de serlo: mercadería + la caja){% endif %}{% if resultado.totales.rechazos_bultos %}, − rechazos perdidos {{ resultado.totales.rechazos_perdidos|moneda }} ({{ resultado.totales.rechazos_bultos|numero }} bultos que volvieron y se fueron a segunda: mercadería + envase, pérdida entera){% endif %}{% set dif_total = resultado.totales.diferencia_devolucion_proveedor or 0 %}{% if dif_total|round|int %}, <span class="dif-devolucion-proveedor">{{ "+" if dif_total > 0 }}{{ dif_total|moneda }} de devoluciones al proveedor (su precio de compra contra el costo del armado: lo que el proveedor devuelve de más o de menos)</span>{% endif %},
+      envase {{ resultado.totales.costo_envase|moneda }}, mermas {{ resultado.totales.costo_mermas|moneda }}{% if resultado.totales.bultos_pasados_a_segunda %}, pasado a segunda {{ resultado.totales.costo_segunda|moneda }} ({{ resultado.totales.bultos_pasados_a_segunda|numero }} bulto{{ "s" if resultado.totales.bultos_pasados_a_segunda != 1 }} de primera que dejaron de serlo: mercadería + la caja){% endif %}{% if resultado.totales.rechazos_bultos %}, − rechazos perdidos {{ resultado.totales.rechazos_perdidos|moneda }} ({{ resultado.totales.rechazos_bultos|numero }} bultos que volvieron y se fueron a segunda: mercadería + envase, pérdida entera){% endif %}{% set dif_total = resultado.totales.diferencia_devolucion_proveedor or 0 %}{% if dif_total|round|int %}, <span class="dif-devolucion-proveedor">{{ "+" if dif_total > 0 }}{{ dif_total|moneda }} de devoluciones al proveedor (su precio de compra contra el costo del armado: lo que el proveedor devuelve de más o de menos)</span>{% endif %}{% if resultado.totales.bultos_segunda_cobrados %}, <span class="recupero-segunda">+ recupero de segunda {{ resultado.totales.recupero_segunda|moneda }} ({{ resultado.totales.bultos_segunda_cobrados|numero }} bultos que pagó el puesto, aparte de la venta al súper)</span>{% endif %},
       {{ resultado.totales.bultos|numero }} bultos enviados.
       {% if resultado.totales.segunda_bultos %}Segunda generada: {{ resultado.totales.segunda_bultos|numero }} bultos (vale cero).{% endif %}
       La utilidad % es sobre la mercadería.
@@ -367,6 +372,15 @@
       Provisorio (remito sin volver):
       {% for f in resultado.fechas_provisorias %}{{ f.strftime("%d/%m") }}{% if not loop.last %}, {% endif %}{% endfor %}.
       Esos días se cuentan con los kilos enviados.
+    </div>
+    {% endif %}
+    {# LA SEGUNDA SIN COBRAR (dueño, 02/10): el día NO es provisorio, solo
+       dice cuántos lotes de segunda que salieron ese día todavía no pagó el
+       puesto. Cuando se cobran, su recupero entra en ESE día. #}
+    {% if resultado.segunda_sin_cobrar %}
+    <div class="segunda-sin-cobrar">
+      Segunda sin cobrar:
+      {% for d in resultado.segunda_sin_cobrar %}{{ d.fecha.strftime("%d/%m") }} ({{ d.lotes }} lote{{ "s" if d.lotes != 1 }} de segunda sin cobrar){% if not loop.last %}, {% endif %}{% endfor %}.
     </div>
     {% endif %}
     {% if resultado.totales.cajas_perdidas %}
@@ -493,11 +507,11 @@
            chips se dibuja). Arreglar dos y olvidar la tercera deja la fila
            dibujada y su pérdida sin una palabra encima, que es peor que no
            dibujarla: parece un artículo sin nada. #}
-        {% if f.bultos_mermados or f.segunda_bultos or f.bultos_pasados_a_segunda or f.devoluciones_bultos or f.devueltos_proveedor_bultos %}
+        {% if f.bultos_mermados or f.segunda_bultos or f.bultos_pasados_a_segunda or f.devoluciones_bultos or f.devueltos_proveedor_bultos or f.bultos_segunda_cobrados %}
         {# Un chip por tipo de merma, y SOLO los que tienen algo: el
            artículo que se mermó todo crudo no tiene por qué arrastrar un
            chip de trabajada en cero. #}
-        <span class="detalle">{% if f.bultos_mermados_cruda %}<span class="chip-merma">merma cruda {{ f.bultos_mermados_cruda|numero }} bulto{{ "s" if f.bultos_mermados_cruda != 1 }} · {{ f.costo_mermas_cruda|moneda }}</span>{% endif %} {% if f.bultos_mermados_trabajada %}<span class="chip-merma-trabajada">merma trabajada {{ f.bultos_mermados_trabajada|numero }} bulto{{ "s" if f.bultos_mermados_trabajada != 1 }} · {{ f.costo_mermas_trabajada|moneda }}</span>{% endif %} {% if f.bultos_pasados_a_segunda %}<span class="chip-pasado-segunda">pasado a segunda {{ f.bultos_pasados_a_segunda|numero }} bulto{{ "s" if f.bultos_pasados_a_segunda != 1 }} · {{ f.costo_segunda|moneda }}</span>{% endif %} {% if f.segunda_bultos %}<span class="chip-segunda">{{ f.segunda_bultos|numero }} de segunda</span>{% endif %} {% if f.devoluciones_bultos %}<span class="chip-devolucion">devolvió {{ f.devoluciones_bultos|numero }} bultos · −{{ f.devoluciones_venta|moneda }} de venta</span>{% endif %} {% if f.rechazos_bultos %}<span class="chip-rechazo">rechazo perdido {{ f.rechazos_bultos|numero }} bultos · {{ f.rechazos_perdidos|moneda }}</span>{% endif %} {% if f.devueltos_proveedor_bultos %}<span class="chip-devuelto-proveedor">devuelto al proveedor {{ f.devueltos_proveedor_bultos|numero }} bulto{{ "s" if f.devueltos_proveedor_bultos != 1 }} · al precio de la compra{% set dif = f.diferencia_devolucion_proveedor or 0 %}{% if dif|round|int %} · {{ "+" if dif > 0 }}{{ dif|moneda }} contra el costo del armado{% endif %}</span>{% endif %} {% if f.cajas_perdidas %}<span class="chip-cajas">{{ f.cajas_perdidas|numero }} caja{{ "s" if f.cajas_perdidas != 1 }} nuestras · {{ f.cajas_perdidas_pesos|moneda }}</span>{% endif %}</span>
+        <span class="detalle">{% if f.bultos_mermados_cruda %}<span class="chip-merma">merma cruda {{ f.bultos_mermados_cruda|numero }} bulto{{ "s" if f.bultos_mermados_cruda != 1 }} · {{ f.costo_mermas_cruda|moneda }}</span>{% endif %} {% if f.bultos_mermados_trabajada %}<span class="chip-merma-trabajada">merma trabajada {{ f.bultos_mermados_trabajada|numero }} bulto{{ "s" if f.bultos_mermados_trabajada != 1 }} · {{ f.costo_mermas_trabajada|moneda }}</span>{% endif %} {% if f.bultos_pasados_a_segunda %}<span class="chip-pasado-segunda">pasado a segunda {{ f.bultos_pasados_a_segunda|numero }} bulto{{ "s" if f.bultos_pasados_a_segunda != 1 }} · {{ f.costo_segunda|moneda }}</span>{% endif %} {% if f.segunda_bultos %}<span class="chip-segunda">{{ f.segunda_bultos|numero }} de segunda</span>{% endif %} {% if f.devoluciones_bultos %}<span class="chip-devolucion">devolvió {{ f.devoluciones_bultos|numero }} bultos · −{{ f.devoluciones_venta|moneda }} de venta</span>{% endif %} {% if f.rechazos_bultos %}<span class="chip-rechazo">rechazo perdido {{ f.rechazos_bultos|numero }} bultos · {{ f.rechazos_perdidos|moneda }}</span>{% endif %} {% if f.devueltos_proveedor_bultos %}<span class="chip-devuelto-proveedor">devuelto al proveedor {{ f.devueltos_proveedor_bultos|numero }} bulto{{ "s" if f.devueltos_proveedor_bultos != 1 }} · al precio de la compra{% set dif = f.diferencia_devolucion_proveedor or 0 %}{% if dif|round|int %} · {{ "+" if dif > 0 }}{{ dif|moneda }} contra el costo del armado{% endif %}</span>{% endif %} {% if f.bultos_segunda_cobrados %}<span class="chip-recupero-segunda">recupero de segunda {{ f.bultos_segunda_cobrados|numero }} bulto{{ "s" if f.bultos_segunda_cobrados != 1 }} · +{{ f.recupero_segunda|moneda }}</span>{% endif %} {% if f.cajas_perdidas %}<span class="chip-cajas">{{ f.cajas_perdidas|numero }} caja{{ "s" if f.cajas_perdidas != 1 }} nuestras · {{ f.cajas_perdidas_pesos|moneda }}</span>{% endif %}</span>
         {% endif %}
       </div>
       <div class="renta {% if f.renta_pesos < 0 %}negativa{% endif %}">

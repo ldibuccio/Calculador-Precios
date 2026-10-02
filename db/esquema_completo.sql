@@ -2039,3 +2039,62 @@ create table remitos_fotos (
 );
 create index remitos_fotos_por_remito on remitos_fotos (remito_id);
 comment on table remitos_fotos is 'Las fotos del remito FIRMADO que trae el camionero (una o mas, obligatorias al recibir). Bucket "comandas", prefijo "remitos".';
+
+-- COBRANZAS DE SEGUNDA (dueño, 02/10): db/cobranza_segunda_1 a _3.
+create table segunda_cobros (
+    salida_id   bigint primary key references remitos_segunda (id),
+    importe     numeric(14, 2) not null,
+    fecha_cobro date not null,
+    sector      text not null check (sector in ('administracion', 'gerencia')),
+    creado_en   timestamptz not null default now(),
+    constraint segunda_cobros_importe_no_negativo check (coalesce(importe >= 0, false))
+);
+comment on table segunda_cobros is 'Cobranzas de segunda (duenio, 02/10): lo que pago el puesto por cada lote (una salida de remitos_segunda con destino puesto). Una fila por lote; sin fila, el lote esta pendiente. El importe puede ser 0: cobrado en cero. Sector y hora dicen quien lo cargo.';
+
+create table segunda_cobros_historial (
+    id                   bigint generated always as identity primary key,
+    salida_id            bigint not null references remitos_segunda (id),
+    tipo                 text not null check (tipo in ('correccion', 'a_pendiente')),
+    importe_anterior     numeric(14, 2) not null,
+    importe_nuevo        numeric(14, 2),
+    fecha_cobro_anterior date not null,
+    motivo               text,
+    sector               text not null check (sector = 'gerencia'),
+    creado_en            timestamptz not null default now(),
+    constraint segunda_historial_campos_de_su_tipo check (
+      (tipo = 'correccion' and coalesce(importe_nuevo >= 0, false)
+        and importe_nuevo <> importe_anterior)
+      or (tipo = 'a_pendiente' and importe_nuevo is null
+        and btrim(coalesce(motivo, '')) <> ''))
+);
+create index segunda_cobros_historial_por_lote on segunda_cobros_historial (salida_id);
+comment on table segunda_cobros_historial is 'Lo que Gerencia le cambio a un cobro de segunda: correccion del importe (anterior y nuevo) o volver el lote a pendiente (con motivo). Sector y hora dicen quien. No se borra.';
+
+create or replace function segunda_cobro_solo_lote_vigente() returns trigger
+language plpgsql as $f$
+begin
+  if not exists (select 1 from remitos_segunda
+                  where id = new.salida_id and destino = 'puesto'
+                    and anulado_el is null) then
+    raise exception 'la salida % no es un lote al puesto vigente', new.salida_id
+      using errcode = 'check_violation', constraint = 'segunda_cobro_solo_lote_vigente';
+  end if;
+  return new;
+end $f$;
+create trigger segunda_cobro_solo_lote_vigente
+  before insert or update on segunda_cobros
+  for each row execute function segunda_cobro_solo_lote_vigente();
+
+create or replace function segunda_cobrada_no_se_anula() returns trigger
+language plpgsql as $f$
+begin
+  if new.anulado_el is not null and old.anulado_el is null
+     and exists (select 1 from segunda_cobros where salida_id = new.id) then
+    raise exception 'la salida % tiene cobro: primero hay que volverla a pendiente', new.id
+      using errcode = 'check_violation', constraint = 'segunda_cobrada_no_se_anula';
+  end if;
+  return new;
+end $f$;
+create trigger segunda_cobrada_no_se_anula
+  before update of anulado_el on remitos_segunda
+  for each row execute function segunda_cobrada_no_se_anula();
