@@ -611,6 +611,8 @@ from core.tareas import (
     estado_visible as estado_visible_de_tarea,
     generar_excel_tareas,
     generar_pdf_tareas,
+    dias_del_mes as dias_del_mes_de_tarea,
+    puede_manejar as puede_manejar_tarea,
     texto_de_la_regla as texto_de_la_regla_de_tarea,
     texto_del_filtro as texto_del_filtro_de_tareas,
 )
@@ -3214,11 +3216,11 @@ def _recuadro_de_tareas(sector: str) -> dict:
         tareas = tareas_pendientes_del_sector(sector, hoy)
     except (psycopg2.Error, RuntimeError):
         logger.exception("No se pudieron leer las tareas de %s", sector)
-        return {"sector": sector, "tareas": [], "vencidas": 0, "error": True}
+        return {"sector": sector, "tareas": [], "vencidas": 0, "error": True, "sectores": SECTORES_DE_TAREA}
     for tarea in tareas:
         tarea["vencida"] = estado_visible_de_tarea(tarea, hoy) == "vencida"
     return {"sector": sector, "tareas": tareas, "vencidas": sum(1 for t in tareas if t["vencida"]),
-            "error": False}
+            "error": False, "sectores": SECTORES_DE_TAREA}
 
 
 def _marcar_tarea_hecha_desde(request: Request, sector: str, ocurrencia_id: int, nota: str):
@@ -3250,21 +3252,43 @@ def marcar_tarea_hecha_gerencia(request: Request, ocurrencia_id: int, nota: str 
     return _marcar_tarea_hecha_desde(request, "gerencia", ocurrencia_id, nota)
 
 
-def _filtros_de_tareas(sector: str, desde: str, hasta: str, estado: str) -> dict:
+def _filtros_de_tareas(sector: str, desde: str, hasta: str, estado: str, creada_por: str = "") -> dict:
     return {
         "sector": sector if sector in SECTORES_CON_TAREAS else None,
         "desde": fecha_del_filtro_vales(desde),
         "hasta": fecha_del_filtro_vales(hasta),
         "estado": estado if estado in ESTADOS_VISIBLES_DE_TAREA else None,
+        "creada_por": creada_por if creada_por in SECTORES_CON_TAREAS else None,
     }
+
+
+def _sector_de_tareas(request: Request) -> str:
+    """CADA SECTOR CARGA LAS SUYAS (dueño, 02/10): la MISMA pantalla bajo
+    /compras, /administracion y /gerencia, y el sector sale del PREFIJO
+    (corolario 63), nunca del formulario."""
+    sector = request.url.path.split("/")[1]
+    if sector not in SECTORES_CON_TAREAS:
+        raise HTTPException(status_code=404)
+    return sector
+
+
+def _sin_acceso_a_tareas(request: Request, sector: str, *, escribe: bool):
+    """Compras y Administración las cierra su middleware; Gerencia pregunta acá."""
+    if sector != "gerencia":
+        return None
+    if escribe:
+        return _puerta_de_gerencia_para_escribir(request)
+    return None if _acceso_gerencia_valido(request) else _pantalla_clave_gerencia(request)
 
 
 def _renderizar_tareas(request: Request, filtros: dict, *, aviso: str | None = None, error: str | None = None,
                        status_code: int = 200):
+    sector = _sector_de_tareas(request)
     hoy = _hoy_argentina()
     try:
-        ocurrencias = listar_ocurrencias(hoy=hoy, **filtros)
-        repetitivas = listar_tareas_repetitivas()
+        # El REGISTRO es de Gerencia: un sector ve sus repetitivas y carga.
+        ocurrencias = listar_ocurrencias(hoy=hoy, **filtros) if sector == "gerencia" else []
+        repetitivas = listar_tareas_repetitivas(None if sector == "gerencia" else sector)
         reaperturas = reaperturas_de_tareas([o["id"] for o in ocurrencias if o["reaperturas"]])
     except Exception as error_db:
         raise HTTPException(status_code=500, detail=f"Error al conectar con la base de datos: {error_db}") from error_db
@@ -3273,22 +3297,30 @@ def _renderizar_tareas(request: Request, filtros: dict, *, aviso: str | None = N
         o["atraso"] = dias_de_atraso_de_tarea(o, hoy)
     for r in repetitivas:
         r["regla"] = texto_de_la_regla_de_tarea(r)
+        r["maneja"] = puede_manejar_tarea(r, sector)
+        r["dias_mes_texto"] = ", ".join(str(d) for d in (r["dias_mes"] or []))
     return templates.TemplateResponse(request, "gerencia_tareas.html", {
-        "filtros": filtros, "ocurrencias": ocurrencias, "repetitivas": repetitivas, "reaperturas": reaperturas,
+        "sector": sector, "filtros": filtros, "ocurrencias": ocurrencias, "repetitivas": repetitivas,
+        "reaperturas": reaperturas,
         "hoy": hoy, "sectores": SECTORES_DE_TAREA, "tipos": TIPOS_DE_TAREA, "dias_semana": DIAS_DE_LA_SEMANA_TAREA,
         "estados_visibles": ESTADOS_VISIBLES_DE_TAREA, "estados_de_tarea": ESTADOS_DE_LA_TAREA,
         "hora_argentina": hora_argentina_vale, "aviso": aviso, "error": error,
     }, status_code=status_code)
 
 
+@app.get("/compras/tareas")
+@app.get("/administracion/tareas")
 @app.get("/gerencia/tareas")
 def ver_tareas(request: Request, sector: str = "", desde: str = "", hasta: str = "", estado: str = "",
-               aviso: str | None = None, error: str | None = None):
-    """Gerencia: crear tareas, las repetitivas (editar, pausar, dar de baja) y
-    el registro filtrado de todo lo que salió."""
-    if not _acceso_gerencia_valido(request):
-        return _pantalla_clave_gerencia(request)
-    return _renderizar_tareas(request, _filtros_de_tareas(sector, desde, hasta, estado), aviso=aviso, error=error)
+               creada_por: str = "", aviso: str | None = None, error: str | None = None):
+    """Crear tareas y las repetitivas (editar, pausar, dar de baja). Gerencia
+    además ve el registro filtrado de todo lo que salió."""
+    quien = _sector_de_tareas(request)
+    sin_acceso = _sin_acceso_a_tareas(request, quien, escribe=False)
+    if sin_acceso is not None:
+        return sin_acceso
+    return _renderizar_tareas(request, _filtros_de_tareas(sector, desde, hasta, estado, creada_por),
+                              aviso=aviso, error=error)
 
 
 def _entero_del_form(texto: str) -> int | None:
@@ -3296,23 +3328,40 @@ def _entero_del_form(texto: str) -> int | None:
     return int(texto) if texto.lstrip("-").isdigit() else None
 
 
-def _regla_del_formulario(tipo: str, cada_dias: str, dia_semana: str, dia_mes: str) -> dict:
+def _regla_del_formulario(tipo: str, cada_dias: str, dia_semana: str, dias_mes: str) -> dict:
     """Solo el campo del tipo elegido: los otros van en None aunque el
-    formulario los traiga (el CHECK de la base no deja sobrar ninguno)."""
+    formulario los traiga (el CHECK de la base no deja sobrar ninguno).
+    Mensual con días que no se entienden: ValueError, que la ruta muestra."""
+    dias = None
+    if tipo == "mensual":
+        dias = dias_del_mes_de_tarea(dias_mes)
+        if dias is None:
+            raise ValueError("Los días del mes van del 1 al 31, separados por coma (por ejemplo: 1, 15).")
     return {
         "cada_dias": _entero_del_form(cada_dias) if tipo == "cada_dias" else None,
         "dia_semana": _entero_del_form(dia_semana) if tipo == "semanal" else None,
-        "dia_mes": _entero_del_form(dia_mes) if tipo == "mensual" else None,
+        "dias_mes": dias,
     }
 
 
+def _volver_a_tareas(quien: str, aviso: str):
+    return RedirectResponse(url=f"/{quien}/tareas?" + urlencode({"aviso": aviso}), status_code=303)
+
+
+@app.post("/compras/tareas")
+@app.post("/administracion/tareas")
 @app.post("/gerencia/tareas")
 def crear_tarea_ruta(request: Request, sector: str = Form(""), titulo: str = Form(""), detalle: str = Form(""),
                      tipo: str = Form(""), vence_el: str = Form(""), desde: str = Form(""),
-                     cada_dias: str = Form(""), dia_semana: str = Form(""), dia_mes: str = Form("")):
-    puerta = _puerta_de_gerencia_para_escribir(request)
-    if puerta is not None:
-        return puerta
+                     cada_dias: str = Form(""), dia_semana: str = Form(""), dias_mes: str = Form("")):
+    """Gerencia carga para cualquier sector; un sector, solo para sí mismo
+    (el formulario no le pregunta, y la base lo exige igual)."""
+    quien = _sector_de_tareas(request)
+    sin_acceso = _sin_acceso_a_tareas(request, quien, escribe=True)
+    if sin_acceso is not None:
+        return sin_acceso
+    if quien != "gerencia":
+        sector = quien
     filtros = _filtros_de_tareas("", "", "", "")
     hoy = _hoy_argentina()
     if sector not in SECTORES_CON_TAREAS or tipo not in TIPOS_DE_TAREA:
@@ -3322,41 +3371,48 @@ def crear_tarea_ruta(request: Request, sector: str = Form(""), titulo: str = For
     if tipo == "una_vez" and vence is None:
         return _renderizar_tareas(request, filtros, error="Falta la fecha de vencimiento.", status_code=400)
     try:
-        crear_tarea(sector=sector, titulo=titulo, detalle=detalle, tipo=tipo, vence_el=vence, desde=inicio,
-                    hoy=hoy, **_regla_del_formulario(tipo, cada_dias, dia_semana, dia_mes))
+        crear_tarea(sector=sector, creada_por=quien, titulo=titulo, detalle=detalle, tipo=tipo, vence_el=vence,
+                    desde=inicio, hoy=hoy, **_regla_del_formulario(tipo, cada_dias, dia_semana, dias_mes))
     except ValueError as motivo:
         return _renderizar_tareas(request, filtros, error=str(motivo), status_code=400)
-    return RedirectResponse(url="/gerencia/tareas?" + urlencode({"aviso": "Tarea creada."}), status_code=303)
+    return _volver_a_tareas(quien, "Tarea creada.")
 
 
+@app.post("/compras/tareas/{tarea_id}/editar")
+@app.post("/administracion/tareas/{tarea_id}/editar")
 @app.post("/gerencia/tareas/{tarea_id}/editar")
 def editar_tarea_ruta(request: Request, tarea_id: int, titulo: str = Form(""), detalle: str = Form(""),
                       tipo: str = Form(""), cada_dias: str = Form(""), dia_semana: str = Form(""),
-                      dia_mes: str = Form("")):
-    puerta = _puerta_de_gerencia_para_escribir(request)
-    if puerta is not None:
-        return puerta
+                      dias_mes: str = Form("")):
+    """Gerencia edita cualquiera; un sector, solo las que creó él."""
+    quien = _sector_de_tareas(request)
+    sin_acceso = _sin_acceso_a_tareas(request, quien, escribe=True)
+    if sin_acceso is not None:
+        return sin_acceso
     try:
-        editar_tarea_repetitiva(tarea_id, titulo=titulo, detalle=detalle, tipo=tipo,
-                                **_regla_del_formulario(tipo, cada_dias, dia_semana, dia_mes))
+        editar_tarea_repetitiva(tarea_id, quien=quien, titulo=titulo, detalle=detalle, tipo=tipo,
+                                **_regla_del_formulario(tipo, cada_dias, dia_semana, dias_mes))
     except ValueError as motivo:
         return _renderizar_tareas(request, _filtros_de_tareas("", "", "", ""), error=str(motivo), status_code=400)
-    return RedirectResponse(url="/gerencia/tareas?" + urlencode(
-        {"aviso": "Tarea editada. Lo que ya salió queda como estaba."}), status_code=303)
+    return _volver_a_tareas(quien, "Tarea editada. Lo que ya salió queda como estaba.")
 
 
+@app.post("/compras/tareas/{tarea_id}/estado")
+@app.post("/administracion/tareas/{tarea_id}/estado")
 @app.post("/gerencia/tareas/{tarea_id}/estado")
 def cambiar_estado_de_tarea_ruta(request: Request, tarea_id: int, estado: str = Form("")):
-    puerta = _puerta_de_gerencia_para_escribir(request)
-    if puerta is not None:
-        return puerta
+    """Pausar, reanudar o dar de baja: Gerencia cualquiera; un sector, las suyas."""
+    quien = _sector_de_tareas(request)
+    sin_acceso = _sin_acceso_a_tareas(request, quien, escribe=True)
+    if sin_acceso is not None:
+        return sin_acceso
     try:
-        cambiar_estado_de_tarea(tarea_id, estado, _hoy_argentina())
+        cambiar_estado_de_tarea(tarea_id, estado, _hoy_argentina(), quien=quien)
     except ValueError as motivo:
         return _renderizar_tareas(request, _filtros_de_tareas("", "", "", ""), error=str(motivo), status_code=400)
     textos = {"pausada": "Tarea pausada.", "activa": "Tarea reanudada: sigue desde hoy.",
               "baja": "Tarea dada de baja. Lo que ya salió queda en el registro."}
-    return RedirectResponse(url="/gerencia/tareas?" + urlencode({"aviso": textos[estado]}), status_code=303)
+    return _volver_a_tareas(quien, textos[estado])
 
 
 @app.post("/gerencia/tareas/ocurrencias/{ocurrencia_id}/pendiente")
@@ -3373,8 +3429,8 @@ def volver_tarea_a_pendiente_ruta(request: Request, ocurrencia_id: int, motivo: 
         {"aviso": "La tarea volvió a pendiente. Lo que decía queda en el registro."}), status_code=303)
 
 
-def _exportacion_de_tareas(sector: str, desde: str, hasta: str, estado: str):
-    filtros = _filtros_de_tareas(sector, desde, hasta, estado)
+def _exportacion_de_tareas(sector: str, desde: str, hasta: str, estado: str, creada_por: str):
+    filtros = _filtros_de_tareas(sector, desde, hasta, estado, creada_por)
     hoy = _hoy_argentina()
     try:
         ocurrencias = listar_ocurrencias(hoy=hoy, **filtros)
@@ -3384,21 +3440,23 @@ def _exportacion_de_tareas(sector: str, desde: str, hasta: str, estado: str):
 
 
 @app.get("/gerencia/tareas/exportar-pdf")
-def exportar_tareas_pdf(request: Request, sector: str = "", desde: str = "", hasta: str = "", estado: str = ""):
+def exportar_tareas_pdf(request: Request, sector: str = "", desde: str = "", hasta: str = "", estado: str = "",
+                        creada_por: str = ""):
     """El registro con los MISMOS filtros que la pantalla, en PDF."""
     if not _acceso_gerencia_valido(request):
         return _pantalla_clave_gerencia(request)
-    ocurrencias, filtro, hoy = _exportacion_de_tareas(sector, desde, hasta, estado)
+    ocurrencias, filtro, hoy = _exportacion_de_tareas(sector, desde, hasta, estado, creada_por)
     return Response(content=generar_pdf_tareas(filtro, ocurrencias, hoy), media_type="application/pdf",
                     headers={"Content-Disposition": f'attachment; filename="Tareas_{hoy.isoformat()}.pdf"'})
 
 
 @app.get("/gerencia/tareas/exportar-excel")
-def exportar_tareas_excel(request: Request, sector: str = "", desde: str = "", hasta: str = "", estado: str = ""):
+def exportar_tareas_excel(request: Request, sector: str = "", desde: str = "", hasta: str = "", estado: str = "",
+                          creada_por: str = ""):
     """El registro con los MISMOS filtros que la pantalla, en Excel."""
     if not _acceso_gerencia_valido(request):
         return _pantalla_clave_gerencia(request)
-    ocurrencias, filtro, hoy = _exportacion_de_tareas(sector, desde, hasta, estado)
+    ocurrencias, filtro, hoy = _exportacion_de_tareas(sector, desde, hasta, estado, creada_por)
     return Response(content=generar_excel_tareas(filtro, ocurrencias, hoy),
                     media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
                     headers={"Content-Disposition": f'attachment; filename="Tareas_{hoy.isoformat()}.xlsx"'})

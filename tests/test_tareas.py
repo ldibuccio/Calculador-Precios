@@ -48,7 +48,7 @@ def base(monkeypatch):
 
 
 def _semanal(d, sector="compras", desde=LUNES, titulo="EJ Contar cajas"):
-    return d.crear_tarea(sector=sector, titulo=titulo, detalle="EJ en el galpón", tipo="semanal",
+    return d.crear_tarea(creada_por="gerencia", sector=sector, titulo=titulo, detalle="EJ en el galpón", tipo="semanal",
                          dia_semana=0, desde=desde, hoy=desde)
 
 
@@ -72,7 +72,7 @@ def _cliente(monkeypatch, *sectores):
 
 def test_una_de_UNA_VEZ_sale_al_crearla_y_la_marca_SU_sector_con_nota(base):
     d, sql = base
-    d.crear_tarea(sector="administracion", titulo="EJ Pagar luz", detalle=None, tipo="una_vez",
+    d.crear_tarea(creada_por="gerencia", sector="administracion", titulo="EJ Pagar luz", detalle=None, tipo="una_vez",
                   vence_el=LUNES + timedelta(days=3), hoy=LUNES)
     (tarea,) = d.tareas_pendientes_del_sector("administracion", LUNES)
     assert d.tareas_pendientes_del_sector("compras", LUNES) == []
@@ -90,11 +90,11 @@ def test_la_base_exige_los_campos_de_CADA_tipo(base):
     import psycopg2
     d, sql = base
     with pytest.raises(ValueError, match="Faltan o sobran"):
-        d.crear_tarea(sector="compras", titulo="EJ", detalle=None, tipo="semanal", dia_semana=None,
-                      desde=LUNES, hoy=LUNES)
+        d.crear_tarea(creada_por="gerencia", sector="compras", titulo="EJ", detalle=None, tipo="semanal",
+                      dia_semana=None, desde=LUNES, hoy=LUNES)
     with pytest.raises(psycopg2.errors.CheckViolation):
-        sql("INSERT INTO tareas (sector, titulo, tipo, vence_el, cada_dias) "
-            "VALUES ('compras', 'EJ', 'una_vez', '2026-03-05', 3)")
+        sql("INSERT INTO tareas (sector, creada_por, titulo, tipo, vence_el, cada_dias) "
+            "VALUES ('compras', 'gerencia', 'EJ', 'una_vez', '2026-03-05', 3)")
 
 
 def test_una_REPETITIVA_sale_el_dia_que_le_toca_y_NO_SE_ACUMULA(base):
@@ -139,25 +139,25 @@ def test_PAUSADA_no_sale_y_al_REANUDAR_sigue_desde_hoy_sin_no_hechas(base):
     tarea_id = _semanal(d)
     (t,) = d.tareas_pendientes_del_sector("compras", LUNES)
     d.marcar_tarea_hecha(t["id"], sector="compras", nota=None)
-    d.cambiar_estado_de_tarea(tarea_id, "pausada", LUNES + timedelta(days=1))
+    d.cambiar_estado_de_tarea(tarea_id, "pausada", LUNES + timedelta(days=1), quien="gerencia")
     assert d.tareas_pendientes_del_sector("compras", LUNES + timedelta(days=14)) == []
-    d.cambiar_estado_de_tarea(tarea_id, "activa", LUNES + timedelta(days=15))
+    d.cambiar_estado_de_tarea(tarea_id, "activa", LUNES + timedelta(days=15), quien="gerencia")
     assert d.tareas_pendientes_del_sector("compras", LUNES + timedelta(days=20)) == []
     assert len(d.tareas_pendientes_del_sector("compras", LUNES + timedelta(days=21))) == 1
     assert [f[1] for f in _ocurrencias(sql, tarea_id)] == ["hecha", "pendiente"]
-    d.cambiar_estado_de_tarea(tarea_id, "baja", LUNES + timedelta(days=22))
+    d.cambiar_estado_de_tarea(tarea_id, "baja", LUNES + timedelta(days=22), quien="gerencia")
     d.generar_ocurrencias(LUNES + timedelta(days=60))
     assert len(_ocurrencias(sql, tarea_id)) == 2                 # lo que ya salió queda
     with pytest.raises(ValueError):
-        d.cambiar_estado_de_tarea(tarea_id, "activa", LUNES + timedelta(days=60))
+        d.cambiar_estado_de_tarea(tarea_id, "activa", LUNES + timedelta(days=60), quien="gerencia")
 
 
 def test_EDITAR_cambia_lo_que_viene_y_NO_lo_que_ya_salio(base):
     d, sql = base
     tarea_id = _semanal(d)
     d.generar_ocurrencias(LUNES)
-    d.editar_tarea_repetitiva(tarea_id, titulo="EJ Contar pallets", detalle=None, tipo="cada_dias",
-                              cada_dias=3, dia_semana=None, dia_mes=None)
+    d.editar_tarea_repetitiva(tarea_id, quien="gerencia", titulo="EJ Contar pallets", detalle=None, tipo="cada_dias",
+                              cada_dias=3, dia_semana=None, dias_mes=None)
     d.generar_ocurrencias(LUNES + timedelta(days=3))
     assert sql("SELECT vence_el, titulo FROM tareas_ocurrencias ORDER BY vence_el") == [
         (LUNES, "EJ Contar cajas"), (LUNES + timedelta(days=3), "EJ Contar pallets")]
@@ -189,7 +189,7 @@ def test_solo_GERENCIA_vuelve_a_pendiente_con_MOTIVO_y_solo_la_ultima(base):
 def test_el_REGISTRO_filtra_por_estado_visible_y_la_ALERTA_cuenta_las_vencidas(base):
     from core.tareas import dias_de_atraso
     d, _ = base
-    d.crear_tarea(sector="gerencia", titulo="EJ Vence hoy", detalle=None, tipo="una_vez", vence_el=LUNES, hoy=LUNES)
+    d.crear_tarea(creada_por="gerencia", sector="gerencia", titulo="EJ Vence hoy", detalle=None, tipo="una_vez", vence_el=LUNES, hoy=LUNES)
     _semanal(d, sector="administracion")
     hoy = LUNES + timedelta(days=9)
     estados = {e: [o["titulo"] for o in d.listar_ocurrencias(sector=None, desde=None, hasta=None, estado=e, hoy=hoy)]
@@ -212,7 +212,7 @@ def test_el_RECUADRO_del_hub_es_UNA_linea_plegada_y_dice_las_vencidas(base, monk
         marcado = cliente.get("/compras").text.split("</style>")[-1]
         assert '<p class="tareas-linea">No hay tareas pendientes</p>' in marcado
         _semanal(d)
-        d.crear_tarea(sector="compras", titulo="EJ Llamar al puesto", detalle=None, tipo="una_vez",
+        d.crear_tarea(creada_por="gerencia", sector="compras", titulo="EJ Llamar al puesto", detalle=None, tipo="una_vez",
                       vence_el=LUNES + timedelta(days=5), hoy=LUNES)
         marcado = cliente.get("/compras").text.split("</style>")[-1]
     resumen = re.search(r'<summary class="tareas-linea">(.*?)</summary>', marcado, re.S).group(1)
@@ -225,7 +225,7 @@ def test_el_RECUADRO_del_hub_es_UNA_linea_plegada_y_dice_las_vencidas(base, monk
 def test_el_SECTOR_marca_desde_su_hub_y_NO_puede_desmarcar(base, monkeypatch):
     from unittest.mock import patch
     d, sql = base
-    d.crear_tarea(sector="administracion", titulo="EJ", detalle=None, tipo="una_vez", vence_el=LUNES, hoy=LUNES)
+    d.crear_tarea(creada_por="gerencia", sector="administracion", titulo="EJ", detalle=None, tipo="una_vez", vence_el=LUNES, hoy=LUNES)
     (t,) = d.tareas_pendientes_del_sector("administracion", LUNES)
     cliente = _cliente(monkeypatch, "administracion")
     with patch("app.main._hoy_argentina", return_value=LUNES):
@@ -247,7 +247,7 @@ def test_GERENCIA_crea_desde_su_pantalla_y_EXPORTA_con_los_filtros(base, monkeyp
     with patch("app.main._hoy_argentina", return_value=LUNES):
         assert cliente.post("/gerencia/tareas", data={
             "sector": "compras", "titulo": "EJ Revisar balanza", "detalle": "", "tipo": "mensual",
-            "desde": LUNES.isoformat(), "dia_mes": "2", "cada_dias": "4", "dia_semana": "3"},
+            "desde": LUNES.isoformat(), "dias_mes": "2", "cada_dias": "4", "dia_semana": "3"},
             follow_redirects=False).status_code == 303
         assert cliente.post("/gerencia/tareas", data={
             "sector": "administracion", "titulo": "EJ Otra", "tipo": "una_vez",
@@ -255,8 +255,8 @@ def test_GERENCIA_crea_desde_su_pantalla_y_EXPORTA_con_los_filtros(base, monkeyp
         marcado = cliente.get("/gerencia/tareas?sector=compras&estado=pendiente").text.split("</style>")[-1]
         links = [html.unescape(l) for l in re.findall(r'href="(/gerencia/tareas/exportar-[a-z]+\?[^"]*)"', marcado)]
         archivos = [_texto_del_archivo(cliente.get(l)) for l in links]
-    assert sql("SELECT tipo, dia_mes, cada_dias, dia_semana FROM tareas WHERE sector = 'compras'") == [
-        ("mensual", 2, None, None)]
+    assert sql("SELECT tipo, dias_mes, cada_dias, dia_semana, creada_por FROM tareas WHERE sector = 'compras'") == [
+        ("mensual", [2], None, None, "gerencia")]
     assert "EJ Revisar balanza" in marcado and "EJ Otra" not in marcado
     assert len(archivos) == 2
     for texto in archivos:
@@ -277,7 +277,7 @@ def test_el_RECUADRO_abierto_se_ve_bien_a_313px(base, monkeypatch):
     from unittest.mock import patch
     from scripts.medir_layout import medir_sync
     d, _ = base
-    d.crear_tarea(sector="gerencia", titulo="EJEMPLO tarea con un título bastante largo para un celular",
+    d.crear_tarea(creada_por="gerencia", sector="gerencia", titulo="EJEMPLO tarea con un título bastante largo para un celular",
                   detalle="EJEMPLOSINESPACIOSQUENOSEPUEDEPARTIRPORNINGUNLADO y algo más",
                   tipo="una_vez", vence_el=LUNES, hoy=LUNES)
     cliente = _cliente(monkeypatch, "gerencia")
@@ -293,7 +293,7 @@ def test_el_RECUADRO_abierto_se_ve_bien_a_313px(base, monkeypatch):
 
 def test_las_FECHAS_de_cada_regla_mensual_31_cae_al_ultimo_dia():
     from core.tareas import fechas_que_tocan
-    mensual = {"tipo": "mensual", "dia_mes": 31, "desde": date(2026, 1, 15)}
+    mensual = {"tipo": "mensual", "dias_mes": [31], "desde": date(2026, 1, 15)}
     assert fechas_que_tocan(mensual, date(2026, 1, 14), date(2026, 4, 30)) == [
         date(2026, 1, 31), date(2026, 2, 28), date(2026, 3, 31), date(2026, 4, 30)]
     cada = {"tipo": "cada_dias", "cada_dias": 3, "desde": date(2026, 3, 2)}

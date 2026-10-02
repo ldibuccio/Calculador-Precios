@@ -12,7 +12,8 @@
      tareas_hub.sector   — 'compras', 'administracion' o 'gerencia'
      tareas_hub.tareas   — las pendientes de ese sector, con `vencida`
      tareas_hub.vencidas — cuántas de ellas ya pasaron su día
-     tareas_hub.error    — no se pudieron leer: se dice, no se calla #}
+     tareas_hub.error    — no se pudieron leer: se dice, no se calla
+     tareas_hub.sectores — los nombres de los sectores (core/tareas.py) #}
 {% macro estilos() %}
   .tareas-hub { background: #fff; border-radius: 8px; margin-bottom: 1rem; box-shadow: 0 1px 3px rgba(0, 0, 0, 0.1);
     overflow-wrap: anywhere; }
@@ -24,6 +25,9 @@
   .tarea-titulo { font-weight: 600; }
   .tarea-detalle { color: #555; font-size: 0.88rem; }
   .tarea-vence { font-size: 0.85rem; color: #444; }
+  .tareas-nueva { display: flex; align-items: center; justify-content: center; min-height: 44px; margin: 0 0.9rem 0.7rem;
+    border-radius: 8px; border: 1px solid #2563eb; color: #2563eb; background: #fff; font-weight: 600;
+    text-decoration: none; box-sizing: border-box; }
   .tarea-hecha summary { display: inline-flex; align-items: center; justify-content: center; min-height: 44px;
     min-width: 44px; padding: 0 1rem; margin-top: 0.4rem; border-radius: 8px; background: #15803d; color: #fff;
     font-weight: 600; cursor: pointer; list-style: none; box-sizing: border-box; }
@@ -52,7 +56,8 @@
       <div class="tarea-titulo">{{ t.titulo }}</div>
       {% if t.detalle %}<div class="tarea-detalle">{{ t.detalle }}</div>{% endif %}
       <div class="tarea-vence {{ 'tareas-roja' if t.vencida }}">Vence el {{ t.vence_el.strftime('%d/%m/%Y') }}
-        {%- if t.atrasada %} · atrasada (la vez anterior no se hizo){% endif %}</div>
+        {%- if t.atrasada %} · atrasada (la vez anterior no se hizo){% endif %}
+        {%- if t.creada_por %} · la cargó {{ tareas_hub.sectores[t.creada_por] }}{% endif %}</div>
       <details class="tarea-hecha">
         <summary>Hecha</summary>
         <form method="post" action="/{{ tareas_hub.sector }}/tareas/{{ t.id }}/hecha">
@@ -64,6 +69,9 @@
     {% endfor %}
   </details>
   {% endif %}
+  {# CADA SECTOR CARGA LAS SUYAS (dueño, 02/10): siempre a la vista, también
+     sin pendientes y con la base caída (ahí la pantalla dice lo suyo). #}
+  <a class="tareas-nueva" href="/{{ tareas_hub.sector }}/tareas">Nueva tarea</a>
 </div>
 {% endif %}
 {% endmacro %}
