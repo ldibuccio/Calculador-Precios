@@ -3777,6 +3777,12 @@ def _filas_de_que_comprar(
                     else None),
                 "cajas": del_piso.get("cajas"),
                 "stock_por_que": del_piso.get("por_que"),
+                # LOS KILOS SALIERON DE UNA ESTIMACIÓN (dueño, 02/10): la
+                # pantalla y el PDF lo dicen al lado del número.
+                "stock_estimado": bool(del_piso.get("estimado")),
+                # LOS BULTOS FÍSICOS, para cuando no hay kilos: el stock no
+                # dice nunca "no se puede saber" si hay bultos.
+                "stock_fisicos": _sumar_o_nada(del_piso.get("sueltos"), del_piso.get("cajas")),
                 "comprado_cajones": lo_comprado.get("cajones", 0.0),
                 "comprado": comprado_magnitud,
                 "de_partida": de_partida,
@@ -3848,11 +3854,12 @@ def _foto_del_stock(articulo_ids: list[int], al_cierre_de) -> dict:
     LA SEGUNDA NO JUEGA y no hay que excluirla: es un pool aparte y ninguna
     de estas dos cuentas lo toca.
 
-    UNA MAGNITUD EN None ES "NO SE PUEDE SABER", y eso es lo importante. Si
-    algún lote suelto no declara su contenido —un ajuste, el stock inicial—
-    la suma de las pilas no cierra contra los bultos que hay. Un cero diría
-    "no hay nada en el piso" y haría comprar de más, que es el peor final
-    posible para esta pantalla.
+    LOS KILOS SE ESTIMAN CUANDO NO CIERRAN (dueño, 02/10), y `estimados` dice
+    de qué artículos: los bultos son los de la resta, y lo que no sale de una
+    compra con restante va al contenido de la compra más cercana. Ver
+    `_sueltos_en_magnitud`. Una magnitud en None queda solo para el artículo
+    sin ninguna compra desde el corte; un cero ahí diría "no hay nada" y
+    haría comprar de más.
     """
     # UNA consulta para todos los artículos, no una por artículo: es la
     # misma que usan Stock del Depósito, Guías R y Rentabilidad Real.
@@ -3862,16 +3869,7 @@ def _foto_del_stock(articulo_ids: list[int], al_cierre_de) -> dict:
     contenido = {f["id"]: f.get("contenido_caja") for f in listar_fichas_de_todos_los_clientes()}
     ids = set(articulo_ids)
 
-    foto_cajas = {}
-    for (articulo_id, ficha_id), bultos in cajas.items():
-        if articulo_id not in ids:
-            continue
-        bultos = float(bultos or 0)
-        por_caja = contenido.get(ficha_id)
-        foto_cajas[ficha_id] = (
-            articulo_id, bultos, bultos * float(por_caja) if por_caja is not None else None)
-
-    foto_sueltos = {}
+    foto_sueltos, cercanos, estimados = {}, {}, set()
     for articulo_id in articulo_ids:
         # Los sueltos salen por RESTA, igual que en el Cotejo: el total del
         # artículo menos TODAS las cajas en fichas (no solo las tildadas).
@@ -3882,9 +3880,28 @@ def _foto_del_stock(articulo_ids: list[int], al_cierre_de) -> dict:
         # (`_sueltos_en_magnitud`), así que un faltante del sistema no hace
         # comprar de más. Lo que cambia es que se ve.
         sueltos = stock.get(articulo_id, 0.0) - todas_las_cajas
-        foto_sueltos[articulo_id] = (
-            sueltos, _sueltos_en_magnitud(articulo_id, movimientos, sueltos, al_cierre_de))
-    return {"sueltos": foto_sueltos, "cajas": foto_cajas}
+        magnitud, estimado, cercanos[articulo_id] = _sueltos_en_magnitud(
+            articulo_id, movimientos, sueltos, al_cierre_de)
+        foto_sueltos[articulo_id] = (sueltos, magnitud)
+        if estimado:
+            estimados.add(articulo_id)
+
+    # UNA CAJA DE FICHA SIN CONTENIDO se estima con el contenido de la
+    # compra más cercana del artículo (dueño, 02/10), igual que los sueltos.
+    foto_cajas = {}
+    for (articulo_id, ficha_id), bultos in cajas.items():
+        if articulo_id not in ids:
+            continue
+        bultos = float(bultos or 0)
+        por_caja = contenido.get(ficha_id)
+        if por_caja is None and bultos > 0 and cercanos.get(articulo_id) is not None:
+            por_caja = cercanos[articulo_id]
+            estimados.add(articulo_id)
+        foto_cajas[ficha_id] = (
+            articulo_id, bultos, bultos * float(por_caja) if por_caja is not None else None)
+    # `estimados` NO SE GUARDA al salir: la foto guardada no tiene dónde
+    # (sin migración), así que después de salir los kilos quedan sin la marca.
+    return {"sueltos": foto_sueltos, "cajas": foto_cajas, "estimados": estimados}
 
 
 def _piso_de_la_foto(foto: dict, articulo_ids: list[int]) -> dict:
@@ -3922,8 +3939,10 @@ def _piso_de_la_foto(foto: dict, articulo_ids: list[int]) -> dict:
             continue
         sueltos, sueltos_magnitud = foto["sueltos"][articulo_id]
         if sueltos_magnitud is None or falta_contenido:
+            # LOS BULTOS IGUAL (dueño, 02/10): solo faltan los kilos, y eso
+            # pasa únicamente con un artículo sin ninguna compra desde el corte.
             por_que = ("hay cajas armadas de una ficha sin contenido por caja" if falta_contenido
-                       else "hay cajones sueltos sin contenido declarado")
+                       else "el artículo no tiene compras desde el corte")
             piso[articulo_id] = {"magnitud": None, "sueltos": sueltos, "cajas": en_cajas_bultos,
                                  "por_que": por_que}
             continue
@@ -3931,36 +3950,79 @@ def _piso_de_la_foto(foto: dict, articulo_ids: list[int]) -> dict:
             "magnitud": sueltos_magnitud + en_cajas_magnitud,
             "sueltos": sueltos,
             "cajas": en_cajas_bultos,
+            "estimado": articulo_id in foto.get("estimados", ()),
         }
     return piso
 
 
 def _sueltos_en_magnitud(articulo_id: int, movimientos: dict, sueltos: float, al_cierre_de):
-    """Los cajones crudos que quedan, pasados a la magnitud de la fila. None si no cierra.
+    """(magnitud, estimado, contenido_cercano) de los cajones crudos que quedan.
 
-    Rejuega el reparto a la fecha y se queda con los lotes de COMPRA con
-    restante —los únicos que declaran contenido— igual que
-    `_pilas_de_cajones`. Si las pilas no suman los bultos que la resta dice
-    que hay, o si alguna pila no declara su contenido, no hay número: es la
-    misma guarda que `_pilas_cierran`, y sin ella un desglose incompleto se
-    leería como un piso más chico del que hay.
+    EXACTO cuando los lotes con restante son todos de COMPRA, declaran su
+    contenido y suman los bultos que la resta dice que hay: es la cuenta de
+    siempre (`_pilas_de_cajones`).
+
+    ESTIMADO en cualquier otro caso (dueño, 02/10: "nunca 'no se puede saber'
+    cuando hay bultos"). Los bultos que valen son los de la RESTA —son los
+    que hay—, y se pasan a kilos con el contenido de las compras que quedan,
+    de la más nueva a la más vieja; lo que no alcanza a cubrir va al
+    contenido de la compra MÁS CERCANA del artículo. Los casos, medidos en
+    Frutamax el 02/10:
+
+      - Granny: el 17/09 se armaron 25 con 14 cargados, 11 bultos salieron
+        sin lote, y las compras 884 y 915 quedan con 14 contra 5 reales.
+      - Ombligo al 29/09: queda la compra 871 y 7 de la guía R 598, que es
+        un lote que no declara contenido de compra.
+
+    Hasta el 02/10 los dos casos devolvían None y la pantalla decía "hay
+    cajones sueltos sin contenido declarado", que era falso: todas las
+    compras tenían su contenido. Lo que no cerraba era el reparto.
+
+    `contenido_cercano` es el de la compra más nueva que quedó con
+    restante, o la última recibida si no queda ninguna: es el que usa
+    también una caja de ficha sin contenido. None solo si el artículo no
+    tiene ninguna compra desde el corte.
     """
-    if sueltos <= 0:
-        return 0.0
     entradas, salidas = movimientos.get(articulo_id, ([], []))
     reparto = reparto_a_la_fecha(entradas, salidas_para_reparto(salidas), al_cierre_de)
-    lotes = [l for l in reparto["lotes"] if l["restante"] > 0 and l["tipo_lote"] == "guia"]
-    contenidos = _contenidos_de(lotes)
-    total_bultos, total_magnitud = 0.0, 0.0
-    for lote in lotes:
-        dato = contenidos.get(f"{lote['tipo_lote']}:{lote['origen_id']}") or {}
-        if dato.get("contenido") is None:
-            return None
-        total_bultos += float(lote["restante"])
-        total_magnitud += float(lote["restante"]) * float(dato["contenido"])
-    if abs(total_bultos - sueltos) > 0.01:
-        return None
-    return total_magnitud
+    con_resto = [l for l in reparto["lotes"] if l["restante"] > 0]
+    de_compra = [l for l in con_resto if l["tipo_lote"] == "guia"]
+    # LA ÚLTIMA COMPRA RECIBIDA HASTA ESE DÍA, por si no queda ninguna con
+    # restante. Va en la MISMA lectura de contenidos.
+    ultima = [e for e in entradas if e.get("tipo_lote") == "guia"
+              and (e.get("fecha_orden") is None or e["fecha_orden"] <= al_cierre_de)][-1:]
+    ya = {l["origen_id"] for l in de_compra}
+    pedir = de_compra + [{"tipo_lote": "guia", "origen_id": e["origen_id"]}
+                         for e in ultima if e["origen_id"] not in ya]
+    contenidos = _contenidos_de(pedir) if pedir else {}
+
+    def contenido(lote):
+        dato = contenidos.get(f"guia:{lote['origen_id']}") or {}
+        return float(dato["contenido"]) if dato.get("contenido") is not None else None
+
+    con_contenido = [(l, contenido(l)) for l in de_compra]
+    con_contenido = [(l, c) for l, c in con_contenido if c is not None]
+    cercano = con_contenido[-1][1] if con_contenido else (contenido(ultima[0]) if ultima else None)
+
+    if sueltos <= 0:
+        return 0.0, False, cercano
+    exacto = (len(con_contenido) == len(con_resto)
+              and abs(sum(float(l["restante"]) for l in con_resto) - sueltos) <= 0.01)
+    if exacto:
+        return sum(float(l["restante"]) * c for l, c in con_contenido), False, cercano
+
+    falta, magnitud = float(sueltos), 0.0
+    for lote, por_bulto in reversed(con_contenido):
+        tomo = min(falta, float(lote["restante"]))
+        magnitud += tomo * por_bulto
+        falta -= tomo
+        if falta <= 0:
+            break
+    if falta > 0:
+        if cercano is None:
+            return None, False, None
+        magnitud += falta * cercano
+    return magnitud, True, cercano
 
 
 def _primera_ficha_por_cliente_y_articulo(elegidos: list[int]) -> dict:
@@ -4045,6 +4107,14 @@ def _contexto_de_que_comprar(request: Request, aviso: str | None = None):
                 "hay_borrador": False, "salio_el": None, "viejas": []}
     try:
         borrador = borrador_de_compra()
+        # AL ENTRAR NO HAY NADA TILDADO QUE NO SE HAYA TILDADO HOY (dueño,
+        # 02/10: "tilda solo Lionel"). Un listado abierto otro día no cuenta:
+        # ni sus cargas, ni su foto, ni su salida. Lo cierra el próximo
+        # guardado (`guardar_borrador_de_compra`), así este GET no escribe.
+        # Hasta el 02/10 el listado del 23/09 seguía abierto, con la carga 28
+        # tildada y la foto del 29/09 congelada.
+        if borrador and borrador["fecha"] < hoy:
+            borrador = None
         desde = hoy - timedelta(days=1)
         if borrador:
             desde = min(desde, borrador["fecha"] - timedelta(days=1))

@@ -2620,7 +2620,9 @@ def test_el_aviso_de_YA_USADA_excluye_el_listado_que_se_esta_editando():
     """Sin excluirlo, toda carga recien tildada diria "ya se uso" y el cartel
     pasaria a estar siempre puesto, que es como se aprende a no leerlo."""
     # `fecha` como en la base (NOT NULL): el listado abierto es de algún día.
-    borrador = {"id": 41, "fecha": date(2026, 9, 23), "estado": "borrador", "cargas": set(),
+    # De HOY: desde el 02/10 uno de otro día no cuenta al entrar.
+    from app.main import ARGENTINA
+    borrador = {"id": 41, "fecha": datetime.now(ARGENTINA).date(), "estado": "borrador", "cargas": set(),
                 "kilajes": {}, "generado_el": None}
     with patch("app.main.listar_cargas_desde", return_value=[]) as listar, \
          patch("app.main.borrador_de_compra", return_value=borrador):

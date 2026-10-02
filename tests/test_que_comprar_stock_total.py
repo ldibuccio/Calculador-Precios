@@ -29,20 +29,25 @@ def test_el_stock_suma_las_cajas_de_TODOS_los_clientes():
     assert piso[1].get("por_que") is None
 
 
-def test_un_stock_que_no_se_puede_saber_dice_POR_QUE():
+def test_unos_KILOS_que_no_se_pueden_saber_dicen_POR_QUE_y_los_bultos_quedan():
+    """Desde el 02/10 un suelto sin kilos es solo el artículo sin ninguna
+    compra desde el corte; "sin contenido declarado" era falso (Granny y
+    Ombligo tenían todas sus compras con contenido)."""
     piso = _piso_de_la_foto(FOTO, [2, 3])
-    assert piso[2]["magnitud"] is None
+    assert piso[2]["magnitud"] is None and piso[2]["sueltos"] == 1.0 and piso[2]["cajas"] == 2.0
     assert piso[2]["por_que"] == "hay cajas armadas de una ficha sin contenido por caja"
     assert piso[3]["por_que"] == "el artículo se cargó después de la foto"
     sin_contenido = _piso_de_la_foto({"sueltos": {4: (3.0, None)}, "cajas": {}}, [4])
-    assert sin_contenido[4]["por_que"] == "hay cajones sueltos sin contenido declarado"
+    assert sin_contenido[4]["por_que"] == "el artículo no tiene compras desde el corte"
+    assert sin_contenido[4]["sueltos"] == 3.0
 
 
 def test_la_cuenta_real_usa_el_stock_TOTAL_sin_pedir_las_fichas_del_cliente():
     """Por el contexto de verdad: la foto trae una caja de OTRO cliente."""
     from unittest.mock import patch
     foto = {"sueltos": {1: (2.0, 40.0)}, "cajas": {99: (1, 5.0, 100.0)}}
-    borrador = {"id": 3, "fecha": tq.date(2026, 9, 23), "cargas": [1], "kilajes": {},
+    from app.main import ARGENTINA
+    borrador = {"id": 3, "fecha": datetime.now(ARGENTINA).date(), "cargas": [1], "kilajes": {},
                 "generado_el": datetime(2026, 9, 23, 1, 5, tzinfo=timezone.utc)}
     contexto, _ = tq._contexto_real(borrador, foto_guardada=foto)
     assert contexto["filas"][0]["en_piso"] == 140.0
@@ -125,10 +130,23 @@ def test_el_PDF_antes_de_salir_dice_STOCK_PROVISORIO_y_despues_no():
     assert "stock provisorio" not in despues and "stock al salir, 28/09 10:05" in despues
 
 
-def test_la_PANTALLA_dice_por_que_no_se_puede_saber_el_stock():
-    fila = {**tq._fila(3, "TOMATE"), "en_piso": None, "stock_bultos": None,
+def test_sin_kilos_la_PANTALLA_muestra_los_BULTOS_y_dice_por_que():
+    """Dueño, 02/10: nunca "no se puede saber" cuando hay bultos."""
+    fila = {**tq._fila(3, "TOMATE"), "en_piso": None, "stock_bultos": None, "stock_fisicos": 7.0,
             "stock_por_que": "hay cajas armadas de una ficha sin contenido por caja"}
     tarjeta, = _tarjetas(tq._render(tq._contexto([fila])))
     celda = tarjeta[tarjeta.index('class="dato dato-stock"'):tarjeta.index('class="dato dato-en-camino"')]
-    assert "no se puede saber" in celda
-    assert '<small class="por-que">hay cajas armadas de una ficha sin contenido por caja</small>' in celda
+    assert "no se puede saber" not in celda
+    assert '<b class="stock-bultos">7 blt</b>' in celda
+    assert ('<small class="por-que">kilos sin dato: hay cajas armadas de una ficha sin contenido'
+            ' por caja</small>') in celda
+
+
+def test_los_kilos_ESTIMADOS_lo_dicen_en_la_PANTALLA():
+    fila = {**tq._fila(3, "TOMATE"), "stock_estimado": True}
+    tarjeta, = _tarjetas(tq._render(tq._contexto([fila])))
+    celda = tarjeta[tarjeta.index('class="dato dato-stock"'):tarjeta.index('class="dato dato-en-camino"')]
+    assert '<small class="estimado">kilos estimados</small>' in celda
+    sin = {**tq._fila(3, "TOMATE"), "stock_estimado": False}
+    tarjeta, = _tarjetas(tq._render(tq._contexto([sin])))
+    assert 'class="estimado"' not in tarjeta

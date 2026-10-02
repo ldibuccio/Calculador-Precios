@@ -11666,8 +11666,20 @@ este archivo guarda.
 7. **El listado está atado al momento de SALIR, no al reloj.** El botón
    "Salgo a comprar" guarda la foto del stock; "Compré" es lo cargado desde
    ahí, "En camino" lo cargado en los 3 días antes que no había llegado, y las
-   pendientes más viejas van a un aviso sin sumarse. Uno solo abierto, sea del
-   día que sea. Detalle en `docs/que_comprar_hoy.md`.
+   pendientes más viejas van a un aviso sin sumarse. Uno solo abierto.
+   Detalle en `docs/que_comprar_hoy.md`.
+
+   **Y el listado es DEL DÍA en que se abrió (dueño, 02/10)**: "al abrir no
+   puede haber NADA tildado, ni por lo guardado ayer. Tilda solo Lionel". Uno
+   abierto otro día no cuenta al entrar —ni sus cargas, ni su foto, ni su
+   salida— y el próximo guardado lo cierra y abre uno nuevo, en la misma
+   transacción (`guardar_borrador_de_compra`). El GET no escribe. El
+   formulario va con `autocomplete="off"`. Pasó en Frutamax: el listado del
+   23/09 siguió abierto nueve días con la carga 28 tildada y la foto del 29/09
+   congelada, y por eso el stock no cambiaba al cargar compras. Esto da vuelta
+   lo del 23/09 ("sea del día que sea"): un listado armado a las 22 para salir
+   a las 4 ya no sobrevive a la medianoche. Lo cuida
+   `tests/test_que_comprar_granny_ombligo.py`, contra Postgres.
 
    **El stock es del ARTÍCULO, no del cliente (dueño, 28/09)**: los sueltos
    más TODAS las cajas armadas, de cualquier ficha y cualquier cliente; la
@@ -11678,9 +11690,23 @@ este archivo guarda.
    **Antes de salir, el stock es el de ahora, en gris** y con "provisorio, se
    congela al salir"; la cuenta ya lo usa. "Salgo a comprar" va arriba de
    todo, y después de salir arriba dice de cuándo es la foto. El PDF dice
-   "stock provisorio" hasta que se sale. Un stock que no se puede saber dice
-   por qué (una caja de ficha sin contenido, o sueltos sin contenido
-   declarado); en el PDF sigue en blanco, como decidió el dueño.
+   "stock provisorio" hasta que se sale.
+
+   **Nunca "no se puede saber" cuando hay bultos (dueño, 02/10).** Los
+   bultos son los de la resta (los que hay), y los kilos salen de las compras
+   con restante; si el reparto no cierra, se ESTIMAN con la compra más nueva
+   que queda o la última recibida, y la pantalla y el PDF dicen "kilos
+   estimados" (`_sueltos_en_magnitud`). Una caja de ficha sin contenido usa
+   el mismo contenido. Hasta ese día la pantalla decía "hay cajones sueltos
+   sin contenido declarado", y era falso: en Granny el 17/09 se armaron 25
+   con 14 cargados (11 sin lote) y las compras 884 y 915 quedaban con 14
+   contra 5 reales; en Ombligo quedaba un lote de la guía R 598. Todas las
+   compras tenían su contenido; lo que no cerraba era el reparto. Era así
+   desde v941 (21/09), y el cartel desde v1017. Sin ninguna compra desde el
+   corte no hay kilos: se muestran los bultos y "kilos sin dato".
+   **La marca "estimado" no se guarda al salir** (la foto no tiene columna,
+   y se dejó sin migración): después de "Salgo a comprar" los kilos quedan
+   congelados sin la aclaración.
 
 8. **Tildar no recalcula solo (28/09)**: el listado sale de lo GUARDADO.
    "Actualizar" es el mismo guardado que el Guardar del pie, puesto arriba

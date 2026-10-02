@@ -53,13 +53,17 @@ def textos_de_la_fila(fila: dict, numero, sin_decimales) -> dict:
     sufijo = fila.get("sufijo") or ""
     pide = fila.get("pide")
     en_piso = fila.get("en_piso")
+    # NUNCA "no se puede saber" CON BULTOS (dueño, 02/10): sin kilos van los
+    # bultos físicos.
     if en_piso is None:
-        stock, stock_magnitud = "no se puede saber", ""
+        stock, stock_magnitud = f"{numero(fila.get('stock_fisicos') or 0)} blt", ""
     elif fila.get("stock_bultos") is not None:
         stock = f"{numero(fila['stock_bultos'])} blt"
         stock_magnitud = f"{sin_decimales(en_piso)} {sufijo}".strip()
     else:
         stock, stock_magnitud = f"{sin_decimales(en_piso)} {sufijo}".strip(), ""
+    # "kilos estimados", como en la pantalla.
+    estimado = "kilos estimados" if en_piso is not None and fila.get("stock_estimado") else ""
 
     a_comprar_magnitud = fila.get("a_comprar_magnitud")
     if a_comprar_magnitud is not None and a_comprar_magnitud == 0:
@@ -89,6 +93,7 @@ def textos_de_la_fila(fila: dict, numero, sin_decimales) -> dict:
         "pide_bultos": numero(fila["pide_bultos"]) if fila.get("pide_bultos") is not None else "—",
         "stock": stock,
         "stock_magnitud": stock_magnitud,
+        "stock_estimado": estimado,
         "en_camino": (HUECO_UNIDAD if fila.get("en_camino") is None
                       else f"{sin_decimales(fila.get('en_camino_cajones') or 0)} cj"),
         "a_comprar": a_comprar,
@@ -177,6 +182,8 @@ def generar_pdf_que_comprar(
                 magnitud = para_el_papel(textos["stock_magnitud"])
                 if clave == "stock" and texto and magnitud:
                     texto += f"<br/><font size='8' color='#595959'>{_escapar(magnitud)}</font>"
+                    if textos["stock_estimado"]:
+                        texto += f"<br/><font size='7' color='#595959'>{textos['stock_estimado']}</font>"
                 if clave == "stock" and textos["sueltos_negativos"]:
                     texto += (("<br/>" if texto else "")
                               + f"<font size='8' color='#B91C1C'><b>{_escapar(textos['sueltos_negativos'])}</b></font>")
