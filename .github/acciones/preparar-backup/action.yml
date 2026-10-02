@@ -1,0 +1,51 @@
+name: Preparar el backup
+description: rclone, psycopg2 y la configuración de rclone con el token más nuevo.
+inputs:
+  rclone_conf:
+    description: el secret RCLONE_CONF (los remotos onedrive y gdrive)
+    required: true
+runs:
+  using: composite
+  steps:
+    # El python del sistema no deja instalar con pip (PEP 668): uno propio.
+    - uses: actions/setup-python@v5
+      with:
+        python-version: "3.11"
+    - name: rclone y psycopg2
+      shell: bash
+      run: |
+        curl -fsSL https://rclone.org/install.sh | sudo bash > /dev/null
+        rclone version | head -1
+        python -m pip install -q psycopg2-binary
+    # EL TOKEN DE ONEDRIVE SE RENUEVA SOLO, y si la renovación no se guarda,
+    # el que está en el secret vence a los 90 días y el backup deja de
+    # llegar a OneDrive sin que nadie haya tocado nada. Por eso la
+    # configuración que rclone deja renovada se guarda en la cache de
+    # Actions, CIFRADA con la misma clave del backup, y la corrida siguiente
+    # arranca de ésa. Si Lionel vuelve a autorizar y cambia el secret, la
+    # huella del secret cambia y manda el secret nuevo.
+    - uses: actions/cache/restore@v4
+      with:
+        path: ~/.token-backup
+        key: rclone-token-${{ github.run_id }}-${{ github.job }}
+        restore-keys: rclone-token-
+    - name: Configuración de rclone
+      shell: bash
+      env:
+        RCLONE_CONF: ${{ inputs.rclone_conf }}
+      run: |
+        set -euo pipefail
+        test -n "$RCLONE_CONF" || { echo "falta el secret RCLONE_CONF"; exit 1; }
+        test -n "$BACKUP_CLAVE" || { echo "falta el secret BACKUP_CLAVE"; exit 1; }
+        huella=$(printf '%s' "$RCLONE_CONF" | sha256sum | cut -c1-64)
+        if [ -f ~/.token-backup/rclone.conf.enc ] && [ "$(cat ~/.token-backup/huella 2>/dev/null)" = "$huella" ] \
+           && openssl enc -d -aes-256-cbc -pbkdf2 -pass env:BACKUP_CLAVE \
+                -in ~/.token-backup/rclone.conf.enc -out "$RCLONE_CONFIG" 2>/dev/null; then
+          echo "rclone: con el token renovado de la corrida anterior"
+        else
+          printf '%s\n' "$RCLONE_CONF" > "$RCLONE_CONFIG"
+          echo "rclone: con el token del secret"
+        fi
+        chmod 600 "$RCLONE_CONFIG"
+        mkdir -p ~/.token-backup && printf '%s' "$huella" > ~/.token-backup/huella
+        rclone listremotes

@@ -1,0 +1,17 @@
+name: Guardar el token renovado
+description: Guarda la configuración de rclone, cifrada, para la corrida siguiente.
+runs:
+  using: composite
+  steps:
+    - name: Cifrar la configuración
+      shell: bash
+      run: |
+        set -euo pipefail
+        test -f "$RCLONE_CONFIG" || exit 0
+        mkdir -p ~/.token-backup
+        openssl enc -aes-256-cbc -pbkdf2 -salt -pass env:BACKUP_CLAVE -in "$RCLONE_CONFIG" -out ~/.token-backup/rclone.conf.enc
+        rm -f "$RCLONE_CONFIG"
+    - uses: actions/cache/save@v4
+      with:
+        path: ~/.token-backup
+        key: rclone-token-${{ github.run_id }}-${{ github.job }}

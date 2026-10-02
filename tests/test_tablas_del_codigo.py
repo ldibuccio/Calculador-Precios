@@ -31,6 +31,10 @@ NO_SON_TABLAS = {
     "jsonb_each": "FROM jsonb_each(...): una función",
     "pg_constraint": "catálogo de Postgres",
     "information_schema": "catálogo de Postgres",
+    # scripts/backup.py lee el catálogo para saber qué respaldar (02/10).
+    "pg_class": "catálogo de Postgres", "pg_namespace": "catálogo de Postgres",
+    "pg_depend": "catálogo de Postgres", "pg_extension": "catálogo de Postgres",
+    "pg_policies": "catálogo de Postgres", "pg_roles": "catálogo de Postgres",
 }
 
 

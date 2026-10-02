@@ -7,7 +7,7 @@ core/lector_comandas.py.
 
 import os
 import re
-from datetime import date, timedelta
+from datetime import date, datetime, timedelta, timezone
 from contextlib import contextmanager
 
 import psycopg2
@@ -20,6 +20,7 @@ from core.envases import (cajas_que_mueve_la_guia, como_queda_la_cuenta,
 from core.fotos import archivos_de_hoy, pasa_el_aviso, porcentaje_del_plan
 from core.remitos import rechazo_no_coincide, sin_factura_hace_mucho, sin_volver_hace_mucho
 from core.tareas import fechas_que_tocan
+from core.backup import estado_de_las_partes, partes_viejas
 from core.cobranzas_segunda import sin_cobrar_hace_mucho
 from core.magnitudes import repartir_magnitudes
 from core.matcheo_comanda import normalizar_texto
@@ -19914,3 +19915,67 @@ def contar_tareas_vencidas(hoy: date) -> dict:
     """La alerta de Gerencia: tareas pendientes cuyo día ya pasó, de cualquier sector."""
     vencidas = listar_ocurrencias(sector=None, desde=None, hasta=None, estado="vencida", hoy=hoy)
     return {"casos": len(vencidas), "mas_viejo": min((o["vence_el"] for o in vencidas), default=None)}
+
+
+# ---------------------------------------------------------------------------
+# PLAN B DE BACKUP (dueño, 02/10): lo que Gerencia ve.
+#
+# `backups_corridas` la escribe el workflow de GitHub (scripts/backup.py), con
+# un rol que SOLO inserta ahí. La app solo la lee. Las reglas (qué es exitoso,
+# cuándo es viejo) viven en core/backup.py.
+# ---------------------------------------------------------------------------
+
+# La última corrida de cada parte y la última EXITOSA (los dos destinos bien).
+# Con esas dos filas por parte, `estado_de_las_partes` contesta todo: no hace
+# falta traer la historia entera.
+_SQL_ULTIMAS_CORRIDAS_DE_BACKUP = """
+    (SELECT DISTINCT ON (parte) parte, onedrive_ok, gdrive_ok, detalle, terminada_el
+       FROM backups_corridas ORDER BY parte, terminada_el DESC, id DESC)
+    UNION ALL
+    (SELECT DISTINCT ON (parte) parte, onedrive_ok, gdrive_ok, detalle, terminada_el
+       FROM backups_corridas WHERE onedrive_ok AND gdrive_ok
+      ORDER BY parte, terminada_el DESC, id DESC)
+"""
+
+
+def _filas_como_dicts(cursor) -> list[dict]:
+    columnas = [d[0] for d in cursor.description]
+    return [dict(zip(columnas, fila)) for fila in cursor.fetchall()]
+
+
+def estado_de_los_backups(ahora: datetime | None = None) -> list[dict]:
+    """Por parte (código, bases, fotos): el último backup exitoso, si está
+    viejo, y qué destino falló en la última corrida."""
+    ahora = ahora or datetime.now(timezone.utc)
+    conexion = obtener_conexion()
+    try:
+        with conexion.cursor() as cursor:
+            cursor.execute(_SQL_ULTIMAS_CORRIDAS_DE_BACKUP)
+            return estado_de_las_partes(_filas_como_dicts(cursor), ahora)
+    finally:
+        conexion.close()
+
+
+def ultimas_corridas_de_backup(limite: int = 30) -> list[dict]:
+    """La historia reciente, para ver cuál destino falló y cuándo."""
+    conexion = obtener_conexion()
+    try:
+        with conexion.cursor() as cursor:
+            cursor.execute(
+                "SELECT parte, onedrive_ok, gdrive_ok, detalle, terminada_el FROM backups_corridas "
+                "ORDER BY terminada_el DESC, id DESC LIMIT %s",
+                (limite,),
+            )
+            return _filas_como_dicts(cursor)
+    finally:
+        conexion.close()
+
+
+def contar_backups_viejos(ahora: datetime | None = None) -> dict:
+    """La alerta de Gerencia: partes cuyo último backup exitoso tiene más de
+    HORAS_PARA_LA_ALERTA, o que no tienen ninguno. `mas_viejo` es el día del
+    más viejo de los que tienen fecha."""
+    estado = estado_de_los_backups(ahora)
+    fechas = [e["ultima_exitosa"].astimezone(ZoneInfo("America/Argentina/Buenos_Aires")).date()
+              for e in estado if e["vieja"] and e["ultima_exitosa"]]
+    return {"casos": partes_viejas(estado), "mas_viejo": min(fechas, default=None)}

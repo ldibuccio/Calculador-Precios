@@ -213,7 +213,7 @@ PANTALLAS_CON_I = {
     "cliente_formulario.html", "compra_detalle.html", "compra_editar_gerencia.html",
     "compra_form.html", "compra_fotos_multiples.html", "compra_leer_foto.html",
     "compra_listado.html", "compra_manual.html", "compra_proveedor_form.html",
-    "gerencia_fotos.html",
+    "gerencia_fotos.html", "gerencia_backups.html",
     "compras_cajas.html", "compras_cajas_colega.html", "compras_cajas_movimientos.html",
     "compras_carga.html", "compras_proveedores.html", "compras_vacios_cotejo.html",
     "compras_vacios_proveedor.html", "deposito_devolver.html", "deposito_ingresar.html",

@@ -100,6 +100,13 @@ jobs:
           fi
           psql --version
 
+      - name: rclone, para el simulacro del backup
+        # tests/test_backup.py sube y baja de dos destinos cifrados con rclone
+        # de verdad. Con HUMO_OBLIGATORIO, que falte rclone FALLA: no se saltea.
+        run: |
+          curl -fsSL https://rclone.org/install.sh | sudo bash > /dev/null
+          rclone version | head -1
+
       - name: Navegador para los tests de layout
         # OCHO tests miden anchos, solapes y el mínimo tocable de 44px, y
         # están guardados con `importorskip("playwright")`. playwright NO está

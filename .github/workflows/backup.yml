@@ -1,0 +1,107 @@
+# PLAN B DE BACKUP (dueño, 02/10): todos los días a las 04:00 de Argentina.
+#
+# Código, bases (Frutamax, Palmala, Ganadería) y fotos van a OneDrive Y a
+# Google Drive, CIFRADOS con la clave que Lionel tiene impresa. SIN ESA CLAVE
+# EL BACKUP NO SIRVE: nadie puede abrir lo que hay en las nubes.
+#
+# Cada parte graba cómo le fue en `backups_corridas` (Frutamax y Palmala), y
+# Gerencia → Backups lo muestra. Una corrida en rojo acá es una parte que no
+# llegó a los dos destinos: la pantalla dice cuál. Nada de mails.
+#
+# Las credenciales son TODAS secrets del repo (la guía dice de dónde sale cada
+# una). Ninguna va en un archivo. RESTAURAR.md dice cómo se vuelve todo.
+name: Backup
+
+on:
+  schedule:
+    - cron: "0 7 * * *"     # 07:00 UTC = 04:00 de Argentina (sin horario de verano)
+  workflow_dispatch:
+
+# Una corrida a la vez: dos juntas se pisarían el token renovado de OneDrive.
+concurrency:
+  group: backup
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+env:
+  RCLONE_CONFIG: ${{ github.workspace }}/../rclone.conf
+  BACKUP_CLAVE: ${{ secrets.BACKUP_CLAVE }}
+  ESTADO_FRUTAMAX_URL: ${{ secrets.ESTADO_FRUTAMAX_URL }}
+  ESTADO_PALMALA_URL: ${{ secrets.ESTADO_PALMALA_URL }}
+
+jobs:
+  codigo:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0          # la historia ENTERA y todas las ramas: el bundle es --all
+      - uses: ./.github/acciones/preparar-backup
+        with:
+          rclone_conf: ${{ secrets.RCLONE_CONF }}
+      - run: python scripts/backup.py codigo
+      - uses: ./.github/acciones/guardar-token
+        if: always()
+
+  bases:
+    needs: codigo
+    if: always()                  # que falle el código no frena las bases
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    services:
+      # EL POSTGRES DESCARTABLE: cada base bajada de cada nube se restaura acá
+      # y se cuenta contra el origen. Si no da igual, esa parte NO es exitosa.
+      postgres:
+        image: postgres:17
+        env:
+          POSTGRES_PASSWORD: prueba
+        ports: ["5432:5432"]
+        options: >-
+          --health-cmd pg_isready --health-interval 10s --health-timeout 5s --health-retries 10
+    env:
+      BACKUP_PRUEBA_URL: postgresql://postgres:prueba@127.0.0.1:5432/postgres
+      FRUTAMAX_DB_URL: ${{ secrets.FRUTAMAX_DB_URL }}
+      PALMALA_DB_URL: ${{ secrets.PALMALA_DB_URL }}
+      GANADERIA_DB_URL: ${{ secrets.GANADERIA_DB_URL }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: ./.github/acciones/preparar-backup
+        with:
+          rclone_conf: ${{ secrets.RCLONE_CONF }}
+      # Las tres bases son PostgreSQL 17: pg_dump tiene que ser 17 o más nuevo.
+      - name: Cliente de PostgreSQL 17
+        run: |
+          sudo apt-get install -y -q postgresql-common
+          sudo /usr/share/postgresql-common/pgdg/apt.postgresql.org.sh -y
+          sudo apt-get install -y -q postgresql-client-17
+          echo "/usr/lib/postgresql/17/bin" >> "$GITHUB_PATH"
+      - run: pg_dump --version && python scripts/backup.py bases
+      - uses: ./.github/acciones/guardar-token
+        if: always()
+
+  fotos:
+    needs: bases
+    if: always()
+    runs-on: ubuntu-latest
+    timeout-minutes: 120
+    env:
+      FRUTAMAX_S3_KEY_ID: ${{ secrets.FRUTAMAX_S3_KEY_ID }}
+      FRUTAMAX_S3_SECRET: ${{ secrets.FRUTAMAX_S3_SECRET }}
+      FRUTAMAX_S3_REGION: ${{ secrets.FRUTAMAX_S3_REGION }}
+      PALMALA_S3_KEY_ID: ${{ secrets.PALMALA_S3_KEY_ID }}
+      PALMALA_S3_SECRET: ${{ secrets.PALMALA_S3_SECRET }}
+      PALMALA_S3_REGION: ${{ secrets.PALMALA_S3_REGION }}
+      GANADERIA_S3_KEY_ID: ${{ secrets.GANADERIA_S3_KEY_ID }}
+      GANADERIA_S3_SECRET: ${{ secrets.GANADERIA_S3_SECRET }}
+      GANADERIA_S3_REGION: ${{ secrets.GANADERIA_S3_REGION }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: ./.github/acciones/preparar-backup
+        with:
+          rclone_conf: ${{ secrets.RCLONE_CONF }}
+      - run: python scripts/backup.py fotos
+      - uses: ./.github/acciones/guardar-token
+        if: always()

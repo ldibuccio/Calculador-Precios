@@ -12716,6 +12716,7 @@ def test_recalcular_alertas_usa_las_ventanas_de_cada_control():
         "contar_ordenes_sin_remito": VACIO,
         "contar_segunda_sin_cobrar": VACIO,
         "contar_tareas_vencidas": VACIO,
+        "contar_backups_viejos": VACIO,
     }
     with ExitStack() as pila:
         pila.enter_context(patch("app.main._hoy_argentina", return_value=HOY_DE_PRUEBA))

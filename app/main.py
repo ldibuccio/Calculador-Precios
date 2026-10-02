@@ -185,6 +185,9 @@ from app.db import (
     cambiar_estado_de_tarea,
     volver_tarea_a_pendiente,
     contar_tareas_vencidas,
+    contar_backups_viejos,
+    estado_de_los_backups,
+    ultimas_corridas_de_backup,
     LoteDeSegundaCobrado,
     lotes_de_segunda,
     historial_de_cobros_de_segunda,
@@ -601,6 +604,7 @@ from core.vales import (
     total_de as total_de_vales,
 )
 from core.vales import hora_argentina as hora_argentina_vale
+from core.backup import HORAS_PARA_LA_ALERTA, TEXTO_DE_LA_PARTE, TEXTO_DEL_DESTINO
 from core.tareas import (
     DIAS_DE_LA_SEMANA as DIAS_DE_LA_SEMANA_TAREA,
     ESTADOS_DE_LA_TAREA,
@@ -11226,6 +11230,24 @@ def ver_fotos_de_mas_de_3_anios(request: Request, aviso: str | None = None, erro
     })
 
 
+@app.get("/gerencia/backups")
+def ver_backups(request: Request):
+    """Plan B de backup (dueño, 02/10): la fecha del último backup exitoso de
+    cada parte —código, bases y fotos— y, si la última corrida no llegó a los
+    dos destinos, cuál falló. Lo escribe el workflow de GitHub; acá solo se lee."""
+    if not _acceso_gerencia_valido(request):
+        return _pantalla_clave_gerencia(request)
+    try:
+        estado = estado_de_los_backups()
+        corridas = ultimas_corridas_de_backup()
+    except Exception as error_db:
+        raise HTTPException(status_code=500, detail=f"Error al conectar con la base de datos: {error_db}") from error_db
+    return templates.TemplateResponse(request, "gerencia_backups.html", {
+        "estado": estado, "corridas": corridas, "horas_para_la_alerta": HORAS_PARA_LA_ALERTA,
+        "texto_de_la_parte": TEXTO_DE_LA_PARTE, "texto_del_destino": TEXTO_DEL_DESTINO,
+    })
+
+
 def _borrar_fotos(estado: dict, fotos: list[dict], *, como: str, tipo: str, anteriores_a, salteadas: int) -> int:
     """Borra el ARCHIVO de cada foto y deja su registro, atado a UN renglón del
     historial. Cada foto es su propia transacción: si una falla en el Storage,
@@ -18252,6 +18274,19 @@ ALERTAS = [
         texto_link="Ver Tareas",
         modulos=("gerencia",),
         contar=lambda: contar_tareas_vencidas(_hoy_argentina()),
+    ),
+    DefinicionAlerta(
+        codigo="backups_viejos",
+        # Dueño, 02/10: una parte del backup (código, bases o fotos) cuyo
+        # último backup exitoso —los dos destinos bien— tiene más de
+        # HORAS_PARA_LA_ALERTA, o no tiene ninguno (core/backup.py). Solo Gerencia.
+        titulo="Backup atrasado",
+        texto=lambda casos: (f"{casos} parte{'s' if casos != 1 else ''} del backup sin copia buena hace "
+                             f"más de {HORAS_PARA_LA_ALERTA // 24} días"),
+        url="/gerencia/backups",
+        texto_link="Ver Backups",
+        modulos=("gerencia",),
+        contar=lambda: contar_backups_viejos(),
     ),
     DefinicionAlerta(
         codigo="espacio_de_fotos",
