@@ -817,3 +817,18 @@ La compra del 138 es la 656 porque era la única compra de Arándano de
 FRUTAMAX recibida al momento del armado. La del 137 la eligió Lionel: la
 709, a $22.000; la otra opción era la 704, a $20.000. Quedan 6 rechazos al
 proveedor sin compra atada, y esos siguen valiendo el costo del armado.
+
+## 02/10 — `cobranza_segunda_1` a `_3`: Cobranzas de segunda
+
+Corridos por Lionel en las dos bases, cada bloque solo. La verificación
+(`cobranza_segunda_4`), corrida aparte, la hizo el Claude con acceso de
+lectura:
+
+```
+FRUTAMAX  cobranza_segunda · tablas 2 · checks 2 · triggers 2 · cobros 0 · lotes 60 · bultos 608 · primer lote 29/08 · último lote 01/10
+PALMALA   cobranza_segunda · tablas 2 · checks 2 · triggers 2 · cobros 0 · lotes 0
+```
+
+Las dos tablas, los dos CHECK y los dos triggers están en las dos bases. Los
+60 lotes de Frutamax arrancan todos pendientes (`cobros 0`). Palmala no tiene
+ningún lote al puesto y no vota: confirma solo que los bloques no explotan.
