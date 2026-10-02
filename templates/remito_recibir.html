@@ -88,7 +88,7 @@
   <form method="post" action="/administracion/facturacion/remito/{{ remito.id }}/recibir" enctype="multipart/form-data">
     <div class="tarjeta">
       <h2>Lo que dice el remito firmado</h2>
-      <div class="ojo">Bultos y kilos vienen con lo que se envió: cambiá solo lo que el súper anotó distinto. Si rechazó bultos, poné los que se quedó y los kilos de esos bultos. Esto no mueve stock: lo rechazado lo ingresa Depósito.</div>
+      <div class="ojo">Bultos y kilos vienen con lo que se envió menos lo que Depósito ya cargó como rechazado: cambiá solo lo que el súper anotó distinto. Si rechazó bultos, poné los que se quedó y los kilos de esos bultos. Esto no mueve stock: lo rechazado lo ingresa Depósito.</div>
       {% for r in remito.renglones %}
         <div class="renglon">
           <div class="renglon-nombre">{{ r.articulo_nombre or "(sin identificar)" }}</div>
@@ -99,11 +99,11 @@
           <div class="pares">
             <label>Bultos recibidos
               <input type="text" inputmode="decimal" name="bultos_{{ r.id }}" required
-                     value="{{ cargado.get('bultos_' ~ r.id, r.bultos_enviados|numero) }}">
+                     value="{{ cargado.get('bultos_' ~ r.id, r.precarga_bultos|numero) }}">
             </label>
             <label>Recibido ({{ r.sufijo or "sin unidad" }})
               <input type="text" inputmode="decimal" name="kilos_{{ r.id }}" required
-                     value="{{ cargado.get('kilos_' ~ r.id, r.kilos_enviados|numero) }}">
+                     value="{{ cargado.get('kilos_' ~ r.id, r.precarga_kilos|numero) }}">
             </label>
           </div>
         </div>
