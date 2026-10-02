@@ -229,13 +229,15 @@ def test_la_MARCA_vieja_de_juntar_ya_NO_ABRE_NADA(base):
     assert [a for a in archivos if "juntando_proveedores" in io.open(a, encoding="utf-8").read()] == []
 
 
-def test_un_vale_de_DEVOLUCION_no_se_corrige_aca(base):
-    """Lee proveedor, fecha e importe de la devolución: se corrige allá."""
+def test_un_vale_de_DEVOLUCION_no_cambia_de_PROVEEDOR(base):
+    """Desde el 02/10 se le corrigen importe, fecha y número (ver
+    tests/test_vales_editables.py); el proveedor sigue siendo el de la
+    devolución."""
     d, _ = base
     dev = _devolucion(d, cajones=4, importe=2000.0)
     (vale_id,) = [v["id"] for v in d.listar_vales(hoy=HOY) if v["devolucion_id"] == dev]
     with pytest.raises(d.ValeNoSeCorrige, match="devolución"):
-        d.corregir_vale(vale_id, importe=1.0, numero=None, fecha=date(2026, 9, 2), proveedor_id=1, hoy=HOY)
+        d.corregir_vale(vale_id, importe=1.0, numero=None, fecha=date(2026, 9, 2), proveedor_id=2, hoy=HOY)
 
 
 def test_la_PANTALLA_de_un_vale_ofrece_corregir_SOLO_a_Gerencia_y_en_cartera(base, monkeypatch):

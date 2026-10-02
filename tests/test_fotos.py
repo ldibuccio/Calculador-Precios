@@ -234,13 +234,15 @@ def test_la_foto_anexada_se_ve_por_SU_vale_y_un_id_ajeno_es_404(base, monkeypatc
     assert ajena.status_code == 404
 
 
-def test_NINGUNA_pantalla_borra_una_foto_de_un_vale():
-    """Ni la original ni las anexadas (dueño, 30/09). Se mira el CÓDIGO: una
-    ruta de borrar o un DELETE sobre la tabla no puede existir."""
+def test_la_FILA_de_una_foto_de_un_vale_no_se_borra_y_borrar_es_SOLO_de_Gerencia():
+    """Hasta el 02/10 ninguna foto de un vale se borraba. Desde ahí Gerencia
+    borra y reemplaza (dueño, 02/10), con la regla de fotos: se va el ARCHIVO
+    y la fila que lo nombra queda. Se mira el CÓDIGO: las rutas que borran son
+    las DECIDIDAS, y un DELETE o un UPDATE de la ruta no puede existir."""
     from app.main import app
-    for ruta in app.routes:
-        if "/vales/" in getattr(ruta, "path", ""):
-            assert "borrar" not in ruta.path, ruta.path
+    borran = {ruta.path for ruta in app.routes if "/vales/" in getattr(ruta, "path", "")
+              and ("borrar" in ruta.path or "reemplazar" in ruta.path)}
+    assert borran == {"/gerencia/vales/{vale_id}/fotos/borrar", "/gerencia/vales/{vale_id}/fotos/reemplazar"}
     for archivo in ("app/main.py", "app/db.py"):
         texto = io.open(os.path.join(RAIZ, archivo), encoding="utf-8").read()
         assert not re.search(r"DELETE\s+FROM\s+vales_a_cobrar_fotos", texto, re.I), archivo

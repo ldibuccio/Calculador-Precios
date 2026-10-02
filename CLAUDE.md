@@ -4611,11 +4611,27 @@ Lo cuida `tests/test_vales_a_cobrar.py`, contra Postgres.
   pregunta ANTES de enviar (`/vales/cargar/parecidos`), porque un formulario
   que vuelve del servidor no trae la foto; el POST vuelve a preguntar.
 - **Un vale no se anula, se CORRIGE** (`corregir_vale`), solo Gerencia, y
-  solo uno EN CARTERA con datos propios (anterior al sistema o carga manual).
-  El de una devolución lee sus datos de ella y se corrige allá. Importe,
-  número, fecha y proveedor, con historial en `vales_correcciones` (campo,
+  **cualquier vale EN CARTERA** (dueño, 02/10; hasta ese día solo los de
+  datos propios). Importe, número y fecha en todos; el proveedor solo en los
+  que lo traen propio (anterior al sistema o carga manual): el de una
+  devolución es el de la devolución. Historial en `vales_correcciones` (campo,
   anterior, nuevo, fecha y sector), igual que el número de remito. El detalle
-  lo muestra en la historia.
+  lo muestra en la historia. Un vale con la devolución anulada no se corrige.
+- **EL IMPORTE DEL VALE** (dueño, 02/10) es lo que dice el papel, y es el que
+  vale en cartera, al cobrar y al cruzar: `coalesce(vale.importe,
+  devolución.importe)`. En un vale de devolución `vale.importe` y `vale.fecha`
+  son la CORRECCIÓN de Gerencia (NULL = la de la devolución; volver al valor
+  de la devolución deja NULL), y la devolución no se toca.
+  `importe_calculado` (seña × cajones) no cambia nunca: la pantalla muestra
+  el importe del vale, el calculado y la diferencia, y "cargada por $X" si se
+  corrigió. **OJO, el pedido decía que el importe salía del calculado: no.**
+  Sale de la devolución, y los 13 de Frutamax lo tienen (02/10, total
+  $4.313.000), así que ninguno queda "sin importe" y la alerta de "sin
+  importe" no se construyó: no hay cómo llegar a ese caso.
+  Migración `db/vales_editables_1` (solo el CHECK `vales_origen_coherente`,
+  no toca filas), verificación en `_2`. Lo cuida
+  `tests/test_vales_editables.py`, con los 13 de Frutamax sembrados con el
+  CHECK viejo.
 - **Un vale que salió (cobrado o cruzado) no se corrige**, y lo decide la
   base con dos triggers. Importe, número y fecha: nunca
   (`vale_que_salio_no_se_corrige`, en el momento). El proveedor: solo si al
@@ -4666,8 +4682,13 @@ Migraciones `db/vales_manual_1` a `_3`, verificación en `_4`. Lo cuida
   transacción (`_SQL_GUARDAR_FOTOS_DE_COMPRAS_BORRADAS`) y el archivo queda.
   Se ven en Gerencia → Fotos: "de la compra N° X, borrada el …".
 - **Un vale suma fotos en cualquier estado** ("Anexar foto", Administración y
-  Gerencia): `vales_a_cobrar_fotos`, con el sector. La original no se copia y
-  ninguna se borra. El detalle las muestra en orden con su origen
+  Gerencia): `vales_a_cobrar_fotos`, con el sector. La original no se copia.
+  **Gerencia borra y reemplaza cualquier foto de un vale, salga o no de la
+  cartera** (dueño, 02/10, `borrar_foto_del_vale`): se va el ARCHIVO, la fila
+  que lo nombra queda, y se registra en `fotos_borradas_por_antiguedad` como
+  'a_mano' con un renglón en `fotos_borrados`. Reemplazar es anexar la nueva y
+  DESPUÉS borrar la vieja: nunca queda sin ninguna. Hay más de una foto por
+  vale (las anexadas). El detalle las muestra en orden con su origen
   (`texto_de_la_foto`, core/vales.py) y el listado dice cuántas tiene cada vale
   y marca el que no tiene ninguna.
 - Migraciones `db/fotos_1` a `fotos_4`, verificación en `fotos_5`. Lo cuida
@@ -4900,7 +4921,8 @@ Migraciones `db/tareas_1` a `_3`, verificación en `_4`. Lo cuida
   "Foto borrada el DD/MM/AAAA, por plazo / a mano". El renglón de la operación
   no se toca nunca.
 - **Nunca se borran** (se saltean, y la pantalla dice cuántas y por qué): las
-  fotos de un vale que está en cartera, y las de un remito
+  fotos de un vale que está en cartera (desde el detalle del vale Gerencia
+  sí la borra, 02/10), y las de un remito
   sin facturar (un remito no se anula, así que la foto queda protegida hasta
   que se facture). Lo marca `_SQL_FOTOS_DE_RESPALDO` en la columna `protegida`,
   con el MISMO `_SQL_ESTADO_DEL_VALE` de la cartera. La foto de una devolución
