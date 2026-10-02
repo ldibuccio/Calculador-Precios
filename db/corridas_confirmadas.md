@@ -899,3 +899,18 @@ Es el resultado esperado entre los dos pasos: `dia_mes` y el default de
 `creada_por` siguen puestos porque el código viejo los usa. `tareas_6` los
 saca y se corre DESPUÉS del deploy del #95; la misma `tareas_7` tiene que dar
 entonces `dia_mes_viejo 0 · con_default 0`. Palmala no vota.
+
+## 02/10 — `tareas_6`: Tareas por sector, segundo paso (PR #95)
+
+Corrido por Lionel en las dos bases DESPUÉS del deploy del #95 (v1076). La
+verificación (`tareas_7`), corrida aparte, la hizo el Claude con acceso de
+lectura:
+
+```
+FRUTAMAX  tareas_por_sector · columnas 2 · dia_mes_viejo 0 · con_default 0 · check_creada 1 · check_dias 1 · de_un_sector 0 · mensual_sin_dias 0 · tareas 1
+PALMALA   tareas_por_sector · columnas 2 · dia_mes_viejo 0 · con_default 0 · check_creada 1 · check_dias 1 · tareas 0
+```
+
+`dia_mes` ya no existe y `creada_por` no tiene default: desde acá el código
+siempre dice quién cargó la tarea. La única tarea de Frutamax sigue y no
+cambió. Palmala no vota. Con esto Tareas por sector queda cerrado.
