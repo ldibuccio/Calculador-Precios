@@ -19,6 +19,7 @@ from core.envases import (cajas_que_mueve_la_guia, como_queda_la_cuenta,
                           hay_que_reponer)
 from core.fotos import archivos_de_hoy, pasa_el_aviso, porcentaje_del_plan
 from core.remitos import rechazo_no_coincide, sin_factura_hace_mucho, sin_volver_hace_mucho
+from core.tareas import fechas_que_tocan
 from core.cobranzas_segunda import sin_cobrar_hace_mucho
 from core.magnitudes import repartir_magnitudes
 from core.matcheo_comanda import normalizar_texto
@@ -19496,3 +19497,303 @@ def contar_segunda_sin_cobrar(hoy: date) -> dict:
     """Lotes pendientes con más de DIAS_SEGUNDA_SIN_COBRAR días desde la salida."""
     vencidos = [l for l in lotes_de_segunda(estado="pendiente") if sin_cobrar_hace_mucho(l, hoy)]
     return {"casos": len(vencidos), "mas_viejo": min((l["fecha"] for l in vencidos), default=None)}
+
+
+# ============================================================================
+# TAREAS (dueño, 02/10)
+#
+# Gerencia le carga tareas a un sector; el sector las marca como hechas. Las
+# reglas puras (qué fecha toca, qué estado se ve, el atraso) viven en
+# core/tareas.py; acá se escribe y se lee.
+#
+# LAS OCURRENCIAS SE GENERAN AL LEER, no en el recálculo de cada 6 horas:
+# `generar_ocurrencias` corre al abrir el recuadro de un hub, la pantalla de
+# Tareas y la alerta. Es idempotente (la clave tarea_id + vence_el y el
+# FOR UPDATE de cada tarea), así que dos lecturas a la vez no generan dos
+# veces, y no depende de que el reloj de las alertas esté vivo.
+# ============================================================================
+
+_COLUMNAS_DE_TAREA = ("id", "sector", "titulo", "detalle", "tipo", "vence_el", "cada_dias", "dia_semana",
+                      "dia_mes", "desde", "generada_hasta", "estado", "creado_en", "actualizado_en")
+
+
+def _tarea_de_fila(fila) -> dict:
+    return dict(zip(_COLUMNAS_DE_TAREA, fila))
+
+
+def generar_ocurrencias(hoy: date) -> int:
+    """Saca las ocurrencias de las repetitivas activas cuya fecha ya llegó.
+    NO ACUMULA: si al llegar una fecha la anterior sigue pendiente, la
+    anterior pasa a 'no_hecha' (con el día) y la nueva sale atrasada.
+    Devuelve cuántas generó."""
+    generadas = 0
+    conexion = obtener_conexion()
+    try:
+        with conexion.cursor() as cursor:
+            cursor.execute(
+                "SELECT " + ", ".join(_COLUMNAS_DE_TAREA) + " FROM tareas "
+                "WHERE estado = 'activa' AND tipo <> 'una_vez' "
+                "AND (generada_hasta IS NULL OR generada_hasta < %s) ORDER BY id FOR UPDATE",
+                (hoy,),
+            )
+            for tarea in [_tarea_de_fila(f) for f in cursor.fetchall()]:
+                despues_de = tarea["generada_hasta"] or (tarea["desde"] - timedelta(days=1))
+                for fecha in fechas_que_tocan(tarea, despues_de, hoy):
+                    cursor.execute(
+                        "UPDATE tareas_ocurrencias SET estado = 'no_hecha', no_hecha_el = %s "
+                        "WHERE tarea_id = %s AND estado = 'pendiente' AND vence_el < %s",
+                        (fecha, tarea["id"], fecha),
+                    )
+                    atrasada = cursor.rowcount > 0
+                    cursor.execute(
+                        "INSERT INTO tareas_ocurrencias (tarea_id, vence_el, titulo, detalle, atrasada) "
+                        "VALUES (%s, %s, %s, %s, %s) ON CONFLICT (tarea_id, vence_el) DO NOTHING",
+                        (tarea["id"], fecha, tarea["titulo"], tarea["detalle"], atrasada),
+                    )
+                    generadas += cursor.rowcount
+                cursor.execute("UPDATE tareas SET generada_hasta = %s WHERE id = %s", (hoy, tarea["id"]))
+        conexion.commit()
+    finally:
+        conexion.close()
+    return generadas
+
+
+def _texto_opcional(texto) -> str | None:
+    return (texto or "").strip() or None
+
+
+def crear_tarea(*, sector: str, titulo: str, detalle: str | None, tipo: str, vence_el: date | None = None,
+                cada_dias: int | None = None, dia_semana: int | None = None, dia_mes: int | None = None,
+                desde: date | None = None, hoy: date) -> int:
+    """Crea la tarea. La de una sola vez sale en el momento con su
+    vencimiento; la repetitiva sale el día que le toca (desde `desde`). Los
+    campos de cada tipo los exige la base (`tareas_campos_de_su_tipo`)."""
+    titulo = (titulo or "").strip()
+    if not titulo:
+        raise ValueError("Falta el título.")
+    if tipo == "una_vez" and vence_el is not None and vence_el < hoy:
+        raise ValueError("La fecha de vencimiento ya pasó.")
+    conexion = obtener_conexion()
+    try:
+        with conexion.cursor() as cursor:
+            try:
+                cursor.execute(
+                    "INSERT INTO tareas (sector, titulo, detalle, tipo, vence_el, cada_dias, dia_semana, dia_mes, "
+                    "desde) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s) RETURNING id",
+                    (sector, titulo, _texto_opcional(detalle), tipo, vence_el, cada_dias, dia_semana, dia_mes,
+                     desde),
+                )
+            except psycopg2.errors.CheckViolation as error:
+                conexion.rollback()
+                raise ValueError("Faltan o sobran datos para ese tipo de tarea.") from error
+            (tarea_id,) = cursor.fetchone()
+            if tipo == "una_vez":
+                cursor.execute(
+                    "INSERT INTO tareas_ocurrencias (tarea_id, vence_el, titulo, detalle) VALUES (%s, %s, %s, %s)",
+                    (tarea_id, vence_el, titulo, _texto_opcional(detalle)),
+                )
+        conexion.commit()
+        return tarea_id
+    finally:
+        conexion.close()
+
+
+def editar_tarea_repetitiva(tarea_id: int, *, titulo: str, detalle: str | None, tipo: str,
+                            cada_dias: int | None, dia_semana: int | None, dia_mes: int | None) -> None:
+    """Cambia una repetitiva de acá en adelante. Lo que ya salió no se toca:
+    cada ocurrencia tiene su propio título y detalle."""
+    titulo = (titulo or "").strip()
+    if not titulo:
+        raise ValueError("Falta el título.")
+    if tipo == "una_vez":
+        raise ValueError("Una repetitiva no se convierte en una de una sola vez.")
+    conexion = obtener_conexion()
+    try:
+        with conexion.cursor() as cursor:
+            try:
+                cursor.execute(
+                    "UPDATE tareas SET titulo = %s, detalle = %s, tipo = %s, cada_dias = %s, dia_semana = %s, "
+                    "dia_mes = %s, actualizado_en = now() WHERE id = %s AND tipo <> 'una_vez' AND estado <> 'baja'",
+                    (titulo, _texto_opcional(detalle), tipo, cada_dias, dia_semana, dia_mes, tarea_id),
+                )
+            except psycopg2.errors.CheckViolation as error:
+                conexion.rollback()
+                raise ValueError("Faltan o sobran datos para ese tipo de tarea.") from error
+            if cursor.rowcount == 0:
+                raise ValueError("Esa tarea no es una repetitiva que se pueda editar.")
+        conexion.commit()
+    finally:
+        conexion.close()
+
+
+def cambiar_estado_de_tarea(tarea_id: int, estado: str, hoy: date) -> None:
+    """Pausar, reanudar o dar de baja una repetitiva. Lo que ya salió queda.
+    Al reanudar, las fechas de la pausa no salen ni cuentan como no hechas:
+    se sigue desde hoy."""
+    transiciones = {"pausada": ("activa",), "activa": ("pausada",), "baja": ("activa", "pausada")}
+    if estado not in transiciones:
+        raise ValueError("Ese estado no existe.")
+    conexion = obtener_conexion()
+    try:
+        with conexion.cursor() as cursor:
+            cursor.execute(
+                "UPDATE tareas SET estado = %s, actualizado_en = now(), "
+                "generada_hasta = CASE WHEN %s = 'activa' THEN %s ELSE generada_hasta END "
+                "WHERE id = %s AND tipo <> 'una_vez' AND estado = ANY(%s)",
+                (estado, estado, hoy - timedelta(days=1), tarea_id, list(transiciones[estado])),
+            )
+            if cursor.rowcount == 0:
+                raise ValueError("Esa tarea no se puede pasar a ese estado.")
+        conexion.commit()
+    finally:
+        conexion.close()
+
+
+_SQL_OCURRENCIAS = """
+    SELECT o.id, o.tarea_id, t.sector, o.titulo, o.detalle, o.vence_el, o.estado, o.atrasada,
+           o.hecha_el, o.hecha_por, o.nota, o.no_hecha_el, t.tipo,
+           (SELECT count(*) FROM tareas_reaperturas r WHERE r.ocurrencia_id = o.id) AS reaperturas,
+           o.id = (SELECT max(o2.id) FROM tareas_ocurrencias o2 WHERE o2.tarea_id = o.tarea_id) AS la_ultima
+      FROM tareas_ocurrencias o JOIN tareas t ON t.id = o.tarea_id
+"""
+
+
+def _ocurrencias(condiciones: list[str], parametros: list, orden: str) -> list[dict]:
+    conexion = obtener_conexion()
+    try:
+        with conexion.cursor() as cursor:
+            cursor.execute(_SQL_OCURRENCIAS + " WHERE " + (" AND ".join(condiciones) or "true") + orden,
+                           parametros)
+            columnas = [d[0] for d in cursor.description]
+            return [dict(zip(columnas, f)) for f in cursor.fetchall()]
+    finally:
+        conexion.close()
+
+
+def tareas_pendientes_del_sector(sector: str, hoy: date) -> list[dict]:
+    """Lo que va en el recuadro del hub: las pendientes de ESE sector, la más
+    vieja primero. Genera antes lo que ya tocaba."""
+    generar_ocurrencias(hoy)
+    return _ocurrencias(["t.sector = %s", "o.estado = 'pendiente'"], [sector], " ORDER BY o.vence_el, o.id")
+
+
+def listar_ocurrencias(*, sector: str | None, desde: date | None, hasta: date | None, estado: str | None,
+                       hoy: date) -> list[dict]:
+    """El registro de Gerencia, por vencimiento. `estado` es el VISIBLE:
+    'pendiente' (no venció), 'vencida', 'hecha' o 'no_hecha'."""
+    generar_ocurrencias(hoy)
+    condiciones, parametros = [], []
+    if sector:
+        condiciones.append("t.sector = %s")
+        parametros.append(sector)
+    if desde:
+        condiciones.append("o.vence_el >= %s")
+        parametros.append(desde)
+    if hasta:
+        condiciones.append("o.vence_el <= %s")
+        parametros.append(hasta)
+    if estado == "pendiente":
+        condiciones.append("o.estado = 'pendiente' AND o.vence_el >= %s")
+        parametros.append(hoy)
+    elif estado == "vencida":
+        condiciones.append("o.estado = 'pendiente' AND o.vence_el < %s")
+        parametros.append(hoy)
+    elif estado in ("hecha", "no_hecha"):
+        condiciones.append("o.estado = %s")
+        parametros.append(estado)
+    return _ocurrencias(condiciones, parametros, " ORDER BY o.vence_el DESC, o.id DESC")
+
+
+def listar_tareas_repetitivas() -> list[dict]:
+    """Las repetitivas que no se dieron de baja, para editarlas o pausarlas."""
+    conexion = obtener_conexion()
+    try:
+        with conexion.cursor() as cursor:
+            cursor.execute("SELECT " + ", ".join(_COLUMNAS_DE_TAREA) + " FROM tareas "
+                           "WHERE tipo <> 'una_vez' AND estado <> 'baja' ORDER BY sector, titulo, id")
+            return [_tarea_de_fila(f) for f in cursor.fetchall()]
+    finally:
+        conexion.close()
+
+
+def marcar_tarea_hecha(ocurrencia_id: int, *, sector: str, nota: str | None) -> None:
+    """El sector marca SU tarea pendiente. Se graba cuándo y quién (el
+    sector). Lo decide el WHERE: una que no es de ese sector o ya no está
+    pendiente no se toca."""
+    conexion = obtener_conexion()
+    try:
+        with conexion.cursor() as cursor:
+            cursor.execute(
+                "UPDATE tareas_ocurrencias o SET estado = 'hecha', hecha_el = now(), hecha_por = %s, nota = %s "
+                "FROM tareas t WHERE t.id = o.tarea_id AND o.id = %s AND o.estado = 'pendiente' AND t.sector = %s",
+                (sector, _texto_opcional(nota), ocurrencia_id, sector),
+            )
+            if cursor.rowcount == 0:
+                raise ValueError("Esa tarea ya no está pendiente para este sector.")
+        conexion.commit()
+    finally:
+        conexion.close()
+
+
+def volver_tarea_a_pendiente(ocurrencia_id: int, motivo: str) -> None:
+    """Solo Gerencia, con motivo: una hecha vuelve a pendiente y queda lo que
+    decía antes en `tareas_reaperturas`. Solo la ÚLTIMA ocurrencia de su tarea:
+    si ya salió la siguiente, reabrir esta dejaría dos pendientes, y una
+    repetitiva no acumula."""
+    motivo = (motivo or "").strip()
+    if not motivo:
+        raise ValueError("Para volverla a pendiente hace falta el motivo.")
+    conexion = obtener_conexion()
+    try:
+        with conexion.cursor() as cursor:
+            cursor.execute(
+                "SELECT o.estado, o.hecha_el, o.hecha_por, o.nota, "
+                "o.id = (SELECT max(o2.id) FROM tareas_ocurrencias o2 WHERE o2.tarea_id = o.tarea_id) "
+                "FROM tareas_ocurrencias o WHERE o.id = %s FOR UPDATE",
+                (ocurrencia_id,),
+            )
+            fila = cursor.fetchone()
+            if fila is None or fila[0] != "hecha":
+                raise ValueError("Solo una tarea hecha vuelve a pendiente.")
+            if not fila[4]:
+                raise ValueError("Ya salió la siguiente vez de esta tarea: esta no se reabre.")
+            cursor.execute(
+                "INSERT INTO tareas_reaperturas (ocurrencia_id, motivo, hecha_el_anterior, hecha_por_anterior, "
+                "nota_anterior, sector) VALUES (%s, %s, %s, %s, %s, 'gerencia')",
+                (ocurrencia_id, motivo, fila[1], fila[2], fila[3]),
+            )
+            cursor.execute(
+                "UPDATE tareas_ocurrencias SET estado = 'pendiente', hecha_el = NULL, hecha_por = NULL, "
+                "nota = NULL WHERE id = %s",
+                (ocurrencia_id,),
+            )
+        conexion.commit()
+    finally:
+        conexion.close()
+
+
+def reaperturas_de_tareas(ocurrencia_ids: list[int]) -> dict:
+    if not ocurrencia_ids:
+        return {}
+    conexion = obtener_conexion()
+    try:
+        with conexion.cursor() as cursor:
+            cursor.execute(
+                "SELECT ocurrencia_id, motivo, hecha_el_anterior, hecha_por_anterior, nota_anterior, creado_en "
+                "FROM tareas_reaperturas WHERE ocurrencia_id = ANY(%s) ORDER BY creado_en, id",
+                (list(ocurrencia_ids),),
+            )
+            columnas = [d[0] for d in cursor.description]
+            resultado: dict = {}
+            for fila in cursor.fetchall():
+                r = dict(zip(columnas, fila))
+                resultado.setdefault(r["ocurrencia_id"], []).append(r)
+            return resultado
+    finally:
+        conexion.close()
+
+
+def contar_tareas_vencidas(hoy: date) -> dict:
+    """La alerta de Gerencia: tareas pendientes cuyo día ya pasó, de cualquier sector."""
+    vencidas = listar_ocurrencias(sector=None, desde=None, hasta=None, estado="vencida", hoy=hoy)
+    return {"casos": len(vencidas), "mas_viejo": min((o["vence_el"] for o in vencidas), default=None)}

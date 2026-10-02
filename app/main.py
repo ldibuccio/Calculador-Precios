@@ -175,6 +175,16 @@ from app.db import (
     anular_movimiento_stock,
     articulos_con_salidas_stock,
     anular_remito_segunda,
+    tareas_pendientes_del_sector,
+    marcar_tarea_hecha,
+    listar_ocurrencias,
+    listar_tareas_repetitivas,
+    reaperturas_de_tareas,
+    crear_tarea,
+    editar_tarea_repetitiva,
+    cambiar_estado_de_tarea,
+    volver_tarea_a_pendiente,
+    contar_tareas_vencidas,
     LoteDeSegundaCobrado,
     lotes_de_segunda,
     historial_de_cobros_de_segunda,
@@ -589,6 +599,19 @@ from core.vales import (
     total_de as total_de_vales,
 )
 from core.vales import hora_argentina as hora_argentina_vale
+from core.tareas import (
+    DIAS_DE_LA_SEMANA as DIAS_DE_LA_SEMANA_TAREA,
+    ESTADOS_DE_LA_TAREA,
+    ESTADOS_VISIBLES as ESTADOS_VISIBLES_DE_TAREA,
+    SECTORES as SECTORES_DE_TAREA,
+    TIPOS as TIPOS_DE_TAREA,
+    dias_de_atraso as dias_de_atraso_de_tarea,
+    estado_visible as estado_visible_de_tarea,
+    generar_excel_tareas,
+    generar_pdf_tareas,
+    texto_de_la_regla as texto_de_la_regla_de_tarea,
+    texto_del_filtro as texto_del_filtro_de_tareas,
+)
 from core.cobranzas_segunda import (
     DIAS_SEGUNDA_SIN_COBRAR,
     OPCIONES_DE_ESTADO as OPCIONES_DE_ESTADO_COBRANZAS,
@@ -3167,6 +3190,217 @@ def _validar_compra_nueva_form(
     return error, valores
 
 
+# ============================================================================
+# TAREAS (dueño, 02/10)
+#
+# Gerencia carga tareas a Compras, Administración o Gerencia; el sector las
+# ve en un recuadro de su hub, debajo del banner de alertas, y las marca como
+# hechas. Las ocurrencias de las repetitivas se generan AL LEER (ver
+# `generar_ocurrencias` en app/db.py). Reglas y archivos: core/tareas.py.
+# ============================================================================
+
+SECTORES_CON_TAREAS = ("compras", "administracion", "gerencia")
+
+
+def _recuadro_de_tareas(sector: str) -> dict:
+    """Lo que el recuadro del hub necesita. Si la base no contesta, el
+    recuadro lo DICE en vez de mostrar "No hay tareas pendientes", que se
+    vería igual que no tener ninguna."""
+    hoy = _hoy_argentina()
+    try:
+        tareas = tareas_pendientes_del_sector(sector, hoy)
+    except (psycopg2.Error, RuntimeError):
+        logger.exception("No se pudieron leer las tareas de %s", sector)
+        return {"sector": sector, "tareas": [], "vencidas": 0, "error": True}
+    for tarea in tareas:
+        tarea["vencida"] = estado_visible_de_tarea(tarea, hoy) == "vencida"
+    return {"sector": sector, "tareas": tareas, "vencidas": sum(1 for t in tareas if t["vencida"]),
+            "error": False}
+
+
+def _marcar_tarea_hecha_desde(request: Request, sector: str, ocurrencia_id: int, nota: str):
+    try:
+        marcar_tarea_hecha(ocurrencia_id, sector=sector, nota=nota)
+    except ValueError as motivo:
+        raise HTTPException(status_code=409, detail=str(motivo)) from motivo
+    return RedirectResponse(url=f"/{sector}", status_code=303)
+
+
+@app.post("/compras/tareas/{ocurrencia_id}/hecha")
+def marcar_tarea_hecha_compras(request: Request, ocurrencia_id: int, nota: str = Form("")):
+    """Compras marca SU tarea como hecha (la clave de Compras la pide el middleware)."""
+    return _marcar_tarea_hecha_desde(request, "compras", ocurrencia_id, nota)
+
+
+@app.post("/administracion/tareas/{ocurrencia_id}/hecha")
+def marcar_tarea_hecha_administracion(request: Request, ocurrencia_id: int, nota: str = Form("")):
+    """Administración marca SU tarea como hecha (la clave la pide el middleware)."""
+    return _marcar_tarea_hecha_desde(request, "administracion", ocurrencia_id, nota)
+
+
+@app.post("/gerencia/tareas/{ocurrencia_id}/hecha")
+def marcar_tarea_hecha_gerencia(request: Request, ocurrencia_id: int, nota: str = Form("")):
+    """Gerencia marca SU tarea como hecha; como toda escritura de /gerencia, con su clave."""
+    puerta = _puerta_de_gerencia_para_escribir(request)
+    if puerta is not None:
+        return puerta
+    return _marcar_tarea_hecha_desde(request, "gerencia", ocurrencia_id, nota)
+
+
+def _filtros_de_tareas(sector: str, desde: str, hasta: str, estado: str) -> dict:
+    return {
+        "sector": sector if sector in SECTORES_CON_TAREAS else None,
+        "desde": fecha_del_filtro_vales(desde),
+        "hasta": fecha_del_filtro_vales(hasta),
+        "estado": estado if estado in ESTADOS_VISIBLES_DE_TAREA else None,
+    }
+
+
+def _renderizar_tareas(request: Request, filtros: dict, *, aviso: str | None = None, error: str | None = None,
+                       status_code: int = 200):
+    hoy = _hoy_argentina()
+    try:
+        ocurrencias = listar_ocurrencias(hoy=hoy, **filtros)
+        repetitivas = listar_tareas_repetitivas()
+        reaperturas = reaperturas_de_tareas([o["id"] for o in ocurrencias if o["reaperturas"]])
+    except Exception as error_db:
+        raise HTTPException(status_code=500, detail=f"Error al conectar con la base de datos: {error_db}") from error_db
+    for o in ocurrencias:
+        o["visible"] = estado_visible_de_tarea(o, hoy)
+        o["atraso"] = dias_de_atraso_de_tarea(o, hoy)
+    for r in repetitivas:
+        r["regla"] = texto_de_la_regla_de_tarea(r)
+    return templates.TemplateResponse(request, "gerencia_tareas.html", {
+        "filtros": filtros, "ocurrencias": ocurrencias, "repetitivas": repetitivas, "reaperturas": reaperturas,
+        "hoy": hoy, "sectores": SECTORES_DE_TAREA, "tipos": TIPOS_DE_TAREA, "dias_semana": DIAS_DE_LA_SEMANA_TAREA,
+        "estados_visibles": ESTADOS_VISIBLES_DE_TAREA, "estados_de_tarea": ESTADOS_DE_LA_TAREA,
+        "hora_argentina": hora_argentina_vale, "aviso": aviso, "error": error,
+    }, status_code=status_code)
+
+
+@app.get("/gerencia/tareas")
+def ver_tareas(request: Request, sector: str = "", desde: str = "", hasta: str = "", estado: str = "",
+               aviso: str | None = None, error: str | None = None):
+    """Gerencia: crear tareas, las repetitivas (editar, pausar, dar de baja) y
+    el registro filtrado de todo lo que salió."""
+    if not _acceso_gerencia_valido(request):
+        return _pantalla_clave_gerencia(request)
+    return _renderizar_tareas(request, _filtros_de_tareas(sector, desde, hasta, estado), aviso=aviso, error=error)
+
+
+def _entero_del_form(texto: str) -> int | None:
+    texto = (texto or "").strip()
+    return int(texto) if texto.lstrip("-").isdigit() else None
+
+
+def _regla_del_formulario(tipo: str, cada_dias: str, dia_semana: str, dia_mes: str) -> dict:
+    """Solo el campo del tipo elegido: los otros van en None aunque el
+    formulario los traiga (el CHECK de la base no deja sobrar ninguno)."""
+    return {
+        "cada_dias": _entero_del_form(cada_dias) if tipo == "cada_dias" else None,
+        "dia_semana": _entero_del_form(dia_semana) if tipo == "semanal" else None,
+        "dia_mes": _entero_del_form(dia_mes) if tipo == "mensual" else None,
+    }
+
+
+@app.post("/gerencia/tareas")
+def crear_tarea_ruta(request: Request, sector: str = Form(""), titulo: str = Form(""), detalle: str = Form(""),
+                     tipo: str = Form(""), vence_el: str = Form(""), desde: str = Form(""),
+                     cada_dias: str = Form(""), dia_semana: str = Form(""), dia_mes: str = Form("")):
+    puerta = _puerta_de_gerencia_para_escribir(request)
+    if puerta is not None:
+        return puerta
+    filtros = _filtros_de_tareas("", "", "", "")
+    hoy = _hoy_argentina()
+    if sector not in SECTORES_CON_TAREAS or tipo not in TIPOS_DE_TAREA:
+        return _renderizar_tareas(request, filtros, error="Elegí el sector y el tipo.", status_code=400)
+    vence = fecha_del_filtro_vales(vence_el) if tipo == "una_vez" else None
+    inicio = (fecha_del_filtro_vales(desde) or hoy) if tipo != "una_vez" else None
+    if tipo == "una_vez" and vence is None:
+        return _renderizar_tareas(request, filtros, error="Falta la fecha de vencimiento.", status_code=400)
+    try:
+        crear_tarea(sector=sector, titulo=titulo, detalle=detalle, tipo=tipo, vence_el=vence, desde=inicio,
+                    hoy=hoy, **_regla_del_formulario(tipo, cada_dias, dia_semana, dia_mes))
+    except ValueError as motivo:
+        return _renderizar_tareas(request, filtros, error=str(motivo), status_code=400)
+    return RedirectResponse(url="/gerencia/tareas?" + urlencode({"aviso": "Tarea creada."}), status_code=303)
+
+
+@app.post("/gerencia/tareas/{tarea_id}/editar")
+def editar_tarea_ruta(request: Request, tarea_id: int, titulo: str = Form(""), detalle: str = Form(""),
+                      tipo: str = Form(""), cada_dias: str = Form(""), dia_semana: str = Form(""),
+                      dia_mes: str = Form("")):
+    puerta = _puerta_de_gerencia_para_escribir(request)
+    if puerta is not None:
+        return puerta
+    try:
+        editar_tarea_repetitiva(tarea_id, titulo=titulo, detalle=detalle, tipo=tipo,
+                                **_regla_del_formulario(tipo, cada_dias, dia_semana, dia_mes))
+    except ValueError as motivo:
+        return _renderizar_tareas(request, _filtros_de_tareas("", "", "", ""), error=str(motivo), status_code=400)
+    return RedirectResponse(url="/gerencia/tareas?" + urlencode(
+        {"aviso": "Tarea editada. Lo que ya salió queda como estaba."}), status_code=303)
+
+
+@app.post("/gerencia/tareas/{tarea_id}/estado")
+def cambiar_estado_de_tarea_ruta(request: Request, tarea_id: int, estado: str = Form("")):
+    puerta = _puerta_de_gerencia_para_escribir(request)
+    if puerta is not None:
+        return puerta
+    try:
+        cambiar_estado_de_tarea(tarea_id, estado, _hoy_argentina())
+    except ValueError as motivo:
+        return _renderizar_tareas(request, _filtros_de_tareas("", "", "", ""), error=str(motivo), status_code=400)
+    textos = {"pausada": "Tarea pausada.", "activa": "Tarea reanudada: sigue desde hoy.",
+              "baja": "Tarea dada de baja. Lo que ya salió queda en el registro."}
+    return RedirectResponse(url="/gerencia/tareas?" + urlencode({"aviso": textos[estado]}), status_code=303)
+
+
+@app.post("/gerencia/tareas/ocurrencias/{ocurrencia_id}/pendiente")
+def volver_tarea_a_pendiente_ruta(request: Request, ocurrencia_id: int, motivo: str = Form("")):
+    """Solo Gerencia vuelve a pendiente una tarea hecha, con motivo. El sector no puede desmarcar."""
+    puerta = _puerta_de_gerencia_para_escribir(request)
+    if puerta is not None:
+        return puerta
+    try:
+        volver_tarea_a_pendiente(ocurrencia_id, motivo)
+    except ValueError as error:
+        return _renderizar_tareas(request, _filtros_de_tareas("", "", "", ""), error=str(error), status_code=400)
+    return RedirectResponse(url="/gerencia/tareas?" + urlencode(
+        {"aviso": "La tarea volvió a pendiente. Lo que decía queda en el registro."}), status_code=303)
+
+
+def _exportacion_de_tareas(sector: str, desde: str, hasta: str, estado: str):
+    filtros = _filtros_de_tareas(sector, desde, hasta, estado)
+    hoy = _hoy_argentina()
+    try:
+        ocurrencias = listar_ocurrencias(hoy=hoy, **filtros)
+    except Exception as error_db:
+        raise HTTPException(status_code=500, detail=f"Error al conectar con la base de datos: {error_db}") from error_db
+    return ocurrencias, texto_del_filtro_de_tareas(**filtros), hoy
+
+
+@app.get("/gerencia/tareas/exportar-pdf")
+def exportar_tareas_pdf(request: Request, sector: str = "", desde: str = "", hasta: str = "", estado: str = ""):
+    """El registro con los MISMOS filtros que la pantalla, en PDF."""
+    if not _acceso_gerencia_valido(request):
+        return _pantalla_clave_gerencia(request)
+    ocurrencias, filtro, hoy = _exportacion_de_tareas(sector, desde, hasta, estado)
+    return Response(content=generar_pdf_tareas(filtro, ocurrencias, hoy), media_type="application/pdf",
+                    headers={"Content-Disposition": f'attachment; filename="Tareas_{hoy.isoformat()}.pdf"'})
+
+
+@app.get("/gerencia/tareas/exportar-excel")
+def exportar_tareas_excel(request: Request, sector: str = "", desde: str = "", hasta: str = "", estado: str = ""):
+    """El registro con los MISMOS filtros que la pantalla, en Excel."""
+    if not _acceso_gerencia_valido(request):
+        return _pantalla_clave_gerencia(request)
+    ocurrencias, filtro, hoy = _exportacion_de_tareas(sector, desde, hasta, estado)
+    return Response(content=generar_excel_tareas(filtro, ocurrencias, hoy),
+                    media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                    headers={"Content-Disposition": f'attachment; filename="Tareas_{hoy.isoformat()}.xlsx"'})
+
+
 @app.get("/compras")
 def ver_compras(request: Request, aviso: str | None = None):
     """Botonera de entrada al módulo de compras.
@@ -3181,7 +3415,8 @@ def ver_compras(request: Request, aviso: str | None = None):
     duplicadas con las de Auditoría y ya desincronizadas entre sí.
     """
     return templates.TemplateResponse(
-        request, "compras.html", {"banner": _banner_alertas("compras"), "aviso": aviso}
+        request, "compras.html", {"banner": _banner_alertas("compras"), "aviso": aviso,
+                                  "tareas_hub": _recuadro_de_tareas("compras")}
     )
 
 
@@ -16860,7 +17095,8 @@ def ver_gerencia(request: Request):
     """
     if not _acceso_gerencia_valido(request):
         return _pantalla_clave_gerencia(request)
-    return templates.TemplateResponse(request, "gerencia.html", {"banner": _banner_alertas("gerencia")})
+    return templates.TemplateResponse(request, "gerencia.html", {"banner": _banner_alertas("gerencia"),
+                                                                 "tareas_hub": _recuadro_de_tareas("gerencia")})
 
 
 @app.post("/gerencia/clave")
@@ -17874,6 +18110,17 @@ ALERTAS = [
         destinos_por_sector={"gerencia": ("/gerencia/cobranzas-segunda?estado=pendiente",
                                           "Ver Cobranzas de segunda")},
         contar=lambda: contar_segunda_sin_cobrar(_hoy_argentina()),
+    ),
+    DefinicionAlerta(
+        codigo="tareas_vencidas",
+        # Dueño, 02/10: una tarea vencida y no hecha, de cualquier sector. Es
+        # lo ÚNICO que conecta Tareas con las alertas, y solo en Gerencia.
+        titulo="Tareas vencidas sin hacer",
+        texto=lambda casos: f"{casos} tarea{'s' if casos != 1 else ''} vencida{'s' if casos != 1 else ''} sin hacer",
+        url="/gerencia/tareas?estado=vencida",
+        texto_link="Ver Tareas",
+        modulos=("gerencia",),
+        contar=lambda: contar_tareas_vencidas(_hoy_argentina()),
     ),
     DefinicionAlerta(
         codigo="espacio_de_fotos",
@@ -19578,7 +19825,8 @@ def ver_administracion(request: Request):
     el banner vino a evitar.
     """
     return templates.TemplateResponse(
-        request, "administracion.html", {"banner": _banner_alertas("administracion")}
+        request, "administracion.html", {"banner": _banner_alertas("administracion"),
+                                         "tareas_hub": _recuadro_de_tareas("administracion")}
     )
 
 

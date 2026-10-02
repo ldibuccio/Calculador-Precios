@@ -1,0 +1,196 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Tareas</title>
+<style>
+  :root { font-family: -apple-system, system-ui, sans-serif; }
+  body { margin: 0; padding: 1rem; background: #f5f5f5; color: #222; }
+  .tarjeta {
+    background: #fff; border-radius: 10px; padding: 1rem; margin-bottom: 1rem;
+    box-shadow: 0 1px 3px rgba(0, 0, 0, 0.1); overflow-wrap: anywhere;
+  }
+  .error { background: #fee2e2; color: #991b1b; padding: 0.75rem 1rem; border-radius: 8px; margin-bottom: 1rem; }
+  .aviso { background: #dcfce7; color: #166534; padding: 0.75rem 1rem; border-radius: 8px; margin-bottom: 1rem; }
+  h2 { font-size: 1.05rem; margin: 0 0 0.5rem; }
+  .campos { display: flex; flex-wrap: wrap; gap: 0.6rem; }
+  .campos label { flex: 1 1 9rem; font-size: 0.85rem; color: #444; }
+  .campos label.ancho { flex-basis: 100%; }
+  .campos input, .campos select {
+    display: block; width: 100%; box-sizing: border-box; margin-top: 0.2rem; padding: 0.6rem;
+    border: 1px solid #ccc; border-radius: 8px; font-size: 1rem; background: #fff; min-height: 44px;
+  }
+  .acciones { display: flex; flex-wrap: wrap; gap: 0.6rem; margin-top: 0.8rem; }
+  .acciones button, .acciones a {
+    flex: 1 1 9rem; min-height: 48px; padding: 0.7rem; border-radius: 8px; font-size: 1rem;
+    font-weight: 600; text-align: center; text-decoration: none; box-sizing: border-box;
+  }
+  .acciones button { background: #2563eb; color: #fff; border: none; }
+  .acciones a { background: #fff; color: #2563eb; border: 1px solid #2563eb; }
+  .acciones button.gris { background: #64748b; }
+  .acciones button.peligro { background: #b45309; }
+  .fila { padding: 0.6rem 0; border-top: 1px solid #eee; }
+  .fila-que { font-weight: 600; }
+  .fila-dato { color: #555; font-size: 0.88rem; }
+  .roja { color: #dc2626; font-weight: 700; }
+  .verde { color: #15803d; font-weight: 700; }
+  .vacio { color: #666; font-style: italic; }
+  details > summary { min-height: 44px; display: flex; align-items: center; color: #2563eb; font-weight: 600;
+    cursor: pointer; }
+</style>
+</head>
+<body>
+  {% set barra_sector = "gerencia" %}
+  {% set barra_titulo = "Tareas" %}
+  {% set barra_atras = "/gerencia" %}
+  {% include "_barra_navegacion.html" %}
+
+  {% if aviso %}<div class="aviso">{{ aviso }}</div>{% endif %}
+  {% if error %}<div class="error">{{ error }}</div>{% endif %}
+
+  <div class="tarjeta">
+    <details>
+      <summary>Crear tarea</summary>
+      <form method="post" action="/gerencia/tareas">
+        <div class="campos">
+          <label>Sector
+            <select name="sector" required>
+              {% for clave, texto in sectores.items() %}<option value="{{ clave }}">{{ texto }}</option>{% endfor %}
+            </select>
+          </label>
+          <label>Tipo
+            <select name="tipo" id="tipo-nueva" required>
+              {% for clave, texto in tipos.items() %}<option value="{{ clave }}">{{ texto }}</option>{% endfor %}
+            </select>
+          </label>
+          <label class="ancho">Título<input type="text" name="titulo" required autocomplete="off"></label>
+          <label class="ancho">Detalle (una línea)<input type="text" name="detalle" autocomplete="off"></label>
+          <label data-tipo="una_vez">Vence el<input type="date" name="vence_el" min="{{ hoy.isoformat() }}"></label>
+          <label data-tipo="cada_dias semanal mensual">Desde<input type="date" name="desde" value="{{ hoy.isoformat() }}"></label>
+          <label data-tipo="cada_dias">Cada cuántos días<input type="number" name="cada_dias" min="1" step="1" inputmode="numeric"></label>
+          <label data-tipo="semanal">Día de la semana
+            <select name="dia_semana">
+              {% for d in dias_semana %}<option value="{{ loop.index0 }}">{{ d }}</option>{% endfor %}
+            </select>
+          </label>
+          <label data-tipo="mensual">Día del mes<input type="number" name="dia_mes" min="1" max="31" step="1" inputmode="numeric"></label>
+        </div>
+        <div class="acciones"><button type="submit">Crear tarea</button></div>
+      </form>
+    </details>
+  </div>
+
+  <div class="tarjeta">
+    <h2>Repetitivas</h2>
+    {% for r in repetitivas %}
+    <div class="fila">
+      <div class="fila-que">{{ r.titulo }}</div>
+      <div class="fila-dato">{{ sectores[r.sector] }} · {{ r.regla }} · {{ estados_de_tarea[r.estado] }}{% if r.detalle %} · {{ r.detalle }}{% endif %}</div>
+      <details>
+        <summary>Editar, pausar o dar de baja</summary>
+        <form method="post" action="/gerencia/tareas/{{ r.id }}/editar">
+          <div class="campos">
+            <label class="ancho">Título<input type="text" name="titulo" value="{{ r.titulo }}" required></label>
+            <label class="ancho">Detalle<input type="text" name="detalle" value="{{ r.detalle or '' }}"></label>
+            <label>Tipo
+              <select name="tipo">
+                {% for clave, texto in tipos.items() if clave != 'una_vez' %}
+                <option value="{{ clave }}" {% if clave == r.tipo %}selected{% endif %}>{{ texto }}</option>
+                {% endfor %}
+              </select>
+            </label>
+            <label>Cada cuántos días<input type="number" name="cada_dias" min="1" value="{{ r.cada_dias or '' }}" inputmode="numeric"></label>
+            <label>Día de la semana
+              <select name="dia_semana">
+                {% for d in dias_semana %}<option value="{{ loop.index0 }}" {% if r.dia_semana == loop.index0 %}selected{% endif %}>{{ d }}</option>{% endfor %}
+              </select>
+            </label>
+            <label>Día del mes<input type="number" name="dia_mes" min="1" max="31" value="{{ r.dia_mes or '' }}" inputmode="numeric"></label>
+          </div>
+          <div class="acciones"><button type="submit">Guardar cambios</button></div>
+        </form>
+        <form method="post" action="/gerencia/tareas/{{ r.id }}/estado">
+          <div class="acciones">
+            {% if r.estado == 'activa' %}<button type="submit" name="estado" value="pausada" class="gris">Pausar</button>
+            {% else %}<button type="submit" name="estado" value="activa" class="gris">Reanudar</button>{% endif %}
+            <button type="submit" name="estado" value="baja" class="peligro">Dar de baja</button>
+          </div>
+        </form>
+      </details>
+    </div>
+    {% else %}
+    <p class="vacio">No hay tareas repetitivas.</p>
+    {% endfor %}
+  </div>
+
+  <form class="tarjeta" method="get" action="/gerencia/tareas">
+    <h2>Registro</h2>
+    <div class="campos">
+      <label>Sector
+        <select name="sector">
+          <option value="">Todos</option>
+          {% for clave, texto in sectores.items() %}<option value="{{ clave }}" {% if filtros.sector == clave %}selected{% endif %}>{{ texto }}</option>{% endfor %}
+        </select>
+      </label>
+      <label>Estado
+        <select name="estado">
+          <option value="">Todos</option>
+          {% for clave, texto in estados_visibles.items() %}<option value="{{ clave }}" {% if filtros.estado == clave %}selected{% endif %}>{{ texto }}</option>{% endfor %}
+        </select>
+      </label>
+      <label>Vencen desde<input type="date" name="desde" value="{{ filtros.desde.isoformat() if filtros.desde else '' }}"></label>
+      <label>Vencen hasta<input type="date" name="hasta" value="{{ filtros.hasta.isoformat() if filtros.hasta else '' }}"></label>
+    </div>
+    <div class="acciones">
+      <button type="submit">Filtrar</button>
+      <a href="/gerencia/tareas/exportar-pdf?sector={{ filtros.sector or '' }}&amp;estado={{ filtros.estado or '' }}&amp;desde={{ filtros.desde.isoformat() if filtros.desde else '' }}&amp;hasta={{ filtros.hasta.isoformat() if filtros.hasta else '' }}">PDF</a>
+      <a href="/gerencia/tareas/exportar-excel?sector={{ filtros.sector or '' }}&amp;estado={{ filtros.estado or '' }}&amp;desde={{ filtros.desde.isoformat() if filtros.desde else '' }}&amp;hasta={{ filtros.hasta.isoformat() if filtros.hasta else '' }}">Excel</a>
+    </div>
+  </form>
+
+  <div class="tarjeta">
+    <h2>{{ ocurrencias|length }} tarea{{ '' if ocurrencias|length == 1 else 's' }}</h2>
+    {% for o in ocurrencias %}
+    <div class="fila" data-ocurrencia="{{ o.id }}">
+      <div class="fila-que">{{ o.titulo }}</div>
+      <div class="fila-dato">{{ sectores[o.sector] }} · vence el {{ o.vence_el.strftime('%d/%m/%Y') }} ·
+        <span class="{{ 'roja' if o.visible in ('vencida', 'no_hecha') else ('verde' if o.visible == 'hecha' else '') }}">{{ estados_visibles[o.visible] }}</span>
+        {%- if o.atrasada %} · atrasada{% endif %}
+        {%- if o.atraso %} · {{ o.atraso }} día{{ '' if o.atraso == 1 else 's' }} de atraso{% endif %}</div>
+      {% if o.detalle %}<div class="fila-dato">{{ o.detalle }}</div>{% endif %}
+      {% if o.estado == 'hecha' %}
+      <div class="fila-dato">Marcada el {{ hora_argentina(o.hecha_el) }} por {{ sectores[o.hecha_por] }}{% if o.nota %} · «{{ o.nota }}»{% endif %}</div>
+      {% endif %}
+      {% for r in reaperturas.get(o.id, []) %}
+      <div class="fila-dato">Gerencia la volvió a pendiente el {{ hora_argentina(r.creado_en) }}: {{ r.motivo }} (estaba hecha el {{ hora_argentina(r.hecha_el_anterior) }} por {{ sectores[r.hecha_por_anterior] }})</div>
+      {% endfor %}
+      {% if o.estado == 'hecha' and o.la_ultima %}
+      <details>
+        <summary>Volver a pendiente</summary>
+        <form method="post" action="/gerencia/tareas/ocurrencias/{{ o.id }}/pendiente">
+          <div class="campos"><label class="ancho">Motivo<input type="text" name="motivo" required></label></div>
+          <div class="acciones"><button type="submit" class="peligro">Volver a pendiente</button></div>
+        </form>
+      </details>
+      {% endif %}
+    </div>
+    {% else %}
+    <p class="vacio">No hay tareas con estos filtros.</p>
+    {% endfor %}
+  </div>
+<script>
+(function () {
+  var tipo = document.getElementById("tipo-nueva");
+  function mostrar() {
+    document.querySelectorAll("[data-tipo]").forEach(function (el) {
+      el.style.display = el.getAttribute("data-tipo").split(" ").indexOf(tipo.value) >= 0 ? "" : "none";
+    });
+  }
+  tipo.addEventListener("change", mostrar);
+  mostrar();
+})();
+</script>
+{% include "_pie_version.html" %}
+</body>
+</html>

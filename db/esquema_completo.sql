@@ -2048,6 +2048,75 @@ create table remitos_fotos (
 create index remitos_fotos_por_remito on remitos_fotos (remito_id);
 comment on table remitos_fotos is 'Las fotos del remito FIRMADO que trae el camionero (una o mas, obligatorias al recibir). Bucket "comandas", prefijo "remitos".';
 
+-- TAREAS (dueño, 02/10): db/tareas_1 a _3.
+create table tareas (
+  id bigint generated always as identity primary key,
+  sector text not null check (sector in ('compras', 'administracion', 'gerencia')),
+  titulo text not null check (btrim(titulo) <> ''),
+  detalle text,
+  tipo text not null check (tipo in ('una_vez', 'cada_dias', 'semanal', 'mensual')),
+  vence_el date,
+  cada_dias integer,
+  dia_semana integer,
+  dia_mes integer,
+  desde date,
+  generada_hasta date,
+  estado text not null default 'activa' check (estado in ('activa', 'pausada', 'baja')),
+  creado_en timestamptz not null default now(),
+  actualizado_en timestamptz not null default now(),
+  constraint tareas_campos_de_su_tipo check (
+    (tipo = 'una_vez' and vence_el is not null and cada_dias is null
+      and dia_semana is null and dia_mes is null and desde is null)
+    or (tipo <> 'una_vez' and vence_el is null and desde is not null
+      and (tipo = 'cada_dias') = coalesce(cada_dias >= 1, false)
+      and (tipo = 'semanal') = coalesce(dia_semana between 0 and 6, false)
+      and (tipo = 'mensual') = coalesce(dia_mes between 1 and 31, false))),
+  constraint tareas_una_vez_no_se_pausa check (tipo <> 'una_vez' or estado = 'activa')
+);
+comment on table tareas is
+  'Tareas que Gerencia le carga a un sector (duenio, 02/10): de una vez, con '
+  'su vencimiento, o repetitivas (cada N dias, un dia de la semana con 0 = '
+  'lunes, o un dia del mes). Lo que el sector ve y marca son las ocurrencias.';
+create table tareas_ocurrencias (
+  id bigint generated always as identity primary key,
+  tarea_id bigint not null references tareas (id),
+  vence_el date not null,
+  titulo text not null,
+  detalle text,
+  estado text not null default 'pendiente'
+    check (estado in ('pendiente', 'hecha', 'no_hecha')),
+  atrasada boolean not null default false,
+  hecha_el timestamptz,
+  hecha_por text check (hecha_por in ('compras', 'administracion', 'gerencia')),
+  nota text,
+  no_hecha_el date,
+  creado_en timestamptz not null default now(),
+  constraint tareas_ocurrencias_una_por_fecha unique (tarea_id, vence_el),
+  constraint tareas_ocurrencias_hecha_coherente check (
+    (estado = 'hecha') = (hecha_el is not null and hecha_por is not null)
+    and (estado = 'hecha' or nota is null)
+    and (estado = 'no_hecha') = (no_hecha_el is not null))
+);
+create index tareas_ocurrencias_pendientes on tareas_ocurrencias (estado, vence_el);
+comment on table tareas_ocurrencias is
+  'Cada vez que una tarea sale: su vencimiento, el titulo y detalle de ese '
+  'momento, y si se hizo (cuando, que sector, nota) o quedo no hecha porque '
+  'llego la siguiente. Una repetitiva tiene UNA pendiente a la vez.';
+create table tareas_reaperturas (
+  id bigint generated always as identity primary key,
+  ocurrencia_id bigint not null references tareas_ocurrencias (id),
+  motivo text not null check (btrim(motivo) <> ''),
+  hecha_el_anterior timestamptz not null,
+  hecha_por_anterior text not null,
+  nota_anterior text,
+  sector text not null check (sector = 'gerencia'),
+  creado_en timestamptz not null default now()
+);
+create index tareas_reaperturas_por_ocurrencia on tareas_reaperturas (ocurrencia_id);
+comment on table tareas_reaperturas is
+  'Cuando Gerencia volvio a pendiente una tarea hecha: el motivo y lo que '
+  'decia antes (cuando, quien y la nota). El sector no puede desmarcar.';
+
 -- COBRANZAS DE SEGUNDA (dueño, 02/10): db/cobranza_segunda_1 a _3.
 create table segunda_cobros (
     salida_id   bigint primary key references remitos_segunda (id),

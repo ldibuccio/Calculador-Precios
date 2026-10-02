@@ -4,6 +4,7 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Gerencia</title>
+{% import "_tareas_pendientes.html" as tareas_parcial %}
 <style>
   :root { font-family: -apple-system, system-ui, sans-serif; }
   body {
@@ -43,6 +44,7 @@
     font-size: 0.85rem;
     text-decoration: none;
   }
+  {{ tareas_parcial.estilos() }}
 </style>
 </head>
 <body>
@@ -52,12 +54,15 @@
   {% include "_barra_navegacion.html" %}
 
   {% include "_banner_alertas.html" %}
+  {{ tareas_parcial.recuadro(tareas_hub) }}
   {% from "_boton_alertas.html" import cuantas_alertas %}
 
   {# PRIMERO, como en Compras: es lo que hay que mirar antes de hacer nada, y
      el banner de arriba manda acá. #}
   <div class="tarjeta">
     <a class="boton" href="/gerencia/alertas">Alertas{{ cuantas_alertas(banner) }}</a>
+    {# Lo que Gerencia les carga a los sectores (dueño, 02/10). #}
+    <a class="boton" href="/gerencia/tareas">Tareas</a>
   </div>
 
   {# El manejo del dinero, con su clave. La Auditoría vive en su propio

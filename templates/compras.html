@@ -4,6 +4,7 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Compras</title>
+{% import "_tareas_pendientes.html" as tareas_parcial %}
 <style>
   :root { font-family: -apple-system, system-ui, sans-serif; }
   body {
@@ -78,6 +79,7 @@
     font-weight: 600;
     text-decoration: none;
   }
+  {{ tareas_parcial.estilos() }}
 </style>
 </head>
 <body>
@@ -91,6 +93,7 @@
   {% endif %}
 
   {% include "_banner_alertas.html" %}
+  {{ tareas_parcial.recuadro(tareas_hub) }}
   {% from "_boton_alertas.html" import cuantas_alertas %}
 
   <div class="tarjeta">
