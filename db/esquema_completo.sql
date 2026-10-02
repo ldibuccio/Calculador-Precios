@@ -2232,3 +2232,18 @@ create constraint trigger vale_que_salio_cambia_de_proveedor
   after update of proveedor_id on vales_a_cobrar
   deferrable initially deferred
   for each row execute function vale_que_salio_cambia_de_proveedor();
+
+-- PLAN B DE BACKUP (duenio, 02/10, db/backups_1 y _2): como le fue a cada
+-- parte del backup diario en cada destino. La escribe el workflow con el rol
+-- backup_estado (que solo inserta aca; el rol es del cluster y lo crea
+-- backups_2, no este archivo). Gerencia la lee.
+create table backups_corridas (
+  id bigint generated always as identity primary key,
+  parte text not null,
+  onedrive_ok boolean not null,
+  gdrive_ok boolean not null,
+  detalle text,
+  terminada_el timestamptz not null default now(),
+  constraint backups_corridas_parte check (parte in ('codigo', 'bases', 'fotos'))
+);
+create index backups_corridas_parte_fecha on backups_corridas (parte, terminada_el desc);

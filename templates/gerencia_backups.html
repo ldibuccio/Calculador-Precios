@@ -1,0 +1,84 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Backups</title>
+<style>
+  :root { font-family: -apple-system, system-ui, sans-serif; }
+  body { margin: 0; padding: 1rem; background: #f5f5f5; color: #222; }
+  .tarjeta {
+    background: #fff; border-radius: 10px; padding: 1rem; margin-bottom: 1rem;
+    box-shadow: 0 1px 3px rgba(0, 0, 0, 0.1); overflow-wrap: anywhere;
+  }
+  .tarjeta.vieja { border-left: 5px solid #dc2626; }
+  h2 { font-size: 1.05rem; margin: 0 0 0.3rem; }
+  .fecha { font-size: 1.3rem; font-weight: 700; margin: 0.2rem 0; }
+  .fecha.vieja { color: #dc2626; }
+  .dato { color: #555; font-size: 0.9rem; margin: 0.2rem 0 0; }
+  .fallo { background: #fee2e2; color: #991b1b; padding: 0.6rem 0.8rem; border-radius: 8px; margin-top: 0.6rem;
+    font-size: 0.92rem; }
+  .fallo .detalle { display: block; margin-top: 0.3rem; color: #7f1d1d; font-size: 0.85rem; }
+  .corrida { padding: 0.55rem 0; border-top: 1px solid #eee; }
+  .corrida-cabeza { display: flex; flex-wrap: wrap; justify-content: space-between; gap: 0.4rem; }
+  .corrida-que { font-weight: 600; }
+  .destinos { display: flex; flex-wrap: wrap; gap: 0.4rem; margin-top: 0.25rem; }
+  .destino { font-size: 0.85rem; padding: 0.15rem 0.5rem; border-radius: 999px; }
+  .destino.bien { background: #dcfce7; color: #166534; }
+  .destino.mal { background: #fee2e2; color: #991b1b; }
+  .corrida .detalle { color: #555; font-size: 0.85rem; margin-top: 0.25rem; }
+  .vacio { color: #666; font-style: italic; }
+</style>
+</head>
+<body>
+  {% from "_info.html" import info %}
+  {% set barra_sector = "gerencia" %}
+  {% set barra_titulo = "Backups" %}
+  {% set barra_atras = "/gerencia" %}
+  {% include "_barra_navegacion.html" %}
+
+  {% for e in estado %}
+  <div class="tarjeta{{ ' vieja' if e.vieja else '' }}" data-parte="{{ e.parte }}">
+    <h2>{{ e.texto }}
+      {% if loop.first %}{% call info("Cómo funciona") %}Todos los días a las 4 de la mañana GitHub copia
+        el código, las bases (Frutamax, Palmala y Ganadería) y las fotos a <strong>OneDrive</strong> y a
+        <strong>Google Drive</strong>, cifrado. Un backup cuenta como bueno solo si llegó a los
+        <strong>dos</strong>; el de las bases, además, si se pudo restaurar y dio las mismas filas.
+        Si pasan más de {{ horas_para_la_alerta // 24 }} días sin uno bueno, sale en las alertas de
+        Gerencia. Sin la clave de cifrado impresa, ninguna copia se puede abrir.{% endcall %}{% endif %}</h2>
+    <p class="dato">Último backup bueno</p>
+    {% if e.ultima_exitosa %}
+    <p class="fecha{{ ' vieja' if e.vieja else '' }}">{{ e.ultima_exitosa|fecha_hora }}</p>
+    {% else %}
+    <p class="fecha vieja">Nunca</p>
+    {% endif %}
+    {% if e.fallaron %}
+    <div class="fallo">La última corrida ({{ e.ultima_corrida|fecha_hora }}) falló en
+      <strong>{{ e.texto_fallaron|join(' y ') }}</strong>.
+      {% if e.detalle %}<span class="detalle">{{ e.detalle }}</span>{% endif %}
+    </div>
+    {% endif %}
+  </div>
+  {% endfor %}
+
+  <div class="tarjeta">
+    <h2>Últimas corridas</h2>
+    {% for c in corridas %}
+    <div class="corrida">
+      <div class="corrida-cabeza">
+        <span class="corrida-que">{{ texto_de_la_parte[c.parte] }}</span>
+        <span>{{ c.terminada_el|fecha_hora }}</span>
+      </div>
+      <div class="destinos">
+        <span class="destino {{ 'bien' if c.onedrive_ok else 'mal' }}">{{ texto_del_destino['onedrive'] }} {{ '✓' if c.onedrive_ok else '✗' }}</span>
+        <span class="destino {{ 'bien' if c.gdrive_ok else 'mal' }}">{{ texto_del_destino['gdrive'] }} {{ '✓' if c.gdrive_ok else '✗' }}</span>
+      </div>
+      {% if c.detalle and not (c.onedrive_ok and c.gdrive_ok) %}<div class="detalle">{{ c.detalle }}</div>{% endif %}
+    </div>
+    {% else %}
+    <p class="vacio">Todavía no corrió ningún backup.</p>
+    {% endfor %}
+  </div>
+{% include "_pie_version.html" %}
+</body>
+</html>
