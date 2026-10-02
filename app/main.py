@@ -696,6 +696,7 @@ from core.remitos import (
     TEXTO_DEL_ESTADO as TEXTO_DEL_ESTADO_REMITO,
     diferencia_de_rechazo,
     estado_del_remito,
+    precarga_de_lo_recibido,
     importe_del_remito,
     importe_del_renglon,
     leer_recepcion,
@@ -20198,6 +20199,7 @@ def _remito_para_mostrar(remito: dict, hoy: date) -> dict:
         renglon["rechazo_remito"] = rechazo_del_remito(renglon)
         renglon["cambio"] = renglon_cambio(renglon)
         renglon["importe"] = importe_del_renglon(renglon)
+        renglon["precarga_bultos"], renglon["precarga_kilos"] = precarga_de_lo_recibido(renglon)
         renglon["sufijo"] = SUFIJOS_FICHA_REPROCESO.get(renglon.get("unidad_venta"), "")
     estado = estado_del_remito(remito)
     remito["estado"] = estado
@@ -20344,8 +20346,10 @@ def _renderizar_recibir(request: Request, remito_id: int, *, cargado: dict | Non
 
 @app.get("/administracion/facturacion/remito/{remito_id}/recibir")
 def ver_recibir_remito(request: Request, remito_id: int):
-    """ESE MISMO remito, con los bultos y kilos recibidos PRECARGADOS con los
-    enviados: solo se cambia lo que el súper anotó distinto. La foto del
+    """ESE MISMO remito, con los bultos y kilos recibidos PRECARGADOS con lo
+    enviado menos lo que Depósito ya cargó como rechazado
+    (`precarga_de_lo_recibido`, 02/10): solo se cambia lo que el súper anotó
+    distinto. La foto del
     remito firmado, obligatoria."""
     return _renderizar_recibir(request, remito_id)
 

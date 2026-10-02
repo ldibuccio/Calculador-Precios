@@ -4720,7 +4720,12 @@ facturación y la cobranza no se hacen acá. La regla pura vive en
   (pedido cargado a mano) la crea al emitir.
 - **EL REMITO OBSERVADO ES EL MISMO REMITO.** Recibir se busca por número y
   abre ESE remito: por renglón, **bultos recibidos y kilos recibidos**,
-  precargados con lo enviado, y se cambia solo lo que anotó el súper (que tome
+  precargados con lo enviado MENOS lo que Depósito ya cargó como rechazado de
+  ese renglón (dueño, 02/10, `precarga_de_lo_recibido` en core/remitos.py):
+  bultos = enviados − rechazados, kilos proporcionales, todo rechazado da 0 y
+  0, y sin rechazos cargados es lo enviado. Caso real: el remito 20424
+  precargaba 10/160 en Tomate Redondo con los 10 rechazados (se guardó bien,
+  a mano, en 0/0). Se cambia solo lo que anotó el súper (que tome
   todo con menos kilos, que rechace bultos, o las dos cosas). Enviado y
   recibido quedan lado a lado en la fila; un renglón cambió si difieren
   (`renglon_cambio`), y la hora es `recibido_el`. El detalle dice "Volvió

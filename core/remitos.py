@@ -108,6 +108,26 @@ def diferencia_de_rechazo(renglon: dict) -> float | None:
     return remito - (_numero(renglon.get("rechazo_deposito")) or 0.0)
 
 
+def precarga_de_lo_recibido(renglon: dict) -> tuple[float, float]:
+    """Lo que "Recibir remito" propone en cada renglón (dueño, 02/10): lo que
+    SALIÓ menos lo que Depósito ya cargó como rechazado de ese renglón.
+
+    Bultos = enviados − rechazados; kilos = kilos enviados × recibidos ÷
+    enviados (proporcional). Sin rechazos cargados es lo enviado; con todo
+    rechazado (o de más), 0 y 0; un rechazo en cero o negativo no resta. Es solo la
+    PROPUESTA: sigue editable, y el cotejo contra Depósito no cambia.
+    """
+    enviados = float(renglon["bultos_enviados"])
+    kilos = float(renglon["kilos_enviados"])
+    rechazados = _numero(renglon.get("rechazo_deposito")) or 0.0
+    if rechazados <= 0:
+        return enviados, kilos
+    recibidos = enviados - rechazados
+    if recibidos <= 0:
+        return 0.0, 0.0
+    return recibidos, round(kilos * recibidos / enviados, 2)
+
+
 def rechazo_no_coincide(renglon: dict) -> bool:
     diferencia = diferencia_de_rechazo(renglon)
     return diferencia is not None and abs(diferencia) > 1e-9
