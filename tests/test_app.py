@@ -30661,6 +30661,12 @@ PANTALLAS_SIN_LINK_DECIDIDAS = {
     # marcado RENDERIZADO.
     "/administracion/facturacion/recibir":
         "se llega por el form GET 'Recibir un remito' de Facturación, no por un href",
+    # "Nueva tarea" del recuadro de cada hub (02/10). Lo afirma sobre el
+    # marcado RENDERIZADO de los tres hubs test_tareas_por_sector.py.
+    "/compras/tareas":
+        "el href se arma con {{ tareas_hub.sector }}, que un regex literal no ve",
+    "/administracion/tareas":
+        "el href se arma con {{ tareas_hub.sector }}, que un regex literal no ve",
 }
 
 

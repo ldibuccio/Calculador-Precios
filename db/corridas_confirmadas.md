@@ -870,3 +870,32 @@ Decisión del dueño: los vales en papel se cargan desde la pantalla de Vales
 ("Cargar vale", origen `carga_manual`). `db/vales_papel_1_pegar.sql` y los
 pasos que lo siguen no se corren más. Lo que ya se cargó por ese camino queda
 como `anterior_al_sistema`.
+
+## 02/10 — `vales_editables_1`: Vales editables desde Gerencia (PR #93)
+
+Corrido por Lionel en las dos bases. La verificación (`vales_editables_2`),
+corrida aparte, la hizo el Claude con acceso de lectura:
+
+```
+FRUTAMAX  vales_editables · coherente_nuevo 1 · devolucion_corregidos 0 · sin_importe 0 · importe_vigente 4313000 · vales 13 · testigo 02/10
+PALMALA   vales_editables · coherente_nuevo 1 · devolucion_corregidos 0 · sin_importe 0 · importe_vigente 0 · vales 0
+```
+
+El CHECK nuevo está en las dos bases. En Frutamax el importe vigente de los
+13 vales es el mismo de antes de correr el bloque ($4.313.000): no cambió
+ninguna fila. Palmala no tiene vales y no vota.
+
+## 02/10 — `tareas_5`: Tareas por sector y mensual en varios días (PR #95)
+
+Corrido por Lionel en las dos bases, ANTES del deploy. La verificación
+(`tareas_7`), corrida aparte, la hizo el Claude con acceso de lectura:
+
+```
+FRUTAMAX  tareas_por_sector · columnas 2 · dia_mes_viejo 1 · con_default 1 · check_creada 1 · check_dias 1 · de_un_sector 0 · mensual_sin_dias 0 · tareas 1
+PALMALA   tareas_por_sector · columnas 2 · dia_mes_viejo 1 · con_default 1 · check_creada 1 · check_dias 1 · de_un_sector 0 · mensual_sin_dias 0 · tareas 0
+```
+
+Es el resultado esperado entre los dos pasos: `dia_mes` y el default de
+`creada_por` siguen puestos porque el código viejo los usa. `tareas_6` los
+saca y se corre DESPUÉS del deploy del #95; la misma `tareas_7` tiene que dar
+entonces `dia_mes_viejo 0 · con_default 0`. Palmala no vota.

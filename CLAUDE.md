@@ -4906,6 +4906,34 @@ en `core/tareas.py`.
 Migraciones `db/tareas_1` a `_3`, verificación en `_4`. Lo cuida
 `tests/test_tareas.py`, contra Postgres.
 
+### Cada sector carga las suyas, y la mensual en varios días (02/10, dueño)
+
+- **Compras, Administración y Gerencia crean tareas para su propio sector**
+  (Gerencia, para cualquiera), de una vez o repetitivas, con las mismas
+  opciones. Es la MISMA pantalla bajo `/compras/tareas`,
+  `/administracion/tareas` y `/gerencia/tareas`, con el sector sacado del
+  prefijo (corolario 63). El recuadro de cada hub tiene "Nueva tarea".
+- **`tareas.creada_por`** dice quién la cargó (las de antes, Gerencia). La
+  base exige que un sector solo cargue para sí mismo (`tareas_creada_por`).
+  Se ve en el recuadro, en las repetitivas y en el registro.
+- **Un sector edita, pausa y da de baja SOLO las que creó él**; Gerencia
+  todas. Lo decide el WHERE de la escritura (`_SQL_PUEDE_MANEJAR`) y la
+  pantalla pregunta lo mismo (`puede_manejar`, core/tareas.py): las de
+  Gerencia se ven sin controles. El registro sigue siendo de Gerencia, con
+  filtro "Creada por" que llevan el PDF y el Excel (y su columna).
+- **La alerta de vencidas de Gerencia cubre todas**, las cree quien las cree.
+- **La mensual sale en varios días** (`dias_mes`, por ejemplo 1 y 15): cada
+  fecha es una ocurrencia, no se acumula (la de antes queda "no hecha" y la
+  nueva atrasada), y un día que el mes no tiene cae al último; si dos caen
+  el mismo día (30 y 31 en febrero) sale una sola.
+- **Migración en dos bloques** (corolario 94): `db/tareas_5` ANTES del
+  deploy (agrega `creada_por` con default 'gerencia' y `dias_mes` copiado de
+  `dia_mes`; el CHECK acepta las dos formas) y `db/tareas_6` DESPUÉS (vuelve
+  a copiar lo que el código viejo haya cargado en la ventana, saca el
+  default y borra `dia_mes`). Verificación en `_7`, corrida aparte después
+  de cada uno. Lo cuida `tests/test_tareas_por_sector.py`, contra Postgres,
+  con la migración corrida sobre el esquema viejo.
+
 ## FOTOS: EL PLAZO POR TIPO Y EL BORRADO A MANO (01/10, dueño)
 
 - **Cada tipo de foto tiene su plazo** en años desde la subida, editable en

@@ -41,9 +41,12 @@
 </style>
 </head>
 <body>
-  {% set barra_sector = "gerencia" %}
+  {# LA MISMA PANTALLA en los tres sectores (dueño, 02/10): el sector sale
+     del prefijo. Un sector carga para sí mismo y maneja SOLO las que creó;
+     el registro es de Gerencia. #}
+  {% set barra_sector = sector %}
   {% set barra_titulo = "Tareas" %}
-  {% set barra_atras = "/gerencia" %}
+  {% set barra_atras = "/" ~ sector %}
   {% include "_barra_navegacion.html" %}
 
   {% if aviso %}<div class="aviso">{{ aviso }}</div>{% endif %}
@@ -51,14 +54,16 @@
 
   <div class="tarjeta">
     <details>
-      <summary>Crear tarea</summary>
-      <form method="post" action="/gerencia/tareas">
+      <summary>Nueva tarea{% if sector != 'gerencia' %} de {{ sectores[sector] }}{% endif %}</summary>
+      <form method="post" action="/{{ sector }}/tareas">
         <div class="campos">
+          {% if sector == 'gerencia' %}
           <label>Sector
             <select name="sector" required>
               {% for clave, texto in sectores.items() %}<option value="{{ clave }}">{{ texto }}</option>{% endfor %}
             </select>
           </label>
+          {% endif %}
           <label>Tipo
             <select name="tipo" id="tipo-nueva" required>
               {% for clave, texto in tipos.items() %}<option value="{{ clave }}">{{ texto }}</option>{% endfor %}
@@ -74,7 +79,7 @@
               {% for d in dias_semana %}<option value="{{ loop.index0 }}">{{ d }}</option>{% endfor %}
             </select>
           </label>
-          <label data-tipo="mensual">Día del mes<input type="number" name="dia_mes" min="1" max="31" step="1" inputmode="numeric"></label>
+          <label data-tipo="mensual">Días del mes (ej: 1, 15)<input type="text" name="dias_mes" inputmode="numeric" autocomplete="off" placeholder="1, 15"></label>
         </div>
         <div class="acciones"><button type="submit">Crear tarea</button></div>
       </form>
@@ -82,14 +87,17 @@
   </div>
 
   <div class="tarjeta">
-    <h2>Repetitivas</h2>
+    <h2>Repetitivas{% if sector != 'gerencia' %} de {{ sectores[sector] }}{% endif %}</h2>
     {% for r in repetitivas %}
     <div class="fila">
       <div class="fila-que">{{ r.titulo }}</div>
-      <div class="fila-dato">{{ sectores[r.sector] }} · {{ r.regla }} · {{ estados_de_tarea[r.estado] }}{% if r.detalle %} · {{ r.detalle }}{% endif %}</div>
+      <div class="fila-dato">{{ sectores[r.sector] }} · {{ r.regla }} · {{ estados_de_tarea[r.estado] }} · la cargó {{ sectores[r.creada_por] }}{% if r.detalle %} · {{ r.detalle }}{% endif %}</div>
+      {# Editar, pausar y dar de baja: Gerencia todas, un sector las que creó
+         él (`puede_manejar`, la misma regla que el WHERE de la escritura). #}
+      {% if r.maneja %}
       <details>
         <summary>Editar, pausar o dar de baja</summary>
-        <form method="post" action="/gerencia/tareas/{{ r.id }}/editar">
+        <form method="post" action="/{{ sector }}/tareas/{{ r.id }}/editar">
           <div class="campos">
             <label class="ancho">Título<input type="text" name="titulo" value="{{ r.titulo }}" required></label>
             <label class="ancho">Detalle<input type="text" name="detalle" value="{{ r.detalle or '' }}"></label>
@@ -106,11 +114,11 @@
                 {% for d in dias_semana %}<option value="{{ loop.index0 }}" {% if r.dia_semana == loop.index0 %}selected{% endif %}>{{ d }}</option>{% endfor %}
               </select>
             </label>
-            <label>Día del mes<input type="number" name="dia_mes" min="1" max="31" value="{{ r.dia_mes or '' }}" inputmode="numeric"></label>
+            <label>Días del mes (ej: 1, 15)<input type="text" name="dias_mes" value="{{ r.dias_mes_texto }}" inputmode="numeric" autocomplete="off"></label>
           </div>
           <div class="acciones"><button type="submit">Guardar cambios</button></div>
         </form>
-        <form method="post" action="/gerencia/tareas/{{ r.id }}/estado">
+        <form method="post" action="/{{ sector }}/tareas/{{ r.id }}/estado">
           <div class="acciones">
             {% if r.estado == 'activa' %}<button type="submit" name="estado" value="pausada" class="gris">Pausar</button>
             {% else %}<button type="submit" name="estado" value="activa" class="gris">Reanudar</button>{% endif %}
@@ -118,12 +126,16 @@
           </div>
         </form>
       </details>
+      {% else %}
+      <div class="fila-dato">La cargó Gerencia: solo Gerencia la cambia.</div>
+      {% endif %}
     </div>
     {% else %}
     <p class="vacio">No hay tareas repetitivas.</p>
     {% endfor %}
   </div>
 
+  {% if sector == 'gerencia' %}
   <form class="tarjeta" method="get" action="/gerencia/tareas">
     <h2>Registro</h2>
     <div class="campos">
@@ -139,13 +151,19 @@
           {% for clave, texto in estados_visibles.items() %}<option value="{{ clave }}" {% if filtros.estado == clave %}selected{% endif %}>{{ texto }}</option>{% endfor %}
         </select>
       </label>
+      <label>Creada por
+        <select name="creada_por">
+          <option value="">Todos</option>
+          {% for clave, texto in sectores.items() %}<option value="{{ clave }}" {% if filtros.creada_por == clave %}selected{% endif %}>{{ texto }}</option>{% endfor %}
+        </select>
+      </label>
       <label>Vencen desde<input type="date" name="desde" value="{{ filtros.desde.isoformat() if filtros.desde else '' }}"></label>
       <label>Vencen hasta<input type="date" name="hasta" value="{{ filtros.hasta.isoformat() if filtros.hasta else '' }}"></label>
     </div>
     <div class="acciones">
       <button type="submit">Filtrar</button>
-      <a href="/gerencia/tareas/exportar-pdf?sector={{ filtros.sector or '' }}&amp;estado={{ filtros.estado or '' }}&amp;desde={{ filtros.desde.isoformat() if filtros.desde else '' }}&amp;hasta={{ filtros.hasta.isoformat() if filtros.hasta else '' }}">PDF</a>
-      <a href="/gerencia/tareas/exportar-excel?sector={{ filtros.sector or '' }}&amp;estado={{ filtros.estado or '' }}&amp;desde={{ filtros.desde.isoformat() if filtros.desde else '' }}&amp;hasta={{ filtros.hasta.isoformat() if filtros.hasta else '' }}">Excel</a>
+      <a href="/gerencia/tareas/exportar-pdf?sector={{ filtros.sector or '' }}&amp;estado={{ filtros.estado or '' }}&amp;desde={{ filtros.desde.isoformat() if filtros.desde else '' }}&amp;hasta={{ filtros.hasta.isoformat() if filtros.hasta else '' }}&amp;creada_por={{ filtros.creada_por or '' }}">PDF</a>
+      <a href="/gerencia/tareas/exportar-excel?sector={{ filtros.sector or '' }}&amp;estado={{ filtros.estado or '' }}&amp;desde={{ filtros.desde.isoformat() if filtros.desde else '' }}&amp;hasta={{ filtros.hasta.isoformat() if filtros.hasta else '' }}&amp;creada_por={{ filtros.creada_por or '' }}">Excel</a>
     </div>
   </form>
 
@@ -154,7 +172,7 @@
     {% for o in ocurrencias %}
     <div class="fila" data-ocurrencia="{{ o.id }}">
       <div class="fila-que">{{ o.titulo }}</div>
-      <div class="fila-dato">{{ sectores[o.sector] }} · vence el {{ o.vence_el.strftime('%d/%m/%Y') }} ·
+      <div class="fila-dato">{{ sectores[o.sector] }} · la cargó {{ sectores[o.creada_por] }} · vence el {{ o.vence_el.strftime('%d/%m/%Y') }} ·
         <span class="{{ 'roja' if o.visible in ('vencida', 'no_hecha') else ('verde' if o.visible == 'hecha' else '') }}">{{ estados_visibles[o.visible] }}</span>
         {%- if o.atrasada %} · atrasada{% endif %}
         {%- if o.atraso %} · {{ o.atraso }} día{{ '' if o.atraso == 1 else 's' }} de atraso{% endif %}</div>
@@ -179,6 +197,7 @@
     <p class="vacio">No hay tareas con estos filtros.</p>
     {% endfor %}
   </div>
+  {% endif %}
 <script>
 (function () {
   var tipo = document.getElementById("tipo-nueva");

@@ -19595,7 +19595,9 @@ def contar_segunda_sin_cobrar(hoy: date) -> dict:
 # ============================================================================
 # TAREAS (dueño, 02/10)
 #
-# Gerencia le carga tareas a un sector; el sector las marca como hechas. Las
+# Gerencia le carga tareas a un sector, y desde el 02/10 cada sector carga las
+# suyas (`creada_por`); el sector las marca como hechas. Un sector edita,
+# pausa o da de baja SOLO las que creó él: lo dice el WHERE. Las
 # reglas puras (qué fecha toca, qué estado se ve, el atraso) viven en
 # core/tareas.py; acá se escribe y se lee.
 #
@@ -19607,7 +19609,13 @@ def contar_segunda_sin_cobrar(hoy: date) -> dict:
 # ============================================================================
 
 _COLUMNAS_DE_TAREA = ("id", "sector", "titulo", "detalle", "tipo", "vence_el", "cada_dias", "dia_semana",
-                      "dia_mes", "desde", "generada_hasta", "estado", "creado_en", "actualizado_en")
+                      "dias_mes", "desde", "generada_hasta", "estado", "creado_en", "actualizado_en",
+                      "creada_por")
+
+# La condición de "este sector puede manejar esta tarea", escrita UNA vez
+# para los dos UPDATE: Gerencia todas, un sector las que creó él. Es la
+# misma regla que `puede_manejar` (core/tareas.py), que usa la pantalla.
+_SQL_PUEDE_MANEJAR = "(%(quien)s = 'gerencia' OR creada_por = %(quien)s)"
 
 
 def _tarea_de_fila(fila) -> dict:
@@ -19655,12 +19663,16 @@ def _texto_opcional(texto) -> str | None:
     return (texto or "").strip() or None
 
 
-def crear_tarea(*, sector: str, titulo: str, detalle: str | None, tipo: str, vence_el: date | None = None,
-                cada_dias: int | None = None, dia_semana: int | None = None, dia_mes: int | None = None,
-                desde: date | None = None, hoy: date) -> int:
+def crear_tarea(*, sector: str, creada_por: str, titulo: str, detalle: str | None, tipo: str,
+                vence_el: date | None = None, cada_dias: int | None = None, dia_semana: int | None = None,
+                dias_mes: list[int] | None = None, desde: date | None = None, hoy: date) -> int:
     """Crea la tarea. La de una sola vez sale en el momento con su
     vencimiento; la repetitiva sale el día que le toca (desde `desde`). Los
-    campos de cada tipo los exige la base (`tareas_campos_de_su_tipo`)."""
+    campos de cada tipo los exige la base (`tareas_campos_de_su_tipo`).
+
+    `creada_por` NO TIENE DEFAULT: lo dice la ruta por la que entró. Un
+    sector solo crea para sí mismo, y eso lo decide la base
+    (`tareas_creada_por`); acá se traduce."""
     titulo = (titulo or "").strip()
     if not titulo:
         raise ValueError("Falta el título.")
@@ -19671,13 +19683,15 @@ def crear_tarea(*, sector: str, titulo: str, detalle: str | None, tipo: str, ven
         with conexion.cursor() as cursor:
             try:
                 cursor.execute(
-                    "INSERT INTO tareas (sector, titulo, detalle, tipo, vence_el, cada_dias, dia_semana, dia_mes, "
-                    "desde) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s) RETURNING id",
-                    (sector, titulo, _texto_opcional(detalle), tipo, vence_el, cada_dias, dia_semana, dia_mes,
-                     desde),
+                    "INSERT INTO tareas (sector, creada_por, titulo, detalle, tipo, vence_el, cada_dias, dia_semana, "
+                    "dias_mes, desde) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s) RETURNING id",
+                    (sector, creada_por, titulo, _texto_opcional(detalle), tipo, vence_el, cada_dias, dia_semana,
+                     dias_mes, desde),
                 )
             except psycopg2.errors.CheckViolation as error:
                 conexion.rollback()
+                if error.diag.constraint_name == "tareas_creada_por":
+                    raise ValueError("Un sector solo carga tareas para sí mismo.") from error
                 raise ValueError("Faltan o sobran datos para ese tipo de tarea.") from error
             (tarea_id,) = cursor.fetchone()
             if tipo == "una_vez":
@@ -19691,10 +19705,11 @@ def crear_tarea(*, sector: str, titulo: str, detalle: str | None, tipo: str, ven
         conexion.close()
 
 
-def editar_tarea_repetitiva(tarea_id: int, *, titulo: str, detalle: str | None, tipo: str,
-                            cada_dias: int | None, dia_semana: int | None, dia_mes: int | None) -> None:
+def editar_tarea_repetitiva(tarea_id: int, *, quien: str, titulo: str, detalle: str | None, tipo: str,
+                            cada_dias: int | None, dia_semana: int | None, dias_mes: list[int] | None) -> None:
     """Cambia una repetitiva de acá en adelante. Lo que ya salió no se toca:
-    cada ocurrencia tiene su propio título y detalle."""
+    cada ocurrencia tiene su propio título y detalle. `quien` es el sector
+    que edita: Gerencia cualquiera, un sector solo las que creó él."""
     titulo = (titulo or "").strip()
     if not titulo:
         raise ValueError("Falta el título.")
@@ -19705,24 +19720,27 @@ def editar_tarea_repetitiva(tarea_id: int, *, titulo: str, detalle: str | None, 
         with conexion.cursor() as cursor:
             try:
                 cursor.execute(
-                    "UPDATE tareas SET titulo = %s, detalle = %s, tipo = %s, cada_dias = %s, dia_semana = %s, "
-                    "dia_mes = %s, actualizado_en = now() WHERE id = %s AND tipo <> 'una_vez' AND estado <> 'baja'",
-                    (titulo, _texto_opcional(detalle), tipo, cada_dias, dia_semana, dia_mes, tarea_id),
+                    "UPDATE tareas SET titulo = %(titulo)s, detalle = %(detalle)s, tipo = %(tipo)s, "
+                    "cada_dias = %(cada_dias)s, dia_semana = %(dia_semana)s, dias_mes = %(dias_mes)s, "
+                    "actualizado_en = now() WHERE id = %(id)s AND tipo <> 'una_vez' AND estado <> 'baja' AND "
+                    + _SQL_PUEDE_MANEJAR,
+                    {"titulo": titulo, "detalle": _texto_opcional(detalle), "tipo": tipo, "cada_dias": cada_dias,
+                     "dia_semana": dia_semana, "dias_mes": dias_mes, "id": tarea_id, "quien": quien},
                 )
             except psycopg2.errors.CheckViolation as error:
                 conexion.rollback()
                 raise ValueError("Faltan o sobran datos para ese tipo de tarea.") from error
             if cursor.rowcount == 0:
-                raise ValueError("Esa tarea no es una repetitiva que se pueda editar.")
+                raise ValueError("Esa tarea no es una repetitiva que este sector pueda editar.")
         conexion.commit()
     finally:
         conexion.close()
 
 
-def cambiar_estado_de_tarea(tarea_id: int, estado: str, hoy: date) -> None:
+def cambiar_estado_de_tarea(tarea_id: int, estado: str, hoy: date, *, quien: str) -> None:
     """Pausar, reanudar o dar de baja una repetitiva. Lo que ya salió queda.
     Al reanudar, las fechas de la pausa no salen ni cuentan como no hechas:
-    se sigue desde hoy."""
+    se sigue desde hoy. `quien`: Gerencia cualquiera, un sector las suyas."""
     transiciones = {"pausada": ("activa",), "activa": ("pausada",), "baja": ("activa", "pausada")}
     if estado not in transiciones:
         raise ValueError("Ese estado no existe.")
@@ -19730,20 +19748,21 @@ def cambiar_estado_de_tarea(tarea_id: int, estado: str, hoy: date) -> None:
     try:
         with conexion.cursor() as cursor:
             cursor.execute(
-                "UPDATE tareas SET estado = %s, actualizado_en = now(), "
-                "generada_hasta = CASE WHEN %s = 'activa' THEN %s ELSE generada_hasta END "
-                "WHERE id = %s AND tipo <> 'una_vez' AND estado = ANY(%s)",
-                (estado, estado, hoy - timedelta(days=1), tarea_id, list(transiciones[estado])),
+                "UPDATE tareas SET estado = %(estado)s, actualizado_en = now(), "
+                "generada_hasta = CASE WHEN %(estado)s = 'activa' THEN %(ayer)s ELSE generada_hasta END "
+                "WHERE id = %(id)s AND tipo <> 'una_vez' AND estado = ANY(%(desde)s) AND " + _SQL_PUEDE_MANEJAR,
+                {"estado": estado, "ayer": hoy - timedelta(days=1), "id": tarea_id,
+                 "desde": list(transiciones[estado]), "quien": quien},
             )
             if cursor.rowcount == 0:
-                raise ValueError("Esa tarea no se puede pasar a ese estado.")
+                raise ValueError("Esa tarea no se puede pasar a ese estado desde este sector.")
         conexion.commit()
     finally:
         conexion.close()
 
 
 _SQL_OCURRENCIAS = """
-    SELECT o.id, o.tarea_id, t.sector, o.titulo, o.detalle, o.vence_el, o.estado, o.atrasada,
+    SELECT o.id, o.tarea_id, t.sector, t.creada_por, o.titulo, o.detalle, o.vence_el, o.estado, o.atrasada,
            o.hecha_el, o.hecha_por, o.nota, o.no_hecha_el, t.tipo,
            (SELECT count(*) FROM tareas_reaperturas r WHERE r.ocurrencia_id = o.id) AS reaperturas,
            o.id = (SELECT max(o2.id) FROM tareas_ocurrencias o2 WHERE o2.tarea_id = o.tarea_id) AS la_ultima
@@ -19771,7 +19790,7 @@ def tareas_pendientes_del_sector(sector: str, hoy: date) -> list[dict]:
 
 
 def listar_ocurrencias(*, sector: str | None, desde: date | None, hasta: date | None, estado: str | None,
-                       hoy: date) -> list[dict]:
+                       hoy: date, creada_por: str | None = None) -> list[dict]:
     """El registro de Gerencia, por vencimiento. `estado` es el VISIBLE:
     'pendiente' (no venció), 'vencida', 'hecha' o 'no_hecha'."""
     generar_ocurrencias(hoy)
@@ -19779,6 +19798,9 @@ def listar_ocurrencias(*, sector: str | None, desde: date | None, hasta: date | 
     if sector:
         condiciones.append("t.sector = %s")
         parametros.append(sector)
+    if creada_por:
+        condiciones.append("t.creada_por = %s")
+        parametros.append(creada_por)
     if desde:
         condiciones.append("o.vence_el >= %s")
         parametros.append(desde)
@@ -19797,13 +19819,15 @@ def listar_ocurrencias(*, sector: str | None, desde: date | None, hasta: date | 
     return _ocurrencias(condiciones, parametros, " ORDER BY o.vence_el DESC, o.id DESC")
 
 
-def listar_tareas_repetitivas() -> list[dict]:
-    """Las repetitivas que no se dieron de baja, para editarlas o pausarlas."""
+def listar_tareas_repetitivas(sector: str | None = None) -> list[dict]:
+    """Las repetitivas que no se dieron de baja, para editarlas o pausarlas.
+    Con `sector`, solo las de ese sector (Gerencia las ve todas)."""
     conexion = obtener_conexion()
     try:
         with conexion.cursor() as cursor:
             cursor.execute("SELECT " + ", ".join(_COLUMNAS_DE_TAREA) + " FROM tareas "
-                           "WHERE tipo <> 'una_vez' AND estado <> 'baja' ORDER BY sector, titulo, id")
+                           "WHERE tipo <> 'una_vez' AND estado <> 'baja' AND (%s::text IS NULL OR sector = %s) "
+                           "ORDER BY sector, titulo, id", (sector, sector))
             return [_tarea_de_fila(f) for f in cursor.fetchall()]
     finally:
         conexion.close()

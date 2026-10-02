@@ -6,6 +6,11 @@ marca como hechas y queda cuándo y quién (el sector: el sistema no tiene
 usuarios). No tiene nada que ver con las alertas, salvo una cosa: una tarea
 vencida y no hecha sale en las alertas de Gerencia.
 
+CADA SECTOR CARGA LAS SUYAS (dueño, 02/10). Compras, Administración y
+Gerencia crean tareas para su propio sector; Gerencia, para cualquiera. Cada
+tarea dice quién la CREÓ (`creada_por`), y un sector edita, pausa o da de
+baja SOLO las que creó él. La mensual puede salir en VARIOS días del mes.
+
 LAS OCURRENCIAS. Lo que el sector ve y marca es una OCURRENCIA: cada vez que
 la tarea sale. La de una sola vez sale al crearla. La repetitiva sale el día
 que le toca (y vence ese día), y NO SE ACUMULA: si llega la fecha de la
@@ -37,8 +42,9 @@ ESTADOS_DE_LA_TAREA = {"activa": "Activa", "pausada": "Pausada", "baja": "Dada d
 
 def fechas_que_tocan(tarea: dict, despues_de: date, hasta: date) -> list[date]:
     """Las fechas de una repetitiva en (despues_de, hasta], en orden. Nunca
-    antes de `desde`. Mensual con un día que el mes no tiene (31 en
-    septiembre) cae el último día del mes."""
+    antes de `desde`. Mensual: cada día de `dias_mes`, y uno que el mes no
+    tiene (31 en septiembre) cae el último día del mes. Si dos caen el mismo
+    día (30 y 31 en febrero) sale una sola vez."""
     inicio = max(despues_de + timedelta(days=1), tarea["desde"])
     if inicio > hasta:
         return []
@@ -57,13 +63,11 @@ def fechas_que_tocan(tarea: dict, despues_de: date, hasta: date) -> list[date]:
             dia += timedelta(days=7)
     elif tarea["tipo"] == "mensual":
         anio, mes = inicio.year, inicio.month
-        while True:
+        while date(anio, mes, 1) <= hasta:
             ultimo = calendar.monthrange(anio, mes)[1]
-            dia = date(anio, mes, min(int(tarea["dia_mes"]), ultimo))
-            if dia > hasta:
-                break
-            if dia >= inicio:
-                fechas.append(dia)
+            for dia in sorted({date(anio, mes, min(int(d), ultimo)) for d in tarea["dias_mes"] or []}):
+                if inicio <= dia <= hasta:
+                    fechas.append(dia)
             anio, mes = (anio + 1, 1) if mes == 12 else (anio, mes + 1)
     return fechas
 
@@ -96,10 +100,29 @@ def texto_de_la_regla(tarea: dict) -> str:
         return "todos los días" if n == 1 else f"cada {n} días"
     if tarea["tipo"] == "semanal":
         return f"todos los {DIAS_DE_LA_SEMANA[int(tarea['dia_semana'])]}"
-    return f"el día {int(tarea['dia_mes'])} de cada mes"
+    dias = [str(int(d)) for d in sorted(tarea["dias_mes"] or [])]
+    if len(dias) == 1:
+        return f"el día {dias[0]} de cada mes"
+    return f"los días {', '.join(dias[:-1])} y {dias[-1]} de cada mes"
 
 
-def texto_del_filtro(sector: str | None, desde: date | None, hasta: date | None, estado: str | None) -> str:
+def dias_del_mes(texto: str) -> list[int] | None:
+    """Los días del mes que se escribieron ("1, 15" o "1 15"), ordenados y sin
+    repetir. None si no hay ninguno o alguno no es un día del 1 al 31."""
+    partes = [p for p in (texto or "").replace(",", " ").replace(";", " ").split() if p]
+    if not partes or not all(p.isdigit() and 1 <= int(p) <= 31 for p in partes):
+        return None
+    return sorted({int(p) for p in partes})
+
+
+def puede_manejar(tarea: dict, sector: str) -> bool:
+    """Editar, pausar o dar de baja (dueño, 02/10): Gerencia todas; un sector
+    SOLO las que creó él. La escritura pregunta lo mismo en su WHERE."""
+    return sector == "gerencia" or tarea["creada_por"] == sector
+
+
+def texto_del_filtro(sector: str | None, desde: date | None, hasta: date | None, estado: str | None,
+                     creada_por: str | None = None) -> str:
     """Lo que dice el encabezado del PDF y del Excel: TODOS los filtros
     aplicados, o que no hay ninguno (regla de v1063)."""
     partes = []
@@ -113,19 +136,22 @@ def texto_del_filtro(sector: str | None, desde: date | None, hasta: date | None,
         partes.append(f"vencen hasta el {hasta.strftime('%d/%m/%Y')}")
     if estado:
         partes.append(f"estado {ESTADOS_VISIBLES[estado].lower()}")
+    if creada_por:
+        partes.append(f"creadas por {SECTORES[creada_por]}")
     return " · ".join(partes) or "sin filtros: todas las tareas"
 
 
 def _fila(o: dict, hoy: date) -> tuple:
     return (
-        o["vence_el"].strftime("%d/%m/%Y"), SECTORES[o["sector"]], o["titulo"], o["detalle"] or "",
+        o["vence_el"].strftime("%d/%m/%Y"), SECTORES[o["sector"]], SECTORES[o["creada_por"]], o["titulo"],
+        o["detalle"] or "",
         ESTADOS_VISIBLES[estado_visible(o, hoy)] + (" (atrasada)" if o["atrasada"] else ""),
         hora_argentina(o["hecha_el"]), SECTORES.get(o["hecha_por"], ""), o["nota"] or "",
         dias_de_atraso(o, hoy),
     )
 
 
-ENCABEZADOS = ("Vence", "Sector", "Tarea", "Detalle", "Estado", "Marcada el", "Quién", "Nota", "Días de atraso")
+ENCABEZADOS = ("Vence", "Sector", "Creada por", "Tarea", "Detalle", "Estado", "Marcada el", "Quién", "Nota", "Días de atraso")
 
 
 def generar_excel_tareas(filtro: str, ocurrencias: list[dict], hoy: date) -> bytes:
@@ -142,7 +168,7 @@ def generar_excel_tareas(filtro: str, ocurrencias: list[dict], hoy: date) -> byt
     for numero_fila, o in enumerate(ocurrencias, start=5):
         for columna, valor in enumerate(_fila(o, hoy), start=1):
             hoja.cell(row=numero_fila, column=columna, value=valor)
-    for letra, ancho in zip("ABCDEFGHI", (12, 15, 30, 36, 18, 18, 15, 30, 10)):
+    for letra, ancho in zip("ABCDEFGHIJ", (12, 15, 15, 30, 36, 18, 18, 15, 30, 10)):
         hoja.column_dimensions[letra].width = ancho
     salida = BytesIO()
     libro.save(salida)
@@ -150,7 +176,7 @@ def generar_excel_tareas(filtro: str, ocurrencias: list[dict], hoy: date) -> byt
 
 
 def generar_pdf_tareas(filtro: str, ocurrencias: list[dict], hoy: date) -> bytes:
-    """A4 apaisado: son nueve columnas."""
+    """A4 apaisado: son diez columnas."""
     buffer = BytesIO()
     documento = SimpleDocTemplate(buffer, pagesize=landscape(A4), topMargin=14 * mm,
                                   leftMargin=12 * mm, rightMargin=12 * mm, bottomMargin=12 * mm)
@@ -164,6 +190,6 @@ def generar_pdf_tareas(filtro: str, ocurrencias: list[dict], hoy: date) -> bytes
     filas = [[_p(v) for v in _fila(o, hoy)] for o in ocurrencias] \
         or [[_p("No hay tareas con estos filtros.", "vacio")] + [""] * (len(ENCABEZADOS) - 1)]
     titulo = f"Tareas al {hoy.strftime('%d/%m/%Y')} — Filtros: {filtro}"
-    anchos = [20 * mm, 24 * mm, 40 * mm, 52 * mm, 24 * mm, 28 * mm, 22 * mm, 40 * mm, 18 * mm]
+    anchos = [23 * mm, 22 * mm, 22 * mm, 38 * mm, 43 * mm, 24 * mm, 26 * mm, 20 * mm, 34 * mm, 18 * mm]
     documento.build([_tabla_seccion_pdf(titulo, list(ENCABEZADOS), filas, anchos, estilos)])
     return buffer.getvalue()
