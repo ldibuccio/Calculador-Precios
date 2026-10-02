@@ -258,35 +258,41 @@ con el código arriba, un corte rompe ruidosamente o no rompe nada; con los
 comentarios arriba, el caso silencioso existe. No cuesta nada y se elige una
 sola vez.
 
-### La base de Frutamax se LEE, nunca se escribe (30/09, dueño)
+### Las bases se LEEN por el conector "Supabase Lectura", nunca se escriben (dueño)
 
-Claude tiene acceso de **solo lectura** a Frutamax. Desde la nube es el
-conector MCP "Supabase Lectura" (abajo). En una sesión local es la variable
-`LECTURA_FRUTAMAX_URL`, con el usuario de
-`db/lectura_1_usuario_solo_lectura.sql` (verificación en `lectura_2`), y la
-clave no pasa nunca por el chat.
+Claude lee Frutamax y Palmala por el conector MCP **"Supabase Lectura"**:
+el MCP de Supabase en modo `read_only`. Corre como
+`supabase_read_only_user`, con `transaction_read_only = on` y sin INSERT,
+UPDATE ni DELETE (medido el 02/10 con `has_table_privilege`). Un INSERT
+rebota con `25006: cannot execute INSERT in a read-only transaction`.
 
-- **Sirve para verificar consultas contra los datos reales** antes de
-  mandarlas o de citar un número (corolario 85: la colisión va ANTES de leer
-  el número). El resultado se cita con la base y la fecha al lado.
-- **Las migraciones las sigue corriendo el dueño**, en el editor de Supabase
-  y en las dos bases, igual que antes. Claude no escribe, aunque pudiera, y
-  el usuario no puede: solo tiene SELECT, y eso lo sostienen los permisos,
-  no el `default_transaction_read_only`, que el mismo usuario se puede sacar.
-- **Palmala no tiene este acceso.** Ahí sigue todo por el dueño.
-- **DESDE LA NUBE SE LEE POR EL CONECTOR MCP "Supabase Lectura"** (dueño,
-  02/10), proyecto `opivgeqpjgtlduxcozqz`. Es el MCP de Supabase en modo
-  `read_only`: corre como `supabase_read_only_user`, con
-  `transaction_read_only = on` y sin permiso de INSERT, UPDATE ni DELETE
-  (medido el 02/10 con `has_table_privilege` sobre `tareas`). Un INSERT
-  rebota con `25006: cannot execute INSERT in a read-only transaction`.
+| base | proyecto |
+|---|---|
+| Frutamax | `opivgeqpjgtlduxcozqz` |
+| Palmala | `uygzmbqwharuhtnzqwpp` ("Palmala USA") |
+
+- **"Verificado contra Frutamax" o "contra Palmala" quiere decir por el
+  conector "Supabase Lectura"** (dueño, 02/10). Cualquier otra cosa (un
+  fixture, el esquema del repo, una consulta que no se corrió) no se cita
+  así. El resultado va con la base y la fecha al lado.
 - **El conector "Supabase" (el que ESCRIBE) no se usa nunca, ni para leer.**
   Leer por el que escribe deja una escritura a un error de tipeo.
+- **Sirve para verificar consultas contra los datos reales** antes de
+  mandarlas o de citar un número (corolario 85: la colisión va ANTES de leer
+  el número).
+- **LAS MIGRACIONES (dueño, 02/10)**: Claude le manda el bloque a Lionel,
+  Lionel lo corre en el editor de Supabase en las dos bases, y Claude corre
+  la verificación por el conector, la anota en `db/corridas_confirmadas.md`
+  con la fila de cada base y mergea. El dueño sigue verificando aparte.
+  Claude no corre migraciones: el conector no puede, y aunque pudiera.
 - **`LECTURA_FRUTAMAX_URL` queda solo para sesiones LOCALES.** Desde la nube
   no conecta: apunta al pooler por TCP al 5432 y el proxy del contenedor no
-  deja pasar bases de datos por TCP crudo. Su usuario es `lectura_claudia`,
-  y la migración crea `lectura_claude`: ese rol se creó por otro lado y
-  `lectura_2` no lo verifica.
+  deja pasar bases de datos por TCP crudo. Su usuario es `lectura_claudia`
+  (`db/lectura_1_usuario_solo_lectura.sql`, verificación en `lectura_2`,
+  creado el 02/10, solo en Frutamax), y la clave no pasa nunca por el chat.
+  **Ojo: no tiene `bypassrls`**, así que en las 55 tablas con RLS y sin
+  política (`compras`, `pedidos`, `movimientos_stock`…) lee CERO filas sin
+  error. Ver `db/corridas_confirmadas.md`, 02/10.
 
 ## Un `if not exists` sobre CONTENIDO es una trampa, no una protección
 
@@ -483,7 +489,9 @@ De acá en adelante, después de cualquier push que se dé por desplegado:
    es el de siempre: sello, suite y humo, push, PR, CI verde, merge por rebase,
    y después la `conclusion` del CI de `main`. Si el PR trae una migración (un
    `.sql` que cambia el esquema o los datos y lo corre Lionel), no se mergea
-   hasta que el dueño la verifique.
+   hasta que esté verificada: desde el 02/10 la verifica Claude por el
+   conector "Supabase Lectura" después de que Lionel la corra, y la anota en
+   `db/corridas_confirmadas.md` (ver "Las bases se LEEN por el conector").
 
    **NADA DE HERRAMIENTAS QUE LE PIDAN PERMISO AL DUEÑO (01/10, dueño).**
    Ni búsqueda de documentación, ni `send_later`, ni ninguna otra que lo

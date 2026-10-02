@@ -914,3 +914,28 @@ PALMALA   tareas_por_sector · columnas 2 · dia_mes_viejo 0 · con_default 0 ·
 `dia_mes` ya no existe y `creada_por` no tiene default: desde acá el código
 siempre dice quién cargó la tarea. La única tarea de Frutamax sigue y no
 cambió. Palmala no vota. Con esto Tareas por sector queda cerrado.
+
+## 02/10 — `lectura_1`: el usuario de solo lectura es `lectura_claudia`
+
+Creado el 02/10 en Frutamax. El rol de la base se llama `lectura_claudia`;
+los `.sql` decían `lectura_claude`, que no existe, y se corrigieron el mismo
+día. La verificación (`lectura_2`, ya corregida) la corrí yo por el conector
+"Supabase Lectura":
+
+```
+FRUTAMAX  lectura_usuario · usuario 1 · ve_todo_rls 0 · tablas_POBLACION 95 · sin_lectura 0 · ESCRIBE 0 · CREA_TABLAS 0 · tablas_futuras 1 · testigo 02/10
+```
+
+Lee todo y no escribe nada: 95 objetos (94 tablas y 1 vista), SELECT en los
+95, ningún INSERT/UPDATE/DELETE/TRUNCATE, no crea tablas, y las tablas
+futuras le llegan con SELECT. Su configuración es `default_transaction_read_only=on`
+y `statement_timeout=60s` (el `.sql` dice 30s).
+
+**`ve_todo_rls 0` NO es lo que pide el `.sql`**, que le pone `bypassrls`. En
+Frutamax hay 55 tablas con RLS y sin ninguna política (`compras`,
+`pedidos`, `movimientos_stock`, `reprocesos`, `fichas_logistica`, entre
+otras), y en esas el permiso de SELECT no alcanza: este usuario recibe cero
+filas sin error. Solo afecta a `LECTURA_FRUTAMAX_URL` en una sesión local;
+el conector corre como `supabase_read_only_user` y ve las filas (855 compras
+el 02/10). Pendiente del dueño, si se va a usar la URL: darle `bypassrls`.
+Palmala no tiene este usuario.
