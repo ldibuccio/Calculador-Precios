@@ -14,7 +14,13 @@ select 'vales_manual' as QUE_MIGRACION,
        (select count(*) from pg_class
          where relname = 'vales_correcciones' and relkind = 'r') as tabla_1,
        (select count(*) from pg_trigger
-         where tgname = 'vale_que_salio_no_se_corrige' and not tgisinternal) as trigger_1,
+         where tgname in ('vale_que_salio_no_se_corrige', 'vale_que_salio_cambia_de_proveedor')
+           and not tgisinternal) as triggers_de_2,
+       (select count(*) from pg_trigger
+         where tgname = 'vale_que_salio_cambia_de_proveedor'
+           and tgdeferrable and tginitdeferred) as diferido_1,
+       (select count(*) from pg_proc
+         where prosrc like '%juntando_proveedores%') as marca_vieja_0,
        (select count(*) from vales_a_cobrar where origen = 'carga_manual') as manuales_en_0,
        (select count(*) from vales_a_cobrar) as POBLACION_vales,
        (select count(*) from vales_a_cobrar where origen = 'anterior_al_sistema')
@@ -25,5 +31,5 @@ select 'vales_manual' as QUE_MIGRACION,
 -- un do, el editor se queda con la ultima y el bloque NO SE EJECUTA.
 --
 -- Esperado en las dos bases: columnas 2 · origen 1 · coherente 1 · checks 3 ·
--- tabla 1 · trigger 1 · manuales 0. La poblacion es la que haya hoy: ninguna
+-- tabla 1 · triggers 2 · diferido 1 · marca_vieja 0 · manuales 0. La poblacion es la que haya hoy: ninguna
 -- fila cambia. Palmala no vota: solo confirma que los bloques no explotan.

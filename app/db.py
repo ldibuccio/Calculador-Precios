@@ -1704,9 +1704,10 @@ def juntar_proveedores(queda_id: int, va_id: int) -> dict:
             # proveedor (los de una devolución lo leen de ella, que ya se movió
             # arriba). Se mueven también los que ya salieron de la cartera: no
             # es corregir el vale, es el mismo proveedor con dos fichas. La
-            # pared `vale_que_salio_no_se_corrige` (db/vales_manual_3) deja
-            # pasar ESTA transacción por la marca de abajo.
-            cursor.execute("SET LOCAL app.juntando_proveedores = 'si'")
+            # base lo deja porque el trigger diferido
+            # `vale_que_salio_cambia_de_proveedor` (db/vales_manual_3) mira al
+            # cerrar la transacción, y para entonces el DELETE de abajo ya
+            # borró al que se va. Sin marca ni excepción: es la misma regla.
             cursor.execute(
                 "UPDATE vales_a_cobrar SET proveedor_id = %(queda)s WHERE proveedor_id = %(va)s",
                 parametros,
@@ -18403,6 +18404,11 @@ def corregir_vale(vale_id: int, *, importe: float, numero: str | None, fecha: da
             if not cambios:
                 raise ValueError("No cambió nada.")
             try:
+                # El proveedor lo cuida un trigger DIFERIDO (salta al cerrar la
+                # transacción, para dejar pasar a juntar). Acá no se borra
+                # ningún proveedor, así que se lo pide en el momento: rebota en
+                # este UPDATE y se traduce abajo, en vez de en el commit.
+                cursor.execute("SET CONSTRAINTS vale_que_salio_cambia_de_proveedor IMMEDIATE")
                 cursor.execute(
                     "UPDATE vales_a_cobrar SET importe = %s, numero = %s, fecha = %s, proveedor_id = %s "
                     "WHERE id = %s",

@@ -158,6 +158,75 @@ def test_GERENCIA_corrige_con_HISTORIAL_y_un_vale_que_SALIO_no_se_corrige(base):
         d.corregir_vale(vale_id, importe=1.0, numero=None, fecha=date(2026, 9, 2), proveedor_id=2, hoy=HOY)
     with pytest.raises(psycopg2.errors.CheckViolation):
         sql("UPDATE vales_a_cobrar SET importe = 1 WHERE id = %s", (vale_id,))
+    # Solo el proveedor: lo cuida el trigger DIFERIDO, y la función lo pide en
+    # el momento, así que también se traduce (y no revienta en el commit).
+    with pytest.raises(d.ValeNoSeCorrige, match="ya salió"):
+        d.corregir_vale(vale_id, importe=5500.0, numero=None, fecha=date(2026, 9, 2), proveedor_id=1, hoy=HOY)
+    # A mano, sin borrar al proveedor viejo: rebota al cerrar la transacción.
+    with pytest.raises(psycopg2.errors.CheckViolation):
+        sql("UPDATE vales_a_cobrar SET proveedor_id = 1 WHERE id = %s", (vale_id,))
+    assert sql("SELECT importe, proveedor_id FROM vales_a_cobrar WHERE id = %s", (vale_id,)) == [(5500, 2)]
+
+
+def _vale_cobrado_de_un_proveedor_nuevo(d, sql):
+    """Un proveedor propio del test, para poder borrarlo sin arrastrar la siembra."""
+    (prov,) = sql("INSERT INTO proveedores (id, nombre, codigo_puesto) OVERRIDING SYSTEM VALUE VALUES (93, 'EJ Tres', 'N92P93') RETURNING id")[0]
+    vale_id = _cargar(d, proveedor=prov)
+    d.registrar_salida_de_vale(vale_id, "cobrado", date(2026, 9, 10), sector="administracion", hoy=HOY,
+                               importe_cobrado=5000.0, ingreso_a_caja=None)
+    return prov, vale_id
+
+
+def _en_una_transaccion(d, *sentencias):
+    conexion = d.obtener_conexion()
+    try:
+        with conexion.cursor() as cursor:
+            for consulta, parametros in sentencias:
+                cursor.execute(consulta, parametros)
+        conexion.commit()
+    finally:
+        conexion.close()
+
+
+def test_un_vale_que_SALIO_cambia_de_proveedor_SOLO_si_el_viejo_DESAPARECE_en_la_misma_transaccion(base):
+    """La regla que deja pasar a juntar, sin marca ni excepción: el proveedor
+    viejo tiene que no existir al cerrar. Importe, número y fecha, nunca."""
+    import psycopg2
+    d, sql = base
+    prov, vale_id = _vale_cobrado_de_un_proveedor_nuevo(d, sql)
+    mover = ("UPDATE vales_a_cobrar SET proveedor_id = 1 WHERE id = %s", (vale_id,))
+    borrar = ("DELETE FROM proveedores WHERE id = %s", (prov,))
+    # Mover Y tocar el importe, aunque el viejo se borre: rebota.
+    with pytest.raises(psycopg2.errors.CheckViolation):
+        _en_una_transaccion(d, ("UPDATE vales_a_cobrar SET proveedor_id = 1, importe = 9 WHERE id = %s",
+                                (vale_id,)), borrar)
+    # Mover sin borrar al viejo: rebota.
+    with pytest.raises(psycopg2.errors.CheckViolation):
+        _en_una_transaccion(d, mover)
+    assert sql("SELECT proveedor_id, importe FROM vales_a_cobrar WHERE id = %s", (vale_id,)) == [(prov, 5000)]
+    # Mover y borrar al viejo, juntos: pasa.
+    _en_una_transaccion(d, mover, borrar)
+    assert sql("SELECT proveedor_id, importe FROM vales_a_cobrar WHERE id = %s", (vale_id,)) == [(1, 5000)]
+
+
+def test_la_MARCA_vieja_de_juntar_ya_NO_ABRE_NADA(base):
+    """Hasta el 02/10 la pared dejaba pasar a cualquier transacción que hiciera
+    `set local app.juntando_proveedores = 'si'`. Ya no existe: ponerla no
+    cambia nada, y ningún código la nombra."""
+    import glob
+    import psycopg2
+    d, sql = base
+    prov, vale_id = _vale_cobrado_de_un_proveedor_nuevo(d, sql)
+    with pytest.raises(psycopg2.errors.CheckViolation):
+        _en_una_transaccion(d, ("SET LOCAL app.juntando_proveedores = 'si'", None),
+                            ("UPDATE vales_a_cobrar SET importe = 9 WHERE id = %s", (vale_id,)))
+    with pytest.raises(psycopg2.errors.CheckViolation):
+        _en_una_transaccion(d, ("SET LOCAL app.juntando_proveedores = 'si'", None),
+                            ("UPDATE vales_a_cobrar SET proveedor_id = 1 WHERE id = %s", (vale_id,)))
+    archivos = [a for patron in ("app/*.py", "core/*.py", "db/esquema_completo.sql", "db/vales_manual_[123]_*.sql")
+                for a in glob.glob(os.path.join(RAIZ, patron))]
+    assert len(archivos) > 5
+    assert [a for a in archivos if "juntando_proveedores" in io.open(a, encoding="utf-8").read()] == []
 
 
 def test_un_vale_de_DEVOLUCION_no_se_corrige_aca(base):
@@ -197,7 +266,7 @@ def test_juntar_proveedores_MUEVE_tambien_el_vale_que_ya_salio(base):
     d.registrar_salida_de_vale(vale_id, "cobrado", date(2026, 9, 10), sector="administracion", hoy=HOY,
                                importe_cobrado=5000.0, ingreso_a_caja=None)
     d.juntar_proveedores(1, 2)
-    assert sql("SELECT proveedor_id FROM vales_a_cobrar WHERE id = %s", (vale_id,)) == [(1,)]
+    assert sql("SELECT proveedor_id, importe FROM vales_a_cobrar WHERE id = %s", (vale_id,)) == [(1, 5000)]
 
 
 def test_el_LISTADO_y_MOVIMIENTOS_filtran_por_ORIGEN_y_el_Excel_lo_dice(base, monkeypatch):

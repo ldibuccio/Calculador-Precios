@@ -4611,10 +4611,17 @@ Lo cuida `tests/test_vales_a_cobrar.py`, contra Postgres.
   número, fecha y proveedor, con historial en `vales_correcciones` (campo,
   anterior, nuevo, fecha y sector), igual que el número de remito. El detalle
   lo muestra en la historia.
-- **Un vale que salió (cobrado o cruzado) no se corrige**: lo frena el
-  trigger `vale_que_salio_no_se_corrige`. La excepción es juntar dos
-  proveedores, que mueve también los que salieron: su transacción hace
-  `SET LOCAL app.juntando_proveedores = 'si'` y la pared la deja pasar.
+- **Un vale que salió (cobrado o cruzado) no se corrige**, y lo decide la
+  base con dos triggers. Importe, número y fecha: nunca
+  (`vale_que_salio_no_se_corrige`, en el momento). El proveedor: solo si al
+  CERRAR la transacción el proveedor viejo ya no existe
+  (`vale_que_salio_cambia_de_proveedor`, diferido). Es lo que pasa al juntar
+  dos proveedores, que mueve los vales y borra el que se va en la misma
+  transacción. Sin marca ni excepción (dueño, 02/10): hasta ese día juntar
+  ponía `SET LOCAL app.juntando_proveedores = 'si'` y la pared dejaba pasar
+  los cuatro campos; un test exige que esa marca no exista más.
+  `corregir_vale` pide el diferido en el momento (`SET CONSTRAINTS ...
+  IMMEDIATE`), así rebota en el UPDATE y se traduce, en vez de en el commit.
 - **El listado de Vales y Movimientos (pantalla y Excel) filtran por origen**,
   y el Excel lo dice en el encabezado.
 
