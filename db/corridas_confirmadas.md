@@ -800,3 +800,20 @@ FRUTAMAX  devolucion_valor_2 · atada 1 · sin_proveedor_suelto 1 · compra 807 
 suelto sino a la compra 807. El valor nuevo es 10 × $60.000, el precio por
 cajón de la compra, y no 10 × $59.822,75 del armado. La población son los 10
 rechazos al proveedor no anulados de la base.
+
+## 02/10 — `devolucion_valor_2` dos veces más: los movimientos 138 y 137 atados a su compra
+
+Corridos por el dueño SOLO en Frutamax, con el mismo bloque de
+`devolucion_valor_2` cambiando el movimiento, el renglón y la compra.
+Verificados por el Claude con acceso de lectura:
+
+```
+FRUTAMAX  movimiento 138 · Arándano · renglón 1786 (armado 17/09) · compra 656 · atada · sin proveedor suelto · no anulado · 10 × $22.000 = $220.000
+FRUTAMAX  movimiento 137 · Arándano · renglón 1785 (armado 18/09) · compra 709 · atada · sin proveedor suelto · no anulado · 10 × $22.000 = $220.000
+FRUTAMAX  población de rechazos al proveedor 10 · con compra 4 (137, 138, 170 y 199)
+```
+
+La compra del 138 es la 656 porque era la única compra de Arándano de
+FRUTAMAX recibida al momento del armado. La del 137 la eligió Lionel: la
+709, a $22.000; la otra opción era la 704, a $20.000. Quedan 6 rechazos al
+proveedor sin compra atada, y esos siguen valiendo el costo del armado.
