@@ -1700,8 +1700,13 @@ def juntar_proveedores(queda_id: int, va_id: int) -> dict:
                     "UPDATE vacios_deposito_foto SET proveedor_id = %(queda)s WHERE proveedor_id = %(va)s",
                     parametros,
                 )
-            # Los vales anteriores al sistema nombran al proveedor (los de una
-            # devolución lo leen de ella, que ya se movió arriba).
+            # Los vales anteriores al sistema y los de carga manual nombran al
+            # proveedor (los de una devolución lo leen de ella, que ya se movió
+            # arriba). Se mueven también los que ya salieron de la cartera: no
+            # es corregir el vale, es el mismo proveedor con dos fichas. La
+            # pared `vale_que_salio_no_se_corrige` (db/vales_manual_3) deja
+            # pasar ESTA transacción por la marca de abajo.
+            cursor.execute("SET LOCAL app.juntando_proveedores = 'si'")
             cursor.execute(
                 "UPDATE vales_a_cobrar SET proveedor_id = %(queda)s WHERE proveedor_id = %(va)s",
                 parametros,
@@ -17905,12 +17910,19 @@ def _anular(tabla: str, fila_id: int, que: str, anulado: str, guarda=None) -> No
 #                        devolución: escritos una vez.
 #   anterior_al_sistema  los vales en papel de antes, cargados por SQL
 #                        (db/vales_carga_2_cargar.sql). Traen lo suyo.
+#   carga_manual         un vale en papel dado de alta desde la pantalla
+#                        (dueño, 02/10), con la misma forma que el anterior y
+#                        además quién lo cargó (`cargado_desde`) y una nota.
+#                        Sin devolución ni movimiento de cajones.
 #
 # Y sale de la cartera por UNA salida (cobrado o cruzado), o porque se anuló
 # la devolución de la que nació. Un vale NO se anula (dueño, 01/10). NADA DE ESTO TOCA EL STOCK.
 # ============================================================================
 
-ORIGENES_DEL_VALE = ("devolucion", "anterior_al_sistema")
+ORIGENES_DEL_VALE = ("devolucion", "anterior_al_sistema", "carga_manual")
+# Los que traen sus propios datos (proveedor, fecha, importe): son los únicos
+# que Gerencia puede corregir. El de una devolución los lee de ella.
+ORIGENES_CON_DATOS_PROPIOS = ("anterior_al_sistema", "carga_manual")
 TIPOS_DE_SALIDA_DEL_VALE = ("cobrado", "cruzado", "anulado")
 ESTADOS_DEL_VALE = ("en_cartera",) + TIPOS_DE_SALIDA_DEL_VALE + ("devolucion_anulada",)
 
@@ -17945,7 +17957,7 @@ COLUMNAS_DEL_VALE = (
     "fecha", "importe", "importe_calculado", "numero", "foto_ruta", "cargada_desde",
     "devolucion_anulada_el", "creado_en", "estado",
     "salida_fecha", "importe_cobrado", "ingreso_a_caja", "referencia", "motivo",
-    "salida_sector", "salida_creado_en", "fotos_anexadas", "dias",
+    "salida_sector", "salida_creado_en", "fotos_anexadas", "nota", "dias",
 )
 
 _SQL_VALES = f"""
@@ -17956,12 +17968,14 @@ _SQL_VALES = f"""
                COALESCE(v.fecha, (d.creado_en AT TIME ZONE 'America/Argentina/Buenos_Aires')::date)
                    AS fecha,
                COALESCE(v.importe, d.importe) AS importe, v.importe_calculado, v.numero,
-               COALESCE(v.foto_ruta, d.foto_ruta) AS foto_ruta, d.cargada_desde,
+               COALESCE(v.foto_ruta, d.foto_ruta) AS foto_ruta,
+               COALESCE(v.cargado_desde, d.cargada_desde) AS cargada_desde,
                d.anulado_el AS devolucion_anulada_el, v.creado_en,
                {_SQL_ESTADO_DEL_VALE} AS estado,
                s.fecha AS salida_fecha, s.importe_cobrado, s.ingreso_a_caja, s.referencia,
                s.motivo, s.sector AS salida_sector, s.creado_en AS salida_creado_en,
-               (SELECT count(*) FROM vales_a_cobrar_fotos fa WHERE fa.vale_id = v.id) AS fotos_anexadas
+               (SELECT count(*) FROM vales_a_cobrar_fotos fa WHERE fa.vale_id = v.id) AS fotos_anexadas,
+               v.nota
           FROM vales_a_cobrar v
           LEFT JOIN vacios_deposito_devoluciones d ON d.id = v.devolucion_id
           JOIN proveedores p ON p.id = COALESCE(v.proveedor_id, d.proveedor_id)
@@ -18018,7 +18032,7 @@ def _vale_de_fila(fila, hoy: date) -> dict:
 
 def listar_vales(*, estado: str | None = "en_cartera", proveedor_id: int | None = None,
                  desde: date | None = None, hasta: date | None = None,
-                 mas_de_dias: int | None = None, hoy: date) -> list[dict]:
+                 mas_de_dias: int | None = None, hoy: date, origen: str | None = None) -> list[dict]:
     """Los vales, del más viejo al más nuevo. `estado` None es todos.
 
     `mas_de_dias` se mide contra `hoy` (los días en cartera), así que junto con
@@ -18031,6 +18045,9 @@ def listar_vales(*, estado: str | None = "en_cartera", proveedor_id: int | None 
     if proveedor_id is not None:
         condiciones.append("x.proveedor_id = %s")
         parametros.append(proveedor_id)
+    if origen is not None:
+        condiciones.append("x.origen = %s")
+        parametros.append(origen)
     if desde is not None:
         condiciones.append("x.fecha >= %s")
         parametros.append(desde)
@@ -18185,12 +18202,12 @@ def registrar_salida_de_vale(vale_id: int, tipo: str, fecha: date, *, sector: st
 # lo que salió (por la fecha de la salida). Sale de `_SQL_VALES`, así que un
 # vale y su movimiento no pueden decir cosas distintas.
 def movimientos_de_vales(desde: date, hasta: date, *, proveedor_id: int | None,
-                         hoy: date) -> list[dict]:
+                         hoy: date, origen: str | None = None) -> list[dict]:
     """Una fila por hecho en la ventana: "entrada" o la salida, del más viejo al más nuevo.
 
     La devolución anulada es también un movimiento: saca el vale de la cartera.
     """
-    vales = listar_vales(estado=None, proveedor_id=proveedor_id, hoy=hoy)
+    vales = listar_vales(estado=None, proveedor_id=proveedor_id, hoy=hoy, origen=origen)
     movimientos = []
     for v in vales:
         if v["fecha"] and desde <= v["fecha"] <= hasta:
@@ -18275,6 +18292,153 @@ def fotos_del_vale(vale_id: int) -> list[dict]:
     finally:
         conexion.close()
     return [{"que": f[0], "id": f[1], "ruta": f[2], "creado_en": f[3], "sector": f[4]} for f in filas]
+
+
+# CARGA MANUAL DE UN VALE (dueño, 02/10): un vale en papel dado de alta desde
+# la pantalla, sin devolución detrás. NO toca el stock, ni los cajones, ni
+# Vacíos: es una fila en `vales_a_cobrar` y nada más.
+
+def vales_parecidos(proveedor_id: int, numero: str | None, fecha: date, importe: float) -> list[dict]:
+    """Los vales que podrían ser el MISMO que se está por cargar, de cualquier
+    origen y estado. Con número: el mismo proveedor y el mismo número (sin
+    mayúsculas ni espacios de más). Sin número: el mismo proveedor, fecha e
+    importe. La pantalla avisa y pide confirmación; no frena."""
+    numero = (numero or "").strip() or None
+    if numero is not None:
+        filtro, parametros = "x.proveedor_id = %s AND upper(btrim(x.numero)) = upper(%s)", (proveedor_id, numero)
+    else:
+        filtro, parametros = "x.proveedor_id = %s AND x.fecha = %s AND x.importe = %s", (proveedor_id, fecha, importe)
+    conexion = obtener_conexion()
+    try:
+        with conexion.cursor() as cursor:
+            cursor.execute(_SQL_VALES + " WHERE " + filtro + " ORDER BY x.id", parametros)
+            filas = cursor.fetchall()
+    finally:
+        conexion.close()
+    return [_vale_de_fila(f, fecha) for f in filas]
+
+
+def cargar_vale_manual(proveedor_id: int, fecha: date, importe: float, *, numero: str | None,
+                       foto_ruta: str | None, nota: str | None, sector: str, hoy: date) -> int:
+    """Da de alta un vale en cartera con origen 'carga_manual'. Devuelve el id.
+    Quién y cuándo: el sector y `creado_en`."""
+    if importe is None or importe <= 0:
+        raise ValueError("El importe tiene que ser mayor que cero.")
+    if fecha > hoy:
+        raise ValueError("La fecha del vale no puede ser posterior a hoy.")
+    conexion = obtener_conexion()
+    try:
+        with conexion.cursor() as cursor:
+            cursor.execute(
+                "INSERT INTO vales_a_cobrar (origen, proveedor_id, fecha, importe, numero, foto_ruta, "
+                "nota, cargado_desde) VALUES ('carga_manual', %s, %s, %s, %s, %s, %s, %s) RETURNING id",
+                (proveedor_id, fecha, importe, (numero or "").strip() or None, foto_ruta,
+                 (nota or "").strip() or None, sector),
+            )
+            (vale_id,) = cursor.fetchone()
+        conexion.commit()
+        return vale_id
+    finally:
+        conexion.close()
+
+
+class ValeNoSeCorrige(ValueError):
+    """El vale ya salió de la cartera, o lee sus datos de una devolución."""
+
+
+def _texto_del_valor(campo: str, valor, cursor) -> str | None:
+    if valor is None:
+        return None
+    if campo == "proveedor":
+        cursor.execute("SELECT codigo_puesto, nombre FROM proveedores WHERE id = %s", (valor,))
+        fila = cursor.fetchone()
+        return f"{fila[0]} · {fila[1]}" if fila else f"#{valor}"
+    if campo == "fecha":
+        return valor.isoformat()
+    if campo == "importe":
+        return f"{float(valor):.2f}"
+    return str(valor)
+
+
+def corregir_vale(vale_id: int, *, importe: float, numero: str | None, fecha: date,
+                  proveedor_id: int, hoy: date) -> int:
+    """Gerencia corrige un vale cargado mal. Se pasan los cuatro valores como
+    tienen que quedar; se escribe lo que cambió, una fila de historial por
+    campo. Devuelve cuántos cambiaron. Un vale no se anula: se corrige.
+
+    Solo un vale EN CARTERA con datos propios (anterior al sistema o carga
+    manual). Que no haya salido lo decide la base
+    (`vale_que_salio_no_se_corrige`, db/vales_manual_3) y acá se traduce."""
+    if importe is None or importe <= 0:
+        raise ValueError("El importe tiene que ser mayor que cero.")
+    if fecha > hoy:
+        raise ValueError("La fecha del vale no puede ser posterior a hoy.")
+    numero = (numero or "").strip() or None
+    conexion = obtener_conexion()
+    try:
+        with conexion.cursor() as cursor:
+            cursor.execute(
+                "SELECT v.origen, v.importe, v.numero, v.fecha, v.proveedor_id "
+                "FROM vales_a_cobrar v WHERE v.id = %s FOR UPDATE",
+                (vale_id,),
+            )
+            fila = cursor.fetchone()
+            if fila is None:
+                raise ValueError("Ese vale no existe.")
+            origen, *antes = fila
+            if origen not in ORIGENES_CON_DATOS_PROPIOS:
+                raise ValeNoSeCorrige("Este vale nace de una devolución de vacíos: sus datos se "
+                                      "corrigen en la devolución, no acá.")
+            # Si ya salió de la cartera lo decide la BASE, no una pregunta
+            # previa: el UPDATE de abajo rebota y acá se traduce.
+            nuevos = (importe, numero, fecha, proveedor_id)
+            campos = ("importe", "numero", "fecha", "proveedor")
+            cambios = []
+            for campo, viejo, nuevo in zip(campos, antes, nuevos):
+                igual = (round(float(viejo), 2) == round(float(nuevo), 2)) if campo == "importe" \
+                    else viejo == nuevo
+                if not igual:
+                    cambios.append((campo, _texto_del_valor(campo, viejo, cursor),
+                                    _texto_del_valor(campo, nuevo, cursor)))
+            if not cambios:
+                raise ValueError("No cambió nada.")
+            try:
+                cursor.execute(
+                    "UPDATE vales_a_cobrar SET importe = %s, numero = %s, fecha = %s, proveedor_id = %s "
+                    "WHERE id = %s",
+                    (importe, numero, fecha, proveedor_id, vale_id),
+                )
+            except psycopg2.errors.CheckViolation as error:
+                conexion.rollback()
+                if error.diag.constraint_name == "vale_que_salio_no_se_corrige":
+                    raise ValeNoSeCorrige("Este vale ya salió de la cartera (cobrado o cruzado): "
+                                          "no se corrige.") from error
+                raise
+            for campo, anterior, nuevo in cambios:
+                cursor.execute(
+                    "INSERT INTO vales_correcciones (vale_id, campo, valor_anterior, valor_nuevo, sector) "
+                    "VALUES (%s, %s, %s, %s, 'gerencia')",
+                    (vale_id, campo, anterior, nuevo),
+                )
+        conexion.commit()
+        return len(cambios)
+    finally:
+        conexion.close()
+
+
+def correcciones_del_vale(vale_id: int) -> list[dict]:
+    conexion = obtener_conexion()
+    try:
+        with conexion.cursor() as cursor:
+            cursor.execute(
+                "SELECT campo, valor_anterior, valor_nuevo, sector, creado_en FROM vales_correcciones "
+                "WHERE vale_id = %s ORDER BY creado_en, id",
+                (vale_id,),
+            )
+            columnas = [d[0] for d in cursor.description]
+            return [dict(zip(columnas, f)) for f in cursor.fetchall()]
+    finally:
+        conexion.close()
 
 
 def anexar_fotos_al_vale(vale_id: int, rutas: list[str], *, sector: str) -> int:

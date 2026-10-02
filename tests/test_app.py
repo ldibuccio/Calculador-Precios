@@ -30645,6 +30645,8 @@ PANTALLAS_SIN_LINK_DECIDIDAS = {
     "/gerencia/auditoria": "301 a /auditoria — es la URL vieja, no una pantalla",
     "/deposito/stock/reproceso/desglose": "JSON que pide el JS, no es una pantalla",
     "/deposito/ingresar/parecidos": "JSON que pide el JS del ingreso directo, no es una pantalla",
+    "/administracion/vales/cargar/parecidos": "JSON que pide el JS de Cargar vale, no es una pantalla",
+    "/gerencia/vales/cargar/parecidos": "JSON que pide el JS de Cargar vale, no es una pantalla",
     "/compras/que-comprar/pdf":
         "llega por el 303 del POST: el botón guarda primero (test_que_comprar_pdf.py)",
     "/administracion/precios-por-periodo/exportar-excel":

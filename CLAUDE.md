@@ -4572,7 +4572,10 @@ textos y el Excel en `core/vales.py`.
 - **Los CHECK con `importe > 0` van con `coalesce(..., false)`**: sin eso, un
   importe vacío da NULL y el CHECK deja pasar (corolario 67). Lo agarró el
   test que planta el caso, no la lectura.
-- **Vales en papel**: `vales_papel_listado` es donde se pega el listado
+- **Vales en papel**: **OBSOLETO desde el 02/10** (dueño): los vales en papel
+  se cargan desde la pantalla ("Cargar vale", ver abajo), y
+  `db/vales_papel_1_pegar.sql` no se corre más. Lo que sigue es cómo
+  funcionaba: `vales_papel_listado` es donde se pega el listado
   (`db/vales_papel_1_pegar.sql`, hasta 35 filas por corrida), y la vista
   `vales_papel_revision` dice fila por fila a qué proveedor va y qué tiene
   mal. La regla vive una vez, en la vista, y la leen la revisión (paso 2) y
@@ -4584,6 +4587,39 @@ textos y el Excel en `core/vales.py`.
 - **NADA DE ESTO TOCA EL STOCK.**
 
 Lo cuida `tests/test_vales_a_cobrar.py`, contra Postgres.
+
+### Cargar un vale a mano, y corregirlo (02/10, dueño)
+
+- **"Cargar vale"** (`/administracion/vales/cargar` y `/gerencia/vales/cargar`):
+  código de puesto (principal o alternativo; si no, se elige el proveedor de
+  la lista), fecha, importe, número, foto y nota opcionales. La foto va al
+  bucket "comandas", prefijo de vales. **Es un origen NUEVO, `carga_manual`**,
+  y no `anterior_al_sistema`: ése queda para lo que se cargó por SQL, que no
+  dice quién. El de carga manual guarda el sector en `cargado_desde` (la base
+  lo exige: `vales_carga_manual_con_sector`) y la nota en `nota`. Entra en
+  cartera como cualquier vale y **no toca stock, ni cajones, ni Vacíos**: es
+  una fila en `vales_a_cobrar` y nada más (lo cuida un test que cuenta las
+  tablas que no se pueden mover).
+- **Duplicados: avisa y pide confirmación, no frena.** Con número: el mismo
+  proveedor y el mismo número (sin mayúsculas ni espacios de más). Sin
+  número: el mismo proveedor, fecha e importe (`vales_parecidos`). La pantalla
+  pregunta ANTES de enviar (`/vales/cargar/parecidos`), porque un formulario
+  que vuelve del servidor no trae la foto; el POST vuelve a preguntar.
+- **Un vale no se anula, se CORRIGE** (`corregir_vale`), solo Gerencia, y
+  solo uno EN CARTERA con datos propios (anterior al sistema o carga manual).
+  El de una devolución lee sus datos de ella y se corrige allá. Importe,
+  número, fecha y proveedor, con historial en `vales_correcciones` (campo,
+  anterior, nuevo, fecha y sector), igual que el número de remito. El detalle
+  lo muestra en la historia.
+- **Un vale que salió (cobrado o cruzado) no se corrige**: lo frena el
+  trigger `vale_que_salio_no_se_corrige`. La excepción es juntar dos
+  proveedores, que mueve también los que salieron: su transacción hace
+  `SET LOCAL app.juntando_proveedores = 'si'` y la pared la deja pasar.
+- **El listado de Vales y Movimientos (pantalla y Excel) filtran por origen**,
+  y el Excel lo dice en el encabezado.
+
+Migraciones `db/vales_manual_1` a `_3`, verificación en `_4`. Lo cuida
+`tests/test_vales_carga_manual.py`, contra Postgres.
 
 ## FOTOS: LA REGLA DE 3 AÑOS Y LAS ANEXADAS DE UN VALE (30/09, dueño)
 

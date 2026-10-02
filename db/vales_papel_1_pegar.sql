@@ -25,3 +25,6 @@ insert into vales_papel_listado (fila, codigo, fecha, importe, numero, foto) val
 --
 -- Esto no carga ningun vale todavia: solo deja el listado para revisar.
 -- Paso 2: vales_papel_2_revisar.sql.
+--
+-- OBSOLETO DESDE EL 02/10 (duenio): los vales en papel se cargan desde la
+-- pantalla de Vales ("Cargar vale"). Este archivo no se corre mas.

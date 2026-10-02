@@ -68,10 +68,17 @@
           {% endfor %}
         </select>
       </label>
+      <label>Origen
+        <select name="origen">
+          {% for valor, texto in opciones_de_origen %}
+          <option value="{{ valor }}" {% if (filtros.origen or '') == valor %}selected{% endif %}>{{ texto }}</option>
+          {% endfor %}
+        </select>
+      </label>
     </div>
     <div class="acciones">
       <button type="submit">Filtrar</button>
-      {% set consulta = "desde=" ~ filtros.desde.isoformat() ~ "&hasta=" ~ filtros.hasta.isoformat() ~ "&proveedor_id=" ~ (filtros.proveedor_id or '') %}
+      {% set consulta = "desde=" ~ filtros.desde.isoformat() ~ "&hasta=" ~ filtros.hasta.isoformat() ~ "&proveedor_id=" ~ (filtros.proveedor_id or '') ~ "&origen=" ~ (filtros.origen or '') %}
       {% if not filtros.error and camino.sector == 'gerencia' %}<a href="/gerencia/vales/movimientos-excel?{{ consulta }}">Bajar Excel</a>
       {% elif not filtros.error %}<a href="/administracion/vales/movimientos-excel?{{ consulta }}">Bajar Excel</a>{% endif %}
     </div>

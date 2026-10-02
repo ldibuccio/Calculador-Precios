@@ -1000,7 +1000,8 @@ comment on table vacios_deposito_arranque_pilas is 'Lo contado en cada PILA (pro
 -- VALES A COBRAR (dueño, 30/09). Ver db/vales_1..4.
 create table vales_a_cobrar (
   id bigint generated always as identity primary key,
-  origen text not null check (origen in ('devolucion', 'anterior_al_sistema')),
+  origen text not null constraint vales_a_cobrar_origen_check
+    check (origen in ('devolucion', 'anterior_al_sistema', 'carga_manual')),
   devolucion_id bigint unique references vacios_deposito_devoluciones (id),
   proveedor_id bigint references proveedores (id),
   fecha date,
@@ -1009,14 +1010,21 @@ create table vales_a_cobrar (
   numero text,
   foto_ruta text,
   creado_en timestamptz not null default now(),
+  -- db/vales_manual_1 (02/10): quién cargó un vale de carga manual, y su nota.
+  cargado_desde text,
+  nota text,
   constraint vales_origen_coherente check (
     (origen = 'devolucion' and devolucion_id is not null
       and proveedor_id is null and fecha is null
       and importe is null and foto_ruta is null)
-    or (origen = 'anterior_al_sistema' and devolucion_id is null
+    or (origen in ('anterior_al_sistema', 'carga_manual') and devolucion_id is null
       and proveedor_id is not null and fecha is not null
       and coalesce(importe > 0, false) and importe_calculado is null)),
-  constraint vales_numero_no_vacio check (numero is null or btrim(numero) <> '')
+  constraint vales_numero_no_vacio check (numero is null or btrim(numero) <> ''),
+  constraint vales_carga_manual_con_sector check (
+    (origen = 'carga_manual') = (cargado_desde is not null)
+    and (cargado_desde is null or cargado_desde in ('administracion', 'gerencia'))),
+  constraint vales_nota_no_vacia check (nota is null or btrim(nota) <> '')
 );
 create index vales_a_cobrar_proveedor on vales_a_cobrar (proveedor_id);
 comment on table vales_a_cobrar is
@@ -2098,3 +2106,33 @@ end $f$;
 create trigger segunda_cobrada_no_se_anula
   before update of anulado_el on remitos_segunda
   for each row execute function segunda_cobrada_no_se_anula();
+
+-- VALES, CARGA MANUAL (dueño, 02/10): db/vales_manual_2 y _3.
+create table vales_correcciones (
+    id             bigint generated always as identity primary key,
+    vale_id        bigint not null references vales_a_cobrar (id),
+    campo          text not null check (campo in ('importe', 'numero', 'fecha', 'proveedor')),
+    valor_anterior text,
+    valor_nuevo    text,
+    sector         text not null check (sector = 'gerencia'),
+    creado_en      timestamptz not null default now(),
+    constraint vales_correcciones_distinto check (valor_anterior is distinct from valor_nuevo)
+);
+create index vales_correcciones_por_vale on vales_correcciones (vale_id);
+comment on table vales_correcciones is 'Lo que Gerencia le corrigio a un vale cargado mal (importe, numero, fecha o proveedor): el valor anterior, el nuevo, cuando y el sector. No se borra. Un vale no se anula: se corrige.';
+
+create or replace function vale_que_salio_no_se_corrige() returns trigger
+language plpgsql as $f$
+begin
+  if (new.importe, new.numero, new.fecha, new.proveedor_id)
+     is distinct from (old.importe, old.numero, old.fecha, old.proveedor_id)
+     and coalesce(current_setting('app.juntando_proveedores', true), '') <> 'si'
+     and exists (select 1 from vales_a_cobrar_salidas where vale_id = new.id) then
+    raise exception 'el vale % ya salio de la cartera: no se corrige', new.id
+      using errcode = 'check_violation', constraint = 'vale_que_salio_no_se_corrige';
+  end if;
+  return new;
+end $f$;
+create trigger vale_que_salio_no_se_corrige
+  before update on vales_a_cobrar
+  for each row execute function vale_que_salio_no_se_corrige();

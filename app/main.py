@@ -386,6 +386,12 @@ from app.db import (
     contar_vacios_para_devolver,
     SECTOR_DE_LA_SALIDA,
     salidas_del_vale,
+    correcciones_del_vale,
+    corregir_vale,
+    ValeNoSeCorrige,
+    cargar_vale_manual,
+    vales_parecidos,
+    ORIGENES_CON_DATOS_PROPIOS,
     contar_vales_plata_sin_aplicar,
     contar_vales_viejos,
     foto_del_vale,
@@ -570,6 +576,10 @@ from core.vales import (
     TEXTO_DEL_MOVIMIENTO as TEXTO_DEL_MOVIMIENTO_VALE,
     TEXTO_DEL_ORIGEN as TEXTO_DEL_ORIGEN_VALE,
     TEXTO_DEL_SECTOR as TEXTO_DEL_SECTOR_VALE,
+    TEXTO_DEL_CAMPO as TEXTO_DEL_CAMPO_VALE,
+    OPCIONES_DE_ORIGEN as OPCIONES_DE_ORIGEN_VALE,
+    origen_del_filtro as origen_del_filtro_vales,
+    texto_del_valor_corregido as texto_del_valor_corregido_vale,
     dias_del_filtro as dias_del_filtro_vales,
     estado_del_filtro as estado_del_filtro_vales,
     fecha_del_filtro as fecha_del_filtro_vales,
@@ -20171,8 +20181,10 @@ def _sin_clave_de_vales(request: Request):
     return None
 
 
-def _filtros_de_vales(estado: str, proveedor_id: str, desde: str, hasta: str, mas_de: str) -> dict:
+def _filtros_de_vales(estado: str, proveedor_id: str, desde: str, hasta: str, mas_de: str,
+                      origen: str = "") -> dict:
     return {
+        "origen": origen_del_filtro_vales(origen),
         "estado": estado_del_filtro_vales(estado),
         "estado_texto": estado or "en_cartera",
         "proveedor_id": _id_opcional_desde_query(proveedor_id),
@@ -20190,7 +20202,7 @@ def _renderizar_vales(request: Request, filtros: dict, *, aviso: str | None = No
         resumen = resumen_de_la_cartera(hoy)
         vales = listar_vales(estado=filtros["estado"], proveedor_id=filtros["proveedor_id"],
                              desde=filtros["desde"], hasta=filtros["hasta"],
-                             mas_de_dias=filtros["mas_de"], hoy=hoy)
+                             mas_de_dias=filtros["mas_de"], hoy=hoy, origen=filtros["origen"])
         proveedores = listar_proveedores()
     except Exception as error_db:
         raise HTTPException(status_code=500, detail=f"Error al conectar con la base de datos: {error_db}") from error_db
@@ -20198,6 +20210,7 @@ def _renderizar_vales(request: Request, filtros: dict, *, aviso: str | None = No
         "camino": camino, "resumen": resumen, "vales": vales, "total_filtrado": total_de_vales(vales),
         "filtros": filtros, "proveedores": proveedores,
         "opciones_de_estado": OPCIONES_DE_ESTADO_VALE, "texto_del_estado": TEXTO_DEL_ESTADO_VALE,
+        "opciones_de_origen": OPCIONES_DE_ORIGEN_VALE,
         "texto_del_origen": TEXTO_DEL_ORIGEN_VALE, "texto_de_la_salida": texto_de_la_salida_vale,
         "aviso": aviso, "error": error,
     }, status_code=status_code)
@@ -20206,65 +20219,196 @@ def _renderizar_vales(request: Request, filtros: dict, *, aviso: str | None = No
 @app.get("/administracion/vales")
 @app.get("/gerencia/vales")
 def ver_vales_a_cobrar(request: Request, estado: str = "", proveedor_id: str = "", desde: str = "",
-                       hasta: str = "", mas_de: str = "", aviso: str | None = None,
+                       hasta: str = "", mas_de: str = "", origen: str = "", aviso: str | None = None,
                        error: str | None = None):
     """Vales a cobrar: el total en cartera arriba, y la lista filtrada abajo."""
     sin_clave = _sin_clave_de_vales(request)
     if sin_clave is not None:
         return sin_clave
-    return _renderizar_vales(request, _filtros_de_vales(estado, proveedor_id, desde, hasta, mas_de),
+    return _renderizar_vales(request, _filtros_de_vales(estado, proveedor_id, desde, hasta, mas_de, origen),
                              aviso=aviso, error=error)
 
 
-def _filtros_de_movimientos_de_vales(desde: str, hasta: str, proveedor_id: str) -> dict:
+def _filtros_de_movimientos_de_vales(desde: str, hasta: str, proveedor_id: str, origen: str = "") -> dict:
     """Los mismos para la pantalla y el Excel. La ventana es la de Movimientos
     de vacíos: 30 días por defecto, hasta 90."""
     inicio, fin, error = ventana_de_movimientos_vacios(desde, hasta, _hoy_argentina())
     return {"desde": inicio, "hasta": fin, "error": error,
-            "proveedor_id": _id_opcional_desde_query(proveedor_id)}
+            "proveedor_id": _id_opcional_desde_query(proveedor_id),
+            "origen": origen_del_filtro_vales(origen)}
 
 
 @app.get("/administracion/vales/movimientos")
 @app.get("/gerencia/vales/movimientos")
-def ver_movimientos_de_vales(request: Request, desde: str = "", hasta: str = "", proveedor_id: str = ""):
+def ver_movimientos_de_vales(request: Request, desde: str = "", hasta: str = "", proveedor_id: str = "",
+                             origen: str = ""):
     """Lo que entró a la cartera y lo que salió, por fecha."""
     sin_clave = _sin_clave_de_vales(request)
     if sin_clave is not None:
         return sin_clave
-    filtros = _filtros_de_movimientos_de_vales(desde, hasta, proveedor_id)
+    filtros = _filtros_de_movimientos_de_vales(desde, hasta, proveedor_id, origen)
     try:
         movimientos = [] if filtros["error"] else movimientos_de_vales(
-            filtros["desde"], filtros["hasta"], proveedor_id=filtros["proveedor_id"], hoy=_hoy_argentina())
+            filtros["desde"], filtros["hasta"], proveedor_id=filtros["proveedor_id"], hoy=_hoy_argentina(),
+            origen=filtros["origen"])
         proveedores = listar_proveedores()
     except Exception as error_db:
         raise HTTPException(status_code=500, detail=f"Error al conectar con la base de datos: {error_db}") from error_db
     return templates.TemplateResponse(request, "vales_movimientos.html", {
         "camino": _camino_de_vales(request), "filtros": filtros, "movimientos": movimientos,
         "proveedores": proveedores, "texto_del_movimiento": TEXTO_DEL_MOVIMIENTO_VALE,
+        "opciones_de_origen": OPCIONES_DE_ORIGEN_VALE,
         "texto_de_la_salida": texto_de_la_salida_vale,
     })
 
 
 @app.get("/administracion/vales/movimientos-excel")
 @app.get("/gerencia/vales/movimientos-excel")
-def exportar_movimientos_de_vales(request: Request, desde: str = "", hasta: str = "", proveedor_id: str = ""):
+def exportar_movimientos_de_vales(request: Request, desde: str = "", hasta: str = "", proveedor_id: str = "",
+                                  origen: str = ""):
     sin_clave = _sin_clave_de_vales(request)
     if sin_clave is not None:
         return sin_clave
-    filtros = _filtros_de_movimientos_de_vales(desde, hasta, proveedor_id)
+    filtros = _filtros_de_movimientos_de_vales(desde, hasta, proveedor_id, origen)
     if filtros["error"]:
         raise HTTPException(status_code=400, detail=filtros["error"])
     try:
         movimientos = movimientos_de_vales(filtros["desde"], filtros["hasta"],
-                                           proveedor_id=filtros["proveedor_id"], hoy=_hoy_argentina())
+                                           proveedor_id=filtros["proveedor_id"], hoy=_hoy_argentina(),
+                                           origen=filtros["origen"])
     except Exception as error_db:
         raise HTTPException(status_code=500, detail=f"Error al conectar con la base de datos: {error_db}") from error_db
-    filtro = " · ".join(_textos_de_filtros(filtros["proveedor_id"])) or "todos los proveedores"
+    textos = _textos_de_filtros(filtros["proveedor_id"])
+    if filtros["origen"]:
+        textos.append(f"origen {TEXTO_DEL_ORIGEN_VALE[filtros['origen']]}")
+    filtro = " · ".join(textos) or "todos los proveedores"
     contenido = generar_excel_movimientos_vales(filtros["desde"], filtros["hasta"], filtro, movimientos)
     nombre = f"Vales_a_cobrar_{filtros['desde'].isoformat()}_a_{filtros['hasta'].isoformat()}.xlsx"
     return Response(content=contenido,
                     media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
                     headers={"Content-Disposition": f'attachment; filename="{nombre}"'})
+
+
+# CARGAR UN VALE A MANO (dueño, 02/10): Gerencia y Administración dan de alta
+# un vale en papel, sin devolución ni movimiento de cajones. Las rutas van
+# ANTES de `/vales/{vale_id}`, o "cargar" se leería como un id.
+
+def _proveedor_del_vale(formulario) -> tuple[dict | None, str | None]:
+    """El proveedor por código de puesto (principal o alternativo) o elegido
+    de la lista. El código, si se escribió, manda."""
+    codigo = str(formulario.get("codigo_puesto", "")).strip()
+    if codigo:
+        proveedor = buscar_proveedor_por_codigo(codigo)
+        if proveedor is None:
+            return None, f"No hay ningún proveedor con el código {codigo!r}."
+        return proveedor, None
+    proveedor_id = _id_opcional_desde_query(str(formulario.get("proveedor_id", "")))
+    proveedor = next((p for p in listar_proveedores() if p["id"] == proveedor_id), None)
+    if proveedor is None:
+        return None, "Falta el proveedor: escribí el código de puesto o elegilo de la lista."
+    return proveedor, None
+
+
+def _renderizar_carga_de_vale(request: Request, *, valores: dict | None = None, error: str | None = None,
+                              parecidos: list | None = None, status_code: int = 200):
+    try:
+        proveedores = listar_proveedores()
+    except Exception as error_db:
+        raise HTTPException(status_code=500, detail=f"Error al conectar con la base de datos: {error_db}") from error_db
+    return templates.TemplateResponse(request, "vale_cargar.html", {
+        "camino": _camino_de_vales(request), "proveedores": proveedores, "hoy": _hoy_argentina(),
+        "valores": valores or {}, "error": error, "parecidos": parecidos or [],
+        "texto_del_estado": TEXTO_DEL_ESTADO_VALE, "texto_del_origen": TEXTO_DEL_ORIGEN_VALE,
+    }, status_code=status_code)
+
+
+@app.get("/administracion/vales/cargar")
+@app.get("/gerencia/vales/cargar")
+def ver_carga_de_vale(request: Request):
+    """El formulario para dar de alta un vale en papel."""
+    sin_clave = _sin_clave_de_vales(request)
+    if sin_clave is not None:
+        return sin_clave
+    return _renderizar_carga_de_vale(request)
+
+
+@app.get("/administracion/vales/cargar/parecidos")
+@app.get("/gerencia/vales/cargar/parecidos")
+def parecidos_de_vale(request: Request, codigo_puesto: str = "", proveedor_id: str = "", numero: str = "",
+                      fecha: str = "", importe: str = ""):
+    """Los vales que podrían ser el mismo, para preguntar ANTES de enviar: un
+    formulario que vuelve del servidor no puede traer la foto elegida."""
+    sin_clave = _sin_clave_de_vales(request)
+    if sin_clave is not None:
+        return sin_clave
+    proveedor, _ = _proveedor_del_vale({"codigo_puesto": codigo_puesto, "proveedor_id": proveedor_id})
+    dia = fecha_del_filtro_vales(fecha)
+    valor = _importe_del_form(importe)
+    if proveedor is None or dia is None or valor is None:
+        return {"parecidos": []}
+    return {"parecidos": [
+        {"id": v["id"], "texto": f"{v['proveedor']} · {v['fecha'].strftime('%d/%m/%Y')} · "
+                                f"${valor_entero(v['importe'])}" + (f" · vale {v['numero']}" if v["numero"] else "")
+                                + f" · {TEXTO_DEL_ESTADO_VALE[v['estado']]}"}
+        for v in vales_parecidos(proveedor["id"], numero, dia, valor)]}
+
+
+def valor_entero(importe) -> str:
+    return f"{int(round(float(importe or 0))):,}".replace(",", ".")
+
+
+@app.post("/administracion/vales/cargar")
+@app.post("/gerencia/vales/cargar")
+async def cargar_vale_ruta(request: Request):
+    """Da de alta el vale con origen 'carga_manual'. Si hay uno parecido y no
+    se confirmó, vuelve a preguntar (la guarda va donde se escribe). NO toca
+    stock, cajones ni Vacíos."""
+    camino = _camino_de_vales(request)
+    if camino["sector"] == "gerencia":
+        puerta = _puerta_de_gerencia_para_escribir(request)
+        if puerta is not None:
+            return puerta
+    formulario = await request.form()
+    valores = {k: str(formulario.get(k, "")) for k in
+               ("codigo_puesto", "proveedor_id", "fecha", "importe", "numero", "nota")}
+    proveedor, error = _proveedor_del_vale(formulario)
+    dia = fecha_del_filtro_vales(valores["fecha"])
+    importe = _importe_del_form(valores["importe"])
+    if error is None and dia is None:
+        error = "La fecha del vale no se entiende."
+    if error is None and (importe is None or importe <= 0):
+        error = "El importe tiene que ser un número mayor que cero."
+    if error is not None:
+        return _renderizar_carga_de_vale(request, valores=valores, error=error, status_code=400)
+    if formulario.get("confirmar_parecido") != "si":
+        parecidos = vales_parecidos(proveedor["id"], valores["numero"], dia, importe)
+        if parecidos:
+            return _renderizar_carga_de_vale(
+                request, valores=valores, parecidos=parecidos, status_code=409,
+                error="Ya hay un vale que puede ser el mismo. Si es otro, confirmalo (y volvé a elegir la foto).")
+    foto = formulario.get("foto")
+    foto_ruta = None
+    if hasattr(foto, "read") and getattr(foto, "filename", ""):
+        crudo = await foto.read()
+        comprimida = _comprimir_foto_jpeg(crudo) if crudo else None
+        if comprimida is None:
+            return _renderizar_carga_de_vale(request, valores=valores, status_code=400,
+                                             error=f"«{foto.filename}» no es una foto. No se cargó el vale.")
+        foto_ruta = subir_foto_comanda(comprimida, f"vale-manual-{proveedor['id']}", prefijo=PREFIJO_VALE)
+    try:
+        vale_id = cargar_vale_manual(proveedor["id"], dia, importe, numero=valores["numero"], foto_ruta=foto_ruta,
+                                     nota=valores["nota"], sector=camino["sector"], hoy=_hoy_argentina())
+    except Exception as motivo:
+        if foto_ruta:
+            try:
+                borrar_foto_comanda(foto_ruta)
+            except Exception:
+                logger.exception("No se pudo borrar la foto huérfana del vale %s", foto_ruta)
+        if isinstance(motivo, ValueError):
+            return _renderizar_carga_de_vale(request, valores=valores, error=str(motivo), status_code=400)
+        raise
+    return RedirectResponse(url=f"{camino['base']}/vales/{vale_id}?" + urlencode(
+        {"aviso": "Vale cargado. Ya está en la cartera."}), status_code=303)
 
 
 def _renderizar_vale(request: Request, vale_id: int, *, aviso: str | None = None,
@@ -20274,6 +20418,7 @@ def _renderizar_vale(request: Request, vale_id: int, *, aviso: str | None = None
     try:
         vale = vale_a_cobrar(vale_id, hoy)
         fotos = fotos_del_vale(vale_id) if vale is not None else []
+        correcciones = correcciones_del_vale(vale_id) if vale is not None else []
     except Exception as error_db:
         raise HTTPException(status_code=500, detail=f"Error al conectar con la base de datos: {error_db}") from error_db
     if vale is None:
@@ -20281,10 +20426,18 @@ def _renderizar_vale(request: Request, vale_id: int, *, aviso: str | None = None
     # LO QUE ESTE SECTOR PUEDE HACER con este vale: la misma regla que la base
     # (SECTOR_DE_LA_SALIDA), así no se ofrece un botón que el POST rechaza.
     salidas = salidas_del_vale(camino["sector"]) if vale["estado"] == "en_cartera" else []
+    # CORREGIR (dueño, 02/10): solo Gerencia, solo en cartera y con datos
+    # propios. La misma pregunta que `corregir_vale`, para no ofrecer lo que
+    # la escritura rechaza.
+    puede_corregir = (camino["sector"] == "gerencia" and vale["estado"] == "en_cartera"
+                      and vale["origen"] in ORIGENES_CON_DATOS_PROPIOS)
+    proveedores = listar_proveedores() if puede_corregir else []
     return templates.TemplateResponse(request, "vale_a_cobrar.html", {
         "camino": camino, "vale": vale, "salidas": salidas, "hoy": hoy, "fotos": fotos,
         "texto_de_la_foto": texto_de_la_foto_vale, "texto_del_estado": TEXTO_DEL_ESTADO_VALE, "texto_del_origen": TEXTO_DEL_ORIGEN_VALE,
         "texto_del_sector": TEXTO_DEL_SECTOR_VALE, "texto_de_la_salida": texto_de_la_salida_vale,
+        "correcciones": correcciones, "puede_corregir": puede_corregir, "proveedores": proveedores,
+        "texto_del_campo": TEXTO_DEL_CAMPO_VALE, "texto_del_valor_corregido": texto_del_valor_corregido_vale,
         "aviso": aviso, "error": error,
     }, status_code=status_code)
 
@@ -20420,6 +20573,30 @@ def cobrar_vale(request: Request, vale_id: int, fecha: str = Form(""), importe_c
 def cruzar_vale(request: Request, vale_id: int, fecha: str = Form(""), referencia: str = Form("")):
     """Cruzado con el proveedor: fecha y número de liquidación o referencia."""
     return _salida_de_vale(request, vale_id, "cruzado", fecha, referencia=referencia)
+
+
+@app.post("/gerencia/vales/{vale_id}/corregir")
+def corregir_vale_ruta(request: Request, vale_id: int, proveedor_id: str = Form(""), fecha: str = Form(""),
+                       importe: str = Form(""), numero: str = Form("")):
+    """Solo Gerencia corrige un vale cargado mal (dueño, 02/10): importe,
+    número, fecha o proveedor, con historial. Uno que ya salió no se corrige."""
+    puerta = _puerta_de_gerencia_para_escribir(request)
+    if puerta is not None:
+        return puerta
+    dia = fecha_del_filtro_vales(fecha)
+    valor = _importe_del_form(importe)
+    proveedor = _id_opcional_desde_query(proveedor_id)
+    if dia is None or valor is None or proveedor is None:
+        return _renderizar_vale(request, vale_id, status_code=400,
+                                error="Faltan datos: proveedor, fecha e importe son obligatorios.")
+    try:
+        cuantos = corregir_vale(vale_id, importe=valor, numero=numero, fecha=dia, proveedor_id=proveedor,
+                                hoy=_hoy_argentina())
+    except ValueError as motivo:
+        return _renderizar_vale(request, vale_id, error=str(motivo), status_code=400)
+    aviso = "Corrección guardada." if cuantos == 1 else f"{cuantos} correcciones guardadas."
+    return RedirectResponse(url=f"/gerencia/vales/{vale_id}?" + urlencode(
+        {"aviso": aviso + " Lo anterior queda en la historia."}), status_code=303)
 
 
 # NO HAY RUTA PARA ANULAR UN VALE (dueño, 01/10): el vale lo hace un tercero.

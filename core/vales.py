@@ -32,7 +32,29 @@ OPCIONES_DE_ESTADO = (("en_cartera", "En cartera"), ("todos", "Todos")) + tuple(
 TEXTO_DEL_ORIGEN = {
     "devolucion": "Devolución de vacíos",
     "anterior_al_sistema": "Anterior al sistema",
+    "carga_manual": "Carga manual",
 }
+
+# El filtro de origen de la pantalla y de Movimientos: vacío es todos.
+OPCIONES_DE_ORIGEN = (("", "Todos"),) + tuple(TEXTO_DEL_ORIGEN.items())
+
+TEXTO_DEL_CAMPO = {"importe": "Importe", "numero": "Número", "fecha": "Fecha", "proveedor": "Proveedor"}
+
+
+def origen_del_filtro(texto: str) -> str | None:
+    """El origen pedido en la URL, o None (todos)."""
+    return texto if texto in TEXTO_DEL_ORIGEN else None
+
+
+def texto_del_valor_corregido(campo: str, valor: str | None) -> str:
+    """Un valor del historial de correcciones como se lee en la pantalla."""
+    if valor is None:
+        return "sin número" if campo == "numero" else "—"
+    if campo == "fecha":
+        return date.fromisoformat(valor).strftime("%d/%m/%Y")
+    if campo == "importe":
+        return "$" + _miles(float(valor))
+    return valor
 
 TEXTO_DEL_SECTOR = {
     "administracion": "Administración",
@@ -138,8 +160,8 @@ def generar_excel_movimientos_vales(desde: date, hasta: date, filtro: str,
         v = m["vale"]
         if m["que"] == "entrada":
             detalle = (f"{v['cajones']} cajones" if v.get("cajones") else "")
-            sector = TEXTO_DEL_SECTOR.get(v.get("cargada_desde"), "sin dato") \
-                if v["origen"] == "devolucion" else "carga por SQL"
+            sector = "carga por SQL" if v["origen"] == "anterior_al_sistema" \
+                else TEXTO_DEL_SECTOR.get(v.get("cargada_desde"), "sin dato")
             cargado = v["creado_en"]
         else:
             detalle = texto_de_la_salida(v)
