@@ -103,10 +103,12 @@ def test_REINGRESO_las_explicaciones_van_a_la_i_cerradas_y_entra_en_313(base):
 
 
 def test_el_RESUMEN_PROVEEDORES_se_llama_asi_en_todos_lados():
-    """Ni en las pantallas, ni en el PDF/Excel, ni en CLAUDE.md queda el nombre viejo."""
+    """Ni en las pantallas, ni en el PDF/Excel, ni en CLAUDE.md ni en docs/ queda el nombre viejo."""
     import glob
     archivos = (glob.glob(os.path.join(RAIZ, "app", "*.py")) + glob.glob(os.path.join(RAIZ, "core", "*.py"))
-                + glob.glob(os.path.join(RAIZ, "templates", "*.html")) + [os.path.join(RAIZ, "CLAUDE.md")])
+                + glob.glob(os.path.join(RAIZ, "templates", "*.html")) + [os.path.join(RAIZ, "CLAUDE.md")]
+                + [a for d in ("reglas", "corolarios", "modulos")       # lo que era CLAUDE.md hasta el 03/10
+                   for a in glob.glob(os.path.join(RAIZ, "docs", d, "*.md"))])
     assert len(archivos) > 100
     viejos = [(os.path.basename(a), n) for a in archivos for n in ("Planilla para pagar", "planilla para pagar",
                                                                    "Ingresos a Depósito", "Ingresos_Deposito")
