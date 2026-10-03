@@ -13,5 +13,17 @@
       "mcp__github__update_pull_request",
       "mcp__github__merge_pull_request"
     ]
+  },
+  "hooks": {
+    "SessionStart": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "service postgresql start >/dev/null 2>&1 || true"
+          }
+        ]
+      }
+    ]
   }
 }
