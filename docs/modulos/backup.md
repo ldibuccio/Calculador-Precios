@@ -6,8 +6,8 @@ vigentes, en corto, están en CLAUDE.md.
 ## PLAN B DE BACKUP (02/10, dueño)
 
 Todo se tiene que poder reconstruir aunque desaparezcan Supabase, Railway o
-GitHub. **Todos los días a las 04:00 de Argentina** (`.github/workflows/backup.yml`,
-cron `0 7 * * *` UTC) tres partes van a **OneDrive Y Google Drive** de Lionel,
+GitHub. **Todos los días a las 03:47 de Argentina** (`.github/workflows/backup.yml`,
+cron `47 6 * * *` UTC; hasta el 03/10 era `0 7 * * *`, ver abajo) tres partes van a **OneDrive Y Google Drive** de Lionel,
 **cifradas con rclone crypt**. La regla pura vive en `core/backup.py`, la
 corrida en `scripts/backup.py`, y cómo se vuelve todo en `RESTAURAR.md`, que
 también se sube SIN cifrar a la carpeta `Backup-Sistema` de cada nube.
@@ -70,3 +70,19 @@ cada nube y cuánto lugar queda; si alcanza con 30 diarias y 12 mensuales; y
 qué hacer con las fotos cuando pesen (no rotan nunca: o se compra más lugar,
 o se decide un corte). Y probar `RESTAURAR.md` de punta a punta otra vez,
 con la clave impresa y no la del secret.
+
+### El schedule de GitHub no es una garantía (03/10)
+
+La primera corrida programada (07:00 UTC del 03/10) **no se creó nunca**: el
+workflow estaba activo, el cron bien escrito y en `main`, y el repo tenía cero
+corridas con evento `schedule`. GitHub avisa en su documentación que con carga
+atrasa o DESCARTA los schedule, y la hora en punto es la más cargada. No queda
+rastro: no hay corrida roja que mirar, simplemente no hay corrida.
+
+- **La corrida va a las 06:47 UTC (03:47 AR)**, fuera de la hora en punto.
+- **Hay una de RESPALDO a las 10:17 UTC (07:17 AR)**. El job `hace_falta`
+  pregunta a la API de Actions si hoy (desde las 00:00 de Argentina) ya hubo
+  un Backup que terminó bien. Si hubo, se saltea; si no, o si la consulta
+  falla, hace el backup. Una corrida a mano siempre corre.
+- **Lo que avisa si las dos se pierden** sigue siendo la alerta
+  `backups_viejos` de Gerencia (más de 48 horas sin uno bueno).

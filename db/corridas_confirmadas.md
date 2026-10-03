@@ -263,5 +263,7 @@ filas anteriores.)
   (`aws-0-us-west-1.pooler.supabase.com`). La guía
   (`docs/backup_guia_para_lionel.md`) deja la región como `<region>`: la de
   Palmala es ésa.
-- Pendiente: después de la corrida programada de las 04:00 del 04/10,
-  confirmar que cada base tenga 6 filas (3 más).
+- La corrida programada de las 04:00 del 03/10 **no se creó** (GitHub
+  descartó el schedule; ver `docs/modulos/backup.md`). Verificado por el
+  conector a las 08:11: siguen 3 filas en Frutamax. Pendiente: confirmar 6
+  filas por base después de la próxima corrida buena.
