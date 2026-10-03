@@ -265,5 +265,20 @@ filas anteriores.)
   Palmala es ésa.
 - La corrida programada de las 04:00 del 03/10 **no se creó** (GitHub
   descartó el schedule; ver `docs/modulos/backup.md`). Verificado por el
-  conector a las 08:11: siguen 3 filas en Frutamax. Pendiente: confirmar 6
-  filas por base después de la próxima corrida buena.
+  conector a las 08:11: siguen 3 filas en Frutamax. Arreglado en v1085
+  (PR #103: 03:47 AR más una corrida de respaldo a las 07:17 AR).
+- **Segunda corrida, a mano** (`workflow_dispatch`, run 37122581362, 03/10,
+  terminó en `success`). Verificado por el conector el 03/10, 6 filas en cada
+  base:
+
+```
+FRUTAMAX  codigo · onedrive true · gdrive true · 03/10 09:22 · total 6
+FRUTAMAX  bases  · onedrive true · gdrive true · 03/10 09:26 · total 6
+FRUTAMAX  fotos  · onedrive true · gdrive true · 03/10 09:32 · total 6
+PALMALA   codigo · onedrive true · gdrive true · 03/10 09:22 · total 6
+PALMALA   bases  · onedrive true · gdrive true · 03/10 09:26 · total 6
+PALMALA   fotos  · onedrive true · gdrive true · 03/10 09:32 · total 6
+```
+
+- Pendiente: que las corridas programadas (03:47 y la de respaldo de las
+  07:17) se creen solas a partir del 04/10.
