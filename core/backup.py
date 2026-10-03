@@ -67,6 +67,22 @@ ESQUEMAS_DE_SUPABASE = frozenset({
 #   el login de Supabase, pero Ganadería puede: sin estas dos, nadie entra.
 TABLAS_DE_SUPABASE = ("storage.buckets", "storage.objects", "auth.users", "auth.identities")
 
+# LOS PROYECTOS cuyo usuario de backup NO LEE auth ni storage, así que esas
+# cuatro tablas ni se intentan (dueño, 03/10). Ganadería entra con
+# `backup_lectura`: solo lectura, bypassrls, SELECT en las tablas y
+# secuencias de public y memoria, y nada en auth ni storage. Medido el 03/10
+# por "Supabase Lectura": 18 de 18 tablas y 15 de 15 secuencias con SELECT,
+# y auth y storage en CERO filas las cuatro, así que no se pierde nada.
+# Es una lista DECIDIDA y no un "si no hay permiso, salteá": en Frutamax o
+# Palmala, un permiso perdido tiene que hacer fallar la parte, no dejar el
+# backup sin `storage.objects` en silencio.
+PROYECTOS_SIN_TABLAS_DE_SUPABASE = frozenset({"ganaderia"})
+
+
+def tablas_de_supabase_de(proyecto: str) -> tuple[str, ...]:
+    """Las tablas de Supabase que se exportan como CSV para ESE proyecto."""
+    return () if proyecto in PROYECTOS_SIN_TABLAS_DE_SUPABASE else TABLAS_DE_SUPABASE
+
 _FECHA = re.compile(r"(\d{4}-\d{2}-\d{2})")
 
 

@@ -102,6 +102,11 @@ Railway en `DATABASE_URL`). Tiene que ser la de **Session pooler**, puerto
 contraseña** para sacarla: si la cambiás, Railway deja de conectarse hasta que
 la cambies también ahí.
 
+**Ganadería es distinta**: `GANADERIA_DB_URL` entra con el usuario
+`backup_lectura` (solo lectura) y no con `postgres`. El backup de Ganadería
+vuelca solo `public` y `memoria`; no lee `auth` ni `storage` (hoy están
+vacías ahí).
+
 **Las llaves de las fotos (`<EMPRESA>_S3_…`).** En Supabase, el proyecto →
 **Storage** → **S3 Configuration** (o Settings → Storage). Ahí están el
 endpoint y la **región** (para `_S3_REGION`). Abajo, **New access key** →

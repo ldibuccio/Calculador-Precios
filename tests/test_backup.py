@@ -231,6 +231,43 @@ def test_la_restauracion_CREA_el_rol_de_las_politicas_y_ve_una_FILA_que_FALTA(si
     assert not s["sql"]("postgres", "SELECT 1 FROM pg_database WHERE datname = 'bk_prueba'")
 
 
+def test_GANADERIA_con_un_usuario_de_SOLO_LECTURA_vuelca_public_y_memoria_y_no_toca_auth_ni_storage(simulacro):
+    """Como `backup_lectura` en Ganadería (03/10): login, bypassrls, solo
+    lectura, SELECT en las tablas y secuencias de public y memoria, y NADA en
+    auth ni storage. La parte tiene que salir entera sin intentar esas cuatro
+    tablas; y el MISMO usuario con otro proyecto tiene que FALLAR, que es lo
+    que impide que un permiso perdido en Frutamax se saltee en silencio."""
+    s = simulacro
+    s["sql"]("postgres", "DROP ROLE IF EXISTS bk_lectura_ej")
+    s["sql"]("postgres", "CREATE ROLE bk_lectura_ej LOGIN BYPASSRLS PASSWORD 'clave_de_ejemplo_ej'")
+    s["sql"]("postgres", "ALTER ROLE bk_lectura_ej SET default_transaction_read_only = on")
+    s["sql"]("bk_origen", """
+        GRANT USAGE ON SCHEMA public, memoria TO bk_lectura_ej;
+        GRANT SELECT ON ALL TABLES IN SCHEMA public, memoria TO bk_lectura_ej;
+        GRANT SELECT ON ALL SEQUENCES IN SCHEMA public, memoria TO bk_lectura_ej;
+        REVOKE ALL ON ALL TABLES IN SCHEMA auth, storage FROM PUBLIC;
+    """)
+    try:
+        base = os.environ["FRUTAMAX_DB_URL"].rsplit("/", 1)[0]
+        lectura = "postgresql://bk_lectura_ej:clave_de_ejemplo_ej@" + base.split("@", 1)[1].split("/", 1)[0] + "/bk_origen"
+        assert s["sql"]("bk_origen", "SELECT has_table_privilege('bk_lectura_ej', 'auth.users', 'SELECT')") == [(False,)]
+        carpeta = s["tmp"] / "ganaderia"
+        manifiesto = s["bk"].respaldar_base("ganaderia", lectura, carpeta)
+        assert manifiesto["esquemas"] == ["memoria", "public"]
+        assert manifiesto["filas"]["memoria.notas"] == 2 and manifiesto["filas"]["public.clientes"] == 2
+        assert manifiesto["supabase"] == {}
+        assert sorted(p.name for p in carpeta.iterdir()) == ["base.dump", "manifiesto.json"]
+        assert s["bk"].probar_restauracion(carpeta, os.environ["BACKUP_PRUEBA_URL"], "bk_prueba") == []
+        # el origen quedó como estaba
+        assert s["sql"]("bk_origen", "SELECT count(*) FROM memoria.notas") == [(2,)]
+        # canario: el mismo usuario como FRUTAMAX sí intenta auth/storage y falla
+        with pytest.raises(Exception, match="permission denied"):
+            s["bk"].respaldar_base("frutamax", lectura, s["tmp"] / "frutamax")
+    finally:
+        s["sql"]("bk_origen", "DROP OWNED BY bk_lectura_ej")
+        s["sql"]("postgres", "DROP ROLE IF EXISTS bk_lectura_ej")
+
+
 def test_un_destino_que_FALLA_no_frena_al_otro_y_en_el_que_falla_NO_se_rota(simulacro):
     s = simulacro
     viejo = f"calculador-precios_{HOY - timedelta(days=400)}.bundle"   # más de 12 meses

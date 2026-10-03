@@ -15,7 +15,8 @@ LO QUE NECESITA DEL ENTORNO (en el workflow, todo sale de los secrets):
     BACKUP_CLAVE              la clave del cifrado. SIN ELLA EL BACKUP NO SIRVE.
     RCLONE_CONFIG             el archivo con los remotos `onedrive` y `gdrive`
     <P>_DB_URL                la conexión de cada proyecto (P = FRUTAMAX,
-                              PALMALA, GANADERIA), con el usuario postgres
+                              PALMALA, GANADERIA). Frutamax y Palmala con
+                              postgres; Ganadería con backup_lectura
     <P>_S3_KEY_ID, <P>_S3_SECRET, <P>_S3_REGION
                               las llaves S3 del Storage de cada proyecto
     BACKUP_PRUEBA_URL         un Postgres descartable donde se restaura
@@ -42,8 +43,8 @@ RAIZ = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(RAIZ))
 
 from core.backup import (  # noqa: E402
-    DESTINOS, PROYECTOS, TABLAS_DE_SUPABASE, TEXTO_DEL_DESTINO, diferencias,
-    esquemas_a_respaldar, nombre_del_bundle, que_se_borra,
+    DESTINOS, PROYECTOS, TEXTO_DEL_DESTINO, diferencias,
+    esquemas_a_respaldar, nombre_del_bundle, que_se_borra, tablas_de_supabase_de,
 )
 
 ARGENTINA = ZoneInfo("America/Argentina/Buenos_Aires")
@@ -240,7 +241,8 @@ def respaldar_base(proyecto: str, url: str, salida: Path) -> dict:
             _ejecutar(argumentos)
 
             supabase = {}
-            for tabla in TABLAS_DE_SUPABASE:
+            # Ganadería no las intenta: su usuario no las lee (core/backup.py).
+            for tabla in tablas_de_supabase_de(proyecto):
                 cursor.execute("SELECT to_regclass(%s) IS NOT NULL", (tabla,))
                 if not cursor.fetchone()[0]:
                     supabase[tabla] = None

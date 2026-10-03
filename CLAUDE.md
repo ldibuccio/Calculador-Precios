@@ -4898,7 +4898,12 @@ también se sube SIN cifrar a la carpeta `Backup-Sistema` de cada nube.
   `storage`, `extensions`…) los trae cualquier proyecto nuevo y restaurarlos
   encima pisaría su versión. De esos van como CSV `storage.buckets`,
   `storage.objects` (la app lee `created_at`: re-subir las fotos les pone la
-  fecha de hoy) y `auth.users`/`identities`. **Se RESTAURA todos los días**:
+  fecha de hoy) y `auth.users`/`identities`. **Ganadería no las intenta**
+  (`PROYECTOS_SIN_TABLAS_DE_SUPABASE`, 03/10): entra con `backup_lectura`,
+  que solo lee public y memoria (medido: 18 de 18 tablas y 15 de 15
+  secuencias con SELECT, y las cuatro de Supabase en cero filas). Es una
+  lista decidida: en Frutamax o Palmala un permiso perdido hace fallar la
+  parte, no la saltea. **Se RESTAURA todos los días**:
   se baja de cada destino y va a un Postgres 17 descartable. Si la cantidad
   de tablas o las filas de alguna no coinciden con el manifiesto, la parte NO
   es exitosa. La restauración se saltea `CREATE SCHEMA public`
