@@ -1,4 +1,5 @@
-# PLAN B DE BACKUP (dueño, 02/10): todos los días a las 04:00 de Argentina.
+# PLAN B DE BACKUP (dueño, 02/10): todos los días a las 03:47 de Argentina
+# (hasta el 03/10 era a las 04:00 en punto; ver el schedule).
 #
 # Código, bases (Frutamax, Palmala, Ganadería) y fotos van a OneDrive Y a
 # Google Drive, CIFRADOS con la clave que Lionel tiene impresa. SIN ESA CLAVE
@@ -13,8 +14,16 @@
 name: Backup
 
 on:
+  # GitHub NO garantiza los schedule: con carga los atrasa o los DESCARTA, y
+  # la hora en punto es la más cargada. El 03/10 el de las 07:00 UTC no se
+  # creó nunca (cero corridas `schedule` en el repo). Por eso:
+  #   - la corrida va a un minuto que no es en punto (06:47 UTC = 03:47 AR);
+  #   - y hay una de RESPALDO a las 10:17 UTC (07:17 AR) que solo hace el
+  #     backup si hoy (Argentina) todavía no hubo ninguno bueno.
+  # Si se cambia una de las dos horas, cambiar también CRON_RESPALDO abajo.
   schedule:
-    - cron: "0 7 * * *"     # 07:00 UTC = 04:00 de Argentina (sin horario de verano)
+    - cron: "47 6 * * *"    # 06:47 UTC = 03:47 de Argentina (sin horario de verano)
+    - cron: "17 10 * * *"   # 10:17 UTC = 07:17 de Argentina: el respaldo
   workflow_dispatch:
 
 # Una corrida a la vez: dos juntas se pisarían el token renovado de OneDrive.
@@ -32,7 +41,41 @@ env:
   ESTADO_PALMALA_URL: ${{ secrets.ESTADO_PALMALA_URL }}
 
 jobs:
+  # ¿HACE FALTA? Siempre que sí, salvo en la corrida de RESPALDO: ésa se saltea
+  # si hoy (Argentina) ya hubo un Backup que terminó bien. Si la consulta a
+  # GitHub falla, se hace el backup igual: uno de más no rompe nada (las
+  # diarias llevan la fecha en el nombre y las fotos son incrementales).
+  hace_falta:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      actions: read
+    outputs:
+      correr: ${{ steps.decidir.outputs.correr }}
+    steps:
+      - id: decidir
+        env:
+          GH_TOKEN: ${{ github.token }}
+          EVENTO: ${{ github.event_name }}
+          CRON: ${{ github.event.schedule }}
+          CRON_RESPALDO: "17 10 * * *"
+        run: |
+          if [ "$EVENTO" != "schedule" ] || [ "$CRON" != "$CRON_RESPALDO" ]; then
+            echo "correr=true" >> "$GITHUB_OUTPUT"; echo "corrida normal: se hace"; exit 0
+          fi
+          desde=$(TZ=America/Argentina/Buenos_Aires date +%Y-%m-%dT00:00:00-03:00)
+          if n=$(gh api -X GET "repos/${{ github.repository }}/actions/workflows/backup.yml/runs" \
+                   -f status=success -f created=">=$desde" --jq .total_count); then
+            echo "Backups buenos desde $desde: $n"
+            if [ "$n" -gt 0 ]; then echo "correr=false" >> "$GITHUB_OUTPUT"; exit 0; fi
+          else
+            echo "No se pudo preguntar a GitHub: se hace el backup igual"
+          fi
+          echo "correr=true" >> "$GITHUB_OUTPUT"
+
   codigo:
+    needs: hace_falta
+    if: needs.hace_falta.outputs.correr == 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 30
     steps:
@@ -47,8 +90,9 @@ jobs:
         if: always()
 
   bases:
-    needs: codigo
-    if: always()                  # que falle el código no frena las bases
+    needs: [hace_falta, codigo]
+    # que falle el código no frena las bases; que no haga falta, sí
+    if: always() && needs.hace_falta.outputs.correr == 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 60
     services:
@@ -83,8 +127,8 @@ jobs:
         if: always()
 
   fotos:
-    needs: bases
-    if: always()
+    needs: [hace_falta, bases]
+    if: always() && needs.hace_falta.outputs.correr == 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 120
     env:
