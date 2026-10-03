@@ -939,3 +939,19 @@ filas sin error. Solo afecta a `LECTURA_FRUTAMAX_URL` en una sesión local;
 el conector corre como `supabase_read_only_user` y ve las filas (855 compras
 el 02/10). Pendiente del dueño, si se va a usar la URL: darle `bypassrls`.
 Palmala no tiene este usuario.
+
+## 02/10 — `backups_1` y `backups_2`: Plan B de backup (PR #97)
+
+Corridos por Lionel en las dos bases, cada una con la clave de SU rol, ANTES
+del deploy del #97. La verificación (`backups_3`), corrida aparte, la hizo el
+Claude con acceso de lectura:
+
+```
+FRUTAMAX  backups · tabla 1 · check 1 · rol 1 · inserta 1 · lee_o_cambia 0 · otras_tablas 0 · rls 1 · politica 1 · politicas_total 1 · corridas 0 · proveedores 42
+PALMALA   backups · tabla 1 · check 1 · rol 1 · inserta 1 · lee_o_cambia 0 · otras_tablas 0 · rls 1 · politica 1 · politicas_total 1 · corridas 0 · proveedores 45
+```
+
+La fila de Frutamax se volvió a correr el 03/10 por el conector "Supabase
+Lectura" y dio idéntica (proveedores 42). La de Palmala es la que reportó el
+dueño: Palmala no tiene acceso de lectura. `corridas 0` es lo esperado: el
+workflow todavía no corrió (faltan rclone y los secrets).
