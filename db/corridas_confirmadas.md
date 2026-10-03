@@ -953,5 +953,36 @@ PALMALA   backups · tabla 1 · check 1 · rol 1 · inserta 1 · lee_o_cambia 0 
 
 La fila de Frutamax se volvió a correr el 03/10 por el conector "Supabase
 Lectura" y dio idéntica (proveedores 42). La de Palmala es la que reportó el
-dueño: Palmala no tiene acceso de lectura. `corridas 0` es lo esperado: el
-workflow todavía no corrió (faltan rclone y los secrets).
+dueño, porque cuando se escribió esta entrada se creía que no había acceso de
+lectura a Palmala. Eso era falso: el conector "Supabase Lectura" lee las dos
+bases (ver la entrada del 03/10, abajo). `corridas 0` es lo esperado: el
+workflow todavía no corría (faltaban rclone y los secrets).
+
+## 03/10 — Primera corrida del Backup: las tres partes, en los dos destinos
+
+Corrida manual del workflow `Backup` (`workflow_dispatch`, run 37089873233),
+terminada el 03/10 a las 00:21 de Argentina. No es una migración: es la primera
+vez que `backups_corridas` recibe filas. Verificado por el conector "Supabase
+Lectura" el 03/10, en las dos bases:
+
+```
+FRUTAMAX  codigo · onedrive true · gdrive true · 02/10 23:29 · detalle NULL · total 3
+FRUTAMAX  bases  · onedrive true · gdrive true · 02/10 23:32 · detalle NULL · total 3
+FRUTAMAX  fotos  · onedrive true · gdrive true · 03/10 00:21 · detalle NULL · total 3
+PALMALA   codigo · onedrive true · gdrive true · 02/10 23:29 · detalle NULL · total 3
+PALMALA   bases  · onedrive true · gdrive true · 02/10 23:32 · detalle NULL · total 3
+PALMALA   fotos  · onedrive true · gdrive true · 03/10 00:21 · detalle NULL · total 3
+```
+
+(Horas de Argentina. El `total 3` es la tabla entera de cada base: no hay
+filas anteriores.)
+
+- **Las fotos subidas fueron 1110**, según el log del workflow que vio el
+  Claude con lectura. Ese número no está en la base (`detalle` es NULL cuando
+  la parte sale bien) y no se verificó por el conector.
+- **`ESTADO_PALMALA_URL` usa el host `aws-0-us-west-1`** del pooler
+  (`aws-0-us-west-1.pooler.supabase.com`). La guía
+  (`docs/backup_guia_para_lionel.md`) deja la región como `<region>`: la de
+  Palmala es ésa.
+- Pendiente: después de la corrida programada de las 04:00 del 04/10,
+  confirmar que cada base tenga 6 filas (3 más).
