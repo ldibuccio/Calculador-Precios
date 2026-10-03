@@ -16,6 +16,7 @@ bases/AAAA-MM-DD/<proyecto>/base.dump        la base (frutamax, palmala, ganader
 bases/AAAA-MM-DD/<proyecto>/manifiesto.json  qué tenía: tablas, filas, roles
 bases/AAAA-MM-DD/<proyecto>/storage.objects.csv  cuándo se subió cada foto
 bases/AAAA-MM-DD/<proyecto>/auth.users.csv   usuarios de login (si los hay)
+   (Ganadería no trae estos CSV: su usuario de backup no lee auth ni storage)
 fotos/<proyecto>/<bucket>/...                todas las fotos, con su ruta original
 ```
 
