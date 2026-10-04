@@ -1,0 +1,102 @@
+{# LA FRANJA DE ARRIBA de Compras, Administración y Gerencia (dueño, 04/10):
+   UNA línea con dos botones lado a lado, Tareas y Alertas, y cada uno
+   despliega lo suyo ABAJO de la línea, a todo el ancho. Arranca plegada.
+
+   - Tareas: "Sin tareas pendientes" en gris, o "Tareas pendientes (N)"
+     destacado, y en ROJO si alguna ya pasó su día. Despliega la lista y,
+     abajo, "Nueva tarea" (también sin pendientes).
+   - Alertas: "Sin alertas" o "Alertas (N)", con N = las que tienen casos
+     (la misma cuenta que tenía el botón). Despliega cada una con su link y,
+     abajo, el detalle de todas.
+
+   BOTÓN Y PANEL SEPARADOS, y no un <details> por botón: con dos <details>
+   lado a lado, lo desplegado queda en la mitad del ancho, y a 313px eso es
+   una columna de 130px con un formulario adentro. El panel cuelga de la
+   franja entera; el botón dice con `aria-expanded` cuál está abierto, y abrir
+   uno cierra el otro. El panel se esconde con `hidden`, que es la intención:
+   ningún CSS de acá le pone `display` (corolario 32).
+
+   El link al detalle de las alertas lo escribe EL HUB (el `caller`), literal,
+   para que el barrido de pantallas sin link lo encuentre.
+
+   DOS MACROS, como _tareas_pendientes.html: `estilos()` adentro del <style>
+   del hub y `franja(tareas_hub, banner)` en el cuerpo. #}
+{% import "_tareas_pendientes.html" as _tareas %}
+{% from "_boton_alertas.html" import texto_de_alerta %}
+
+{% macro estilos() %}
+  .franja-hub { margin-bottom: 1rem; }
+  .franja-botones { display: flex; gap: 0.5rem; }
+  .franja-boton { flex: 1 1 0; min-width: 0; min-height: 44px; padding: 0.55rem 0.5rem; border-radius: 8px;
+    border: 1px solid #d4d4d4; background: #fff; color: #6b7280; font-size: 0.92rem; font-weight: 600;
+    font-family: inherit; line-height: 1.25; cursor: pointer; box-shadow: 0 1px 3px rgba(0, 0, 0, 0.1);
+    overflow-wrap: anywhere; }
+  .franja-boton.destacada { background: #2563eb; border-color: #2563eb; color: #fff; }
+  .franja-boton.alerta { background: #ea580c; border-color: #ea580c; color: #fff; }
+  .franja-boton.roja { background: #dc2626; border-color: #dc2626; color: #fff; }
+  .franja-boton[aria-expanded="true"] { outline: 3px solid #93c5fd; outline-offset: 1px; }
+  .franja-panel { margin-top: 0.5rem; background: #fff; border-radius: 8px; box-shadow: 0 1px 3px rgba(0, 0, 0, 0.1);
+    overflow-wrap: anywhere; }
+  .franja-alerta { display: flex; align-items: center; min-height: 44px; padding: 0.5rem 0.9rem;
+    border-top: 1px solid #eee; color: #9a3412; font-weight: 600; text-decoration: none; box-sizing: border-box; }
+  .franja-alerta:first-child { border-top: none; }
+  .franja-vacia { margin: 0; padding: 0.7rem 0.9rem; color: #6b7280; }
+  .franja-ver { display: flex; align-items: center; justify-content: center; min-height: 44px; margin: 0.7rem 0.9rem;
+    border-radius: 8px; border: 1px solid #ea580c; color: #ea580c; font-weight: 600; text-decoration: none;
+    box-sizing: border-box; }
+{{ _tareas.estilos() }}
+{% endmacro %}
+
+{% macro franja(tareas_hub, banner) %}
+{% set _activas = banner.con_casos if banner and banner.con_casos else [] %}
+{% set _cuantas = tareas_hub.tareas|length if tareas_hub and not tareas_hub.error else 0 %}
+<div class="franja-hub" data-franja>
+  <div class="franja-botones">
+    {% if not tareas_hub or tareas_hub.error %}
+    <button type="button" class="franja-boton" aria-expanded="false" aria-controls="franja-tareas"
+            data-franja-boton="tareas">Tareas: no se pudieron leer</button>
+    {% elif _cuantas %}
+    <button type="button" class="franja-boton {{ 'roja' if tareas_hub.vencidas else 'destacada' }}" aria-expanded="false"
+            aria-controls="franja-tareas" data-franja-boton="tareas">Tareas pendientes ({{ _cuantas }})</button>
+    {% else %}
+    <button type="button" class="franja-boton" aria-expanded="false" aria-controls="franja-tareas"
+            data-franja-boton="tareas">Sin tareas pendientes</button>
+    {% endif %}
+    {% if _activas %}
+    <button type="button" class="franja-boton alerta" aria-expanded="false" aria-controls="franja-alertas"
+            data-franja-boton="alertas">Alertas ({{ _activas|length }})</button>
+    {% else %}
+    <button type="button" class="franja-boton" aria-expanded="false" aria-controls="franja-alertas"
+            data-franja-boton="alertas">Sin alertas</button>
+    {% endif %}
+  </div>
+  <div class="franja-panel" id="franja-tareas" data-franja-panel="tareas" hidden>
+    {% if tareas_hub %}{{ _tareas.lista(tareas_hub) }}{% endif %}
+  </div>
+  <div class="franja-panel" id="franja-alertas" data-franja-panel="alertas" hidden>
+    {% for a in _activas %}
+    <a class="franja-alerta" href="{{ a.url }}">{{ texto_de_alerta(a) }}</a>
+    {% else %}
+    <p class="franja-vacia">No hay alertas con casos.</p>
+    {% endfor %}
+    {{ caller() }}
+  </div>
+</div>
+<script>
+  (function () {
+    var franja = document.currentScript.previousElementSibling;
+    var botones = franja.querySelectorAll("[data-franja-boton]");
+    botones.forEach(function (boton) {
+      boton.addEventListener("click", function () {
+        var abrir = boton.getAttribute("aria-expanded") !== "true";
+        botones.forEach(function (otro) {
+          otro.setAttribute("aria-expanded", "false");
+          franja.querySelector("#" + otro.getAttribute("aria-controls")).hidden = true;
+        });
+        boton.setAttribute("aria-expanded", abrir ? "true" : "false");
+        franja.querySelector("#" + boton.getAttribute("aria-controls")).hidden = !abrir;
+      });
+    });
+  })();
+</script>
+{% endmacro %}

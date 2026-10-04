@@ -154,19 +154,25 @@ def test_el_hub_muestra_la_frase_y_el_boton_ALERTAS_con_la_cantidad(url):
     # el último "</style>" se lo lleva (corolario 50). El ancla es el <a>.
     marcado = respuesta.text
     assert '">Hay 1.086 cajones vacíos en el galpón: hay que devolver</a>' in marcado
-    assert f'href="{url}/alertas">Alertas (1)</a>' in marcado
+    # Desde el 04/10 el botón es el de la FRANJA de arriba (dueño), y el
+    # detalle de todas sigue linkeado desde su panel.
+    assert 'data-franja-boton="alertas">Alertas (1)</button>' in marcado
+    assert f'href="{url}/alertas">Ver el detalle de las alertas</a>' in marcado
 
 
 def test_el_boton_cuenta_ALERTAS_y_no_casos():
     """Dos alertas activas en Compras: el botón dice 2, no 1.086 + 3."""
     marcado = _hub("/compras", _estado(otra_de_compras=3)).text
-    assert 'href="/compras/alertas">Alertas (2)</a>' in marcado
+    assert 'data-franja-boton="alertas">Alertas (2)</button>' in marcado
 
 
 @pytest.mark.parametrize("url", ["/compras", "/gerencia", "/administracion", "/comercial"])
 def test_sin_alertas_el_boton_dice_solo_ALERTAS(url):
     marcado = _hub(url, _estado(casos_vacios=0)).text
-    assert f'href="{url}/alertas">Alertas</a>' in marcado
+    if url == "/comercial":     # Comercial no tiene franja: sigue su botón
+        assert f'href="{url}/alertas">Alertas</a>' in marcado
+    else:
+        assert 'data-franja-boton="alertas">Sin alertas</button>' in marcado
     assert "hay que devolver" not in marcado
 
 
@@ -174,7 +180,7 @@ def test_una_alerta_SIN_CALCULAR_no_suma_al_boton():
     estado = [{"codigo": "vacios_para_devolver", "casos": None, "mas_viejo": None,
                "calculada_el": None, "error": None}]
     marcado = _hub("/gerencia", estado).text
-    assert 'href="/gerencia/alertas">Alertas</a>' in marcado
+    assert 'data-franja-boton="alertas">Sin alertas</button>' in marcado
 
 
 # ---------------------------------------------------------------------------

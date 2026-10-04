@@ -18423,15 +18423,17 @@ def _banner_alertas(modulo: str) -> dict:
         estado = listar_estado_alertas()
     except Exception:
         logger.exception("No se pudo leer el estado de las alertas para el banner de %s", modulo)
-        return {"alertas": [], "frescura": None, "activas": 0}
+        return {"alertas": [], "frescura": None, "activas": 0, "con_casos": []}
     alertas = para_mostrar(ALERTAS, estado, modulo)
+    # Las que tienen casos: las que despliega el botón "Alertas" de la franja
+    # del hub, y su número. Una sin calcular o con error sale en el banner
+    # pero no se cuenta acá: no se sabe si tiene casos.
+    con_casos = [a for a in alertas if a["casos"] and not a["error"]]
     return {
         "alertas": alertas,
         "frescura": frescura(estado, datetime.now(ARGENTINA)),
-        # Las que tienen casos: el número del botón "Alertas". Una sin
-        # calcular o con error sale en el banner pero no se cuenta acá: no
-        # se sabe si tiene casos.
-        "activas": sum(1 for a in alertas if a["casos"] and not a["error"]),
+        "activas": len(con_casos),
+        "con_casos": con_casos,
     }
 
 

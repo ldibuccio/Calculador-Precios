@@ -13,18 +13,27 @@ sale en las alertas de GERENCIA (`tareas_vencidas`, solo ahí). La escritura
 vive en app/db.py (sección TAREAS) y las reglas, las palabras y los archivos
 en `core/tareas.py`.
 
-- **El recuadro "Tareas pendientes"** va en los hubs de Compras,
-  Administración y Gerencia (solo esos tres), debajo del banner de alertas y
-  separado de él. Ocupa una línea: "No hay tareas pendientes", o "Tareas
-  pendientes (3) · 1 vencida" plegada (un `<details>` sin `open`). Desplegada,
-  cada tarea lleva título, una línea de detalle, vencimiento (en rojo si
-  venció) y "Hecha", que abre una nota opcional. Al marcarla sale del recuadro.
-  Si la base no contesta, el recuadro lo DICE ("No se pudieron leer las
-  tareas pendientes"): un "No hay tareas" ahí se vería igual que no tener
-  ninguna. Es un parcial de DOS macros (`templates/_tareas_pendientes.html`):
-  los estilos van en el `<style>` del hub, así no mueve el corte de los tests.
-  Medido a 313px, desplegado y con un nombre que no se parte: sin desborde y
-  sin solapes.
+- **La franja de arriba** (dueño, 04/10; antes era un recuadro propio) va en
+  los hubs de Compras, Administración y Gerencia (solo esos tres), debajo del
+  banner de alertas: UNA línea con dos botones lado a lado, **Tareas** y
+  **Alertas**, que arranca plegada. Tareas dice "Sin tareas pendientes" en
+  gris, o "Tareas pendientes (3)" destacado, y en ROJO si alguna venció.
+  Alertas dice "Sin alertas" o "Alertas (N)", N = las que tienen casos.
+  Cada botón despliega lo suyo ABAJO de la línea, a todo el ancho, y abrir
+  uno cierra el otro: botón y panel van separados (con dos `<details>` lado a
+  lado, lo desplegado quedaba en media columna a 313px). Desplegada, cada
+  tarea lleva título, una línea de detalle, vencimiento (en rojo si venció) y
+  "Hecha", que abre una nota opcional; abajo, "Nueva tarea", también sin
+  pendientes. Las alertas van una por renglón con su link, y abajo "Ver el
+  detalle de las alertas" (la pantalla de Alertas del sector, que sigue).
+  Si la base no contesta, el botón lo DICE ("Tareas: no se pudieron leer"):
+  un "Sin tareas" ahí se vería igual que no tener ninguna. Son dos parciales
+  de DOS macros (`templates/_franja_hub.html`, que usa la lista de
+  `templates/_tareas_pendientes.html`): los estilos van en el `<style>` del
+  hub, así no mueven el corte de los tests. Las palabras de cada alerta salen
+  de `_boton_alertas.html`, las mismas que la cinta del banner. Medido a
+  313px: sin desborde y sin solapes, los dos botones a la misma altura y de
+  44px (`tests/test_franja_hubs.py`).
 - **Lo que el sector ve es una OCURRENCIA** (`tareas_ocurrencias`): cada vez
   que la tarea sale, con el título y el detalle de ese momento (editar la
   tarea no reescribe lo que ya salió). La de una sola vez sale al crearla. La
@@ -32,7 +41,7 @@ en `core/tareas.py`.
   último día de los meses más cortos) sale el día que le toca y vence ese día.
 - **UNA REPETITIVA NO SE ACUMULA.** Si llega la fecha de la siguiente y la
   anterior sigue pendiente, la anterior queda `no_hecha` (con el día en que
-  llegó la siguiente) y la nueva sale marcada atrasada. En el recuadro hay
+  llegó la siguiente) y la nueva sale marcada atrasada. En la lista hay
   una sola. Tres semanas sin abrir el sistema dejan las salteadas como no
   hechas y una sola pendiente.
 - **Las ocurrencias se generan AL LEER**, no en el recálculo de cada 6 horas
@@ -61,10 +70,10 @@ Migraciones `db/tareas_1` a `_3`, verificación en `_4`. Lo cuida
   (Gerencia, para cualquiera), de una vez o repetitivas, con las mismas
   opciones. Es la MISMA pantalla bajo `/compras/tareas`,
   `/administracion/tareas` y `/gerencia/tareas`, con el sector sacado del
-  prefijo (corolario 63). El recuadro de cada hub tiene "Nueva tarea".
+  prefijo (corolario 63). La franja de cada hub tiene "Nueva tarea".
 - **`tareas.creada_por`** dice quién la cargó (las de antes, Gerencia). La
   base exige que un sector solo cargue para sí mismo (`tareas_creada_por`).
-  Se ve en el recuadro, en las repetitivas y en el registro.
+  Se ve en la lista de la franja, en las repetitivas y en el registro.
 - **Un sector edita, pausa y da de baja SOLO las que creó él**; Gerencia
   todas. Lo decide el WHERE de la escritura (`_SQL_PUEDE_MANEJAR`) y la
   pantalla pregunta lo mismo (`puede_manejar`, core/tareas.py): las de

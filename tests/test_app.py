@@ -10952,7 +10952,10 @@ def test_banner_corre_y_duplica_el_contenido_para_el_loop():
 
     assert respuesta.status_code == 200
     assert 'class="banner-cinta" style="animation-duration: 24s;"' in respuesta.text
-    assert respuesta.text.count("Compras sin precio de compra cargado (4)") == 2
+    # DENTRO DE LA CINTA: desde el 04/10 el panel de Alertas de la franja del
+    # hub también la nombra, y eso no es el loop.
+    cinta = respuesta.text.split('class="banner-cinta"')[1].split('class="banner-avisos"')[0].split("</div>")[0]
+    assert cinta.count("Compras sin precio de compra cargado (4)") == 2
     assert '<span class="copia" aria-hidden="true">' in respuesta.text
 
 
@@ -13892,7 +13895,10 @@ def test_el_boton_de_Alertas_esta_en_el_sector_del_comprador():
     with patch("app.main.listar_estado_alertas", return_value=_foto_alertas()):
         marcado = cliente.get("/compras").text.split("</style>")[-1]
 
-    assert '<a class="boton boton-naranja" href="/compras/alertas">Alertas</a>' in marcado
+    # Desde el 04/10 es el botón de la franja de arriba, y el detalle de las
+    # alertas del comprador sigue a un toque desde su panel.
+    assert 'data-franja-boton="alertas">Sin alertas</button>' in marcado
+    assert '<a class="franja-ver" href="/compras/alertas">Ver el detalle de las alertas</a>' in marcado
 
 
 def test_ver_auditoria_sin_casos_muestra_todo_en_orden():

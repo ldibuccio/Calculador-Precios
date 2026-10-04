@@ -4,7 +4,7 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Administración</title>
-{% import "_tareas_pendientes.html" as tareas_parcial %}
+{% import "_franja_hub.html" as franja_hub %}
 <style>
   h2 { font-size: 1.05rem; margin: 0 0 0.75rem; }
   :root { font-family: -apple-system, system-ui, sans-serif; }
@@ -48,7 +48,7 @@
     font-size: 0.85rem;
     text-decoration: none;
   }
-  {{ tareas_parcial.estilos() }}
+  {{ franja_hub.estilos() }}
 </style>
 </head>
 <body>
@@ -60,14 +60,10 @@
   {# Para no dejar Administración abierta en un celular suelto. Solo aparece
      si hay clave configurada: sin ella no hay nada que bloquear. #}
   {% include "_banner_alertas.html" %}
-  {{ tareas_parcial.recuadro(tareas_hub) }}
-  {% from "_boton_alertas.html" import cuantas_alertas %}
-
-  {# PRIMERO, como en Compras: es lo que hay que mirar antes de hacer nada, y
-     el banner de arriba manda acá. #}
-  <div class="tarjeta">
-    <a class="boton" href="/administracion/alertas">Alertas{{ cuantas_alertas(banner) }}</a>
-  </div>
+  {# LA FRANJA (dueño, 04/10): Tareas y Alertas en una línea, plegadas. #}
+  {% call franja_hub.franja(tareas_hub, banner) %}
+    <a class="franja-ver" href="/administracion/alertas">Ver el detalle de las alertas</a>
+  {% endcall %}
 
   <div class="tarjeta">
     <h2>Control de stock</h2>
