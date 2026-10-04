@@ -269,8 +269,8 @@ lo que no hay.
 **La segunda no tenía cómo corregirse cuando el desvío no viene de su origen**
 (guía R, rechazo, pase o remito), por ejemplo la segunda que había en el piso
 el 05/09 y no entró al stock inicial. Desde el 28/09 hay **ajuste de segunda**
-(`/administracion/stock/ajustar-segunda`), con el botón en la tarjeta de
-segunda del Cotejo:
+(`/administracion/stock/ajustar-segunda`), con el formulario en la tarjeta de
+segunda del Cotejo (adentro de la tarjeta desde el 04/10):
 
 - **Tabla propia**, `ajustes_segunda` (migración corrida en las dos bases el
   28/09), con signo y motivo obligatorio. No toca la primera: es la sexta pata
@@ -720,3 +720,33 @@ campo que hay que mirar es la fecha, y va **el día en que se armó**.
 
 (Desde el 30/09 el punto 1 vale solo pasados tres días: ver "El margen de
 la guía R". El 2 sigue igual.)
+
+## Cotejo y ajuste: UNA pantalla (04/10, dueño)
+
+Administración tenía dos botones, Cotejo y Ajustar Stock, y los usaba a los
+dos. Desde el 04/10 son uno, **"Cotejo y ajuste"**
+(`/administracion/stock/cotejo`): se ve la diferencia y, si hace falta, se
+ajusta en la misma tarjeta. **No cambió ningún permiso ni ninguna regla del
+ajuste**: los formularios postean a las mismas rutas
+(`/administracion/stock/ajustar` y `.../ajustar-segunda`), con `volver=cotejo`
+para que el aviso o el error vuelvan a esta pantalla.
+
+- **La propuesta sale de UNA función** (`_propuesta_de_ajuste` y
+  `_propuesta_de_ajuste_segunda` en app/main.py), la misma que usa la
+  pantalla vieja de Ajustar Stock: la diferencia del día del conteo, el
+  motivo propuesto (en la segunda, sin motivo) y el aviso.
+- **El ajuste sin conteo** (lo que era Ajustar Stock en blanco) va al pie,
+  plegado, con la lista de "Ajustes de segunda cargados" al lado.
+- **Las pantallas viejas siguen abriendo** (`/administracion/stock/ajustar`
+  y `.../ajustar-segunda`), para los links que alguien tenga guardados.
+
+**Stock inicial del corte salió de Administración el mismo día**: se usó una
+sola vez, el 05/09. Quedó SOLO en Gerencia (`/gerencia/stock/inicial`, con la
+clave de Gerencia), la misma pantalla con el sector sacado del prefijo
+(corolario 63). La dirección de Administración sigue abriendo y no tiene
+botón.
+
+**Evolución y Movimientos son PESTAÑAS de Stock del depósito** (aprobado por
+el dueño el 04/10): arriba de las tres pantallas va Hoy · Evolución ·
+Movimientos (`templates/_pestanas_stock.html`), y el hub tiene un solo botón.
+Cada pestaña sigue siendo su propia pantalla, con su propia dirección.

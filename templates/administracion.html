@@ -5,8 +5,8 @@
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Administración</title>
 {% import "_franja_hub.html" as franja_hub %}
+{% import "_botones_hub.html" as botones_hub %}
 <style>
-  h2 { font-size: 1.05rem; margin: 0 0 0.75rem; }
   :root { font-family: -apple-system, system-ui, sans-serif; }
   body {
     margin: 0;
@@ -21,25 +21,6 @@
     margin-bottom: 1rem;
     box-shadow: 0 1px 3px rgba(0, 0, 0, 0.1);
   }
-  .boton:last-child { margin-bottom: 0; }
-  .boton {
-    /* Separación entre botones: la tarjeta tenía UNO solo y nunca hizo
-       falta. Con cinco, pegados se leen como un bloque y el dedo no
-       distingue dónde termina uno. */
-    margin-bottom: 0.6rem;
-    width: 100%;
-    padding: 1.1rem;
-    background: #2563eb;
-    color: #fff;
-    border: none;
-    border-radius: 10px;
-    font-size: 1.1rem;
-    font-weight: 700;
-    text-align: center;
-    text-decoration: none;
-    display: block;
-    box-sizing: border-box;
-  }
   .volver {
     display: block;
     margin-top: 0.75rem;
@@ -49,6 +30,7 @@
     text-decoration: none;
   }
   {{ franja_hub.estilos() }}
+  {{ botones_hub.estilos() }}
 </style>
 </head>
 <body>
@@ -57,33 +39,32 @@
   {% set barra_atras = "/inicio" %}
   {% include "_barra_navegacion.html" %}
 
-  {# Para no dejar Administración abierta en un celular suelto. Solo aparece
-     si hay clave configurada: sin ella no hay nada que bloquear. #}
   {% include "_banner_alertas.html" %}
   {# LA FRANJA (dueño, 04/10): Tareas y Alertas en una línea, plegadas. #}
   {% call franja_hub.franja(tareas_hub, banner) %}
     <a class="franja-ver" href="/administracion/alertas">Ver el detalle de las alertas</a>
   {% endcall %}
 
+  {# CUATRO GRUPOS (dueño, 04/10). Cotejo y Ajustar Stock son UN botón: se
+     ve la diferencia y se ajusta en la misma pantalla. Stock Inicial del
+     Corte se fue a Gerencia: se usó una sola vez, el 05/09. #}
   <div class="tarjeta">
-    <h2>Control de stock</h2>
+    <h2>Stock</h2>
     {# El Remanente REEMPLAZÓ a Stock del Sistema el 06/09: aquella la
        miraron tres veces y ninguna sirvió —el desglose por guía R y el
        "sin procesar −95" confundían—. Lo que sí importaba de la vieja no
        se perdió: los negativos van abajo del Remanente en su sección
        aparte, y las seis patas por artículo pasaron a Stock por Guía, que
        se alcanza desde ahí. #}
-    <a class="boton" href="/administracion/stock/remanente">Stock del Depósito</a>
-    <a class="boton" href="/administracion/stock/evolucion">Evolución</a>
-    <a class="boton" href="/administracion/stock/cotejo">Cotejo</a>
-    <a class="boton" href="/administracion/stock/ajustar">Ajustar Stock</a>
-    <a class="boton" href="/administracion/stock/movimientos">Movimientos</a>
-    <a class="boton" href="/administracion/stock/guias-r">Guías R</a>
-    <a class="boton" href="/administracion/stock/inicial">Stock Inicial del Corte</a>
+    <a class="boton color-1" href="/administracion/stock/remanente">{{ ICONOS_HUBS['stock']|safe }}<span>Stock del Depósito</span></a>
+    {# Evolución y Movimientos son PESTAÑAS de Stock del depósito (dueño,
+       04/10): Hoy · Evolución · Movimientos, arriba de las tres pantallas. #}
+    <a class="boton color-1" href="/administracion/stock/cotejo">{{ ICONOS_HUBS['cotejo']|safe }}<span>Cotejo y ajuste</span></a>
+    <a class="boton color-1" href="/administracion/stock/guias-r">{{ ICONOS_HUBS['guias_r']|safe }}<span>Guías R</span></a>
     {# La MISMA pantalla que Depósito tiene en /deposito/devolver (dueño, 01/10):
-       cada devolución guarda desde qué sector se cargó. Va en Control de
-       stock y no en Facturación: saca mercadería del piso. #}
-    <a class="boton" href="/administracion/devolver">Devolver mercadería</a>
+       cada devolución guarda desde qué sector se cargó. Va en Stock y no en
+       Facturación: saca mercadería del piso. #}
+    <a class="boton color-1" href="/administracion/devolver">{{ ICONOS_HUBS['devolver']|safe }}<span>Devolver mercadería</span></a>
   </div>
 
   <div class="tarjeta">
@@ -92,29 +73,25 @@
        la fase 3 de la etapa 0, que está diferida (ver db/APLICADO.md). El
        botón se muda igual: la navegación es lo que usa la persona, y no
        tiene por qué esperar al renombre. #}
-    <a class="boton" href="/deposito/pedido/cargar">Cargar Pedido</a>
-    <a class="boton" href="/administracion/pedidos/buscar">Armar Remito</a>
+    <a class="boton color-2" href="/deposito/pedido/cargar">{{ ICONOS_HUBS['cargar_pedido']|safe }}<span>Cargar pedido</span></a>
+    <a class="boton color-2" href="/administracion/pedidos/buscar">{{ ICONOS_HUBS['remito']|safe }}<span>Armar remito</span></a>
   </div>
 
   <div class="tarjeta">
-    <h2>Facturación</h2>
+    <h2>Facturación y cobranzas</h2>
     {# Los remitos por orden de compra y la factura (dueño, 01/10). #}
-    <a class="boton" href="/administracion/facturacion">Remitos y facturas</a>
-    {# "Movimientos del depósito" (dueño, 30/09): lo que entra y lo que sale.
-       El Resumen proveedores (con lo que hay que
-       depositarle a cada proveedor) sigue, colgada de adentro. #}
-    <a class="boton" href="/administracion/ingresos">Movimientos del depósito</a>
-    <a class="boton" href="/administracion/vales">Vales a cobrar</a>
+    <a class="boton color-3" href="/administracion/facturacion">{{ ICONOS_HUBS['facturas']|safe }}<span>Remitos y facturas</span></a>
     {# La MISMA pantalla que Comercial tiene en /precios/vigencias, con su
        propia URL para que la barra y el atrás sean de acá. El botón de
        Comercial queda donde está: éste se agrega, no lo reemplaza. #}
-    <a class="boton" href="/administracion/precios-por-periodo">Precios por Período</a>
-  </div>
-
-  <div class="tarjeta">
-    <h2>Cobranzas de segunda</h2>
+    <a class="boton color-3" href="/administracion/precios-por-periodo">{{ ICONOS_HUBS['periodo']|safe }}<span>Precios por período</span></a>
+    <a class="boton color-3" href="/administracion/vales">{{ ICONOS_HUBS['vales']|safe }}<span>Vales a cobrar</span></a>
     {# Lo que paga el puesto por cada lote de segunda (dueño, 02/10). #}
-    <a class="boton" href="/administracion/cobranzas-segunda">Cobranzas de segunda</a>
+    <a class="boton color-3" href="/administracion/cobranzas-segunda">{{ ICONOS_HUBS['cobranzas']|safe }}<span>Cobranzas de segunda</span></a>
+    {# "Movimientos del depósito" (dueño, 30/09): lo que entra y lo que sale.
+       El Resumen proveedores (con lo que hay que
+       depositarle a cada proveedor) sigue, colgada de adentro. #}
+    <a class="boton color-3" href="/administracion/ingresos">{{ ICONOS_HUBS['movimientos']|safe }}<span>Movimientos del depósito</span></a>
   </div>
 
   <div class="tarjeta">
@@ -122,8 +99,8 @@
     {# Cajas es la MISMA pantalla que Compras tiene en /compras/cajas, con su
        propia dirección para que la barra, el atrás y cada formulario se queden
        en Administración. Vacíos del depósito vive SOLO acá desde el 29/09. #}
-    <a class="boton" href="/administracion/cajas">Cajas</a>
-    <a class="boton" href="/administracion/vacios">Vacíos del depósito</a>
+    <a class="boton color-1" href="/administracion/cajas">{{ ICONOS_HUBS['cajas']|safe }}<span>Cajas</span></a>
+    <a class="boton color-1" href="/administracion/vacios">{{ ICONOS_HUBS['vacios']|safe }}<span>Vacíos del depósito</span></a>
   </div>
 
   <a class="volver" href="/inicio">Volver a Inicio</a>

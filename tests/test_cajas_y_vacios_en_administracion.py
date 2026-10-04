@@ -272,9 +272,9 @@ def test_el_hub_de_ADMINISTRACION_tiene_el_recuadro_y_los_otros_TRES_intactos():
     assert respuesta.status_code == 200
     marcado = respuesta.text.split("</style>")[-1]
     titulos = [t.split("</h2>")[0] for t in marcado.split("<h2>")[1:]]
-    # "Cobranzas de segunda" (02/10) es una tarjeta nueva, pedida así por el
-    # dueño; las otras siguen en su lugar.
-    assert titulos == ["Control de stock", "Pedidos", "Facturación", "Cobranzas de segunda", "Cajas y vacíos"]
+    # CUATRO GRUPOS desde el 04/10 (dueño): Cobranzas de segunda entró a
+    # Facturación y cobranzas.
+    assert titulos == ["Stock", "Pedidos", "Facturación y cobranzas", "Cajas y vacíos"]
     recuadro = marcado.split("<h2>Cajas y vacíos</h2>")[1].split("</div>")[0]
     assert 'href="/administracion/cajas"' in recuadro
     assert 'href="/administracion/vacios"' in recuadro

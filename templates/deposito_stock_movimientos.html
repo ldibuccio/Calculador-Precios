@@ -4,6 +4,7 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Movimientos de Stock</title>
+{% import "_pestanas_stock.html" as pestanas_stock %}
 <style>
   :root { font-family: -apple-system, system-ui, sans-serif; }
   body {
@@ -101,6 +102,7 @@
   }
   .renglon form { margin: 0; }
   .vacio { color: #888; font-style: italic; margin: 0; }
+  {{ pestanas_stock.estilos() }}
 </style>
 </head>
 <body>
@@ -109,6 +111,7 @@
   {% set barra_atras = "/administracion" %}
   {% from "_info.html" import info %}
   {% include "_barra_navegacion.html" %}
+  {{ pestanas_stock.pestanas("movimientos") }}
   {% if error %}<div class="error">{{ error }}</div>{% endif %}
 
   <div class="tarjeta">

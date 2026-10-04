@@ -96,6 +96,8 @@ desde la versión larga de este archivo el 03/10.
   `action`, descargas) se revisan.
 - **Un link de una alerta es por sector** (`destinos_por_sector`): la url de
   un sector puede ser una pared en otro (corolario 56).
+- **Los hubs se leen como Depósito**: un dibujo en cada botón y un color por
+  recuadro, en orden (`templates/_botones_hub.html`). Depósito no se toca.
 - **Toda medición de layout usa `scripts/medir_layout.py`** e imprime la
   identidad (status y un conteo propio de la pantalla) y el denominador.
 
@@ -226,7 +228,7 @@ desde la versión larga de este archivo el 03/10.
 
 Reglas:
 - `docs/reglas/pantallas.md`: mobile-first, rótulos, exportaciones, la "i",
-  esconder contenedores.
+  esconder contenedores, el estilo de los hubs.
 - `docs/reglas/sql_y_conector.md`: editor de Supabase, conector de lectura,
   `if not exists`.
 - `docs/reglas/git_ci_y_deploy.md`: push silencioso, CI, sello, deploy,
@@ -243,8 +245,8 @@ Corolarios, por familia (se buscan por número con `grep "Corolario N"`):
 Módulos (se lee el que se va a tocar):
 - `docs/modulos/stock_y_guias_r.md`: envase de la ficha, margen de la guía R,
   guía anulada, negativos, filtro por tipo, `primera = 0`, mismo lote el
-  mismo día.
-- `docs/modulos/cajas.md`: el modelo de la caja.
+  mismo día, Cotejo y ajuste en una pantalla y Stock inicial solo en Gerencia.
+- `docs/modulos/cajas.md`: el modelo de la caja, y Cajas con sus tipos y costo en Administración.
 - `docs/modulos/vacios.md`: los dos circuitos de vacíos.
 - `docs/modulos/devoluciones.md`: devoluciones y su valor.
 - `docs/modulos/vales.md`: vales a cobrar.

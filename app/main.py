@@ -604,6 +604,7 @@ from core.vales import (
     total_de as total_de_vales,
 )
 from core.vales import hora_argentina as hora_argentina_vale
+from app.iconos_hubs import ICONOS_HUBS
 from core.backup import HORAS_PARA_LA_ALERTA, TEXTO_DE_LA_PARTE, TEXTO_DEL_DESTINO, causa_legible
 from core.tareas import (
     DIAS_DE_LA_SEMANA as DIAS_DE_LA_SEMANA_TAREA,
@@ -1774,6 +1775,9 @@ _ICONOS_DEPOSITO = {
 }
 
 templates.env.globals["ICONOS_DEPOSITO"] = _ICONOS_DEPOSITO
+# Los de Administración, Compras, Gerencia y Comercial (dueño, 04/10): el
+# mismo juego que Depósito, en su propio archivo.
+templates.env.globals["ICONOS_HUBS"] = ICONOS_HUBS
 
 # |tojson es la forma correcta de meter un texto de la base adentro de una
 # cadena de JavaScript: escapa < > & ' como \u00XX, así que el navegador los
@@ -11399,6 +11403,24 @@ def _validar_costo_envase(texto: str) -> tuple[str | None, float | None]:
     return None, valor
 
 
+# LOS TIPOS DE CAJA Y SU COSTO POR DOS CAMINOS (dueño, 04/10): el precio de
+# las cajas lo carga Administración, desde adentro de Cajas. La pantalla es
+# la misma que Comercial tenía en /envases y el costo es el MISMO que leen la
+# rentabilidad y el costeo (`costos_envases`). Va en su propia pantalla y no
+# en la de Cajas, que es SOLO stock (dueño, 17/09). El sector sale del
+# PREFIJO (corolario 63).
+_CAMINOS_DE_ENVASES = {
+    "comercial": {"sector": "comercial", "base": "/envases", "atras": "/comercial",
+                  "titulo": "Envases"},
+    "administracion": {"sector": "administracion", "base": "/administracion/cajas/tipos",
+                       "atras": "/administracion/cajas", "titulo": "Tipos de caja"},
+}
+
+
+def _camino_de_envases(request: Request) -> dict:
+    return _CAMINOS_DE_ENVASES["administracion" if request.url.path.startswith("/administracion/") else "comercial"]
+
+
 def _renderizar_pantalla_envases(
     request: Request, aviso: str | None = None, error: str | None = None, status_code: int = 200
 ):
@@ -11425,17 +11447,20 @@ def _renderizar_pantalla_envases(
             "historial_por_envase": historial_por_envase,
             "aviso": aviso,
             "error": error,
+            "camino": _camino_de_envases(request),
         },
         status_code=status_code,
     )
 
 
 @app.get("/envases")
+@app.get("/administracion/cajas/tipos")
 def ver_envases(request: Request, aviso: str | None = None):
     return _renderizar_pantalla_envases(request, aviso=aviso)
 
 
 @app.post("/envases/nuevo")
+@app.post("/administracion/cajas/tipos/nuevo")
 def agregar_envase(request: Request, nombre: str = Form(""), costo: str = Form("")):
     error, nombre_valor = _validar_nombre(nombre)
     if not error:
@@ -11452,10 +11477,11 @@ def agregar_envase(request: Request, nombre: str = Form(""), costo: str = Form("
         raise HTTPException(status_code=500, detail=f"No se pudo crear el envase: {error_db}") from error_db
 
     parametros = urlencode({"aviso": f"Envase {nombre_valor} creado, con costo vigente desde hoy."})
-    return RedirectResponse(url=f"/envases?{parametros}", status_code=303)
+    return RedirectResponse(url=f"{_camino_de_envases(request)['base']}?{parametros}", status_code=303)
 
 
 @app.post("/envases/{envase_id}/costo")
+@app.post("/administracion/cajas/tipos/{envase_id}/costo")
 def cambiar_costo_envase(request: Request, envase_id: int, costo: str = Form("")):
     error, costo_valor = _validar_costo_envase(costo)
     if error:
@@ -11470,10 +11496,11 @@ def cambiar_costo_envase(request: Request, envase_id: int, costo: str = Form("")
         raise HTTPException(status_code=500, detail=f"No se pudo registrar el costo: {error_db}") from error_db
 
     parametros = urlencode({"aviso": "Costo nuevo registrado, vigente desde hoy. El historial anterior se conserva."})
-    return RedirectResponse(url=f"/envases?{parametros}", status_code=303)
+    return RedirectResponse(url=f"{_camino_de_envases(request)['base']}?{parametros}", status_code=303)
 
 
 @app.post("/envases/{envase_id}/baja")
+@app.post("/administracion/cajas/tipos/{envase_id}/baja")
 def dar_de_baja_envase(request: Request, envase_id: int):
     """Baja de un envase: fila nueva con costo 0 vigente desde hoy — mismo criterio de historial, nada se borra."""
     try:
@@ -11484,7 +11511,7 @@ def dar_de_baja_envase(request: Request, envase_id: int):
     parametros = urlencode(
         {"aviso": "Envase dado de baja: costo $0 desde hoy. El historial y los cálculos pasados se conservan."}
     )
-    return RedirectResponse(url=f"/envases?{parametros}", status_code=303)
+    return RedirectResponse(url=f"{_camino_de_envases(request)['base']}?{parametros}", status_code=303)
 
 
 @app.get("/logistica")
@@ -13980,26 +14007,60 @@ def ver_ajustar_stock_deposito(
         except Exception as error_db:
             raise HTTPException(status_code=500, detail=f"Error al conectar con la base de datos: {error_db}") from error_db
 
-        diferencia = round(contado_valor - sistema_del_dia, 2)
-        dia_texto = dia.strftime("%d/%m")
-        precarga = {
-            "articulo_id": articulo_id,
-            "cantidad": diferencia,
-            "motivo": (
-                f"Conteo del {dia_texto}: {_formatear_numero(contado_valor)} contados, "
-                f"el sistema decía {_formatear_numero(sistema_del_dia)}"
-            ),
-            # A LA VISTA y no en la "i": cambia lo que se va a guardar. El que
-            # viene de otra época de esta pantalla espera "dejarlo en lo
-            # contado", y eso ya no es lo que propone.
-            "aviso_conteo": (
-                f"El conteo es del {dia_texto}: contaste {_formatear_numero(contado_valor)} y al cierre de "
-                f"ese día el sistema decía {_formatear_numero(sistema_del_dia)}. Se propone esa diferencia "
-                f"({'+' if diferencia > 0 else ''}{_formatear_numero(diferencia)}). Lo que entró y salió "
-                f"después del conteo ya está cargado y no se toca."
-            ),
-        }
+        precarga = {"articulo_id": articulo_id, **_propuesta_de_ajuste(contado_valor, sistema_del_dia, dia)}
     return _renderizar_pantalla_ajustar_stock(request, precarga=precarga, aviso=aviso)
+
+
+def _propuesta_de_ajuste(contado: float, sistema_del_dia: float, dia: date) -> dict:
+    """Lo que se propone ajustar a partir de un conteo: la DIFERENCIA de ese
+    día (`contado − sistema al cierre del día del conteo`), el motivo y el
+    aviso. UNA vez para las dos pantallas que lo proponen: la tarjeta de
+    Cotejo y ajuste y la pantalla vieja de Ajustar Stock (04/10)."""
+    diferencia = round(contado - sistema_del_dia, 2)
+    dia_texto = dia.strftime("%d/%m")
+    return {
+        "cantidad": diferencia,
+        "motivo": (
+            f"Conteo del {dia_texto}: {_formatear_numero(contado)} contados, "
+            f"el sistema decía {_formatear_numero(sistema_del_dia)}"
+        ),
+        # A LA VISTA y no en la "i": cambia lo que se va a guardar. El que
+        # viene de otra época de esta pantalla espera "dejarlo en lo
+        # contado", y eso ya no es lo que propone.
+        "aviso_conteo": (
+            f"El conteo es del {dia_texto}: contaste {_formatear_numero(contado)} y al cierre de "
+            f"ese día el sistema decía {_formatear_numero(sistema_del_dia)}. Se propone esa diferencia "
+            f"({'+' if diferencia > 0 else ''}{_formatear_numero(diferencia)}). Lo que entró y salió "
+            f"después del conteo ya está cargado y no se toca."
+        ),
+    }
+
+
+def _propuesta_de_ajuste_segunda(contado: float, sistema_del_dia: float, dia: date) -> dict:
+    """Lo mismo para la SEGUNDA: la diferencia de ese día y el aviso. El
+    motivo NO se propone (ver ver_ajustar_segunda)."""
+    diferencia = round(contado - sistema_del_dia, 2)
+    dia_texto = dia.strftime("%d/%m")
+    return {
+        "cantidad": diferencia,
+        "fecha_conteo": dia.isoformat(),
+        "dia_texto": dia_texto,
+        "aviso_conteo": (
+            f"El {dia_texto} contaste {_formatear_numero(contado)} de segunda y al cierre de ese día el "
+            f"sistema decía {_formatear_numero(sistema_del_dia)}. Se propone esa diferencia "
+            f"({'+' if diferencia > 0 else ''}{_formatear_numero(diferencia)}). El ajuste queda fechado el "
+            f"{dia_texto} y no toca la primera."
+        ),
+    }
+
+
+_VOLVER_AL_COTEJO = "/administracion/stock/cotejo"
+
+
+def _al_cotejo(**query) -> RedirectResponse:
+    """Vuelve a Cotejo y ajuste con lo que pasó (04/10): el ajuste se guarda
+    desde la tarjeta y el operario sigue mirando la misma pantalla."""
+    return RedirectResponse(url=f"{_VOLVER_AL_COTEJO}?{urlencode(query)}", status_code=303)
 
 
 @app.post("/administracion/stock/ajustar")
@@ -14008,6 +14069,7 @@ def ajustar_stock_deposito_ruta(
     articulo_id: str = Form(""),
     cantidad: str = Form(""),
     motivo: str = Form(""),
+    volver: str = Form(""),
 ):
     """Guarda un ajuste de stock: cantidad en bultos con signo (nunca 0) y motivo OBLIGATORIO. Nunca pisa: movimiento nuevo."""
     motivo_limpio = re.sub(r"\s+", " ", motivo).strip()
@@ -14038,7 +14100,10 @@ def ajustar_stock_deposito_ruta(
         if articulo is None:
             error = "Elegí un artículo válido."
 
+    desde_el_cotejo = volver == "cotejo"
     if error:
+        if desde_el_cotejo:
+            return _al_cotejo(error=error)
         precarga = {"articulo_id": articulo_id, "cantidad": cantidad, "motivo": motivo_limpio}
         return _renderizar_pantalla_ajustar_stock(request, precarga=precarga, error=error, status_code=400)
 
@@ -14047,6 +14112,8 @@ def ajustar_stock_deposito_ruta(
             articulo["id"], "ajuste", cantidad_valor, motivo_limpio, _hoy_argentina()
         )
     except Exception as error_db:
+        if desde_el_cotejo:
+            return _al_cotejo(error=f"No se pudo guardar el ajuste: {error_db}")
         return _renderizar_pantalla_ajustar_stock(
             request, error=f"No se pudo guardar el ajuste: {error_db}", status_code=500
         )
@@ -14055,6 +14122,8 @@ def ajustar_stock_deposito_ruta(
         f"Ajuste guardado: {'+' if cantidad_valor > 0 else ''}{_formatear_numero(cantidad_valor)} bultos de "
         f"{articulo['nombre']}. El stock quedó en {_formatear_numero(stock_nuevo)}."
     )
+    if desde_el_cotejo:
+        return _al_cotejo(aviso=aviso)
     # El motivo vuelve en la URL para poder encadenar varios ajustes con el
     # mismo motivo sin reescribirlo. (El stock inicial del corte NO se carga
     # más por acá: tiene pantalla y tipo propios — ver /administracion/stock/inicial.)
@@ -14119,15 +14188,10 @@ def ver_ajustar_segunda(
         except Exception as error_db:
             raise HTTPException(status_code=500, detail=f"Error al conectar con la base de datos: {error_db}") from error_db
         if articulo:
-            diferencia = round(contado_valor - sistema_del_dia, 2)
             precarga = {
                 "articulo_id": articulo["id"],
                 "articulo_nombre": articulo["nombre"],
-                "fecha_conteo": dia.isoformat(),
-                "dia_texto": dia.strftime("%d/%m"),
-                "contado": contado_valor,
-                "sistema": sistema_del_dia,
-                "cantidad": diferencia,
+                **_propuesta_de_ajuste_segunda(contado_valor, sistema_del_dia, dia),
             }
     return _renderizar_ajustar_segunda(request, precarga=precarga, aviso=aviso)
 
@@ -14139,6 +14203,7 @@ def ajustar_segunda_ruta(
     fecha_conteo: str = Form(""),
     cantidad: str = Form(""),
     motivo: str = Form(""),
+    volver: str = Form(""),
 ):
     """Guarda un ajuste de segunda: bultos con signo (nunca 0), motivo OBLIGATORIO, fechado el día del conteo."""
     motivo_limpio = re.sub(r"\s+", " ", motivo).strip()
@@ -14172,10 +14237,14 @@ def ajustar_segunda_ruta(
         except ValueError as rechazo:
             error = str(rechazo)
         except Exception as error_db:
+            if volver == "cotejo":
+                return _al_cotejo(error=f"No se pudo guardar el ajuste: {error_db}")
             return _renderizar_ajustar_segunda(
                 request, error=f"No se pudo guardar el ajuste: {error_db}", status_code=500
             )
 
+    if error and volver == "cotejo":
+        return _al_cotejo(error=error)
     if error:
         precarga = {
             "articulo_id": articulo_id, "articulo_nombre": articulo["nombre"] if articulo else "",
@@ -14189,6 +14258,8 @@ def ajustar_segunda_ruta(
         f"bultos de {articulo['nombre']}, al {dia.strftime('%d/%m')}. La segunda quedó en "
         f"{_formatear_numero(pool_nuevo)} al cierre de ese día."
     )
+    if volver == "cotejo":
+        return _al_cotejo(aviso=aviso)
     return RedirectResponse(
         url=f"/administracion/stock/ajustar-segunda?{urlencode({'aviso': aviso})}", status_code=303
     )
@@ -14311,6 +14382,20 @@ def _porcion_elegida(articulo_id: str, que_conto: str) -> tuple[dict | None, boo
     return ficha, False, None
 
 
+# STOCK INICIAL DEL CORTE POR DOS CAMINOS (dueño, 04/10): se usó una sola
+# vez, el 05/09, y el botón quedó SOLO en Gerencia. La dirección de
+# Administración sigue abriendo (un link viejo no puede dar 404). El sector
+# sale del PREFIJO (corolario 63), igual que Facturación.
+_CAMINOS_DE_STOCK_INICIAL = {
+    "administracion": {"sector": "administracion", "base": "/administracion", "nombre": "Administración"},
+    "gerencia": {"sector": "gerencia", "base": "/gerencia", "nombre": "Gerencia"},
+}
+
+
+def _camino_de_stock_inicial(request: Request) -> dict:
+    return _CAMINOS_DE_STOCK_INICIAL["gerencia" if request.url.path.startswith("/gerencia") else "administracion"]
+
+
 def _renderizar_stock_inicial(
     request: Request, *, articulo_id=None, precarga=None, aviso=None, error=None, status_code: int = 200
 ):
@@ -14330,6 +14415,7 @@ def _renderizar_stock_inicial(
             "precarga": precarga or {},
             "aviso": aviso,
             "error": error,
+            "camino": _camino_de_stock_inicial(request),
         }
     except Exception as error_db:
         raise HTTPException(status_code=500, detail=f"Error al conectar con la base de datos: {error_db}") from error_db
@@ -14339,7 +14425,7 @@ def _renderizar_stock_inicial(
     )
 
 
-def _volver_a_stock_inicial(articulo_id, aviso=None, error=None):
+def _volver_a_stock_inicial(request: Request, articulo_id, aviso=None, error=None):
     """Vuelve a la pantalla con el MISMO artículo puesto y el foco en la carga (#carga).
 
     El ancla no es un detalle: en el celular, sin ella cada guardado deja
@@ -14351,20 +14437,37 @@ def _volver_a_stock_inicial(articulo_id, aviso=None, error=None):
         parametros["aviso"] = aviso
     if error:
         parametros["error"] = error
-    return RedirectResponse(url=f"/administracion/stock/inicial?{urlencode(parametros)}#carga", status_code=303)
+    base = _camino_de_stock_inicial(request)["base"]
+    return RedirectResponse(url=f"{base}/stock/inicial?{urlencode(parametros)}#carga", status_code=303)
+
+
+def _sin_clave_de_stock_inicial(request: Request):
+    """Bajo /gerencia la clave se pregunta en cada ruta: esa puerta no tiene
+    middleware que cubra los GET, y los POST piden la de escribir. Bajo
+    /administracion la cubre el middleware de su prefijo."""
+    if _camino_de_stock_inicial(request)["sector"] != "gerencia":
+        return None
+    if request.method == "POST":
+        return _puerta_de_gerencia_para_escribir(request)
+    return None if _acceso_gerencia_valido(request) else _pantalla_clave_gerencia(request)
 
 
 @app.get("/administracion/stock/inicial")
+@app.get("/gerencia/stock/inicial")
 def ver_stock_inicial(
     request: Request,
     articulo_id: str | None = None,
     aviso: str | None = None,
     error: str | None = None,
 ):
+    puerta = _sin_clave_de_stock_inicial(request)
+    if puerta is not None:
+        return puerta
     return _renderizar_stock_inicial(request, articulo_id=articulo_id, aviso=aviso, error=error)
 
 
 @app.post("/administracion/stock/inicial/sueltos")
+@app.post("/gerencia/stock/inicial/sueltos")
 def cargar_stock_inicial_sueltos(
     request: Request,
     articulo_id: str = Form(""),
@@ -14372,6 +14475,9 @@ def cargar_stock_inicial_sueltos(
     costo_por_bulto: str = Form(""),
 ):
     """Los bultos SIN PROCESAR que hay en el piso, con su costo por bulto."""
+    puerta = _sin_clave_de_stock_inicial(request)
+    if puerta is not None:
+        return puerta
     error, bultos_valor = _validar_bultos_positivos(bultos, "del stock inicial")
     costo_valor = None
     if not error:
@@ -14403,6 +14509,7 @@ def cargar_stock_inicial_sueltos(
         )
 
     return _volver_a_stock_inicial(
+        request,
         articulo["id"],
         aviso=(f"Cargados {_formatear_numero(bultos_valor)} bultos sueltos de {articulo['nombre']} "
                f"a {_formatear_moneda(costo_valor)} cada uno."),
@@ -14410,6 +14517,7 @@ def cargar_stock_inicial_sueltos(
 
 
 @app.post("/administracion/stock/inicial/armadas")
+@app.post("/gerencia/stock/inicial/armadas")
 def cargar_stock_inicial_armadas(
     request: Request,
     articulo_id: str = Form(""),
@@ -14418,6 +14526,9 @@ def cargar_stock_inicial_armadas(
     costo_por_caja: str = Form(""),
 ):
     """Las cajas YA ARMADAS que hay en el piso: una guía R de tipo inicial, que produce sin consumir."""
+    puerta = _sin_clave_de_stock_inicial(request)
+    if puerta is not None:
+        return puerta
     error, cajas_valor = _validar_bultos_positivos(cajas, "ya armadas")
     costo_valor = None
     if not error:
@@ -14460,6 +14571,7 @@ def cargar_stock_inicial_armadas(
         )
 
     return _volver_a_stock_inicial(
+        request,
         articulo["id"],
         aviso=(f"Cargadas {_formatear_numero(cajas_valor)} cajas armadas de {ficha['nombre']} "
                f"a {_formatear_moneda(costo_valor)} cada una."),
@@ -14467,6 +14579,7 @@ def cargar_stock_inicial_armadas(
 
 
 @app.post("/administracion/stock/inicial/anular")
+@app.post("/gerencia/stock/inicial/anular")
 def anular_stock_inicial_ruta(
     request: Request,
     clase: str = Form(""),
@@ -14474,15 +14587,18 @@ def anular_stock_inicial_ruta(
     articulo_id: str = Form(""),
 ):
     """Saca un renglón mal cargado. Se carga a mano y de apuro: equivocarse es parte del trabajo."""
+    puerta = _sin_clave_de_stock_inicial(request)
+    if puerta is not None:
+        return puerta
     if not renglon_id.strip().isdigit() or clase not in ("sueltos", "armadas"):
-        return _volver_a_stock_inicial(articulo_id, error="No se entendió qué renglón anular.")
+        return _volver_a_stock_inicial(request, articulo_id, error="No se entendió qué renglón anular.")
     try:
         anular_renglon_stock_inicial(clase, int(renglon_id))
     except ValueError as error_valor:
-        return _volver_a_stock_inicial(articulo_id, error=str(error_valor))
+        return _volver_a_stock_inicial(request, articulo_id, error=str(error_valor))
     except Exception as error_db:
         raise HTTPException(status_code=500, detail=f"Error al conectar con la base de datos: {error_db}") from error_db
-    return _volver_a_stock_inicial(articulo_id, aviso="Renglón anulado: no cuenta más en el total.")
+    return _volver_a_stock_inicial(request, articulo_id, aviso="Renglón anulado: no cuenta más en el total.")
 
 
 BULTOS_ENTEROS = (
@@ -15807,6 +15923,8 @@ def ver_cotejo_stock(request: Request):
     """
     try:
         conteos = listar_ultimos_conteos_stock()
+        # Para el ajuste sin conteo, que también vive acá desde el 04/10.
+        articulos = listar_articulos()
         corte = _corte_o_none()
         # UNA LECTURA POR DÍA CONTADO, no por porción: las tarjetas del mismo
         # día comparten el mismo cierre, y son pocos días distintos.
@@ -15864,11 +15982,8 @@ def ver_cotejo_stock(request: Request):
         if propio:
             fila["deficit"] = propio
 
-        # Con diferencia, botón directo a la pantalla de ajuste con el
-        # artículo, lo contado y el DÍA del conteo. Esa pantalla vuelve a
-        # calcular el cierre de ese día con la misma función y propone la
-        # DIFERENCIA de ese día (ver ver_ajustar_stock_deposito): no viaja un
-        # número del sistema en la URL que alguien pueda cambiar.
+        # Con diferencia, el ajuste ahí mismo, propuesto con la DIFERENCIA
+        # del día del conteo (ver _propuesta_de_ajuste).
         #
         # SOLO en los renglones de sueltos. Un ajuste de stock es por
         # ARTÍCULO: mueve el total, no reparte entre fichas. Si sobran
@@ -15885,24 +16000,18 @@ def ver_cotejo_stock(request: Request):
         # Ajustar desde ahí movería la pila equivocada — es el corolario 8,
         # dos cuentas con el mismo nombre y distinto alcance.
         # LA SEGUNDA TIENE SU PROPIO AJUSTE desde el 28/09, que mueve el pool
-        # y no el total: otra pantalla y otra tabla. Viaja lo mismo —artículo,
-        # contado y día— y la diferencia se vuelve a calcular allá.
+        # y no el total: otra ruta y otra tabla.
+        #
+        # COTEJO Y AJUSTE SON UNA PANTALLA desde el 04/10 (dueño): el
+        # formulario del ajuste va adentro de la tarjeta, ya propuesto con la
+        # diferencia de ESE día. La propuesta sale de la MISMA función que
+        # usa la pantalla vieja de Ajustar Stock, con el mismo número que la
+        # tarjeta muestra; la cantidad que se guarda es la que se manda.
         if fila["dif_del_dia"] not in (None, 0) and es_segunda:
-            fila["query_ajuste_segunda"] = urlencode(
-                {
-                    "articulo_id": conteo["articulo_id"],
-                    "contado": conteo["cantidad"],
-                    "fecha_conteo": dia.isoformat(),
-                }
-            )
+            fila["ajuste_segunda"] = _propuesta_de_ajuste_segunda(
+                float(conteo["cantidad"]), fila["sistema_del_dia"], dia)
         if fila["dif_del_dia"] not in (None, 0) and fila["ficha_id"] is None and not es_segunda:
-            fila["query_ajuste"] = urlencode(
-                {
-                    "articulo_id": conteo["articulo_id"],
-                    "contado": conteo["cantidad"],
-                    "fecha_conteo": dia.isoformat(),
-                }
-            )
+            fila["ajuste"] = _propuesta_de_ajuste(float(conteo["cantidad"]), fila["sistema_del_dia"], dia)
         filas.append(fila)
 
     # SIGNOS OPUESTOS ENTRE PORCIONES DEL MISMO ARTÍCULO. Es la firma de una
@@ -15971,7 +16080,10 @@ def ver_cotejo_stock(request: Request):
 
     return templates.TemplateResponse(
         request, "deposito_stock_cotejo.html",
-        {"filas": _ponerle_titulo_de_porcion(filas)},
+        {"filas": _ponerle_titulo_de_porcion(filas), "articulos": articulos,
+         # Lo que dejó el ajuste que se guardó desde acá. Se lee acá: un
+         # `?error=` que el GET no lee es un error mudo.
+         "aviso": request.query_params.get("aviso"), "error": request.query_params.get("error")},
     )
 
 

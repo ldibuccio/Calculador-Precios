@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Envases</title>
+<title>{{ camino.titulo }}</title>
 <style>
   :root { font-family: -apple-system, system-ui, sans-serif; }
   body {
@@ -159,9 +159,12 @@
 </style>
 </head>
 <body>
-  {% set barra_sector = "comercial" %}
-  {% set barra_titulo = "Envases" %}
-  {% set barra_atras = "/comercial" %}
+  {# DOS CAMINOS (dueño, 04/10): Comercial y Administración, que entra desde
+     adentro de Cajas. La barra, el atrás y cada formulario salen del prefijo
+     (`camino`). #}
+  {% set barra_sector = camino.sector %}
+  {% set barra_titulo = camino.titulo %}
+  {% set barra_atras = camino.atras %}
   {% from "_info.html" import info %}
   {% include "_barra_navegacion.html" %}
 
@@ -197,7 +200,7 @@
     <!-- El confirm() es el aviso pedido: cambiar el costo afecta el precio
          sugerido de todos los artículos, de TODOS los clientes, que usan
          este envase (el catálogo es compartido). -->
-    <form class="fila-cambio" method="post" action="/envases/{{ envase.id }}/costo"
+    <form class="fila-cambio" method="post" action="{{ camino.base }}/{{ envase.id }}/costo"
           onsubmit="return confirm('Ojo: el costo nuevo cambia el precio sugerido de TODOS los artículos, de todos los clientes, que usan {{ envase.nombre }}{% if envase.fichas_que_lo_usan %} ({{ envase.fichas_que_lo_usan }} artículo{{ "s" if envase.fichas_que_lo_usan != 1 else "" }}){% endif %}. Rige desde hoy y el historial anterior se conserva. ¿Registrar?');">
       <input type="text" inputmode="decimal" name="costo" placeholder="Costo nuevo $" required>
       <button type="submit" class="boton">Cambiar costo</button>
@@ -218,7 +221,7 @@
     </details>
     {% endif %}
 
-    <form method="post" action="/envases/{{ envase.id }}/baja"
+    <form method="post" action="{{ camino.base }}/{{ envase.id }}/baja"
           onsubmit="return confirm('¿Dar de baja {{ envase.nombre }}? Queda con costo $0 desde hoy — el historial y los cálculos pasados se conservan.');">
       <button type="submit" class="boton-baja">Dar de baja (costo $0 desde hoy)</button>
     </form>
@@ -228,7 +231,7 @@
   <div class="tarjeta formulario">
     <h2>Agregar envase</h2>
     <p class="ayuda">Si un envase es exclusivo de un cliente, distinguilo por el nombre (ej: "Caja Impresa Día").</p>
-    <form method="post" action="/envases/nuevo">
+    <form method="post" action="{{ camino.base }}/nuevo">
       <label for="nombre">Nombre *</label>
       <input type="text" id="nombre" name="nombre" placeholder="Ej: Caja Mediana" required>
       <label for="costo">Costo inicial $ *</label>

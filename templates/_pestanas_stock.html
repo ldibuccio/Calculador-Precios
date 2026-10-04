@@ -1,0 +1,28 @@
+{# LAS PESTAÑAS DE STOCK DEL DEPÓSITO (dueño, 04/10): Hoy · Evolución ·
+   Movimientos. Eran tres botones del hub de Administración que miran lo
+   mismo —el stock— desde tres lados; ahora se entra por uno y se cambia de
+   lado arriba de la pantalla. Cada pestaña sigue siendo su propia pantalla,
+   con su propia dirección: un link viejo abre igual.
+
+   DOS MACROS, como _franja_hub.html: `estilos()` adentro del <style> de la
+   pantalla y `pestanas(activa)` debajo de la barra. La activa lleva
+   `aria-current="page"`, que es la intención; el CSS decide cómo se ve. #}
+{% macro estilos() %}
+  .pestanas-stock { display: flex; gap: 0.35rem; margin: 0 0 1rem; }
+  /* EL ANCHO LO PONE LA PALABRA (flex auto) y no se parte nunca: con tres
+     tercios iguales, a 313px "Movimientos" no entraba y se cortaba al medio.
+     "Hoy" es corta y le cede lugar a las otras dos. */
+  .pestanas-stock a { flex: 1 1 auto; min-height: 44px; display: flex; align-items: center;
+    justify-content: center; padding: 0.4rem 0.5rem; box-sizing: border-box; border-radius: 8px; background: #fff;
+    border: 1px solid #d4d4d4; color: #334155; font-weight: 600; font-size: 0.92rem; text-decoration: none;
+    text-align: center; white-space: nowrap; }
+  .pestanas-stock a[aria-current="page"] { background: #334155; border-color: #334155; color: #fff; }
+{% endmacro %}
+
+{% macro pestanas(activa) %}
+<nav class="pestanas-stock" aria-label="Stock del depósito">
+  <a href="/administracion/stock/remanente"{% if activa == "hoy" %} aria-current="page"{% endif %}>Hoy</a>
+  <a href="/administracion/stock/evolucion"{% if activa == "evolucion" %} aria-current="page"{% endif %}>Evolución</a>
+  <a href="/administracion/stock/movimientos"{% if activa == "movimientos" %} aria-current="page"{% endif %}>Movimientos</a>
+</nav>
+{% endmacro %}

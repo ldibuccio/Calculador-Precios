@@ -260,11 +260,17 @@ def test_la_tarjeta_de_segunda_del_COTEJO_lleva_el_boton_y_la_pantalla_propone_l
     cliente = _cliente(m)
     with patch.dict(os.environ, {"CLAVE_ADMINISTRACION": "a"}):
         cotejo = cliente.get("/administracion/stock/cotejo").text.split("</style>")[-1]
-        tarjeta = [t for t in cotejo.split('<div class="tarjeta') if "EJEMPLO Palta Cotejo Boton" in t]
+        # por el ENCABEZADO: el artículo también está en la lista del ajuste sin conteo
+        tarjeta = [t for t in cotejo.split('<div class="tarjeta') if 'encabezado">EJEMPLO Palta Cotejo Boton' in t]
         assert len(tarjeta) == 1
-        assert f'href="/administracion/stock/ajustar-segunda?articulo_id={art}&amp;contado=0' in tarjeta[0]
+        # COTEJO Y AJUSTE (04/10): el formulario de la segunda va adentro de
+        # la tarjeta, con la diferencia de ese día y SIN motivo escrito
+        assert tarjeta[0].count('action="/administracion/stock/ajustar-segunda"') == 1
+        assert f'<input type="hidden" name="fecha_conteo" value="{dia.isoformat()}">' in tarjeta[0]
+        assert re.search(r'name="cantidad" step="0.01" required[^>]*value="2.0"', tarjeta[0])
+        assert re.search(r'<input type="text" name="motivo" required\s+placeholder="[^"]*"></label>', tarjeta[0])
         # la de PRIMERA no: ese botón mueve el total y la segunda no está ahí
-        assert "/administracion/stock/ajustar?" not in tarjeta[0]
+        assert 'action="/administracion/stock/ajustar"' not in tarjeta[0]
         pantalla = cliente.get(
             f"/administracion/stock/ajustar-segunda?articulo_id={art}&contado=0&fecha_conteo={dia.isoformat()}"
         ).text.split("</style>")[-1]

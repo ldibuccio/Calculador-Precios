@@ -574,11 +574,12 @@ def test_el_HUB_de_Administracion_tiene_Devolver_mercaderia_y_Deposito_sigue_igu
     import io as _io
     admin = _io.open("templates/administracion.html", encoding="utf-8").read()
     deposito = _io.open("templates/deposito.html", encoding="utf-8").read()
-    assert 'href="/administracion/devolver">Devolver mercadería</a>' in admin
-    # En la tarjeta "Control de stock" (dueño, 01/10), no en Facturación.
+    assert re.search(r'href="/administracion/devolver">[^<]*<span>Devolver mercadería</span></a>', admin)
+    # En la tarjeta de stock (dueño, 01/10; desde el 04/10 se llama "Stock"),
+    # no en Facturación.
     tarjetas = admin.split('<div class="tarjeta">')
-    control = next(c for c in tarjetas if "<h2>Control de stock</h2>" in c)
-    facturacion = next(c for c in tarjetas if "<h2>Facturación</h2>" in c)
+    control = next(c for c in tarjetas if "<h2>Stock</h2>" in c)
+    facturacion = next(c for c in tarjetas if "<h2>Facturación y cobranzas</h2>" in c)
     assert 'href="/administracion/devolver"' in control
     assert 'href="/administracion/devolver"' not in facturacion
     assert 'href="/deposito/devolver">' in deposito
