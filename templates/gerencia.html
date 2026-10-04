@@ -4,7 +4,7 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Gerencia</title>
-{% import "_tareas_pendientes.html" as tareas_parcial %}
+{% import "_franja_hub.html" as franja_hub %}
 <style>
   :root { font-family: -apple-system, system-ui, sans-serif; }
   body {
@@ -44,7 +44,7 @@
     font-size: 0.85rem;
     text-decoration: none;
   }
-  {{ tareas_parcial.estilos() }}
+  {{ franja_hub.estilos() }}
 </style>
 </head>
 <body>
@@ -54,13 +54,12 @@
   {% include "_barra_navegacion.html" %}
 
   {% include "_banner_alertas.html" %}
-  {{ tareas_parcial.recuadro(tareas_hub) }}
-  {% from "_boton_alertas.html" import cuantas_alertas %}
+  {# LA FRANJA (dueño, 04/10): Tareas y Alertas en una línea, plegadas. #}
+  {% call franja_hub.franja(tareas_hub, banner) %}
+    <a class="franja-ver" href="/gerencia/alertas">Ver el detalle de las alertas</a>
+  {% endcall %}
 
-  {# PRIMERO, como en Compras: es lo que hay que mirar antes de hacer nada, y
-     el banner de arriba manda acá. #}
   <div class="tarjeta">
-    <a class="boton" href="/gerencia/alertas">Alertas{{ cuantas_alertas(banner) }}</a>
     {# Lo que Gerencia les carga a los sectores (dueño, 02/10). #}
     <a class="boton" href="/gerencia/tareas">Tareas</a>
     {# Plan B (dueño, 02/10): solo mira, y es de lo que se mira antes que

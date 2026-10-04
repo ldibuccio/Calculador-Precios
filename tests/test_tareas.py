@@ -204,22 +204,36 @@ def test_el_REGISTRO_filtra_por_estado_visible_y_la_ALERTA_cuenta_las_vencidas(b
 
 # --- las pantallas -------------------------------------------------------------------
 
-def test_el_RECUADRO_del_hub_es_UNA_linea_plegada_y_dice_las_vencidas(base, monkeypatch):
+def _boton_de_tareas(marcado):
+    """El <button> de Tareas de la franja, entero: clase y texto."""
+    (boton,) = re.findall(r'<button type="button" class="([^"]*)"[^>]*data-franja-boton="tareas">([^<]*)</button>',
+                          " ".join(marcado.split()))
+    return boton
+
+
+def test_la_FRANJA_dice_las_tareas_en_gris_destacado_o_ROJO_y_arranca_plegada(base, monkeypatch):
+    """Dueño, 04/10: "Sin tareas pendientes" en gris; "Tareas pendientes (N)"
+    destacado; en rojo si alguna está vencida. "Nueva tarea" se despliega
+    SIEMPRE, también sin pendientes."""
     from unittest.mock import patch
     d, _ = base
     cliente = _cliente(monkeypatch, "compras")
     with patch("app.main._hoy_argentina", return_value=LUNES + timedelta(days=2)):
-        marcado = cliente.get("/compras").text.split("</style>")[-1]
-        assert '<p class="tareas-linea">No hay tareas pendientes</p>' in marcado
-        _semanal(d)
-        d.crear_tarea(creada_por="gerencia", sector="compras", titulo="EJ Llamar al puesto", detalle=None, tipo="una_vez",
-                      vence_el=LUNES + timedelta(days=5), hoy=LUNES)
-        marcado = cliente.get("/compras").text.split("</style>")[-1]
-    resumen = re.search(r'<summary class="tareas-linea">(.*?)</summary>', marcado, re.S).group(1)
-    assert " ".join(resumen.split()) == 'Tareas pendientes (2) · <span class="tareas-roja">1 vencida</span>'
-    assert '<details class="tareas-plegable">' in marcado                      # sin `open`: plegado
-    assert marcado.index("tareas-hub") < marcado.index("/compras/alertas")     # arriba de los botones
-    assert marcado.count('action="/compras/tareas/') == 2
+        sin = cliente.get("/compras").text.split("</style>")[-1]
+        d.crear_tarea(creada_por="gerencia", sector="compras", titulo="EJ Llamar al puesto", detalle=None,
+                      tipo="una_vez", vence_el=LUNES + timedelta(days=5), hoy=LUNES)
+        al_dia = cliente.get("/compras").text.split("</style>")[-1]
+        _semanal(d)                                             # la semanal del LUNES ya pasó: vencida
+        con_vencida = cliente.get("/compras").text.split("</style>")[-1]
+    assert _boton_de_tareas(sin) == ("franja-boton", "Sin tareas pendientes")
+    assert _boton_de_tareas(al_dia) == ("franja-boton destacada", "Tareas pendientes (1)")
+    assert _boton_de_tareas(con_vencida) == ("franja-boton roja", "Tareas pendientes (2)")
+    for marcado in (sin, al_dia, con_vencida):
+        panel = marcado.split('id="franja-tareas"')[1].split('id="franja-alertas"')[0]
+        assert panel.startswith(' data-franja-panel="tareas" hidden>')         # plegado al llegar
+        assert panel.count('<a class="tareas-nueva" href="/compras/tareas">Nueva tarea</a>') == 1
+        assert marcado.index("data-franja") < marcado.index('<div class="tarjeta">')   # arriba de los botones
+    assert con_vencida.count('action="/compras/tareas/') == 2
 
 
 def test_el_SECTOR_marca_desde_su_hub_y_NO_puede_desmarcar(base, monkeypatch):

@@ -1,10 +1,9 @@
-{# TAREAS PENDIENTES (dueño, 02/10): el recuadro de Compras, Administración y
-   Gerencia, debajo del banner de alertas y separado de él. Ocupa el MÍNIMO:
-   una línea plegada, y al tocarla se despliega hacia abajo. Arranca SIEMPRE
-   plegado (un <details> sin `open`).
+{# TAREAS PENDIENTES (dueño, 02/10) de Compras, Administración y Gerencia.
+   Desde el 04/10 el botón que las abre está en la franja de arriba del hub,
+   al lado del de Alertas (_franja_hub.html), y arranca plegado.
 
    DOS MACROS, como _fotos_para_subir.html: `estilos()` va adentro del
-   <style> del hub y `recuadro(tareas_hub)` en el cuerpo. Un <style> propio en
+   <style> del hub y `lista(tareas_hub)` adentro del panel de la franja. Un <style> propio en
    el medio de la página movería el corte `split("</style>")` de los tests de
    los hubs (corolario 50).
 
@@ -15,17 +14,13 @@
      tareas_hub.error    — no se pudieron leer: se dice, no se calla
      tareas_hub.sectores — los nombres de los sectores (core/tareas.py) #}
 {% macro estilos() %}
-  .tareas-hub { background: #fff; border-radius: 8px; margin-bottom: 1rem; box-shadow: 0 1px 3px rgba(0, 0, 0, 0.1);
-    overflow-wrap: anywhere; }
-  .tareas-linea { margin: 0; padding: 0.7rem 0.9rem; min-height: 44px; box-sizing: border-box; display: flex;
-    align-items: center; gap: 0.3rem; flex-wrap: wrap; font-size: 0.95rem; color: #333; }
-  summary.tareas-linea { cursor: pointer; font-weight: 600; }
+  .tareas-linea { margin: 0; padding: 0.7rem 0.9rem; font-size: 0.95rem; color: #333; }
   .tareas-roja { color: #dc2626; font-weight: 700; }
   .tarea-item { border-top: 1px solid #eee; padding: 0.6rem 0.9rem; }
   .tarea-titulo { font-weight: 600; }
   .tarea-detalle { color: #555; font-size: 0.88rem; }
   .tarea-vence { font-size: 0.85rem; color: #444; }
-  .tareas-nueva { display: flex; align-items: center; justify-content: center; min-height: 44px; margin: 0 0.9rem 0.7rem;
+  .tareas-nueva { display: flex; align-items: center; justify-content: center; min-height: 44px; margin: 0.7rem 0.9rem;
     border-radius: 8px; border: 1px solid #2563eb; color: #2563eb; background: #fff; font-weight: 600;
     text-decoration: none; box-sizing: border-box; }
   .tarea-hecha summary { display: inline-flex; align-items: center; justify-content: center; min-height: 44px;
@@ -40,38 +35,30 @@
     color: #fff; font-weight: 600; font-size: 1rem; }
 {% endmacro %}
 
-{% macro recuadro(tareas_hub) %}
-{% if tareas_hub %}
-<div class="tareas-hub">
+{# LA LISTA, sin el botón que la abre: desde el 04/10 (dueño) el botón vive
+   en la franja de arriba de cada hub (_franja_hub.html), al lado del de
+   Alertas, y esto es lo que despliega. #}
+{% macro lista(tareas_hub) %}
   {% if tareas_hub.error %}
   <p class="tareas-linea">No se pudieron leer las tareas pendientes.</p>
-  {% elif not tareas_hub.tareas %}
-  <p class="tareas-linea">No hay tareas pendientes</p>
-  {% else %}
-  <details class="tareas-plegable">
-    <summary class="tareas-linea">Tareas pendientes ({{ tareas_hub.tareas|length }})
-      {%- if tareas_hub.vencidas %} · <span class="tareas-roja">{{ tareas_hub.vencidas }} vencida{{ 's' if tareas_hub.vencidas != 1 }}</span>{% endif %}</summary>
-    {% for t in tareas_hub.tareas %}
-    <div class="tarea-item" data-tarea="{{ t.id }}">
-      <div class="tarea-titulo">{{ t.titulo }}</div>
-      {% if t.detalle %}<div class="tarea-detalle">{{ t.detalle }}</div>{% endif %}
-      <div class="tarea-vence {{ 'tareas-roja' if t.vencida }}">Vence el {{ t.vence_el.strftime('%d/%m/%Y') }}
-        {%- if t.atrasada %} · atrasada (la vez anterior no se hizo){% endif %}
-        {%- if t.creada_por %} · la cargó {{ tareas_hub.sectores[t.creada_por] }}{% endif %}</div>
-      <details class="tarea-hecha">
-        <summary>Hecha</summary>
-        <form method="post" action="/{{ tareas_hub.sector }}/tareas/{{ t.id }}/hecha">
-          <label>Nota (opcional)<input type="text" name="nota" autocomplete="off"></label>
-          <button type="submit">Marcar como hecha</button>
-        </form>
-      </details>
-    </div>
-    {% endfor %}
-  </details>
   {% endif %}
-  {# CADA SECTOR CARGA LAS SUYAS (dueño, 02/10): siempre a la vista, también
-     sin pendientes y con la base caída (ahí la pantalla dice lo suyo). #}
+  {% for t in tareas_hub.tareas %}
+  <div class="tarea-item" data-tarea="{{ t.id }}">
+    <div class="tarea-titulo">{{ t.titulo }}</div>
+    {% if t.detalle %}<div class="tarea-detalle">{{ t.detalle }}</div>{% endif %}
+    <div class="tarea-vence {{ 'tareas-roja' if t.vencida }}">Vence el {{ t.vence_el.strftime('%d/%m/%Y') }}
+      {%- if t.atrasada %} · atrasada (la vez anterior no se hizo){% endif %}
+      {%- if t.creada_por %} · la cargó {{ tareas_hub.sectores[t.creada_por] }}{% endif %}</div>
+    <details class="tarea-hecha">
+      <summary>Hecha</summary>
+      <form method="post" action="/{{ tareas_hub.sector }}/tareas/{{ t.id }}/hecha">
+        <label>Nota (opcional)<input type="text" name="nota" autocomplete="off"></label>
+        <button type="submit">Marcar como hecha</button>
+      </form>
+    </details>
+  </div>
+  {% endfor %}
+  {# CADA SECTOR CARGA LAS SUYAS (dueño, 02/10): también sin pendientes y con
+     la base caída (ahí la pantalla dice lo suyo). #}
   <a class="tareas-nueva" href="/{{ tareas_hub.sector }}/tareas">Nueva tarea</a>
-</div>
-{% endif %}
 {% endmacro %}
