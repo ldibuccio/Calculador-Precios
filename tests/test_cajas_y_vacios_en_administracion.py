@@ -154,17 +154,18 @@ def test_entrando_por_ADMINISTRACION_todo_el_camino_es_de_ADMINISTRACION(ruta, p
 
 @pytest.mark.parametrize("ruta, propio, atras",
                          [p for p in PANTALLAS if p[0].startswith("/cajas")])
-def test_entrando_por_COMPRAS_sigue_siendo_todo_de_COMPRAS(ruta, propio, atras):
-    """Cajas sigue también en Compras. Vacíos del depósito no: desde el 29/09
-    vive solo en Administración (lo cuida `test_VACIOS_ya_no_existe_bajo_COMPRAS`)."""
+def test_entrando_por_COMPRAS_lleva_a_la_de_ADMINISTRACION(ruta, propio, atras):
+    """Cajas vive SOLO en Administración desde el 04/10 (dueño), como Vacíos
+    del depósito desde el 29/09: la dirección vieja de Compras no se rompe,
+    lleva a la de Administración, y la pantalla que se abre es de ahí."""
     with _con_datos():
-        respuesta = cliente.get(f"/compras{ruta}")
-    assert respuesta.status_code == 200
-    marcado = respuesta.text
-    assert propio in marcado
-    assert 'aria-label="Ir a Compras"' in marcado
-    assert f'href="/compras{atras}" aria-label="Volver atrás"' in marcado
-    assert "/administracion" not in marcado
+        respuesta = cliente.get(f"/compras{ruta}", follow_redirects=False)
+        assert respuesta.status_code == 301
+        assert respuesta.headers["location"] == f"/administracion{ruta}"
+        destino = cliente.get(respuesta.headers["location"])
+    assert destino.status_code == 200
+    assert propio in destino.text
+    assert 'aria-label="Ir a Administración"' in destino.text
 
 
 def test_los_FORMULARIOS_de_cada_pantalla_mandan_a_SU_sector():

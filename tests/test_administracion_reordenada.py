@@ -280,7 +280,7 @@ def test_STOCK_DEL_DEPOSITO_tiene_las_pestanas_Hoy_Evolucion_Movimientos_en_sus_
         paginas = {activa: cliente.get(ruta).text for activa, ruta in PESTANAS.items()}
     for activa, entera in paginas.items():
         marcado = entera.split("</style>")[-1]
-        (nav,) = re.findall(r'<nav class="pestanas-stock" aria-label="Stock del depósito">(.*?)</nav>', marcado, re.S)
+        (nav,) = re.findall(r'<nav class="pestanas" aria-label="Stock del depósito">(.*?)</nav>', marcado, re.S)
         links = re.findall(r'<a href="([^"]+)"( aria-current="page")?>([^<]+)</a>', nav)
         assert [(h, t) for h, _a, t in links] == [(PESTANAS["hoy"], "Hoy"), (PESTANAS["evolucion"], "Evolución"),
                                                     (PESTANAS["movimientos"], "Movimientos")]
@@ -295,7 +295,8 @@ def test_los_TIPOS_DE_CAJA_se_cargan_desde_Cajas_de_Administracion_y_el_costo_es
     with patch.dict(os.environ, CLAVES):
         cliente = _cliente(m, "administracion", "compras")
         cajas = cliente.get("/administracion/cajas").text.split("</style>")[-1]
-        cajas_compras = cliente.get("/compras/cajas").text.split("</style>")[-1]
+        # Compras ya no tiene Cajas (04/10): su dirección vieja lleva acá
+        cajas_compras = cliente.get("/compras/cajas", follow_redirects=False)
         tipos = cliente.get("/administracion/cajas/tipos").text
         nombre = f"EJEMPLO Caja Tipos {datetime.now():%H%M%S%f}"
         alta = cliente.post("/administracion/cajas/tipos/nuevo", follow_redirects=False,
@@ -307,7 +308,7 @@ def test_los_TIPOS_DE_CAJA_se_cargan_desde_Cajas_de_Administracion_y_el_costo_es
                                                 follow_redirects=False, data={"costo": "1"})
     # se llega desde adentro de Cajas de Administración, y desde Compras no
     assert cajas.count('href="/administracion/cajas/tipos"') == 1
-    assert "/cajas/tipos" not in cajas_compras
+    assert cajas_compras.status_code == 301 and cajas_compras.headers["location"] == "/administracion/cajas"
     # la pantalla saca todo del prefijo: barra, atrás y formularios
     assert '<a class="barra-boton" href="/administracion/cajas" aria-label="Volver atrás">' in tipos
     marcado = tipos.split("</style>")[-1]
@@ -347,13 +348,13 @@ def test_las_PESTANAS_entran_en_UNA_linea_a_313px_sin_partir_ninguna_palabra(gal
     _d, m, *_ = galpon
     with patch.dict(os.environ, CLAVES):
         respuesta = _cliente(m, "administracion").get("/administracion/stock/remanente")
-    assert respuesta.status_code == 200 and 'class="pestanas-stock"' in respuesta.text
+    assert respuesta.status_code == 200 and '<nav class="pestanas" aria-label="Stock del depósito">' in respuesta.text
     with sync_playwright() as pw:
         navegador = pw.chromium.launch(executable_path=CHROMIUM)
         try:
             pagina = navegador.new_page(viewport={"width": 313, "height": 700})
             pagina.set_content(respuesta.text)
-            medidas = pagina.evaluate("""() => [...document.querySelectorAll('.pestanas-stock a')].map(a => ({
+            medidas = pagina.evaluate("""() => [...document.querySelectorAll('.pestanas a')].map(a => ({
               texto: a.textContent.trim(), alto: a.getBoundingClientRect().height,
               arriba: a.getBoundingClientRect().top, derecha: a.getBoundingClientRect().right,
               lineas: Math.round(a.getBoundingClientRect().height / parseFloat(getComputedStyle(a).lineHeight || 20)),

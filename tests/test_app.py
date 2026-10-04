@@ -1859,7 +1859,7 @@ def test_ver_compras_muestra_solo_la_botonera():
     assert ">Cargar<" in respuesta.text
     assert ">Operaciones<" in respuesta.text
     assert respuesta.text.index(">Cargar<") < respuesta.text.index(">Operaciones<")
-    assert "Buscar Compras" in respuesta.text
+    assert "<span>Buscar compras</span>" in respuesta.text
     assert "Últimas Compras" not in respuesta.text
     assert "<table" not in respuesta.text
     assert 'id="boton-borrar-seleccionadas"' not in respuesta.text
@@ -2636,15 +2636,14 @@ def test_ver_compras_muestra_la_botonera_de_cargar_y_operaciones():
     respuesta = cliente.get("/compras")
 
     assert respuesta.status_code == 200
-    # Grupo Cargar.
-    assert 'href="/compras/nueva/manual"' in respuesta.text
-    assert "Cargar Manual" in respuesta.text
-    assert 'href="/compras/nueva/foto-una"' in respuesta.text
-    assert "Cargar Foto" in respuesta.text
-    assert 'href="/compras/nueva/fotos"' in respuesta.text
-    assert "Cargar Múltiples Fotos" in respuesta.text
-    assert 'href="/compras/nueva/listado"' in respuesta.text
-    assert "Cargar Listado de Compras" in respuesta.text
+    # Grupo Cargar: UN botón desde el 04/10 (dueño), y las cuatro formas
+    # adentro de "Cargar compra".
+    assert 'href="/compras/cargar-compra"' in respuesta.text
+    cargar = cliente.get("/compras/cargar-compra").text
+    for href, rotulo in (("/compras/nueva/manual", "Cargar Manual"), ("/compras/nueva/foto-una", "Cargar Foto"),
+                         ("/compras/nueva/fotos", "Cargar Múltiples Fotos"),
+                         ("/compras/nueva/listado", "Cargar Listado de Compras")):
+        assert re.search(r'href="%s">[^<]*<svg.*?</svg><span>%s</span>' % (href, rotulo), cargar, re.S), href
     # Grupo Operaciones: Buscar Compras, Armar Listado, Compras sin precio,
     # Disponibles. "Últimas Compras" y "Enviar a Logística" ya no existen
     # (Buscar Compras + Logística los reemplazan).
@@ -2655,8 +2654,8 @@ def test_ver_compras_muestra_la_botonera_de_cargar_y_operaciones():
     assert "Qué comprar hoy" in respuesta.text
     # El placeholder se fue entero: ni la ruta vieja ni el "(Próximamente)".
     assert 'href="/compras/armar-listado"' not in respuesta.text
-    assert 'href="/compras/pendientes"' in respuesta.text
-    assert "Compras sin precio" in respuesta.text
+    # "Compras sin precio" es la pestaña Sin precio de Buscar compras (04/10)
+    assert 'href="/compras/pendientes"' in io.open("templates/_pestanas_compras.html", encoding="utf-8").read()
     assert 'href="/compras/disponibles"' in respuesta.text
     assert "Disponibles" in respuesta.text
     assert 'href="/compras/enviar-logistica"' not in respuesta.text
@@ -2669,19 +2668,14 @@ def test_ver_compras_botonera_diferencia_grupos_por_color():
     respuesta = cliente.get("/compras")
 
     assert respuesta.status_code == 200
-    # Cargar: azul, el color de acción normal (sin clase extra de color).
-    assert 'class="boton" href="/compras/nueva/manual"' in respuesta.text
-    # Operaciones: naranja — ni verde (=guardar) ni rojo (=borrar/cancelar).
-    assert 'class="boton boton-naranja" href="/compras/buscar"' in respuesta.text
-    assert 'class="boton boton-naranja" href="/compras/pendientes"' in respuesta.text
-    assert ".boton-naranja { background: #ea580c; }" in respuesta.text
-    # "Próximamente": color del grupo pero atenuado (mismo criterio en
-    # Cargar y en Operaciones). Cargar Listado de Compras, Buscar Compras y
-    # Disponibles ya no son "próximamente" — quedaron activos.
-    assert 'class="boton" href="/compras/nueva/listado"' in respuesta.text
-    assert 'class="boton boton-naranja" href="/compras/disponibles"' in respuesta.text
-    assert "Disponibles (Próximamente)" not in respuesta.text
-    assert ".boton-proximamente { opacity: 0.6; }" in respuesta.text
+    # UN COLOR POR RECUADRO, en orden (dueño, 04/10): Cargar el primero,
+    # Operaciones el segundo, Catálogo el tercero. Ya no hay naranja.
+    assert 'class="boton color-1" href="/compras/cargar-compra"' in respuesta.text
+    assert 'class="boton color-2" href="/compras/buscar"' in respuesta.text
+    assert 'class="boton color-2" href="/compras/disponibles"' in respuesta.text
+    assert 'class="boton color-3" href="/compras/articulos"' in respuesta.text
+    assert "boton-naranja" not in respuesta.text.split("</style>")[-1]
+    assert "Próximamente" not in respuesta.text
 
 
 def test_ver_buscar_compras_boton_borrar_seleccionadas_es_tamano_normal():
@@ -10898,7 +10892,7 @@ def test_ver_compras_muestra_en_su_banner_solo_las_alertas_que_le_tocan():
     assert "Guías R esperando precio (1)" in respuesta.text
     assert "Mercadería sin recepcionar" not in respuesta.text
     # Arriba de los botones de carga, no mezclado ni después.
-    assert respuesta.text.index("Compras sin precio") < respuesta.text.index('href="/compras/nueva/manual"')
+    assert respuesta.text.index("Compras sin precio") < respuesta.text.index('href="/compras/cargar-compra"')
 
 
 def test_los_pedidos_incompletos_se_ven_TAMBIEN_en_compras():
@@ -10936,7 +10930,7 @@ def test_ver_compras_error_al_leer_las_alertas_no_rompe_la_pantalla():
 
     assert respuesta.status_code == 200
     assert 'class="banner-avisos"' not in respuesta.text
-    assert 'href="/compras/nueva/manual"' in respuesta.text
+    assert 'href="/compras/cargar-compra"' in respuesta.text
 
 
 def test_banner_corre_y_duplica_el_contenido_para_el_loop():
@@ -14541,8 +14535,10 @@ def test_ver_compras_tiene_el_boton_objetivo_de_compra():
         respuesta = cliente.get("/compras")
 
     assert respuesta.status_code == 200
-    assert 'href="/compras/objetivo"' in respuesta.text
-    assert "Objetivo de Compra" in respuesta.text
+    # Desde el 04/10 es la pestaña de Analizar artículo (dueño).
+    assert 'href="/compras/analizar"' in respuesta.text
+    pestanas = io.open("templates/_pestanas_compras.html", encoding="utf-8").read()
+    assert re.search(r'<a href="/compras/objetivo"[^>]*>Objetivo de compra</a>', pestanas)
 
 
 # --- /envases: costos de envase por cliente, con historial ---
@@ -30674,7 +30670,9 @@ PANTALLAS_SIN_LINK_DECIDIDAS = {
         "el href se arma con {{ camino.base }}, que un regex literal no ve",
     # Lo afirma sobre el marcado RENDERIZADO test_movimientos_de_cajas.py.
     "/compras/cajas/movimientos":
-        "el href se arma con {{ camino.base }}, que un regex literal no ve",
+        "lleva a /administracion/cajas/movimientos: Cajas es de Administración (04/10)",
+    "/compras/cajas":
+        "lleva a /administracion/cajas: Cajas es de Administración (04/10)",
     "/administracion/cajas/movimientos":
         "el href se arma con {{ camino.base }}, que un regex literal no ve",
     # Se llega por el FORMULARIO de búsqueda de Facturación (un GET con su

@@ -256,7 +256,7 @@ Módulos (se lee el que se va a tocar):
 - `docs/modulos/backup.md`: plan B de backup.
 - `docs/modulos/tareas.md`: tareas y la franja Tareas/Alertas de los hubs.
 - `docs/modulos/compras.md`: títulos de magnitudes, Buscar compras, seña,
-  proveedores con varios puestos, pesaje, sello del importe.
+  proveedores con varios puestos, pesaje, sello del importe, el hub de 7.
 - `docs/modulos/magnitudes.md`: kilos y conteo.
 - `docs/modulos/perdidas.md`: pérdidas.
 - `docs/modulos/fichas_y_precios.md`: borrar una ficha y sus precios.

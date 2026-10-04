@@ -4,6 +4,7 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Analizar Artículo</title>
+{% import "_pestanas_compras.html" as pestanas_compras %}
 <style>
   :root { font-family: -apple-system, system-ui, sans-serif; }
   body { margin: 0; padding: 1rem; background: #f5f5f5; color: #111; }
@@ -122,6 +123,7 @@
     line-height: 1.45;
   }
   .objetivo-falta { background: #f8fafc; border-color: #e2e8f0; color: #475569; }
+  {{ pestanas_compras.estilos() }}
 </style>
 </head>
 <body>
@@ -143,6 +145,7 @@
   {% set barra_atras = "/compras" %}
   {% endif %}
   {% include "_barra_navegacion.html" %}
+  {{ pestanas_compras.analizar("que_pasa_si") }}
 
   {# PLEGADOS UNA VEZ QUE CUMPLIERON. Abiertos se llevaban toda la parte de
      arriba de una pantalla que se mira parado en el puesto, y para lo que
