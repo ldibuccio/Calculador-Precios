@@ -604,7 +604,7 @@ from core.vales import (
     total_de as total_de_vales,
 )
 from core.vales import hora_argentina as hora_argentina_vale
-from core.backup import HORAS_PARA_LA_ALERTA, TEXTO_DE_LA_PARTE, TEXTO_DEL_DESTINO
+from core.backup import HORAS_PARA_LA_ALERTA, TEXTO_DE_LA_PARTE, TEXTO_DEL_DESTINO, causa_legible
 from core.tareas import (
     DIAS_DE_LA_SEMANA as DIAS_DE_LA_SEMANA_TAREA,
     ESTADOS_DE_LA_TAREA,
@@ -11245,6 +11245,7 @@ def ver_backups(request: Request):
     return templates.TemplateResponse(request, "gerencia_backups.html", {
         "estado": estado, "corridas": corridas, "horas_para_la_alerta": HORAS_PARA_LA_ALERTA,
         "texto_de_la_parte": TEXTO_DE_LA_PARTE, "texto_del_destino": TEXTO_DEL_DESTINO,
+        "causa_legible": causa_legible,
     })
 
 

@@ -159,6 +159,26 @@ def diferencias(manifiesto: dict, restaurada: dict) -> list[str]:
     return malas
 
 
+# LO QUE DIJO EL PROGRAMA, EN CRIOLLO (04/10). `detalle` es la cola de la
+# salida de rclone: para Gerencia no se lee. Acá van solo las causas que YA
+# pasaron; una que no está se muestra tal cual. El 04/10 a las 10:06 las fotos
+# no llegaron a Google Drive porque Google cortó por límite de pedidos
+# (rateLimitExceeded) y la corrida de respaldo de las 12:24 salió bien.
+CAUSAS_CONOCIDAS = (
+    ("rateLimitExceeded",
+     "Google Drive cortó la copia por exceso de pedidos. Es un límite pasajero: "
+     "la próxima corrida lo vuelve a intentar."),
+)
+
+
+def causa_legible(detalle: str | None) -> str | None:
+    """La causa del fallo dicha para Gerencia, o None si no es una conocida."""
+    for marca, texto in CAUSAS_CONOCIDAS:
+        if detalle and marca in detalle:
+            return texto
+    return None
+
+
 def estado_de_las_partes(corridas: list[dict], ahora: datetime) -> list[dict]:
     """Para Gerencia: por parte, el último backup EXITOSO (los dos destinos
     bien) y, si la última corrida no fue exitosa, qué destino falló.
@@ -176,13 +196,16 @@ def estado_de_las_partes(corridas: list[dict], ahora: datetime) -> list[dict]:
         fallaron = []
         if ultima and not (ultima["onedrive_ok"] and ultima["gdrive_ok"]):
             fallaron = [d for d in DESTINOS if not ultima[f"{d}_ok"]]
+        llegaron = [d for d in DESTINOS if d not in fallaron] if fallaron else []
         vieja = ultima_exitosa is None or (ahora - ultima_exitosa) > timedelta(hours=HORAS_PARA_LA_ALERTA)
         salida.append({
             "parte": parte, "texto": TEXTO_DE_LA_PARTE[parte],
             "ultima_exitosa": ultima_exitosa, "vieja": vieja,
             "ultima_corrida": ultima["terminada_el"] if ultima else None,
             "fallaron": fallaron, "texto_fallaron": [TEXTO_DEL_DESTINO[d] for d in fallaron],
+            "texto_llegaron": [TEXTO_DEL_DESTINO[d] for d in llegaron],
             "detalle": ultima["detalle"] if ultima and fallaron else None,
+            "causa": causa_legible(ultima["detalle"]) if ultima and fallaron else None,
         })
     return salida
 

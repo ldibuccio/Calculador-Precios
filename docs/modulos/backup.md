@@ -49,7 +49,11 @@ también se sube SIN cifrar a la carpeta `Backup-Sistema` de cada nube.
   `backup_estado`, que SOLO puede insertar ahí (`db/backups_1` a `_3`). Si no
   puede grabar en una, igual graba en la otra y la corrida sale en rojo.
 - **Gerencia → Backups** (`/gerencia/backups`): la fecha del último backup
-  bueno de cada parte y, si la última corrida falló en un destino, cuál. La
+  bueno de cada parte y, si la última corrida falló en un destino, cuál, y a
+  cuál SÍ llegó ("esa copia está en un solo lugar"). Las causas que ya
+  pasaron se dicen en criollo (`CAUSAS_CONOCIDAS` en `core/backup.py`, hoy
+  solo `rateLimitExceeded`, 04/10) y la salida de rclone va a la "i"; una
+  causa desconocida se muestra tal cual. La
   alerta `backups_viejos` (solo Gerencia) salta con **más de 48 horas** sin
   uno bueno, o ninguno. Nada de mails.
 - **El token de OneDrive se renueva solo** y el renovado se guarda en la
@@ -84,5 +88,8 @@ rastro: no hay corrida roja que mirar, simplemente no hay corrida.
   pregunta a la API de Actions si hoy (desde las 00:00 de Argentina) ya hubo
   un Backup que terminó bien. Si hubo, se saltea; si no, o si la consulta
   falla, hace el backup. Una corrida a mano siempre corre.
+- **El 04/10 las dos llegaron, pero 5 y 6 horas tarde** (09:52 y 12:23 AR).
+  La primera falló en Google Drive y la de respaldo la repitió: el diseño
+  anduvo. Detalle en `db/corridas_confirmadas.md`.
 - **Lo que avisa si las dos se pierden** sigue siendo la alerta
   `backups_viejos` de Gerencia (más de 48 horas sin uno bueno).

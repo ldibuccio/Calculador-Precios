@@ -280,5 +280,50 @@ PALMALA   bases  · onedrive true · gdrive true · 03/10 09:26 · total 6
 PALMALA   fotos  · onedrive true · gdrive true · 03/10 09:32 · total 6
 ```
 
-- Pendiente: que las corridas programadas (03:47 y la de respaldo de las
-  07:17) se creen solas a partir del 04/10.
+- Las corridas programadas se crearon solas el 04/10 (ver la entrada que
+  sigue).
+
+## 04/10 — Backup programado: llegó tarde, y la de respaldo cubrió un fallo
+
+Las dos corridas del 04/10 son **programadas** (evento `schedule`, ninguna a
+mano), según la API de Actions y el log del job `hace_falta`, que imprime qué
+cron la disparó:
+
+- **Run 37203603420**: cron `47 6 * * *` (la de las 03:47), **creada a las
+  09:52**, 6 h 05 tarde. Código y bases bien; **fotos falló en Google Drive**
+  con `rateLimitExceeded`: Google cortó por límite de pedidos (rclone usa un
+  `client_id` compartido por todos sus usuarios). OneDrive sí recibió las
+  fotos. Conclusión del workflow: `failure`.
+- **Run 37212839632**: cron `17 10 * * *` (la de respaldo de las 07:17),
+  **creada a las 12:23**, 5 h 06 tarde. `hace_falta` contó 0 backups buenos
+  desde las 00:00 (la anterior había terminado en `failure`) y la hizo.
+  Conclusión: `success`.
+
+Verificado por el conector "Supabase Lectura" el 04/10, 12 filas en cada base:
+
+```
+FRUTAMAX  codigo · onedrive true · gdrive true  · 04/10 09:53 · total 12
+FRUTAMAX  bases  · onedrive true · gdrive true  · 04/10 09:56 · total 12
+FRUTAMAX  fotos  · onedrive true · gdrive FALSE · 04/10 10:06 · total 12
+FRUTAMAX  codigo · onedrive true · gdrive true  · 04/10 12:24 · total 12
+FRUTAMAX  bases  · onedrive true · gdrive true  · 04/10 12:28 · total 12
+FRUTAMAX  fotos  · onedrive true · gdrive true  · 04/10 12:36 · total 12
+PALMALA   codigo · onedrive true · gdrive true  · 04/10 09:53 · total 12
+PALMALA   bases  · onedrive true · gdrive true  · 04/10 09:56 · total 12
+PALMALA   fotos  · onedrive true · gdrive FALSE · 04/10 10:06 · total 12
+PALMALA   codigo · onedrive true · gdrive true  · 04/10 12:25 · total 12
+PALMALA   bases  · onedrive true · gdrive true  · 04/10 12:28 · total 12
+PALMALA   fotos  · onedrive true · gdrive true  · 04/10 12:36 · total 12
+```
+
+El `detalle` de la fila de fotos de las 10:06, igual en las dos bases:
+`Google Drive: frutamax/comandas: rclone cryptcheck salió con 1: ...
+rateLimitExceeded`. Se cortó en el primer bucket (`frutamax/comandas`).
+
+- **El respaldo funcionó como se diseñó**: la de las 03:47 falló en un
+  destino y la de las 07:17 la repitió entera.
+- **Los atrasos de 5 a 6 horas son de GitHub**, no del workflow.
+- Desde v1087, Gerencia → Backups dice a cuál destino SÍ llegó la copia y
+  traduce `rateLimitExceeded` al criollo.
+- Abierto, sin decidir: un `client_id` propio de Google Drive para rclone
+  haría menos probable el corte.

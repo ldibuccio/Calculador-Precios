@@ -40,12 +40,13 @@
   {% for e in estado %}
   <div class="tarjeta{{ ' vieja' if e.vieja else '' }}" data-parte="{{ e.parte }}">
     <h2>{{ e.texto }}
-      {% if loop.first %}{% call info("Cómo funciona") %}Todos los días a las 4 de la mañana GitHub copia
+      {% if loop.first %}{% call info("Cómo funciona") %}Todos los días a la madrugada (03:47) GitHub copia
         el código, las bases (Frutamax, Palmala y Ganadería) y las fotos a <strong>OneDrive</strong> y a
         <strong>Google Drive</strong>, cifrado. Un backup cuenta como bueno solo si llegó a los
         <strong>dos</strong>; el de las bases, además, si se pudo restaurar y dio las mismas filas.
         Si pasan más de {{ horas_para_la_alerta // 24 }} días sin uno bueno, sale en las alertas de
-        Gerencia. Sin la clave de cifrado impresa, ninguna copia se puede abrir.{% endcall %}{% endif %}</h2>
+        Gerencia. GitHub a veces la larga con horas de atraso; si no salió bien, a las 07:17 hay otra
+        de respaldo. Sin la clave de cifrado impresa, ninguna copia se puede abrir.{% endcall %}{% endif %}</h2>
     <p class="dato">Último backup bueno</p>
     {% if e.ultima_exitosa %}
     <p class="fecha{{ ' vieja' if e.vieja else '' }}">{{ e.ultima_exitosa|fecha_hora }}</p>
@@ -53,9 +54,15 @@
     <p class="fecha vieja">Nunca</p>
     {% endif %}
     {% if e.fallaron %}
-    <div class="fallo">La última corrida ({{ e.ultima_corrida|fecha_hora }}) falló en
-      <strong>{{ e.texto_fallaron|join(' y ') }}</strong>.
-      {% if e.detalle %}<span class="detalle">{{ e.detalle }}</span>{% endif %}
+    <div class="fallo" data-fallo>La última corrida ({{ e.ultima_corrida|fecha_hora }})
+      {% if e.texto_llegaron %}llegó a <strong data-llego>{{ e.texto_llegaron|join(' y ') }}</strong> pero
+      falló en <strong data-fallo-en>{{ e.texto_fallaron|join(' y ') }}</strong>: esa copia está en un
+      solo lugar.
+      {% else %}falló en <strong data-fallo-en>{{ e.texto_fallaron|join(' y ') }}</strong>: no llegó a
+      ningún lado.
+      {% endif %}
+      {% if e.causa %}<span class="detalle" data-causa>{{ e.causa }}{% if e.detalle %} {% call info("Qué dijo el programa") %}{{ e.detalle }}{% endcall %}{% endif %}</span>
+      {% elif e.detalle %}<span class="detalle">{{ e.detalle }}</span>{% endif %}
     </div>
     {% endif %}
   </div>
@@ -73,7 +80,8 @@
         <span class="destino {{ 'bien' if c.onedrive_ok else 'mal' }}">{{ texto_del_destino['onedrive'] }} {{ '✓' if c.onedrive_ok else '✗' }}</span>
         <span class="destino {{ 'bien' if c.gdrive_ok else 'mal' }}">{{ texto_del_destino['gdrive'] }} {{ '✓' if c.gdrive_ok else '✗' }}</span>
       </div>
-      {% if c.detalle and not (c.onedrive_ok and c.gdrive_ok) %}<div class="detalle">{{ c.detalle }}</div>{% endif %}
+      {% if c.detalle and not (c.onedrive_ok and c.gdrive_ok) %}{% set causa = causa_legible(c.detalle) %}
+      <div class="detalle">{% if causa %}{{ causa }}{% else %}{{ c.detalle }}{% endif %}</div>{% endif %}
     </div>
     {% else %}
     <p class="vacio">Todavía no corrió ningún backup.</p>
