@@ -11,6 +11,7 @@ corrida del workflow.
 """
 import json
 import os
+import re
 import shutil
 import subprocess
 import sys
@@ -88,6 +89,27 @@ def test_el_ESTADO_dice_cual_destino_FALLO_y_la_buena_es_la_de_los_DOS():
     # "más de" 48 horas, no "igual"
     assert estado["bases"]["vieja"] is False and estado["fotos"]["vieja"] is True
     assert regla.partes_viejas(list(estado.values())) == 1
+
+
+# La cola real que grabó la corrida del 04/10 10:06 (fotos, Google Drive).
+_DETALLE_DEL_0410 = ('Google Drive: frutamax/comandas: rclone cryptcheck salió con 1:         "url": '
+                     '"https://cloud.google.com/docs/quotas/help/request_increase" |       } |     ] |   } | ] | '
+                     ', rateLimitExceeded')
+
+
+def test_si_llego_a_UN_destino_el_ESTADO_dice_a_CUAL_llego_y_la_causa_en_criollo():
+    ahora = datetime(2026, 3, 18, 10, tzinfo=timezone.utc)
+    corridas = [_corrida("fotos", 2, gdrive=False, detalle=_DETALLE_DEL_0410, ahora=ahora),
+                # el RIVAL: falló en los dos, con una causa que no es conocida
+                _corrida("codigo", 2, onedrive=False, gdrive=False,
+                         detalle="OneDrive: sin token; Google Drive: sin token", ahora=ahora),
+                _corrida("bases", 2, ahora=ahora)]
+    estado = {e["parte"]: e for e in regla.estado_de_las_partes(corridas, ahora)}
+    assert estado["fotos"]["texto_llegaron"] == ["OneDrive"]
+    assert estado["fotos"]["texto_fallaron"] == ["Google Drive"]
+    assert estado["fotos"]["causa"].startswith("Google Drive cortó la copia por exceso de pedidos")
+    assert estado["codigo"]["texto_llegaron"] == [] and estado["codigo"]["causa"] is None
+    assert estado["bases"]["texto_llegaron"] == [] and estado["bases"]["causa"] is None
 
 
 def test_una_parte_SIN_NINGUNA_corrida_buena_es_VIEJA():
@@ -366,8 +388,40 @@ def test_la_PANTALLA_y_la_ALERTA_leen_lo_que_grabo_el_workflow(simulacro, monkey
     monkeypatch.setattr(m, "_acceso_gerencia_valido", lambda request: True)
     texto = cliente.get("/gerencia/backups").text.split("</style>")[-1]
     assert texto.count('data-parte="') == 3
-    assert "falló en\n      <strong>OneDrive</strong>" in texto
+    assert "llegó a <strong data-llego>Google Drive</strong>" in texto
+    assert '<strong data-fallo-en>OneDrive</strong>' in texto
     assert texto.count('class="destino mal"') == 1
+
+
+def test_la_PANTALLA_dice_A_CUAL_llego_y_la_jerga_de_rclone_queda_en_la_i(simulacro, monkeypatch):
+    s = simulacro
+    s["sql"]("bk_estado_a", "INSERT INTO backups_corridas (parte, onedrive_ok, gdrive_ok, detalle, terminada_el) "
+             "VALUES ('fotos', true, true, null, now() - interval '30 hours'), "
+             f"('fotos', true, false, $d${_DETALLE_DEL_0410}$d$, now() - interval '20 hours'), "
+             "('codigo', false, false, 'OneDrive: sin token; Google Drive: sin token', now() - interval '20 hours'), "
+             "('bases', true, true, null, now() - interval '20 hours')")
+    monkeypatch.setenv("DATABASE_URL", os.environ["FRUTAMAX_DB_URL"].rsplit("/", 1)[0] + "/bk_estado_a")
+    from fastapi.testclient import TestClient
+    import app.main as m
+    monkeypatch.setattr(m, "_acceso_gerencia_valido", lambda request: True)
+    texto = TestClient(m.app).get("/gerencia/backups").text.split("</style>")[-1]
+    # cada tarjeta va desde su data-parte hasta la tarjeta que sigue
+    tarjetas = dict(re.findall(r'data-parte="(\w+)">(.*?)(?=<div class="tarjeta)', texto, re.S))
+    assert set(tarjetas) == {"codigo", "bases", "fotos"}
+    fotos, codigo = tarjetas["fotos"], tarjetas["codigo"]
+    assert "llegó a <strong data-llego>OneDrive</strong>" in fotos
+    assert "<strong data-fallo-en>Google Drive</strong>" in fotos and "esa copia está en un\n      solo lugar" in fotos
+    assert fotos.count("<span class=\"detalle\" data-causa>Google Drive cortó la copia por exceso de pedidos") == 1
+    # el RIVAL, que no llegó a ningún lado y con una causa desconocida, la muestra tal cual
+    assert "data-llego" not in codigo and "no llegó a\n      ningún lado" in codigo
+    assert "data-causa" not in codigo and '<span class="detalle">OneDrive: sin token' in codigo
+    assert "data-fallo" not in tarjetas["bases"]
+    # la jerga de rclone aparece UNA vez en toda la página, y es adentro de la "i"
+    assert texto.count("rateLimitExceeded") == 1
+    i = re.search(r'<span class="info-texto">([^<]*rateLimitExceeded[^<]*)</span>', texto)
+    assert i is not None
+    # en la historia, la fila de Google Drive mal dice la causa en criollo
+    assert texto.count('<div class="detalle">Google Drive cortó la copia por exceso de pedidos') == 1
 
 
 def test_la_ALERTA_de_backups_es_SOLO_de_Gerencia_y_va_a_su_pantalla():
