@@ -242,7 +242,9 @@ baja**. El precio de las cajas lo carga Administración.
   sacado del prefijo (corolario 63), y escribe **el mismo costo**
   (`costos_envases`, con su historial) que leen la rentabilidad y el costeo.
   Nada de la cuenta cambia.
-- Sale el botón Cajas de Compras y sale Envases de Comercial, cada uno en el
-  PR de su sector. La alerta de pocas cajas de Compras pasa a llevar a la
-  pantalla de Alertas de Compras.
+- **Salió el botón Cajas de Compras** (PR de Compras, 04/10): sus
+  direcciones viejas (`/compras/cajas`, sus movimientos y la cuenta de un
+  colega) llevan con un 301 a las de Administración. La alerta de pocas cajas
+  de Compras lleva a la pantalla de Alertas de Compras, que trae la caja, las
+  que quedan y el umbral. Envases sale de Comercial en el PR de Comercial.
 

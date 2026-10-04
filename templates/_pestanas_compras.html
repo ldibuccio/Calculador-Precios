@@ -1,0 +1,35 @@
+{# LAS PESTAÑAS DE COMPRAS (dueño, 04/10). El hub de Compras pasó de 14 a 7
+   botones juntando pantallas que son partes de una misma cosa; cada una
+   sigue siendo su propia pantalla, con su propia dirección:
+
+   - Buscar compras: Todas · Sin precio ("Compras sin precio" era un filtro
+     de Buscar con botón propio).
+   - Qué comprar hoy: 1. Lo que pide cada cliente · 2. Qué comprar hoy (los
+     dos pasos del mismo trámite, en orden).
+   - Analizar artículo: Qué pasa si · Objetivo de compra (las dos
+     calculadoras del precio de compra).
+
+   Los links van escritos tal cual (ver _pestanas.html). #}
+{% import "_pestanas.html" as _pestanas %}
+{% macro estilos() %}{{ _pestanas.estilos() }}{% endmacro %}
+
+{% macro buscar(activa) %}
+<nav class="pestanas" aria-label="Buscar compras">
+  <a href="/compras/buscar"{% if activa == "todas" %} aria-current="page"{% endif %}>Todas</a>
+  <a href="/compras/pendientes"{% if activa == "sin_precio" %} aria-current="page"{% endif %}>Sin precio</a>
+</nav>
+{% endmacro %}
+
+{% macro que_comprar(activa) %}
+<nav class="pestanas" aria-label="Qué comprar hoy">
+  <a href="/compras/carga"{% if activa == "cargas" %} aria-current="page"{% endif %}>1. Lo que pide cada cliente</a>
+  <a href="/compras/que-comprar"{% if activa == "listado" %} aria-current="page"{% endif %}>2. Qué comprar hoy</a>
+</nav>
+{% endmacro %}
+
+{% macro analizar(activa) %}
+<nav class="pestanas" aria-label="Analizar artículo">
+  <a href="/compras/analizar"{% if activa == "que_pasa_si" %} aria-current="page"{% endif %}>Qué pasa si</a>
+  <a href="/compras/objetivo"{% if activa == "objetivo" %} aria-current="page"{% endif %}>Objetivo de compra</a>
+</nav>
+{% endmacro %}

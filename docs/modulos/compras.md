@@ -535,3 +535,22 @@ más apoyados en `[-1]`** — ninguno de ellos sobre `crear_compra`, verificado 
 `ast`, así que este cambio no los tocó. Es el corolario 38 otra vez: una
 costumbre no se hereda por estar escrita en un lugar; se hereda cuando algo la
 exige.
+
+## El hub de Compras: 7 botones en tres grupos (04/10, dueño)
+
+Eran 14. Lo que era la misma cosa vista de otro lado quedó adentro, como
+opción o como pestaña (`templates/_pestanas_compras.html`); cada pantalla
+sigue con su dirección, y ningún botón desapareció del sistema:
+
+- **Cargar** → *Cargar compra* (`/compras/cargar-compra`): adentro, a mano,
+  con una foto, con varias fotos o con un listado.
+- **Operaciones** → *Buscar compras* (pestañas Todas · Sin precio), *Qué
+  comprar hoy* (pestañas 1. Lo que pide cada cliente · 2. Qué comprar hoy),
+  *Analizar artículo* (pestañas Qué pasa si · Objetivo de compra) y
+  *Disponibles*.
+- **Catálogo** → *Artículos* y *Proveedores*.
+
+**Cajas se fue a Administración** (ver `docs/modulos/cajas.md`). Arriba, la
+franja Tareas/Alertas; abajo, el link a Sistema. Lo cuida
+`tests/test_compras_reordenada.py`.
+

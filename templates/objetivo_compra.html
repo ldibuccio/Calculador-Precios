@@ -4,6 +4,7 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Objetivo de Compra</title>
+{% import "_pestanas_compras.html" as pestanas_compras %}
 <style>
   :root { font-family: -apple-system, system-ui, sans-serif; }
   body {
@@ -135,6 +136,7 @@
     margin-top: 0.15rem;
   }
   .lista-aparte { margin: 0; padding-left: 1.1rem; font-size: 0.85rem; color: #713f12; }
+  {{ pestanas_compras.estilos() }}
 </style>
 </head>
 <body>
@@ -142,6 +144,7 @@
   {% set barra_titulo = "Objetivo de Compra" %}
   {% set barra_atras = "/compras" %}
   {% include "_barra_navegacion.html" %}
+  {{ pestanas_compras.analizar("objetivo") }}
 
   <div class="tarjeta">
     <form class="selector" method="get" action="/compras/objetivo">

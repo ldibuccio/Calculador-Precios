@@ -5,6 +5,7 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Compras sin precio</title>
+{% import "_pestanas_compras.html" as pestanas_compras %}
 <style>
   :root { font-family: -apple-system, system-ui, sans-serif; }
   body {
@@ -156,6 +157,7 @@
     }
     .form-importe button { flex: 0 0 auto; padding: 0.7rem 1rem; font-size: 0.95rem; }
   }
+  {{ pestanas_compras.estilos() }}
 </style>
 </head>
 <body>
@@ -163,6 +165,7 @@
   {% set barra_titulo = "Compras sin precio" %}
   {% set barra_atras = "/compras" %}
   {% include "_barra_navegacion.html" %}
+  {{ pestanas_compras.buscar("sin_precio") }}
 
   {% if error %}
   <div class="error">{{ error }}</div>

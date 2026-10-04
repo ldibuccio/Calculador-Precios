@@ -5,6 +5,7 @@
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Compras</title>
 {% import "_franja_hub.html" as franja_hub %}
+{% import "_botones_hub.html" as botones_hub %}
 <style>
   :root { font-family: -apple-system, system-ui, sans-serif; }
   body {
@@ -13,7 +14,6 @@
     background: #f5f5f5;
     color: #222;
   }
-  h2 { font-size: 1.05rem; margin: 0 0 0.75rem; }
   .tarjeta {
     background: #fff;
     border-radius: 10px;
@@ -21,44 +21,6 @@
     margin-bottom: 1rem;
     box-shadow: 0 1px 3px rgba(0, 0, 0, 0.1);
   }
-  .boton {
-    margin-top: 1.1rem;
-    width: 100%;
-    padding: 0.8rem;
-    background: #2563eb;
-    color: #fff;
-    border: none;
-    border-radius: 8px;
-    font-size: 1rem;
-    font-weight: 600;
-    text-align: center;
-    text-decoration: none;
-    display: block;
-    box-sizing: border-box;
-  }
-  .grupo-botones {
-    display: flex;
-    flex-wrap: wrap;
-    gap: 0.6rem;
-  }
-  .grupo-botones .boton {
-    flex: 1 1 calc(50% - 0.3rem);
-    margin-top: 0;
-    padding: 0.7rem 0.5rem;
-    font-size: 0.95rem;
-    line-height: 1.25;
-    min-height: 3.2rem;
-    display: flex;
-    align-items: center;
-    justify-content: center;
-  }
-  /* Naranja para "Operaciones": distinto del azul de "Cargar", y evita a
-     propósito el verde (guardar/confirmar) y el rojo (borrar/cancelar),
-     que ya tienen otro significado en el resto del sistema. */
-  .boton-naranja { background: #ea580c; }
-  /* "Próximamente": mismo color del grupo, pero atenuado, para que se
-     note a simple vista que todavía no hace nada. */
-  .boton-proximamente { opacity: 0.6; }
   .volver {
     display: block;
     margin-top: 0.75rem;
@@ -80,6 +42,7 @@
     text-decoration: none;
   }
   {{ franja_hub.estilos() }}
+  {{ botones_hub.estilos() }}
 </style>
 </head>
 <body>
@@ -98,41 +61,32 @@
     <a class="franja-ver" href="/compras/alertas">Ver el detalle de las alertas</a>
   {% endcall %}
 
+  {# SIETE BOTONES EN TRES GRUPOS (dueño, 04/10; eran 14). Lo que era la misma
+     cosa vista de otro lado quedó adentro, como opción o como pestaña:
+     - Cargar compra: a mano, con una foto, con varias fotos o con un listado.
+     - Buscar compras: Todas · Sin precio.
+     - Qué comprar hoy: 1. Lo que pide cada cliente · 2. Qué comprar hoy.
+     - Analizar artículo: Qué pasa si · Objetivo de compra.
+     Cajas se fue a Administración; Compras se queda con la alerta de pocas
+     cajas, que la manda a sus Alertas. #}
   <div class="tarjeta">
     <h2>Cargar</h2>
-    <div class="grupo-botones">
-      <a class="boton" href="/compras/nueva/manual">Cargar Manual</a>
-      <a class="boton" href="/compras/nueva/foto-una">Cargar Foto</a>
-      <a class="boton" href="/compras/nueva/fotos">Cargar Múltiples Fotos</a>
-      <a class="boton" href="/compras/nueva/listado">Cargar Listado de Compras</a>
-    </div>
+    <a class="boton color-1" href="/compras/cargar-compra">{{ ICONOS_HUBS['cargar_compra']|safe }}<span>Cargar compra</span></a>
   </div>
 
   <div class="tarjeta">
     <h2>Operaciones</h2>
-    <div class="grupo-botones">
-      <a class="boton boton-naranja" href="/compras/buscar">Buscar Compras</a>
-      {# La calculadora de "qué pasa si", para decidir parado en el puesto. #}
-      <a class="boton boton-naranja" href="/compras/analizar">Analizar Artículo</a>
-      <a class="boton boton-naranja" href="/compras/objetivo">Objetivo de Compra</a>
-      {# Los DOS pasos, y en este orden: primero se carga lo de cada cliente
-         y después se arma el listado del día con las cargas que hagan falta. #}
-      <a class="boton boton-naranja" href="/compras/carga">Cargar lo que hay que comprar</a>
-      <a class="boton boton-naranja" href="/compras/que-comprar">Qué comprar hoy</a>
-      <a class="boton boton-naranja" href="/compras/pendientes">Compras sin precio</a>
-      <a class="boton boton-naranja" href="/compras/disponibles">Disponibles</a>
-      <a class="boton boton-naranja" href="/compras/cajas">Cajas</a>
-      {# Vacíos del depósito salió de Compras el 29/09 (dueño): vive en
-         Administración, y Depósito cuenta y devuelve sin clave. #}
-    </div>
+    <a class="boton color-2" href="/compras/buscar">{{ ICONOS_HUBS['buscar']|safe }}<span>Buscar compras</span></a>
+    <a class="boton color-2" href="/compras/que-comprar">{{ ICONOS_HUBS['que_comprar']|safe }}<span>Qué comprar hoy</span></a>
+    {# La calculadora de "qué pasa si", para decidir parado en el puesto. #}
+    <a class="boton color-2" href="/compras/analizar">{{ ICONOS_HUBS['analizar']|safe }}<span>Analizar artículo</span></a>
+    <a class="boton color-2" href="/compras/disponibles">{{ ICONOS_HUBS['disponibles']|safe }}<span>Disponibles</span></a>
   </div>
 
   <div class="tarjeta">
     <h2>Catálogo</h2>
-    <div class="grupo-botones">
-      <a class="boton" href="/compras/articulos">Artículos</a>
-      <a class="boton" href="/compras/proveedores">Proveedores</a>
-    </div>
+    <a class="boton color-3" href="/compras/articulos">{{ ICONOS_HUBS['articulos']|safe }}<span>Artículos</span></a>
+    <a class="boton color-3" href="/compras/proveedores">{{ ICONOS_HUBS['proveedores']|safe }}<span>Proveedores</span></a>
   </div>
 
   <a class="volver" href="/sistema">Sistema</a>

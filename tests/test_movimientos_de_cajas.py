@@ -149,8 +149,9 @@ def _get(url):
     return respuesta, leer
 
 
-@pytest.mark.parametrize("prefijo, otro", [("/compras", "/administracion"),
-                                           ("/administracion", "/compras")])
+# Desde el 04/10 Cajas vive SOLO en Administración (dueño): la dirección de
+# Compras lleva acá con su consulta, y eso lo cuida tests/test_compras_reordenada.py.
+@pytest.mark.parametrize("prefijo, otro", [("/administracion", "/compras")])
 def test_la_pantalla_dice_QUE_PASO_cuantas_y_de_que_caja_y_se_queda_en_su_sector(prefijo, otro):
     respuesta, leer = _get(f"{prefijo}/cajas/movimientos?desde=2026-09-01&hasta=2026-09-10")
     assert respuesta.status_code == 200

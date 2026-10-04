@@ -1,0 +1,23 @@
+{# EL ESTILO DE LAS PESTAÑAS (dueño, 04/10): una fila de pestañas arriba de
+   pantallas que miran lo mismo desde distintos lados. Cada pestaña es su
+   propia pantalla, con su propia dirección; la activa lleva
+   `aria-current="page"`, que es la intención, y el CSS decide cómo se ve.
+
+   UN ESTILO para todas. Los links NO van acá: cada grupo de pestañas los
+   escribe tal cual en su parcial (_pestanas_stock.html,
+   _pestanas_compras.html), porque el barrido que busca pantallas que nadie
+   linkea lee el TEXTO de las plantillas y no resuelve un argumento.
+
+   EL ANCHO LO PONE LA PALABRA (flex auto) y no se parte: con tercios
+   iguales, a 313px "Movimientos" se cortaba al medio. Si no entran en una
+   fila, bajan ENTERAS a la siguiente (flex-wrap). Sin `nowrap` a propósito:
+   con flex-wrap no hace falta, y un rótulo más ancho que la fila se saldría
+   de costado en vez de partirse entre palabras. #}
+{% macro estilos() %}
+  .pestanas { display: flex; flex-wrap: wrap; gap: 0.35rem; margin: 0 0 1rem; }
+  .pestanas a { flex: 1 1 auto; min-height: 44px; display: flex; align-items: center;
+    justify-content: center; padding: 0.4rem 0.35rem; box-sizing: border-box; border-radius: 8px; background: #fff;
+    border: 1px solid #d4d4d4; color: #334155; font-weight: 600; font-size: 0.9rem; text-decoration: none;
+    text-align: center; }
+  .pestanas a[aria-current="page"] { background: #334155; border-color: #334155; color: #fff; }
+{% endmacro %}

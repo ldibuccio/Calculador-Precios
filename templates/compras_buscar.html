@@ -5,6 +5,7 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Buscar Compras</title>
+{% import "_pestanas_compras.html" as pestanas_compras %}
 <style>
   :root { font-family: -apple-system, system-ui, sans-serif; }
   body {
@@ -368,6 +369,7 @@
     text-underline-offset: 2px;
   }
   .link-detalle:hover, .link-detalle:focus { text-decoration-color: currentColor; }
+  {{ pestanas_compras.estilos() }}
 </style>
 </head>
 <body>
@@ -375,6 +377,7 @@
   {% set barra_titulo = "Buscar Compras" %}
   {% set barra_atras = "/compras" %}
   {% include "_barra_navegacion.html" %}
+  {{ pestanas_compras.buscar("todas") }}
 
   <div class="tarjeta">
     {# LOS FILTROS ARRANCAN PLEGADOS, y no es una preferencia de estilo: esta

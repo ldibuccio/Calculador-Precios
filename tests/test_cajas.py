@@ -18,7 +18,7 @@ from app.db import (
     crear_movimiento_envase,
     cuentas_de_colegas,
 )
-from app.main import PUERTA_COMPRAS, app
+from app.main import PUERTA_ADMINISTRACION, PUERTA_COMPRAS, app
 from core.envases import (
     ORIGENES_DE_COLEGA,
     SIGNO_POR_TIPO_DE_GUIA,
@@ -385,12 +385,16 @@ def _puerta_de_compras_abierta():
     Es el mismo molde que la fixture de test_app.py. Copiarlo es lo correcto
     acá: lo que se comparte es el gesto de abrir la puerta, no una regla.
     """
-    with patch.dict(os.environ, {"CLAVE_COMPRAS": "compras-secreta"}):
+    # Y LA DE ADMINISTRACIÓN desde el 04/10: Cajas vive SOLO ahí (dueño), y
+    # las direcciones de Compras llevan allá.
+    with patch.dict(os.environ, {"CLAVE_COMPRAS": "compras-secreta", "CLAVE_ADMINISTRACION": "admin-secreta"}):
         cliente.cookies.set(PUERTA_COMPRAS.cookie, PUERTA_COMPRAS.firma("compras-secreta"))
+        cliente.cookies.set(PUERTA_ADMINISTRACION.cookie, PUERTA_ADMINISTRACION.firma("admin-secreta"))
         try:
             yield
         finally:
             cliente.cookies.delete(PUERTA_COMPRAS.cookie)
+            cliente.cookies.delete(PUERTA_ADMINISTRACION.cookie)
 
 
 # LOS FIXTURES LLEVAN LAS ONCE COLUMNAS, como las devuelve la consulta. Un
@@ -452,13 +456,13 @@ def test_sin_conteo_inicial_la_pantalla_NO_dice_cero():
     with patch("app.main.stock_de_envases", return_value=UN_ENVASE_SIN_ARRANCAR), \
          patch("app.main.cuentas_de_colegas", return_value=[]), \
          patch("app.main.listar_colegas", return_value=[]):
-        respuesta = cliente.get("/compras/cajas")
+        respuesta = cliente.get("/administracion/cajas")
     assert respuesta.status_code == 200
     marcado = respuesta.text.split("</style>")[-1]
     assert "sin arrancar" in marcado
     assert 'class="n bajo"' not in marcado
     # Y ofrece arrancarla, que es lo único que se puede hacer con ese envase.
-    assert 'action="/compras/cajas/conteo-inicial"' in marcado
+    assert 'action="/administracion/cajas/conteo-inicial"' in marcado
     # SIN NADA ESPERANDO, EL AVISO NO SALE. Es la otra mitad del par: un aviso
     # que se dibuja siempre se ve igual de trabajador que uno que funciona, y
     # acá diría que hay movimientos invisibles donde no hay ninguno.
@@ -649,17 +653,18 @@ def test_debajo_del_umbral_la_pantalla_lo_MARCA():
     assert "vueltas de un rechazo" not in marcado
 
 
-def test_la_pantalla_vive_en_COMPRAS_y_la_barra_lo_dice():
+def test_la_pantalla_vive_en_ADMINISTRACION_y_la_barra_lo_dice():
+    """Desde el 04/10 (dueño) Cajas vive SOLO en Administración."""
     with patch("app.main.stock_de_envases", return_value=UN_ENVASE_BAJO), \
          patch("app.main.cuentas_de_colegas", return_value=[]), \
          patch("app.main.listar_colegas", return_value=[]):
-        respuesta = cliente.get("/compras/cajas")
+        respuesta = cliente.get("/administracion/cajas")
     # SOBRE EL DOCUMENTO ENTERO y no sobre `[-1]`: la barra se incluye desde
     # otra plantilla que trae su PROPIO `<style>`, así que el último
     # `</style>` del documento es el de ella y el corte se come la barra.
     # Es el corolario 50 —`split` falla por los dos lados— y el ancla es un
     # elemento que solo puede ser marcado, no una palabra suelta.
-    assert 'href="/compras" aria-label="Volver atrás"' in respuesta.text
+    assert 'href="/administracion" aria-label="Volver atrás"' in respuesta.text
 
 
 def test_una_cantidad_con_DECIMALES_no_entra():
@@ -775,9 +780,11 @@ def test_la_alerta_manda_a_CAJAS_que_es_donde_se_repone():
     # TRES SECTORES desde el 30/09 (dueño): hasta ese día era solo Compras y
     # en las Alertas de Gerencia y Administración no aparecía nunca.
     assert alerta.modulos == ("compras", "gerencia", "administracion")
-    assert alerta.url == "/compras/cajas"
-    # Cada uno a SU puerta: el link de Compras choca contra una clave ajena.
+    # Desde el 04/10 Cajas vive SOLO en Administración (dueño): Compras y
+    # Gerencia van a SUS Alertas, que traen la caja, las que quedan y el umbral.
+    assert alerta.url == "/administracion/cajas"
     assert alerta.destinos_por_sector == {
+        "compras": ("/compras/alertas", "Ver cuál es"),
         "gerencia": ("/gerencia/alertas", "Ver cuál es"),
         "administracion": ("/administracion/cajas", "Ver en Cajas"),
     }
@@ -1257,10 +1264,10 @@ def test_la_pantalla_lista_UN_RENGLON_por_colega_y_SE_VE_que_se_puede_entrar():
     with patch("app.main.stock_de_envases", return_value=UN_ENVASE_BAJO), \
          patch("app.main.cuentas_de_colegas", return_value=CUENTA_CON_DOSCIENTAS), \
          patch("app.main.listar_colegas", return_value=[{"id": 3, "nombre": "Colega EJEMPLO Uno", "activo": True}]):
-        respuesta = cliente.get("/compras/cajas")
+        respuesta = cliente.get("/administracion/cajas")
     assert respuesta.status_code == 200
     marcado = respuesta.text.split("</style>")[-1]
-    assert 'href="/compras/cajas/colega/3"' in marcado
+    assert 'href="/administracion/cajas/colega/3"' in marcado
     assert "Colega EJEMPLO Uno" in marcado
     assert "me debe" in marcado and "200" in marcado
     # Y el colega se puede elegir al cargar el movimiento.
@@ -1286,7 +1293,7 @@ def test_el_detalle_de_la_cuenta_MUESTRA_lo_que_le_di_y_lo_que_me_dio_con_fechas
     ]
     with patch("app.main.movimientos_de_colegas", return_value=movimientos), \
          patch("app.main.cuentas_de_colegas", return_value=CUENTA_CON_DOSCIENTAS):
-        respuesta = cliente.get("/compras/cajas/colega/3")
+        respuesta = cliente.get("/administracion/cajas/colega/3")
     assert respuesta.status_code == 200
     marcado = respuesta.text.split("</style>")[-1]
     assert "Le presté" in marcado and "Me devolvió" in marcado
@@ -1296,14 +1303,14 @@ def test_el_detalle_de_la_cuenta_MUESTRA_lo_que_le_di_y_lo_que_me_dio_con_fechas
     # y se come la barra. Y el href solo aparece dos veces en la barra por
     # diseño (el ícono del sector y el botón de atrás), así que un assert del
     # href pelado no puede fallar — hay que anclar en el elemento.
-    assert 'href="/compras/cajas" aria-label="Volver atrás"' in respuesta.text, (
+    assert 'href="/administracion/cajas" aria-label="Volver atrás"' in respuesta.text, (
         "tiene que poder volver a Cajas"
     )
 
     # Un colega que no existe no es un 500.
     with patch("app.main.movimientos_de_colegas", return_value=[]), \
          patch("app.main.cuentas_de_colegas", return_value=[]):
-        assert cliente.get("/compras/cajas/colega/999").status_code == 404
+        assert cliente.get("/administracion/cajas/colega/999").status_code == 404
 
 
 # ---------------------------------------------------------------------------

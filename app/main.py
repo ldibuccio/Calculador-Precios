@@ -5379,6 +5379,13 @@ def _renderizar_compra_manual(
     )
 
 
+@app.get("/compras/cargar-compra")
+def ver_cargar_compra(request: Request):
+    """Cargar compra (dueño, 04/10): las cuatro formas —a mano, con una foto,
+    con varias fotos o con un listado— detrás de un solo botón del hub."""
+    return templates.TemplateResponse(request, "compras_cargar_compra.html", {})
+
+
 @app.get("/compras/nueva/manual")
 def ver_nueva_compra_manual(request: Request, error: str | None = None):
     return _renderizar_compra_manual(request, error=error)
@@ -6797,16 +6804,32 @@ def _renderizar_pantalla_cajas(request: Request, *, error: str | None = None,
     )
 
 
+# CAJAS, TODO EN ADMINISTRACIÓN (dueño, 04/10): salió el botón de Compras.
+# Las direcciones viejas de Compras no se rompen: llevan a las de
+# Administración, que pide su clave. Las de escribir (`POST /compras/cajas/…`)
+# se dejan: solo las usaba el formulario de esta pantalla.
 @app.get("/compras/cajas")
+@app.get("/compras/cajas/movimientos")
+def cajas_de_compras_va_a_administracion(request: Request):
+    destino = request.url.path.replace("/compras/", "/administracion/", 1)
+    consulta = f"?{request.url.query}" if request.url.query else ""
+    return RedirectResponse(url=destino + consulta, status_code=301)
+
+
+@app.get("/compras/cajas/colega/{colega_id}")
+def colega_de_compras_va_a_administracion(colega_id: int):
+    return RedirectResponse(url=f"/administracion/cajas/colega/{colega_id}", status_code=301)
+
+
 @app.get("/administracion/cajas")
 def ver_cajas(request: Request, aviso: str | None = None):
     """Stock de CAJAS NUESTRAS, derivado en cada lectura.
 
-    Vive en Compras porque es donde se decide reponerlas, y desde el 23/09
-    también en Administración, que lleva la cuenta: la MISMA pantalla con su
-    propia dirección (ver CAMINOS_DE_CAJAS_Y_VACIOS). Cada puerta se aplica
-    por PREFIJO en el middleware, así que las dos rutas nacen cerradas por la
-    suya sin escribir una línea.
+    Vive SOLO en Administración desde el 04/10 (dueño): ahí se lleva la cuenta,
+    se carga la compra de cajas y, en su propia pantalla, los tipos y su
+    costo. Hasta ese día era la MISMA pantalla también en Compras; sus
+    direcciones viejas llevan acá. Compras se queda con la alerta de pocas
+    cajas, que la manda a sus Alertas.
 
     OJO CON EL NOMBRE: en este sistema ya hay tres cosas que se llaman
     "Stock" —la de Vacíos en Puesto, la del Depósito y la que se llamó así
@@ -6948,7 +6971,6 @@ def crear_colega_ruta(request: Request, nombre: str = Form("")):
     )
 
 
-@app.get("/compras/cajas/colega/{colega_id}")
 @app.get("/administracion/cajas/colega/{colega_id}")
 def ver_cuenta_de_colega(request: Request, colega_id: int):
     """El detalle de la cuenta de un colega: lo que le di y lo que me dio, con fechas.
@@ -6986,7 +7008,6 @@ def ver_cuenta_de_colega(request: Request, colega_id: int):
 VENTANA_MOVIMIENTOS_DE_CAJAS_DIAS = 30
 
 
-@app.get("/compras/cajas/movimientos")
 @app.get("/administracion/cajas/movimientos")
 def ver_movimientos_de_cajas(request: Request, desde: str = "", hasta: str = ""):
     """Qué pasó con las cajas, cuándo, cuántas y de qué tipo, filtrado por fecha.
@@ -17901,7 +17922,7 @@ ALERTAS = [
         codigo="cajas_a_reponer",
         titulo="Cajas nuestras debajo del aviso de reposición",
         titulo_corto="Cajas por reponer",
-        url="/compras/cajas",
+        url="/administracion/cajas",
         texto_link="Ver en Cajas",
         # EN LOS TRES SECTORES QUE MIRAN LAS CAJAS (dueño, 30/09): Compras las
         # repone, Administración lleva la cuenta y Gerencia la mira. Cajas
@@ -17910,7 +17931,11 @@ ALERTAS = [
         # Cajas, y Gerencia —que no tiene Cajas— a su propia pantalla de
         # Alertas, que trae la caja, las que quedan y el umbral.
         modulos=("compras", "gerencia", "administracion"),
+        # Desde el 04/10 Cajas vive SOLO en Administración (dueño): Compras se
+        # queda con la alerta, que la manda a SU pantalla de Alertas —trae la
+        # caja, las que quedan y el umbral—, igual que a Gerencia.
         destinos_por_sector={
+            "compras": ("/compras/alertas", "Ver cuál es"),
             "gerencia": ("/gerencia/alertas", "Ver cuál es"),
             "administracion": ("/administracion/cajas", "Ver en Cajas"),
         },
