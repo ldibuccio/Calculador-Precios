@@ -123,9 +123,12 @@
 </style>
 </head>
 <body>
-  {% set barra_sector = "administracion" %}
+  {# DOS CAMINOS (dueño, 04/10): el botón está SOLO en Gerencia, pero la
+     dirección de Administración sigue abriendo. La barra, el atrás y cada
+     formulario salen del prefijo con que se entró (`camino`). #}
+  {% set barra_sector = camino.sector %}
   {% set barra_titulo = "Stock Inicial" %}
-  {% set barra_atras = "/administracion" %}
+  {% set barra_atras = camino.base %}
   {% include "_barra_navegacion.html" %}
 
   <div class="corte">
@@ -137,7 +140,7 @@
   {# El artículo vive en la URL y NO se limpia al guardar: son muchos
      renglones seguidos y reelegirlo cada vez es media tarde. #}
   <div class="tarjeta">
-    <form method="get" action="/administracion/stock/inicial" id="elegir">
+    <form method="get" action="{{ camino.base }}/stock/inicial" id="elegir">
       <div class="campo">
         <label for="articulo_id">Artículo</label>
         <select id="articulo_id" name="articulo_id" onchange="document.getElementById('elegir').submit()">
@@ -169,7 +172,7 @@
     <p class="ayuda" style="margin-top:-0.4rem;margin-bottom:1rem;">
       Los cajones sin procesar que hay en el piso.
     </p>
-    <form method="post" action="/administracion/stock/inicial/sueltos">
+    <form method="post" action="{{ camino.base }}/stock/inicial/sueltos">
       <input type="hidden" name="articulo_id" value="{{ articulo_id }}">
       <div class="campo">
         <label for="bultos">Bultos</label>
@@ -194,7 +197,7 @@
     </p>
     {% set fichas = fichas_por_articulo.get(articulo_id, []) %}
     {% if fichas %}
-    <form method="post" action="/administracion/stock/inicial/armadas">
+    <form method="post" action="{{ camino.base }}/stock/inicial/armadas">
       <input type="hidden" name="articulo_id" value="{{ articulo_id }}">
       <div class="campo">
         <label for="ficha_id">De qué ficha son</label>
@@ -247,7 +250,7 @@
           <div class="detalle">{{ fila.cantidad|numero }} bultos × {{ fila.costo_por_bulto|moneda }}</div>
         </div>
         <div class="plata">{{ (fila.cantidad|float * fila.costo_por_bulto|float)|moneda }}</div>
-        <form class="enlinea" method="post" action="/administracion/stock/inicial/anular">
+        <form class="enlinea" method="post" action="{{ camino.base }}/stock/inicial/anular">
           <input type="hidden" name="clase" value="sueltos">
           <input type="hidden" name="renglon_id" value="{{ fila.id }}">
           <input type="hidden" name="articulo_id" value="{{ articulo_id }}">
@@ -271,7 +274,7 @@
           </div>
         </div>
         <div class="plata">{{ (fila.bultos_primera|float * fila.costo_por_bulto_primera|float)|moneda }}</div>
-        <form class="enlinea" method="post" action="/administracion/stock/inicial/anular">
+        <form class="enlinea" method="post" action="{{ camino.base }}/stock/inicial/anular">
           <input type="hidden" name="clase" value="armadas">
           <input type="hidden" name="renglon_id" value="{{ fila.id }}">
           <input type="hidden" name="articulo_id" value="{{ articulo_id }}">
@@ -284,7 +287,7 @@
     {% endif %}
   </div>
 
-  <a class="volver" href="/administracion">Volver a Administración</a>
+  <a class="volver" href="{{ camino.base }}">Volver a {{ camino.nombre }}</a>
 {% include "_pie_version.html" %}
 </body>
 </html>

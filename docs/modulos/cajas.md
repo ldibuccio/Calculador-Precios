@@ -225,3 +225,24 @@ a que alguien lo cite mal.)
 gasto_en_cajas` que nada usa hace creer al próximo que lee la ruta que la
 pantalla todavía lo muestra. La función se conserva donde vive; el cableado
 muerto se corta.
+
+## Cajas, todo en Administración (04/10, dueño)
+
+El stock, la compra de cajas, los préstamos de vacías, las cuentas con
+colegas, las correcciones y el aviso de reposición ya estaban en Cajas de
+Administración (la MISMA pantalla que Compras). Desde el 04/10 se suma lo
+que estaba en Comercial → Envases: **el alta de tipos de caja, su costo y la
+baja**. El precio de las cajas lo carga Administración.
+
+- **Va en su propia pantalla, "Tipos de caja y su costo"**
+  (`/administracion/cajas/tipos`), que se abre desde adentro de Cajas. No
+  va en la pantalla de Cajas porque esa es SOLO stock (la regla de arriba,
+  del 17/09): el costo se mira en otro momento que las existencias.
+- **Es la misma pantalla que Comercial tenía en `/envases`**, con el sector
+  sacado del prefijo (corolario 63), y escribe **el mismo costo**
+  (`costos_envases`, con su historial) que leen la rentabilidad y el costeo.
+  Nada de la cuenta cambia.
+- Sale el botón Cajas de Compras y sale Envases de Comercial, cada uno en el
+  PR de su sector. La alerta de pocas cajas de Compras pasa a llevar a la
+  pantalla de Alertas de Compras.
+

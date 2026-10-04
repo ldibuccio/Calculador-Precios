@@ -739,7 +739,8 @@ def test_la_pantalla_esta_LINKEADA_desde_el_hub_de_ADMINISTRACION():
 
 def test_el_boton_NO_se_llama_solo_Vacios_porque_el_del_puesto_ya_se_llama_asi():
     hub = io.open("templates/administracion.html", encoding="utf-8").read()
-    etiqueta = re.search(r'href="/administracion/vacios">([^<]+)<', hub)
+    # el rótulo va en el <span>, después del dibujo (04/10)
+    etiqueta = re.search(r'href="/administracion/vacios">[^<]*<span>([^<]+)</span>', hub)
     assert etiqueta, "no encontré el botón"
     assert etiqueta.group(1).strip() != "Vacíos"
     assert "depósito" in etiqueta.group(1).lower()

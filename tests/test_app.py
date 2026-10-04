@@ -12352,7 +12352,8 @@ def test_ver_administracion_es_un_hub_con_ingresos_a_deposito():
 
     assert respuesta.status_code == 200
     assert "Administración" in respuesta.text
-    assert 'href="/administracion/ingresos">Movimientos del depósito<' in respuesta.text
+    assert '<span>Movimientos del depósito</span></a>' in respuesta.text
+    assert 'href="/administracion/ingresos">' in respuesta.text
     assert "En construcción" not in respuesta.text
     assert 'href="/inicio"' in respuesta.text
 
@@ -16923,8 +16924,8 @@ def test_administracion_tiene_cargar_pedido_en_la_tarjeta_de_pedidos():
     assert 'href="/deposito/pedido/cargar"' in cuerpo
     # Va en Pedidos, junto a Buscar, y no en otra tarjeta.
     pedidos = cuerpo.split("<h2>Pedidos</h2>")[1].split("</div>")[0]
-    assert "Cargar Pedido" in pedidos
-    assert "Armar Remito" in pedidos
+    assert "<span>Cargar pedido</span>" in pedidos
+    assert "<span>Armar remito</span>" in pedidos
 
 
 def test_la_pantalla_de_cargar_pedido_vuelve_a_DEPOSITO():
@@ -17764,7 +17765,9 @@ def test_el_nombre_de_la_pantalla_dice_LO_MISMO_en_el_boton_el_titulo_y_el_Excel
 
     # Por el atributo entero y no por la palabra suelta: el nombre también
     # aparece en los comentarios que explican el renombre (corolario 38).
-    assert f'href="/administracion/stock/remanente">{NOMBRE_STOCK_DEPOSITO}</a>' in boton
+    # Desde el 04/10 el botón lleva su dibujo antes del rótulo.
+    assert re.search(r'href="/administracion/stock/remanente">\{\{ ICONOS_HUBS\[\'stock\'\]\|safe \}\}<span>'
+                     + re.escape(NOMBRE_STOCK_DEPOSITO) + '</span></a>', boton)
     assert f"<title>{NOMBRE_STOCK_DEPOSITO}</title>" in pantalla
     assert f'{{% set barra_titulo = "{NOMBRE_STOCK_DEPOSITO}" %}}' in pantalla
     assert f'hoja.title = "{NOMBRE_STOCK_DEPOSITO}"' in excel
@@ -23365,10 +23368,11 @@ def test_cotejo_stock_compara_contra_el_cierre_del_dia_y_arma_el_link_de_ajuste(
     # La diferencia es contra el cierre del día del conteo, resaltada.
     assert "-3" in respuesta.text
     assert 'class="tarjeta con-diferencia"' in respuesta.text
-    # Con diferencia: botón al ajuste con el artículo, lo contado y EL DÍA.
-    # El número del sistema NO viaja en la URL: la pantalla de ajuste lo
-    # vuelve a calcular con la misma función.
-    assert "articulo_id=1&amp;contado=12.0&amp;fecha_conteo=2026-08-25" in respuesta.text
+    # Con diferencia: el ajuste AHÍ MISMO (Cotejo y ajuste, 04/10), con el
+    # artículo y la diferencia DEL DÍA ya propuesta (12 contados − 15 del
+    # sistema). La foto del sistema al contar no viaja en ningún lado.
+    assert '<input type="hidden" name="articulo_id" value="1">' in respuesta.text
+    assert re.search(r'name="cantidad" step="0.01" required[^>]*value="-3.0"', respuesta.text)
     assert "stock_conteo" not in respuesta.text
     assert respuesta.text.count("Ajustar a lo contado") == 1
     assert "diferencia-cero" in respuesta.text
@@ -24547,8 +24551,9 @@ def test_el_control_de_stock_vive_en_administracion():
     respuesta = cliente.get("/administracion")
 
     assert respuesta.status_code == 200
+    # Desde el 04/10 (dueño): Ajustar vive adentro de Cotejo y ajuste, y
+    # Movimientos es una pestaña de Stock del depósito.
     for destino in ("/administracion/stock/remanente", "/administracion/stock/cotejo",
-                    "/administracion/stock/ajustar", "/administracion/stock/movimientos",
                     "/administracion/stock/guias-r", "/administracion/pedidos/buscar"):
         assert f'href="{destino}"' in respuesta.text, destino
     # Stock del Sistema se BORRÓ el 06/09: el Remanente ocupa su lugar. El
@@ -26392,11 +26397,12 @@ def test_stock_inicial_anular_con_clase_desconocida_no_llama_a_la_base():
     mock_anular.assert_not_called()
 
 
-def test_administracion_tiene_el_boton_del_stock_inicial():
+def test_el_boton_del_stock_inicial_esta_en_GERENCIA_y_no_en_Administracion():
+    """Se usó una sola vez, el 05/09: quedó SOLO en Gerencia (dueño, 04/10)."""
     with patch("app.main._banner_alertas", return_value=None):
         respuesta = cliente.get("/administracion")
-
-    assert 'href="/administracion/stock/inicial"' in respuesta.text
+    assert 'href="/administracion/stock/inicial"' not in respuesta.text
+    assert 'href="/gerencia/stock/inicial"' in io.open("templates/gerencia.html", encoding="utf-8").read()
 
 
 def test_stock_inicial_los_importes_grandes_no_salen_en_notacion_cientifica():
@@ -26512,6 +26518,8 @@ def _cotejo(conteos, porciones=None, deficits=None, corte=CORTE_DEL_COTEJO):
     ]
     with ExitStack() as pila:
         pila.enter_context(patch("app.main.listar_ultimos_conteos_stock", return_value=conteos))
+        # La lista del ajuste sin conteo, que vive en el Cotejo desde el 04/10.
+        pila.enter_context(patch("app.main.listar_articulos", return_value=[]))
         pila.enter_context(patch("app.main._remanente_a_fecha", return_value={"porciones": porciones}))
         pila.enter_context(patch("app.main.deficit_de_cajas_por_ficha", return_value=deficits or {}))
         pila.enter_context(patch("app.main._corte_o_none", return_value=corte))
@@ -26565,7 +26573,7 @@ def test_con_signos_opuestos_el_boton_de_ajuste_queda_en_SEGUNDO_PLANO_pero_no_d
     cuerpo = _cotejo(*_articulo_partido()).text.split("</style>")[-1]
 
     # El ajuste sigue estando, y en segundo plano.
-    assert 'class="boton-ajustar secundario"\n         href="/administracion/stock/ajustar' in cuerpo
+    assert '<summary class="boton-ajustar secundario">Ajustar a lo contado</summary>' in cuerpo
     # Y el recomendado —revisar la guía R— es el que queda de primero: dos
     # botones secundarios serían dos caminos sin recomendación.
     assert '<a class="boton-ajustar" href="/administracion/stock/guias-r">' in cuerpo
@@ -26658,7 +26666,7 @@ def test_el_deficit_pone_en_SEGUNDO_PLANO_el_ajuste_de_los_SUELTOS():
     cuerpo = _cotejo(*_articulo_con_deficit(contado_sueltos=30.0)).text.split("</style>")[-1]
 
     assert "ficha equivocada" not in cuerpo
-    assert 'class="boton-ajustar secundario"\n         href="/administracion/stock/ajustar' in cuerpo
+    assert '<summary class="boton-ajustar secundario">Ajustar a lo contado</summary>' in cuerpo
     # Y el recomendado —cargar la guía R que falta— queda de primero.
     assert '<a class="boton-ajustar" href="/deposito/stock/reproceso">' in cuerpo
     assert "guía R que los produzca" in cuerpo
@@ -26681,7 +26689,7 @@ def test_el_aviso_de_deficit_llega_a_los_SUELTOS_aunque_la_ficha_NO_se_haya_cont
     assert "ficha equivocada" not in cuerpo
     # Y aun así avisa, y baja el botón.
     assert "guía R que los produzca" in cuerpo
-    assert 'class="boton-ajustar secundario"\n         href="/administracion/stock/ajustar' in cuerpo
+    assert '<summary class="boton-ajustar secundario">Ajustar a lo contado</summary>' in cuerpo
 
 
 def test_con_DEFICIT_el_aviso_es_el_del_deficit_y_NO_el_de_signos_opuestos():
@@ -26772,7 +26780,8 @@ def test_la_SEGUNDA_no_ofrece_AJUSTAR_ni_entra_en_el_aviso_de_signos_opuestos():
 
     assert "ficha equivocada" not in cuerpo
     # El ajuste se ofrece en los SUELTOS (que sí mueven el total)...
-    assert "/administracion/stock/ajustar?articulo_id=3&amp;contado=8.0" in cuerpo
+    assert '<input type="hidden" name="articulo_id" value="3">' in cuerpo
+    assert cuerpo.count('<details class="ajuste-aca" data-ajuste="primera">') == 1
     # ...y NO en la segunda: un solo botón de ajuste en toda la pantalla.
     assert cuerpo.count("Ajustar a lo contado") == 1
 
@@ -26901,7 +26910,8 @@ def test_cotejo_si_ofrece_ajustar_stock_en_una_diferencia_de_SUELTOS():
     respuesta = _cotejo(conteos)
 
     assert "Ajustar a lo contado" in respuesta.text
-    assert "articulo_id=1&amp;contado=12.0" in respuesta.text
+    # el formulario del ajuste, ahí mismo y con el artículo (04/10)
+    assert '<input type="hidden" name="articulo_id" value="1">' in respuesta.text
 
 
 def test_cotejo_no_inventa_renglones_de_fichas_que_nunca_se_contaron():
@@ -26912,6 +26922,7 @@ def test_cotejo_no_inventa_renglones_de_fichas_que_nunca_se_contaron():
     """
     with (
         patch("app.main.listar_ultimos_conteos_stock", return_value=[]) as mock_listar,
+        patch("app.main.listar_articulos", return_value=[]),
         patch("app.main._remanente_a_fecha", return_value={"porciones": []}),
         patch("app.main.deficit_de_cajas_por_ficha", return_value={}),
     ):
@@ -26947,6 +26958,7 @@ def test_cada_tarjeta_compara_contra_el_CIERRE_DE_SU_DIA_y_no_contra_hoy():
                             {"articulo_id": 2, "ficha_id": None, "bultos": 40.0}],
     }
     with (
+        patch("app.main.listar_articulos", return_value=[]),
         patch("app.main.listar_ultimos_conteos_stock", return_value=conteos),
         patch("app.main._remanente_a_fecha",
               side_effect=lambda dia, articulo_id=None: {"porciones": por_dia[dia]}) as remanente,
@@ -28715,8 +28727,10 @@ def test_la_diferencia_del_cotejo_es_SISTEMA_MENOS_FISICO():
 
     cuerpo = _cotejo(conteos, porciones).text.split("</style>")[-1]
 
-    assert "+42" in cuerpo, "50 en el sistema menos 8 contados son +42 que faltan"
-    assert "-42" not in cuerpo, "la resta quedó al revés"
+    # EL NÚMERO DE LA TARJETA. El ajuste propuesto SÍ dice −42 (contado menos
+    # sistema, lo que se suma o resta), así que se mira la celda Diferencia.
+    (diferencia,) = re.findall(r'class="valor diferencia-distinta">\s*([^<]*?)\s*</span>', cuerpo)
+    assert diferencia == "+42", "50 en el sistema menos 8 contados son +42 que faltan"
     # Y la ayuda dice la convención, porque un signo sin regla al lado se
     # lee como el que lo mira quiera.
     assert "Sistema − Físico" in cuerpo
@@ -30674,6 +30688,12 @@ PANTALLAS_SIN_LINK_DECIDIDAS = {
         "el href se arma con {{ tareas_hub.sector }}, que un regex literal no ve",
     "/administracion/tareas":
         "el href se arma con {{ tareas_hub.sector }}, que un regex literal no ve",
+    # REORDEN DE ADMINISTRACIÓN (dueño, 04/10). Las dos siguen abriendo para
+    # los links viejos; lo afirma tests/test_administracion_reordenada.py.
+    "/administracion/stock/ajustar":
+        "absorbida por Cotejo y ajuste: el ajuste se hace en la tarjeta (04/10)",
+    "/administracion/stock/inicial":
+        "Stock inicial del corte quedó SOLO en Gerencia, /gerencia/stock/inicial (04/10)",
 }
 
 

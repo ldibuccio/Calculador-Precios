@@ -1,0 +1,39 @@
+{# EL ESTILO DE DEPÓSITO PARA LOS OTROS HUBS (dueño, 04/10): Administración,
+   Compras, Gerencia y Comercial se leen igual que Depósito. Botón con un
+   dibujo al lado del rótulo (ICONOS_HUBS, app/iconos_hubs.py) y UN COLOR
+   POR RECUADRO, en orden: el primero azul, el segundo verde azulado, el
+   tercero pizarra, y si hay un cuarto vuelve a empezar. El dueño eligió
+   esto el 04/10 entre "un color por recuadro" y "un color por lo que hace".
+
+   LOS TRES COLORES SON LOS DE DEPÓSITO, y Depósito no se toca: tiene su
+   propia copia en templates/deposito.html (`.ingresos`, `.pedidos`,
+   `.stock`). Que las dos copias digan lo mismo lo cuida un test
+   (tests/test_estilo_de_los_hubs.py): si alguien mueve uno, cae.
+
+   Uso: `{{ botones_hub.estilos() }}` adentro del <style> del hub, y en cada
+   botón `class="boton color-1"` (o 2, o 3) con el dibujo y un <span>. #}
+{% macro estilos() %}
+  .boton {
+    margin-top: 0.6rem;
+    width: 100%;
+    min-height: 44px;
+    padding: 0.8rem;
+    color: #fff;
+    border: none;
+    border-radius: 8px;
+    font-size: 1rem;
+    font-weight: 600;
+    text-decoration: none;
+    box-sizing: border-box;
+    display: flex;
+    align-items: center;
+    gap: 0.7rem;
+  }
+  .boton:first-of-type { margin-top: 0; }
+  .boton.color-1 { background: #2563eb; }
+  .boton.color-2 { background: #0d9488; }
+  .boton.color-3 { background: #334155; }
+  .boton svg { width: 1.35rem; height: 1.35rem; flex: none; }
+  .boton span { overflow-wrap: anywhere; }
+  .tarjeta h2 { margin: 0 0 0.8rem; font-size: 1.05rem; color: #444; }
+{% endmacro %}

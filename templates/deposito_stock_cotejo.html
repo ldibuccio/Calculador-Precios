@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Cotejo de Stock</title>
+<title>Cotejo y ajuste</title>
 <style>
   :root { font-family: -apple-system, system-ui, sans-serif; }
   body {
@@ -85,14 +85,33 @@
     border-radius: 8px;
   }
   a.boton-ajustar.secundario { background: #fff; color: #2563eb; border: 1px solid #2563eb; }
+  /* EL AJUSTE AHÍ MISMO (04/10): el botón es el <summary> y abre el
+     formulario adentro de la tarjeta. */
+  summary.boton-ajustar { list-style: none; cursor: pointer; min-height: 44px; box-sizing: border-box; }
+  summary.boton-ajustar::-webkit-details-marker { display: none; }
+  summary.boton-ajustar.secundario { background: #fff; color: #2563eb; border: 1px solid #2563eb; }
+  .ajuste-form { display: flex; flex-direction: column; gap: 0.6rem; margin-top: 0.6rem; }
+  .ajuste-form label { font-size: 0.88rem; color: #444; font-weight: 600; }
+  .ajuste-form input, .ajuste-form select { display: block; width: 100%; box-sizing: border-box; margin-top: 0.25rem;
+    min-height: 44px; padding: 0.55rem; border: 1px solid #ccc; border-radius: 8px; font-size: 1rem; font-family: inherit;
+    background: #fff; }
+  .ajuste-form button { min-height: 48px; border: none; border-radius: 8px; background: #2563eb; color: #fff;
+    font-size: 1rem; font-weight: 700; font-family: inherit; cursor: pointer; }
+  .mensaje { padding: 0.75rem 0.9rem; border-radius: 8px; margin-bottom: 1rem; font-size: 0.92rem; }
+  .mensaje.bien { background: #dcfce7; color: #166534; }
+  .mensaje.mal { background: #fee2e2; color: #991b1b; }
+  .tarjeta h2 { font-size: 1.05rem; margin: 0; }
 </style>
 </head>
 <body>
   {% set barra_sector = "administracion" %}
-  {% set barra_titulo = "Cotejo de Stock" %}
+  {% set barra_titulo = "Cotejo y ajuste" %}
   {% set barra_atras = "/administracion" %}
   {% from "_info.html" import info %}
   {% include "_barra_navegacion.html" %}
+
+  {% if aviso %}<div class="mensaje bien" role="status">{{ aviso }}</div>{% endif %}
+  {% if error %}<div class="mensaje mal" role="alert">{{ error }}</div>{% endif %}
 
   {# Lo que se lee para ENTENDER EL NÚMERO queda a la vista (el signo); cómo
      se arma la comparación va a la "i". #}
@@ -196,15 +215,27 @@
          secundarios serían dos caminos sin recomendación. #}
       <a class="boton-ajustar" href="/administracion/stock/guias-r">Revisar las Guías R</a>
       {% endif %}
-      {% if f.query_ajuste %}
-      {# La pantalla de ajuste propone la diferencia del día del conteo, la
-         misma de esta tarjeta, y la aplica hoy como un movimiento más.
-         Con una hermana de signo opuesto —o con una ficha del artículo en
-         déficit— el botón pasa a segundo plano pero NO desaparece: puede
+      {% if f.ajuste %}
+      {# EL AJUSTE AHÍ MISMO (dueño, 04/10): propone la diferencia del día del
+         conteo, la misma de esta tarjeta, y la aplica hoy como un movimiento
+         más. Con una hermana de signo opuesto —o con una ficha del artículo
+         en déficit— el botón pasa a segundo plano pero NO desaparece: puede
          haber una guía R faltante o mal atribuida Y mercadería faltante de
          verdad encima. Más difícil de apretar, no imposible. #}
-      <a class="boton-ajustar {% if f.opuestas or f.deficit %}secundario{% endif %}"
-         href="/administracion/stock/ajustar?{{ f.query_ajuste }}">Ajustar a lo contado</a>
+      <details class="ajuste-aca" data-ajuste="primera">
+        <summary class="boton-ajustar {% if f.opuestas or f.deficit %}secundario{% endif %}">Ajustar a lo contado</summary>
+        <p class="aviso">{{ f.ajuste.aviso_conteo }}</p>
+        <form class="ajuste-form" method="post" action="/administracion/stock/ajustar">
+          <input type="hidden" name="volver" value="cotejo">
+          <input type="hidden" name="articulo_id" value="{{ f.articulo_id }}">
+          <label>¿Cuántos bultos sumo o resto?
+            <input type="number" name="cantidad" step="0.01" required placeholder="Ej: 12 suma, -3 resta"
+                   value="{{ f.ajuste.cantidad }}"></label>
+          <label>¿Por qué? (obligatorio)
+            <input type="text" name="motivo" required value="{{ f.ajuste.motivo }}"></label>
+          <button type="submit">Guardar ajuste</button>
+        </form>
+      </details>
       {% elif f.es_segunda and f.dif_del_dia not in (none, 0) %}
       {# LA SEGUNDA ES OTRO CIRCUITO y necesita su propio consejo. Caía en la
          rama de abajo —la de las fichas— y le decía "lo que cambia entre
@@ -224,8 +255,25 @@
         y sale por el <strong>remito al Puesto</strong> y por la que se le manda a un cliente que la
         acepta. El ajuste es para lo que no vino por ninguno de esos: queda fechado el día del conteo,
         con su motivo, y no toca la primera.{% endcall %}</p>
-      {% if f.query_ajuste_segunda %}
-      <a class="boton-ajustar" href="/administracion/stock/ajustar-segunda?{{ f.query_ajuste_segunda }}">Ajustar la segunda</a>
+      {% if f.ajuste_segunda %}
+      {# El motivo NO se propone: es lo único que dice por qué la segunda no
+         vino por su origen (ver ver_ajustar_segunda). #}
+      <details class="ajuste-aca" data-ajuste="segunda">
+        <summary class="boton-ajustar">Ajustar la segunda</summary>
+        <p class="aviso">{{ f.ajuste_segunda.aviso_conteo }}</p>
+        <form class="ajuste-form" method="post" action="/administracion/stock/ajustar-segunda">
+          <input type="hidden" name="volver" value="cotejo">
+          <input type="hidden" name="articulo_id" value="{{ f.articulo_id }}">
+          <input type="hidden" name="fecha_conteo" value="{{ f.ajuste_segunda.fecha_conteo }}">
+          <label>¿Cuántos bultos de segunda sumo o resto?
+            <input type="number" name="cantidad" step="0.01" required placeholder="Ej: 4 suma, -3 resta"
+                   value="{{ f.ajuste_segunda.cantidad }}"></label>
+          <label>¿Por qué no vino por la guía R, el rechazo, el pase o el remito? (obligatorio)
+            <input type="text" name="motivo" required
+                   placeholder="Ej: segunda que había en el piso al corte y no se cargó"></label>
+          <button type="submit">Guardar ajuste de segunda</button>
+        </form>
+      </details>
       {% endif %}
       {% elif f.dif_del_dia not in (none, 0) and not f.opuestas and not f.deficit %}
       {# Una diferencia en una FICHA no se arregla con un ajuste de stock:
@@ -245,6 +293,30 @@
       Solo aparece acá lo que se contó: una ficha que nunca se contó no genera tarjeta.</p>
   </div>
   {% endif %}
+
+  {# EL AJUSTE SIN CONTEO (04/10): lo que hacía la pantalla Ajustar Stock en
+     blanco, ahora acá abajo y plegado. Un ajuste que no sale de una tarjeta
+     es la excepción, no el camino. #}
+  <div class="tarjeta" id="sin-conteo">
+    <details class="ajuste-aca" data-ajuste="sin-conteo">
+      <summary class="boton-ajustar secundario">Ajustar un artículo sin conteo</summary>
+      <form class="ajuste-form" method="post" action="/administracion/stock/ajustar">
+        <input type="hidden" name="volver" value="cotejo">
+        <label>¿Qué artículo?
+          <select name="articulo_id" required>
+            <option value="" selected disabled>Elegí un artículo...</option>
+            {% for a in articulos %}<option value="{{ a.id }}">{{ a.nombre }}</option>{% endfor %}
+          </select></label>
+        <label>¿Cuántos bultos sumo o resto?
+          <input type="number" name="cantidad" step="0.01" required placeholder="Ej: 12 suma, -3 resta"></label>
+        <label>¿Por qué? (obligatorio)
+          <input type="text" name="motivo" required placeholder="Ej: se rompieron 2 cajones al descargar"></label>
+        <button type="submit">Guardar ajuste</button>
+      </form>
+    </details>
+    {# Los ajustes de segunda ya cargados, con su Anular, siguen en su lista. #}
+    <a class="boton-ajustar secundario" href="/administracion/stock/ajustar-segunda">Ajustes de segunda cargados</a>
+  </div>
 
   <a class="volver" href="/administracion">Volver a Administración</a>
 {% include "_pie_version.html" %}

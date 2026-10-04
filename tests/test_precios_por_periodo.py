@@ -633,9 +633,9 @@ def test_el_hub_de_administracion_lleva_a_la_pantalla_desde_FACTURACION():
     assert respuesta.status_code == 200
 
     marcado = respuesta.text
-    assert 'href="/administracion/precios-por-periodo">Precios por Período</a>' in marcado
+    assert '<span>Precios por período</span></a>' in marcado
 
-    facturacion = marcado.split("<h2>Facturación</h2>")[1].split("</div>")[0]
+    facturacion = marcado.split("<h2>Facturación y cobranzas</h2>")[1].split("</div>")[0]
     assert "/administracion/precios-por-periodo" in facturacion, "quedó en otra tarjeta"
 
 

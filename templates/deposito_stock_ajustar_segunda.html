@@ -113,11 +113,8 @@
 
   {% if precarga.articulo_id %}
   {# La diferencia de ESE día se lee ANTES de guardar: cambia lo que se hace. #}
-  {% if precarga.contado is defined %}
-  <div class="aviso-conteo">El {{ precarga.dia_texto }} contaste {{ precarga.contado|numero }} de segunda
-    y al cierre de ese día el sistema decía {{ precarga.sistema|numero }}. Se propone esa diferencia
-    ({% if precarga.cantidad > 0 %}+{% endif %}{{ precarga.cantidad|numero }}). El ajuste queda fechado el
-    {{ precarga.dia_texto }} y no toca la primera.</div>
+  {% if precarga.aviso_conteo %}
+  <div class="aviso-conteo">{{ precarga.aviso_conteo }}</div>
   {% endif %}
   <div class="tarjeta">
     <form method="post" action="/administracion/stock/ajustar-segunda">

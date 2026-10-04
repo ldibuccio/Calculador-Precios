@@ -246,3 +246,19 @@ que se apaga por media query. La pregunta es siempre la misma: *¿esto que
 escondo tiene adentro algo que se toca?* Y la respuesta se cuenta, no se
 recuerda — en las cuatro pantallas de arriba la intuición decía "son
 rótulos" y en una de las cuatro era falso.
+
+## Los hubs se leen como Depósito (04/10, dueño)
+
+Administración, Compras, Gerencia y Comercial llevan el estilo de Depósito:
+**un dibujo al lado del rótulo** de cada botón y **un color por recuadro, en
+orden** (azul, verde azulado, pizarra, y si hay un cuarto vuelve a empezar).
+El dueño eligió "un color por recuadro" y no "un color por lo que hace".
+
+- El estilo vive en `templates/_botones_hub.html` y los dibujos en
+  `app/iconos_hubs.py` (Heroicons, el mismo juego que Depósito).
+- **Depósito no se toca**: tiene su propia copia de los tres colores en
+  `templates/deposito.html`. Que las dos copias digan lo mismo lo cuida
+  `tests/test_administracion_reordenada.py`.
+- Arriba de Compras, Administración y Gerencia va la franja Tareas/Alertas
+  (`docs/modulos/tareas.md`).
+
