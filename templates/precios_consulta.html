@@ -221,13 +221,13 @@
     {% if filas %}
     {% set nuevos = filas|selectattr("es_nuevo")|list|length %}
     {% if nuevos %}
-    <p class="ayuda">En rojo, {% if nuevos == 1 %}el precio que empezó{% else %}los {{ nuevos }} precios que empezaron{% endif %} a regir el {{ fecha_mostrar }}.</p>
+    <p class="ayuda">En rojo, {% if nuevos == 1 %}el precio que cambió{% else %}los {{ nuevos }} precios que cambiaron{% endif %} contra el día anterior.</p>
     {% endif %}
     {% for fila in filas %}
     <div class="fila-precio {% if fila.es_nuevo %}nueva{% endif %}">
       <span>{{ fila.articulo_nombre }}</span>
       <span class="precio">{{ fila.precio|moneda }}</span>
-      {% if fila.es_nuevo %}<span class="badge-nuevo">● Nuevo precio</span>{% endif %}
+      {% if fila.es_nuevo %}<span class="badge-nuevo">● Nuevo precio{% if fila.precio_anterior is not none %} (antes {{ fila.precio_anterior|moneda }}){% else %} (ayer no tenía){% endif %}</span>{% endif %}
     </div>
     {% endfor %}
     {% else %}

@@ -2008,21 +2008,14 @@ def test_listar_precios_vigentes_por_cliente_trae_vigente_desde():
     assert "ficha_id IS NOT NULL" in consulta
 
 
-def test_listar_precios_anteriores_por_cliente_trae_la_fila_previa_a_la_vigente():
-    # Para la columna "Precio anterior" del Excel: la fila #2 (orden = 2 en
-    # el ROW_NUMBER, la que regía justo antes de la vigente), no la #1.
-    conexion, cursor = _conexion_falsa(filas_fetchall=[(902, 2, 350.0)])
-    cursor.description = [("ficha_id",), ("articulo_id",), ("precio",)]
-
-    with patch("app.db.obtener_conexion", return_value=conexion):
-        resultado = listar_precios_anteriores_por_cliente(1, date(2026, 8, 16))
-
-    assert resultado == [{"ficha_id": 902, "articulo_id": 2, "precio": 350.0}]
-    consulta, parametros = cursor.execute.call_args[0]
-    assert "PARTITION BY ficha_id" in consulta
-    assert "ROW_NUMBER()" in consulta
-    assert "WHERE orden = 2" in consulta
-    assert parametros == (1, date(2026, 8, 16))
+def test_listar_precios_anteriores_es_lo_VIGENTE_al_cierre_del_DIA_ANTERIOR():
+    """Dueño, 05/10: el "Precio anterior" es el vigente al cierre del día
+    anterior a la fecha del listado, no la fila previa a la vigente. Es la
+    MISMA consulta de vigente, un día antes (el caso entero, contra
+    Postgres, está en tests/test_precio_anterior.py)."""
+    with patch("app.db.listar_precios_vigentes_por_cliente", return_value=["EJ"]) as vigentes:
+        assert listar_precios_anteriores_por_cliente(1, date(2026, 8, 16)) == ["EJ"]
+    vigentes.assert_called_once_with(1, date(2026, 8, 15))
 
 
 def test_guardar_precios_cliente_escribe_LA_FECHA_QUE_LE_PASAN_y_no_la_del_servidor():

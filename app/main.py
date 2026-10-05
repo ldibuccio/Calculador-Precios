@@ -9950,6 +9950,8 @@ def ver_precios_consultar(request: Request, cliente_id: str | None = None, fecha
     try:
         fichas = listar_fichas_por_cliente(cliente_id)
         precios_vigentes = listar_precios_vigentes_por_cliente(cliente_id, fecha_consulta)
+        precio_de_ayer_por_ficha = {p["ficha_id"]: p["precio"]
+                                    for p in listar_precios_anteriores_por_cliente(cliente_id, fecha_consulta)}
     except Exception as error_db:
         raise HTTPException(status_code=500, detail=f"Error al conectar con la base de datos: {error_db}") from error_db
 
@@ -9967,10 +9969,9 @@ def ver_precios_consultar(request: Request, cliente_id: str | None = None, fecha
                 else f"Artículo #{precio['articulo_id']}"
             ),
             "precio": precio["precio"],
-            # Mismo criterio que el PDF y el Excel: empezó a regir en la
-            # fecha consultada. Sirve para facturar — si venía todo igual y
-            # algo cambió ese día, se ve sin comparar contra la lista anterior.
-            "es_nuevo": precio.get("vigente_desde") == fecha_consulta,
+            # La MISMA regla que el PDF y el Excel (dueño, 05/10): contra el
+            # precio vigente al cierre del día anterior.
+            **_contra_el_dia_anterior(precio["precio"], precio_de_ayer_por_ficha, precio["ficha_id"]),
         }
         for precio in precios_vigentes
     ]
@@ -10020,20 +10021,37 @@ def ver_precios_consultar(request: Request, cliente_id: str | None = None, fecha
     )
 
 
+def _contra_el_dia_anterior(precio, precios_de_ayer: dict, ficha_id) -> dict:
+    """"Precio anterior" y "nuevo precio" de UNA fila del listado (dueño, 05/10).
+
+    UNA regla para la pantalla, el PDF y el Excel, así las tres dicen lo
+    mismo: el anterior es el precio VIGENTE AL CIERRE DEL DÍA ANTERIOR a la
+    fecha del listado (`listar_precios_anteriores_por_cliente`), y la fila
+    es nueva si hoy vale distinto que ayer o si ayer no tenía precio. Un
+    precio recargado hoy con el mismo valor no es nuevo: ayer y hoy valen
+    lo mismo y las dos columnas lo dicen.
+    """
+    anterior = precios_de_ayer.get(ficha_id)
+    return {
+        "precio_anterior": anterior,
+        "es_nuevo": anterior is None or float(anterior) != float(precio),
+    }
+
+
 def _armar_filas_exportacion_precios(cliente_id: int, fecha_consulta) -> tuple[list[dict], bool]:
     """Arma las filas para exportar (PDF/Excel) la lista de precios de un cliente a una fecha.
 
     Reusa exactamente los mismos datos que ya arma /precios/consultar
     (fichas para nombre/unidad, precios vigentes, catálogo para el grupo)
-    — no calcula nada nuevo. es_nuevo es "este precio EMPEZÓ A REGIR en la
-    fecha consultada" (vigente_desde == fecha_consulta), y vale igual para
-    hoy que para una fecha pasada: consultar el 20 tiene que mostrar lo que
-    cambió el 20, que es justo para lo que se consulta para atrás.
+    — no calcula nada nuevo. precio_anterior y es_nuevo salen de
+    `_contra_el_dia_anterior` (dueño, 05/10), la misma regla que la
+    pantalla: el anterior es el vigente al cierre del día anterior a la
+    fecha consultada, y es nuevo lo que vale distinto que ese día o no
+    tenía precio. Vale igual para hoy que para una fecha pasada.
     es_hoy queda solo para el encabezado del Excel ("Precio Desde HOY" vs
     "Precio al dd/mm"), que sí depende de si la fecha es la de hoy.
-    precio_anterior (ver listar_precios_anteriores_por_cliente) solo lo usa
-    la columna "Precio anterior" del Excel (el PDF no la muestra) — un
-    artículo sin precio anterior cargado queda en None.
+    precio_anterior lo muestra la columna "Precio anterior" del Excel (el
+    PDF no la muestra); sin precio el día anterior queda en None.
     """
     fichas = listar_fichas_por_cliente(cliente_id)
     precios_vigentes = listar_precios_vigentes_por_cliente(cliente_id, fecha_consulta)
@@ -10049,7 +10067,9 @@ def _armar_filas_exportacion_precios(cliente_id: int, fecha_consulta) -> tuple[l
     }
     unidad_por_articulo = {ficha["articulo_id"]: ficha.get("unidad_venta") for ficha in fichas}
     grupo_por_articulo = {articulo["id"]: articulo.get("grupo") for articulo in articulos_existentes}
-    precio_anterior_por_articulo = {precio["articulo_id"]: precio["precio"] for precio in precios_anteriores}
+    # Por FICHA, que es la que tiene precio: por artículo, dos fichas del
+    # mismo artículo se pisaban el anterior.
+    precio_de_ayer_por_ficha = {precio["ficha_id"]: precio["precio"] for precio in precios_anteriores}
 
     es_hoy = fecha_consulta == _hoy_argentina()
 
@@ -10058,9 +10078,8 @@ def _armar_filas_exportacion_precios(cliente_id: int, fecha_consulta) -> tuple[l
             "articulo_nombre": nombre_por_articulo.get(precio["articulo_id"], f"Artículo #{precio['articulo_id']}"),
             "grupo": grupo_por_articulo.get(precio["articulo_id"]),
             "precio": precio["precio"],
-            "precio_anterior": precio_anterior_por_articulo.get(precio["articulo_id"]),
+            **_contra_el_dia_anterior(precio["precio"], precio_de_ayer_por_ficha, precio.get("ficha_id")),
             "unidad": unidad_por_articulo.get(precio["articulo_id"]),
-            "es_nuevo": precio.get("vigente_desde") == fecha_consulta,
             "ficha_id": precio.get("ficha_id"),
         }
         for precio in precios_vigentes

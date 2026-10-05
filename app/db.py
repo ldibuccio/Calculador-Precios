@@ -2162,37 +2162,17 @@ def listar_precios_vigentes_por_cliente(cliente_id: int, fecha_referencia) -> li
 
 
 def listar_precios_anteriores_por_cliente(cliente_id: int, fecha_referencia) -> list[dict]:
-    """El precio que tenía cada FICHA ANTES del que hoy está vigente (para la columna "Precio anterior"
-    de la Lista de Precios en Excel — ver core.exportar_precios).
+    """El "Precio anterior" del listado (dueño, 05/10): el VIGENTE AL CIERRE DEL
+    DÍA ANTERIOR a la fecha del listado, por ficha.
 
-    Mismo criterio de "vigente" que listar_precios_vigentes_por_cliente,
-    pero un escalón atrás: de las filas de precios_venta_historial con
-    vigente_desde <= fecha_referencia, la vigente es la de vigente_desde
-    más reciente (fila #1) — esto devuelve la fila #2, la que regía justo
-    antes de esa. Una ficha con una sola fila cargada (nunca cambió de
-    precio) o sin ninguna simplemente no aparece — no hay "anterior" que
-    mostrar.
+    Hasta el 05/10 era el último precio DISTINTO (la fila anterior a la
+    vigente), que podía ser de hace semanas: el listado del lunes decía
+    "antes $500" de un precio que cambió el mes pasado. Ahora: si ayer valía
+    lo mismo que hoy, es el mismo número; si ayer no tenía precio, la ficha
+    no aparece (la celda queda vacía). Es la misma consulta de "vigente",
+    un día antes — no una regla aparte.
     """
-    conexion = obtener_conexion()
-    try:
-        with conexion.cursor() as cursor:
-            cursor.execute(
-                """
-                SELECT ficha_id, articulo_id, precio FROM (
-                    SELECT ficha_id, articulo_id, precio,
-                           ROW_NUMBER() OVER (PARTITION BY ficha_id ORDER BY vigente_desde DESC) AS orden
-                    FROM precios_venta_historial
-                    WHERE cliente_id = %s AND vigente_desde <= %s AND ficha_id IS NOT NULL
-                ) filas_ordenadas
-                WHERE orden = 2
-                """,
-                (cliente_id, fecha_referencia),
-            )
-            columnas = [descripcion[0] for descripcion in cursor.description]
-            filas = cursor.fetchall()
-        return [dict(zip(columnas, fila)) for fila in filas]
-    finally:
-        conexion.close()
+    return listar_precios_vigentes_por_cliente(cliente_id, fecha_referencia - timedelta(days=1))
 
 
 def guardar_precios_cliente(cliente_id: int, cambios: list[dict], vigente_desde, foto_ruta: str | None = None) -> None:

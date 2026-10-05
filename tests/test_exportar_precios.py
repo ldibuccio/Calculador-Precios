@@ -251,15 +251,15 @@ def test_generar_excel_fecha_pasada_resalta_igual_lo_que_empezo_a_regir_ese_dia(
     assert _nombres_con_cambio_resaltado(libro.active) == ["Manzana Red", "Tomate Cherry"]
 
 
-def test_generar_excel_el_precio_anterior_figura_siempre():
+def test_generar_excel_sin_precio_el_dia_anterior_la_celda_queda_VACIA():
     excel_bytes = generar_excel_lista_precios("Día", date(2026, 8, 16), FILAS_DE_PRUEBA, es_hoy=True, nombre_empresa="Frutamax")
     libro = _cargar_excel(excel_bytes)
     hoja = libro.active
 
-    # Manzana Red nunca tuvo precio previo cargado: el anterior repite el
-    # vigente (siempre figura, pedido explícito).
+    # Manzana Red no tenía precio el día anterior (dueño, 05/10): la celda
+    # del anterior queda vacía, ya no repite el vigente.
     fila_manzana = next(fila for fila in hoja.iter_rows() if fila[0].value == "Manzana Red")
-    assert fila_manzana[1].value == 890.0
+    assert fila_manzana[1].value is None
     assert fila_manzana[2].value == 890.0
 
 

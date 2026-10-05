@@ -9096,6 +9096,7 @@ def test_ver_precios_consultar_con_cliente_lista_todos_los_precios_vigentes():
         patch("app.main._hoy_argentina", return_value=HOY_DE_PRUEBA),
         patch("app.main.listar_fichas_por_cliente", return_value=FICHAS_PRECIOS_DE_PRUEBA),
         patch("app.main.listar_precios_vigentes_por_cliente", return_value=PRECIOS_VIGENTES_DE_PRUEBA) as mock_precios,
+        patch("app.main.listar_precios_anteriores_por_cliente", return_value=[]),
     ):
         respuesta = cliente.get("/precios/consultar?cliente_id=1")
 
@@ -9135,6 +9136,7 @@ def _consultar_con_historial(url, historial=None, fichas=None):
         patch("app.main._hoy_argentina", return_value=HOY_DE_PRUEBA),
         patch("app.main.listar_fichas_por_cliente", return_value=fichas or FICHAS_PRECIOS_DE_PRUEBA),
         patch("app.main.listar_precios_vigentes_por_cliente", return_value=PRECIOS_VIGENTES_DE_PRUEBA),
+        patch("app.main.listar_precios_anteriores_por_cliente", return_value=[]),
         patch("app.main.listar_historial_de_precios_de_ficha",
               return_value=[dict(h) for h in (HISTORIAL_DE_PRUEBA if historial is None else historial)]) as mock_hist,
     ):
@@ -9217,12 +9219,19 @@ def test_ver_precios_consultar_fecha_pasada_usa_esa_fecha():
         patch("app.main.listar_clientes", return_value=CLIENTES_DE_PRUEBA),
         patch("app.main.listar_fichas_por_cliente", return_value=FICHAS_PRECIOS_DE_PRUEBA),
         patch("app.main.listar_precios_vigentes_por_cliente", return_value=[]) as mock_precios,
+        patch("app.main.listar_precios_anteriores_por_cliente", return_value=[]),
     ):
         respuesta = cliente.get("/precios/consultar?cliente_id=1&fecha=2026-01-15")
 
     assert respuesta.status_code == 200
     assert mock_precios.call_args[0][1] == date(2026, 1, 15)
     assert "15/01/2026" in respuesta.text
+
+
+def _ayer(precios, fecha):
+    """Lo vigente al cierre del día anterior a `fecha` en un fixture donde nada
+    cambió de precio antes: lo que ya regía, con el mismo precio."""
+    return [p for p in precios if p["vigente_desde"] < fecha]
 
 
 def _precios_vigentes_con_fechas(vigente_desde_cherry, vigente_desde_mango):
@@ -9248,6 +9257,7 @@ def test_ver_precios_consultar_resalta_el_precio_que_empezo_a_regir_ese_dia():
             "app.main.listar_precios_vigentes_por_cliente",
             return_value=_precios_vigentes_con_fechas(HOY_DE_PRUEBA, date(2026, 1, 1)),
         ),
+        patch("app.main.listar_precios_anteriores_por_cliente", return_value=_ayer(_precios_vigentes_con_fechas(HOY_DE_PRUEBA, date(2026, 1, 1)), HOY_DE_PRUEBA)),
     ):
         respuesta = cliente.get("/precios/consultar?cliente_id=1")
 
@@ -9268,12 +9278,13 @@ def test_ver_precios_consultar_fecha_pasada_resalta_igual_lo_que_cambio_ese_dia(
             "app.main.listar_precios_vigentes_por_cliente",
             return_value=_precios_vigentes_con_fechas(date(2026, 1, 15), date(2026, 1, 1)),
         ),
+        patch("app.main.listar_precios_anteriores_por_cliente", return_value=_ayer(_precios_vigentes_con_fechas(date(2026, 1, 15), date(2026, 1, 1)), date(2026, 1, 15))),
     ):
         respuesta = cliente.get("/precios/consultar?cliente_id=1&fecha=2026-01-15")
 
     assert "nueva" in _bloque_de_articulo(respuesta.text, "Tomate Cherry")
     assert "nueva" not in _bloque_de_articulo(respuesta.text, "Mango")
-    assert "el precio que empezó a regir el 15/01/2026" in respuesta.text
+    assert "el precio que cambió contra el día anterior" in respuesta.text
 
 
 def test_ver_precios_consultar_sin_cambios_ese_dia_no_resalta_ninguno():
@@ -9285,6 +9296,7 @@ def test_ver_precios_consultar_sin_cambios_ese_dia_no_resalta_ninguno():
             "app.main.listar_precios_vigentes_por_cliente",
             return_value=_precios_vigentes_con_fechas(date(2026, 1, 1), date(2026, 1, 1)),
         ),
+        patch("app.main.listar_precios_anteriores_por_cliente", return_value=_ayer(_precios_vigentes_con_fechas(date(2026, 1, 1), date(2026, 1, 1)), date(2026, 1, 15))),
     ):
         respuesta = cliente.get("/precios/consultar?cliente_id=1&fecha=2026-01-15")
 
@@ -9298,6 +9310,7 @@ def test_ver_precios_consultar_fecha_invalida_muestra_error():
         patch("app.main.listar_clientes", return_value=CLIENTES_DE_PRUEBA),
         patch("app.main.listar_fichas_por_cliente", return_value=FICHAS_PRECIOS_DE_PRUEBA),
         patch("app.main.listar_precios_vigentes_por_cliente", return_value=[]),
+        patch("app.main.listar_precios_anteriores_por_cliente", return_value=[]),
     ):
         respuesta = cliente.get("/precios/consultar?cliente_id=1&fecha=no-es-una-fecha")
 
@@ -9310,6 +9323,7 @@ def test_ver_precios_consultar_articulo_puntual_filtra_a_ese_solo():
         patch("app.main.listar_clientes", return_value=CLIENTES_DE_PRUEBA),
         patch("app.main.listar_fichas_por_cliente", return_value=FICHAS_PRECIOS_DE_PRUEBA),
         patch("app.main.listar_precios_vigentes_por_cliente", return_value=PRECIOS_VIGENTES_DE_PRUEBA),
+        patch("app.main.listar_precios_anteriores_por_cliente", return_value=[]),
         patch("app.main.listar_historial_de_precios_de_ficha", return_value=[]),
     ):
         respuesta = cliente.get("/precios/consultar?cliente_id=1&ficha_id=902")
@@ -9329,6 +9343,7 @@ def test_ver_precios_consultar_articulo_puntual_sin_precio_vigente_muestra_mensa
         patch("app.main.listar_clientes", return_value=CLIENTES_DE_PRUEBA),
         patch("app.main.listar_fichas_por_cliente", return_value=FICHAS_PRECIOS_DE_PRUEBA),
         patch("app.main.listar_precios_vigentes_por_cliente", return_value=[]),
+        patch("app.main.listar_precios_anteriores_por_cliente", return_value=[]),
         patch("app.main.listar_historial_de_precios_de_ficha", return_value=[]),
     ):
         respuesta = cliente.get("/precios/consultar?cliente_id=1&ficha_id=902")
@@ -9342,6 +9357,7 @@ def test_ver_precios_consultar_cliente_sin_precios_muestra_mensaje():
         patch("app.main.listar_clientes", return_value=CLIENTES_DE_PRUEBA),
         patch("app.main.listar_fichas_por_cliente", return_value=FICHAS_PRECIOS_DE_PRUEBA),
         patch("app.main.listar_precios_vigentes_por_cliente", return_value=[]),
+        patch("app.main.listar_precios_anteriores_por_cliente", return_value=[]),
     ):
         respuesta = cliente.get("/precios/consultar?cliente_id=1")
 
@@ -9354,6 +9370,7 @@ def test_ver_precios_consultar_incluye_link_para_cargar():
         patch("app.main.listar_clientes", return_value=CLIENTES_DE_PRUEBA),
         patch("app.main.listar_fichas_por_cliente", return_value=FICHAS_PRECIOS_DE_PRUEBA),
         patch("app.main.listar_precios_vigentes_por_cliente", return_value=PRECIOS_VIGENTES_DE_PRUEBA),
+        patch("app.main.listar_precios_anteriores_por_cliente", return_value=[]),
     ):
         respuesta = cliente.get("/precios/consultar?cliente_id=1")
 
@@ -9383,6 +9400,7 @@ def test_ver_precios_consultar_articulo_id_vacio_trae_el_listado_completo():
         patch("app.main.listar_clientes", return_value=CLIENTES_DE_PRUEBA),
         patch("app.main.listar_fichas_por_cliente", return_value=FICHAS_PRECIOS_DE_PRUEBA),
         patch("app.main.listar_precios_vigentes_por_cliente", return_value=PRECIOS_VIGENTES_DE_PRUEBA),
+        patch("app.main.listar_precios_anteriores_por_cliente", return_value=[]),
     ):
         respuesta = cliente.get("/precios/consultar?cliente_id=1&fecha=2026-08-15&articulo_id=")
 
@@ -9396,6 +9414,7 @@ def test_ver_precios_consultar_articulo_id_no_numerico_no_rompe_trae_el_listado_
         patch("app.main.listar_clientes", return_value=CLIENTES_DE_PRUEBA),
         patch("app.main.listar_fichas_por_cliente", return_value=FICHAS_PRECIOS_DE_PRUEBA),
         patch("app.main.listar_precios_vigentes_por_cliente", return_value=PRECIOS_VIGENTES_DE_PRUEBA),
+        patch("app.main.listar_precios_anteriores_por_cliente", return_value=[]),
     ):
         respuesta = cliente.get("/precios/consultar?cliente_id=1&articulo_id=no-es-un-numero")
 
@@ -9419,6 +9438,7 @@ def test_ver_precios_consultar_url_no_repite_cliente_id():
         patch("app.main.listar_clientes", return_value=CLIENTES_DE_PRUEBA),
         patch("app.main.listar_fichas_por_cliente", return_value=FICHAS_PRECIOS_DE_PRUEBA),
         patch("app.main.listar_precios_vigentes_por_cliente", return_value=PRECIOS_VIGENTES_DE_PRUEBA),
+        patch("app.main.listar_precios_anteriores_por_cliente", return_value=[]),
     ):
         respuesta = cliente.get("/precios/consultar?cliente_id=1")
 
@@ -9430,6 +9450,7 @@ def test_ver_precios_consultar_incluye_buscador_de_articulo():
         patch("app.main.listar_clientes", return_value=CLIENTES_DE_PRUEBA),
         patch("app.main.listar_fichas_por_cliente", return_value=FICHAS_PRECIOS_DE_PRUEBA),
         patch("app.main.listar_precios_vigentes_por_cliente", return_value=PRECIOS_VIGENTES_DE_PRUEBA),
+        patch("app.main.listar_precios_anteriores_por_cliente", return_value=[]),
     ):
         respuesta = cliente.get("/precios/consultar?cliente_id=1")
 
@@ -9446,6 +9467,7 @@ def test_ver_precios_consultar_articulo_elegido_muestra_boton_para_limpiar():
         patch("app.main.listar_clientes", return_value=CLIENTES_DE_PRUEBA),
         patch("app.main.listar_fichas_por_cliente", return_value=FICHAS_PRECIOS_DE_PRUEBA),
         patch("app.main.listar_precios_vigentes_por_cliente", return_value=PRECIOS_VIGENTES_DE_PRUEBA),
+        patch("app.main.listar_precios_anteriores_por_cliente", return_value=[]),
         patch("app.main.listar_historial_de_precios_de_ficha", return_value=[]),
     ):
         respuesta = cliente.get("/precios/consultar?cliente_id=1&ficha_id=902")
@@ -9459,6 +9481,7 @@ def test_ver_precios_consultar_con_resultados_muestra_boton_exportar():
         patch("app.main.listar_clientes", return_value=CLIENTES_DE_PRUEBA),
         patch("app.main.listar_fichas_por_cliente", return_value=FICHAS_PRECIOS_DE_PRUEBA),
         patch("app.main.listar_precios_vigentes_por_cliente", return_value=PRECIOS_VIGENTES_DE_PRUEBA),
+        patch("app.main.listar_precios_anteriores_por_cliente", return_value=[]),
     ):
         respuesta = cliente.get("/precios/consultar?cliente_id=1")
 
@@ -9475,6 +9498,7 @@ def test_ver_precios_consultar_boton_exportar_va_arriba_del_boton_cargar_precios
         patch("app.main.listar_clientes", return_value=CLIENTES_DE_PRUEBA),
         patch("app.main.listar_fichas_por_cliente", return_value=FICHAS_PRECIOS_DE_PRUEBA),
         patch("app.main.listar_precios_vigentes_por_cliente", return_value=PRECIOS_VIGENTES_DE_PRUEBA),
+        patch("app.main.listar_precios_anteriores_por_cliente", return_value=[]),
     ):
         respuesta = cliente.get("/precios/consultar?cliente_id=1")
 
@@ -9486,6 +9510,7 @@ def test_ver_precios_consultar_sin_resultados_no_muestra_boton_exportar():
         patch("app.main.listar_clientes", return_value=CLIENTES_DE_PRUEBA),
         patch("app.main.listar_fichas_por_cliente", return_value=FICHAS_PRECIOS_DE_PRUEBA),
         patch("app.main.listar_precios_vigentes_por_cliente", return_value=[]),
+        patch("app.main.listar_precios_anteriores_por_cliente", return_value=[]),
     ):
         respuesta = cliente.get("/precios/consultar?cliente_id=1")
 
@@ -9560,7 +9585,7 @@ def test_exportar_precios_pdf_hoy_resalta_el_que_cambio_hoy():
             "app.main.listar_precios_vigentes_por_cliente",
             return_value=_precios_vigentes_exportacion(HOY_DE_PRUEBA),
         ),
-        patch("app.main.listar_precios_anteriores_por_cliente", return_value=[]),
+        patch("app.main.listar_precios_anteriores_por_cliente", return_value=_ayer(_precios_vigentes_exportacion(HOY_DE_PRUEBA), HOY_DE_PRUEBA)),
     ):
         respuesta = cliente.get(f"/precios/consultar/exportar-pdf?cliente_id=1&fecha={HOY_DE_PRUEBA.isoformat()}")
 
@@ -9583,7 +9608,7 @@ def test_exportar_precios_pdf_fecha_pasada_resalta_lo_que_empezo_a_regir_ese_dia
             "app.main.listar_precios_vigentes_por_cliente",
             return_value=_precios_vigentes_exportacion(date(2026, 1, 15)),
         ),
-        patch("app.main.listar_precios_anteriores_por_cliente", return_value=[]),
+        patch("app.main.listar_precios_anteriores_por_cliente", return_value=_ayer(_precios_vigentes_exportacion(date(2026, 1, 15)), date(2026, 1, 15))),
     ):
         respuesta = cliente.get("/precios/consultar/exportar-pdf?cliente_id=1&fecha=2026-01-15")
 
@@ -9694,9 +9719,9 @@ def test_exportar_precios_excel_usa_el_formato_de_planilla_del_dueno():
             "app.main.listar_precios_vigentes_por_cliente",
             return_value=_precios_vigentes_exportacion(HOY_DE_PRUEBA),
         ),
-        # Mango (articulo_id 2) tenía $300 antes; Tomate Cherry (1) nunca
-        # tuvo un precio previo cargado.
-        patch("app.main.listar_precios_anteriores_por_cliente", return_value=[{"ficha_id": 902, "articulo_id": 2, "precio": 300.0}]),
+        # Al cierre de ayer: Mango ya valía $350; Tomate Cherry no tenía precio.
+        patch("app.main.listar_precios_anteriores_por_cliente",
+              return_value=_ayer(_precios_vigentes_exportacion(HOY_DE_PRUEBA), HOY_DE_PRUEBA)),
     ):
         respuesta = cliente.get(f"/precios/consultar/exportar-excel?cliente_id=1&fecha={HOY_DE_PRUEBA.isoformat()}")
 
@@ -9709,22 +9734,20 @@ def test_exportar_precios_excel_usa_el_formato_de_planilla_del_dueno():
     assert hoja.cell(row=2, column=2).value == "Precio Anterior"
     assert hoja.cell(row=2, column=3).value == "Precio Desde HOY"
 
-    # Cherry EMPEZÓ A REGIR hoy: naranja con el precio en rojo. Nunca tuvo
-    # precio previo cargado, así que el anterior repite el vigente (figura
-    # igual, pedido explícito) — lo que manda es la fecha, no la comparación.
+    # Cherry no tenía precio ayer: el anterior queda VACÍO (dueño, 05/10) y
+    # la fila se resalta, naranja con el precio en rojo.
     fila_cherry = next(fila for fila in hoja.iter_rows() if fila[0].value == "Tomate Cherry")
-    assert fila_cherry[1].value == 500.0
+    assert fila_cherry[1].value is None
     assert fila_cherry[2].value == 500.0
     assert fila_cherry[2].fill.start_color.rgb.endswith("FFC000")
     assert fila_cherry[2].font.color.rgb.endswith("C00000")
     assert fila_cherry[1].fill.start_color.rgb != fila_cherry[2].fill.start_color.rgb  # el anterior queda sin resaltar
 
-    # Mango tiene un precio anterior distinto (300 -> 350) pero ese cambio
-    # es del 1/1, no de hoy: NO se resalta. Antes sí, y era un falso aviso.
+    # Mango valía lo mismo ayer: las dos columnas dicen 350 y NO se resalta.
     # Se vende por unidad y el pie dice "POR KG", así que la unidad va
     # pegada al nombre.
     fila_mango = next(fila for fila in hoja.iter_rows() if fila[0].value == "Mango (por unidad)")
-    assert fila_mango[1].value == 300.0
+    assert fila_mango[1].value == 350.0
     assert fila_mango[2].value == 350.0
     assert fila_mango[2].fill.start_color.rgb != fila_cherry[2].fill.start_color.rgb
 
@@ -9758,7 +9781,7 @@ def test_guardar_y_exportar_precios_cargar_manual_pdf_guarda_y_devuelve_archivo(
             "app.main.listar_precios_vigentes_por_cliente",
             side_effect=[PRECIOS_VIGENTES_DE_PRUEBA, precios_tras_guardar],
         ),
-        patch("app.main.listar_precios_anteriores_por_cliente", return_value=[]),
+        patch("app.main.listar_precios_anteriores_por_cliente", return_value=PRECIOS_VIGENTES_DE_PRUEBA),
         patch("app.main.guardar_precios_cliente") as mock_guardar,
     ):
         respuesta = cliente.post(
@@ -9850,6 +9873,7 @@ def test_guardar_y_exportar_precios_cargar_manual_pdf_precio_invalido_da_400_y_n
         patch("app.main.listar_clientes", return_value=CLIENTES_DE_PRUEBA),
         patch("app.main.listar_fichas_por_cliente", return_value=FICHAS_EXPORTACION_DE_PRUEBA),
         patch("app.main.listar_precios_vigentes_por_cliente", return_value=PRECIOS_VIGENTES_DE_PRUEBA),
+        patch("app.main.listar_precios_anteriores_por_cliente", return_value=[]),
         patch("app.main.guardar_precios_cliente") as mock_guardar,
     ):
         respuesta = cliente.post(
@@ -9877,6 +9901,7 @@ def test_ver_cargar_precios_embebe_el_catalogo_con_precio_vigente():
         patch("app.main.listar_clientes", return_value=CLIENTES_DE_PRUEBA),
         patch("app.main.listar_fichas_por_cliente", return_value=FICHAS_PRECIOS_DE_PRUEBA),
         patch("app.main.listar_precios_vigentes_por_cliente", return_value=PRECIOS_VIGENTES_DE_PRUEBA),
+        patch("app.main.listar_precios_anteriores_por_cliente", return_value=[]),
         patch("app.main.calcular_listado_para_negociar_precios", return_value=[]),
         patch("app.main.facturacion_por_ficha", return_value=FACTURACION_DE_PRUEBA),
     ):
@@ -9896,6 +9921,7 @@ def test_ver_cargar_precios_articulo_sin_precio_previo_embebe_null():
         patch("app.main.listar_clientes", return_value=CLIENTES_DE_PRUEBA),
         patch("app.main.listar_fichas_por_cliente", return_value=FICHAS_PRECIOS_DE_PRUEBA),
         patch("app.main.listar_precios_vigentes_por_cliente", return_value=[]),
+        patch("app.main.listar_precios_anteriores_por_cliente", return_value=[]),
         patch("app.main.calcular_listado_para_negociar_precios", return_value=[]),
         patch("app.main.facturacion_por_ficha", return_value=FACTURACION_DE_PRUEBA),
     ):
@@ -9914,6 +9940,7 @@ def test_ver_cargar_precios_embebe_costo_y_denominador_para_simulacion():
         patch("app.main.listar_clientes", return_value=CLIENTES_DE_PRUEBA),
         patch("app.main.listar_fichas_por_cliente", return_value=FICHAS_PRECIOS_DE_PRUEBA),
         patch("app.main.listar_precios_vigentes_por_cliente", return_value=PRECIOS_VIGENTES_DE_PRUEBA),
+        patch("app.main.listar_precios_anteriores_por_cliente", return_value=[]),
         patch("app.main.calcular_listado_para_negociar_precios", return_value=ARTICULOS_NEGOCIACION_DE_PRUEBA),
         patch("app.main.facturacion_por_ficha", return_value=FACTURACION_DE_PRUEBA),
     ):
@@ -9935,6 +9962,7 @@ def test_ver_cargar_precios_incluye_boton_guardar_y_generar_listado():
         patch("app.main.listar_clientes", return_value=CLIENTES_DE_PRUEBA),
         patch("app.main.listar_fichas_por_cliente", return_value=FICHAS_PRECIOS_DE_PRUEBA),
         patch("app.main.listar_precios_vigentes_por_cliente", return_value=PRECIOS_VIGENTES_DE_PRUEBA),
+        patch("app.main.listar_precios_anteriores_por_cliente", return_value=[]),
         patch("app.main.calcular_listado_para_negociar_precios", return_value=[]),
         patch("app.main.facturacion_por_ficha", return_value=FACTURACION_DE_PRUEBA),
     ):
@@ -9955,6 +9983,7 @@ def test_ver_cargar_precios_boton_cargar_otro_precio_va_en_azul_y_hay_cancelar()
         patch("app.main.listar_clientes", return_value=CLIENTES_DE_PRUEBA),
         patch("app.main.listar_fichas_por_cliente", return_value=FICHAS_PRECIOS_DE_PRUEBA),
         patch("app.main.listar_precios_vigentes_por_cliente", return_value=PRECIOS_VIGENTES_DE_PRUEBA),
+        patch("app.main.listar_precios_anteriores_por_cliente", return_value=[]),
         patch("app.main.calcular_listado_para_negociar_precios", return_value=[]),
         patch("app.main.facturacion_por_ficha", return_value=FACTURACION_DE_PRUEBA),
     ):
@@ -9976,6 +10005,7 @@ def test_ver_cargar_precios_cliente_sin_fichas_muestra_mensaje():
         patch("app.main.listar_clientes", return_value=CLIENTES_DE_PRUEBA),
         patch("app.main.listar_fichas_por_cliente", return_value=[]),
         patch("app.main.listar_precios_vigentes_por_cliente", return_value=[]),
+        patch("app.main.listar_precios_anteriores_por_cliente", return_value=[]),
         patch("app.main.calcular_listado_para_negociar_precios", return_value=[]),
         patch("app.main.facturacion_por_ficha", return_value=FACTURACION_DE_PRUEBA),
     ):
@@ -10011,6 +10041,7 @@ def test_ver_cargar_precios_incluye_boton_y_panel_de_negociacion():
         patch("app.main.listar_clientes", return_value=CLIENTES_DE_PRUEBA),
         patch("app.main.listar_fichas_por_cliente", return_value=FICHAS_PRECIOS_DE_PRUEBA),
         patch("app.main.listar_precios_vigentes_por_cliente", return_value=PRECIOS_VIGENTES_DE_PRUEBA),
+        patch("app.main.listar_precios_anteriores_por_cliente", return_value=[]),
         patch("app.main.calcular_listado_para_negociar_precios", return_value=ARTICULOS_NEGOCIACION_DE_PRUEBA) as mock_negociar,
         patch("app.main.facturacion_por_ficha", return_value=FACTURACION_DE_PRUEBA),
     ):
@@ -10040,6 +10071,7 @@ def test_ver_cargar_precios_incluye_el_recuadro_de_simulacion():
         patch("app.main.listar_clientes", return_value=CLIENTES_DE_PRUEBA),
         patch("app.main.listar_fichas_por_cliente", return_value=FICHAS_PRECIOS_DE_PRUEBA),
         patch("app.main.listar_precios_vigentes_por_cliente", return_value=PRECIOS_VIGENTES_DE_PRUEBA),
+        patch("app.main.listar_precios_anteriores_por_cliente", return_value=[]),
         patch("app.main.calcular_listado_para_negociar_precios", return_value=[]),
         patch("app.main.facturacion_por_ficha", return_value=FACTURACION_DE_PRUEBA),
     ):
@@ -10060,6 +10092,7 @@ def test_ver_cargar_precios_panel_de_negociacion_no_usa_pendientes_sin_guardar()
         patch("app.main.listar_clientes", return_value=CLIENTES_DE_PRUEBA),
         patch("app.main.listar_fichas_por_cliente", return_value=FICHAS_PRECIOS_DE_PRUEBA),
         patch("app.main.listar_precios_vigentes_por_cliente", return_value=PRECIOS_VIGENTES_DE_PRUEBA),
+        patch("app.main.listar_precios_anteriores_por_cliente", return_value=[]),
         patch("app.main.calcular_listado_para_negociar_precios", return_value=[]) as mock_negociar,
         patch("app.main.facturacion_por_ficha", return_value=FACTURACION_DE_PRUEBA),
     ):
@@ -10076,6 +10109,7 @@ def test_ver_cargar_precios_sin_fichas_igual_muestra_boton_de_negociacion():
         patch("app.main.listar_clientes", return_value=CLIENTES_DE_PRUEBA),
         patch("app.main.listar_fichas_por_cliente", return_value=[]),
         patch("app.main.listar_precios_vigentes_por_cliente", return_value=[]),
+        patch("app.main.listar_precios_anteriores_por_cliente", return_value=[]),
         patch("app.main.calcular_listado_para_negociar_precios", return_value=[]),
         patch("app.main.facturacion_por_ficha", return_value=FACTURACION_DE_PRUEBA),
     ):
@@ -10115,6 +10149,7 @@ def test_cargar_precios_guarda_los_pendientes_y_redirige_con_cantidad():
         patch("app.main.listar_clientes", return_value=CLIENTES_DE_PRUEBA),
         patch("app.main.listar_fichas_por_cliente", return_value=FICHAS_PRECIOS_DE_PRUEBA),
         patch("app.main.listar_precios_vigentes_por_cliente", return_value=PRECIOS_VIGENTES_DE_PRUEBA),
+        patch("app.main.listar_precios_anteriores_por_cliente", return_value=[]),
         patch("app.main._hoy_argentina", return_value=HOY_DE_CARGA_DE_PRECIOS),
         patch("app.main.guardar_precios_cliente") as mock_guardar,
     ):
@@ -10132,6 +10167,7 @@ def test_cargar_precios_varios_pendientes_se_guardan_todos_juntos():
         patch("app.main.listar_clientes", return_value=CLIENTES_DE_PRUEBA),
         patch("app.main.listar_fichas_por_cliente", return_value=FICHAS_PRECIOS_DE_PRUEBA),
         patch("app.main.listar_precios_vigentes_por_cliente", return_value=PRECIOS_VIGENTES_DE_PRUEBA),
+        patch("app.main.listar_precios_anteriores_por_cliente", return_value=[]),
         patch("app.main._hoy_argentina", return_value=HOY_DE_CARGA_DE_PRECIOS),
         patch("app.main.guardar_precios_cliente") as mock_guardar,
     ):
@@ -10159,6 +10195,7 @@ def test_cargar_precios_articulo_sin_precio_previo_genera_alta():
         patch("app.main.listar_clientes", return_value=CLIENTES_DE_PRUEBA),
         patch("app.main.listar_fichas_por_cliente", return_value=FICHAS_PRECIOS_DE_PRUEBA),
         patch("app.main.listar_precios_vigentes_por_cliente", return_value=PRECIOS_VIGENTES_DE_PRUEBA),
+        patch("app.main.listar_precios_anteriores_por_cliente", return_value=[]),
         patch("app.main._hoy_argentina", return_value=HOY_DE_CARGA_DE_PRECIOS),
         patch("app.main.guardar_precios_cliente") as mock_guardar,
     ):
@@ -10180,6 +10217,7 @@ def test_cargar_precios_pendiente_igual_al_vigente_no_genera_fila():
         patch("app.main.listar_clientes", return_value=CLIENTES_DE_PRUEBA),
         patch("app.main.listar_fichas_por_cliente", return_value=FICHAS_PRECIOS_DE_PRUEBA),
         patch("app.main.listar_precios_vigentes_por_cliente", return_value=PRECIOS_VIGENTES_DE_PRUEBA),
+        patch("app.main.listar_precios_anteriores_por_cliente", return_value=[]),
         patch("app.main._hoy_argentina", return_value=HOY_DE_CARGA_DE_PRECIOS),
         patch("app.main.guardar_precios_cliente") as mock_guardar,
     ):
@@ -10199,6 +10237,7 @@ def test_cargar_precios_sin_pendientes_no_guarda_nada():
         patch("app.main.listar_clientes", return_value=CLIENTES_DE_PRUEBA),
         patch("app.main.listar_fichas_por_cliente", return_value=FICHAS_PRECIOS_DE_PRUEBA),
         patch("app.main.listar_precios_vigentes_por_cliente", return_value=PRECIOS_VIGENTES_DE_PRUEBA),
+        patch("app.main.listar_precios_anteriores_por_cliente", return_value=[]),
         patch("app.main._hoy_argentina", return_value=HOY_DE_CARGA_DE_PRECIOS),
         patch("app.main.guardar_precios_cliente") as mock_guardar,
     ):
@@ -10214,6 +10253,7 @@ def test_cargar_precios_invalido_da_400():
         patch("app.main.listar_clientes", return_value=CLIENTES_DE_PRUEBA),
         patch("app.main.listar_fichas_por_cliente", return_value=FICHAS_PRECIOS_DE_PRUEBA),
         patch("app.main.listar_precios_vigentes_por_cliente", return_value=PRECIOS_VIGENTES_DE_PRUEBA),
+        patch("app.main.listar_precios_anteriores_por_cliente", return_value=[]),
         patch("app.main._hoy_argentina", return_value=HOY_DE_CARGA_DE_PRECIOS),
         patch("app.main.guardar_precios_cliente") as mock_guardar,
     ):
@@ -10230,6 +10270,7 @@ def test_cargar_precios_cero_o_negativo_da_400():
         patch("app.main.listar_clientes", return_value=CLIENTES_DE_PRUEBA),
         patch("app.main.listar_fichas_por_cliente", return_value=FICHAS_PRECIOS_DE_PRUEBA),
         patch("app.main.listar_precios_vigentes_por_cliente", return_value=PRECIOS_VIGENTES_DE_PRUEBA),
+        patch("app.main.listar_precios_anteriores_por_cliente", return_value=[]),
         patch("app.main._hoy_argentina", return_value=HOY_DE_CARGA_DE_PRECIOS),
         patch("app.main.guardar_precios_cliente") as mock_guardar,
     ):
@@ -10246,6 +10287,7 @@ def test_cargar_precios_error_de_base_da_500():
         patch("app.main.listar_clientes", return_value=CLIENTES_DE_PRUEBA),
         patch("app.main.listar_fichas_por_cliente", return_value=FICHAS_PRECIOS_DE_PRUEBA),
         patch("app.main.listar_precios_vigentes_por_cliente", return_value=PRECIOS_VIGENTES_DE_PRUEBA),
+        patch("app.main.listar_precios_anteriores_por_cliente", return_value=[]),
         patch("app.main._hoy_argentina", return_value=HOY_DE_CARGA_DE_PRECIOS),
         patch("app.main.guardar_precios_cliente", side_effect=Exception("no se pudo conectar")),
     ):
@@ -10307,6 +10349,7 @@ def test_leer_foto_precios_matchea_y_muestra_pantalla_de_revision():
         patch("app.main.listar_fichas_por_cliente", return_value=FICHAS_PRECIOS_DE_PRUEBA),
         patch("app.main.listar_articulos", return_value=[]),
         patch("app.main.listar_precios_vigentes_por_cliente", return_value=PRECIOS_VIGENTES_DE_PRUEBA),
+        patch("app.main.listar_precios_anteriores_por_cliente", return_value=[]),
         patch("app.main.extraer_listado_precios_de_imagenes", return_value=LISTADO_PRECIOS_LEIDO_DE_PRUEBA) as mock_extraer,
     ):
         respuesta = cliente.post(
@@ -10329,6 +10372,7 @@ def test_leer_foto_precios_pantalla_revision_incluye_boton_guardar_y_generar_lis
         patch("app.main.listar_fichas_por_cliente", return_value=FICHAS_PRECIOS_DE_PRUEBA),
         patch("app.main.listar_articulos", return_value=[]),
         patch("app.main.listar_precios_vigentes_por_cliente", return_value=PRECIOS_VIGENTES_DE_PRUEBA),
+        patch("app.main.listar_precios_anteriores_por_cliente", return_value=[]),
         patch("app.main.extraer_listado_precios_de_imagenes", return_value=LISTADO_PRECIOS_LEIDO_DE_PRUEBA),
     ):
         respuesta = cliente.post(
@@ -10352,6 +10396,7 @@ def test_leer_foto_precios_pdf_convierte_paginas_a_imagenes():
         patch("app.main.listar_fichas_por_cliente", return_value=FICHAS_PRECIOS_DE_PRUEBA),
         patch("app.main.listar_articulos", return_value=[]),
         patch("app.main.listar_precios_vigentes_por_cliente", return_value=[]),
+        patch("app.main.listar_precios_anteriores_por_cliente", return_value=[]),
         patch("app.main.imagenes_desde_pdf", return_value=[b"pagina1", b"pagina2"]) as mock_pdf,
         patch("app.main.extraer_listado_precios_de_imagenes", return_value=LISTADO_PRECIOS_LEIDO_DE_PRUEBA) as mock_extraer,
     ):
@@ -10372,6 +10417,7 @@ def test_leer_foto_precios_excel_convierte_a_texto():
         patch("app.main.listar_fichas_por_cliente", return_value=FICHAS_PRECIOS_DE_PRUEBA),
         patch("app.main.listar_articulos", return_value=[]),
         patch("app.main.listar_precios_vigentes_por_cliente", return_value=[]),
+        patch("app.main.listar_precios_anteriores_por_cliente", return_value=[]),
         patch("app.main.texto_desde_excel", return_value="Tomate Cherry | 520") as mock_excel,
         patch("app.main.extraer_listado_precios_de_texto", return_value=LISTADO_PRECIOS_LEIDO_DE_PRUEBA) as mock_extraer,
     ):
@@ -10426,6 +10472,7 @@ def test_leer_foto_precios_sin_ningun_articulo_muestra_mensaje_claro():
         patch("app.main.listar_fichas_por_cliente", return_value=FICHAS_PRECIOS_DE_PRUEBA),
         patch("app.main.listar_articulos", return_value=[]),
         patch("app.main.listar_precios_vigentes_por_cliente", return_value=[]),
+        patch("app.main.listar_precios_anteriores_por_cliente", return_value=[]),
         patch("app.main.extraer_listado_precios_de_imagenes", return_value={"items": []}),
     ):
         respuesta = cliente.post(
@@ -10454,6 +10501,7 @@ def test_confirmar_carga_foto_precios_guarda_y_sube_el_archivo():
         patch("app.main.listar_clientes", return_value=CLIENTES_DE_PRUEBA),
         patch("app.main.listar_fichas_por_cliente", return_value=FICHAS_PRECIOS_DE_PRUEBA),
         patch("app.main.listar_precios_vigentes_por_cliente", return_value=PRECIOS_VIGENTES_DE_PRUEBA),
+        patch("app.main.listar_precios_anteriores_por_cliente", return_value=[]),
         patch("app.main._hoy_argentina", return_value=HOY_DE_CARGA_DE_PRECIOS),
         patch("app.main.subir_archivo_comanda", return_value="2026-08-16/dia-123-abc.jpg") as mock_subir,
         patch("app.main.guardar_precios_cliente") as mock_guardar,
@@ -10485,6 +10533,7 @@ def test_confirmar_carga_foto_precios_renglon_descartado_no_se_guarda():
         patch("app.main.listar_clientes", return_value=CLIENTES_DE_PRUEBA),
         patch("app.main.listar_fichas_por_cliente", return_value=FICHAS_PRECIOS_DE_PRUEBA),
         patch("app.main.listar_precios_vigentes_por_cliente", return_value=PRECIOS_VIGENTES_DE_PRUEBA),
+        patch("app.main.listar_precios_anteriores_por_cliente", return_value=[]),
         patch("app.main._hoy_argentina", return_value=HOY_DE_CARGA_DE_PRECIOS),
         patch("app.main.subir_archivo_comanda") as mock_subir,
         patch("app.main.guardar_precios_cliente") as mock_guardar,
@@ -10514,6 +10563,7 @@ def test_confirmar_carga_foto_precios_error_al_subir_archivo_guarda_igual_sin_ar
         patch("app.main.listar_clientes", return_value=CLIENTES_DE_PRUEBA),
         patch("app.main.listar_fichas_por_cliente", return_value=FICHAS_PRECIOS_DE_PRUEBA),
         patch("app.main.listar_precios_vigentes_por_cliente", return_value=PRECIOS_VIGENTES_DE_PRUEBA),
+        patch("app.main.listar_precios_anteriores_por_cliente", return_value=[]),
         patch("app.main._hoy_argentina", return_value=HOY_DE_CARGA_DE_PRECIOS),
         patch("app.main.subir_archivo_comanda", side_effect=RuntimeError("Storage caído")),
         patch("app.main.guardar_precios_cliente") as mock_guardar,
@@ -10541,6 +10591,7 @@ def test_confirmar_carga_foto_precios_pdf_sube_con_extension_y_content_type_corr
         patch("app.main.listar_clientes", return_value=CLIENTES_DE_PRUEBA),
         patch("app.main.listar_fichas_por_cliente", return_value=FICHAS_PRECIOS_DE_PRUEBA),
         patch("app.main.listar_precios_vigentes_por_cliente", return_value=PRECIOS_VIGENTES_DE_PRUEBA),
+        patch("app.main.listar_precios_anteriores_por_cliente", return_value=[]),
         patch("app.main._hoy_argentina", return_value=HOY_DE_CARGA_DE_PRECIOS),
         patch("app.main.subir_archivo_comanda", return_value="ruta.pdf") as mock_subir,
         patch("app.main.guardar_precios_cliente"),

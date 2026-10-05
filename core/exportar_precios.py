@@ -150,9 +150,9 @@ def generar_pdf_lista_precios(
 ) -> bytes:
     """Arma el PDF de la Lista de Precios de un cliente a una fecha, con el formato ya definido.
 
-    filas: [{"articulo_nombre", "grupo", "precio", "unidad", "es_nuevo"}, ...]. es_nuevo es "empezó
-    a regir en la fecha de esta lista" y se resalta siempre, sea hoy o una fecha pasada: consultar
-    para atrás es justamente para ver qué cambió ESE día.
+    filas: [{"articulo_nombre", "grupo", "precio", "unidad", "es_nuevo"}, ...]. es_nuevo es "vale
+    distinto que al cierre del día anterior, o ese día no tenía precio" (dueño, 05/10, la misma
+    regla que la pantalla y el Excel) y se resalta siempre, sea hoy o una fecha pasada.
 
     Cada grupo (Fruta/Hortaliza/Pesada/Sin clasificar) arranca en su propia página, y lleva su título
     de sección DENTRO de la tabla (repeatRows=2, junto con el encabezado de columnas) para que, si una
@@ -288,14 +288,15 @@ def generar_excel_lista_precios(
 
     Una sola tabla alfabética (sin secciones por grupo — eso queda para el
     PDF): fecha arriba, columnas Producto | Precio Anterior | Precio Desde
-    HOY, y el pie "PRECIOS POR KG - SIN IVA". El precio anterior figura
-    SIEMPRE: si el artículo nunca cambió de precio, se repite el vigente —
-    así el cliente ve todas las filas iguales salvo las resaltadas.
+    HOY, y el pie "PRECIOS POR KG - SIN IVA". El precio anterior es el
+    VIGENTE AL CIERRE DEL DÍA ANTERIOR (dueño, 05/10): si ayer valía lo
+    mismo, las dos columnas dicen lo mismo; si ayer no tenía precio, la
+    celda queda vacía.
 
-    El resaltado (fondo naranja + precio en rojo) marca las filas cuyo
-    precio EMPEZÓ A REGIR en la fecha de esta lista (fila["es_nuevo"]), no
-    las que difieren del anterior: un precio que cambió hace una semana no
-    es una novedad de hoy y resaltarlo llenaba la lista de falsos avisos.
+    El resaltado (fondo naranja + precio en rojo) marca las filas que valen
+    distinto que el día anterior o ese día no tenían precio
+    (fila["es_nuevo"], la misma regla que la pantalla y el PDF): lo
+    resaltado es exactamente lo que difiere de la columna de al lado.
     Para una fecha pasada, el encabezado dice "Precio al dd/mm" en vez de
     "Precio Desde HOY" — pero el resaltado va igual, que es para lo que se
     consulta para atrás.
@@ -345,9 +346,9 @@ def generar_excel_lista_precios(
             nombre = f"{nombre} ({_texto_unidad(unidad)})"
 
         precio = float(fila["precio"])
-        # El anterior SIEMPRE figura: sin un precio previo cargado, se
-        # repite el vigente (fila sin cambio, no se resalta).
-        precio_anterior = float(fila["precio_anterior"]) if fila.get("precio_anterior") is not None else precio
+        # El anterior es el vigente al cierre del día anterior (dueño,
+        # 05/10). Si ese día no tenía precio, la celda queda VACÍA.
+        precio_anterior = float(fila["precio_anterior"]) if fila.get("precio_anterior") is not None else None
         cambio = bool(fila.get("es_nuevo"))
 
         celda_nombre = hoja.cell(row=fila_actual, column=1, value=nombre)
