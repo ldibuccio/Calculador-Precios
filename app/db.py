@@ -5273,6 +5273,30 @@ def _condiciones_buscar_ingresos(fecha_desde, fecha_hasta, proveedor_id, articul
     return condiciones, parametros
 
 
+# LA MARCA DEL CAJÓN de una compra (dueño, 05/10, Resumen proveedores): la que
+# escribió Recepción —como el Detalle, que dice con qué marca LLEGÓ aunque
+# después Administración asigne esos cajones a otra pila— y, si no hay texto,
+# la marca de cajón pegada. Pide `compras c` y `marcas_vacio mv` por
+# `c.marca_vacio_id`.
+_SQL_MARCA_DEL_CAJON = "coalesce(nullif(btrim(c.marca), ''), mv.nombre)"
+
+
+def marcas_de_compras(compra_ids: list[int]) -> dict:
+    """{compra_id: marca del cajón} (None si no tiene), para las devoluciones del Resumen."""
+    ids = sorted({i for i in compra_ids if i is not None})
+    if not ids:
+        return {}
+    conexion = obtener_conexion()
+    try:
+        with conexion.cursor() as cursor:
+            cursor.execute(
+                "SELECT c.id, " + _SQL_MARCA_DEL_CAJON + " FROM compras c "
+                "LEFT JOIN marcas_vacio mv ON mv.id = c.marca_vacio_id WHERE c.id = ANY(%s)", (ids,))
+            return dict(cursor.fetchall())
+    finally:
+        conexion.close()
+
+
 # LO QUE VALE UNA DEVOLUCIÓN AL PROVEEDOR, POR BULTO (regla de Lionel, 01/10):
 # EXACTAMENTE el precio por cajón de la compra a la que está atada
 # (`compras.importe`), por los DOS caminos —el rechazo con destino
@@ -5456,10 +5480,12 @@ def buscar_ingresos_deposito(
                        c.cantidad_cajones_rechazada, c.motivo_rechazo, c.importe, c.sena,
                        a.nombre AS articulo_nombre, a.unidad_compra, a.unidad_conteo,
                        c.segunda_por_cajon,
-                       c.proveedor_id, p.nombre AS proveedor_nombre, p.codigo_puesto AS proveedor_codigo_puesto, coalesce(c.codigo_llegada, p.codigo_puesto) AS codigo_llegada
+                       c.proveedor_id, p.nombre AS proveedor_nombre, p.codigo_puesto AS proveedor_codigo_puesto, coalesce(c.codigo_llegada, p.codigo_puesto) AS codigo_llegada,
+                       {_SQL_MARCA_DEL_CAJON} AS marca
                 FROM compras c
                 JOIN articulos a ON a.id = c.articulo_id
                 JOIN proveedores p ON p.id = c.proveedor_id
+                LEFT JOIN marcas_vacio mv ON mv.id = c.marca_vacio_id
                 WHERE {" AND ".join(condiciones)}
                 ORDER BY p.nombre, p.codigo_puesto, c.procesada_el, c.id
                 {tope_sql}

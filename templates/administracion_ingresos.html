@@ -37,7 +37,9 @@
     background: #fff;
   }
   .fila-fechas { display: flex; gap: 0.75rem; }
-  .fila-fechas > div { flex: 1; }
+  /* min-width 0: sin esto el campo de fecha del celular no se achica y el
+     "Hasta" se salía 61px a 313 (medido el 05/10). */
+  .fila-fechas > div { flex: 1; min-width: 0; }
   button.boton-buscar, .boton-exportar {
     display: block;
     margin-top: 1rem;
@@ -103,6 +105,8 @@
   /* La devolución al proveedor: negativa, en rojo, y con su tipo. */
   tr.devolucion { background: #fef2f2; }
   .negativo { color: #b91c1c; }
+  /* La marca del cajón (dueño, 05/10), debajo del artículo. */
+  .marca-cajon { display: block; color: #64748b; font-weight: 600; font-size: 0.85rem; }
   .marca-devolucion { color: #991b1b; font-weight: 700; font-size: 0.78rem; }
   .estado-ok { color: #666; font-size: 0.78rem; }
   .desglose-subtotal {
@@ -190,7 +194,9 @@
       border-top: 1px solid #eee;
     }
     tbody tr:first-child { border-top: none; }
-    td { border-bottom: none; padding: 0; }
+    /* min-width 0: sin esto una celda no baja de su contenido y el renglón
+       de una devolución se salía 3px a 313 (medido el 05/10). */
+    td { border-bottom: none; padding: 0; min-width: 0; overflow-wrap: anywhere; }
     /* Por posición y no por una clase en cada celda: la clase habría que
        escribirla ocho veces y acordarse de moverla el día que una columna
        cambie de lugar. El orden del `<thead>` manda. */
@@ -224,6 +230,10 @@
        El contenedor es el `tr`, así que el fondo va ahí. */
     tr.sin-precio { background: #fef9c3; border-radius: 8px; padding-inline: 0.5rem; }
     tr.sin-precio td { background: none; }
+    /* EN EL CELULAR NO VA EL TOTAL DE SEÑAS (dueño, 05/10): ni el del
+       proveedor ni el del final. La seña de cada compra sí se ve, y el PDF y
+       el Excel lo llevan todo. */
+    .desglose-senas { display: none; }
   }
 </style>
 </head>
@@ -314,7 +324,7 @@
             <tr class="devolucion{% if f.sin_precio %} sin-precio{% endif %}">
               <td>{{ f.fecha.strftime("%d/%m") }}</td>
               <td>{% if f.compra_id %}Compra {{ f.compra_id }}{% else %}—{% endif %}</td>
-              <td>{{ f.articulo_nombre }}</td>
+              <td>{{ f.articulo_nombre }}<span class="marca-cajon">{% if f.marca %}Marca {{ f.marca }}{% else %}Sin marca{% endif %}</span></td>
               <td class="negativo">{{ f.bultos|numero }} bultos</td>
               <td>{% if f.sin_precio %}<span class="marca-sin-precio">Sin precio</span>{% else %}{{ f.importe|moneda }}{% endif %}</td>
               <td>{% if f.sena is not none %}{{ f.sena|moneda }}{% if f.total_sena is not none %} (<span class="negativo">{{ f.total_sena|moneda }}</span>){% endif %}{% else %}—{% endif %}</td>
@@ -325,7 +335,7 @@
             <tr {% if f.sin_precio %}class="sin-precio"{% endif %}>
               <td>{% if f.procesada_el %}{{ f.procesada_el.strftime("%d/%m %H:%M") }}{% else %}—{% endif %}</td>
               <td>{% if f.guia_id %}{{ f.guia_id }}.{{ f.guia_punto }}{% else %}—{% endif %}</td>
-              <td>{{ f.articulo_nombre }}</td>
+              <td>{{ f.articulo_nombre }}<span class="marca-cajon">{% if f.marca %}Marca {{ f.marca }}{% else %}Sin marca{% endif %}</span></td>
               <td>{% if f.cantidad_cajones_real is not none %}{{ f.cantidad_cajones_real|numero }} × {{ magnitudes_del_cajon(f, real=true) }}{% else %}—{% endif %}</td>
               <td>{% if f.sin_precio %}<span class="marca-sin-precio">Sin precio</span>{% elif f.importe is not none %}{{ f.importe|moneda }}{% else %}—{% endif %}</td>
               {# Seña por cajón y, al lado, lo señado por los cajones reales. #}
@@ -347,7 +357,7 @@
         <span>{{ g.subtotal|moneda }}</span>
       </div>
       {% if g.subtotal_senas %}
-      <div class="desglose-subtotal">mercadería {{ g.subtotal_mercaderia|moneda }} + señas {{ g.subtotal_senas|moneda }}</div>
+      <div class="desglose-subtotal desglose-senas">mercadería {{ g.subtotal_mercaderia|moneda }} + señas {{ g.subtotal_senas|moneda }}</div>
       {% endif %}
     </div>
     {% endfor %}
@@ -358,7 +368,7 @@
     <div class="total">
       <span class="numero-grande">Total a depositar: {{ total_general|moneda }}</span>
       {% if total_senas %}
-      <p class="desglose-total">mercadería {{ total_mercaderia|moneda }} + señas de los cajones {{ total_senas|moneda }}</p>
+      <p class="desglose-total desglose-senas">mercadería {{ total_mercaderia|moneda }} + señas de los cajones {{ total_senas|moneda }}</p>
       {% endif %}
       {% if cantidad_sin_precio > 0 %}
       <p class="aviso-sin-precio">Ojo: {{ cantidad_sin_precio }} compra{{ "s" if cantidad_sin_precio != 1 else "" }} sin precio cargado (en amarillo) — no suman al total, completalas antes de facturar.</p>

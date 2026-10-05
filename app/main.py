@@ -509,6 +509,7 @@ from app.db import (
     listar_fotos_de_recepcion,
     fotos_de_recepcion_por_compra,
     movimientos_del_deposito,
+    marcas_de_compras,
     marca_en_origen_de_la_compra,
     cambiar_proveedor_de_compra,
     frenos_para_cambiar_proveedor,
@@ -20291,9 +20292,12 @@ def _devoluciones_para_pagar(desde: date, hasta: date, proveedor_id: int | None,
     se devolvió (dueño, 01/10): las dos clases, por rechazo y desde depósito.
     Salen de la MISMA consulta que Movimientos del depósito, así las dos
     pantallas no pueden decir importes distintos."""
-    return [m for m in movimientos_del_deposito(desde, hasta, proveedor_id=proveedor_id,
-                                                articulo_id=articulo_id)
-            if m["tipo"] in TEXTO_DE_LA_DEVOLUCION_EN_LA_PLANILLA]
+    devoluciones = [m for m in movimientos_del_deposito(desde, hasta, proveedor_id=proveedor_id,
+                                                        articulo_id=articulo_id)
+                    if m["tipo"] in TEXTO_DE_LA_DEVOLUCION_EN_LA_PLANILLA]
+    # La marca del cajón de su compra (dueño, 05/10): cada renglón la dice.
+    marcas = marcas_de_compras([d["compra_id"] for d in devoluciones]) if devoluciones else {}
+    return [dict(d, marca=marcas.get(d["compra_id"])) for d in devoluciones]
 
 
 def _fila_de_devolucion(devolucion: dict) -> dict:
@@ -20313,7 +20317,7 @@ def _fila_de_devolucion(devolucion: dict) -> dict:
         total_a_depositar = (total or 0.0) + (total_sena or 0.0)
     return {
         "devolucion": True, "fecha": devolucion["fecha"], "compra_id": devolucion["compra_id"],
-        "articulo_nombre": devolucion["articulo"], "bultos": bultos,
+        "articulo_nombre": devolucion["articulo"], "marca": devolucion.get("marca"), "bultos": bultos,
         "importe": (total / bultos) if total is not None and bultos else None,
         "total": total, "sin_precio": total is None, "sena": sena, "total_sena": total_sena,
         "total_a_depositar": total_a_depositar,

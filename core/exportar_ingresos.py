@@ -22,6 +22,7 @@ app/main.py — esto solo arma bytes en memoria, nunca guarda nada.
 
 from datetime import date
 from io import BytesIO
+from xml.sax.saxutils import escape
 
 from openpyxl import Workbook
 from openpyxl.styles import Font, PatternFill
@@ -87,6 +88,12 @@ def _texto_cantidad_real(fila: dict) -> str:
         return "—"
     sufijo = SUFIJOS_UNIDAD_COMPRA.get(fila.get("unidad_compra"), "")
     return f"{_formatear_numero(fila['cantidad_cajones_real'])} × {_formatear_numero(fila['contenido_por_cajon_real'])}{sufijo}"
+
+
+def _texto_articulo(fila: dict) -> str:
+    """El artículo y, abajo, la marca del cajón (dueño, 05/10), como en la pantalla."""
+    marca = f"Marca {escape(fila['marca'])}" if fila.get("marca") else "Sin marca"
+    return f"{escape(fila['articulo_nombre'])}<br/><font size='7.5' color='#64748B'>{marca}</font>"
 
 
 def _texto_sena(fila: dict) -> str:
@@ -193,7 +200,7 @@ def generar_pdf_ingresos_deposito(
                 [
                     Paragraph(_texto_recepcion(fila), estilo_dato_gris),
                     Paragraph(_texto_guia(fila), estilo_dato_gris),
-                    Paragraph(fila["articulo_nombre"], estilo_dato),
+                    Paragraph(_texto_articulo(fila), estilo_dato),
                     Paragraph(_texto_cantidad_real(fila), estilo_dato),
                     Paragraph(precio, estilo_dato),
                     Paragraph(_texto_sena(fila), estilo_dato),
@@ -290,7 +297,7 @@ def generar_excel_ingresos_deposito(
 
     fila_actual = 1
     hoja.cell(row=fila_actual, column=1, value="Resumen proveedores")
-    for columna in range(1, 14):
+    for columna in range(1, 15):
         celda = hoja.cell(row=fila_actual, column=columna)
         celda.fill = relleno_verde
         if columna == 1:
@@ -304,7 +311,7 @@ def generar_excel_ingresos_deposito(
         hoja.cell(row=fila_actual, column=1, value="No se encontraron ingresos con estos filtros.").font = fuente_normal
 
     encabezados = (
-        "Fecha", "Hora", "Guía", "Artículo", "Cajones reales", "Contenido real",
+        "Fecha", "Hora", "Guía", "Artículo", "Marca", "Cajones reales", "Contenido real",
         "Rechazados", "Precio por bulto", "Seña por bulto", "Total seña", "Total mercadería",
         "A depositar", "Estado",
     )
@@ -326,43 +333,45 @@ def generar_excel_ingresos_deposito(
                 # devolvió, la compra en "Guía" y los bultos en negativo.
                 hoja.cell(row=fila_actual, column=1, value=fila["fecha"].strftime("%d/%m/%Y"))
                 hoja.cell(row=fila_actual, column=2, value="—")
-                hoja.cell(row=fila_actual, column=5, value=float(fila["bultos"]))
+                hoja.cell(row=fila_actual, column=6, value=float(fila["bultos"]))
             else:
                 hoja.cell(row=fila_actual, column=1, value=fila["procesada_el"].strftime("%d/%m/%Y") if fila["procesada_el"] else "—")
                 hoja.cell(row=fila_actual, column=2, value=fila["procesada_el"].strftime("%H:%M") if fila["procesada_el"] else "—")
             hoja.cell(row=fila_actual, column=3, value=_texto_guia(fila))
             hoja.cell(row=fila_actual, column=4, value=fila["articulo_nombre"])
+            hoja.cell(row=fila_actual, column=5, value=fila.get("marca") or "Sin marca")
             if fila["cantidad_cajones_real"] is not None:
-                hoja.cell(row=fila_actual, column=5, value=float(fila["cantidad_cajones_real"]))
+                hoja.cell(row=fila_actual, column=6, value=float(fila["cantidad_cajones_real"]))
             if fila["contenido_por_cajon_real"] is not None:
                 sufijo = SUFIJOS_UNIDAD_COMPRA.get(fila.get("unidad_compra"), "")
-                hoja.cell(row=fila_actual, column=6, value=f"{_formatear_numero(fila['contenido_por_cajon_real'])}{sufijo}")
+                hoja.cell(row=fila_actual, column=7, value=f"{_formatear_numero(fila['contenido_por_cajon_real'])}{sufijo}")
             if fila["cantidad_cajones_rechazada"] is not None:
-                hoja.cell(row=fila_actual, column=7, value=float(fila["cantidad_cajones_rechazada"]))
+                hoja.cell(row=fila_actual, column=8, value=float(fila["cantidad_cajones_rechazada"]))
             if fila["sin_precio"]:
-                hoja.cell(row=fila_actual, column=8, value="SIN PRECIO").font = fuente_marca
+                hoja.cell(row=fila_actual, column=9, value="SIN PRECIO").font = fuente_marca
             elif fila["importe"] is not None:
-                celda_precio = hoja.cell(row=fila_actual, column=8, value=float(fila["importe"]))
+                celda_precio = hoja.cell(row=fila_actual, column=9, value=float(fila["importe"]))
                 celda_precio.number_format = '"$"#,##0'
             if fila.get("sena") is not None:
-                celda_sena = hoja.cell(row=fila_actual, column=9, value=float(fila["sena"]))
+                celda_sena = hoja.cell(row=fila_actual, column=10, value=float(fila["sena"]))
                 celda_sena.number_format = '"$"#,##0'
             if fila.get("total_sena") is not None:
-                celda_total_sena = hoja.cell(row=fila_actual, column=10, value=float(fila["total_sena"]))
+                celda_total_sena = hoja.cell(row=fila_actual, column=11, value=float(fila["total_sena"]))
                 celda_total_sena.number_format = '"$"#,##0'
             if fila["total"] is not None:
-                celda_total = hoja.cell(row=fila_actual, column=11, value=float(fila["total"]))
+                celda_total = hoja.cell(row=fila_actual, column=12, value=float(fila["total"]))
                 celda_total.number_format = '"$"#,##0'
             if fila["total_a_depositar"] is not None:
-                celda_depositar = hoja.cell(row=fila_actual, column=12, value=float(fila["total_a_depositar"]))
+                celda_depositar = hoja.cell(row=fila_actual, column=13, value=float(fila["total_a_depositar"]))
                 celda_depositar.number_format = '"$"#,##0'
-            celda_estado = hoja.cell(row=fila_actual, column=13, value=_texto_estado(fila))
+            celda_estado = hoja.cell(row=fila_actual, column=14, value=_texto_estado(fila))
             if fila["estado_etiqueta"] != "Recepcionada":
                 celda_estado.font = fuente_marca
             fila_actual += 1
 
         hoja.cell(row=fila_actual, column=1, value="Subtotal").font = fuente_subtotal
-        for columna, valor in ((11, grupo["subtotal_mercaderia"]), (12, grupo["subtotal"])):
+        for columna, valor in ((11, grupo["subtotal_senas"]), (12, grupo["subtotal_mercaderia"]),
+                               (13, grupo["subtotal"])):
             celda_subtotal = hoja.cell(row=fila_actual, column=columna, value=float(valor))
             celda_subtotal.font = fuente_subtotal
             celda_subtotal.number_format = '"$"#,##0'
@@ -370,7 +379,8 @@ def generar_excel_ingresos_deposito(
 
     if grupos:
         hoja.cell(row=fila_actual, column=1, value="Total a depositar").font = fuente_total
-        for columna, valor in ((11, totales["total_mercaderia"]), (12, totales["total_general"])):
+        for columna, valor in ((11, totales["total_senas"]), (12, totales["total_mercaderia"]),
+                               (13, totales["total_general"])):
             celda_total_general = hoja.cell(row=fila_actual, column=columna, value=float(valor))
             celda_total_general.font = fuente_total
             celda_total_general.number_format = '"$"#,##0'
@@ -382,7 +392,7 @@ def generar_excel_ingresos_deposito(
                 "completalas antes de facturar.",
             ).font = fuente_marca
 
-    for columna, ancho in enumerate((12, 8, 9, 22, 14, 14, 12, 15, 14, 12, 15, 13, 24), start=1):
+    for columna, ancho in enumerate((12, 8, 9, 22, 16, 14, 14, 12, 15, 14, 12, 15, 13, 24), start=1):
         hoja.column_dimensions[get_column_letter(columna)].width = ancho
 
     buffer = BytesIO()
