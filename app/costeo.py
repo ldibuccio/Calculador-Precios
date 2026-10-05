@@ -703,12 +703,19 @@ def _listado_para_negociar_precios(
         # aunque falte la utilidad objetivo del cliente (utilidad_aproximada
         # no depende de ella, solo de las tasas y del costo).
         costo_envase_por_unidad = 0.0
+        # LA CAJA ENTERA por unidad, sin ponderar (dueño, 05/10): en una ficha
+        # de envase variable la Rentabilidad Real cobra la caja según cómo
+        # salió CADA renglón —en su envase, nada; reprocesado a caja de Día,
+        # una caja cada `contenido_caja`—, no el promedio de las compras.
+        costo_envase_reprocesado = None
         if costo_actual is not None:
             envases_ponderado = _envases_por_unidad_ponderado(
                 compras_ventana1, ficha["contenido_caja"], ficha["envase_variable"], magnitud
             )
             costo_envase = costo_por_envase_id.get(ficha["envase_id"], SIN_ENVASE) if ficha["envase_id"] else SIN_ENVASE
             costo_envase_por_unidad = costo_envase * envases_ponderado
+            costo_envase_reprocesado = costo_envase * envases_por_unidad_de_venta(
+                ficha["contenido_caja"], False, None)
 
         precio_sugerido_valor = None
         if costo_actual is not None and utilidad is not None:
@@ -791,6 +798,8 @@ def _listado_para_negociar_precios(
                 "utilidad_aproximada": utilidad_aproximada,
                 "compras_sin_precio_excluidas": sin_precio,
                 "costo_envase_unidad_venta": costo_envase_unidad_venta,
+                "envase_variable": bool(ficha["envase_variable"] and ficha["envase_id"]),
+                "costo_envase_reprocesado_unidad_venta": costo_envase_reprocesado,
                 "denominador_tasas": denominador_tasas,
                 # El punto de partida del Análisis de Artículo. Su cociente
                 # ES costo_actual, exacto (ver _promedios_por_cajon).

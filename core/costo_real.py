@@ -183,6 +183,22 @@ def _numero(valor):
     return float(valor) if valor is not None else None
 
 
+def envase_por_unidad_del_renglon(margen: dict, en_su_envase) -> float:
+    """El costo de la caja por unidad de venta de UN renglón armado.
+
+    EN SU ENVASE O EN CAJA DE DÍA (dueño, 05/10): en una ficha de envase
+    variable (Mango, Cherry) lo decide cómo salió ESE renglón —en su envase no
+    lleva caja; reprocesado a caja de Día, la caja entera—. En cualquier otra
+    ficha es el envase de la ficha, como siempre. Lo usan la venta y su
+    devolución: la caja que se cobró es la que se acredita.
+    """
+    if margen.get("envase_variable"):
+        if en_su_envase:
+            return 0.0
+        return _numero(margen.get("costo_envase_reprocesado_unidad_venta")) or 0.0
+    return _numero(margen.get("costo_envase_unidad_venta")) or 0.0
+
+
 def atribuir_costos_fifo(entradas: list[dict], salidas: list[dict]) -> list[dict]:
     """Atribuye CADA salida a los lotes que consumió, con su costo — la extensión del repartir_fifo total.
 
@@ -542,7 +558,7 @@ def calcular_rentabilidad_real(
                 denominador = _numero(margen.get("denominador_tasas"))
                 if denominador is None:
                     denominador = 1.0
-                envase_unidad = _numero(margen.get("costo_envase_unidad_venta")) or 0.0
+                envase_unidad = envase_por_unidad_del_renglon(margen, salida.get("en_su_envase"))
                 # LO QUE SE COBRA es lo recibido si el remito volvió; si no, lo
                 # enviado, y el día queda provisorio solo desde REMITOS_DESDE:
                 # antes no había remitos acá y no falta nada. El envase sigue
@@ -669,7 +685,7 @@ def calcular_rentabilidad_real(
                 # Sin costo congelado: se acredita el precio de la compra
                 # entero, como se hacía.
                 costo = precio_compra
-        envase_unidad = _numero(margen.get("costo_envase_unidad_venta")) or 0.0
+        envase_unidad = envase_por_unidad_del_renglon(margen, devolucion.get("en_su_envase"))
         perdido = devolucion.get("destino_rechazo") in DESTINOS_RECHAZO_PERDIDO
         al_proveedor = devolucion.get("destino_rechazo") == "devolucion_proveedor"
         # La caja se va con la mercadería por estas dos puertas y no vuelve.

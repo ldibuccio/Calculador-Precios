@@ -5375,7 +5375,7 @@ _SQL_MOVIMIENTOS_DEL_DEPOSITO = """
                -ABS(m.cantidad),
                -ABS(m.cantidad) * """ + _SQL_VALOR_POR_BULTO_DE_LA_DEVOLUCION + """,
                m.motivo,
-               CASE WHEN m.tipo = 'devolucion_deposito' OR fd.envase_id IS NULL
+               CASE WHEN m.tipo = 'devolucion_deposito' OR fd.envase_id IS NULL OR r.en_su_envase
                     THEN NULLIF(COALESCE(cd.sena, 0), 0) END,
                m.cargada_desde, COALESCE(pc.codigo_puesto, ps.codigo_puesto)
           FROM movimientos_stock m
@@ -9039,13 +9039,17 @@ class SegundaNoPermitida(ValueError):
     """La segunda que se quiso mandar en un renglón no se puede: el motivo va en el mensaje."""
 
 
+class ComoSaleNoPermitido(ValueError):
+    """Falta elegir, o no corresponde elegir, si el renglón sale en su envase o en caja de Día."""
+
+
 def _fmt_bultos(numero: float) -> str:
     """12.0 -> "12", 2.5 -> "2,5": para los mensajes de la segunda."""
     return f"{numero:g}".replace(".", ",")
 
 
 def marcar_renglon_armado(renglon_id: int, cantidad_armada=None, kilos_enviados=None,
-                          bultos_de_segunda=None) -> None:
+                          bultos_de_segunda=None, en_su_envase: bool | None = None) -> None:
     """Tilda un renglón como armado. El tilde significa "terminé con este renglón", no "está completo".
 
     cantidad_armada solo si armó MENOS de lo pedido (Día pide 15 y hay
@@ -9082,6 +9086,7 @@ def marcar_renglon_armado(renglon_id: int, cantidad_armada=None, kilos_enviados=
     conexion = obtener_conexion()
     try:
         with conexion.cursor() as cursor:
+            en_su_envase = _como_sale_el_renglon(cursor, renglon_id, en_su_envase)
             if segunda > 0:
                 cursor.execute(
                     """
@@ -9121,8 +9126,8 @@ def marcar_renglon_armado(renglon_id: int, cantidad_armada=None, kilos_enviados=
 
             cursor.execute(
                 "UPDATE pedidos_renglones SET armado_el = now(), cantidad_armada = %s, kilos_enviados = %s,"
-                " bultos_de_segunda = %s WHERE id = %s",
-                (cantidad_armada, kilos_enviados, segunda or None, renglon_id),
+                " bultos_de_segunda = %s, en_su_envase = %s WHERE id = %s",
+                (cantidad_armada, kilos_enviados, segunda or None, en_su_envase, renglon_id),
             )
             # Vuelve a tildar: la corrección vieja se va. Puede estar
             # cambiando la cantidad, y una corrección que reparte 15 bultos
@@ -9131,6 +9136,30 @@ def marcar_renglon_armado(renglon_id: int, cantidad_armada=None, kilos_enviados=
         conexion.commit()
     finally:
         conexion.close()
+
+
+def _como_sale_el_renglon(cursor, renglon_id: int, en_su_envase: bool | None) -> bool:
+    """EN SU ENVASE O EN CAJA DE DÍA (dueño, 05/10), por renglón, al armar.
+
+    Solo en las fichas que lo permiten (`envase_variable` con su caja,
+    `envase_id`): Mango y Cherry pueden ir en el envase en que vinieron, que
+    NO consume cajas de Día, o reprocesados a caja de Día, que sí. Ahí la
+    elección es OBLIGATORIA: no hay default, porque las dos cosas pasan y el
+    sistema no puede adivinar cuál. En cualquier otra ficha no se elige
+    nada: sale como dice la ficha (False).
+    """
+    cursor.execute(
+        "SELECT f.envase_variable AND f.envase_id IS NOT NULL FROM pedidos_renglones r "
+        "LEFT JOIN fichas_logistica f ON f.id = r.ficha_id WHERE r.id = %s", (renglon_id,))
+    fila = cursor.fetchone()
+    se_elige = bool(fila and fila[0])
+    if not se_elige:
+        if en_su_envase:
+            raise ComoSaleNoPermitido("Este artículo sale como dice su ficha: no se elige el envase.")
+        return False
+    if en_su_envase is None:
+        raise ComoSaleNoPermitido("Elegí cómo sale: en su envase o reprocesado a caja.")
+    return bool(en_su_envase)
 
 
 def _borrar_lotes_elegidos(cursor, renglon_id: int) -> None:
@@ -9649,7 +9678,7 @@ def desmarcar_renglon_armado(renglon_id: int) -> bool:
                 """
                 UPDATE pedidos_renglones
                 SET armado_el = NULL, cantidad_armada = NULL, kilos_enviados = NULL,
-                    controlado_el = NULL, bultos_de_segunda = NULL
+                    controlado_el = NULL, bultos_de_segunda = NULL, en_su_envase = false
                 WHERE id = %s
                 RETURNING (controlado_el IS NOT NULL)
                 """,
@@ -9680,7 +9709,8 @@ def anular_renglon_pedido(renglon_id: int) -> None:
                 """
                 UPDATE pedidos_renglones
                 SET anulado_el = now(), armado_el = NULL, cantidad_armada = NULL,
-                    kilos_enviados = NULL, controlado_el = NULL, bultos_de_segunda = NULL
+                    kilos_enviados = NULL, controlado_el = NULL, bultos_de_segunda = NULL,
+                    en_su_envase = false
                 WHERE id = %s
                 """,
                 (renglon_id,),
@@ -12751,7 +12781,7 @@ def devoluciones_vinculadas_por_rango(cliente_id: int, fecha_desde, fecha_hasta)
             cursor.execute(
                 """
                 SELECT m.id, m.cantidad AS bultos, m.fecha_operacion, m.costo_por_bulto,
-                       m.destino_rechazo, r.ficha_id, m.pedido_renglon_id AS renglon_id,
+                       m.destino_rechazo, r.ficha_id, m.pedido_renglon_id AS renglon_id, r.en_su_envase,
                        r.kilos_enviados, COALESCE(r.cantidad_armada, r.cantidad) AS bultos_armados,
                        p.fecha_operacion AS fecha_pedido,
                        a.id AS articulo_id, a.nombre AS articulo_nombre, a.grupo,
@@ -12918,8 +12948,11 @@ def _entradas_y_salidas_stock_varios(cursor, articulo_ids: list[int], corte=None
             SELECT m.fecha_operacion, m.creado_en, m.tipo, m.id, m.fecha_operacion,
                    cl.nombre, m.motivo, m.cantidad, m.costo_por_bulto, NULL::bigint,
                    (m.tipo = 'reingreso_rechazo' AND pr.ficha_id IS NOT NULL
-                    AND fl.envase_id IS NULL) AS en_cajon,
-                   (m.tipo = 'reingreso_rechazo' AND pr.ficha_id IS NOT NULL),
+                    AND (fl.envase_id IS NULL OR pr.en_su_envase)) AS en_cajon,
+                   -- En su envase (05/10) vuelve a los sueltos, como en
+                   -- `_SQL_REINGRESO_ES_DE_LA_FICHA`.
+                   (m.tipo = 'reingreso_rechazo' AND pr.ficha_id IS NOT NULL
+                    AND NOT pr.en_su_envase),
                    m.articulo_id
             FROM movimientos_stock m
             LEFT JOIN clientes cl ON cl.id = m.cliente_id
@@ -13250,6 +13283,7 @@ _SQL_REINGRESO_ES_DE_LA_FICHA = """
     m.tipo = 'reingreso_rechazo'
     AND (m.destino_rechazo IS NULL OR m.destino_rechazo = 'stock')
     AND pr.ficha_id IS NOT NULL
+    AND NOT pr.en_su_envase
 """
 
 _SQL_STOCK_PARTIDO = """
@@ -13273,6 +13307,9 @@ _SQL_STOCK_PARTIDO = """
         FROM pedidos_renglones r JOIN vigentes v ON v.id = r.pedido_id, corte, tope
         WHERE r.armado_el IS NOT NULL AND r.anulado_el IS NULL
           AND r.articulo_id IS NOT NULL AND r.ficha_id IS NOT NULL
+          -- En su envase (dueño, 05/10) no sale de las cajas de la ficha:
+          -- sale de los sueltos, que se derivan por resta del total.
+          AND NOT r.en_su_envase
           AND (r.armado_el AT TIME ZONE 'America/Argentina/Buenos_Aires')::date
               > corte.fecha
           AND (r.armado_el AT TIME ZONE 'America/Argentina/Buenos_Aires')::date
@@ -15781,7 +15818,10 @@ _SQL_SALIDAS_STOCK = """
                -- R. Sin envase es "envase perdido" (manzana, pera, arándano)
                -- y el cajón del proveedor ES lo que se despacha.
                -- Es el campo que acertó 630 de 630 y 135 de 135 el 08/09.
-               (f.envase_id IS NOT NULL) AS ficha_con_envase,
+               -- EN SU ENVASE (dueño, 05/10): el renglón de Mango o Cherry
+               -- que salió en el envase en que vino sale como uno sin caja.
+               (f.envase_id IS NOT NULL AND NOT r.en_su_envase) AS ficha_con_envase,
+               r.en_su_envase,
                r.id AS renglon_id,
                r.articulo_id AS articulo_id
         FROM pedidos_renglones r
@@ -15813,7 +15853,7 @@ _SQL_SALIDAS_STOCK = """
                CASE WHEN m.tipo = 'devolucion_deposito' THEN 'guia' ELSE m.lote_tipo END,
                CASE WHEN m.tipo = 'devolucion_deposito' THEN m.compra_devolucion_id
                     ELSE m.lote_origen_id END,
-               m.ficha_id, FALSE, NULL::bigint, m.articulo_id
+               m.ficha_id, FALSE, FALSE, NULL::bigint, m.articulo_id
         FROM movimientos_stock m
         WHERE m.anulado_el IS NULL AND m.cantidad < 0 AND m.articulo_id = ANY(%s)
           AND m.fecha_operacion > %s
@@ -15826,7 +15866,7 @@ _SQL_SALIDAS_STOCK = """
         UNION ALL
         SELECT rp.fecha_operacion, rp.creado_en, 'reproceso_toma', rp.fecha_operacion,
                rp.bultos_tomados, 0, NULL, NULL, NULL, rp.bultos_segunda,
-               NULL, NULL, NULL, FALSE, NULL::bigint, rp.articulo_id
+               NULL, NULL, NULL, FALSE, FALSE, NULL::bigint, rp.articulo_id
         FROM reprocesos rp
         WHERE rp.anulado_el IS NULL AND rp.articulo_id = ANY(%s)
           AND rp.fecha_operacion > %s
@@ -16854,6 +16894,8 @@ _SQL_CAJAS_PERDIDAS = """
           JOIN pedidos_renglones pr ON pr.id = m.pedido_renglon_id
          WHERE m.anulado_el IS NULL
            AND m.tipo = 'reingreso_rechazo'
+           -- En su envase (05/10) no llevaba caja de Día: no se pierde ninguna.
+           AND NOT pr.en_su_envase
            AND m.destino_rechazo IN ('segunda', 'devolucion_proveedor', 'reproceso')
            AND m.fecha_operacion >= %s AND m.fecha_operacion <= %s
         UNION ALL
@@ -17404,8 +17446,9 @@ _SQL_ARRANQUE_VIGENTE = """
 # la pila de ese proveedor y de la marca con que llegó la compra. Son dos
 # caminos: la devolución DESDE DEPÓSITO (sale del suelto, que es cajón) y la
 # devolución POR RECHAZO cuando lo rechazado iba en el cajón del proveedor
-# —ficha sin caja nuestra o renglón sin ficha—. Un rechazo que iba en caja de
-# Día no devuelve ningún cajón: el suyo quedó vacío en el galpón al armar.
+# —ficha sin caja nuestra, renglón sin ficha o renglón que salió EN SU ENVASE
+# (05/10)—. Un rechazo que iba en caja de Día no devuelve ningún cajón: el
+# suyo quedó vacío en el galpón al armar.
 # Escrito UNA vez: lo leen la cuenta de las pilas y la lista de movimientos.
 _SQL_DEVOLUCIONES_LLENAS = """
           FROM movimientos_stock ml
@@ -17414,7 +17457,8 @@ _SQL_DEVOLUCIONES_LLENAS = """
           LEFT JOIN fichas_logistica fll ON fll.id = prl.ficha_id
          WHERE COALESCE(cl.sena, 0) > 0
            AND (ml.tipo = 'devolucion_deposito'
-                OR (ml.destino_rechazo = 'devolucion_proveedor' AND fll.envase_id IS NULL))
+                OR (ml.destino_rechazo = 'devolucion_proveedor'
+                    AND (fll.envase_id IS NULL OR prl.en_su_envase)))
 """
 
 

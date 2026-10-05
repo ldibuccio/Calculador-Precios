@@ -303,6 +303,7 @@ from app.db import (
     guardar_condiciones_pedido,
     guardar_acepta_segunda,
     SegundaNoPermitida,
+    ComoSaleNoPermitido,
     guardar_horario_revision_casilla,
     listar_casillas_pedidos,
     listar_condiciones_pedido,
@@ -24705,6 +24706,9 @@ def ver_armar_pedido(request: Request, cliente_id: str | None = None, fecha: str
     # la mercadería sale en el envase del proveedor ("envase perdido") y no
     # hay caja que reprocesar: son las que no tienen que recibir el aviso.
     fichas_con_envase = {f["id"] for f in fichas if f.get("envase_id")}
+    # Mango y Cherry (dueño, 05/10): en su envase o reprocesado a caja. Las
+    # fichas que lo permiten piden la elección en cada renglón.
+    fichas_que_eligen_envase = {f["id"] for f in fichas if f.get("envase_id") and f.get("envase_variable")}
     unidad_por_ficha = {f["id"]: f.get("unidad_venta") for f in fichas}
     contenido_por_articulo = {
         f["articulo_id"]: float(f["contenido_caja"]) for f in fichas if f.get("contenido_caja")
@@ -24770,6 +24774,7 @@ def ver_armar_pedido(request: Request, cliente_id: str | None = None, fecha: str
         r["sin_cajas_de_la_ficha"] = (
             r.get("ficha_id") in fichas_con_envase and r["ficha_id"] not in con_cajas
         )
+        r["elige_envase"] = r.get("ficha_id") in fichas_que_eligen_envase
     for r in armados:
         # Con qué comparar para la marca "editado a mano": el cálculo de
         # ficha sobre los bultos que realmente armó.
@@ -24887,6 +24892,7 @@ def armar_renglon_pedido_ruta(
     cantidad_pedida: str = Form(""),
     kilos_por_bulto: str = Form(""),
     bultos_de_segunda: str = Form(""),
+    como_sale: str = Form(""),
 ):
     """Tilda un renglón como armado. Con cantidad_armada (menor a lo pedido), queda "incompleto" con su cantidad real.
 
@@ -24954,10 +24960,13 @@ def armar_renglon_pedido_ruta(
         if segunda_valor == 0:
             segunda_valor = None
 
+    # EN SU ENVASE O REPROCESADO A CAJA (dueño, 05/10): vacío = no se eligió,
+    # y `marcar_renglon_armado` decide si hacía falta elegir.
+    en_su_envase = {"su_envase": True, "caja": False}.get(como_sale.strip())
     try:
         marcar_renglon_armado(renglon_id, cantidad_armada_valor, kilos_valor,
-                              bultos_de_segunda=segunda_valor)
-    except SegundaNoPermitida as motivo:
+                              bultos_de_segunda=segunda_valor, en_su_envase=en_su_envase)
+    except (SegundaNoPermitida, ComoSaleNoPermitido) as motivo:
         raise HTTPException(status_code=400, detail=str(motivo)) from motivo
     except Exception as error_db:
         raise HTTPException(status_code=500, detail=f"No se pudo marcar el renglón: {error_db}") from error_db

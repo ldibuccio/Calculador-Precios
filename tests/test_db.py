@@ -3796,25 +3796,27 @@ def test_borrar_foto_pedido_devuelve_la_ruta_solo_si_nadie_mas_la_usa():
 
 
 def test_marcar_renglon_armado_completo_y_parcial():
-    conexion, cursor = _conexion_falsa()
+    # La primera lectura es si la ficha deja elegir el envase (05/10): acá no.
+    conexion, cursor = _conexion_falsa([(False,)])
 
     with patch("app.db.obtener_conexion", return_value=conexion):
         marcar_renglon_armado(11)
 
-    consulta, parametros = cursor.execute.call_args_list[0].args
+    consulta, parametros = cursor.execute.call_args_list[1].args
     assert "SET armado_el = now(), cantidad_armada = %s, kilos_enviados = %s" in consulta
     # El cuarto es la segunda: sin decirla, va en NULL — la segunda nunca
-    # se elige sola, y retildar sin ella la limpia.
-    assert parametros == (None, None, None, 11)
+    # se elige sola, y retildar sin ella la limpia. El quinto, en su envase:
+    # en una ficha que no lo elige, siempre False.
+    assert parametros == (None, None, None, False, 11)
     # Y en la MISMA transacción se va la corrección de lotes vieja: puede
     # estar cambiando la cantidad, y una corrección que reparte 15 bultos
     # sobre un renglón que ahora manda 8 es una mentira guardada.
-    assert "DELETE FROM pedidos_renglones_lotes_elegidos" in cursor.execute.call_args_list[1].args[0]
+    assert "DELETE FROM pedidos_renglones_lotes_elegidos" in cursor.execute.call_args_list[2].args[0]
 
-    conexion2, cursor2 = _conexion_falsa()
+    conexion2, cursor2 = _conexion_falsa([(False,)])
     with patch("app.db.obtener_conexion", return_value=conexion2):
         marcar_renglon_armado(11, 12.0, 120.0)
-    assert cursor2.execute.call_args_list[0].args[1] == (12.0, 120.0, None, 11)
+    assert cursor2.execute.call_args_list[1].args[1] == (12.0, 120.0, None, False, 11)
 
 
 def test_desmarcar_renglon_armado_borra_tilde_y_cantidad():
