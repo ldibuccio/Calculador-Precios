@@ -106,3 +106,22 @@ corregir lo pedido después no la deje arriba de lo armado), desmarcar y anular
 la limpian, y la recarga la traslada con el armado. Un quinto que toque el
 armado sin saberlo rebota contra la base — que es lo que la pared está para
 hacer, y el motivo por el que los tests de esto corren contra Postgres.
+
+## La Casilla de pedidos vive en Administración (04/10, dueño)
+
+Estaba en Sistema, sin clave, y era el único botón de ese hub. El dueño
+eligió "Todo a Administración": la configuración del buzón, la lista de mails
+de pedido, el "revisar ahora" y el marcar como ignorado van en
+**Administración → Pedidos → Casilla de pedidos**
+(`/administracion/casilla-pedidos`), con la clave de Administración. Sus tres
+alertas (mails sin confirmar, pedidos leídos con IA y casilla sin revisar)
+pasaron a Administración. **Sistema desapareció**: `/sistema` y
+`/sistema/casilla-pedidos` llevan con un 301 a la Casilla.
+
+- **El circuito del mail sigue en Depósito, sin clave**
+  (`/deposito/pedido/mails/{id}/revisar`, que se abre desde Pedidos de
+  Depósito). Si el mail ya se procesó o no se puede leer, vuelve a **Pedidos
+  de Depósito** con el aviso, y no a la Casilla: desde Depósito la Casilla
+  sería una pared (corolario 56). El atrás de esa revisión también es Pedidos.
+- Lo cuida `tests/test_gerencia_reordenada.py`.
+

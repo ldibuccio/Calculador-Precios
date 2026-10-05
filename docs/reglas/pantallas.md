@@ -261,4 +261,11 @@ El dueño eligió "un color por recuadro" y no "un color por lo que hace".
   `tests/test_administracion_reordenada.py`.
 - Arriba de Compras, Administración y Gerencia va la franja Tareas/Alertas
   (`docs/modulos/tareas.md`).
+- **Lo que mira lo mismo desde varios lados va en UN botón con pestañas**
+  (`templates/_pestanas.html` y un parcial por grupo, con los links escritos
+  tal cual para el barrido de pantallas sin link). Administración: Stock del
+  Depósito. Compras: Buscar compras, Qué comprar hoy, Analizar artículo.
+  Gerencia (Mirar · Corregir · Mantenimiento, 10 botones): Rentabilidad,
+  Pérdidas y Facturación y cobranzas, cuyas pestañas salen solo entrando por
+  Gerencia. Sistema desapareció (`docs/modulos/pedidos.md`).
 

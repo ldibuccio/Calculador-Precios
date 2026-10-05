@@ -258,9 +258,10 @@ Módulos (se lee el que se va a tocar):
 - `docs/modulos/compras.md`: títulos de magnitudes, Buscar compras, seña,
   proveedores con varios puestos, pesaje, sello del importe, el hub de 7.
 - `docs/modulos/magnitudes.md`: kilos y conteo.
-- `docs/modulos/perdidas.md`: pérdidas.
+- `docs/modulos/perdidas.md`: pérdidas, y su botón con dos pestañas.
 - `docs/modulos/fichas_y_precios.md`: borrar una ficha y sus precios.
-- `docs/modulos/pedidos.md`: renglón agregado por teléfono, segunda al cliente.
+- `docs/modulos/pedidos.md`: renglón agregado por teléfono, segunda al cliente,
+  la Casilla de pedidos en Administración.
 - `docs/modulos/que_comprar_hoy.md`: decisiones de Qué comprar hoy (el diseño
   sigue en `docs/que_comprar_hoy.md`).
 

@@ -156,9 +156,10 @@
 </style>
 </head>
 <body>
-  {% set barra_sector = "sistema" %}
+  {# En Administración → Pedidos desde el 04/10 (dueño); antes, Sistema. #}
+  {% set barra_sector = "administracion" %}
   {% set barra_titulo = "Casilla de Pedidos" %}
-  {% set barra_atras = "/sistema" %}
+  {% set barra_atras = "/administracion" %}
   {% from "_info.html" import info %}
   {% include "_barra_navegacion.html" %}
 
@@ -228,12 +229,12 @@
     <p class="dato">Último error (ya recuperado): {{ casilla.ultimo_error_el|fecha_hora }} — {{ casilla.ultimo_error }}</p>
     {% endif %}
 
-    <form method="post" action="/sistema/casilla-pedidos/{{ casilla.id }}/revisar">
+    <form method="post" action="/administracion/casilla-pedidos/{{ casilla.id }}/revisar">
       <button type="submit" class="boton">Revisar ahora</button>
     </form>
 
     {% if not casilla.activa %}
-    <form method="post" action="/sistema/casilla-pedidos/{{ casilla.id }}/activar">
+    <form method="post" action="/administracion/casilla-pedidos/{{ casilla.id }}/activar">
       <label for="fecha-activacion-{{ casilla.id }}">Mirar correos desde (vacío = ahora)</label>
       <input type="datetime-local" id="fecha-activacion-{{ casilla.id }}" name="fecha_activacion">
       <button type="submit" class="boton boton-secundario">Activar la casilla</button>
@@ -241,18 +242,18 @@
     {% else %}
     <details>
       <summary>Cambiar desde cuándo se miran los correos</summary>
-      <form method="post" action="/sistema/casilla-pedidos/{{ casilla.id }}/fecha-activacion">
+      <form method="post" action="/administracion/casilla-pedidos/{{ casilla.id }}/fecha-activacion">
         <label for="fecha-nueva-{{ casilla.id }}">Nueva fecha (vacío = ahora)</label>
         <input type="datetime-local" id="fecha-nueva-{{ casilla.id }}" name="fecha_activacion">
         <button type="submit" class="boton boton-secundario">Cambiar fecha</button>
       </form>
     </details>
-    <form method="post" action="/sistema/casilla-pedidos/{{ casilla.id }}/desactivar">
+    <form method="post" action="/administracion/casilla-pedidos/{{ casilla.id }}/desactivar">
       <button type="submit" class="boton boton-secundario">Desactivar la casilla</button>
     </form>
     {% endif %}
 
-    <form method="post" action="/sistema/casilla-pedidos/{{ casilla.id }}/auto-confirmar">
+    <form method="post" action="/administracion/casilla-pedidos/{{ casilla.id }}/auto-confirmar">
       {% if casilla.auto_confirmar %}
       <input type="hidden" name="valor" value="no">
       <button type="submit" class="boton boton-secundario">Apagar auto-confirmar (hoy: prendido)</button>
@@ -265,7 +266,7 @@
 
     <details>
       <summary>Cambiar horario de revisión automática</summary>
-      <form method="post" action="/sistema/casilla-pedidos/{{ casilla.id }}/horario">
+      <form method="post" action="/administracion/casilla-pedidos/{{ casilla.id }}/horario">
         <div class="fila-horario">
           <div>
             <label for="revision-desde-{{ casilla.id }}">Desde</label>
@@ -290,7 +291,7 @@
 
     <details>
       <summary>Editar configuración</summary>
-      <form method="post" action="/sistema/casilla-pedidos/guardar">
+      <form method="post" action="/administracion/casilla-pedidos/guardar">
         <input type="hidden" name="casilla_id" value="{{ casilla.id }}">
         <label for="direccion-{{ casilla.id }}">Dirección de la casilla</label>
         <input type="email" id="direccion-{{ casilla.id }}" name="direccion" value="{{ casilla.direccion }}" required>
@@ -316,7 +317,7 @@
   <div class="tarjeta">
     <h2>Conectar la casilla</h2>
     <p class="sub">La casilla queda guardada DESACTIVADA: se activa recién cuando la clave esté cargada en Railway.</p>
-    <form method="post" action="/sistema/casilla-pedidos/guardar">
+    <form method="post" action="/administracion/casilla-pedidos/guardar">
       <label for="direccion-nueva">Dirección de la casilla (la cuenta Gmail de la empresa)</label>
       <input type="email" id="direccion-nueva" name="direccion" placeholder="pedidos@empresa.com" required>
       <label for="servidor-nuevo">Servidor IMAP</label>
@@ -348,7 +349,7 @@
         {% if m.estado in ("pendiente", "error") %}
         <div class="acciones">
           <a class="boton-chico boton-confirmar-mail" href="/deposito/pedido/mails/{{ m.id }}/revisar">Revisar y confirmar</a>
-          <form method="post" action="/sistema/casilla-pedidos/mails/{{ m.id }}/ignorar"
+          <form method="post" action="/administracion/casilla-pedidos/mails/{{ m.id }}/ignorar"
                 onsubmit="return confirm('¿Marcar este mail como ignorado? No se carga ningún pedido con él.')">
             <button type="submit" class="boton-chico boton-ignorar">Ignorar</button>
           </form>
@@ -361,7 +362,7 @@
     {% endif %}
   </div>
 
-  <a class="volver" href="/sistema">Volver a Sistema</a>
+  <a class="volver" href="/administracion">Volver a Administración</a>
 {% include "_pie_version.html" %}
 </body>
 </html>

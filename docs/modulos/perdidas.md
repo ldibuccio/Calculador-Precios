@@ -158,3 +158,12 @@ tiene en el renglón "Se tiró" desde el 21/09, y Rentabilidad Real adentro de
 `costo_mermas`. Siguen sin sumarse entre sí —lo dice la pantalla— porque
 cuentan la misma caja contestando dos preguntas distintas: allá por DESTINO,
 para el resultado; en Plata de cajas por CLIENTE, para poder reclamarla.
+
+## En el hub: un botón, dos pestañas (04/10, dueño)
+
+Gerencia tiene UN botón, **Pérdidas**, con dos pestañas: **Mercadería** (lo
+tirado y lo pasado a segunda, `/gerencia/perdidas`) y **Plata de cajas**
+(`/gerencia/cajas-perdidas`). La pestaña se llama "Plata de cajas" y no
+"Cajas" por la misma razón que tenía el botón: adentro también está lo que se
+gastó comprándolas. Siguen sin sumarse entre sí.
+

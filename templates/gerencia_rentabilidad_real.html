@@ -4,6 +4,7 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Rentabilidad Real</title>
+{% import "_pestanas_gerencia.html" as pestanas_gerencia %}
 <style>
   :root { font-family: -apple-system, system-ui, sans-serif; }
   body {
@@ -292,6 +293,7 @@
     border-radius: 8px; font-size: 0.9rem; }
   .provisorio { margin-top: 0.6rem; background: #fef3c7; color: #92400e; padding: 0.6rem 0.8rem;
     border-radius: 8px; font-size: 0.9rem; }
+  {{ pestanas_gerencia.estilos() }}
 </style>
 </head>
 <body>
@@ -300,6 +302,7 @@
   {% set barra_atras = "/gerencia" %}
   {% from "_info.html" import info %}
   {% include "_barra_navegacion.html" %}
+  {{ pestanas_gerencia.rentabilidad("real") }}
 
 
   {% if error_fecha %}

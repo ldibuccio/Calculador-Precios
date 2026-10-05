@@ -648,7 +648,7 @@ def test_la_ALERTA_del_espacio_es_SOLO_de_Gerencia_y_lleva_a_Fotos_y_espacio():
 
 def test_el_HUB_de_Gerencia_dice_Fotos_y_espacio():
     marcado = io.open(os.path.join(RAIZ, "templates", "gerencia.html"), encoding="utf-8").read()
-    assert '<a class="boton" href="/gerencia/fotos">Fotos y espacio</a>' in marcado
+    assert re.search(r'href="/gerencia/fotos">[^<]*<span>Fotos y espacio</span></a>', marcado)
     assert "Fotos de más de 3 años</a>" not in marcado
 
 

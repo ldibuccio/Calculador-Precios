@@ -114,7 +114,10 @@
 <body>
   {% set barra_sector = "deposito" %}
   {% set barra_titulo = "Revisar Pedido" %}
-  {% set barra_atras = "/sistema/casilla-pedidos" if mail else "/deposito/pedido/cargar?cliente_id=" ~ cliente_id ~ "&fecha=" ~ fecha %}
+  {# Desde un mail, el atrás es Pedidos de DEPÓSITO y no la Casilla: esta
+     pantalla es de Depósito, sin clave, y la Casilla vive en Administración
+     desde el 04/10 (dueño). #}
+  {% set barra_atras = "/deposito/pedido" if mail else "/deposito/pedido/cargar?cliente_id=" ~ cliente_id ~ "&fecha=" ~ fecha %}
   {% include "_barra_navegacion.html" %}
 
   {% if metodo_lectura == "estructura" %}
@@ -232,7 +235,7 @@
     <div class="tarjeta">
       <button type="submit" class="guardar">Guardar pedido</button>
       {% if mail %}
-      <a class="volver" href="/sistema/casilla-pedidos">Volver a la casilla (sin guardar)</a>
+      <a class="volver" href="/deposito/pedido">Volver a Pedidos (sin guardar)</a>
       {% else %}
       <a class="volver" href="/deposito/pedido/cargar?cliente_id={{ cliente_id }}&fecha={{ fecha }}">Volver (pegar de nuevo)</a>
       {% endif %}

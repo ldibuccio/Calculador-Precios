@@ -1,0 +1,39 @@
+{# LAS PESTAÑAS DE GERENCIA (dueño, 04/10). El hub de Gerencia junta en un
+   botón lo que mira lo mismo desde dos o tres lados; cada pestaña sigue
+   siendo su propia pantalla, con su propia dirección:
+
+   - Rentabilidad: De pedidos · Real (la estimada y la de lo que salió).
+   - Pérdidas: Mercadería · Plata de cajas (lo tirado y pasado a segunda, y
+     lo que se gastó y se perdió en cajas).
+   - Facturación y cobranzas: Remitos y facturas · Vales · Segunda. Son las
+     MISMAS pantallas que Administración, y estas pestañas salen SOLO
+     entrando por Gerencia (en Administración son tres botones).
+
+   Los links van escritos tal cual (ver _pestanas.html). #}
+{% import "_pestanas.html" as _pestanas %}
+{% macro estilos() %}{{ _pestanas.estilos() }}{% endmacro %}
+
+{% macro rentabilidad(activa) %}
+<nav class="pestanas" aria-label="Rentabilidad">
+  <a href="/gerencia/rentabilidad"{% if activa == "pedidos" %} aria-current="page"{% endif %}>De pedidos</a>
+  <a href="/gerencia/rentabilidad-real"{% if activa == "real" %} aria-current="page"{% endif %}>Real</a>
+</nav>
+{% endmacro %}
+
+{% macro perdidas(activa) %}
+<nav class="pestanas" aria-label="Pérdidas">
+  <a href="/gerencia/perdidas"{% if activa == "mercaderia" %} aria-current="page"{% endif %}>Mercadería</a>
+  {# "PLATA DE CAJAS" y no "Cajas": adentro está también lo que se GASTÓ
+     comprándolas, y un rótulo que dice solo pérdida deja afuera al que busca
+     cuánto gastó (dueño, regla del botón que había). #}
+  <a href="/gerencia/cajas-perdidas"{% if activa == "cajas" %} aria-current="page"{% endif %}>Plata de cajas</a>
+</nav>
+{% endmacro %}
+
+{% macro facturacion(activa) %}
+<nav class="pestanas" aria-label="Facturación y cobranzas">
+  <a href="/gerencia/facturacion"{% if activa == "remitos" %} aria-current="page"{% endif %}>Remitos y facturas</a>
+  <a href="/gerencia/vales"{% if activa == "vales" %} aria-current="page"{% endif %}>Vales</a>
+  <a href="/gerencia/cobranzas-segunda"{% if activa == "segunda" %} aria-current="page"{% endif %}>Segunda</a>
+</nav>
+{% endmacro %}
