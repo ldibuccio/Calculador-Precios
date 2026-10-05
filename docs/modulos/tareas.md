@@ -18,7 +18,10 @@ en `core/tareas.py`.
   banner de alertas: UNA línea con dos botones lado a lado, **Tareas** y
   **Alertas**, que arranca plegada. Tareas dice "Sin tareas pendientes" en
   gris, o "Tareas pendientes (3)" destacado, y en ROJO si alguna venció.
-  Alertas dice "Sin alertas" o "Alertas (N)", N = las que tienen casos.
+  Alertas dice "Sin alertas" en VERDE o "Alertas (N)" en ROJO (dueño, 04/10),
+  N = las que tienen casos; el mismo color va en el botón de Alertas de
+  Comercial (`templates/_boton_alertas.html`, lo cuida
+  `tests/test_boton_alertas.py`).
   Cada botón despliega lo suyo ABAJO de la línea, a todo el ancho, y abrir
   uno cierra el otro: botón y panel van separados (con dos `<details>` lado a
   lado, lo desplegado quedaba en media columna a 313px). Desplegada, cada

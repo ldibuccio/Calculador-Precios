@@ -170,8 +170,9 @@ def test_el_boton_cuenta_ALERTAS_y_no_casos():
 @pytest.mark.parametrize("url", ["/compras", "/gerencia", "/administracion", "/comercial"])
 def test_sin_alertas_el_boton_dice_solo_ALERTAS(url):
     marcado = _hub(url, _estado(casos_vacios=0)).text
-    if url == "/comercial":     # Comercial no tiene franja: sigue su botón, con su dibujo
-        assert re.search(r'href="/comercial/alertas">[^<]*<svg.*?</svg><span>Alertas</span></a>', marcado, re.S)
+    if url == "/comercial":     # Comercial no tiene franja: su botón, verde y "Sin alertas" (04/10)
+        assert re.search(r'<a class="boton sin-alertas" href="/comercial/alertas">[^<]*<svg.*?</svg>'
+                         r'<span>Sin alertas</span></a>', marcado, re.S)
     else:
         assert 'data-franja-boton="alertas">Sin alertas</button>' in marcado
     assert "hay que devolver" not in marcado
