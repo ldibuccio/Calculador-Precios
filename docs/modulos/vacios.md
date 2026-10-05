@@ -229,6 +229,14 @@ arrancó", sus "esperando" y la regla de la fecha— **se fue**.
   seña y marca desde el 28/09** (dueño): nace recibido, así que
   `crear_compra` escribe la marca y la vincula en la misma transacción, con
   la misma regla que Recepción: con seña suma a Vacíos, sin seña no.
+- **La seña cargada DESPUÉS de recibir (dueño, 05/10)** también lleva los
+  cajones a la pila de su marca: hasta ese día iban a "sin asignar" con la
+  marca escrita, porque solo Recepción la pegaba. Ahora la pega
+  `actualizar_precio_compra` (Editar), con la misma regla y sin pisar una
+  marca ya puesta. Lo que ya había quedado (en Frutamax, la 921) lo corrige
+  `db/vacios_marca_texto_2_sena_tarde.sql`, que aborta si esos cajones ya
+  salieron de "sin asignar" (se contarían dos veces). Tests:
+  `tests/test_vacios_sena_tarde.py`.
 - **La devolución sale de una PILA, sin compra**, con la seña por cajón de
   la última recepción de esa pila precargada y editable. **Sin foto del vale
   no es una devolución: es un ajuste** (guarda en la ruta, en la escritura y

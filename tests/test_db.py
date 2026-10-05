@@ -912,7 +912,8 @@ def test_actualizar_cantidad_compra_no_ingresada_no_se_edita():
 
 
 def test_actualizar_precio_compra_pisa_importe_y_sena():
-    conexion, cursor = _conexion_falsa([("recepcionado",)])  # SELECT estado
+    # SELECT estado, y la marca escrita (sin marca de cajón por pegar: None).
+    conexion, cursor = _conexion_falsa([("recepcionado",), None])
 
     with patch("app.db.obtener_conexion", return_value=conexion):
         actualizar_precio_compra(30, 55000.0, 1000.0)
@@ -929,7 +930,7 @@ def test_actualizar_precio_compra_se_puede_editar_aunque_este_retirada_o_recepci
     # A diferencia de la cantidad: retirada y/o recepcionada NO bloquean
     # el precio — el comprador puede renegociar con el proveedor después
     # de que la mercadería ya llegó.
-    conexion, cursor = _conexion_falsa([("recepcionado",)])
+    conexion, cursor = _conexion_falsa([("recepcionado",), None])
 
     with patch("app.db.obtener_conexion", return_value=conexion):
         actualizar_precio_compra(30, 60000.0, None)

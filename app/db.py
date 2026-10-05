@@ -3408,6 +3408,7 @@ def actualizar_precio_compra(compra_id: int, importe: float | None, sena: float 
                 f"UPDATE compras SET importe = %s, sena = %s, {sello} WHERE id = %s",
                 (importe, sena) + sello_params + (compra_id,),
             )
+            _vincular_marca_si_la_sena_llego_tarde(cursor, compra_id)
             _completar_costos_por_el_importe(cursor, compra_id)
         conexion.commit()
     finally:
@@ -3760,6 +3761,26 @@ def _marca_vacio_del_texto(cursor, compra_id: int, marca: str) -> int | None:
     if fila is None or not fila[1]:
         return None
     return _marca_vacio_de_nombre(cursor, fila[0], marca)
+
+
+def _vincular_marca_si_la_sena_llego_tarde(cursor, compra_id: int) -> None:
+    """LA SEÑA CARGADA DESPUÉS (dueño, 05/10): los cajones van a la pila de su marca.
+
+    Recepción pega la marca escrita a su marca de cajón solo si la compra
+    tiene seña (`_marca_vacio_del_texto`). Si la seña se carga después, desde
+    Editar, los cajones entraban a Vacíos en "sin asignar" aunque la marca
+    estuviera escrita: la pila la arma `compras.marca_vacio_id`, y nadie la
+    llenaba. Se llena acá, con la misma regla, y solo si está vacía: una
+    marca ya puesta (por Recepción) no se pisa.
+    """
+    cursor.execute("SELECT marca FROM compras WHERE id = %s AND marca_vacio_id IS NULL", (compra_id,))
+    fila = cursor.fetchone()
+    if fila is None:
+        return
+    # Sin marca escrita devuelve None (`_marca_vacio_de_nombre`): no se inventa.
+    marca_vacio_id = _marca_vacio_del_texto(cursor, compra_id, fila[0] or "")
+    if marca_vacio_id is not None:
+        cursor.execute("UPDATE compras SET marca_vacio_id = %s WHERE id = %s", (marca_vacio_id, compra_id))
 
 
 def _marca_vacio_de_nombre(cursor, proveedor_id: int, nombre: str) -> int | None:
