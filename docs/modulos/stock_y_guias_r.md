@@ -112,6 +112,32 @@ Está escrita en cuatro lugares, y los cuatro tienen que decir lo mismo:
    ajuste queda en segundo plano. Y el aviso llega a la tarjeta de SUELTOS
    aunque esa ficha no se haya contado nunca.
 
+### EN SU ENVASE O REPROCESADO A CAJA (05/10, dueño)
+
+En las fichas con `envase_variable` y caja (Mango y Cherry de Día), el que
+arma elige en CADA renglón cómo sale, sin default (el tilde no pasa sin
+elegir): **en su envase** —el envase en que vino, NO consume cajas de la
+ficha: sale de los cajones, como una ficha sin envase— o **reprocesado a
+caja** —consume cajas, la regla de siempre—. Se guarda en
+`pedidos_renglones.en_su_envase` (`db/en_su_envase_1_renglon.sql`); lo armado
+antes queda en false (se armó con sus guías R). Desarmar y anular lo limpian.
+
+La condición de esta sección pasa a ser `envase_id IS NOT NULL AND NOT
+en_su_envase`, y la respetan, además de los cuatro lugares de arriba:
+
+- `ficha_con_envase` en `_SQL_SALIDAS_STOCK` (FIFO, desglose, alerta de guías R);
+- `salidas_ficha` y `_SQL_REINGRESO_ES_DE_LA_FICHA` en `_SQL_STOCK_PARTIDO`
+  (las cajas de la ficha y el cotejo);
+- el lote del rechazo: vuelve como CAJÓN (`en_cajon`) y a los sueltos;
+- las cajas perdidas (`_SQL_CAJAS_PERDIDAS`): no pierde ninguna caja;
+- la devolución al proveedor: lleva su cajón, su seña y sale de Vacíos;
+- la Rentabilidad Real: `envase_por_unidad_del_renglon` (core/costo_real.py)
+  no cobra caja en su envase y cobra la caja ENTERA reprocesado
+  (`costo_envase_reprocesado_unidad_venta` del costeo). El costeo y la
+  rentabilidad teórica siguen estimando por compra: son de antes del armado.
+
+Tests: `tests/test_en_su_envase.py`, con el rival que va a caja.
+
 ### La vía de escape que hubo, y cómo se cerró (09/09)
 
 **`lotes_senalados` no pasaba por la pared.** Corre en la PASADA 1 de

@@ -58,7 +58,9 @@ desde la versión larga de este archivo el 03/10.
 - **Una salida de una ficha con envase solo sale de esa ficha**: sin stock de
   la ficha queda sin asignar y en negativo hasta la guía R. **Y un armado en
   cajón nunca toma una caja armada.** La condición es una sola:
-  `fichas_logistica.envase_id IS NOT NULL`.
+  `fichas_logistica.envase_id IS NOT NULL` y el renglón no salió **en su
+  envase** (`pedidos_renglones.en_su_envase`: Mango y Cherry, elegido por
+  renglón al armar, 05/10).
 - **Una guía R cubre armados de hasta 3 días antes**
   (`DIAS_DE_MARGEN_DE_LA_GUIA_R`); la alerta cuenta solo lo que pasó el margen.
 - **Todo lo que se tira o pasa a segunda es plata perdida.** Caja armada:
@@ -243,7 +245,7 @@ Corolarios, por familia (se buscan por número con `grep "Corolario N"`):
 - `docs/corolarios/pantallas_y_caminos.md`
 
 Módulos (se lee el que se va a tocar):
-- `docs/modulos/stock_y_guias_r.md`: envase de la ficha, margen de la guía R,
+- `docs/modulos/stock_y_guias_r.md`: envase de la ficha, en su envase o a caja (Mango, Cherry), margen de la guía R,
   guía anulada, negativos, filtro por tipo, `primera = 0`, mismo lote el
   mismo día, Cotejo y ajuste en una pantalla y Stock inicial solo en Gerencia.
 - `docs/modulos/cajas.md`: el modelo de la caja, y Cajas con sus tipos y costo en Administración.

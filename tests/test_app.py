@@ -17634,7 +17634,7 @@ def test_armar_renglon_completo_no_guarda_cantidad():
 
     assert respuesta.status_code == 303
     assert "sucursal=VL" in respuesta.headers["location"]
-    mock_marcar.assert_called_once_with(11, None, None, bultos_de_segunda=None)
+    mock_marcar.assert_called_once_with(11, None, None, bultos_de_segunda=None, en_su_envase=None)
 
 
 def test_armar_renglon_parcial_guarda_la_cantidad_real():
@@ -17647,7 +17647,7 @@ def test_armar_renglon_parcial_guarda_la_cantidad_real():
         )
 
     assert respuesta.status_code == 303
-    mock_marcar.assert_called_once_with(11, 12.0, None, bultos_de_segunda=None)
+    mock_marcar.assert_called_once_with(11, 12.0, None, bultos_de_segunda=None, en_su_envase=None)
 
 
 def test_armar_renglon_con_todo_lo_pedido_cuenta_como_completo():
@@ -17661,7 +17661,7 @@ def test_armar_renglon_con_todo_lo_pedido_cuenta_como_completo():
             follow_redirects=False,
         )
 
-    mock_marcar.assert_called_once_with(11, None, None, bultos_de_segunda=None)
+    mock_marcar.assert_called_once_with(11, None, None, bultos_de_segunda=None, en_su_envase=None)
 
 
 def test_armar_DE_MAS_guarda_los_bultos_de_verdad():
@@ -17680,7 +17680,7 @@ def test_armar_DE_MAS_guarda_los_bultos_de_verdad():
         )
 
     assert respuesta.status_code == 303
-    mock_marcar.assert_called_once_with(11, 80.0, None, bultos_de_segunda=None)
+    mock_marcar.assert_called_once_with(11, 80.0, None, bultos_de_segunda=None, en_su_envase=None)
 
 
 def test_los_kilos_de_un_armado_DE_MAS_salen_por_los_bultos_de_verdad():
@@ -17698,7 +17698,7 @@ def test_los_kilos_de_un_armado_DE_MAS_salen_por_los_bultos_de_verdad():
             follow_redirects=False,
         )
 
-    mock_marcar.assert_called_once_with(11, 80.0, 1280.0, bultos_de_segunda=None)
+    mock_marcar.assert_called_once_with(11, 80.0, 1280.0, bultos_de_segunda=None, en_su_envase=None)
 
 
 def test_el_renglon_armado_de_MAS_no_lleva_el_ambar_del_incompleto():
@@ -21389,7 +21389,7 @@ def test_armar_renglon_guarda_el_total_calculado_por_el_server():
         )
 
     assert respuesta.status_code == 303
-    mock_marcar.assert_called_once_with(11, None, 240.0, bultos_de_segunda=None)
+    mock_marcar.assert_called_once_with(11, None, 240.0, bultos_de_segunda=None, en_su_envase=None)
 
 
 def test_armar_renglon_incompleto_calcula_el_total_con_los_bultos_armados():
@@ -21404,7 +21404,7 @@ def test_armar_renglon_incompleto_calcula_el_total_con_los_bultos_armados():
         )
 
     assert respuesta.status_code == 303
-    mock_marcar.assert_called_once_with(11, 12.0, 192.0, bultos_de_segunda=None)
+    mock_marcar.assert_called_once_with(11, 12.0, 192.0, bultos_de_segunda=None, en_su_envase=None)
 
 
 def test_armar_renglon_kilos_invalidos_da_400():
@@ -33060,7 +33060,7 @@ def test_armar_con_segunda_la_pasa_al_db_y_su_motivo_vuelve_como_400():
             follow_redirects=False,
         )
     assert respuesta.status_code == 303
-    mock_marcar.assert_called_once_with(11, None, None, bultos_de_segunda=4.0)
+    mock_marcar.assert_called_once_with(11, None, None, bultos_de_segunda=4.0, en_su_envase=None)
 
     with patch("app.main.marcar_renglon_armado",
                side_effect=SegundaNoPermitida("Día no acepta mercadería de segunda.")):

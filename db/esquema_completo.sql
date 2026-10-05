@@ -1230,7 +1230,13 @@ create table pedidos_renglones (
     -- falla si no limpia el tilde en la misma sentencia. Una sola direccion a
     -- proposito: armado SIN controlar es el estado normal.
     constraint pedidos_renglones_controlado_solo_armado
-        check (controlado_el is null or armado_el is not null)
+        check (controlado_el is null or armado_el is not null),
+    -- EN SU ENVASE (dueño, 05/10, db/en_su_envase_1_renglon.sql): Mango y
+    -- Cherry pueden salir en el envase en que vinieron, sin gastar cajas de
+    -- la ficha. Se elige al armar; desarmar lo limpia en la misma sentencia.
+    en_su_envase boolean not null default false,
+    constraint pedidos_renglones_en_su_envase_solo_armado
+        check (not en_su_envase or armado_el is not null)
 );
 
 comment on table pedidos_renglones is 'Un renglon por articulo Y sucursal. articulo_id NULL = sin identificar, con el texto crudo conservado. armado_el: tilde de armado del deposito (= termine con este renglon); cantidad_armada: cuantos bultos se armaron realmente si fue menos que lo pedido (NULL = completo).';

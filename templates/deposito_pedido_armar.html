@@ -130,6 +130,12 @@
     cursor: pointer;
   }
   .form-parcial { display: none; margin-top: 0.3rem; }
+  .como-sale { border: none; padding: 0; margin: 0.4rem 0; display: flex; flex-wrap: wrap; gap: 0.4rem; }
+  .como-sale legend { font-weight: 600; margin-bottom: 0.3rem; }
+  .como-sale label {
+    display: flex; align-items: center; gap: 0.4rem; min-height: 44px; padding: 0 0.7rem;
+    border: 1px solid #cbd5e1; border-radius: 8px; background: #fff;
+  }
   .form-parcial.abierto { display: flex; gap: 0.5rem; }
   .form-parcial input {
     width: 6rem;
@@ -641,6 +647,17 @@
              Sale SOLO en fichas con envase: las de envase perdido
              (manzana, pera) nunca van a tener cajas y el cartel sería
              permanente. #}
+          {# EN SU ENVASE O REPROCESADO (dueño, 05/10): Mango y Cherry pueden
+             salir en el envase en que vinieron, que no gasta cajas, o
+             reprocesados a caja. Se elige en cada renglón y sin default: las
+             dos pasan. `required` frena el tilde hasta elegir. #}
+          {% if r.elige_envase %}
+          <fieldset class="como-sale">
+            <legend>¿Cómo sale?</legend>
+            <label><input type="radio" name="como_sale" value="su_envase" required> En su envase</label>
+            <label><input type="radio" name="como_sale" value="caja" required> Reprocesado a caja</label>
+          </fieldset>
+          {% endif %}
           {% if r.sin_cajas_de_la_ficha %}
           <p class="aviso-sin-cajas">No hay cajas armadas de esta ficha.
             Si ya las armaste, cargá la guía R antes de tildar; si no, hay que reprocesar.</p>
