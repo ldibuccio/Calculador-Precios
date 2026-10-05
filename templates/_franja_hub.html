@@ -23,6 +23,7 @@
    del hub y `franja(tareas_hub, banner)` en el cuerpo. #}
 {% import "_tareas_pendientes.html" as _tareas %}
 {% from "_boton_alertas.html" import texto_de_alerta %}
+{% import "_boton_alertas.html" as _boton_alertas %}
 
 {% macro estilos() %}
   .franja-hub { margin-bottom: 1rem; }
@@ -32,7 +33,7 @@
     font-family: inherit; line-height: 1.25; cursor: pointer; box-shadow: 0 1px 3px rgba(0, 0, 0, 0.1);
     overflow-wrap: anywhere; }
   .franja-boton.destacada { background: #2563eb; border-color: #2563eb; color: #fff; }
-  .franja-boton.alerta { background: #ea580c; border-color: #ea580c; color: #fff; }
+{{ _boton_alertas.estilos() }}
   .franja-boton.roja { background: #dc2626; border-color: #dc2626; color: #fff; }
   .franja-boton[aria-expanded="true"] { outline: 3px solid #93c5fd; outline-offset: 1px; }
   .franja-panel { margin-top: 0.5rem; background: #fff; border-radius: 8px; box-shadow: 0 1px 3px rgba(0, 0, 0, 0.1);
@@ -62,13 +63,9 @@
     <button type="button" class="franja-boton" aria-expanded="false" aria-controls="franja-tareas"
             data-franja-boton="tareas">Sin tareas pendientes</button>
     {% endif %}
-    {% if _activas %}
-    <button type="button" class="franja-boton alerta" aria-expanded="false" aria-controls="franja-alertas"
-            data-franja-boton="alertas">Alertas ({{ _activas|length }})</button>
-    {% else %}
-    <button type="button" class="franja-boton" aria-expanded="false" aria-controls="franja-alertas"
-            data-franja-boton="alertas">Sin alertas</button>
-    {% endif %}
+    {# Rojo con alertas, verde sin (dueño, 04/10): _boton_alertas.html. #}
+    <button type="button" class="franja-boton {{ _boton_alertas.clase(banner) }}" aria-expanded="false"
+            aria-controls="franja-alertas" data-franja-boton="alertas">{{ _boton_alertas.texto(banner) }}</button>
   </div>
   <div class="franja-panel" id="franja-tareas" data-franja-panel="tareas" hidden>
     {% if tareas_hub %}{{ _tareas.lista(tareas_hub) }}{% endif %}

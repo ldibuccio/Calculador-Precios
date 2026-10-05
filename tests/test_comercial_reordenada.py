@@ -22,8 +22,9 @@ from tests.test_administracion_reordenada import CLAVES, _cliente  # noqa: E402
 
 _BOTON = re.compile(r'<a class="boton color-(\d)" href="([^"]*)"><svg [^>]*>.*?</svg><span>([^<]*)</span></a>', re.S)
 
-COMERCIAL = [("1", "/comercial/alertas", "Alertas"), ("1", "/precios", "Precios"),
-             ("1", "/clientes", "Clientes"), ("1", "/fichas", "Fichas logísticas")]
+# El de Alertas va aparte: su color es el del estado (rojo o verde), y lo
+# cuida tests/test_boton_alertas.py.
+COMERCIAL = [("1", "/precios", "Precios"), ("1", "/clientes", "Clientes"), ("1", "/fichas", "Fichas logísticas")]
 PRECIOS = [("1", "/precios/consultar", "Consultar Precios"), ("1", "/precios/cargar-precios", "Cargar precios"),
            ("1", "/precios/vigencias", "Precios por Período"), ("1", "/negociar", "Márgenes por Artículo")]
 CARGAR_PRECIOS = [("1", "/precios/cargar", "Modificar Precios"), ("1", "/precios/cargar-foto", "Carga Foto Precios")]
@@ -50,6 +51,8 @@ def test_COMERCIAL_tiene_cuatro_botones_y_ya_no_Envases():
     import app.main as m
     marcado = TestClient(m.app).get("/comercial").text
     assert _botones(marcado) == COMERCIAL
+    assert re.search(r'<a class="boton (con|sin)-alertas" href="/comercial/alertas">', marcado)
+    assert marcado.split("</style>")[-1].count('<a class="boton ') == 4
     assert 'href="/envases"' not in marcado
 
 

@@ -1,16 +1,33 @@
-{# El número del botón "Alertas" de un hub: cuántas tienen casos (29/09,
-   dueño). UNO para todos los sectores, y sale de `banner.activas`, que arma
-   _banner_alertas() con la misma lectura que el banner. Sin casos no pone
-   nada y el botón dice solo "Alertas".
+{# EL BOTÓN DE ALERTAS DE UN HUB SE PINTA SEGÚN EL ESTADO (dueño, 04/10), en
+   todos los que lo tienen —la franja de Compras, Administración y Gerencia, y
+   el de Comercial—:
+   - con alertas: ROJO, y dice "Alertas (N)";
+   - sin alertas: VERDE, y dice "Sin alertas".
+   N = las que tienen casos, y sale de `banner.activas`, que arma
+   _banner_alertas() con la misma lectura que el banner. Una alerta sin
+   calcular o con error sale en el banner pero no se cuenta: no se sabe si
+   tiene casos.
 
-   Pone SOLO el número y no el <a> entero: el link queda escrito en cada hub
-   para que el barrido de pantallas sin link lo encuentre.
-   Uso: {% from "_boton_alertas.html" import cuantas_alertas %}
-        <a class="boton" href="/gerencia/alertas">Alertas{{ cuantas_alertas(banner) }}</a>
-   El banner va como argumento: un macro importado no ve el contexto. #}
-{% macro cuantas_alertas(banner) -%}
-{% if banner and banner.activas %} ({{ banner.activas }}){% endif %}
+   Pone la CLASE y el TEXTO, y no el botón entero: el link al detalle queda
+   escrito en cada hub para que el barrido de pantallas sin link lo encuentre.
+   El banner va como argumento: un macro importado no ve el contexto.
+   Uso: {% import "_boton_alertas.html" as boton_alertas %}
+        class="... {{ boton_alertas.clase(banner) }}" … {{ boton_alertas.texto(banner) }}
+   y `{{ boton_alertas.estilos() }}` adentro del <style>. #}
+{% macro clase(banner) -%}
+{{ 'con-alertas' if banner and banner.activas else 'sin-alertas' }}
 {%- endmacro %}
+
+{% macro texto(banner) -%}
+{% if banner and banner.activas %}Alertas ({{ banner.activas }}){% else %}Sin alertas{% endif %}
+{%- endmacro %}
+
+{# Va DESPUÉS de las reglas del botón (`.franja-boton`, `.boton`): con la
+   misma especificidad gana la última, sin `!important`. #}
+{% macro estilos() %}
+  .con-alertas { background: #dc2626; border-color: #dc2626; color: #fff; }
+  .sin-alertas { background: #15803d; border-color: #15803d; color: #fff; }
+{% endmacro %}
 
 
 {# CÓMO SE DICE UNA ALERTA CON CASOS: lo usan la cinta del banner y el panel
