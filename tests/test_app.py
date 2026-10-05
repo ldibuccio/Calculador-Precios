@@ -4538,7 +4538,7 @@ def test_compras_sin_precio_manda_a_COMERCIAL_A_SU_PROPIA_PANTALLA():
     `cajones_faltantes` desde antes, no uno inventado.
 
     Y LAS DOS PUNTAS SE AFIRMAN, porque el destino se lee en dos lugares y
-    hacen cosas opuestas: desde el BANNER trae a ver el detalle, y adentro de
+    hacen cosas opuestas: desde el hub trae a ver el detalle, y adentro de
     esa misma pantalla el link se esconde solo (apunta a donde ya estás).
     Sin la segunda mitad, el arreglo dejaría un link que recarga la página.
     """
@@ -4561,17 +4561,9 @@ def test_compras_sin_precio_manda_a_COMERCIAL_A_SU_PROPIA_PANTALLA():
                                 "Compras sin precio de compra cargado")
     assert '<a class="link" href="/compras/pendientes">' in bloque_compras
 
-    # LA OTRA PUNTA, que es donde el destino de verdad se usa: el banner de
-    # Comercial. Sin esto el docstring afirmaría dos puntas y el test miraría
-    # una — la pantalla esconde el link igual aunque el destino vuelva a ser
-    # el ajeno, así que el bloque solo no lo puede ver.
-    foto = _foto_alertas({"compras_sin_precio": (4, None)})
-    with patch("app.main.listar_estado_alertas", return_value=foto):
-        comercial = cliente.get("/comercial")
-    cinta = comercial.text.split('class="banner-cinta"')[-1].split("</div>")[0]
-    assert "Compras sin precio de compra cargado (4)" in cinta, "el banner no dibujó la alerta"
-    assert 'href="/comercial/alertas"' in cinta
-    assert "/compras/pendientes" not in cinta
+    # LA OTRA PUNTA era la cinta de Comercial, que el dueño sacó de todo el
+    # sistema el 05/10: hoy el botón de Comercial lleva a esta pantalla, y lo
+    # cuida tests/test_sin_cinta_de_avisos.py.
 
 
 # `unidad_conteo` va porque en producción va: es lo que el artículo declara
@@ -10815,11 +10807,10 @@ def test_ver_comercial_muestra_los_tres_accesos():
     assert 'href="/negociar"' not in respuesta.text
 
 
-def test_ver_comercial_muestra_en_su_banner_solo_las_alertas_que_le_tocan():
+def test_ver_comercial_cuenta_en_su_boton_solo_las_alertas_que_le_tocan():
     # El criterio del mapa de módulos: la alerta aparece donde está la persona
     # que puede resolverla. Comercial factura, así que las compras sin precio
-    # también son suyas; los retiros de Logística no, y no le ensucian el
-    # banner — un banner que se llena de cosas ajenas se deja de mirar.
+    # también son suyas; los retiros de Logística no, y no le suman al botón.
     foto = _foto_alertas({
         "compras_sin_precio": (4, date(2026, 7, 30)),
         "articulos_incotizables": (2, None),
@@ -10829,43 +10820,35 @@ def test_ver_comercial_muestra_en_su_banner_solo_las_alertas_que_le_tocan():
         respuesta = cliente.get("/comercial")
 
     assert respuesta.status_code == 200
-    # UNA sola consulta para todo el banner, tenga el registro 15 alertas o 100.
+    # UNA sola consulta para el botón, tenga el registro 15 alertas o 100.
     mock_foto.assert_called_once_with()
-    assert "Compras sin precio de compra cargado (4)" in respuesta.text
-    # A SU PROPIA PANTALLA, no a /compras/pendientes: desde el 19/09 el
-    # destino de Comercial es el suyo, porque el viejo le pedía la clave de
-    # Compras (GET 401). El banner de COMPRAS, el test de acá abajo, sigue
-    # apuntando a donde se carga el precio — y que ése no se haya movido es
-    # lo que dice que el arreglo no se pasó de sector.
-    assert 'href="/comercial/alertas"' in respuesta.text
-    assert "sin ficha logística o sin precio de venta" in respuesta.text
-    assert "Mercadería sin retirar" not in respuesta.text
-    # Arriba de los tres botones, no mezclado ni después.
-    assert respuesta.text.index("Compras sin precio") < respuesta.text.index('href="/precios"')
+    assert re.search(r'<a class="boton con-alertas" href="/comercial/alertas"><svg.*?</svg>'
+                     r'<span>Alertas \(2\)</span></a>', respuesta.text, re.S)
 
 
-def test_ver_comercial_sin_alertas_no_muestra_banner():
+def test_ver_comercial_sin_alertas_el_boton_es_verde():
     with patch("app.main.listar_estado_alertas", return_value=_foto_alertas()):
         respuesta = cliente.get("/comercial")
 
     assert respuesta.status_code == 200
-    assert 'class="banner-avisos"' not in respuesta.text
+    assert '<a class="boton sin-alertas" href="/comercial/alertas">' in respuesta.text
     assert "sin precio de compra cargado" not in respuesta.text
 
 
 def test_ver_comercial_error_al_leer_las_alertas_no_rompe_la_pantalla():
-    # El banner es un aviso, no algo crítico: si la consulta falla, la
-    # pantalla sigue funcionando (sin banner), nunca un 500.
+    # Las alertas son un aviso, no algo crítico: si la consulta falla, la
+    # pantalla sigue funcionando, nunca un 500. Pero el botón no dice "Sin
+    # alertas" (dueño, 05/10): no se sabe.
     with patch("app.main.listar_estado_alertas", side_effect=Exception("no se pudo conectar")):
         respuesta = cliente.get("/comercial")
 
     assert respuesta.status_code == 200
-    assert 'class="banner-avisos"' not in respuesta.text
+    assert '<a class="boton con-alertas" href="/comercial/alertas">' in respuesta.text
     assert 'href="/precios"' in respuesta.text
     assert 'href="/inicio"' in respuesta.text
 
 
-def test_ver_compras_muestra_en_su_banner_solo_las_alertas_que_le_tocan():
+def test_ver_compras_muestra_en_su_panel_solo_las_alertas_que_le_tocan():
     # El comprador ve apenas entra lo que él puede resolver: los precios que
     # faltan cargar y las Guías R cuyo costo no cierra porque falta un precio
     # de compra. Lo de Depósito no es suyo y no aparece.
@@ -10887,32 +10870,32 @@ def test_ver_compras_muestra_en_su_banner_solo_las_alertas_que_le_tocan():
 
 
 def test_los_pedidos_incompletos_se_ven_TAMBIEN_en_compras():
-    """El depósito la ve porque armó de menos; el comprador porque puede ser
-    la causa —se entregó de menos porque se compró de menos— y es el único
-    que lo puede corregir, comprando mañana.
+    """El depósito la tiene porque armó de menos; el comprador porque puede
+    ser la causa —se entregó de menos porque se compró de menos— y es el
+    único que lo puede corregir, comprando mañana.
 
-    Es la MISMA alerta y la MISMA cuenta: `modulos` decide en qué cintas
-    aparece, no cuántas veces se calcula.
+    Es la MISMA alerta y la MISMA cuenta: `modulos` decide dónde aparece, no
+    cuántas veces se calcula. Desde el 05/10 el hub de Depósito no muestra
+    alertas (el dueño sacó la cinta de todo el sistema): ni la consulta hace.
     """
     foto = _foto_alertas({"pedidos_incompletos": (3, date(2026, 9, 2))})
     with patch("app.main.listar_estado_alertas", return_value=foto) as mock_foto:
         de_compras = cliente.get("/compras")
         del_deposito = cliente.get("/deposito")
 
-    for respuesta in (de_compras, del_deposito):
-        assert "Pedidos incompletos (3)" in respuesta.text
-        assert 'href="/deposito/pedido"' in respuesta.text
-    # UNA consulta por pantalla, la de la foto: la cuenta no se repite.
-    assert mock_foto.call_count == 2
+    assert 'href="/deposito/pedido">Pedidos incompletos (3)' in de_compras.text
+    assert "Pedidos incompletos (3)" not in del_deposito.text
+    # UNA consulta, la de Compras: la cuenta no se repite.
+    assert mock_foto.call_count == 1
 
 
-def test_ver_compras_sin_alertas_no_muestra_banner():
+def test_ver_compras_sin_alertas_el_boton_es_verde():
     with patch("app.main.listar_estado_alertas", return_value=_foto_alertas()):
         respuesta = cliente.get("/compras")
 
     assert respuesta.status_code == 200
     assert "sin precio de compra cargado" not in respuesta.text
-    assert 'class="banner-avisos"' not in respuesta.text
+    assert 'data-franja-boton="alertas">Sin alertas</button>' in respuesta.text
 
 
 def test_ver_compras_error_al_leer_las_alertas_no_rompe_la_pantalla():
@@ -10920,34 +10903,15 @@ def test_ver_compras_error_al_leer_las_alertas_no_rompe_la_pantalla():
         respuesta = cliente.get("/compras")
 
     assert respuesta.status_code == 200
-    assert 'class="banner-avisos"' not in respuesta.text
+    assert 'data-franja-boton="alertas">Alertas (1)</button>' in respuesta.text   # no se sabe: no es verde
     assert 'href="/compras/cargar-compra"' in respuesta.text
 
 
-def test_banner_corre_y_duplica_el_contenido_para_el_loop():
-    # La cinta se anima proporcional a cuántos avisos lleva, y el contenido va
-    # dos veces (la copia oculta a lectores de pantalla) para que el corte del
-    # loop no se note.
-    foto = _foto_alertas({
-        "compras_sin_precio": (4, date(2026, 7, 30)),
-        "guias_r_costo_incompleto": (1, date(2026, 8, 5)),
-    })
-    with patch("app.main.listar_estado_alertas", return_value=foto):
-        respuesta = cliente.get("/compras")
-
-    assert respuesta.status_code == 200
-    assert 'class="banner-cinta" style="animation-duration: 24s;"' in respuesta.text
-    # DENTRO DE LA CINTA: desde el 04/10 el panel de Alertas de la franja del
-    # hub también la nombra, y eso no es el loop.
-    cinta = respuesta.text.split('class="banner-cinta"')[1].split('class="banner-avisos"')[0].split("</div>")[0]
-    assert cinta.count("Compras sin precio de compra cargado (4)") == 2
-    assert '<span class="copia" aria-hidden="true">' in respuesta.text
-
-
-def test_banner_avisa_cuando_la_foto_esta_vencida_aunque_no_haya_ninguna_alerta():
-    # La misma trampa que en Auditoría: un banner vacío porque está todo bien
-    # no puede verse igual que un banner vacío porque nadie calculó nada. Si
-    # el cálculo automático se murió, el banner aparece igual y lo dice.
+def test_el_panel_avisa_cuando_la_foto_esta_vencida_aunque_no_haya_ninguna_alerta():
+    # La misma trampa que en Auditoría: "Sin alertas" porque está todo bien
+    # no puede verse igual que porque nadie calculó nada. Si el cálculo
+    # automático se murió, el panel de Alertas lo dice (antes la cinta,
+    # que el dueño sacó el 05/10).
     vieja = datetime.now(ARGENTINA_TEST) - timedelta(hours=40)
     with patch("app.main.listar_estado_alertas", return_value=_foto_alertas(calculada_el=vieja)):
         respuesta = cliente.get("/compras")
@@ -10957,7 +10921,7 @@ def test_banner_avisa_cuando_la_foto_esta_vencida_aunque_no_haya_ninguna_alerta(
     assert 'href="/auditoria"' in respuesta.text
 
 
-def test_banner_avisa_cuando_las_alertas_nunca_se_calcularon():
+def test_el_panel_avisa_cuando_las_alertas_nunca_se_calcularon():
     with patch("app.main.listar_estado_alertas", return_value=[]):
         respuesta = cliente.get("/compras")
 
@@ -10965,7 +10929,7 @@ def test_banner_avisa_cuando_las_alertas_nunca_se_calcularon():
     assert "las alertas todavía no se calcularon nunca" in respuesta.text
 
 
-def test_banner_muestra_la_alerta_que_no_se_pudo_calcular():
+def test_el_panel_muestra_la_alerta_que_no_se_pudo_calcular():
     # Que una alerta no se haya podido calcular ES la noticia: sale igual,
     # aunque su último conteo diera cero. Desaparecer en silencio es la peor
     # falla posible en un sistema de alertas.
@@ -10980,36 +10944,38 @@ def test_banner_muestra_la_alerta_que_no_se_pudo_calcular():
     assert "No se pudo calcular: Compras sin precio de compra cargado" in respuesta.text
 
 
-def test_toda_alerta_con_modulo_se_ve_en_la_pantalla_de_ese_modulo():
-    """La garantía que no se negocia: una alerta no puede quedar invisible.
+# Dónde se ve una alerta en el hub de su módulo (dueño, 05/10): con botón de
+# Alertas, los cuatro de acá; sin avisos arriba, los otros —el dueño sacó la
+# cinta de todo el sistema y no quiso nada en su lugar—. Ahí la alerta se ve
+# en Auditoría (y en otro sector, si lo declara).
+MODULOS_CON_BOTON_DE_ALERTAS = {"compras", "administracion", "gerencia", "comercial"}
+MODULOS_SIN_AVISOS = {"deposito", "logistica", "puesto", "fichas"}
+
+
+def test_toda_alerta_con_modulo_suma_al_boton_de_ese_modulo():
+    """La garantía: una alerta no queda invisible en un hub con botón.
 
     Recorre los módulos que declara EL REGISTRO —no una lista escrita a mano
-    acá— y entra a la pantalla de cada uno con esa alerta en 1. Si un módulo
-    nuevo se declara y su pantalla no incluye el banner, la alerta existiría
-    en Auditoría y no la vería nunca el que puede resolverla. Este test es lo
-    que lo impide.
+    acá— y compara contra lo DECIDIDO, en las dos direcciones: un módulo
+    nuevo obliga a decidir si tiene botón. En cada hub con botón entra con
+    una alerta suya en 1, y el botón tiene que decir "Alertas (1)".
     """
     from app.main import ALERTAS
 
-    modulos = sorted({modulo for definicion in ALERTAS for modulo in definicion.modulos})
-    assert modulos, "El registro se quedó sin ninguna alerta con módulo"
+    modulos = {modulo for definicion in ALERTAS for modulo in definicion.modulos}
+    assert modulos == MODULOS_CON_BOTON_DE_ALERTAS | MODULOS_SIN_AVISOS
+    assert not MODULOS_CON_BOTON_DE_ALERTAS & MODULOS_SIN_AVISOS
 
-    for modulo in modulos:
+    for modulo in sorted(MODULOS_CON_BOTON_DE_ALERTAS):
         definicion = next(d for d in ALERTAS if modulo in d.modulos)
         foto = _foto_alertas({definicion.codigo: (1, date(2026, 8, 1))})
-        with ExitStack() as pila:
-            pila.enter_context(patch("app.main.listar_estado_alertas", return_value=foto))
-            # Los datos que piden algunas de esas pantallas para poder abrir.
-            pila.enter_context(patch("app.main.listar_clientes", return_value=CLIENTES_DE_PRUEBA))
+        with patch("app.main.listar_estado_alertas", return_value=foto):
             respuesta = cliente.get(f"/{modulo}")
 
-        assert respuesta.status_code == 200, (
-            f"/{modulo} no abre: o el módulo está mal escrito en la alerta "
-            f"{definicion.codigo}, o su pantalla necesita datos que este test no le da"
-        )
-        assert 'class="banner-avisos"' in respuesta.text, (
-            f"La alerta {definicion.codigo} dice ir a {modulo}, pero /{modulo} "
-            f'no muestra el banner: le falta el include de "_banner_alertas.html"'
+        assert respuesta.status_code == 200, f"/{modulo} no abre"
+        marcado = " ".join(respuesta.text.split())
+        assert re.search(r'(data-franja-boton="alertas">|<span>)Alertas \(1\)(</button>|</span>)', marcado), (
+            f"La alerta {definicion.codigo} dice ir a {modulo}, pero el botón de /{modulo} no la cuenta"
         )
 
 
@@ -12068,7 +12034,9 @@ def test_ver_gerencia_es_el_hub_del_dinero_sin_auditoria():
     assert 'href="/gerencia/rentabilidad"' in respuesta.text
     # La Real es la pestaña de Rentabilidad desde el 04/10 (dueño).
     assert 'href="/gerencia/rentabilidad-real"' in io.open("templates/_pestanas_gerencia.html", encoding="utf-8").read()
-    assert "/auditoria" not in respuesta.text
+    # Ningún BOTÓN a Auditoría. El panel de Alertas sí puede linkearla
+    # cuando algo no se pudo calcular (dueño, 05/10).
+    assert not re.search(r'<a class="boton[^"]*" href="/auditoria"', respuesta.text)
     assert 'href="/inicio"' in respuesta.text
 
 

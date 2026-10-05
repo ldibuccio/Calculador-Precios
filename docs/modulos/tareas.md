@@ -14,16 +14,28 @@ vive en app/db.py (sección TAREAS) y las reglas, las palabras y los archivos
 en `core/tareas.py`.
 
 - **La franja de arriba** (dueño, 04/10; antes era un recuadro propio) va en
-  los hubs de Compras, Administración y Gerencia (solo esos tres), debajo del
-  banner de alertas: UNA línea con dos botones lado a lado, **Tareas** y
+  los hubs de Compras, Administración y Gerencia (solo esos tres), debajo de
+  la barra: UNA línea con dos botones lado a lado, **Tareas** y
   **Alertas**, que arranca plegada. Los dos son OVALADOS (dueño, 04/10), para
   no confundirlos con los botones de acción del hub, que siguen con la punta
   de 8px; "Alertas (N)" va en un renglón y Tareas se queda el resto. Tareas dice "Sin tareas pendientes" en
   gris, o "Tareas pendientes (3)" destacado, y en ROJO si alguna venció.
   Alertas dice "Sin alertas" en VERDE o "Alertas (N)" en ROJO (dueño, 04/10),
-  N = las que tienen casos; el mismo color va en el botón de Alertas de
+  N = los renglones del panel; el mismo color va en el botón de Alertas de
   Comercial (`templates/_boton_alertas.html`, lo cuida
-  `tests/test_boton_alertas.py`).
+  `tests/test_boton_alertas.py`). **El botón no se pone verde si no se sabe**
+  (dueño, 05/10): una alerta que no se pudo calcular, una sin calcular
+  todavía, la foto vieja o la base que no contesta suman al botón y van en
+  el panel, después de las que tienen casos, con link a Auditoría.
+- **La cinta corrida de avisos se sacó de TODO el sistema** (dueño, 05/10:
+  "no la pidió nunca y no la quiere en ningún lado"), y `_banner_alertas.html`
+  ya no existe. Depósito, Logística, Puesto y Fichas quedaron sin avisos
+  arriba y sin botón en su lugar: sus alertas se ven en Auditoría y en otro
+  sector si lo declaran. Comercial, que tiene botón sin panel, muestra lo
+  que no se sabe arriba de su pantalla de Alertas (las cuatro pantallas de
+  Alertas lo traen). Lo cuida `tests/test_sin_cinta_de_avisos.py`, y la
+  lista decidida de módulos con y sin botón está en `tests/test_app.py`
+  (`MODULOS_CON_BOTON_DE_ALERTAS`).
   Cada botón despliega lo suyo ABAJO de la línea, a todo el ancho, y abrir
   uno cierra el otro: botón y panel van separados (con dos `<details>` lado a
   lado, lo desplegado quedaba en media columna a 313px). Desplegada, cada
@@ -36,7 +48,8 @@ en `core/tareas.py`.
   de DOS macros (`templates/_franja_hub.html`, que usa la lista de
   `templates/_tareas_pendientes.html`): los estilos van en el `<style>` del
   hub, así no mueven el corte de los tests. Las palabras de cada alerta salen
-  de `_boton_alertas.html`, las mismas que la cinta del banner. Medido a
+  de `_boton_alertas.html`; lo que no se sabe, de `_banner_alertas()` en
+  `app/main.py` (`problemas`). Medido a
   313px: sin desborde y sin solapes, los dos botones a la misma altura y de
   44px, ovalados, y el de acción con 8px (`tests/test_franja_hubs.py`).
 - **Lo que el sector ve es una OCURRENCIA** (`tareas_ocurrencias`): cada vez

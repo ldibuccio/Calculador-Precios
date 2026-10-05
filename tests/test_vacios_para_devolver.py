@@ -129,17 +129,18 @@ def test_sin_casos_la_alerta_NO_sale():
 
 
 # ---------------------------------------------------------------------------
-# Los hubs: el banner y el botón con la cantidad
+# Los hubs: el botón de Alertas con la cantidad y su panel
 # ---------------------------------------------------------------------------
 
 def _estado(casos_vacios=1086, otra_de_compras=0):
+    """La foto ENTERA, como la de producción: todas calculadas recién y en
+    cero, salvo estas. Una que falta es "sin calcular todavía", y desde el
+    05/10 eso también suma al botón."""
+    from app.main import ALERTAS
     ahora = datetime.now(ARGENTINA)
-    filas = [{"codigo": "vacios_para_devolver", "casos": casos_vacios, "mas_viejo": None,
-              "calculada_el": ahora, "error": None}]
-    if otra_de_compras:
-        filas.append({"codigo": "compras_sin_precio", "casos": otra_de_compras,
-                      "mas_viejo": None, "calculada_el": ahora, "error": None})
-    return filas
+    casos = {"vacios_para_devolver": casos_vacios, "compras_sin_precio": otra_de_compras}
+    return [{"codigo": d.codigo, "casos": casos.get(d.codigo, 0), "mas_viejo": None, "calculada_el": ahora,
+             "error": None} for d in ALERTAS]
 
 
 def _hub(url, estado):
@@ -151,8 +152,7 @@ def _hub(url, estado):
 def test_el_hub_muestra_la_frase_y_el_boton_ALERTAS_con_la_cantidad(url):
     respuesta = _hub(url, _estado())
     assert respuesta.status_code == 200
-    # Sobre el texto ENTERO: el banner trae su propio <style>, y cortar por
-    # el último "</style>" se lo lleva (corolario 50). El ancla es el <a>.
+    # Sobre el texto ENTERO; el ancla es el <a>.
     marcado = respuesta.text
     assert '">Hay 1.086 cajones vacíos en el galpón: hay que devolver</a>' in marcado
     # Desde el 04/10 el botón es el de la FRANJA de arriba (dueño), y el
@@ -178,11 +178,13 @@ def test_sin_alertas_el_boton_dice_solo_ALERTAS(url):
     assert "hay que devolver" not in marcado
 
 
-def test_una_alerta_SIN_CALCULAR_no_suma_al_boton():
-    estado = [{"codigo": "vacios_para_devolver", "casos": None, "mas_viejo": None,
-               "calculada_el": None, "error": None}]
+def test_una_alerta_SIN_CALCULAR_suma_al_boton_y_el_panel_dice_cual():
+    """Hasta el 05/10 no sumaba y el botón quedaba verde; el dueño: si no se
+    sabe, no es "Sin alertas"."""
+    estado = [dict(f, casos=None) if f["codigo"] == "vacios_para_devolver" else f for f in _estado()]
     marcado = _hub("/gerencia", estado).text
-    assert 'data-franja-boton="alertas">Sin alertas</button>' in marcado
+    assert 'data-franja-boton="alertas">Alertas (1)</button>' in marcado
+    assert ">Sin calcular todavía: " in marcado
 
 
 # ---------------------------------------------------------------------------

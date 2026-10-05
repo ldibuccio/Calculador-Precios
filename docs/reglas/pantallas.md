@@ -260,7 +260,13 @@ El dueño eligió "un color por recuadro" y no "un color por lo que hace".
   `templates/deposito.html`. Que las dos copias digan lo mismo lo cuida
   `tests/test_administracion_reordenada.py`.
 - Arriba de Compras, Administración y Gerencia va la franja Tareas/Alertas
-  (`docs/modulos/tareas.md`).
+  (`docs/modulos/tareas.md`). La cinta corrida de avisos no va en ninguna
+  pantalla (dueño, 05/10).
+- **El título de la barra no se corta a mitad de palabra** (dueño, 05/10):
+  si no entra en un renglón, parte entre palabras y achica hasta 0.75rem
+  para que entre la más larga ("Administración" a 313px con candado). Solo
+  una palabra que ni así entra —un nombre sin espacios— se corta
+  (`templates/_barra_navegacion.html`, `tests/test_sin_cinta_de_avisos.py`).
 - **Lo que mira lo mismo desde varios lados va en UN botón con pestañas**
   (`templates/_pestanas.html` y un parcial por grupo, con los links escritos
   tal cual para el barrido de pantallas sin link). Administración: Stock del

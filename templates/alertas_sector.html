@@ -64,6 +64,9 @@
   .aparte td { color: #6b7280; }
   /* RECALCULAR, grande y tocable con el pulgar: es el mismo botón de
      Auditoría, para no tener que ir hasta allá (dueño, 30/09). */
+  .problema { display: flex; align-items: center; min-height: 44px; margin: 0 0 0.5rem; padding: 0.5rem 0.9rem;
+    border-radius: 8px; background: #fef9c3; color: #713f12; font-weight: 600; text-decoration: none;
+    box-sizing: border-box; overflow-wrap: anywhere; }
   .recalcular { display: block; width: 100%; min-height: 52px; margin: 0 0 1rem;
     padding: 0.9rem; background: #fff; color: #1d4ed8; border: 2px solid #1d4ed8;
     border-radius: 10px; font-size: 1rem; font-weight: 700; font-family: inherit; cursor: pointer; }
@@ -127,6 +130,12 @@
 
   {% if aviso %}<div class="mensaje ok">{{ aviso }}</div>{% endif %}
   {% if error %}<div class="mensaje mal">{{ error }}</div>{% endif %}
+
+  {# Lo que no se sabe (no se pudo calcular, sin calcular todavía, la foto
+     vieja): lo mismo que el panel de Alertas de la franja (dueño, 05/10). #}
+  {% for p in problemas %}
+  <a class="problema" href="{{ p.url }}">{{ p.texto }}</a>
+  {% endfor %}
 
   <form method="post" action="/{{ sector }}/alertas/recalcular">
     <button class="recalcular" type="submit">Recalcular ahora</button>
@@ -193,7 +202,7 @@
          mostró: a Comercial se le acababa de dar un destino propio en Fichas
          para `unidades_que_difieren` y su propia tabla se lo tapaba. #}
       {# SALVO CUANDO APUNTA ACA. `kilos_faltantes` y `cajones_faltantes`
-         tienen url="/compras/alertas" porque desde el BANNER ese destino es
+         tienen url="/compras/alertas" porque desde el PANEL del hub ese destino es
          el correcto —te trae a ver el detalle—; adentro de esta pantalla es
          un link que recarga la misma página, con el detalle tres centímetros
          más abajo. Es el corolario 56: la url es UNA y los contextos son
@@ -205,7 +214,9 @@
       {% endif %}
     </div>
     {% endfor %}
-  {% else %}
+  {% elif not problemas %}
+  {# "Todo en orden" solo si se sabe: con la foto vieja o la base caída,
+     arriba ya dice qué no se sabe (dueño, 05/10). #}
   <div class="bloque">
     <p class="sin-casos">✓ Todo en orden</p>
     <p class="cuando">Ninguna alerta de {{ modulo_nombre }} tiene casos.</p>

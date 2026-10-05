@@ -5,9 +5,11 @@
    - Tareas: "Sin tareas pendientes" en gris, o "Tareas pendientes (N)"
      destacado, y en ROJO si alguna ya pasó su día. Despliega la lista y,
      abajo, "Nueva tarea" (también sin pendientes).
-   - Alertas: "Sin alertas" o "Alertas (N)", con N = las que tienen casos
-     (la misma cuenta que tenía el botón). Despliega cada una con su link y,
-     abajo, el detalle de todas.
+   - Alertas: "Sin alertas" o "Alertas (N)", con N = los renglones del panel.
+     Despliega cada una con su link, después LO QUE NO SE SABE (no se pudo
+     calcular, sin calcular todavía, la foto vieja: lo que antes decía la
+     cinta corrida, que se sacó de todo el sistema, dueño 05/10) y, abajo, el
+     detalle de todas.
 
    BOTÓN Y PANEL SEPARADOS, y no un <details> por botón: con dos <details>
    lado a lado, lo desplegado queda en la mitad del ancho, y a 313px eso es
@@ -45,6 +47,7 @@
   .franja-alerta { display: flex; align-items: center; min-height: 44px; padding: 0.5rem 0.9rem;
     border-top: 1px solid #eee; color: #9a3412; font-weight: 600; text-decoration: none; box-sizing: border-box; }
   .franja-alerta:first-child { border-top: none; }
+  .franja-problema { color: #713f12; background: #fef9c3; }
   .franja-vacia { margin: 0; padding: 0.7rem 0.9rem; color: #6b7280; }
   .franja-ver { display: flex; align-items: center; justify-content: center; min-height: 44px; margin: 0.7rem 0.9rem;
     border-radius: 8px; border: 1px solid #ea580c; color: #ea580c; font-weight: 600; text-decoration: none;
@@ -54,6 +57,7 @@
 
 {% macro franja(tareas_hub, banner) %}
 {% set _activas = banner.con_casos if banner and banner.con_casos else [] %}
+{% set _problemas = banner.problemas if banner and banner.problemas else [] %}
 {% set _cuantas = tareas_hub.tareas|length if tareas_hub and not tareas_hub.error else 0 %}
 <div class="franja-hub" data-franja>
   <div class="franja-botones">
@@ -77,9 +81,13 @@
   <div class="franja-panel" id="franja-alertas" data-franja-panel="alertas" hidden>
     {% for a in _activas %}
     <a class="franja-alerta" href="{{ a.url }}">{{ texto_de_alerta(a) }}</a>
-    {% else %}
-    <p class="franja-vacia">No hay alertas con casos.</p>
     {% endfor %}
+    {% for p in _problemas %}
+    <a class="franja-alerta franja-problema" href="{{ p.url }}">{{ p.texto }}</a>
+    {% endfor %}
+    {% if not _activas and not _problemas %}
+    <p class="franja-vacia">No hay alertas con casos.</p>
+    {% endif %}
     {{ caller() }}
   </div>
 </div>

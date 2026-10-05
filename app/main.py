@@ -2761,7 +2761,6 @@ def ver_fichas(request: Request, cliente_id: int | None = None, error: str | Non
             "fichas": fichas,
             "error": error,
             "aviso": aviso,
-            "banner": _banner_alertas("fichas"),
         },
     )
 
@@ -11537,7 +11536,7 @@ def dar_de_baja_envase(request: Request, envase_id: int):
 @app.get("/logistica")
 def ver_logistica(request: Request):
     """Hub del área Logística: el retiro de Clark (el único que se tilda acá) y el histórico Consultar Retiros."""
-    return templates.TemplateResponse(request, "logistica.html", {"banner": _banner_alertas("logistica")})
+    return templates.TemplateResponse(request, "logistica.html", {})
 
 
 ESTADOS_FILTRO_RETIRO_VALIDOS = {"pendiente", "retirado", "cancelado"}
@@ -11959,7 +11958,7 @@ def ver_deposito(request: Request, aviso: str | None = None):
     entra a Corregir lo que pidieron y desde ahí se arma.
     """
     return templates.TemplateResponse(
-        request, "deposito.html", {"aviso": aviso, "banner": _banner_alertas("deposito")}
+        request, "deposito.html", {"aviso": aviso}
     )
 
 
@@ -18541,36 +18540,56 @@ def _detalle_vacios_para_devolver() -> dict:
 
 
 def _banner_alertas(modulo: str) -> dict:
-    """Lo que necesita el banner de una botonera: las alertas de ese módulo y cuán vieja es la foto.
+    """El estado de las alertas de un hub: lo que muestra su botón de Alertas.
+
+    Se llama "banner" por la cinta corrida que lo mostraba hasta el 05/10 (el
+    dueño la sacó de todo el sistema). Hoy lo usan el botón y el panel de la
+    franja de Compras, Administración y Gerencia, el botón de Comercial, y los
+    avisos de arriba de la pantalla de Alertas de cada sector.
 
     UNA sola consulta, siempre: lee la foto del último cálculo y filtra en
-    memoria. Da igual que el registro tenga 15 alertas o 100 — por eso las
-    alertas se guardan en vez de calcularse en vivo (ver app/alertas.py).
-
-    El banner es un aviso, no algo crítico para poder navegar: si la consulta
-    falla, la botonera sale sin banner en vez de romperse entera por algo
-    accesorio. Mismo criterio que tenía el banner viejo de Compras.
+    memoria (ver app/alertas.py). Si la consulta falla, el hub sale igual —es
+    un aviso, no algo crítico para navegar— pero el botón no dice "Sin
+    alertas": dice que no se pudieron leer.
 
     La frescura NO sale de la foto: se compara contra el reloj acá. Si el
-    cálculo automático se murió, el banner lo dice — un banner vacío porque
-    nadie calculó nada no puede verse igual que un banner vacío porque está
-    todo bien.
+    cálculo automático se murió, el botón lo dice — "Sin alertas" porque nadie
+    calculó nada no puede verse igual que "Sin alertas" porque está todo bien.
     """
     try:
         estado = listar_estado_alertas()
     except Exception:
         logger.exception("No se pudo leer el estado de las alertas para el banner de %s", modulo)
-        return {"alertas": [], "frescura": None, "activas": 0, "con_casos": []}
+        # Sin foto no se sabe nada: eso tampoco puede verse como "Sin alertas".
+        problemas = [{"texto": "No se pudieron leer las alertas", "url": "/auditoria"}]
+        return {"alertas": [], "frescura": None, "activas": 0, "con_casos": [], "problemas": problemas,
+                "renglones": len(problemas)}
     alertas = para_mostrar(ALERTAS, estado, modulo)
     # Las que tienen casos: las que despliega el botón "Alertas" de la franja
-    # del hub, y su número. Una sin calcular o con error sale en el banner
-    # pero no se cuenta acá: no se sabe si tiene casos.
+    # del hub. Una sin calcular o con error no se sabe si tiene casos: va en
+    # `problemas`, con la foto vencida.
     con_casos = [a for a in alertas if a["casos"] and not a["error"]]
+    # LO QUE NO SE SABE (dueño, 05/10): lo dice la cinta y, en los hubs sin
+    # cinta, el panel de Alertas de la franja; y el botón no se pone verde.
+    problemas = []
+    for a in alertas:
+        if a["error"]:
+            problemas.append({"texto": "No se pudo calcular: " + a["titulo"], "url": "/auditoria"})
+        elif a["casos"] is None:
+            problemas.append({"texto": "Sin calcular todavía: " + a["titulo"], "url": "/auditoria"})
+    al_dia = frescura(estado, datetime.now(ARGENTINA))
+    if al_dia["vencida"]:
+        problemas.append({"texto": ("Ojo: estas alertas se calcularon " + al_dia["texto"]
+                                    + " y no se actualizaron desde entonces") if al_dia["hay_datos"]
+                          else "Ojo: las alertas todavía no se calcularon nunca", "url": "/auditoria"})
     return {
         "alertas": alertas,
-        "frescura": frescura(estado, datetime.now(ARGENTINA)),
+        "frescura": al_dia,
         "activas": len(con_casos),
         "con_casos": con_casos,
+        "problemas": problemas,
+        # lo que cuenta el botón: un renglón por cada cosa del panel
+        "renglones": len(con_casos) + len(problemas),
     }
 
 
@@ -18993,6 +19012,9 @@ def _pantalla_de_alertas(request: Request, sector: str, nombre: str, volver: str
         "alertas_sector.html",
         {
             "bloques": _bloques_de_alertas(sector),
+            # LO QUE NO SE SABE, arriba de todo (dueño, 05/10): en Comercial el
+            # botón no tiene panel, y esto es lo que se ve al tocarlo.
+            "problemas": _banner_alertas(sector)["problemas"],
             "sector": sector,
             "modulo_nombre": nombre,
             "volver": volver,
@@ -21635,7 +21657,7 @@ def exportar_ingresos_deposito_excel(
 @app.get("/puesto")
 def ver_puesto(request: Request):
     """Hub del módulo Puesto (la venta en el puesto del Mercado, aparte de la distribución)."""
-    return templates.TemplateResponse(request, "puesto.html", {"banner": _banner_alertas("puesto")})
+    return templates.TemplateResponse(request, "puesto.html", {})
 
 
 @app.get("/puesto/envases")

@@ -337,7 +337,8 @@ arrancó", sus "esperando" y la regla de la fecha— **se fue**.
   La frase la arma el campo `texto` de `DefinicionAlerta`. Gerencia y
   Administración estrenaron su pantalla de Alertas (`/gerencia/alertas`,
   `/administracion/alertas`), y los cuatro hubs dicen en el botón cuántas
-  tienen casos (`templates/_boton_alertas.html`). Las cuatro pantallas de
+  hay (`templates/_boton_alertas.html`; desde el 05/10 también cuenta lo que
+  no se sabe, ver `docs/modulos/tareas.md`). Las cuatro pantallas de
   Alertas traen "Recalcular ahora" desde el 30/09 (dueño): hasta ese día el
   botón estaba solo en Auditoría. Recalcula TODAS con la misma función que
   Auditoría (`_recalcular_alertas_a_pedido`) y vuelve a la pantalla del

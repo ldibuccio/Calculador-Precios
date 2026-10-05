@@ -33,10 +33,14 @@ def _cliente(m, *puertas):
 
 
 def _estado_con_una_alerta():
+    """La foto ENTERA, como la de producción: todas calculadas recién y en
+    cero, salvo la de los vacíos. Una que falta en la foto es "sin calcular
+    todavía", y eso desde el 05/10 también va al panel."""
     from datetime import datetime
-    from app.main import ARGENTINA
-    return [{"codigo": "vacios_para_devolver", "casos": 1086, "mas_viejo": None,
-             "calculada_el": datetime.now(ARGENTINA), "error": None}]
+    from app.main import ALERTAS, ARGENTINA
+    ahora = datetime.now(ARGENTINA)
+    return [{"codigo": d.codigo, "casos": 1086 if d.codigo == "vacios_para_devolver" else 0, "mas_viejo": None,
+             "calculada_el": ahora, "error": None} for d in ALERTAS]
 
 
 def _tareas(sector, vencida):
