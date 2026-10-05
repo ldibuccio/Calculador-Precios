@@ -41,6 +41,8 @@ GRUPOS_DECIDIDOS = {
     "Pedidos": [
         ("/deposito/pedido/cargar", "Cargar pedido"),
         ("/administracion/pedidos/buscar", "Armar remito"),
+        # Vino entera de Sistema el 04/10 (dueño: "Todo a Administración").
+        ("/administracion/casilla-pedidos", "Casilla de pedidos"),
     ],
     "Facturación y cobranzas": [
         ("/administracion/facturacion", "Remitos y facturas"),

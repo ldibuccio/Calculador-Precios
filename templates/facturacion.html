@@ -4,6 +4,7 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Facturación</title>
+{% import "_pestanas_gerencia.html" as pestanas_gerencia %}
 <style>
   :root { font-family: -apple-system, system-ui, sans-serif; }
   body { margin: 0; padding: 1rem; background: #f5f5f5; color: #222; }
@@ -42,6 +43,7 @@
   label.tilde { display: flex; gap: 0.6rem; align-items: flex-start; min-height: 44px; cursor: pointer; }
   label.tilde input { width: 1.4rem; height: 1.4rem; margin-top: 0.1rem; flex: none; }
   .total { font-weight: 700; margin: 0.6rem 0 0; }
+  {{ pestanas_gerencia.estilos() }}
 </style>
 </head>
 <body>
@@ -49,6 +51,7 @@
   {% set barra_titulo = "Facturación" %}
   {% set barra_atras = camino.base %}
   {% include "_barra_navegacion.html" %}
+  {% if camino.sector == "gerencia" %}{{ pestanas_gerencia.facturacion("remitos") }}{% endif %}
   {% from "_info.html" import info %}
   {% set es_admin = camino.sector == "administracion" %}
 

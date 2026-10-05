@@ -2071,9 +2071,12 @@ def test_el_SQL_de_cajas_perdidas_RECORTA_POR_LAS_DOS_PUNTAS():
 
 
 def test_Cajas_Perdidas_esta_LINKEADA_desde_el_hub_de_Gerencia():
-    """Una ruta sin puerta responde 200, tiene sus tests, y no llega nadie."""
+    """Una ruta sin puerta responde 200, tiene sus tests, y no llega nadie.
+    Desde el 04/10 (dueño) se llega por Pérdidas, en su pestaña."""
     marcado = io.open("templates/gerencia.html", encoding="utf-8").read().split("</style>")[-1]
-    assert 'href="/gerencia/cajas-perdidas"' in marcado
+    assert 'href="/gerencia/perdidas"' in marcado
+    pestanas = io.open("templates/_pestanas_gerencia.html", encoding="utf-8").read()
+    assert 'href="/gerencia/cajas-perdidas"' in pestanas
 
 
 @pytest.mark.parametrize("cliente_nombre, caso", [
@@ -2209,8 +2212,9 @@ def test_el_SQL_del_gasto_RECORTA_POR_LAS_DOS_PUNTAS():
 def test_el_boton_del_hub_dice_PLATA_DE_CAJAS_y_no_solo_las_perdidas():
     """El nombre nombra lo que hay adentro: si dice "Cajas perdidas", el que
     busca cuánto gastó no entra."""
-    marcado = io.open("templates/gerencia.html", encoding="utf-8").read().split("</style>")[-1]
-    assert 'href="/gerencia/cajas-perdidas">Plata de cajas</a>' in marcado
+    # Desde el 04/10 es la pestaña de Pérdidas, y dice lo mismo.
+    pestanas = io.open("templates/_pestanas_gerencia.html", encoding="utf-8").read()
+    assert re.search(r'<a href="/gerencia/cajas-perdidas"[^>]*>Plata de cajas</a>', pestanas)
 
 
 def _forma_que_devuelve(nombre_funcion: str) -> tuple[set, set]:

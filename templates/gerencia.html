@@ -5,6 +5,7 @@
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Gerencia</title>
 {% import "_franja_hub.html" as franja_hub %}
+{% import "_botones_hub.html" as botones_hub %}
 <style>
   :root { font-family: -apple-system, system-ui, sans-serif; }
   body {
@@ -20,22 +21,6 @@
     margin-bottom: 1rem;
     box-shadow: 0 1px 3px rgba(0, 0, 0, 0.1);
   }
-  .boton {
-    margin-top: 1.1rem;
-    width: 100%;
-    padding: 1.1rem;
-    background: #ea580c;
-    color: #fff;
-    border: none;
-    border-radius: 10px;
-    font-size: 1.1rem;
-    font-weight: 700;
-    text-align: center;
-    text-decoration: none;
-    display: block;
-    box-sizing: border-box;
-  }
-  .boton:first-child { margin-top: 0; }
   .volver {
     display: block;
     margin-top: 0.75rem;
@@ -45,6 +30,7 @@
     text-decoration: none;
   }
   {{ franja_hub.estilos() }}
+  {{ botones_hub.estilos() }}
 </style>
 </head>
 <body>
@@ -59,41 +45,42 @@
     <a class="franja-ver" href="/gerencia/alertas">Ver el detalle de las alertas</a>
   {% endcall %}
 
+  {# ONCE BOTONES EN TRES GRUPOS (dueño, 04/10; eran 13, más Stock inicial
+     que vino de Administración). Lo que mira lo mismo desde dos o tres
+     lados quedó en un botón con pestañas (_pestanas_gerencia.html):
+     Rentabilidad (De pedidos · Real), Pérdidas (Mercadería · Cajas) y
+     Facturación y cobranzas (Remitos y facturas · Vales · Segunda). #}
   <div class="tarjeta">
-    {# Lo que Gerencia les carga a los sectores (dueño, 02/10). #}
-    <a class="boton" href="/gerencia/tareas">Tareas</a>
-    {# Plan B (dueño, 02/10): solo mira, y es de lo que se mira antes que
-       nada. No va con Fotos, que es del grupo que escribe. #}
-    <a class="boton" href="/gerencia/backups">Backups</a>
+    <h2>Mirar</h2>
+    {# El manejo del dinero, con su clave. La Auditoría vive en su propio
+       sector (/auditoria), sin clave: es control operativo, no plata. #}
+    <a class="boton color-1" href="/gerencia/rentabilidad">{{ ICONOS_HUBS['rentabilidad']|safe }}<span>Rentabilidad</span></a>
+    <a class="boton color-1" href="/gerencia/perdidas">{{ ICONOS_HUBS['perdidas']|safe }}<span>Pérdidas</span></a>
+    <a class="boton color-1" href="/gerencia/costos-fijos">{{ ICONOS_HUBS['costos_fijos']|safe }}<span>Costos fijos</span></a>
+    {# Las MISMAS pantallas que Administración: acá se corrigen el vale y el
+       número del remito (dueño). #}
+    <a class="boton color-1" href="/gerencia/facturacion">{{ ICONOS_HUBS['facturas']|safe }}<span>Facturación y cobranzas</span></a>
   </div>
 
-  {# El manejo del dinero, con su clave. La Auditoría vive en su propio
-     sector (/auditoria), sin clave: es control operativo, no plata. #}
+  {# APARTE de las de mirar: éstas ESCRIBEN, y escriben en el pasado o no se
+     deshacen. Un grupo propio para que no se toquen de paso. #}
   <div class="tarjeta">
-    <a class="boton" href="/gerencia/rentabilidad">Rentabilidad de Pedidos</a>
-    <a class="boton" href="/gerencia/rentabilidad-real">Rentabilidad Real</a>
-    {# Va en ESTE grupo y no en uno propio: es de mirar plata, como las dos de
-       arriba, y no escribe nada. Cuando se arme el estado de resultados va a
-       ser una linea de ahi; hasta entonces se mira suelta. #}
-    <a class="boton" href="/gerencia/cajas-perdidas">Plata de cajas</a>
-    <a class="boton" href="/gerencia/perdidas">Pérdidas</a>
-    <a class="boton" href="/gerencia/vales">Vales a cobrar</a>
-    <a class="boton" href="/gerencia/cobranzas-segunda">Cobranzas de segunda</a>
-    <a class="boton" href="/gerencia/facturacion">Remitos y facturas</a>
-    <a class="boton" href="/gerencia/costos-fijos">Costos Fijos</a>
-  </div>
-
-  {# APARTE de las tres de arriba, que son de mirar plata: ésta ESCRIBE, y
-     escribe en el pasado. Un grupo propio para que no se toque de paso. #}
-  <div class="tarjeta">
-    <a class="boton" href="/gerencia/compras/ingreso-retroactivo">Ingreso con fecha anterior</a>
+    <h2>Corregir</h2>
+    <a class="boton color-2" href="/gerencia/compras/ingreso-retroactivo">{{ ICONOS_HUBS['fecha_anterior']|safe }}<span>Ingreso con fecha anterior</span></a>
+    <a class="boton color-2" href="/gerencia/proveedores/juntar">{{ ICONOS_HUBS['juntar']|safe }}<span>Juntar dos proveedores</span></a>
     {# Vino de Administración el 04/10 (dueño): se usó una sola vez, el 05/09,
-       y escribe con la fecha del corte. Va con las que escriben en el pasado. #}
-    <a class="boton" href="/gerencia/stock/inicial">Stock inicial del corte</a>
-    {# También escribe y no se deshace: por eso va en este grupo y no con las de mirar plata. #}
-    <a class="boton" href="/gerencia/proveedores/juntar">Juntar dos proveedores</a>
-    {# Borra archivos y no se deshace: va con las que escriben (dueño, 30/09). #}
-    <a class="boton" href="/gerencia/fotos">Fotos y espacio</a>
+       y escribe con la fecha del corte. #}
+    <a class="boton color-2" href="/gerencia/stock/inicial">{{ ICONOS_HUBS['stock_inicial']|safe }}<span>Stock inicial del corte</span></a>
+  </div>
+
+  <div class="tarjeta">
+    <h2>Mantenimiento</h2>
+    {# Lo que Gerencia les carga a los sectores (dueño, 02/10). #}
+    <a class="boton color-3" href="/gerencia/tareas">{{ ICONOS_HUBS['tareas']|safe }}<span>Tareas</span></a>
+    {# Plan B (dueño, 02/10): solo mira. #}
+    <a class="boton color-3" href="/gerencia/backups">{{ ICONOS_HUBS['backups']|safe }}<span>Backups</span></a>
+    {# Borra archivos y no se deshace (dueño, 30/09). #}
+    <a class="boton color-3" href="/gerencia/fotos">{{ ICONOS_HUBS['fotos']|safe }}<span>Fotos y espacio</span></a>
   </div>
 
   <a class="volver" href="/inicio">Volver a Inicio</a>

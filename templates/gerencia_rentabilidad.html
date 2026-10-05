@@ -4,6 +4,7 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Rentabilidad de Pedidos</title>
+{% import "_pestanas_gerencia.html" as pestanas_gerencia %}
 <style>
   :root { font-family: -apple-system, system-ui, sans-serif; }
   body {
@@ -111,6 +112,7 @@
   .item-afuera .crudo { font-weight: 700; }
   .item-afuera .motivo { color: #713f12; font-size: 0.82rem; margin-top: 0.1rem; }
   .vacio { color: #888; font-style: italic; margin: 0; }
+  {{ pestanas_gerencia.estilos() }}
 </style>
 </head>
 <body>
@@ -119,6 +121,7 @@
   {% set barra_atras = "/gerencia" %}
   {% from "_info.html" import info %}
   {% include "_barra_navegacion.html" %}
+  {{ pestanas_gerencia.rentabilidad("pedidos") }}
 
 
   {% if error_fecha %}

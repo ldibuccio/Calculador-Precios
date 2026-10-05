@@ -11122,21 +11122,14 @@ async def guardar_y_exportar_precios_cargar_foto_excel(request: Request):
     return _respuesta_listado_generado(cliente, cambios, "excel")
 
 
-def _renderizar_pantalla_sistema(request: Request):
-    """La pantalla de Sistema. Las fotos viejas ya NO se limpian desde acá
-    (dueño, 30/09): la limpieza de Sistema no pedía clave, borraba el registro
-    y contaba la antigüedad por la fecha de la compra. Vive en Gerencia →
-    Fotos y espacio."""
-    return templates.TemplateResponse(
-        request,
-        "sistema.html",
-        {"banner": _banner_alertas("sistema")},
-    )
-
-
+# SISTEMA DESAPARECIÓ (dueño, 04/10): su único botón era la Casilla de
+# pedidos, que se fue entera a Administración → Pedidos, con la clave de
+# Administración y sus tres alertas. Las direcciones viejas llevan allá.
 @app.get("/sistema")
-def ver_sistema(request: Request):
-    return _renderizar_pantalla_sistema(request)
+@app.get("/sistema/casilla-pedidos")
+def sistema_va_a_la_casilla_de_administracion(request: Request):
+    consulta = f"?{request.url.query}" if request.url.query else ""
+    return RedirectResponse(url="/administracion/casilla-pedidos" + consulta, status_code=301)
 
 
 # ============================================================================
@@ -18247,11 +18240,12 @@ ALERTAS = [
         # Pendientes Y con error de lectura: un mail que falló a las 12:00
         # corriendo solo se tiene que ver acá, no perderse.
         titulo="Mails de pedido sin confirmar",
-        url="/sistema/casilla-pedidos",
+        url="/administracion/casilla-pedidos",
         texto_link="Ver en Casilla de Pedidos",
-        # Solo en Sistema: Depósito ya tiene seis y todas accionables. Un
+        # Solo en Administración, donde vive la Casilla desde el 04/10
+        # (antes, Sistema): Depósito ya tiene seis y todas accionables. Un
         # banner que se llena deja de mirarse.
-        modulos=("sistema",),
+        modulos=("administracion",),
         contar=lambda: contar_mails_pedido_sin_procesar(),
     ),
     DefinicionAlerta(
@@ -18261,9 +18255,9 @@ ALERTAS = [
         # antes de que un cruce de bultos llegue a una entrega. Ventana de 7
         # días: alcanza para verlo sin arrastrar para siempre un mail viejo.
         titulo="Pedidos de mail leídos con IA (el parser de estructura no pudo, últimos 7 días)",
-        url="/sistema/casilla-pedidos",
+        url="/administracion/casilla-pedidos",
         texto_link="Ver en Casilla de Pedidos",
-        modulos=("sistema",),
+        modulos=("administracion",),
         contar=lambda: contar_mails_pedido_leidos_con_ia(_hoy_argentina() - timedelta(days=7)),
     ),
     DefinicionAlerta(
@@ -18284,9 +18278,9 @@ ALERTAS = [
         # recuperó solo no alerta (se ve en la pantalla de la casilla, pero no
         # grita acá).
         titulo="La casilla de pedidos no se pudo revisar",
-        url="/sistema/casilla-pedidos",
+        url="/administracion/casilla-pedidos",
         texto_link="Ver en Casilla de Pedidos",
-        modulos=("sistema",),
+        modulos=("administracion",),
         contar=lambda: contar_casillas_sin_revisar(),
     ),
     DefinicionAlerta(
@@ -23990,8 +23984,11 @@ async def confirmar_pedido(request: Request):
         # Un mail con error de lectura previo se puede confirmar igual (el
         # reintento anduvo); solo un confirmado o ignorado queda cerrado.
         if mail["estado"] not in ("pendiente", "error"):
+            # A PEDIDOS DE DEPÓSITO y no a la Casilla: esta ruta es de
+            # Depósito, sin clave, y la Casilla vive en Administración desde
+            # el 04/10 (dueño). Mandarlo allá sería una pared (corolario 56).
             return RedirectResponse(
-                url=f"/sistema/casilla-pedidos?{urlencode({'error': 'Ese mail ya fue procesado (quizás desde otra pestaña). No se guardó nada.'})}",
+                url=f"/deposito/pedido?{urlencode({'aviso': 'Ese mail ya fue procesado (quizás desde otra pestaña). No se guardó nada.'})}",
                 status_code=303,
             )
 
@@ -25035,25 +25032,32 @@ def _renderizar_casilla_pedidos(request: Request, *, mensaje: str | None = None,
     )
 
 
+def _volver_a_pedidos_de_deposito(aviso: str):
+    """El circuito del mail (revisar y confirmar) es de Depósito, sin clave:
+    si algo no se puede, vuelve a SU pantalla de Pedidos con el aviso, y no a
+    la Casilla, que desde el 04/10 vive en Administración con su clave."""
+    return RedirectResponse(url=f"/deposito/pedido?{urlencode({'aviso': aviso})}", status_code=303)
+
+
 def _redirigir_a_casilla(mensaje: str | None = None, error: str | None = None):
     parametros = {}
     if mensaje:
         parametros["mensaje"] = mensaje
     if error:
         parametros["error"] = error
-    url = "/sistema/casilla-pedidos"
+    url = "/administracion/casilla-pedidos"
     if parametros:
         url += f"?{urlencode(parametros)}"
     return RedirectResponse(url=url, status_code=303)
 
 
-@app.get("/sistema/casilla-pedidos")
+@app.get("/administracion/casilla-pedidos")
 def ver_casilla_pedidos(request: Request, mensaje: str | None = None, error: str | None = None):
     """Casilla de Pedidos: la configuración de lectura del buzón, su estado y los mails registrados."""
     return _renderizar_casilla_pedidos(request, mensaje=mensaje, error=error)
 
 
-@app.post("/sistema/casilla-pedidos/guardar")
+@app.post("/administracion/casilla-pedidos/guardar")
 def guardar_casilla_pedidos(
     request: Request,
     direccion: str = Form(""),
@@ -25110,7 +25114,7 @@ def _fecha_activacion_desde_form(texto: str):
     return valor
 
 
-@app.post("/sistema/casilla-pedidos/{casilla_id}/activar")
+@app.post("/administracion/casilla-pedidos/{casilla_id}/activar")
 def activar_casilla_pedidos_ruta(request: Request, casilla_id: int, fecha_activacion: str = Form("")):
     """Prende la lectura. Solo se miran correos POSTERIORES a la fecha de activación (default: ahora)."""
     fecha_valor = _fecha_activacion_desde_form(fecha_activacion)
@@ -25123,7 +25127,7 @@ def activar_casilla_pedidos_ruta(request: Request, casilla_id: int, fecha_activa
     return _redirigir_a_casilla(mensaje="Casilla activada. Probá la conexión con Revisar ahora.")
 
 
-@app.post("/sistema/casilla-pedidos/{casilla_id}/desactivar")
+@app.post("/administracion/casilla-pedidos/{casilla_id}/desactivar")
 def desactivar_casilla_pedidos_ruta(casilla_id: int):
     try:
         desactivar_casilla_pedidos(casilla_id)
@@ -25132,7 +25136,7 @@ def desactivar_casilla_pedidos_ruta(casilla_id: int):
     return _redirigir_a_casilla(mensaje="Casilla desactivada: no se revisa más hasta que la vuelvas a activar.")
 
 
-@app.post("/sistema/casilla-pedidos/{casilla_id}/fecha-activacion")
+@app.post("/administracion/casilla-pedidos/{casilla_id}/fecha-activacion")
 def cambiar_fecha_activacion_ruta(request: Request, casilla_id: int, fecha_activacion: str = Form("")):
     """Corrige a mano desde cuándo se miran los correos (p. ej. atrasarla para releer un día)."""
     fecha_valor = _fecha_activacion_desde_form(fecha_activacion)
@@ -25145,7 +25149,7 @@ def cambiar_fecha_activacion_ruta(request: Request, casilla_id: int, fecha_activ
     return _redirigir_a_casilla(mensaje="Fecha de activación cambiada: la próxima revisión mira desde ahí.")
 
 
-@app.post("/sistema/casilla-pedidos/{casilla_id}/auto-confirmar")
+@app.post("/administracion/casilla-pedidos/{casilla_id}/auto-confirmar")
 def auto_confirmar_casilla_ruta(casilla_id: int, valor: str = Form("")):
     """El toggle de auto-confirmar (tramo 2: confirmar solo el pedido con todos los candados cerrados y que no reemplaza a nadie)."""
     activar = valor.strip() == "si"
@@ -25158,7 +25162,7 @@ def auto_confirmar_casilla_ruta(casilla_id: int, valor: str = Form("")):
     return _redirigir_a_casilla(mensaje="Auto-confirmar apagado: todos los mails quedan pendientes para confirmar a mano.")
 
 
-@app.post("/sistema/casilla-pedidos/{casilla_id}/horario")
+@app.post("/administracion/casilla-pedidos/{casilla_id}/horario")
 def cambiar_horario_revision_ruta(
     request: Request,
     casilla_id: int,
@@ -25246,7 +25250,7 @@ def _revision_manual_de_casilla(casilla: dict) -> dict:
     return {"error": None, "resultado": resultado, "nuevos": nuevos, "ya_registrados": ya_registrados}
 
 
-@app.post("/sistema/casilla-pedidos/{casilla_id}/revisar")
+@app.post("/administracion/casilla-pedidos/{casilla_id}/revisar")
 def revisar_casilla_ahora_ruta(request: Request, casilla_id: int):
     """Revisar ahora: conecta al buzón en solo lectura, registra lo nuevo y CUENTA lo que vio.
 
@@ -25712,7 +25716,7 @@ async def _bucle_revision_casillas() -> None:
         await asyncio.sleep(SEGUNDOS_TICK_REVISION)
 
 
-@app.post("/sistema/casilla-pedidos/mails/{mail_id}/ignorar")
+@app.post("/administracion/casilla-pedidos/mails/{mail_id}/ignorar")
 def ignorar_mail_pedido_ruta(mail_id: int):
     """Marca un mail pendiente como ignorado (no era un pedido). El registro queda, nada desaparece."""
     try:
@@ -25737,7 +25741,7 @@ def revisar_mail_pedido_ruta(request: Request, mail_id: int):
     if mail is None:
         raise HTTPException(status_code=404, detail="Mail no encontrado")
     if mail["estado"] not in ("pendiente", "error"):
-        return _redirigir_a_casilla(error="Ese mail ya fue procesado: no hay nada para confirmar.")
+        return _volver_a_pedidos_de_deposito("Ese mail ya fue procesado: no hay nada para confirmar.")
 
     # SIEMPRE desde el cuerpo crudo guardado, con la conversión vigente:
     # una mejora del parser o de la conversión aplica retroactivamente a
@@ -25767,7 +25771,7 @@ def revisar_mail_pedido_ruta(request: Request, mail_id: int):
                 marcar_mail_pedido_error(mail_id, f"La lectura falló: {error_lector}")
             except Exception:
                 logger.exception("No se pudo registrar el error de lectura en el mail %s", mail_id)
-            return _redirigir_a_casilla(error=f"No se pudo leer el pedido del mail: {error_lector}")
+            return _volver_a_pedidos_de_deposito(f"No se pudo leer el pedido del mail: {error_lector}")
 
     # La fecha del pedido la manda el ASUNTO ("Pedido Dia 22-08 Sabado":
     # el mail del mediodía es para el día siguiente); la llegada es solo

@@ -1868,13 +1868,14 @@ def test_ver_compras_muestra_solo_la_botonera():
 def test_ver_compras_no_muestra_nada_de_sistema_ahi():
     # Regresión: el indicador de espacio y el botón de limpieza de fotos se
     # movieron a /sistema — /compras es operativa, no tiene que mostrar
-    # nada de eso (ni siquiera si esas funciones responden bien).
+    # nada de eso (ni siquiera si esas funciones responden bien). Y desde el
+    # 04/10 Sistema ya no existe (dueño): Compras tampoco lo linkea.
     respuesta = cliente.get("/compras")
 
     assert respuesta.status_code == 200
     assert "fotos guardadas" not in respuesta.text
     assert 'id="boton-limpiar-fotos-viejas"' not in respuesta.text
-    assert 'href="/sistema"' in respuesta.text
+    assert 'href="/sistema"' not in respuesta.text
 
 
 def test_ver_compras_incluye_links_a_catalogo_y_a_inicio():
@@ -1890,24 +1891,20 @@ def test_ver_compras_incluye_links_a_catalogo_y_a_inicio():
 
 def test_ver_sistema_YA_NO_limpia_fotos_viejas():
     """La limpieza de 3 años salió de Sistema (dueño, 30/09): no pedía clave,
-    borraba el registro y contaba por la fecha de la compra. Vive en Gerencia."""
-    respuesta = cliente.get("/sistema")
-
-    assert respuesta.status_code == 200
-    marcado = respuesta.text.split("</style>")[-1]
-    assert "limpiar-fotos-viejas" not in marcado
-    assert "revisar-fotos-viejas" not in marcado
-    assert "fotos guardadas" not in marcado
+    borraba el registro y contaba por la fecha de la compra. Vive en Gerencia.
+    Y desde el 04/10 Sistema no existe: lleva a la Casilla de Administración."""
+    respuesta = cliente.get("/sistema", follow_redirects=False)
+    assert respuesta.status_code == 301
+    assert respuesta.headers["location"] == "/administracion/casilla-pedidos"
     rutas = {r.path for r in app.routes}
     assert "/sistema/limpiar-fotos-viejas" not in rutas
     assert "/sistema/revisar-fotos-viejas" not in rutas
 
 
-def test_ver_sistema_incluye_link_a_inicio():
-    respuesta = cliente.get("/sistema")
-
-    assert respuesta.status_code == 200
-    assert 'href="/inicio"' in respuesta.text
+def test_ver_sistema_lleva_a_la_casilla_de_ADMINISTRACION():
+    """Sistema desapareció el 04/10 (dueño): su único botón era la Casilla."""
+    respuesta = cliente.get("/sistema", follow_redirects=False)
+    assert (respuesta.status_code, respuesta.headers["location"]) == (301, "/administracion/casilla-pedidos")
 
 
 
@@ -10718,7 +10715,9 @@ def test_ver_inicio_muestra_las_8_areas():
     assert 'href="/gerencia"' in respuesta.text
     assert 'href="/administracion"' in respuesta.text
     assert 'href="/puesto"' in respuesta.text
-    assert 'href="/sistema"' in respuesta.text
+    assert 'href="/auditoria"' in respuesta.text
+    # Sistema desapareció el 04/10 (dueño): su Casilla vive en Administración.
+    assert 'href="/sistema"' not in respuesta.text
 
 
 def test_ver_inicio_usa_el_nombre_de_empresa_configurado():
@@ -10778,7 +10777,7 @@ def test_ver_inicio_usa_los_mismos_iconos_que_la_barra_de_navegacion():
     respuesta = cliente.get("/inicio")
 
     assert respuesta.status_code == 200
-    for sector in ("compras", "comercial", "logistica", "deposito", "gerencia", "administracion", "puesto", "sistema"):
+    for sector in ("compras", "comercial", "logistica", "deposito", "gerencia", "administracion", "puesto"):
         assert SECTORES[sector]["icono"] in respuesta.text
 
 
@@ -12075,7 +12074,8 @@ def test_ver_gerencia_es_el_hub_del_dinero_sin_auditoria():
 
     assert respuesta.status_code == 200
     assert 'href="/gerencia/rentabilidad"' in respuesta.text
-    assert 'href="/gerencia/rentabilidad-real"' in respuesta.text
+    # La Real es la pestaña de Rentabilidad desde el 04/10 (dueño).
+    assert 'href="/gerencia/rentabilidad-real"' in io.open("templates/_pestanas_gerencia.html", encoding="utf-8").read()
     assert "/auditoria" not in respuesta.text
     assert 'href="/inicio"' in respuesta.text
 
@@ -12574,11 +12574,18 @@ def test_barra_navegacion_en_comercial_usa_icono_distinto_de_compras():
     assert SECTORES["compras"]["icono"] not in respuesta.text
 
 
-def test_barra_navegacion_en_sistema():
-    respuesta = cliente.get("/sistema")
-
-    assert respuesta.status_code == 200
-    assert f'href="/sistema" aria-label="Ir a Sistema">{SECTORES["sistema"]["icono"]}</a>' in respuesta.text
+def test_barra_navegacion_en_la_casilla_es_la_de_ADMINISTRACION():
+    """La Casilla vino de Sistema el 04/10 (dueño): su barra es de Administración."""
+    with (
+        patch("app.main.listar_casillas_pedidos", return_value=[]),
+        patch("app.main.listar_mails_pedido", return_value=[]),
+        patch("app.main.listar_clientes", return_value=CLIENTES_PARA_SELECTOR),
+        patch("app.main.clave_casilla_configurada", return_value=None),
+    ):
+        respuesta = cliente.get("/administracion/casilla-pedidos")
+    assert respuesta.status_code == 200, respuesta.text[:300]
+    assert 'aria-label="Ir a Administración"' in respuesta.text
+    assert 'aria-label="Ir a Sistema"' not in respuesta.text
 
 
 ARGENTINA_TEST = timezone(timedelta(hours=-3))
@@ -12654,7 +12661,7 @@ def test_ver_auditoria_lista_las_alertas_con_casos_y_el_mas_viejo():
     assert "leídos con IA (el parser de estructura no pudo" in respuesta.text
     assert "Falta el pedido de un día esperado" in respuesta.text
     assert "La casilla de pedidos no se pudo revisar" in respuesta.text
-    assert 'href="/sistema/casilla-pedidos"' in respuesta.text
+    assert 'href="/administracion/casilla-pedidos"' in respuesta.text
     assert "el más viejo es del 01/08/2026" in respuesta.text
     assert "el más viejo es del 28/07/2026" in respuesta.text
     # Los links al detalle. El de retiros se arma con el dato de la foto.
@@ -14003,7 +14010,6 @@ def test_titulo_grande_del_cuerpo_ya_no_aparece_en_ninguna_pantalla():
     urls = [
         "/compras",
         "/comercial",
-        "/sistema",
         "/logistica",
         "/deposito",
         "/gerencia",
@@ -14044,7 +14050,7 @@ def test_titulo_grande_del_cuerpo_ya_no_aparece_en_ninguna_pantalla():
 def test_barra_navegacion_muestra_el_titulo_del_sector_en_las_pantallas_principales():
     # El único título que queda es el de la barrita — se agrandó, pero
     # sigue siendo el mismo <div class="barra-titulo">.
-    casos = [("/compras", "Compras"), ("/comercial", "Comercial"), ("/sistema", "Sistema")]
+    casos = [("/compras", "Compras"), ("/comercial", "Comercial"), ("/logistica", "Logística")]
     for url, nombre in casos:
         respuesta = cliente.get(url)
         assert respuesta.status_code == 200
@@ -19264,11 +19270,12 @@ MAIL_PEDIDO_DE_PRUEBA = {
 }
 
 
-def test_ver_sistema_muestra_el_acceso_a_la_casilla_de_pedidos():
-    respuesta = cliente.get("/sistema")
+def test_ADMINISTRACION_muestra_el_acceso_a_la_casilla_de_pedidos():
+    """Vino de Sistema el 04/10 (dueño: "Todo a Administración")."""
+    respuesta = cliente.get("/administracion")
 
     assert respuesta.status_code == 200
-    assert 'href="/sistema/casilla-pedidos"' in respuesta.text
+    assert 'href="/administracion/casilla-pedidos"' in respuesta.text
 
 
 def test_ver_casilla_pedidos_sin_casillas_muestra_el_alta_y_avisa_que_falta_la_clave():
@@ -19278,11 +19285,11 @@ def test_ver_casilla_pedidos_sin_casillas_muestra_el_alta_y_avisa_que_falta_la_c
         patch("app.main.listar_clientes", return_value=CLIENTES_PARA_SELECTOR),
         patch("app.main.clave_casilla_configurada", return_value=None),
     ):
-        respuesta = cliente.get("/sistema/casilla-pedidos")
+        respuesta = cliente.get("/administracion/casilla-pedidos")
 
     assert respuesta.status_code == 200
     # El alta, con el filtro de remitente obligatorio.
-    assert 'action="/sistema/casilla-pedidos/guardar"' in respuesta.text
+    assert 'action="/administracion/casilla-pedidos/guardar"' in respuesta.text
     assert "Remitentes permitidos" in respuesta.text
     # La clave falta y la pantalla lo dice, apuntando a la variable de Railway.
     assert "Falta la clave" in respuesta.text
@@ -19298,17 +19305,17 @@ def test_ver_casilla_pedidos_muestra_el_estado_y_el_boton_revisar_ahora():
         patch("app.main.listar_clientes", return_value=CLIENTES_PARA_SELECTOR),
         patch("app.main.clave_casilla_configurada", return_value="clave"),
     ):
-        respuesta = cliente.get("/sistema/casilla-pedidos")
+        respuesta = cliente.get("/administracion/casilla-pedidos")
 
     assert respuesta.status_code == 200
     assert "casilla@empresa.com" in respuesta.text
     assert ">Activa<" in respuesta.text
-    assert 'action="/sistema/casilla-pedidos/3/revisar"' in respuesta.text
+    assert 'action="/administracion/casilla-pedidos/3/revisar"' in respuesta.text
     assert "está configurada" in respuesta.text
     # El mail pendiente, con sus dos acciones.
     assert "Pedido del dia" in respuesta.text
     assert 'href="/deposito/pedido/mails/9/revisar"' in respuesta.text
-    assert 'action="/sistema/casilla-pedidos/mails/9/ignorar"' in respuesta.text
+    assert 'action="/administracion/casilla-pedidos/mails/9/ignorar"' in respuesta.text
 
 
 def test_ver_casilla_pedidos_destaca_un_error_mas_nuevo_que_la_ultima_revision_ok():
@@ -19324,7 +19331,7 @@ def test_ver_casilla_pedidos_destaca_un_error_mas_nuevo_que_la_ultima_revision_o
         patch("app.main.listar_clientes", return_value=CLIENTES_PARA_SELECTOR),
         patch("app.main.clave_casilla_configurada", return_value="clave"),
     ):
-        respuesta = cliente.get("/sistema/casilla-pedidos")
+        respuesta = cliente.get("/administracion/casilla-pedidos")
 
     assert "La última revisión falló" in respuesta.text
     assert "login fallido" in respuesta.text
@@ -19345,7 +19352,7 @@ def test_ver_casilla_pedidos_muestra_el_error_recuperado_sin_destacarlo():
         patch("app.main.listar_clientes", return_value=CLIENTES_PARA_SELECTOR),
         patch("app.main.clave_casilla_configurada", return_value="clave"),
     ):
-        respuesta = cliente.get("/sistema/casilla-pedidos")
+        respuesta = cliente.get("/administracion/casilla-pedidos")
 
     assert "La última revisión falló" not in respuesta.text
     assert "Último error (ya recuperado)" in respuesta.text
@@ -19355,7 +19362,7 @@ def test_ver_casilla_pedidos_muestra_el_error_recuperado_sin_destacarlo():
 def test_guardar_casilla_nueva_normaliza_y_redirige():
     with patch("app.main.crear_casilla_pedidos", return_value=3) as mock_crear:
         respuesta = cliente.post(
-            "/sistema/casilla-pedidos/guardar",
+            "/administracion/casilla-pedidos/guardar",
             data={"direccion": " Casilla@Empresa.com ", "servidor_imap": "",
                   "cliente_id": "1", "asunto_filtro": "  Pedido   Dia ",
                   "remitentes_permitidos": " Pedidos@dia.com.ar , otro@dia.com.ar "},
@@ -19378,7 +19385,7 @@ def test_guardar_casilla_sin_asunto_no_guarda():
         patch("app.main.clave_casilla_configurada", return_value="clave"),
     ):
         respuesta = cliente.post(
-            "/sistema/casilla-pedidos/guardar",
+            "/administracion/casilla-pedidos/guardar",
             data={"direccion": "casilla@empresa.com", "cliente_id": "1", "asunto_filtro": "  ",
                   "remitentes_permitidos": "pedidos@dia.com.ar"},
         )
@@ -19393,7 +19400,7 @@ def test_guardar_casilla_sin_remitentes_guarda_con_cualquier_remitente():
     # pierde porque cambió quién lo manda.
     with patch("app.main.crear_casilla_pedidos", return_value=3) as mock_crear:
         respuesta = cliente.post(
-            "/sistema/casilla-pedidos/guardar",
+            "/administracion/casilla-pedidos/guardar",
             data={"direccion": "casilla@empresa.com", "cliente_id": "1",
                   "asunto_filtro": "Pedido Dia", "remitentes_permitidos": "  "},
             follow_redirects=False,
@@ -19406,7 +19413,7 @@ def test_guardar_casilla_sin_remitentes_guarda_con_cualquier_remitente():
 def test_activar_casilla_sin_fecha_activa_desde_ahora():
     with patch("app.main.activar_casilla_pedidos") as mock_activar:
         respuesta = cliente.post(
-            "/sistema/casilla-pedidos/3/activar", data={"fecha_activacion": ""}, follow_redirects=False
+            "/administracion/casilla-pedidos/3/activar", data={"fecha_activacion": ""}, follow_redirects=False
         )
 
     assert respuesta.status_code == 303
@@ -19430,7 +19437,7 @@ def test_revisar_ahora_reporta_el_detalle_de_lo_que_encontro():
         patch("app.main.registrar_mail_pedido", return_value=9) as mock_registrar,
         patch("app.main.registrar_revision_casilla") as mock_revision,
     ):
-        respuesta = cliente.post("/sistema/casilla-pedidos/3/revisar", follow_redirects=False)
+        respuesta = cliente.post("/administracion/casilla-pedidos/3/revisar", follow_redirects=False)
 
     assert respuesta.status_code == 303
     # La conexión usa la config guardada y la clave de la variable.
@@ -19460,7 +19467,7 @@ def test_revisar_ahora_sin_remitentes_no_menciona_ese_filtro():
               return_value={"total_desde": 12, "candidatos": 12, "con_asunto": 0, "mails": []}) as mock_revisar,
         patch("app.main.registrar_revision_casilla"),
     ):
-        respuesta = cliente.post("/sistema/casilla-pedidos/3/revisar", follow_redirects=False)
+        respuesta = cliente.post("/administracion/casilla-pedidos/3/revisar", follow_redirects=False)
 
     mock_revisar.assert_called_once_with(
         "casilla@empresa.com", "clave", "imap.gmail.com",
@@ -19483,7 +19490,7 @@ def test_revisar_ahora_avisa_si_hay_mails_pero_ninguno_pasa_el_filtro_de_remiten
               return_value={"total_desde": 12, "candidatos": 0, "con_asunto": 0, "mails": []}),
         patch("app.main.registrar_revision_casilla"),
     ):
-        respuesta = cliente.post("/sistema/casilla-pedidos/3/revisar", follow_redirects=False)
+        respuesta = cliente.post("/administracion/casilla-pedidos/3/revisar", follow_redirects=False)
 
     assert "ninguno+pasa+el+filtro+de+remitente" in respuesta.headers["location"]
 
@@ -19495,7 +19502,7 @@ def test_revisar_ahora_sin_asunto_configurado_pide_configurarlo():
         patch("app.main.clave_casilla_configurada", return_value="clave"),
         patch("app.main.revisar_casilla") as mock_revisar,
     ):
-        respuesta = cliente.post("/sistema/casilla-pedidos/3/revisar", follow_redirects=False)
+        respuesta = cliente.post("/administracion/casilla-pedidos/3/revisar", follow_redirects=False)
 
     assert respuesta.status_code == 303
     assert "Falta+el+filtro+de+asunto" in respuesta.headers["location"]
@@ -19508,7 +19515,7 @@ def test_revisar_ahora_sin_clave_no_conecta_y_apunta_a_railway():
         patch("app.main.clave_casilla_configurada", return_value=None),
         patch("app.main.revisar_casilla") as mock_revisar,
     ):
-        respuesta = cliente.post("/sistema/casilla-pedidos/3/revisar", follow_redirects=False)
+        respuesta = cliente.post("/administracion/casilla-pedidos/3/revisar", follow_redirects=False)
 
     assert respuesta.status_code == 303
     assert "CLAVE_CASILLA_PEDIDOS" in respuesta.headers["location"]
@@ -19523,7 +19530,7 @@ def test_revisar_ahora_con_error_imap_lo_registra_y_lo_muestra():
         patch("app.main.registrar_mail_pedido") as mock_registrar,
         patch("app.main.registrar_revision_casilla") as mock_revision,
     ):
-        respuesta = cliente.post("/sistema/casilla-pedidos/3/revisar", follow_redirects=False)
+        respuesta = cliente.post("/administracion/casilla-pedidos/3/revisar", follow_redirects=False)
 
     assert respuesta.status_code == 303
     # El error queda GRABADO (después alimenta la alerta de Auditoría) y a la vista.
@@ -19707,7 +19714,9 @@ def test_revisar_mail_ya_procesado_no_deja_confirmar_dos_veces():
         respuesta = cliente.get("/deposito/pedido/mails/9/revisar", follow_redirects=False)
 
     assert respuesta.status_code == 303
-    assert "/sistema/casilla-pedidos" in respuesta.headers["location"]
+    # Vuelve a Pedidos de DEPÓSITO, que es de donde se revisa el mail: la
+    # Casilla vive en Administración desde el 04/10 (dueño), con su clave.
+    assert respuesta.headers["location"].startswith("/deposito/pedido?aviso=")
     mock_extraer.assert_not_called()
 
 
@@ -19764,13 +19773,15 @@ def test_confirmar_pedido_de_un_mail_ya_procesado_no_guarda_nada():
         )
 
     assert respuesta.status_code == 303
-    assert "/sistema/casilla-pedidos" in respuesta.headers["location"]
+    # Vuelve a Pedidos de DEPÓSITO, que es de donde se revisa el mail: la
+    # Casilla vive en Administración desde el 04/10 (dueño), con su clave.
+    assert respuesta.headers["location"].startswith("/deposito/pedido?aviso=")
     mock_crear.assert_not_called()
 
 
 def test_ignorar_mail_pedido_lo_marca_y_redirige():
     with patch("app.main.marcar_mail_pedido_ignorado") as mock_ignorar:
-        respuesta = cliente.post("/sistema/casilla-pedidos/mails/9/ignorar", follow_redirects=False)
+        respuesta = cliente.post("/administracion/casilla-pedidos/mails/9/ignorar", follow_redirects=False)
 
     assert respuesta.status_code == 303
     mock_ignorar.assert_called_once_with(9, "Marcado a mano desde Sistema")
@@ -19884,14 +19895,14 @@ def test_ver_casilla_muestra_las_acciones_en_un_mail_con_error():
         patch("app.main.listar_clientes", return_value=CLIENTES_PARA_SELECTOR),
         patch("app.main.clave_casilla_configurada", return_value="clave"),
     ):
-        respuesta = cliente.get("/sistema/casilla-pedidos")
+        respuesta = cliente.get("/administracion/casilla-pedidos")
 
     assert respuesta.status_code == 200
     # El error se ve (pill + motivo) y el mail sigue accionable: reintentar o ignorar.
     assert ">Error<" in respuesta.text
     assert "La lectura falló: se cortó" in respuesta.text
     assert 'href="/deposito/pedido/mails/9/revisar"' in respuesta.text
-    assert 'action="/sistema/casilla-pedidos/mails/9/ignorar"' in respuesta.text
+    assert 'action="/administracion/casilla-pedidos/mails/9/ignorar"' in respuesta.text
 
 
 TEXTO_PEDIDO_ESTRUCTURADO = (
@@ -21252,7 +21263,7 @@ def test_ver_recepcion_muestra_la_fecha_de_cada_partida_y_marca_las_viejas():
 def test_cambiar_horario_revision_guarda_y_confirma():
     with patch("app.main.guardar_horario_revision_casilla") as mock_guardar:
         respuesta = cliente.post(
-            "/sistema/casilla-pedidos/3/horario",
+            "/administracion/casilla-pedidos/3/horario",
             data={"revision_desde": "12:00", "revision_hasta": "13:00", "revision_cada_minutos": "30"},
             follow_redirects=False,
         )
@@ -21282,7 +21293,7 @@ def test_cambiar_horario_revision_valida_la_ventana_y_la_cadencia():
             patch("app.main.listar_clientes", return_value=CLIENTES_PARA_SELECTOR),
             patch("app.main.clave_casilla_configurada", return_value="clave"),
         ):
-            respuesta = cliente.post("/sistema/casilla-pedidos/3/horario", data=datos)
+            respuesta = cliente.post("/administracion/casilla-pedidos/3/horario", data=datos)
 
         assert respuesta.status_code == 400, datos
         assert mensaje in respuesta.text
@@ -21297,11 +21308,11 @@ def test_ver_casilla_muestra_el_horario_de_revision_y_su_formulario():
         patch("app.main.listar_clientes", return_value=CLIENTES_PARA_SELECTOR),
         patch("app.main.clave_casilla_configurada", return_value="clave"),
     ):
-        respuesta = cliente.get("/sistema/casilla-pedidos")
+        respuesta = cliente.get("/administracion/casilla-pedidos")
 
     assert respuesta.status_code == 200
     assert "de 12:00 a 13:00,\n      cada 30 min" in respuesta.text
-    assert 'action="/sistema/casilla-pedidos/3/horario"' in respuesta.text
+    assert 'action="/administracion/casilla-pedidos/3/horario"' in respuesta.text
     assert 'value="12:00" required' in respuesta.text
     assert 'value="13:00" required' in respuesta.text
     assert "Cambiar horario de revisión automática" in respuesta.text
@@ -24817,9 +24828,11 @@ def test_gerencia_muestra_el_boton_de_rentabilidad_real_aparte():
     respuesta = cliente.get("/gerencia")
 
     assert respuesta.status_code == 200
-    # Botón APARTE: la teórica sigue con el suyo, intacta.
+    # Desde el 04/10 (dueño) es UN botón, Rentabilidad, con las dos de
+    # pestañas: De pedidos (la teórica, intacta) y Real.
     assert 'href="/gerencia/rentabilidad"' in respuesta.text
-    assert 'href="/gerencia/rentabilidad-real"' in respuesta.text
+    pestanas = io.open("templates/_pestanas_gerencia.html", encoding="utf-8").read()
+    assert re.search(r'<a href="/gerencia/rentabilidad-real"[^>]*>Real</a>', pestanas)
 
 
 def test_rentabilidad_real_sin_cliente_muestra_solo_los_filtros():
@@ -25086,7 +25099,7 @@ def test_casilla_muestra_el_latido_vivo_del_bucle():
         patch("app.main.datetime") as mock_dt,
     ):
         mock_dt.now.return_value = datetime(2026, 8, 25, 12, 31, tzinfo=ARGENTINA_TEST)
-        respuesta = cliente.get("/sistema/casilla-pedidos")
+        respuesta = cliente.get("/administracion/casilla-pedidos")
 
     assert respuesta.status_code == 200
     assert "Bucle de revisión automática vivo: último tick" in respuesta.text
@@ -25109,7 +25122,7 @@ def test_casilla_grita_en_rojo_si_el_bucle_esta_muerto():
         patch("app.main.datetime") as mock_dt,
     ):
         mock_dt.now.return_value = datetime(2026, 8, 25, 12, 31, tzinfo=ARGENTINA_TEST)
-        respuesta = cliente.get("/sistema/casilla-pedidos")
+        respuesta = cliente.get("/administracion/casilla-pedidos")
 
     assert respuesta.status_code == 200
     assert "El bucle de revisión automática NO está corriendo" in respuesta.text
@@ -25122,7 +25135,7 @@ def test_casilla_grita_en_rojo_si_el_bucle_esta_muerto():
         patch("app.main.clave_casilla_configurada", return_value="clave"),
         patch("app.main.obtener_ultimo_tick_revision", return_value=None),
     ):
-        respuesta = cliente.get("/sistema/casilla-pedidos")
+        respuesta = cliente.get("/administracion/casilla-pedidos")
     assert "nunca registró un tick" in respuesta.text
 
 
@@ -26109,7 +26122,7 @@ def test_el_atras_jerarquico_esta_declarado_en_todo_el_sistema():
         respuesta = cliente.get("/administracion/stock/sistema/2")
     assert ancla.format(destino="/administracion/stock/remanente") in respuesta.text
 
-    # La casilla cuelga de Sistema.
+    # La casilla cuelga de Administración (desde el 04/10; antes, Sistema).
     with (
         patch("app.main.listar_casillas_pedidos", return_value=[]),
         patch("app.main.listar_mails_pedido", return_value=[]),
@@ -26117,8 +26130,8 @@ def test_el_atras_jerarquico_esta_declarado_en_todo_el_sistema():
         patch("app.main.clave_casilla_configurada", return_value="clave"),
         patch("app.main.obtener_ultimo_tick_revision", return_value=None),
     ):
-        respuesta = cliente.get("/sistema/casilla-pedidos")
-    assert ancla.format(destino="/sistema") in respuesta.text
+        respuesta = cliente.get("/administracion/casilla-pedidos")
+    assert ancla.format(destino="/administracion") in respuesta.text
 
 
 # --- Etapa 2: el stock inicial del corte ---
