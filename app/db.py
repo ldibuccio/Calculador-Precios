@@ -19405,9 +19405,10 @@ def remito_por_id(remito_id: int) -> dict | None:
             if not remitos:
                 return None
             remito = remitos[0]
-            cursor.execute("SELECT id, foto_ruta, creado_en FROM remitos_fotos WHERE remito_id = %s "
-                           "ORDER BY creado_en, id", (remito_id,))
-            remito["fotos"] = [{"id": f[0], "ruta": f[1], "creado_en": f[2]} for f in cursor.fetchall()]
+            cursor.execute("SELECT id, foto_ruta, creado_en, cargada_por FROM remitos_fotos "
+                           "WHERE remito_id = %s ORDER BY creado_en, id", (remito_id,))
+            remito["fotos"] = [{"id": f[0], "ruta": f[1], "creado_en": f[2], "cargada_por": f[3]}
+                               for f in cursor.fetchall()]
             return remito
     finally:
         conexion.close()
@@ -19458,10 +19459,33 @@ def recibir_remito(remito_id: int, recepcion: dict, fotos_rutas: list[str]) -> N
             for renglon_id, (bultos, kilos) in recepcion.items():
                 cursor.execute("UPDATE remitos_renglones SET bultos_recibidos = %s, kilos_recibidos = %s "
                                "WHERE id = %s", (bultos, kilos, renglon_id))
-            for ruta in fotos_rutas:
-                cursor.execute("INSERT INTO remitos_fotos (remito_id, foto_ruta) VALUES (%s, %s)",
-                               (remito_id, ruta))
+            _insertar_fotos_de_remito(cursor, remito_id, fotos_rutas, "administracion")
             cursor.execute("UPDATE remitos SET recibido_el = now() WHERE id = %s", (remito_id,))
+        conexion.commit()
+    finally:
+        conexion.close()
+
+
+def _insertar_fotos_de_remito(cursor, remito_id: int, fotos_rutas: list[str], sector: str) -> None:
+    """Las fotos del remito, con QUIÉN (el sector). La hora es `creado_en`."""
+    for ruta in fotos_rutas:
+        cursor.execute("INSERT INTO remitos_fotos (remito_id, foto_ruta, cargada_por) VALUES (%s, %s, %s)",
+                       (remito_id, ruta, sector))
+
+
+def agregar_fotos_a_remito(remito_id: int, fotos_rutas: list[str], *, sector: str) -> None:
+    """FOTOS DE UN REMITO RECIBIDO (dueño, 05/10): se AGREGAN, del firmado u
+    otras, con fecha y quién. Nunca se reemplazan ni se borran desde acá: esto
+    solo inserta. Solo un remito ya recibido (las del firmado van al recibir)."""
+    if not fotos_rutas:
+        raise RemitoNoSePuede("Elegí al menos una foto.")
+    conexion = obtener_conexion()
+    try:
+        with conexion.cursor() as cursor:
+            recibido, _, _, _ = _remito_bloqueado(cursor, remito_id)
+            if recibido is None:
+                raise RemitoNoSePuede("Ese remito todavía no se recibió: las fotos van al recibirlo.")
+            _insertar_fotos_de_remito(cursor, remito_id, fotos_rutas, sector)
         conexion.commit()
     finally:
         conexion.close()
