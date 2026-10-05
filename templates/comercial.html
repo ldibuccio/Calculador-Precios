@@ -4,37 +4,13 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Comercial</title>
+{% import "_botones_hub.html" as botones_hub %}
 <style>
   :root { font-family: -apple-system, system-ui, sans-serif; }
-  body {
-    margin: 0;
-    padding: 1rem;
-    background: #f5f5f5;
-    color: #222;
-  }
-  .tarjeta {
-    background: #fff;
-    border-radius: 10px;
-    padding: 1rem;
-    margin-bottom: 1rem;
-    box-shadow: 0 1px 3px rgba(0, 0, 0, 0.1);
-  }
-  .boton {
-    margin-top: 1.1rem;
-    width: 100%;
-    padding: 0.8rem;
-    background: #2563eb;
-    color: #fff;
-    border: none;
-    border-radius: 8px;
-    font-size: 1rem;
-    font-weight: 600;
-    text-align: center;
-    text-decoration: none;
-    display: block;
-    box-sizing: border-box;
-  }
-  .boton:first-child { margin-top: 0; }
+  body { margin: 0; padding: 1rem; background: #f5f5f5; color: #222; }
+  .tarjeta { background: #fff; border-radius: 10px; padding: 1rem; margin-bottom: 1rem;
+    box-shadow: 0 1px 3px rgba(0, 0, 0, 0.1); }
+  {{ botones_hub.estilos() }}
 </style>
 </head>
 <body>
@@ -46,12 +22,15 @@
   {% include "_banner_alertas.html" %}
   {% from "_boton_alertas.html" import cuantas_alertas %}
 
+  {# CUATRO BOTONES (dueño, 04/10; eran cinco): Envases se fue a
+     Administración → Cajas → Tipos de caja y su costo, porque el precio de
+     las cajas lo carga Administración. Un recuadro, un color, y un dibujo en
+     cada botón, como Depósito. #}
   <div class="tarjeta">
-    <a class="boton" href="/comercial/alertas">Alertas{{ cuantas_alertas(banner) }}</a>
-    <a class="boton" href="/precios">Precios</a>
-    <a class="boton" href="/clientes">Clientes</a>
-    <a class="boton" href="/fichas">Fichas logísticas</a>
-    <a class="boton" href="/envases">Envases</a>
+    <a class="boton color-1" href="/comercial/alertas">{{ ICONOS_HUBS['alertas']|safe }}<span>Alertas{{ cuantas_alertas(banner) }}</span></a>
+    <a class="boton color-1" href="/precios">{{ ICONOS_HUBS['precios']|safe }}<span>Precios</span></a>
+    <a class="boton color-1" href="/clientes">{{ ICONOS_HUBS['clientes']|safe }}<span>Clientes</span></a>
+    <a class="boton color-1" href="/fichas">{{ ICONOS_HUBS['fichas']|safe }}<span>Fichas logísticas</span></a>
   </div>
 {% include "_pie_version.html" %}
 </body>

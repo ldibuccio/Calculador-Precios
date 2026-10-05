@@ -268,4 +268,9 @@ El dueño eligió "un color por recuadro" y no "un color por lo que hace".
   Gerencia (Mirar · Corregir · Mantenimiento, 10 botones): Rentabilidad,
   Pérdidas y Facturación y cobranzas, cuyas pestañas salen solo entrando por
   Gerencia. Sistema desapareció (`docs/modulos/pedidos.md`).
+- **Comercial** tiene cuatro botones (Alertas, Precios, Clientes, Fichas
+  logísticas): Envases se fue a Cajas de Administración. **Precios** tiene
+  cuatro (Consultar, Cargar precios —a mano o desde archivo, adentro—,
+  Precios por Período y Márgenes por Artículo); los dos "Próximamente"
+  salieron y sus direcciones siguen abriendo.
 

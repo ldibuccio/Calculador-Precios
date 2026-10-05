@@ -10,6 +10,7 @@ devolver y las cuatro acciones del detalle en azul.
 """
 
 import io
+import re
 import os
 import sys
 from datetime import datetime
@@ -169,8 +170,8 @@ def test_el_boton_cuenta_ALERTAS_y_no_casos():
 @pytest.mark.parametrize("url", ["/compras", "/gerencia", "/administracion", "/comercial"])
 def test_sin_alertas_el_boton_dice_solo_ALERTAS(url):
     marcado = _hub(url, _estado(casos_vacios=0)).text
-    if url == "/comercial":     # Comercial no tiene franja: sigue su botón
-        assert f'href="{url}/alertas">Alertas</a>' in marcado
+    if url == "/comercial":     # Comercial no tiene franja: sigue su botón, con su dibujo
+        assert re.search(r'href="/comercial/alertas">[^<]*<svg.*?</svg><span>Alertas</span></a>', marcado, re.S)
     else:
         assert 'data-franja-boton="alertas">Sin alertas</button>' in marcado
     assert "hay que devolver" not in marcado
