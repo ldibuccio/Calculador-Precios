@@ -119,6 +119,15 @@ Solo con el estado "A pagar" o "Todas": los otros dos son para controlar.
 Lo cuida `test_el_RESUMEN_PROVEEDORES_resta_las_devoluciones...`, contra
 Postgres.
 
+**La marca del cajón en cada renglón (dueño, 05/10)**, debajo del artículo:
+la que escribió Recepción o, si no hay texto, la marca de cajón pegada
+(`_SQL_MARCA_DEL_CAJON`); "Sin marca" si no tiene. La devolución toma la de
+SU compra. **En el celular no va el total de señas** (los desgloses
+"mercadería + señas" del proveedor y del final, clase `desglose-senas`); la
+seña de cada compra sí. El PDF lleva la marca y los desgloses; el Excel, la
+columna Marca y el Total seña también en el subtotal y en el total. Tests:
+`tests/test_resumen_proveedores_marca.py`.
+
 Las fotos de la devolución usan el mismo parcial que el ingreso directo
 (`templates/_fotos_para_subir.html`, dos macros: `estilos()` va en el
 `<style>` de la pantalla, así no queda un `<style>` en el medio que corte el

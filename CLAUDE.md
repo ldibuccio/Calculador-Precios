@@ -248,7 +248,8 @@ Módulos (se lee el que se va a tocar):
   mismo día, Cotejo y ajuste en una pantalla y Stock inicial solo en Gerencia.
 - `docs/modulos/cajas.md`: el modelo de la caja, y Cajas con sus tipos y costo en Administración.
 - `docs/modulos/vacios.md`: los dos circuitos de vacíos.
-- `docs/modulos/devoluciones.md`: devoluciones y su valor.
+- `docs/modulos/devoluciones.md`: devoluciones y su valor, y el Resumen
+  proveedores (marca del cajón, señas en el celular).
 - `docs/modulos/vales.md`: vales a cobrar.
 - `docs/modulos/fotos.md`: plazo de las fotos y espacio.
 - `docs/modulos/remitos.md`: remitos y facturación.

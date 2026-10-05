@@ -606,7 +606,8 @@ def test_el_RESUMEN_PROVEEDORES_resta_las_devoluciones_del_dia_en_que_se_devolvi
               for f in filas]
     # En orden de DÍA: 05/09 y 06/09 entran; 09/09 y 10/09 se devuelven.
     assert [c[0][:5] for c in celdas] == ["05/09", "06/09", "09/09", "10/09"]
-    assert celdas[2][1:4] == ["Compra 11", "EJEMPLO Fruta", "-2 bultos"]
+    # El artículo lleva abajo la marca del cajón (dueño, 05/10); la 11 no tiene.
+    assert celdas[2][1:4] == ["Compra 11", "EJEMPLO FrutaSin marca", "-2 bultos"]
     assert celdas[2][7] == "Devolución por rechazo"
     assert celdas[3][1] == "Compra 12" and celdas[3][7] == "Devolución desde depósito"
     # Entró 10×($100+$500) + 8×$120 = $6.960; se devolvieron 2×($100+$500) + 3×$120 = $1.560.
