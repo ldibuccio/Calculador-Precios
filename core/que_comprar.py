@@ -159,9 +159,9 @@ def bultos_para_mostrar(magnitud, kilaje_del_cajon):
     """Una magnitud pasada a bultos del Mercado, AL ENTERO MÁS CERCANO (dueño, 28/09).
 
     "Se compra y se cuenta en bultos enteros": 205 kg de a 18 son 11,4 y se
-    muestran 11; 36,5 se muestra 37. Es SOLO lo que se ve —"Piden bultos" y
-    el stock—: la cuenta sigue en la magnitud, y ningún número de acá vuelve
-    a entrar en otra cuenta, así que los redondeos no se suman.
+    muestran 11; 36,5 se muestra 37. Es SOLO el stock: la cuenta sigue en la
+    magnitud, y ningún número de acá vuelve a entrar en otra cuenta. Lo que
+    PIDEN va para arriba desde el 05/10 (`bultos_pedidos`).
 
     MEDIO SUBE, y no el `round` de Python: ése redondea 36,5 a 36 (al par).
     `floor(x + 0,5)` es lo mismo que hace `Math.round` en el navegador, que
@@ -174,6 +174,21 @@ def bultos_para_mostrar(magnitud, kilaje_del_cajon):
     if magnitud is None or not kilaje_del_cajon or float(kilaje_del_cajon) <= 0:
         return None
     return math.floor(float(magnitud) / float(kilaje_del_cajon) + 0.5)
+
+
+def bultos_pedidos(magnitud, kilaje_del_cajon):
+    """Lo que pide UN cliente, en bultos del Mercado, ENTEROS Y PARA ARRIBA
+    (dueño, 05/10: "sin decimales: redondeado para arriba"). Un cliente no
+    recibe medio bulto: 205 kg de a 20 son 11.
+
+    El redondeo es sobre lo que pide CADA cliente, no sobre el total: dos que
+    piden 1,2 bultos cada uno reciben 2 y 2, y "Piden bultos" es 4 (la suma),
+    no 3. El navegador lo rehace igual al mover el kilaje (mismas seis cifras
+    de tolerancia, para que 10,000000001 no dé 11).
+    """
+    if magnitud is None or not kilaje_del_cajon or float(kilaje_del_cajon) <= 0:
+        return None
+    return math.ceil(round(float(magnitud) / float(kilaje_del_cajon), 6))
 
 
 def cajones_que_faltan(falta, kilaje_del_cajon):

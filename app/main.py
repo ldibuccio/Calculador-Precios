@@ -525,6 +525,7 @@ from core.que_comprar import (
     MARGEN_SUGERIDO,
     PEDIDOS_DEL_PROMEDIO,
     bultos_para_mostrar,
+    bultos_pedidos,
     cajones_que_faltan,
     con_margen,
     dias_validos,
@@ -3937,12 +3938,14 @@ def _filas_de_que_comprar(
                 # vuelta al primer tecleo.
                 "a_comprar_magnitud": a_comprar_magnitud,
                 # EN BULTOS DEL MERCADO, para leer la fila de izquierda a
-                # derecha: "piden 500 kg, de a 20, son 25 bultos". Al ENTERO
-                # MÁS CERCANO (dueño, 28/09: "se compra y se cuenta en bultos
-                # enteros"), y no para arriba: son lo que piden y lo que hay,
-                # no lo que se compra. El techo va solo en "A comprar" y
-                # "Falta", que es donde no se puede comprar medio cajón.
-                "pide_bultos": bultos_para_mostrar(pide, kilaje),
+                # derecha: "piden 500 kg, de a 20, son 25 bultos". El STOCK
+                # va al entero más cercano (28/09); lo que PIDEN, para arriba
+                # y cliente por cliente (05/10).
+                # LO QUE PIDE CADA CLIENTE, en bultos enteros y PARA ARRIBA
+                # (dueño, 05/10), y "Piden bultos" es la suma de esos.
+                "de_quien_bultos": [(e, t, bultos_pedidos(t, kilaje)) for e, t in de_quien],
+                "pide_bultos": (sum(bultos_pedidos(t, kilaje) for _e, t in de_quien)
+                                if pide is not None and bultos_pedidos(pide, kilaje) is not None else None),
                 "stock_bultos": bultos_para_mostrar(del_piso.get("magnitud"), kilaje),
                 "palabra": PALABRA_DE_LA_UNIDAD.get(unidad, ""),
             }
@@ -4213,7 +4216,7 @@ def _cargas_por_cliente(cargas: list[dict]) -> list[dict]:
     return sorted(por_cliente.values(), key=lambda b: (b["cliente_nombre"] or "").lower())
 
 
-def _contexto_de_que_comprar(request: Request, aviso: str | None = None):
+def _contexto_de_que_comprar(request: Request, aviso: str | None = None, *, con_lo_guardado: bool = True):
     """El Paso 2: qué cargas arma el listado abierto, y la planilla que sale de sumarlas.
 
     Hasta el 23/09 esta pantalla elegía CLIENTES con un modo y un margen
@@ -4269,6 +4272,12 @@ def _contexto_de_que_comprar(request: Request, aviso: str | None = None):
     salida = borrador.get("generado_el")
     if salida is not None:
         contexto["salio_el"] = salida.astimezone(ARGENTINA)
+    # AL ENTRAR NUNCA HAY NADA TILDADO (dueño, 05/10), ni aunque el listado
+    # de hoy ya se haya guardado: se tilda, se aprieta Actualizar, y recién
+    # ahí calcula. Lo guardado se muestra solo al volver de ese guardado
+    # (`con_lo_guardado`); el PDF lo lee siempre, porque sale de él.
+    if not con_lo_guardado:
+        return contexto
     contexto["elegidas"] = set(borrador["cargas"])
     if not borrador["cargas"]:
         return contexto
@@ -5059,10 +5068,17 @@ def ver_que_comprar(request: Request):
     # si hubiera salido bien. Con "Salgo a comprar" eso es caro: el comprador
     # se va al Mercado creyendo que el stock quedó congelado.
     error = request.query_params.get("error")
-    return templates.TemplateResponse(
+    # LO GUARDADO SE VE SOLO AL VOLVER DE ACTUALIZAR (`?actualizado=1`, que
+    # pone la redirección del POST). Entrando por el link, nada tildado.
+    respuesta = templates.TemplateResponse(
         request, "compras_que_comprar.html",
-        _contexto_de_que_comprar(request, ERRORES_DE_QUE_COMPRAR.get(error)),
+        _contexto_de_que_comprar(request, ERRORES_DE_QUE_COMPRAR.get(error),
+                                 con_lo_guardado=request.query_params.get("actualizado") == "1"),
     )
+    # Y EL "ATRÁS" DEL NAVEGADOR NO RESTAURA una pantalla vieja con sus
+    # tildes (la memoria de atrás/adelante): sin guardar, se vuelve a pedir.
+    respuesta.headers["Cache-Control"] = "no-store"
+    return respuesta
 
 
 @app.get("/compras/que-comprar/pdf")
@@ -5169,7 +5185,7 @@ async def guardar_que_comprar(request: Request):
     # se haya apretado Actualizar.
     if accion == "pdf":
         return RedirectResponse("/compras/que-comprar/pdf", status_code=303)
-    return RedirectResponse("/compras/que-comprar", status_code=303)
+    return RedirectResponse("/compras/que-comprar?actualizado=1", status_code=303)
 
 
 def _orden_grupo_disponible(grupo: str | None) -> int:

@@ -99,7 +99,11 @@ def textos_de_la_fila(fila: dict, numero, sin_decimales) -> dict:
         "a_comprar": a_comprar,
         "compre": f"{sin_decimales(fila.get('comprado_cajones') or 0)} cj",
         "falta": falta,
-        "de_quien": " · ".join(f"{e} {sin_decimales(t)}" for e, t in fila.get("de_quien") or []),
+        # EN BULTOS ENTEROS, PARA ARRIBA (dueño, 05/10), como la pantalla.
+        "de_quien": " · ".join(
+            (f"{e} {b} blt ({sin_decimales(t)} {sufijo})" if b is not None else f"{e} {sin_decimales(t)} {sufijo}").strip()
+            for e, t, b in (fila.get("de_quien_bultos")
+                            or [(e, t, None) for e, t in fila.get("de_quien") or []])),
         # EL NEGATIVO DEL SISTEMA, con su número (dueño, 28/09). No es un
         # dato a completar a mano: en el papel va en rojo, no en blanco.
         "sueltos_negativos": (

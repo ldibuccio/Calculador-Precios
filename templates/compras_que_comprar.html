@@ -179,7 +179,8 @@
        data-pide="{{ f.pide if f.pide is not none else '' }}"
        data-en-piso="{{ f.en_piso if f.en_piso is not none else '' }}"
        data-de-partida="{{ f.de_partida if f.de_partida is not none else '' }}"
-       data-ya-tengo="{{ f.ya_tengo if f.ya_tengo is not none else '' }}">
+       data-ya-tengo="{{ f.ya_tengo if f.ya_tengo is not none else '' }}"
+       data-de-quien="{{ f.de_quien|tojson|forceescape }}" data-sufijo="{{ f.sufijo }}">
     <div class="art">{{ f.nombre }}</div>
     {# EN ESTE ORDEN Y NO OTRO (dueño, 23/09): piden kg · kg por bulto · piden
        bultos · stock · en camino · a comprar hoy · compré · falta comprar. El
@@ -228,7 +229,8 @@
     </div>
     {# DE QUIÉN SALE: un total que junta tres cargas y no lo dice se lee como
        el pedido de un solo cliente. #}
-    <div class="de-quien">{% for etiqueta, total in f.de_quien %}{{ etiqueta }} {{ total|sin_decimales }}{% if not loop.last %} · {% endif %}{% endfor %}</div>
+    {# EN BULTOS ENTEROS, PARA ARRIBA (dueño, 05/10), con la magnitud al lado. #}
+    <div class="de-quien">{% for etiqueta, total, bultos in f.de_quien_bultos %}{{ etiqueta }} {% if bultos is not none %}<b>{{ bultos }} blt</b> ({{ total|sin_decimales }} {{ f.sufijo }}){% else %}{{ total|sin_decimales }} {{ f.sufijo }}{% endif %}{% if not loop.last %} · {% endif %}{% endfor %}</div>
   </div>
   {% endfor %}
 
@@ -257,9 +259,14 @@
 // EL MISMO FORMATO QUE EL FILTRO `numero` DEL SERVER (punto y sin ceros de
 // mas): si el primer dibujo y el recalculo escriben distinto, el numero cambia
 // de forma al primer tecleo sin que cambie ningun dato.
-// AL ENTERO MAS CERCANO, igual que `bultos_para_mostrar` del server: medio
-// sube, y Math.round hace exactamente eso (36,5 da 37, -2,5 da -2).
+// EL STOCK AL ENTERO MAS CERCANO, igual que `bultos_para_mostrar` del
+// server: medio sube, y Math.round hace exactamente eso (36,5 da 37).
 function enteros(n) { return String(Math.round(n)); }
+// LO QUE PIDE CADA CLIENTE, PARA ARRIBA, igual que `bultos_pedidos`: con
+// seis cifras de tolerancia, y "Piden bultos" es la suma de los clientes.
+function pedidos(n, kilaje) { return Math.ceil(Math.round(n / kilaje * 1e6) / 1e6); }
+// La magnitud, como el filtro `sin_decimales` del server: entera, sin miles.
+function magnitud(n) { return String(Math.round(n)); }
 function cajonesDe(falta, kilaje) {
   if (falta === 0) { return '<span class="ok">OK</span>'; }
   if (isNaN(kilaje) || kilaje <= 0) { return '<span class="hueco">poné el por bulto</span>'; }
@@ -277,7 +284,19 @@ function recalcular(tarjeta) {
   var kilaje = parseFloat(String(campo.value).replace(",", "."));
   var hayKilaje = !isNaN(kilaje) && kilaje > 0;
   var bultos = tarjeta.querySelector(".pide-bultos");
-  if (bultos && !isNaN(pide)) { bultos.textContent = hayKilaje ? enteros(pide / kilaje) : "—"; }
+  var deQuien = JSON.parse(tarjeta.dataset.deQuien || "[]");
+  if (bultos && !isNaN(pide)) {
+    bultos.textContent = hayKilaje
+      ? String(deQuien.reduce(function (suma, par) { return suma + pedidos(par[1], kilaje); }, 0)) : "—";
+  }
+  var lineaDeQuien = tarjeta.querySelector(".de-quien");
+  var sufijo = tarjeta.dataset.sufijo || "";
+  if (lineaDeQuien && deQuien.length) {
+    lineaDeQuien.innerHTML = deQuien.map(function (par) {
+      return par[0] + " " + (hayKilaje ? "<b>" + pedidos(par[1], kilaje) + " blt</b> (" + magnitud(par[1]) + " " + sufijo + ")"
+                                       : magnitud(par[1]) + " " + sufijo);
+    }).join(" · ");
+  }
   var stock = tarjeta.querySelector(".stock-bultos");
   var stockMagnitud = tarjeta.querySelector(".stock-magnitud");
   if (stock && !isNaN(enPiso) && hayKilaje && stockMagnitud) {
