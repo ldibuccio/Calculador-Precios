@@ -134,7 +134,11 @@
      renglón tiene que poder leerse solo (cuándo, cuántos, por qué). Lista
      y no tabla: en 390px una tabla de cuatro columnas se corta, y acá
      sobra el alto. */
-  .devoluciones { list-style: none; margin: 0; padding: 0; }
+  .devoluciones, .a-donde { list-style: none; margin: 0; padding: 0; }
+  .a-donde li { padding: 0.55rem 0; border-top: 1px solid #eee; }
+  .a-donde .dev-cabeza, .a-donde .dev-detalle { display: block; }
+  .a-donde .dev-cabeza { font-weight: 700; }
+  .a-donde .dev-detalle { color: #555; font-size: 0.9rem; }
   .devoluciones li {
     padding: 0.55rem 0;
     border-top: 1px solid #eee;
@@ -392,6 +396,33 @@
       </form>
       <p class="fotos-guia-nota">Cuelga de este artículo, no de la guía. No cambia ningún número de la compra.</p>
     </div>
+  </div>
+
+  {# A DÓNDE FUE (dueño, 05/10): la mercadería de esta compra que salió al
+     cliente, renglón por renglón, directo o pasando por una guía R. Los
+     bultos y kilos son los de ESTA compra; lo recibido, cuando el remito
+     volvió. Si todavía no salió, lo dice. #}
+  <div class="tarjeta" id="a-donde-fue">
+    <h3>A dónde fue</h3>
+    {% if a_donde is none %}
+    <p class="fotos-guia-vacio">No se pudo leer a dónde fue. Probá de nuevo.</p>
+    {% elif not a_donde.recepcionada %}
+    <p class="fotos-guia-vacio">Todavía no se recibió: no salió nada.</p>
+    {% elif not a_donde.renglones %}
+    <p class="fotos-guia-vacio">Todavía no salió nada de esta compra a un cliente.</p>
+    {% else %}
+    <div class="dato"><span class="etiqueta">Salieron al cliente</span><span class="valor">{{ a_donde.bultos|numero }} bultos</span></div>
+    <ul class="a-donde">
+      {% for r in a_donde.renglones %}
+      <li>
+        <span class="dev-cabeza">Pedido del {{ r.fecha_operacion|fecha_corta }} · {{ r.cliente }}{% if r.sucursal %} · {{ r.sucursal_nombre }}{% endif %}</span>
+        <span class="dev-detalle">Orden de compra {{ r.orden_compra or "sin número" }} · {% if r.remito %}remito {{ r.remito }}{% else %}sin remito todavía{% endif %}</span>
+        <span class="dev-detalle">Enviados: {{ r.bultos|numero }} bultos{% if r.kilos_enviados is not none %} · {{ r.kilos_enviados|numero }} kg{% endif %}{% if r.de_un_renglon_de %} (de un renglón de {{ r.de_un_renglon_de|numero }}){% endif %}</span>
+        <span class="dev-detalle">{% if r.remito_volvio %}Recibidos por el cliente: {{ r.bultos_recibidos|numero }} bultos · {{ r.kilos_recibidos|numero }} kg{% elif r.remito %}El remito todavía no volvió{% endif %}</span>
+      </li>
+      {% endfor %}
+    </ul>
+    {% endif %}
   </div>
 
   {# DETALLE Y EDITAR SON UNA PANTALLA (dueño, 02/10): el Detalle se lee, y
