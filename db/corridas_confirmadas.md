@@ -327,3 +327,19 @@ rateLimitExceeded`. Se cortó en el primer bucket (`frutamax/comandas`).
   traduce `rateLimitExceeded` al criollo.
 - Abierto, sin decidir: un `client_id` propio de Google Drive para rclone
   haría menos probable el corte.
+
+## 05/10 — `fletes_1` a `fletes_4`: Fletes (PR #115)
+
+Corridos por Lionel en las dos bases ANTES del merge del #115. La
+verificación (`fletes_5`), corrida aparte, la corrí yo por el conector
+"Supabase Lectura" el 05/10 a las 16:12 UTC:
+
+```
+FRUTAMAX  fletes · tablas_de_8 8 · checks_de_2 2 · trigger_de_1 1 · sucursales_de_dia BZ=Burzaco GR=Garín VL=Vicente López · fleteros_0 0 · fletes_0 0 · POBLACION_codigos 3 · testigo_ultimo_pedido 2026-10-05
+PALMALA   fletes · tablas_de_8 8 · checks_de_2 2 · trigger_de_1 1 · sucursales_de_dia BZ=Burzaco GR=Garín VL=Vicente López · fleteros_0 0 · fletes_0 0 · POBLACION_codigos 3 · testigo_ultimo_pedido 2026-10-05
+```
+
+Las ocho tablas, los dos checks y el trigger del viaje pagado están en las
+dos. Las tres sucursales de Día tienen su nombre, y son los mismos tres
+códigos que usan los pedidos (POBLACION_codigos 3). Sin fleteros ni fletes
+todavía: los carga Administración. Coincide con lo que reportó el dueño.
