@@ -81,6 +81,38 @@ en `core/tareas.py`.
 Migraciones `db/tareas_1` a `_3`, verificación en `_4`. Lo cuida
 `tests/test_tareas.py`, contra Postgres.
 
+### Segunda vuelta (dueño, 05/10)
+
+- **"Las repetitivas desde los sectores no funcionan"**: en Frutamax no había
+  NINGUNA repetitiva guardada (solo dos de una vez), y en local se cargan
+  bien desde los tres sectores. Lo que sí estaba roto: la mensual pedía
+  escribir "1, 15" con el teclado numérico, que en el iPhone no tiene coma.
+  Ahora son casillas del 1 al 31. Cada forma de repetir se carga desde el
+  formulario de verdad, en un navegador y desde cada sector
+  (`tests/test_tareas_relativas_y_eliminar.py`).
+- **Dos formas de repetir**: a fecha FIJA (cada X días, semanal, mensual en
+  varios días, **anual**: un día de un mes; el 29/02 cae el 28 los años que
+  no lo tienen) o **relativa** (`despues_de_hecha`): vuelve a salir X días
+  después del día en que se marcó hecha (`cada_dias` dice cuántos). La
+  relativa no tiene calendario: si no se hace, sigue la misma pendiente. Una
+  fija no pasa a relativa ni al revés: se elimina y se carga de nuevo.
+- **Eliminar** cualquier tarea, de una vez o repetitiva: el sector las que
+  cargó él, Gerencia todas (la misma regla de editar). No se borra nada: la
+  tarea queda `baja` con `eliminada_por` y `eliminada_el`, lo pendiente o
+  programado pasa a `eliminada` y lo hecho queda. Gerencia lo ve en su
+  registro (estado "Eliminada", con quién y cuándo). "Dar de baja" ya no
+  existe como botón: es eliminar.
+- **Una tarea es pendiente RECIÉN el día de su vencimiento.** Antes es
+  **programada**: no sale en el recuadro del hub (ni lo cuenta), sí en la
+  pantalla de Tareas.
+- **"Nueva tarea" del recuadro** lleva a la pantalla de Tareas del sector
+  (`#nueva` abre el formulario), que ahora tiene "Para hacer",
+  "Programadas" y "Hechas en los últimos 30 días", con Eliminar en lo que el
+  sector puede manejar.
+- Migración `db/tareas_8` (EXPAND: columnas `anual_dia`, `anual_mes`,
+  `eliminada_el`, `eliminada_por`; los CHECK de tipo, campos, una vez y
+  estado de la ocurrencia), verificación `db/tareas_9`.
+
 ### Cada sector carga las suyas, y la mensual en varios días (02/10, dueño)
 
 - **Compras, Administración y Gerencia crean tareas para su propio sector**
@@ -91,7 +123,7 @@ Migraciones `db/tareas_1` a `_3`, verificación en `_4`. Lo cuida
 - **`tareas.creada_por`** dice quién la cargó (las de antes, Gerencia). La
   base exige que un sector solo cargue para sí mismo (`tareas_creada_por`).
   Se ve en la lista de la franja, en las repetitivas y en el registro.
-- **Un sector edita, pausa y da de baja SOLO las que creó él**; Gerencia
+- **Un sector edita, pausa y elimina SOLO las que creó él**; Gerencia
   todas. Lo decide el WHERE de la escritura (`_SQL_PUEDE_MANEJAR`) y la
   pantalla pregunta lo mismo (`puede_manejar`, core/tareas.py): las de
   Gerencia se ven sin controles. El registro sigue siendo de Gerencia, con

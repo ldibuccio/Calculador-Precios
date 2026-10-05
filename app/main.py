@@ -201,6 +201,7 @@ from app.db import (
     crear_tarea,
     editar_tarea_repetitiva,
     cambiar_estado_de_tarea,
+    eliminar_tarea,
     volver_tarea_a_pendiente,
     contar_tareas_vencidas,
     contar_backups_viejos,
@@ -626,6 +627,7 @@ from app.iconos_hubs import ICONOS_HUBS
 from core.backup import HORAS_PARA_LA_ALERTA, TEXTO_DE_LA_PARTE, TEXTO_DEL_DESTINO, causa_legible
 from core.tareas import (
     DIAS_DE_LA_SEMANA as DIAS_DE_LA_SEMANA_TAREA,
+    MESES as MESES_DE_TAREA,
     ESTADOS_DE_LA_TAREA,
     ESTADOS_VISIBLES as ESTADOS_VISIBLES_DE_TAREA,
     SECTORES as SECTORES_DE_TAREA,
@@ -3251,7 +3253,7 @@ def _recuadro_de_tareas(sector: str) -> dict:
 
 def _marcar_tarea_hecha_desde(request: Request, sector: str, ocurrencia_id: int, nota: str):
     try:
-        marcar_tarea_hecha(ocurrencia_id, sector=sector, nota=nota)
+        marcar_tarea_hecha(ocurrencia_id, sector=sector, nota=nota, hoy=_hoy_argentina())
     except ValueError as motivo:
         raise HTTPException(status_code=409, detail=str(motivo)) from motivo
     return RedirectResponse(url=f"/{sector}", status_code=303)
@@ -3311,16 +3313,29 @@ def _renderizar_tareas(request: Request, filtros: dict, *, aviso: str | None = N
                        status_code: int = 200):
     sector = _sector_de_tareas(request)
     hoy = _hoy_argentina()
+    listas = {"para_hacer": [], "programadas": [], "hechas": []}
     try:
         # El REGISTRO es de Gerencia: un sector ve sus repetitivas y carga.
         ocurrencias = listar_ocurrencias(hoy=hoy, **filtros) if sector == "gerencia" else []
         repetitivas = listar_tareas_repetitivas(None if sector == "gerencia" else sector)
         reaperturas = reaperturas_de_tareas([o["id"] for o in ocurrencias if o["reaperturas"]])
+        if sector != "gerencia":
+            # LO DEL SECTOR (dueño, 05/10): para hacer (su día llegó),
+            # programadas (todavía no) y lo hecho en los últimos 30 días.
+            del_sector = listar_ocurrencias(sector=sector, desde=None, hasta=None, estado=None, hoy=hoy)
+            hace_30 = hoy - timedelta(days=30)
+            listas["para_hacer"] = sorted((o for o in del_sector if o["estado"] == "pendiente"
+                                           and o["vence_el"] <= hoy), key=lambda o: (o["vence_el"], o["id"]))
+            listas["programadas"] = sorted((o for o in del_sector if o["estado"] == "pendiente"
+                                            and o["vence_el"] > hoy), key=lambda o: (o["vence_el"], o["id"]))
+            listas["hechas"] = [o for o in del_sector if o["estado"] == "hecha"
+                                and o["hecha_el"].astimezone(ARGENTINA).date() >= hace_30]
     except Exception as error_db:
         raise HTTPException(status_code=500, detail=f"Error al conectar con la base de datos: {error_db}") from error_db
-    for o in ocurrencias:
+    for o in ocurrencias + [o for lista in listas.values() for o in lista]:
         o["visible"] = estado_visible_de_tarea(o, hoy)
         o["atraso"] = dias_de_atraso_de_tarea(o, hoy)
+        o["maneja"] = puede_manejar_tarea(o, sector)
     for r in repetitivas:
         r["regla"] = texto_de_la_regla_de_tarea(r)
         r["maneja"] = puede_manejar_tarea(r, sector)
@@ -3328,6 +3343,8 @@ def _renderizar_tareas(request: Request, filtros: dict, *, aviso: str | None = N
     return templates.TemplateResponse(request, "gerencia_tareas.html", {
         "sector": sector, "filtros": filtros, "ocurrencias": ocurrencias, "repetitivas": repetitivas,
         "reaperturas": reaperturas,
+        "para_hacer": listas["para_hacer"], "programadas": listas["programadas"], "hechas": listas["hechas"],
+        "meses": MESES_DE_TAREA,
         "hoy": hoy, "sectores": SECTORES_DE_TAREA, "tipos": TIPOS_DE_TAREA, "dias_semana": DIAS_DE_LA_SEMANA_TAREA,
         "estados_visibles": ESTADOS_VISIBLES_DE_TAREA, "estados_de_tarea": ESTADOS_DE_LA_TAREA,
         "hora_argentina": hora_argentina_vale, "aviso": aviso, "error": error,
@@ -3339,7 +3356,7 @@ def _renderizar_tareas(request: Request, filtros: dict, *, aviso: str | None = N
 @app.get("/gerencia/tareas")
 def ver_tareas(request: Request, sector: str = "", desde: str = "", hasta: str = "", estado: str = "",
                creada_por: str = "", aviso: str | None = None, error: str | None = None):
-    """Crear tareas y las repetitivas (editar, pausar, dar de baja). Gerencia
+    """Crear tareas y las repetitivas (editar, pausar, eliminar), lo programado y lo hecho. Gerencia
     además ve el registro filtrado de todo lo que salió."""
     quien = _sector_de_tareas(request)
     sin_acceso = _sin_acceso_a_tareas(request, quien, escribe=False)
@@ -3354,20 +3371,33 @@ def _entero_del_form(texto: str) -> int | None:
     return int(texto) if texto.lstrip("-").isdigit() else None
 
 
-def _regla_del_formulario(tipo: str, cada_dias: str, dia_semana: str, dias_mes: str) -> dict:
+def _regla_del_formulario(tipo: str, cada_dias: str, dia_semana: str, dias_mes, dias_despues: str = "",
+                          anual_dia: str = "", anual_mes: str = "") -> dict:
     """Solo el campo del tipo elegido: los otros van en None aunque el
     formulario los traiga (el CHECK de la base no deja sobrar ninguno).
-    Mensual con días que no se entienden: ValueError, que la ruta muestra."""
+    Lo que falta o no se entiende: ValueError con lo que hay que poner, que
+    la ruta muestra."""
     dias = None
     if tipo == "mensual":
         dias = dias_del_mes_de_tarea(dias_mes)
         if dias is None:
-            raise ValueError("Los días del mes van del 1 al 31, separados por coma (por ejemplo: 1, 15).")
-    return {
+            raise ValueError("Tildá al menos un día del mes.")
+    regla = {
         "cada_dias": _entero_del_form(cada_dias) if tipo == "cada_dias" else None,
         "dia_semana": _entero_del_form(dia_semana) if tipo == "semanal" else None,
         "dias_mes": dias,
+        "anual_dia": _entero_del_form(anual_dia) if tipo == "anual" else None,
+        "anual_mes": _entero_del_form(anual_mes) if tipo == "anual" else None,
     }
+    if tipo == "despues_de_hecha":
+        regla["cada_dias"] = _entero_del_form(dias_despues)
+    faltas = {"cada_dias": "Falta cada cuántos días.", "despues_de_hecha": "Falta cuántos días después de hecha.",
+              "anual": "Falta el día del año (del 1 al 31)."}
+    if tipo in ("cada_dias", "despues_de_hecha") and not (regla["cada_dias"] or 0) >= 1:
+        raise ValueError(faltas[tipo])
+    if tipo == "anual" and not (1 <= (regla["anual_dia"] or 0) <= 31 and 1 <= (regla["anual_mes"] or 0) <= 12):
+        raise ValueError(faltas["anual"])
+    return regla
 
 
 def _volver_a_tareas(quien: str, aviso: str):
@@ -3379,7 +3409,8 @@ def _volver_a_tareas(quien: str, aviso: str):
 @app.post("/gerencia/tareas")
 def crear_tarea_ruta(request: Request, sector: str = Form(""), titulo: str = Form(""), detalle: str = Form(""),
                      tipo: str = Form(""), vence_el: str = Form(""), desde: str = Form(""),
-                     cada_dias: str = Form(""), dia_semana: str = Form(""), dias_mes: str = Form("")):
+                     cada_dias: str = Form(""), dia_semana: str = Form(""), dias_mes: list[str] = Form([]),
+                     dias_despues: str = Form(""), anual_dia: str = Form(""), anual_mes: str = Form("")):
     """Gerencia carga para cualquier sector; un sector, solo para sí mismo
     (el formulario no le pregunta, y la base lo exige igual)."""
     quien = _sector_de_tareas(request)
@@ -3398,7 +3429,8 @@ def crear_tarea_ruta(request: Request, sector: str = Form(""), titulo: str = For
         return _renderizar_tareas(request, filtros, error="Falta la fecha de vencimiento.", status_code=400)
     try:
         crear_tarea(sector=sector, creada_por=quien, titulo=titulo, detalle=detalle, tipo=tipo, vence_el=vence,
-                    desde=inicio, hoy=hoy, **_regla_del_formulario(tipo, cada_dias, dia_semana, dias_mes))
+                    desde=inicio, hoy=hoy, **_regla_del_formulario(tipo, cada_dias, dia_semana, dias_mes,
+                                                                   dias_despues, anual_dia, anual_mes))
     except ValueError as motivo:
         return _renderizar_tareas(request, filtros, error=str(motivo), status_code=400)
     return _volver_a_tareas(quien, "Tarea creada.")
@@ -3409,7 +3441,8 @@ def crear_tarea_ruta(request: Request, sector: str = Form(""), titulo: str = For
 @app.post("/gerencia/tareas/{tarea_id}/editar")
 def editar_tarea_ruta(request: Request, tarea_id: int, titulo: str = Form(""), detalle: str = Form(""),
                       tipo: str = Form(""), cada_dias: str = Form(""), dia_semana: str = Form(""),
-                      dias_mes: str = Form("")):
+                      dias_mes: list[str] = Form([]), dias_despues: str = Form(""), anual_dia: str = Form(""),
+                      anual_mes: str = Form("")):
     """Gerencia edita cualquiera; un sector, solo las que creó él."""
     quien = _sector_de_tareas(request)
     sin_acceso = _sin_acceso_a_tareas(request, quien, escribe=True)
@@ -3417,7 +3450,8 @@ def editar_tarea_ruta(request: Request, tarea_id: int, titulo: str = Form(""), d
         return sin_acceso
     try:
         editar_tarea_repetitiva(tarea_id, quien=quien, titulo=titulo, detalle=detalle, tipo=tipo,
-                                **_regla_del_formulario(tipo, cada_dias, dia_semana, dias_mes))
+                                **_regla_del_formulario(tipo, cada_dias, dia_semana, dias_mes, dias_despues,
+                                                        anual_dia, anual_mes))
     except ValueError as motivo:
         return _renderizar_tareas(request, _filtros_de_tareas("", "", "", ""), error=str(motivo), status_code=400)
     return _volver_a_tareas(quien, "Tarea editada. Lo que ya salió queda como estaba.")
@@ -3427,7 +3461,7 @@ def editar_tarea_ruta(request: Request, tarea_id: int, titulo: str = Form(""), d
 @app.post("/administracion/tareas/{tarea_id}/estado")
 @app.post("/gerencia/tareas/{tarea_id}/estado")
 def cambiar_estado_de_tarea_ruta(request: Request, tarea_id: int, estado: str = Form("")):
-    """Pausar, reanudar o dar de baja: Gerencia cualquiera; un sector, las suyas."""
+    """Pausar o reanudar (y eliminar, que tiene su propia ruta): Gerencia cualquiera; un sector, las suyas."""
     quien = _sector_de_tareas(request)
     sin_acceso = _sin_acceso_a_tareas(request, quien, escribe=True)
     if sin_acceso is not None:
@@ -3437,8 +3471,25 @@ def cambiar_estado_de_tarea_ruta(request: Request, tarea_id: int, estado: str = 
     except ValueError as motivo:
         return _renderizar_tareas(request, _filtros_de_tareas("", "", "", ""), error=str(motivo), status_code=400)
     textos = {"pausada": "Tarea pausada.", "activa": "Tarea reanudada: sigue desde hoy.",
-              "baja": "Tarea dada de baja. Lo que ya salió queda en el registro."}
-    return _volver_a_tareas(quien, textos[estado])
+              "baja": "Tarea eliminada. Lo que ya se hizo queda en el registro de Gerencia."}
+    return _volver_a_tareas(quien, textos.get(estado, "Listo."))
+
+
+@app.post("/compras/tareas/{tarea_id}/eliminar")
+@app.post("/administracion/tareas/{tarea_id}/eliminar")
+@app.post("/gerencia/tareas/{tarea_id}/eliminar")
+def eliminar_tarea_ruta(request: Request, tarea_id: int):
+    """ELIMINAR (dueño, 05/10), de una vez o repetitiva: Gerencia cualquiera;
+    un sector, las que cargó él. Queda en el registro de Gerencia."""
+    quien = _sector_de_tareas(request)
+    sin_acceso = _sin_acceso_a_tareas(request, quien, escribe=True)
+    if sin_acceso is not None:
+        return sin_acceso
+    try:
+        eliminar_tarea(tarea_id, quien=quien)
+    except ValueError as motivo:
+        return _renderizar_tareas(request, _filtros_de_tareas("", "", "", ""), error=str(motivo), status_code=400)
+    return _volver_a_tareas(quien, "Tarea eliminada. Lo que ya se hizo queda en el registro de Gerencia.")
 
 
 @app.post("/gerencia/tareas/ocurrencias/{ocurrencia_id}/pendiente")

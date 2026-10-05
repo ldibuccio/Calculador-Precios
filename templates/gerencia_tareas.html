@@ -36,11 +36,29 @@
   .roja { color: #dc2626; font-weight: 700; }
   .verde { color: #15803d; font-weight: 700; }
   .vacio { color: #666; font-style: italic; }
+  fieldset { border: none; padding: 0; margin: 0; min-width: 0; }
+  legend { font-size: 0.85rem; color: #444; padding: 0; margin-bottom: 0.3rem; }
+  .dias-mes { display: grid; grid-template-columns: repeat(7, minmax(0, 1fr)); gap: 0.25rem; flex-basis: 100%; }
+  .dias-mes label { display: flex; flex-direction: column; align-items: center; justify-content: center;
+    min-height: 44px; border: 1px solid #ccc; border-radius: 8px; font-size: 0.85rem; color: #222; background: #fff; }
+  .dias-mes input { display: block; margin: 0 0 0.1rem; width: 18px; height: 18px; min-height: 0; padding: 0; }
   details > summary { min-height: 44px; display: flex; align-items: center; color: #2563eb; font-weight: 600;
     cursor: pointer; }
 </style>
 </head>
 <body>
+{# ELIMINAR (dueño, 05/10): cualquier tarea, de una vez o repetitiva; el
+   sector las que cargó él, Gerencia todas. Con confirmación: un toque suelto
+   no borra nada. Lo eliminado queda en el registro de Gerencia. #}
+{% macro eliminar(sector, tarea_id, tipo) %}
+<details class="eliminar">
+  <summary>Eliminar la tarea</summary>
+  <form method="post" action="/{{ sector }}/tareas/{{ tarea_id }}/eliminar">
+    <p class="fila-dato">{% if tipo != 'una_vez' %}Es repetitiva: deja de salir. {% endif %}Lo que ya se hizo queda en el registro de Gerencia.</p>
+    <div class="acciones"><button type="submit" class="peligro">Sí, eliminar</button></div>
+  </form>
+</details>
+{% endmacro %}
   {# LA MISMA PANTALLA en los tres sectores (dueño, 02/10): el sector sale
      del prefijo. Un sector carga para sí mismo y maneja SOLO las que creó;
      el registro es de Gerencia. #}
@@ -53,38 +71,72 @@
   {% if error %}<div class="error">{{ error }}</div>{% endif %}
 
   <div class="tarjeta">
-    <details>
+    {# "Nueva tarea" del recuadro del hub llega acá con #nueva y lo abre. #}
+    <details id="nueva">
       <summary>Nueva tarea{% if sector != 'gerencia' %} de {{ sectores[sector] }}{% endif %}</summary>
       <form method="post" action="/{{ sector }}/tareas">
         <div class="campos">
           {% if sector == 'gerencia' %}
-          <label>Sector
+          <label>¿Para qué sector?
             <select name="sector" required>
               {% for clave, texto in sectores.items() %}<option value="{{ clave }}">{{ texto }}</option>{% endfor %}
             </select>
           </label>
           {% endif %}
-          <label>Tipo
+          <label class="ancho">¿Qué hay que hacer?<input type="text" name="titulo" required autocomplete="off" placeholder="Ej.: Contar las cajas de Día"></label>
+          <label class="ancho">Detalle (una línea)<input type="text" name="detalle" autocomplete="off"></label>
+          <label class="ancho">¿Se repite?
             <select name="tipo" id="tipo-nueva" required>
               {% for clave, texto in tipos.items() %}<option value="{{ clave }}">{{ texto }}</option>{% endfor %}
             </select>
           </label>
-          <label class="ancho">Título<input type="text" name="titulo" required autocomplete="off"></label>
-          <label class="ancho">Detalle (una línea)<input type="text" name="detalle" autocomplete="off"></label>
-          <label data-tipo="una_vez">Vence el<input type="date" name="vence_el" min="{{ hoy.isoformat() }}"></label>
-          <label data-tipo="cada_dias semanal mensual">Desde<input type="date" name="desde" value="{{ hoy.isoformat() }}"></label>
-          <label data-tipo="cada_dias">Cada cuántos días<input type="number" name="cada_dias" min="1" step="1" inputmode="numeric"></label>
-          <label data-tipo="semanal">Día de la semana
+          <label data-tipo="una_vez">¿Para qué día?<input type="date" name="vence_el" min="{{ hoy.isoformat() }}"></label>
+          <label data-tipo="cada_dias semanal mensual anual despues_de_hecha">¿Desde qué día?<input type="date" name="desde" value="{{ hoy.isoformat() }}"></label>
+          <label data-tipo="cada_dias">¿Cada cuántos días?<input type="number" name="cada_dias" min="1" step="1" inputmode="numeric" placeholder="Ej.: 7"></label>
+          <label data-tipo="despues_de_hecha">¿Cuántos días después de hecha vuelve a salir?<input type="number" name="dias_despues" min="1" step="1" inputmode="numeric" placeholder="Ej.: 15"></label>
+          <label data-tipo="semanal">¿Qué día de la semana?
             <select name="dia_semana">
               {% for d in dias_semana %}<option value="{{ loop.index0 }}">{{ d }}</option>{% endfor %}
             </select>
           </label>
-          <label data-tipo="mensual">Días del mes (ej: 1, 15)<input type="text" name="dias_mes" inputmode="numeric" autocomplete="off" placeholder="1, 15"></label>
+          <fieldset class="ancho dias-mes" data-tipo="mensual">
+            <legend>¿Qué días del mes? Ej.: el 1 y el 15</legend>
+            {% for d in range(1, 32) %}<label><input type="checkbox" name="dias_mes" value="{{ d }}">{{ d }}</label>{% endfor %}
+          </fieldset>
+          <label data-tipo="anual">¿Qué día del año?<input type="number" name="anual_dia" min="1" max="31" inputmode="numeric" placeholder="Ej.: 15"></label>
+          <label data-tipo="anual">¿De qué mes?
+            <select name="anual_mes">
+              {% for m in meses %}<option value="{{ loop.index }}">{{ m }}</option>{% endfor %}
+            </select>
+          </label>
         </div>
         <div class="acciones"><button type="submit">Crear tarea</button></div>
       </form>
     </details>
   </div>
+
+  {% if sector != 'gerencia' %}
+  {# LO DEL SECTOR (dueño, 05/10): lo que hay para hacer, lo programado (su
+     día todavía no llegó: no sale en el recuadro del hub) y lo hecho. #}
+  {% for titulo_lista, lista, vacio in (("Para hacer", para_hacer, "No hay tareas para hoy."),
+                                        ("Programadas", programadas, "No hay tareas programadas."),
+                                        ("Hechas en los últimos 30 días", hechas, "No hay tareas hechas en los últimos 30 días.")) %}
+  <div class="tarjeta" data-lista="{{ titulo_lista }}">
+    <h2>{{ titulo_lista }}</h2>
+    {% for o in lista %}
+    <div class="fila" data-ocurrencia="{{ o.id }}">
+      <div class="fila-que">{{ o.titulo }}</div>
+      <div class="fila-dato">{% if o.estado == 'hecha' %}hecha el {{ hora_argentina(o.hecha_el) }}{% else %}{{ 'vence' if o.visible != 'programada' else 'sale' }} el {{ o.vence_el.strftime('%d/%m/%Y') }}{% endif %} · la cargó {{ sectores[o.creada_por] }}{% if o.tipo != 'una_vez' %} · repetitiva{% endif %}
+        {%- if o.visible == 'vencida' %} · <span class="roja">vencida</span>{% endif %}{% if o.nota %} · «{{ o.nota }}»{% endif %}</div>
+      {% if o.detalle %}<div class="fila-dato">{{ o.detalle }}</div>{% endif %}
+      {% if o.estado == 'pendiente' and o.maneja %}{{ eliminar(sector, o.tarea_id, o.tipo) }}{% endif %}
+    </div>
+    {% else %}
+    <p class="vacio">{{ vacio }}</p>
+    {% endfor %}
+  </div>
+  {% endfor %}
+  {% endif %}
 
   <div class="tarjeta">
     <h2>Repetitivas{% if sector != 'gerencia' %} de {{ sectores[sector] }}{% endif %}</h2>
@@ -92,29 +144,43 @@
     <div class="fila">
       <div class="fila-que">{{ r.titulo }}</div>
       <div class="fila-dato">{{ sectores[r.sector] }} · {{ r.regla }} · {{ estados_de_tarea[r.estado] }} · la cargó {{ sectores[r.creada_por] }}{% if r.detalle %} · {{ r.detalle }}{% endif %}</div>
-      {# Editar, pausar y dar de baja: Gerencia todas, un sector las que creó
+      {# Editar, pausar y eliminar: Gerencia todas, un sector las que creó
          él (`puede_manejar`, la misma regla que el WHERE de la escritura). #}
       {% if r.maneja %}
       <details>
-        <summary>Editar, pausar o dar de baja</summary>
+        <summary>Editar o pausar</summary>
         <form method="post" action="/{{ sector }}/tareas/{{ r.id }}/editar">
           <div class="campos">
             <label class="ancho">Título<input type="text" name="titulo" value="{{ r.titulo }}" required></label>
             <label class="ancho">Detalle<input type="text" name="detalle" value="{{ r.detalle or '' }}"></label>
-            <label>Tipo
+            {# Una fija no pasa a "después de hecha" ni al revés (app/db.py). #}
+            <label>¿Se repite?
               <select name="tipo">
-                {% for clave, texto in tipos.items() if clave != 'una_vez' %}
+                {% for clave, texto in tipos.items() if clave != 'una_vez' and ((clave == 'despues_de_hecha') == (r.tipo == 'despues_de_hecha')) %}
                 <option value="{{ clave }}" {% if clave == r.tipo %}selected{% endif %}>{{ texto }}</option>
                 {% endfor %}
               </select>
             </label>
-            <label>Cada cuántos días<input type="number" name="cada_dias" min="1" value="{{ r.cada_dias or '' }}" inputmode="numeric"></label>
-            <label>Día de la semana
+            {% if r.tipo == 'despues_de_hecha' %}
+            <label>¿Cuántos días después de hecha?<input type="number" name="dias_despues" min="1" value="{{ r.cada_dias or '' }}" inputmode="numeric"></label>
+            {% else %}
+            <label>¿Cada cuántos días?<input type="number" name="cada_dias" min="1" value="{{ r.cada_dias or '' }}" inputmode="numeric"></label>
+            <label>¿Qué día de la semana?
               <select name="dia_semana">
                 {% for d in dias_semana %}<option value="{{ loop.index0 }}" {% if r.dia_semana == loop.index0 %}selected{% endif %}>{{ d }}</option>{% endfor %}
               </select>
             </label>
-            <label>Días del mes (ej: 1, 15)<input type="text" name="dias_mes" value="{{ r.dias_mes_texto }}" inputmode="numeric" autocomplete="off"></label>
+            <fieldset class="ancho dias-mes">
+              <legend>¿Qué días del mes?</legend>
+              {% for d in range(1, 32) %}<label><input type="checkbox" name="dias_mes" value="{{ d }}" {% if r.dias_mes and d in r.dias_mes %}checked{% endif %}>{{ d }}</label>{% endfor %}
+            </fieldset>
+            <label>¿Qué día del año?<input type="number" name="anual_dia" min="1" max="31" value="{{ r.anual_dia or '' }}" inputmode="numeric"></label>
+            <label>¿De qué mes?
+              <select name="anual_mes">
+                {% for m in meses %}<option value="{{ loop.index }}" {% if r.anual_mes == loop.index %}selected{% endif %}>{{ m }}</option>{% endfor %}
+              </select>
+            </label>
+            {% endif %}
           </div>
           <div class="acciones"><button type="submit">Guardar cambios</button></div>
         </form>
@@ -122,10 +188,10 @@
           <div class="acciones">
             {% if r.estado == 'activa' %}<button type="submit" name="estado" value="pausada" class="gris">Pausar</button>
             {% else %}<button type="submit" name="estado" value="activa" class="gris">Reanudar</button>{% endif %}
-            <button type="submit" name="estado" value="baja" class="peligro">Dar de baja</button>
           </div>
         </form>
       </details>
+      {{ eliminar(sector, r.id, r.tipo) }}
       {% else %}
       <div class="fila-dato">La cargó Gerencia: solo Gerencia la cambia.</div>
       {% endif %}
@@ -180,6 +246,9 @@
       {% if o.estado == 'hecha' %}
       <div class="fila-dato">Marcada el {{ hora_argentina(o.hecha_el) }} por {{ sectores[o.hecha_por] }}{% if o.nota %} · «{{ o.nota }}»{% endif %}</div>
       {% endif %}
+      {% if o.eliminada_el %}
+      <div class="fila-dato">Tarea eliminada el {{ hora_argentina(o.eliminada_el) }} por {{ sectores[o.eliminada_por] }}</div>
+      {% elif o.estado == 'pendiente' %}{{ eliminar('gerencia', o.tarea_id, o.tipo) }}{% endif %}
       {% for r in reaperturas.get(o.id, []) %}
       <div class="fila-dato">Gerencia la volvió a pendiente el {{ hora_argentina(r.creado_en) }}: {{ r.motivo }} (estaba hecha el {{ hora_argentina(r.hecha_el_anterior) }} por {{ sectores[r.hecha_por_anterior] }})</div>
       {% endfor %}
@@ -200,6 +269,9 @@
   {% endif %}
 <script>
 (function () {
+  function abrirNueva() { if (location.hash === "#nueva") { document.getElementById("nueva").open = true; } }
+  abrirNueva();
+  window.addEventListener("hashchange", abrirNueva);
   var tipo = document.getElementById("tipo-nueva");
   function mostrar() {
     document.querySelectorAll("[data-tipo]").forEach(function (el) {
