@@ -164,3 +164,22 @@ de la tabla"*. Ese unique no existe desde
 `db/permitir_varias_fichas_por_articulo.sql`. Dos afirmaciones falsas en un
 párrafo de cuatro líneas, las dos envejecidas por cambios que no tocaron esa
 ruta.
+
+## El listado de precios: "Precio anterior" es el de AYER (dueño, 05/10)
+
+En el listado (`/precios/consultar`, su PDF y su Excel) el **precio anterior
+es el VIGENTE AL CIERRE DEL DÍA ANTERIOR** a la fecha del listado, por ficha
+(`listar_precios_anteriores_por_cliente` = la consulta de vigente, un día
+antes). Hasta el 05/10 era el último precio DISTINTO, que podía ser de hace
+semanas.
+
+- Si ayer valía lo mismo, las dos columnas dicen lo mismo.
+- Si ayer no tenía precio, la celda del Excel queda vacía.
+- "Nuevo precio" (pantalla, PDF y Excel) es lo que vale distinto que ayer o
+  ayer no tenía precio: una sola regla, `_contra_el_dia_anterior`
+  (app/main.py). Un precio recargado hoy con el mismo valor no es nuevo.
+- La pantalla dice al lado "(antes $X)" o "(ayer no tenía)". El PDF no lleva
+  la columna: solo la marca.
+
+Tests: `tests/test_precio_anterior.py`, contra Postgres (cambió hoy, no
+cambió, no existía ayer, cambió hace días y recargado igual).

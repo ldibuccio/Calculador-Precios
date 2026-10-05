@@ -233,6 +233,7 @@ def test_la_carga_de_precios_ofrece_las_dos_fichas_con_su_propio_precio():
         patch("app.main.listar_clientes", return_value=CLIENTE_DIA),
         patch("app.main.listar_fichas_por_cliente", return_value=DOS_FICHAS),
         patch("app.main.listar_precios_vigentes_por_cliente", return_value=PRECIOS_DE_LAS_DOS),
+        patch("app.main.listar_precios_anteriores_por_cliente", return_value=[]),
         patch("app.main.calcular_listado_para_negociar_precios", return_value=[]),
     ):
         respuesta = cliente.get("/precios/cargar?cliente_id=1")
@@ -248,6 +249,7 @@ def test_la_consulta_de_precios_lista_las_dos_por_separado():
         patch("app.main._hoy_argentina", return_value=date(2026, 8, 26)),
         patch("app.main.listar_fichas_por_cliente", return_value=DOS_FICHAS),
         patch("app.main.listar_precios_vigentes_por_cliente", return_value=PRECIOS_DE_LAS_DOS),
+        patch("app.main.listar_precios_anteriores_por_cliente", return_value=[]),
     ):
         respuesta = cliente.get("/precios/consultar?cliente_id=1")
 
