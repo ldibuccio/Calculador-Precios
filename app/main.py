@@ -20,6 +20,7 @@ import subprocess
 import unicodedata
 from dataclasses import dataclass
 from datetime import date, datetime, time, timedelta, timezone
+from decimal import Decimal, InvalidOperation
 from urllib.parse import urlencode
 from uuid import uuid4
 
@@ -75,6 +76,23 @@ from core.motor_costeo import (
 import psycopg2
 
 from app.db import (
+    FleteNoSePuede,
+    actualizar_camion,
+    actualizar_fletero,
+    buscar_flete,
+    camiones_del_fletero,
+    camiones_usados_el_dia,
+    cargar_precio_camion,
+    crear_camion,
+    crear_fletero,
+    cuenta_del_fletero,
+    flete_por_dia_y_sucursal,
+    guardar_flete,
+    listar_fleteros,
+    listar_fletes_del_dia,
+    listar_sucursales_del_cliente,
+    marcar_viajes_pagados,
+    obtener_flete,
     RemitoNoSePuede,
     correcciones_de_numero,
     corregir_numero_de_remito,
@@ -19354,6 +19372,11 @@ def exportar_rentabilidad_excel(
     )
 
 
+# DE QUIÉN ES LA PARTE DEL FLETE que resta Rentabilidad Real: la de la
+# empresa de esta base. En Frutamax, la parte de Frutamax (dueño, 05/10).
+_EMPRESA_DEL_FLETE = "palmala" if "palmala" in NOMBRE_EMPRESA.lower() else "frutamax"
+
+
 def _datos_rentabilidad_real(cliente_id: int, fecha_desde, fecha_hasta, articulo_id, grupo) -> dict:
     """Junta los datos y llama al motor puro de la Rentabilidad REAL (core/costo_real.py).
 
@@ -19435,11 +19458,21 @@ def _datos_rentabilidad_real(cliente_id: int, fecha_desde, fecha_hasta, articulo
     if grupo is not None:
         segunda = [l for l in segunda if l["grupo"] == grupo]
 
-    return calcular_rentabilidad_real(
+    # EL FLETE (dueño, 05/10): la parte de ESTA empresa, por día y sucursal
+    # del viaje. Con filtro de artículo o grupo no se resta: un flete no es
+    # de ningún artículo, y repartirlo sería inventar un criterio.
+    fletes = None
+    if articulo_id is None and grupo is None:
+        fletes = flete_por_dia_y_sucursal(cliente_id, fecha_desde, fecha_hasta, _EMPRESA_DEL_FLETE)
+
+    resultado = calcular_rentabilidad_real(
         articulos_datos, margenes_por_fecha, cliente_id, fecha_desde, fecha_hasta,
         devoluciones=devoluciones, cajas_del_deposito=cajas_del_deposito,
-        kilos_recibidos=recibidos, segunda=segunda,
+        kilos_recibidos=recibidos, segunda=segunda, fletes=fletes,
     )
+    resultado["flete_no_se_resta"] = fletes is None
+    resultado["empresa_del_flete"] = NOMBRE_EMPRESA
+    return resultado
 
 
 @app.get("/gerencia/cajas-perdidas")
@@ -25823,6 +25856,475 @@ def revisar_mail_pedido_ruta(request: Request, mail_id: int):
             error="La IA no encontró renglones de pedido en ese mail. Cargalo a mano desde Cargar Pedido, o marcalo como ignorado."
         )
     return templates.TemplateResponse(request, "deposito_pedido_revision.html", contexto)
+
+
+# ---------------------------------------------------------------------------
+# FLETES (dueño, 05/10): Administración → Pedidos → Fletes, con tres pestañas
+# (Fleteros y camiones · Flete del día · Cuenta del fletero). Lo que se decide
+# es de core/fletes.py; lo que se guarda, de app/db.py. Un flete se corrige el
+# mismo día desde Administración; después, solo Gerencia, con historial. Ver
+# docs/modulos/fletes.md.
+# ---------------------------------------------------------------------------
+
+# LOS DOS CAMINOS DE CORREGIR: el sector sale del PREFIJO (corolario 63), y
+# con él la barra, el atrás y adónde postea el formulario.
+_CAMINOS_DE_FLETES = {
+    "administracion": {"sector": "administracion", "base": "/administracion/fletes"},
+    "gerencia": {"sector": "gerencia", "base": "/gerencia/fletes"},
+}
+
+
+def _texto_a_entero(texto, etiqueta: str, minimo: int = 0) -> int:
+    """Vacío es cero cuando cero vale (pallets de una sucursal que no lleva
+    nada); si no, falta el dato."""
+    texto = (texto or "").strip()
+    if texto == "":
+        if minimo == 0:
+            return 0
+        raise FleteNoSePuede(f"{etiqueta}: falta el número.")
+    try:
+        valor = int(texto)
+    except ValueError:
+        raise FleteNoSePuede(f"{etiqueta}: tiene que ser un número entero.") from None
+    if valor < minimo:
+        raise FleteNoSePuede(f"{etiqueta}: tiene que ser {minimo} o más.")
+    return valor
+
+
+def _texto_a_precio(texto) -> Decimal:
+    """"120.000", "120000", "120.000,50" o "120000.5": el punto es de miles
+    solo si separa grupos de tres."""
+    limpio = (texto or "").strip().replace("$", "").replace(" ", "")
+    if "," in limpio:
+        limpio = limpio.replace(".", "").replace(",", ".")
+    elif re.fullmatch(r"\d{1,3}(\.\d{3})+", limpio):
+        limpio = limpio.replace(".", "")
+    try:
+        valor = Decimal(limpio)
+    except InvalidOperation:
+        raise FleteNoSePuede("El precio tiene que ser un número.") from None
+    if not valor.is_finite():
+        raise FleteNoSePuede("El precio tiene que ser un número.")
+    if valor <= 0:
+        raise FleteNoSePuede("El precio tiene que ser mayor a cero.")
+    return valor.quantize(Decimal("0.01"))
+
+
+def _texto_a_fecha(texto, etiqueta: str = "La fecha") -> date:
+    try:
+        return date.fromisoformat((texto or "").strip())
+    except ValueError:
+        raise FleteNoSePuede(f"{etiqueta} no es válida.") from None
+
+
+def _redirigir_a_fleteros(aviso=None, error=None):
+    parametros = {k: v for k, v in (("aviso", aviso), ("error", error)) if v}
+    consulta = f"?{urlencode(parametros)}" if parametros else ""
+    return RedirectResponse(url=f"/administracion/fletes/fleteros{consulta}", status_code=303)
+
+
+@app.get("/administracion/fletes/fleteros")
+def ver_fleteros(request: Request, aviso: str | None = None, error: str | None = None):
+    """Pestaña 1: los fleteros, sus camiones y el precio del viaje con historial."""
+    hoy = _hoy_argentina()
+    try:
+        fleteros = listar_fleteros(hoy)
+    except Exception as error_db:
+        raise HTTPException(status_code=500, detail=f"Error al conectar con la base de datos: {error_db}") from error_db
+    return templates.TemplateResponse(request, "administracion_fletes_fleteros.html",
+                                      {"fleteros": fleteros, "hoy": hoy, "aviso": aviso, "error": error})
+
+
+@app.post("/administracion/fletes/fleteros/nuevo")
+def agregar_fletero(nombre: str = Form(""), telefono: str = Form("")):
+    error, nombre_valor = _validar_nombre(nombre)
+    if error:
+        return _redirigir_a_fleteros(error=error)
+    try:
+        crear_fletero(nombre_valor, telefono.strip() or None)
+    except FleteNoSePuede as error_negocio:
+        return _redirigir_a_fleteros(error=str(error_negocio))
+    return _redirigir_a_fleteros(aviso=f"Fletero {nombre_valor} agregado. Ahora cargale sus camiones.")
+
+
+@app.post("/administracion/fletes/fleteros/{fletero_id}")
+def editar_fletero(fletero_id: int, nombre: str = Form(""), telefono: str = Form(""), activo: str = Form("")):
+    error, nombre_valor = _validar_nombre(nombre)
+    if error:
+        return _redirigir_a_fleteros(error=error)
+    try:
+        actualizar_fletero(fletero_id, nombre_valor, telefono.strip() or None, activo == "si")
+    except FleteNoSePuede as error_negocio:
+        return _redirigir_a_fleteros(error=str(error_negocio))
+    return _redirigir_a_fleteros(aviso=f"Fletero {nombre_valor} guardado.")
+
+
+@app.post("/administracion/fletes/fleteros/{fletero_id}/camiones/nuevo")
+def agregar_camion(fletero_id: int, nombre: str = Form(""), pallets: str = Form(""), cantidad: str = Form(""),
+                   precio: str = Form(""), vigente_desde: str = Form("")):
+    error, nombre_valor = _validar_nombre(nombre)
+    if error:
+        return _redirigir_a_fleteros(error=error)
+    try:
+        crear_camion(fletero_id, nombre_valor, _texto_a_entero(pallets, "Los pallets", 1),
+                     _texto_a_entero(cantidad, "Cuántos tiene"), _texto_a_precio(precio),
+                     _texto_a_fecha(vigente_desde, "La fecha desde la que vale el precio"))
+    except FleteNoSePuede as error_negocio:
+        return _redirigir_a_fleteros(error=str(error_negocio))
+    return _redirigir_a_fleteros(aviso=f"Camión {nombre_valor} agregado.")
+
+
+@app.post("/administracion/fletes/camiones/{camion_id}")
+def editar_camion(camion_id: int, nombre: str = Form(""), pallets: str = Form(""), cantidad: str = Form("")):
+    error, nombre_valor = _validar_nombre(nombre)
+    if error:
+        return _redirigir_a_fleteros(error=error)
+    try:
+        actualizar_camion(camion_id, nombre_valor, _texto_a_entero(pallets, "Los pallets", 1),
+                          _texto_a_entero(cantidad, "Cuántos tiene"))
+    except FleteNoSePuede as error_negocio:
+        return _redirigir_a_fleteros(error=str(error_negocio))
+    return _redirigir_a_fleteros(aviso=f"Camión {nombre_valor} guardado.")
+
+
+@app.post("/administracion/fletes/camiones/{camion_id}/precio")
+def nuevo_precio_camion(camion_id: int, precio: str = Form(""), vigente_desde: str = Form("")):
+    try:
+        valor = _texto_a_precio(precio)
+        desde = _texto_a_fecha(vigente_desde, "La fecha desde la que vale el precio")
+        cargar_precio_camion(camion_id, valor, desde)
+    except FleteNoSePuede as error_negocio:
+        return _redirigir_a_fleteros(error=str(error_negocio))
+    return _redirigir_a_fleteros(
+        aviso=f"Precio de {_formatear_moneda(valor)} desde el {desde.strftime('%d/%m/%Y')}. "
+              "Los fletes ya confirmados siguen con su precio.")
+
+
+def _clientes_con_sucursales() -> list[dict]:
+    clientes = listar_clientes()
+    con = []
+    for cliente in clientes:
+        sucursales = listar_sucursales_del_cliente(cliente["id"])
+        if sucursales:
+            con.append(dict(cliente, sucursales=sucursales))
+    return con
+
+
+def _pallets_del_formulario(form, sucursales: list[dict]) -> list[dict]:
+    filas = []
+    for s in sucursales:
+        filas.append({"codigo": s["codigo"], "nombre": s["nombre"],
+                      "pallets_frutamax": _texto_a_entero(form.get(f"fm_{s['codigo']}"), f"Pallets de {s['nombre']}"),
+                      "pallets_palmala": _texto_a_entero(form.get(f"pm_{s['codigo']}"), f"Pallets de {s['nombre']}")})
+    return filas
+
+
+def _contexto_de_flete(request: Request, camino: dict, fecha, cliente, fletero, sucursales,
+                       flete_id=None, propuesta=None, error=None) -> dict:
+    """Lo que necesita la pantalla del flete del día en cualquiera de sus
+    pasos: los pallets, y si ya se armó, los camiones de cada sucursal."""
+    camiones = camiones_del_fletero(fletero["id"], fecha)
+    return {"camino": camino, "fecha": fecha, "cliente": cliente, "fletero": fletero, "sucursales": sucursales,
+            "camiones": camiones, "flete_id": flete_id, "propuesta": propuesta, "error": error,
+            "accion": (f"{camino['base']}/{flete_id}/corregir" if flete_id else f"{camino['base']}/dia")}
+
+
+def _cliente_y_fletero(cliente_id, fletero_id):
+    cliente = next((c for c in _clientes_con_sucursales() if c["id"] == cliente_id), None)
+    fletero = next((f for f in listar_fleteros(_hoy_argentina()) if f["id"] == fletero_id), None)
+    if cliente is None or fletero is None:
+        raise FleteNoSePuede("Elegí el cliente y el fletero.")
+    return cliente, fletero
+
+
+@app.get("/administracion/fletes/dia")
+def ver_flete_del_dia(request: Request, fecha: str | None = None, cliente_id: str | None = None,
+                      fletero_id: str | None = None, aviso: str | None = None, error: str | None = None):
+    """Pestaña 2: el flete del día. Se elige fecha, cliente y fletero; si ese
+    flete ya está confirmado se ve (con el mensaje para WhatsApp), y si no,
+    se cargan los pallets de cada sucursal para armarlo."""
+    hoy = _hoy_argentina()
+    try:
+        fecha_valor = date.fromisoformat(fecha) if fecha else hoy
+    except ValueError:
+        fecha_valor, error = hoy, "La fecha no es válida."
+    try:
+        clientes = _clientes_con_sucursales()
+        fleteros = listar_fleteros(hoy, solo_activos=True)
+        del_dia = listar_fletes_del_dia(fecha_valor)
+    except Exception as error_db:
+        raise HTTPException(status_code=500, detail=f"Error al conectar con la base de datos: {error_db}") from error_db
+    cliente = next((c for c in clientes if str(c["id"]) == (cliente_id or "")), clientes[0] if clientes else None)
+    fletero = next((f for f in fleteros if str(f["id"]) == (fletero_id or "")), None)
+    contexto = {"camino": _CAMINOS_DE_FLETES["administracion"], "fecha": fecha_valor, "clientes": clientes,
+                "fleteros": fleteros, "cliente": cliente, "fletero": fletero, "del_dia": del_dia,
+                "aviso": aviso, "error": error, "flete": None, "sucursales": None}
+    if cliente and fletero:
+        flete_id = buscar_flete(fecha_valor, cliente["id"], fletero["id"])
+        if flete_id:
+            contexto["flete"] = _flete_para_mostrar(obtener_flete(flete_id))
+        else:
+            contexto["sucursales"] = [dict(s, pallets_frutamax=0, pallets_palmala=0) for s in cliente["sucursales"]]
+    return templates.TemplateResponse(request, "administracion_fletes_dia.html", contexto)
+
+
+def _flete_para_mostrar(flete: dict) -> dict:
+    """El flete con su mensaje de WhatsApp y si hoy se puede corregir desde
+    Administración (el mismo día en que se confirmó)."""
+    from core.fletes import texto_whatsapp
+    por_sucursal = []
+    for s in flete["sucursales"]:
+        cuantos: dict = {}
+        for v in s["viajes"]:
+            cuantos[v["camion"]] = cuantos.get(v["camion"], 0) + 1
+        s["camiones"] = list(cuantos.items())
+        por_sucursal.append({"nombre": s["nombre"], "pallets": s["pallets"], "camiones": s["camiones"]})
+    flete["mensaje"] = texto_whatsapp(flete["fletero"], flete["fecha"], por_sucursal)
+    flete["se_corrige_hoy"] = (flete["confirmado_el"].astimezone(ARGENTINA).date() == _hoy_argentina()
+                               and not flete["pagado"])
+    return flete
+
+
+async def _armar_o_confirmar(request: Request, camino: dict, flete_id: int | None, confirmar: bool):
+    """Armar (propone camiones) o Confirmar (guarda lo que quedó en los
+    campos, editado o no). Los dos leen los mismos pallets."""
+    form = await request.form()
+    try:
+        if flete_id:
+            flete = obtener_flete(flete_id)
+            if flete is None:
+                raise HTTPException(status_code=404, detail="Ese flete no existe.")
+            fecha, cliente_id, fletero_id = flete["fecha"], flete["cliente_id"], flete["fletero_id"]
+        else:
+            fecha = _texto_a_fecha(form.get("fecha"))
+            cliente_id = int(form.get("cliente_id") or 0)
+            fletero_id = int(form.get("fletero_id") or 0)
+        cliente, fletero = _cliente_y_fletero(cliente_id, fletero_id)
+        sucursales = _pallets_del_formulario(form, cliente["sucursales"])
+    except FleteNoSePuede as error_negocio:
+        destino = f"{camino['base']}/dia" if not flete_id else f"{camino['base']}/{flete_id}/corregir"
+        return RedirectResponse(url=f"{destino}?{urlencode({'error': str(error_negocio)})}", status_code=303)
+
+    from core.fletes import armar_flete
+    contexto = _contexto_de_flete(request, camino, fecha, cliente, fletero, sucursales, flete_id)
+    if not confirmar:
+        usados = camiones_usados_el_dia(fletero["id"], fecha, flete_id)
+        con_pallets = [{"codigo": s["codigo"], "pallets": s["pallets_frutamax"] + s["pallets_palmala"]}
+                       for s in sucursales if s["pallets_frutamax"] + s["pallets_palmala"] > 0]
+        propuesta = armar_flete(con_pallets, contexto["camiones"], usados)
+        for s in sucursales:
+            s["elegidos"] = propuesta["asignacion"].get(s["codigo"], {})
+        propuesta["usados"] = usados
+        # DÓNDE SE PASA de la flota, por tipo: es lo que hay que resolver a mano.
+        propuesta["excesos"] = []
+        for c in contexto["camiones"]:
+            usa = sum(s["elegidos"].get(c["id"], 0) for s in sucursales)
+            quedan = max(0, c["cantidad"] - usados.get(c["id"], 0))
+            if usa > quedan:
+                propuesta["excesos"].append({"nombre": c["nombre"], "usa": usa, "quedan": quedan})
+        contexto["propuesta"] = propuesta
+        return templates.TemplateResponse(request, "administracion_fletes_armar.html", contexto)
+
+    try:
+        for s in sucursales:
+            s["camiones"] = {c["id"]: _texto_a_entero(form.get(f"camion_{s['codigo']}_{c['id']}"),
+                                                      f"Camiones de {s['nombre']}")
+                             for c in contexto["camiones"]}
+            s["elegidos"] = s["camiones"]
+        flete_id = guardar_flete(fecha, cliente["id"], fletero["id"], sucursales, camino["sector"], flete_id=flete_id)
+    except FleteNoSePuede as error_negocio:
+        contexto["error"] = str(error_negocio)
+        contexto["propuesta"] = {"alcanza": True, "sin_precio": [], "usados": {}, "excesos": []}
+        return templates.TemplateResponse(request, "administracion_fletes_armar.html", contexto, status_code=400)
+    if camino["sector"] == "gerencia":
+        return RedirectResponse(url=f"/gerencia/fletes/{flete_id}/corregir?aviso=Flete+corregido.", status_code=303)
+    parametros = urlencode({"fecha": fecha.isoformat(), "cliente_id": cliente["id"], "fletero_id": fletero["id"],
+                            "aviso": "Flete confirmado. Copiá el mensaje y mandáselo al fletero."})
+    return RedirectResponse(url=f"/administracion/fletes/dia?{parametros}", status_code=303)
+
+
+@app.post("/administracion/fletes/dia/armar")
+async def armar_flete_del_dia(request: Request):
+    return await _armar_o_confirmar(request, _CAMINOS_DE_FLETES["administracion"], None, confirmar=False)
+
+
+@app.post("/administracion/fletes/dia/confirmar")
+async def confirmar_flete_del_dia(request: Request):
+    return await _armar_o_confirmar(request, _CAMINOS_DE_FLETES["administracion"], None, confirmar=True)
+
+
+def _pantalla_de_corregir(request: Request, camino: dict, flete_id: int, aviso=None, error=None):
+    flete = obtener_flete(flete_id)
+    if flete is None:
+        raise HTTPException(status_code=404, detail="Ese flete no existe.")
+    flete = _flete_para_mostrar(flete)
+    return templates.TemplateResponse(request, "administracion_fletes_corregir.html", {
+        "camino": camino, "flete": flete, "aviso": aviso, "error": error,
+        "se_corrige": (camino["sector"] == "gerencia" and not flete["pagado"]) or flete["se_corrige_hoy"],
+        "sucursales": _sucursales_para_corregir(flete)})
+
+
+def _sucursales_para_corregir(flete: dict) -> list[dict]:
+    """Todas las sucursales del cliente, con los pallets que tenía el flete
+    (las que no iban, en cero)."""
+    cargadas = {s["codigo"]: s for s in flete["sucursales"]}
+    return [{"codigo": s["codigo"], "nombre": s["nombre"],
+             "pallets_frutamax": cargadas.get(s["codigo"], {}).get("pallets_frutamax", 0),
+             "pallets_palmala": cargadas.get(s["codigo"], {}).get("pallets_palmala", 0)}
+            for s in listar_sucursales_del_cliente(flete["cliente_id"])]
+
+
+def _se_puede_corregir_aca(camino: dict, flete_id: int) -> str | None:
+    """None si este sector lo puede corregir; si no, por qué."""
+    flete = obtener_flete(flete_id)
+    if flete is None:
+        raise HTTPException(status_code=404, detail="Ese flete no existe.")
+    if flete["pagado"]:
+        return "Un viaje de este flete ya se pagó: no se corrige."
+    if camino["sector"] == "administracion" and not _flete_para_mostrar(flete)["se_corrige_hoy"]:
+        return "Pasó el día en que se confirmó: lo corrige Gerencia."
+    return None
+
+
+@app.get("/administracion/fletes/{flete_id}/corregir")
+def ver_corregir_flete(request: Request, flete_id: int, aviso: str | None = None, error: str | None = None):
+    return _pantalla_de_corregir(request, _CAMINOS_DE_FLETES["administracion"], flete_id, aviso, error)
+
+
+async def _corregir(request: Request, sector: str, flete_id: int, confirmar: bool):
+    camino = _CAMINOS_DE_FLETES[sector]
+    motivo = _se_puede_corregir_aca(camino, flete_id)
+    if motivo:
+        return RedirectResponse(url=f"{camino['base']}/{flete_id}/corregir?{urlencode({'error': motivo})}",
+                                status_code=303)
+    return await _armar_o_confirmar(request, camino, flete_id, confirmar)
+
+
+@app.post("/administracion/fletes/{flete_id}/corregir/armar")
+async def armar_correccion_flete(request: Request, flete_id: int):
+    return await _corregir(request, "administracion", flete_id, confirmar=False)
+
+
+@app.post("/administracion/fletes/{flete_id}/corregir/confirmar")
+async def confirmar_correccion_flete(request: Request, flete_id: int):
+    return await _corregir(request, "administracion", flete_id, confirmar=True)
+
+
+@app.get("/gerencia/fletes/{flete_id}/corregir")
+def ver_corregir_flete_gerencia(request: Request, flete_id: int, aviso: str | None = None, error: str | None = None):
+    """Después del día en que se confirmó, el flete lo corrige solo Gerencia (dueño, 05/10)."""
+    if not _acceso_gerencia_valido(request):
+        return _pantalla_clave_gerencia(request)
+    return _pantalla_de_corregir(request, _CAMINOS_DE_FLETES["gerencia"], flete_id, aviso, error)
+
+
+@app.post("/gerencia/fletes/{flete_id}/corregir/armar")
+async def armar_correccion_flete_gerencia(request: Request, flete_id: int):
+    rechazo = _puerta_de_gerencia_para_escribir(request)
+    if rechazo:
+        return rechazo
+    return await _corregir(request, "gerencia", flete_id, confirmar=False)
+
+
+@app.post("/gerencia/fletes/{flete_id}/corregir/confirmar")
+async def confirmar_correccion_flete_gerencia(request: Request, flete_id: int):
+    rechazo = _puerta_de_gerencia_para_escribir(request)
+    if rechazo:
+        return rechazo
+    return await _corregir(request, "gerencia", flete_id, confirmar=True)
+
+
+def _filtros_de_la_cuenta(fletero_id, desde, hasta):
+    """Los filtros de la cuenta del fletero: los mismos para la pantalla y las
+    dos descargas. Sin fechas, el mes en curso."""
+    hoy = _hoy_argentina()
+    error = None
+    try:
+        desde_valor = date.fromisoformat(desde) if desde else hoy.replace(day=1)
+        hasta_valor = date.fromisoformat(hasta) if hasta else hoy
+    except ValueError:
+        desde_valor, hasta_valor, error = hoy.replace(day=1), hoy, "Alguna fecha no es válida."
+    if desde_valor > hasta_valor:
+        error = "La fecha desde es posterior a la fecha hasta."
+    fletero_valor = int(fletero_id) if (fletero_id or "").isdigit() else None
+    return fletero_valor, desde_valor, hasta_valor, error
+
+
+def _cuenta_para_mostrar(fletero_id, desde, hasta) -> dict:
+    fleteros = listar_fleteros(_hoy_argentina())
+    filas = [] if desde > hasta else cuenta_del_fletero(fletero_id, desde, hasta)
+    nombre = next((f["nombre"] for f in fleteros if f["id"] == fletero_id), None)
+    totales = {clave: sum((f[clave] for f in filas), Decimal("0"))
+               for clave in ("precio", "parte_frutamax", "parte_palmala")}
+    totales["a_pagar"] = sum((f["precio"] for f in filas if not f["pagado_el"]), Decimal("0"))
+    totales["pagado"] = totales["precio"] - totales["a_pagar"]
+    filtro = (f"Fletero: {nombre}" if nombre else "Todos los fleteros") + \
+        f" · del {desde.strftime('%d/%m/%Y')} al {hasta.strftime('%d/%m/%Y')}"
+    return {"fleteros": fleteros, "filas": filas, "totales": totales, "filtro_texto": filtro}
+
+
+@app.get("/administracion/fletes/cuenta")
+def ver_cuenta_del_fletero(request: Request, fletero_id: str | None = None, desde: str | None = None,
+                           hasta: str | None = None, aviso: str | None = None, error: str | None = None):
+    """Pestaña 3: lo que se le debe al fletero, viaje por viaje, y lo pagado."""
+    fletero_valor, desde_valor, hasta_valor, error_fecha = _filtros_de_la_cuenta(fletero_id, desde, hasta)
+    try:
+        cuenta = _cuenta_para_mostrar(fletero_valor, desde_valor, hasta_valor)
+    except Exception as error_db:
+        raise HTTPException(status_code=500, detail=f"Error al conectar con la base de datos: {error_db}") from error_db
+    consulta = urlencode({"fletero_id": fletero_valor or "", "desde": desde_valor.isoformat(),
+                          "hasta": hasta_valor.isoformat()})
+    return templates.TemplateResponse(request, "administracion_fletes_cuenta.html", dict(
+        cuenta, fletero_id=fletero_valor, desde=desde_valor, hasta=hasta_valor, consulta=consulta,
+        hoy=_hoy_argentina(), aviso=aviso, error=error or error_fecha))
+
+
+@app.post("/administracion/fletes/cuenta/pagar")
+async def pagar_viajes_del_fletero(request: Request):
+    form = await request.form()
+    consulta = urlencode({"fletero_id": form.get("fletero_id") or "", "desde": form.get("desde") or "",
+                          "hasta": form.get("hasta") or ""})
+    try:
+        fecha_pago = _texto_a_fecha(form.get("pagado_el"), "La fecha de pago")
+        ids = [int(v) for v in form.getlist("viaje_id") if v.isdigit()]
+        if not ids:
+            raise FleteNoSePuede("Tildá los viajes que se pagaron.")
+        cuantos = marcar_viajes_pagados(ids, fecha_pago)
+    except FleteNoSePuede as error_negocio:
+        return RedirectResponse(url=f"/administracion/fletes/cuenta?{consulta}&{urlencode({'error': str(error_negocio)})}",
+                                status_code=303)
+    aviso = f"{cuantos} viaje{'s' if cuantos != 1 else ''} pagado{'s' if cuantos != 1 else ''} el " \
+            f"{fecha_pago.strftime('%d/%m/%Y')}."
+    return RedirectResponse(url=f"/administracion/fletes/cuenta?{consulta}&{urlencode({'aviso': aviso})}",
+                            status_code=303)
+
+
+def _descarga_de_la_cuenta(fletero_id, desde, hasta, formato: str):
+    from core.exportar_fletes import generar_excel_cuenta_fletero, generar_pdf_cuenta_fletero
+    fletero_valor, desde_valor, hasta_valor, error = _filtros_de_la_cuenta(fletero_id, desde, hasta)
+    if error:
+        raise HTTPException(status_code=400, detail=error)
+    cuenta = _cuenta_para_mostrar(fletero_valor, desde_valor, hasta_valor)
+    nombre = f"Cuenta_fletero_{desde_valor.isoformat()}_a_{hasta_valor.isoformat()}"
+    if formato == "pdf":
+        contenido = generar_pdf_cuenta_fletero(cuenta["filtro_texto"], cuenta["filas"], cuenta["totales"])
+        return Response(content=contenido, media_type="application/pdf",
+                        headers={"Content-Disposition": f'attachment; filename="{nombre}.pdf"'})
+    contenido = generar_excel_cuenta_fletero(cuenta["filtro_texto"], cuenta["filas"], cuenta["totales"])
+    return Response(content=contenido,
+                    media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                    headers={"Content-Disposition": f'attachment; filename="{nombre}.xlsx"'})
+
+
+@app.get("/administracion/fletes/cuenta/pdf")
+def exportar_cuenta_fletero_pdf(fletero_id: str = "", desde: str = "", hasta: str = ""):
+    return _descarga_de_la_cuenta(fletero_id, desde, hasta, "pdf")
+
+
+@app.get("/administracion/fletes/cuenta/excel")
+def exportar_cuenta_fletero_excel(fletero_id: str = "", desde: str = "", hasta: str = ""):
+    return _descarga_de_la_cuenta(fletero_id, desde, hasta, "excel")
+
 
 
 if __name__ == "__main__":

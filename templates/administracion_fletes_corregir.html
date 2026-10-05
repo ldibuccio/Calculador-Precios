@@ -1,0 +1,51 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Corregir flete</title>
+{% import "_fletes.html" as _fletes %}
+{% import "_pestanas_fletes.html" as _pestanas %}
+<style>
+{{ _fletes.estilos() }}
+{{ _pestanas.estilos() }}
+</style>
+</head>
+<body>
+  {% set barra_sector = camino.sector %}
+  {% set barra_titulo = "Corregir flete" %}
+  {% set barra_atras = "/administracion/fletes/dia?fecha=" ~ flete.fecha.isoformat() ~ "&cliente_id=" ~ flete.cliente_id ~ "&fletero_id=" ~ flete.fletero_id if camino.sector == "administracion" else "/gerencia" %}
+  {% include "_barra_navegacion.html" %}
+  {% if camino.sector == "administracion" %}{{ _pestanas.pestanas("dia") }}{% endif %}
+
+  {% if aviso %}<div class="aviso">{{ aviso }}</div>{% endif %}
+  {% if error %}<div class="error">{{ error }}</div>{% endif %}
+
+  {{ _fletes.detalle(flete) }}
+
+  {% if se_corrige %}
+  <form class="tarjeta" method="post" action="{{ camino.base }}/{{ flete.id }}/corregir/armar">
+    {{ _fletes.pallets(sucursales) }}
+    <div class="acciones"><button type="submit">Volver a armar</button></div>
+  </form>
+  {% elif flete.pagado %}
+  <div class="nota">Tiene viajes pagados: ya no se corrige.</div>
+  {% else %}
+  <div class="nota">Pasó el día en que se confirmó: lo corrige Gerencia.</div>
+  <div class="acciones"><a href="/gerencia/fletes/{{ flete.id }}/corregir">Corregir desde Gerencia</a></div>
+  {% endif %}
+
+  {% if camino.sector == "gerencia" %}{{ _fletes.mensaje(flete) }}{% endif %}
+
+  {% if flete.correcciones %}
+  <div class="tarjeta">
+    <h2>Correcciones</h2>
+    {% for c in flete.correcciones %}
+    <div class="renglon"><div class="dato">{{ c.corregido_el|fecha_hora }} · desde {{ "Gerencia" if c.sector == "gerencia" else "Administración" }} · antes: {% for s in c.antes.sucursales %}{{ s.codigo }} {{ s.pallets_frutamax + s.pallets_palmala }} pallets, {{ s.viajes|length }} camión{{ "es" if s.viajes|length != 1 }}{% if not loop.last %}; {% endif %}{% endfor %}</div></div>
+    {% endfor %}
+  </div>
+  {% endif %}
+
+{% include "_pie_version.html" %}
+</body>
+</html>

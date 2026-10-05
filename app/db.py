@@ -5,9 +5,11 @@ testear (con mocks), igual que se hizo con la llamada a la API de Claude en
 core/lector_comandas.py.
 """
 
+import json
 import os
 import re
 from datetime import date, datetime, timedelta, timezone
+from decimal import Decimal
 from contextlib import contextmanager
 
 import psycopg2
@@ -19979,3 +19981,393 @@ def contar_backups_viejos(ahora: datetime | None = None) -> dict:
     fechas = [e["ultima_exitosa"].astimezone(ZoneInfo("America/Argentina/Buenos_Aires")).date()
               for e in estado if e["vieja"] and e["ultima_exitosa"]]
     return {"casos": partes_viejas(estado), "mas_viejo": min(fechas, default=None)}
+
+
+# ---------------------------------------------------------------------------
+# FLETES (dueño, 05/10). Administración → Pedidos → Fletes. Lo que se decide
+# (qué camiones, cómo se reparte) es de core/fletes.py; acá se lee y se
+# guarda. Ver docs/modulos/fletes.md.
+# ---------------------------------------------------------------------------
+
+class FleteNoSePuede(ValueError):
+    """Un flete, un fletero o un camión que no se puede guardar así; el
+    mensaje es para mostrar tal cual."""
+
+
+_SQL_PRECIO_DEL_CAMION = """
+    (SELECT p.precio FROM fleteros_camiones_precios p
+      WHERE p.camion_id = c.id AND p.vigente_desde <= %(fecha)s
+      ORDER BY p.vigente_desde DESC LIMIT 1)
+"""
+
+
+def listar_sucursales_del_cliente(cliente_id: int) -> list[dict]:
+    """El nombre de cada código de sucursal del cliente (VL = Vicente López),
+    en el orden en que se cargaron."""
+    conexion = obtener_conexion()
+    try:
+        with conexion.cursor() as cursor:
+            cursor.execute("SELECT codigo, nombre FROM clientes_sucursales WHERE cliente_id = %s ORDER BY id",
+                           (cliente_id,))
+            return _filas_como_dicts(cursor)
+    finally:
+        conexion.close()
+
+
+def listar_fleteros(fecha: date, solo_activos: bool = False) -> list[dict]:
+    """Los fleteros con sus tipos de camión y, de cada uno, el precio vigente
+    a `fecha` (None si todavía no tenía) y el historial de precios."""
+    conexion = obtener_conexion()
+    try:
+        with conexion.cursor() as cursor:
+            cursor.execute("SELECT id, nombre, telefono, activo FROM fleteros"
+                           + (" WHERE activo" if solo_activos else "") + " ORDER BY activo DESC, nombre")
+            fleteros = _filas_como_dicts(cursor)
+            cursor.execute(
+                "SELECT c.id, c.fletero_id, c.nombre, c.pallets, c.cantidad, "
+                + _SQL_PRECIO_DEL_CAMION + " AS precio FROM fleteros_camiones c ORDER BY c.pallets DESC, c.nombre",
+                {"fecha": fecha})
+            camiones = _filas_como_dicts(cursor)
+            cursor.execute("SELECT camion_id, precio, vigente_desde FROM fleteros_camiones_precios "
+                           "ORDER BY vigente_desde DESC")
+            precios = _filas_como_dicts(cursor)
+    finally:
+        conexion.close()
+    for camion in camiones:
+        camion["precios"] = [p for p in precios if p["camion_id"] == camion["id"]]
+    for fletero in fleteros:
+        fletero["camiones"] = [c for c in camiones if c["fletero_id"] == fletero["id"]]
+    return fleteros
+
+
+_NOMBRES_REPETIDOS = ("fleteros_nombre", "fleteros_camiones_nombre")
+
+
+def _escribir_catalogo(consulta: str, parametros: tuple, repetido: str):
+    conexion = obtener_conexion()
+    try:
+        with conexion.cursor() as cursor:
+            try:
+                cursor.execute(consulta, parametros)
+            except psycopg2.errors.UniqueViolation as error:
+                conexion.rollback()
+                # Solo el NOMBRE repetido se traduce: otro choque no es eso.
+                if error.diag.constraint_name in _NOMBRES_REPETIDOS:
+                    raise FleteNoSePuede(repetido) from error
+                raise
+            fila = cursor.fetchone() if cursor.description else None
+        conexion.commit()
+        return fila[0] if fila else None
+    finally:
+        conexion.close()
+
+
+def crear_fletero(nombre: str, telefono: str | None) -> int:
+    return _escribir_catalogo("INSERT INTO fleteros (nombre, telefono) VALUES (%s, %s) RETURNING id",
+                              (nombre, telefono), f"Ya hay un fletero que se llama {nombre}.")
+
+
+def actualizar_fletero(fletero_id: int, nombre: str, telefono: str | None, activo: bool) -> None:
+    _escribir_catalogo("UPDATE fleteros SET nombre = %s, telefono = %s, activo = %s WHERE id = %s",
+                       (nombre, telefono, activo, fletero_id), f"Ya hay un fletero que se llama {nombre}.")
+
+
+def crear_camion(fletero_id: int, nombre: str, pallets: int, cantidad: int, precio, vigente_desde: date) -> int:
+    """Un tipo de camión nuevo, con su primer precio: un camión sin precio no
+    se puede proponer, así que nace con uno."""
+    conexion = obtener_conexion()
+    try:
+        with conexion.cursor() as cursor:
+            try:
+                cursor.execute("INSERT INTO fleteros_camiones (fletero_id, nombre, pallets, cantidad) "
+                               "VALUES (%s, %s, %s, %s) RETURNING id", (fletero_id, nombre, pallets, cantidad))
+            except psycopg2.errors.UniqueViolation as error:
+                conexion.rollback()
+                if error.diag.constraint_name in _NOMBRES_REPETIDOS:
+                    raise FleteNoSePuede(f"Ese fletero ya tiene un camión que se llama {nombre}.") from error
+                raise
+            (camion_id,) = cursor.fetchone()
+            cursor.execute("INSERT INTO fleteros_camiones_precios (camion_id, precio, vigente_desde) "
+                           "VALUES (%s, %s, %s)", (camion_id, precio, vigente_desde))
+        conexion.commit()
+        return camion_id
+    finally:
+        conexion.close()
+
+
+def actualizar_camion(camion_id: int, nombre: str, pallets: int, cantidad: int) -> None:
+    _escribir_catalogo("UPDATE fleteros_camiones SET nombre = %s, pallets = %s, cantidad = %s WHERE id = %s",
+                       (nombre, pallets, cantidad, camion_id),
+                       f"Ese fletero ya tiene un camión que se llama {nombre}.")
+
+
+def cargar_precio_camion(camion_id: int, precio, vigente_desde: date) -> None:
+    """Un precio nuevo desde una fecha. Los fletes ya guardados no cambian:
+    cada viaje tiene su precio congelado. La misma fecha dos veces corrige el
+    precio de esa fecha (error de tipeo)."""
+    _escribir_catalogo(
+        "INSERT INTO fleteros_camiones_precios (camion_id, precio, vigente_desde) VALUES (%s, %s, %s) "
+        "ON CONFLICT (camion_id, vigente_desde) DO UPDATE SET precio = EXCLUDED.precio, cargado_el = now()",
+        (camion_id, precio, vigente_desde), "")
+
+
+def camiones_del_fletero(fletero_id: int, fecha: date) -> list[dict]:
+    """Los tipos de camión del fletero con el precio vigente ESE día."""
+    conexion = obtener_conexion()
+    try:
+        with conexion.cursor() as cursor:
+            cursor.execute(
+                "SELECT c.id, c.nombre, c.pallets, c.cantidad, " + _SQL_PRECIO_DEL_CAMION
+                + " AS precio FROM fleteros_camiones c WHERE c.fletero_id = %(fletero)s "
+                "ORDER BY c.pallets DESC, c.nombre", {"fecha": fecha, "fletero": fletero_id})
+            return _filas_como_dicts(cursor)
+    finally:
+        conexion.close()
+
+
+def camiones_usados_el_dia(fletero_id: int, fecha: date, excepto_flete_id: int | None = None) -> dict:
+    """{camion_id: cuántos} que el fletero ya tiene asignados ese día en otros
+    fletes (otro cliente, o el mismo flete antes de corregirlo no cuenta)."""
+    conexion = obtener_conexion()
+    try:
+        with conexion.cursor() as cursor:
+            cursor.execute(
+                "SELECT v.camion_id, count(*) FROM fletes_viajes v "
+                "JOIN fletes_sucursales s ON s.id = v.flete_sucursal_id JOIN fletes f ON f.id = s.flete_id "
+                "WHERE f.fecha = %s AND f.fletero_id = %s AND f.id IS DISTINCT FROM %s GROUP BY v.camion_id",
+                (fecha, fletero_id, excepto_flete_id))
+            return {camion: int(n) for camion, n in cursor.fetchall()}
+    finally:
+        conexion.close()
+
+
+def buscar_flete(fecha: date, cliente_id: int, fletero_id: int) -> int | None:
+    conexion = obtener_conexion()
+    try:
+        with conexion.cursor() as cursor:
+            cursor.execute("SELECT id FROM fletes WHERE fecha = %s AND cliente_id = %s AND fletero_id = %s",
+                           (fecha, cliente_id, fletero_id))
+            fila = cursor.fetchone()
+            return fila[0] if fila else None
+    finally:
+        conexion.close()
+
+
+def _detalle_del_flete(cursor, flete_id: int) -> dict | None:
+    cursor.execute(
+        "SELECT f.id, f.fecha, f.cliente_id, c.nombre AS cliente, f.fletero_id, fl.nombre AS fletero, "
+        "fl.telefono, f.confirmado_el FROM fletes f JOIN clientes c ON c.id = f.cliente_id "
+        "JOIN fleteros fl ON fl.id = f.fletero_id WHERE f.id = %s", (flete_id,))
+    filas = _filas_como_dicts(cursor)
+    if not filas:
+        return None
+    flete = filas[0]
+    cursor.execute(
+        "SELECT s.id, s.sucursal AS codigo, coalesce(cs.nombre, s.sucursal) AS nombre, s.pallets_frutamax, "
+        "s.pallets_palmala FROM fletes_sucursales s JOIN fletes f ON f.id = s.flete_id "
+        "LEFT JOIN clientes_sucursales cs ON cs.cliente_id = f.cliente_id AND cs.codigo = s.sucursal "
+        "WHERE s.flete_id = %s ORDER BY s.id", (flete_id,))
+    flete["sucursales"] = _filas_como_dicts(cursor)
+    cursor.execute(
+        "SELECT v.id, v.flete_sucursal_id, v.camion_id, c.nombre AS camion, c.pallets, v.precio, "
+        "v.parte_frutamax, v.parte_palmala, v.pagado_el FROM fletes_viajes v "
+        "JOIN fleteros_camiones c ON c.id = v.camion_id JOIN fletes_sucursales s ON s.id = v.flete_sucursal_id "
+        "WHERE s.flete_id = %s ORDER BY v.id", (flete_id,))
+    viajes = _filas_como_dicts(cursor)
+    for sucursal in flete["sucursales"]:
+        sucursal["viajes"] = [v for v in viajes if v["flete_sucursal_id"] == sucursal["id"]]
+        sucursal["pallets"] = sucursal["pallets_frutamax"] + sucursal["pallets_palmala"]
+    flete["pagado"] = any(v["pagado_el"] for v in viajes)
+    flete["costo"] = sum((v["precio"] for v in viajes), Decimal("0"))
+    flete["parte_frutamax"] = sum((v["parte_frutamax"] for v in viajes), Decimal("0"))
+    flete["parte_palmala"] = sum((v["parte_palmala"] for v in viajes), Decimal("0"))
+    cursor.execute("SELECT sector, antes, despues, corregido_el FROM fletes_correcciones WHERE flete_id = %s "
+                   "ORDER BY corregido_el, id", (flete_id,))
+    flete["correcciones"] = _filas_como_dicts(cursor)
+    return flete
+
+
+def obtener_flete(flete_id: int) -> dict | None:
+    """El flete con sus sucursales (con nombre), sus viajes y sus correcciones."""
+    conexion = obtener_conexion()
+    try:
+        with conexion.cursor() as cursor:
+            return _detalle_del_flete(cursor, flete_id)
+    finally:
+        conexion.close()
+
+
+def listar_fletes_del_dia(fecha: date) -> list[dict]:
+    conexion = obtener_conexion()
+    try:
+        with conexion.cursor() as cursor:
+            cursor.execute(
+                "SELECT f.id, f.cliente_id, f.fletero_id, c.nombre AS cliente, fl.nombre AS fletero, "
+                "(SELECT coalesce(sum(v.precio), 0) FROM fletes_viajes v JOIN fletes_sucursales s "
+                "  ON s.id = v.flete_sucursal_id WHERE s.flete_id = f.id) AS costo "
+                "FROM fletes f JOIN clientes c ON c.id = f.cliente_id JOIN fleteros fl ON fl.id = f.fletero_id "
+                "WHERE f.fecha = %s ORDER BY f.id", (fecha,))
+            return _filas_como_dicts(cursor)
+    finally:
+        conexion.close()
+
+
+def _foto_para_el_historial(flete: dict | None) -> dict:
+    if not flete:
+        return {}
+    return {"sucursales": [
+        {"codigo": s["codigo"], "pallets_frutamax": s["pallets_frutamax"], "pallets_palmala": s["pallets_palmala"],
+         "viajes": [{"camion": v["camion"], "precio": str(v["precio"]), "parte_frutamax": str(v["parte_frutamax"]),
+                     "parte_palmala": str(v["parte_palmala"])} for v in s["viajes"]]}
+        for s in flete["sucursales"]]}
+
+
+def guardar_flete(fecha: date, cliente_id: int, fletero_id: int, sucursales: list[dict],
+                  sector: str, flete_id: int | None = None) -> int:
+    """Confirma un flete nuevo o corrige uno (`flete_id`). Todo o nada.
+
+    sucursales: [{"codigo", "pallets_frutamax", "pallets_palmala",
+    "camiones": {camion_id: cuántos}}]. Una sucursal sin pallets no se guarda.
+    El precio de cada viaje es el vigente EL DÍA DEL FLETE y queda congelado;
+    la parte de cada empresa sale por pallets (core/fletes.repartir).
+
+    Corregir reemplaza sucursales y viajes y deja en fletes_correcciones cómo
+    estaba y cómo quedó. Quién puede corregir (el mismo día Administración,
+    después solo Gerencia) lo decide la pantalla; que un viaje PAGADO no se
+    toca lo decide la base.
+    """
+    from core.fletes import repartir
+
+    con_pallets = [s for s in sucursales if s["pallets_frutamax"] + s["pallets_palmala"] > 0]
+    if not con_pallets:
+        raise FleteNoSePuede("No hay pallets en ninguna sucursal: no hay flete que confirmar.")
+    conexion = obtener_conexion()
+    try:
+        with conexion.cursor() as cursor:
+            cursor.execute("SELECT codigo, nombre FROM clientes_sucursales WHERE cliente_id = %s", (cliente_id,))
+            nombres = dict(cursor.fetchall())
+            cursor.execute("SELECT c.id, c.nombre, c.pallets, " + _SQL_PRECIO_DEL_CAMION + " AS precio "
+                           "FROM fleteros_camiones c WHERE c.fletero_id = %(fletero)s",
+                           {"fecha": fecha, "fletero": fletero_id})
+            camiones = {c["id"]: c for c in _filas_como_dicts(cursor)}
+            for s in con_pallets:
+                if s["codigo"] not in nombres:
+                    raise FleteNoSePuede(f"La sucursal {s['codigo']} no es de ese cliente.")
+                elegidos = {cid: n for cid, n in s["camiones"].items() if n}
+                nombre = nombres[s["codigo"]]
+                if not elegidos:
+                    raise FleteNoSePuede(f"{nombre} tiene pallets y ningún camión.")
+                for cid in elegidos:
+                    if cid not in camiones:
+                        raise FleteNoSePuede("Ese camión no es de ese fletero.")
+                    if camiones[cid]["precio"] is None:
+                        raise FleteNoSePuede(f"El camión {camiones[cid]['nombre']} no tiene precio al "
+                                             f"{fecha.strftime('%d/%m/%Y')}: cargalo en Fleteros y camiones.")
+                lugar = sum(camiones[cid]["pallets"] * n for cid, n in elegidos.items())
+                pallets = s["pallets_frutamax"] + s["pallets_palmala"]
+                if lugar < pallets:
+                    raise FleteNoSePuede(f"A {nombre} no le entran: son {pallets} pallets y los camiones "
+                                         f"elegidos llevan {lugar}.")
+            antes = None
+            if flete_id is None:
+                try:
+                    cursor.execute("INSERT INTO fletes (fecha, cliente_id, fletero_id) VALUES (%s, %s, %s) "
+                                   "RETURNING id", (fecha, cliente_id, fletero_id))
+                except psycopg2.errors.UniqueViolation as error:
+                    conexion.rollback()
+                    raise FleteNoSePuede("Ese fletero ya tiene un flete de ese cliente para ese día: "
+                                         "corregilo en vez de cargar otro.") from error
+                (flete_id,) = cursor.fetchone()
+            else:
+                antes = _detalle_del_flete(cursor, flete_id)
+                if antes is None:
+                    raise FleteNoSePuede("Ese flete no existe.")
+                try:
+                    cursor.execute("DELETE FROM fletes_sucursales WHERE flete_id = %s", (flete_id,))
+                except psycopg2.errors.CheckViolation as error:
+                    conexion.rollback()
+                    if error.diag.constraint_name == "viaje_pagado_no_se_toca":
+                        raise FleteNoSePuede("Un viaje de este flete ya se pagó: no se corrige.") from error
+                    raise
+            for s in con_pallets:
+                cursor.execute("INSERT INTO fletes_sucursales (flete_id, sucursal, pallets_frutamax, "
+                               "pallets_palmala) VALUES (%s, %s, %s, %s) RETURNING id",
+                               (flete_id, s["codigo"], s["pallets_frutamax"], s["pallets_palmala"]))
+                (sucursal_id,) = cursor.fetchone()
+                for cid, n in sorted(s["camiones"].items(), key=lambda par: -camiones[par[0]]["pallets"]):
+                    precio = camiones[cid]["precio"]
+                    frutamax, palmala = repartir(precio, s["pallets_frutamax"], s["pallets_palmala"])
+                    for _ in range(n):
+                        cursor.execute("INSERT INTO fletes_viajes (flete_sucursal_id, camion_id, precio, "
+                                       "parte_frutamax, parte_palmala) VALUES (%s, %s, %s, %s, %s)",
+                                       (sucursal_id, cid, precio, frutamax, palmala))
+            if antes is not None:
+                despues = _detalle_del_flete(cursor, flete_id)
+                cursor.execute("INSERT INTO fletes_correcciones (flete_id, sector, antes, despues) "
+                               "VALUES (%s, %s, %s, %s)",
+                               (flete_id, sector, json.dumps(_foto_para_el_historial(antes)),
+                                json.dumps(_foto_para_el_historial(despues))))
+        conexion.commit()
+        return flete_id
+    finally:
+        conexion.close()
+
+
+def cuenta_del_fletero(fletero_id: int | None, desde: date, hasta: date) -> list[dict]:
+    """Un renglón por viaje del rango (por la fecha del flete): fecha,
+    sucursal (con nombre), camión, precio, la parte de cada empresa y si se
+    pagó. Sin fletero, todos."""
+    conexion = obtener_conexion()
+    try:
+        with conexion.cursor() as cursor:
+            cursor.execute(
+                "SELECT v.id, f.id AS flete_id, f.fecha, f.cliente_id, f.fletero_id, fl.nombre AS fletero, "
+                "c.nombre AS cliente, "
+                "coalesce(cs.nombre, s.sucursal) AS sucursal, ca.nombre AS camion, v.precio, v.parte_frutamax, "
+                "v.parte_palmala, v.pagado_el FROM fletes_viajes v "
+                "JOIN fletes_sucursales s ON s.id = v.flete_sucursal_id JOIN fletes f ON f.id = s.flete_id "
+                "JOIN fleteros fl ON fl.id = f.fletero_id JOIN clientes c ON c.id = f.cliente_id "
+                "JOIN fleteros_camiones ca ON ca.id = v.camion_id "
+                "LEFT JOIN clientes_sucursales cs ON cs.cliente_id = f.cliente_id AND cs.codigo = s.sucursal "
+                "WHERE f.fecha BETWEEN %s AND %s AND (%s::bigint IS NULL OR f.fletero_id = %s) "
+                "ORDER BY f.fecha, f.id, s.id, v.id", (desde, hasta, fletero_id, fletero_id))
+            return _filas_como_dicts(cursor)
+    finally:
+        conexion.close()
+
+
+def marcar_viajes_pagados(viaje_ids: list[int], pagado_el: date) -> int:
+    """Marca pagados los viajes que todavía estaban a pagar; devuelve cuántos.
+    Uno ya pagado no se toca (ni su fecha de pago)."""
+    if not viaje_ids:
+        return 0
+    conexion = obtener_conexion()
+    try:
+        with conexion.cursor() as cursor:
+            cursor.execute("UPDATE fletes_viajes SET pagado_el = %s WHERE id = ANY(%s) AND pagado_el IS NULL",
+                           (pagado_el, list(viaje_ids)))
+            cuantos = cursor.rowcount
+        conexion.commit()
+        return cuantos
+    finally:
+        conexion.close()
+
+
+def flete_por_dia_y_sucursal(cliente_id: int, desde: date, hasta: date, empresa: str) -> list[dict]:
+    """La parte de UNA empresa del flete, por día y sucursal: la línea "Flete"
+    de Rentabilidad Real. `empresa` es 'frutamax' o 'palmala'."""
+    columna = {"frutamax": "parte_frutamax", "palmala": "parte_palmala"}[empresa]
+    conexion = obtener_conexion()
+    try:
+        with conexion.cursor() as cursor:
+            cursor.execute(psycopg2.sql.SQL(
+                "SELECT f.fecha, coalesce(cs.nombre, s.sucursal) AS sucursal, sum(v.{}) AS pesos "
+                "FROM fletes_viajes v JOIN fletes_sucursales s ON s.id = v.flete_sucursal_id "
+                "JOIN fletes f ON f.id = s.flete_id "
+                "LEFT JOIN clientes_sucursales cs ON cs.cliente_id = f.cliente_id AND cs.codigo = s.sucursal "
+                "WHERE f.cliente_id = %s AND f.fecha BETWEEN %s AND %s "
+                "GROUP BY f.fecha, s.sucursal, cs.nombre, cs.id ORDER BY f.fecha, cs.id NULLS LAST, s.sucursal"
+            ).format(psycopg2.sql.Identifier(columna)), (cliente_id, desde, hasta))
+            return _filas_como_dicts(cursor)
+    finally:
+        conexion.close()

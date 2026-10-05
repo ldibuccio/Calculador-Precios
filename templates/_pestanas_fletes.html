@@ -1,0 +1,13 @@
+{# LAS PESTAÑAS DE FLETES (dueño, 05/10): Fleteros y camiones · Flete del día
+   · Cuenta del fletero. Un solo botón en Administración → Pedidos; cada
+   pestaña es su propia pantalla, con su propia dirección. #}
+{% import "_pestanas.html" as _pestanas %}
+{% macro estilos() %}{{ _pestanas.estilos() }}{% endmacro %}
+
+{% macro pestanas(activa) %}
+<nav class="pestanas" aria-label="Fletes">
+  <a href="/administracion/fletes/fleteros"{% if activa == "fleteros" %} aria-current="page"{% endif %}>Fleteros y camiones</a>
+  <a href="/administracion/fletes/dia"{% if activa == "dia" %} aria-current="page"{% endif %}>Flete del día</a>
+  <a href="/administracion/fletes/cuenta"{% if activa == "cuenta" %} aria-current="page"{% endif %}>Cuenta del fletero</a>
+</nav>
+{% endmacro %}

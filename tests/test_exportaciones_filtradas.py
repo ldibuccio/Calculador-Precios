@@ -79,6 +79,10 @@ EXPORTACIONES = {
     "/puesto/envases/stock/exportar-excel": "solo fecha",
     "/puesto/envases/movimientos/exportar-pdf": "solo fechas",
     "/puesto/envases/movimientos/exportar-excel": "solo fechas",
+    # La cuenta del fletero (05/10): lo cuida tests/test_fletes_pantallas.py,
+    # siguiendo el link que dibuja la pantalla.
+    "/administracion/fletes/cuenta/pdf": "tests/test_fletes_pantallas.py",
+    "/administracion/fletes/cuenta/excel": "tests/test_fletes_pantallas.py",
     # Exportan lo GUARDADO, que es lo que la pantalla muestra: guardan primero.
     "/compras/que-comprar/pdf": "lo guardado (tildes)",
     "/compras/disponibles/guardar-y-exportar-excel": "lo guardado",

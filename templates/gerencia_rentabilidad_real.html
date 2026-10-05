@@ -294,6 +294,11 @@
   .provisorio { margin-top: 0.6rem; background: #fef3c7; color: #92400e; padding: 0.6rem 0.8rem;
     border-radius: 8px; font-size: 0.9rem; }
   {{ pestanas_gerencia.estilos() }}
+  .tarjeta-flete { background: #fff; border-radius: 10px; padding: 1rem; margin-bottom: 1rem;
+    box-shadow: 0 1px 3px rgba(0, 0, 0, 0.1); }
+  .tarjeta-flete h2 { font-size: 1.05rem; margin: 0 0 0.3rem; }
+  .renglon-flete { display: flex; justify-content: space-between; gap: 0.6rem; padding: 0.4rem 0;
+    border-top: 1px solid #eee; }
 </style>
 </head>
 <body>
@@ -363,7 +368,7 @@
     <div class="detalle">
       Renta REAL de {{ resultado.fechas_incluidas|length }} día{{ "s" if resultado.fechas_incluidas|length != 1 }} con envíos —
       venta {{ resultado.totales.venta_neta|moneda }}{% if resultado.totales.devoluciones_bultos %} − devoluciones {{ resultado.totales.devoluciones_venta|moneda }} ({{ resultado.totales.devoluciones_bultos|numero }} bultos que volvieron: se vendió lo enviado menos eso){% endif %}, mercadería {{ resultado.totales.costo_mercaderia|moneda }},
-      envase {{ resultado.totales.costo_envase|moneda }}, mermas {{ resultado.totales.costo_mermas|moneda }}{% if resultado.totales.bultos_pasados_a_segunda %}, pasado a segunda {{ resultado.totales.costo_segunda|moneda }} ({{ resultado.totales.bultos_pasados_a_segunda|numero }} bulto{{ "s" if resultado.totales.bultos_pasados_a_segunda != 1 }} de primera que dejaron de serlo: mercadería + la caja){% endif %}{% if resultado.totales.rechazos_bultos %}, − rechazos perdidos {{ resultado.totales.rechazos_perdidos|moneda }} ({{ resultado.totales.rechazos_bultos|numero }} bultos que volvieron y se fueron a segunda: mercadería + envase, pérdida entera){% endif %}{% set dif_total = resultado.totales.diferencia_devolucion_proveedor or 0 %}{% if dif_total|round|int %}, <span class="dif-devolucion-proveedor">{{ "+" if dif_total > 0 }}{{ dif_total|moneda }} de devoluciones al proveedor (su precio de compra contra el costo del armado: lo que el proveedor devuelve de más o de menos)</span>{% endif %}{% if resultado.totales.bultos_segunda_cobrados %}, <span class="recupero-segunda">+ recupero de segunda {{ resultado.totales.recupero_segunda|moneda }} ({{ resultado.totales.bultos_segunda_cobrados|numero }} bultos que pagó el puesto, aparte de la venta al súper)</span>{% endif %},
+      envase {{ resultado.totales.costo_envase|moneda }}, mermas {{ resultado.totales.costo_mermas|moneda }}{% if resultado.totales.bultos_pasados_a_segunda %}, pasado a segunda {{ resultado.totales.costo_segunda|moneda }} ({{ resultado.totales.bultos_pasados_a_segunda|numero }} bulto{{ "s" if resultado.totales.bultos_pasados_a_segunda != 1 }} de primera que dejaron de serlo: mercadería + la caja){% endif %}{% if resultado.totales.rechazos_bultos %}, − rechazos perdidos {{ resultado.totales.rechazos_perdidos|moneda }} ({{ resultado.totales.rechazos_bultos|numero }} bultos que volvieron y se fueron a segunda: mercadería + envase, pérdida entera){% endif %}{% set dif_total = resultado.totales.diferencia_devolucion_proveedor or 0 %}{% if dif_total|round|int %}, <span class="dif-devolucion-proveedor">{{ "+" if dif_total > 0 }}{{ dif_total|moneda }} de devoluciones al proveedor (su precio de compra contra el costo del armado: lo que el proveedor devuelve de más o de menos)</span>{% endif %}{% if resultado.totales.bultos_segunda_cobrados %}, <span class="recupero-segunda">+ recupero de segunda {{ resultado.totales.recupero_segunda|moneda }} ({{ resultado.totales.bultos_segunda_cobrados|numero }} bultos que pagó el puesto, aparte de la venta al súper)</span>{% endif %}{% if resultado.totales.flete %}, <span class="flete">− flete {{ resultado.totales.flete|moneda }} (la parte de {{ resultado.empresa_del_flete }}, día por día abajo)</span>{% endif %},
       {{ resultado.totales.bultos|numero }} bultos enviados.
       {% if resultado.totales.segunda_bultos %}Segunda generada: {{ resultado.totales.segunda_bultos|numero }} bultos (vale cero).{% endif %}
       La utilidad % es sobre la mercadería.
@@ -454,6 +459,21 @@
     </div>
     {% endif %}
   </div>
+  {% endif %}
+
+  {# EL FLETE (dueño, 05/10): una línea APARTE, la parte de esta empresa,
+     por el día y la sucursal del viaje. No se reparte por artículo: con
+     filtro de artículo o grupo no se resta, y lo dice. #}
+  {% if resultado.fletes %}
+  <div class="tarjeta-flete">
+    <h2>Flete · {{ resultado.totales.flete|moneda }}</h2>
+    <p class="ayuda">La parte de {{ resultado.empresa_del_flete }}, por el día y la sucursal del viaje. Resta de la renta total y no de cada artículo.</p>
+    {% for f in resultado.fletes %}
+    <div class="renglon-flete"><span>{{ f.fecha.strftime('%d/%m') }} · {{ f.sucursal }}</span><span>{{ f.pesos|moneda }}</span></div>
+    {% endfor %}
+  </div>
+  {% elif resultado.flete_no_se_resta %}
+  <p class="ayuda">Con un artículo o un grupo elegido, el flete no se resta: no es de ningún artículo.</p>
   {% endif %}
 
   {% if comparativa %}

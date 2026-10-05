@@ -2247,3 +2247,92 @@ create table backups_corridas (
   constraint backups_corridas_parte check (parte in ('codigo', 'bases', 'fotos'))
 );
 create index backups_corridas_parte_fecha on backups_corridas (parte, terminada_el desc);
+
+-- FLETES (duenio, 05/10, db/fletes_1 a fletes_4). El nombre de cada codigo de
+-- sucursal de un cliente (fletes_1 carga los de "Día %": VL Vicente López, BZ
+-- Burzaco, GR Garín; aca no se siembra), el catalogo de fleteros y camiones
+-- con el precio del viaje con historial, el flete del dia (fecha + cliente +
+-- UN fletero) con los pallets de cada empresa por sucursal, un viaje por
+-- camion con el precio congelado y la parte de cada empresa, y las
+-- correcciones con historial. Un viaje pagado no se toca (trigger).
+create table clientes_sucursales (
+  id bigint generated always as identity primary key,
+  cliente_id bigint not null references clientes (id),
+  codigo text not null check (codigo = upper(btrim(codigo)) and codigo <> ''),
+  nombre text not null check (btrim(nombre) <> ''),
+  unique (cliente_id, codigo)
+);
+create table fleteros (
+  id bigint generated always as identity primary key,
+  nombre text not null check (btrim(nombre) <> ''),
+  telefono text check (telefono is null or btrim(telefono) <> ''),
+  activo boolean not null default true,
+  creado_el timestamptz not null default now()
+);
+create unique index fleteros_nombre on fleteros (upper(btrim(nombre)));
+create table fleteros_camiones (
+  id bigint generated always as identity primary key,
+  fletero_id bigint not null references fleteros (id),
+  nombre text not null check (btrim(nombre) <> ''),
+  pallets integer not null check (pallets > 0),
+  cantidad integer not null check (cantidad >= 0)
+);
+create unique index fleteros_camiones_nombre on fleteros_camiones (fletero_id, upper(btrim(nombre)));
+create table fleteros_camiones_precios (
+  id bigint generated always as identity primary key,
+  camion_id bigint not null references fleteros_camiones (id),
+  precio numeric(14,2) not null check (precio > 0),
+  vigente_desde date not null,
+  cargado_el timestamptz not null default now(),
+  unique (camion_id, vigente_desde)
+);
+create table fletes (
+  id bigint generated always as identity primary key,
+  fecha date not null,
+  cliente_id bigint not null references clientes (id),
+  fletero_id bigint not null references fleteros (id),
+  confirmado_el timestamptz not null default now(),
+  unique (fecha, cliente_id, fletero_id)
+);
+create index fletes_por_fecha on fletes (fecha);
+create table fletes_sucursales (
+  id bigint generated always as identity primary key,
+  flete_id bigint not null references fletes (id) on delete cascade,
+  sucursal text not null,
+  pallets_frutamax integer not null check (pallets_frutamax >= 0),
+  pallets_palmala integer not null check (pallets_palmala >= 0),
+  constraint fletes_sucursales_con_pallets check (pallets_frutamax + pallets_palmala > 0),
+  unique (flete_id, sucursal)
+);
+create table fletes_viajes (
+  id bigint generated always as identity primary key,
+  flete_sucursal_id bigint not null references fletes_sucursales (id) on delete cascade,
+  camion_id bigint not null references fleteros_camiones (id),
+  precio numeric(14,2) not null check (precio >= 0),
+  parte_frutamax numeric(14,2) not null check (parte_frutamax >= 0),
+  parte_palmala numeric(14,2) not null check (parte_palmala >= 0),
+  pagado_el date,
+  constraint fletes_viajes_partes_suman check (parte_frutamax + parte_palmala = precio)
+);
+create index fletes_viajes_por_sucursal on fletes_viajes (flete_sucursal_id);
+create table fletes_correcciones (
+  id bigint generated always as identity primary key,
+  flete_id bigint not null references fletes (id),
+  sector text not null check (sector in ('administracion', 'gerencia')),
+  antes jsonb not null,
+  despues jsonb not null,
+  corregido_el timestamptz not null default now()
+);
+create index fletes_correcciones_por_flete on fletes_correcciones (flete_id);
+create or replace function viaje_pagado_no_se_toca() returns trigger
+language plpgsql as $f$
+begin
+  if old.pagado_el is not null then
+    raise exception 'el viaje % ya se pago: no se corrige', old.id
+      using errcode = 'check_violation', constraint = 'viaje_pagado_no_se_toca';
+  end if;
+  return case when tg_op = 'DELETE' then old else new end;
+end $f$;
+create trigger viaje_pagado_no_se_toca
+  before update or delete on fletes_viajes
+  for each row execute function viaje_pagado_no_se_toca();

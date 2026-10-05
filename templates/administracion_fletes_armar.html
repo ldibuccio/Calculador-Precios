@@ -1,0 +1,68 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Armar flete</title>
+{% import "_fletes.html" as _fletes %}
+{% import "_pestanas_fletes.html" as _pestanas %}
+<style>
+{{ _fletes.estilos() }}
+{{ _pestanas.estilos() }}
+  .camion { display: flex; align-items: center; justify-content: space-between; gap: 0.6rem; padding: 0.4rem 0;
+    border-top: 1px solid #eee; }
+  .camion input { width: 4.5rem; min-height: 44px; box-sizing: border-box; padding: 0.5rem; font-size: 1rem;
+    border: 1px solid #ccc; border-radius: 8px; text-align: center; font-family: inherit; }
+</style>
+</head>
+<body>
+  {% set barra_sector = camino.sector %}
+  {% set barra_titulo = "Fletes" %}
+  {% set barra_atras = camino.base + "/" + flete_id|string + "/corregir" if flete_id else "/administracion/fletes/dia" %}
+  {% include "_barra_navegacion.html" %}
+  {% if camino.sector == "administracion" %}{{ _pestanas.pestanas("dia") }}{% endif %}
+
+  {% if error %}<div class="error">{{ error }}</div>{% endif %}
+  {% if not propuesta.alcanza %}
+  <div class="error">La flota de {{ fletero.nombre }} no alcanza para todos los pallets de ese día{% if propuesta.usados %}, con los camiones que ya salen ese día{% endif %}. {% if propuesta.excesos %} Lo más barato sin ese límite se pasa en: {% for e in propuesta.excesos %}{{ e.nombre }} (usa {{ e.usa }}, {{ "queda" if e.quedan == 1 else "quedan" }} {{ e.quedan }}){% if not loop.last %}, {% endif %}{% endfor %}.{% endif %} Elegí a mano: podés poner más camiones de los que tiene.</div>
+  {% endif %}
+  {% if propuesta.sin_precio %}
+  <div class="nota">Sin precio al {{ fecha.strftime('%d/%m/%Y') }}, no se proponen: {{ propuesta.sin_precio|join(', ') }}.</div>
+  {% endif %}
+
+  <form method="post" action="{{ accion }}/confirmar">
+    {% if not flete_id %}
+    <input type="hidden" name="fecha" value="{{ fecha.isoformat() }}">
+    <input type="hidden" name="cliente_id" value="{{ cliente.id }}">
+    <input type="hidden" name="fletero_id" value="{{ fletero.id }}">
+    {% endif %}
+    <div class="tarjeta">
+      <h2>{{ fletero.nombre }} · {{ fecha.strftime('%d/%m/%Y') }}</h2>
+      <p class="dato">{{ cliente.nombre }}{% if propuesta.costo %} · lo más barato: {{ propuesta.costo|moneda }}{% endif %}</p>
+      <p class="ayuda">¿Qué camiones van a cada sucursal? Ya está la combinación más barata; si hace falta, cambiala.</p>
+    </div>
+    {% for s in sucursales %}
+    <input type="hidden" name="fm_{{ s.codigo }}" value="{{ s.pallets_frutamax }}">
+    <input type="hidden" name="pm_{{ s.codigo }}" value="{{ s.pallets_palmala }}">
+    {% if s.pallets_frutamax + s.pallets_palmala > 0 %}
+    <div class="tarjeta">
+      <h2>{{ s.nombre }} · {{ s.pallets_frutamax + s.pallets_palmala }} pallets</h2>
+      <p class="dato">Frutamax {{ s.pallets_frutamax }} · Palmala {{ s.pallets_palmala }}</p>
+      {% for c in camiones %}
+      <label class="camion">
+        <span>{{ c.nombre }} · {{ c.pallets }} pallets{% if c.precio is not none %} · {{ c.precio|moneda }}{% else %} · sin precio{% endif %}
+          <br><span class="dato">tiene {{ c.cantidad }}{% if propuesta.usados and propuesta.usados.get(c.id) %}, ya salen {{ propuesta.usados[c.id] }} ese día{% endif %}</span></span>
+        <input type="number" name="camion_{{ s.codigo }}_{{ c.id }}" min="0" step="1" inputmode="numeric" value="{{ s.elegidos.get(c.id, 0) }}" aria-label="{{ c.nombre }} a {{ s.nombre }}">
+      </label>
+      {% endfor %}
+    </div>
+    {% endif %}
+    {% endfor %}
+    <div class="acciones">
+      <button type="submit">Confirmar flete</button>
+    </div>
+  </form>
+
+{% include "_pie_version.html" %}
+</body>
+</html>

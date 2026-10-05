@@ -43,6 +43,8 @@ GRUPOS_DECIDIDOS = {
         ("/administracion/pedidos/buscar", "Armar remito"),
         # Vino entera de Sistema el 04/10 (dueño: "Todo a Administración").
         ("/administracion/casilla-pedidos", "Casilla de pedidos"),
+        # Fletes (dueño, 05/10): un botón con tres pestañas.
+        ("/administracion/fletes/dia", "Fletes"),
     ],
     "Facturación y cobranzas": [
         ("/administracion/facturacion", "Remitos y facturas"),

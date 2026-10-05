@@ -278,6 +278,24 @@ def siembra():
     insert into remitos_fotos (remito_id, foto_ruta) select id, 'remitos/EJEMPLO.jpg' from remitos;
     insert into remitos_numeros (remito_id, numero_anterior, numero_nuevo)
       select id, 'EJ-0000', numero from remitos;
+    -- UN FLETE DE HOY (dueño, 05/10), con su sucursal con nombre, un viaje y
+    -- una corrección: así el flete del día, corregir (las dos puertas), la
+    -- cuenta del fletero y Rentabilidad Real pasan por sus joins.
+    insert into clientes_sucursales (cliente_id, codigo, nombre)
+      select min(id), 'EJ', 'EJEMPLO Sucursal' from clientes;
+    insert into fleteros (nombre, telefono) values ('EJEMPLO Fletero', '11 5555-0000');
+    insert into fleteros_camiones (fletero_id, nombre, pallets, cantidad)
+      select id, 'EJ Grande', 12, 2 from fleteros;
+    insert into fleteros_camiones_precios (camion_id, precio, vigente_desde)
+      select id, 100000, '2026-01-01' from fleteros_camiones;
+    insert into fletes (fecha, cliente_id, fletero_id)
+      select current_date, (select min(id) from clientes), id from fleteros;
+    insert into fletes_sucursales (flete_id, sucursal, pallets_frutamax, pallets_palmala)
+      select id, 'EJ', 6, 4 from fletes;
+    insert into fletes_viajes (flete_sucursal_id, camion_id, precio, parte_frutamax, parte_palmala)
+      select s.id, c.id, 100000, 60000, 40000 from fletes_sucursales s, fleteros_camiones c;
+    insert into fletes_correcciones (flete_id, sector, antes, despues)
+      select id, 'gerencia', '{"sucursales": []}', '{"sucursales": []}' from fletes;
     """
 
 
