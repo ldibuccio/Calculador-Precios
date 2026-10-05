@@ -343,3 +343,18 @@ Las ocho tablas, los dos checks y el trigger del viaje pagado están en las
 dos. Las tres sucursales de Día tienen su nombre, y son los mismos tres
 códigos que usan los pedidos (POBLACION_codigos 3). Sin fleteros ni fletes
 todavía: los carga Administración. Coincide con lo que reportó el dueño.
+
+## 05/10 — `tareas_8`: Tareas anual, relativa y eliminar (PR #116)
+
+Corrido por Lionel en las dos bases ANTES del merge del #116. La
+verificación (`tareas_9`), corrida aparte, la corrí yo por el conector
+"Supabase Lectura" el 05/10 a las 17:53 UTC:
+
+```
+FRUTAMAX  tareas_8 · columnas_de_4 4 · tipos_nuevos_1 1 · campos_1 1 · una_vez_se_elimina_1 1 · eliminada_1 1 · ocurrencia_eliminada_1 1 · POBLACION_tareas 2 · ocurrencias 2 · testigo_ultima_tarea 2026-10-05
+PALMALA   tareas_8 · columnas_de_4 4 · tipos_nuevos_1 1 · campos_1 1 · una_vez_se_elimina_1 1 · eliminada_1 1 · ocurrencia_eliminada_1 1 · POBLACION_tareas 0 · ocurrencias 0 · testigo_ultima_tarea (sin tareas)
+```
+
+Las cuatro columnas y los cinco CHECK nuevos están en las dos. Las dos
+tareas de Frutamax (las de una vez de Compras) siguen con sus ocurrencias:
+el cambio de los CHECK no rechazó ninguna fila. Palmala no tiene tareas.
