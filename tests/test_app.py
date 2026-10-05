@@ -9000,34 +9000,26 @@ def test_costeo_prueba_ya_no_existe():
 # --- /precios: botonera de Lista de Precios ---
 
 
-def test_ver_precios_muestra_la_botonera_con_los_seis_accesos_en_orden():
+def test_ver_precios_muestra_la_botonera_con_los_cuatro_accesos_en_orden():
+    """Desde el 04/10 (dueño) son cuatro: Modificar y Carga foto van detrás de
+    "Cargar precios", y los dos "Próximamente" salieron."""
     respuesta = cliente.get("/precios")
 
     assert respuesta.status_code == 200
-    assert 'href="/precios/cargar"' in respuesta.text
-    assert 'href="/precios/cargar-foto"' in respuesta.text
-    assert 'href="/precios/consultar"' in respuesta.text
-    assert 'href="/negociar"' in respuesta.text
-    assert 'href="/precios/resultado-negociacion"' in respuesta.text
-    assert 'href="/precios/generar-listado"' in respuesta.text
-    assert "Modificar Precios" in respuesta.text
-    assert "Carga Foto Precios" in respuesta.text
-    assert "Consultar Precios" in respuesta.text
-    assert "Márgenes por Artículo" in respuesta.text
-    assert "Resultado Negociación" in respuesta.text
+    for href in ("/precios/consultar", "/precios/cargar-precios", "/precios/vigencias", "/negociar"):
+        assert f'href="{href}"' in respuesta.text, href
     assert "Cargar Precios Nuevos" not in respuesta.text
-    assert "Próximamente" in respuesta.text
+    assert "Próximamente" not in respuesta.text
+    assert 'href="/precios/resultado-negociacion"' not in respuesta.text
 
-    orden = [
-        "Modificar Precios",
-        "Carga Foto Precios",
-        "Consultar Precios",
-        "Márgenes por Artículo",
-        "Resultado Negociación",
-        "Generar Listado Actualizado",
-    ]
-    posiciones = [respuesta.text.index(texto) for texto in orden]
+    orden = ["Consultar Precios", "Cargar precios", "Precios por Período", "Márgenes por Artículo"]
+    marcado = respuesta.text.split("</style>")[-1]
+    posiciones = [marcado.index(f"<span>{texto}</span>") for texto in orden]
     assert posiciones == sorted(posiciones)
+
+    cargar = cliente.get("/precios/cargar-precios").text
+    assert cargar.index('href="/precios/cargar"') < cargar.index('href="/precios/cargar-foto"')
+    assert "<span>Modificar Precios</span>" in cargar and "<span>Carga Foto Precios</span>" in cargar
 
 
 def test_ver_precios_guardado_muestra_mensaje_de_confirmacion():
@@ -14591,18 +14583,18 @@ def test_ver_envases_muestra_costo_vigente_historial_y_advertencia():
 
 def test_cambiar_costo_envase_registra_fila_nueva_y_vuelve_con_aviso():
     with _reloj_argentino(), patch("app.main.registrar_costo_envase") as mock_registrar:
-        respuesta = cliente.post("/envases/7/costo", data={"costo": "800"}, follow_redirects=False)
+        respuesta = cliente.post("/administracion/cajas/tipos/7/costo", data={"costo": "800"}, follow_redirects=False)
 
     assert respuesta.status_code == 303
     mock_registrar.assert_called_once_with(7, 800.0, VIGENCIA_DE_UNA_CARGA)
-    assert "/envases?" in respuesta.headers["location"]
+    assert "/administracion/cajas/tipos?" in respuesta.headers["location"]
     assert "vigente+desde+hoy" in respuesta.headers["location"]
 
 
 def test_cambiar_costo_envase_invalido_muestra_error_sin_registrar():
     parches = _patches_envases()
     with parches[0], parches[1], patch("app.main.registrar_costo_envase") as mock_registrar:
-        respuesta = cliente.post("/envases/7/costo", data={"costo": "-5"})
+        respuesta = cliente.post("/administracion/cajas/tipos/7/costo", data={"costo": "-5"})
 
     assert respuesta.status_code == 400
     assert "El costo tiene que ser mayor a cero." in respuesta.text
@@ -14611,7 +14603,7 @@ def test_cambiar_costo_envase_invalido_muestra_error_sin_registrar():
 
 def test_dar_de_baja_envase_registra_costo_cero_desde_hoy():
     with _reloj_argentino(), patch("app.main.registrar_costo_envase") as mock_registrar:
-        respuesta = cliente.post("/envases/7/baja", follow_redirects=False)
+        respuesta = cliente.post("/administracion/cajas/tipos/7/baja", follow_redirects=False)
 
     assert respuesta.status_code == 303
     mock_registrar.assert_called_once_with(7, 0, VIGENCIA_DE_UNA_CARGA)
@@ -14619,7 +14611,7 @@ def test_dar_de_baja_envase_registra_costo_cero_desde_hoy():
 
 def test_agregar_envase_crea_y_vuelve_con_aviso():
     with _reloj_argentino(), patch("app.main.crear_envase") as mock_crear:
-        respuesta = cliente.post("/envases/nuevo", data={"nombre": "Caja Mediana", "costo": "700"}, follow_redirects=False)
+        respuesta = cliente.post("/administracion/cajas/tipos/nuevo", data={"nombre": "Caja Mediana", "costo": "700"}, follow_redirects=False)
 
     assert respuesta.status_code == 303
     mock_crear.assert_called_once_with("Caja Mediana", 700.0, VIGENCIA_DE_UNA_CARGA)
@@ -14631,19 +14623,21 @@ def test_agregar_envase_con_nombre_repetido_muestra_el_error():
         parches[0], parches[1],
         patch("app.main.crear_envase", side_effect=ValueError("Ya existe un envase con ese nombre.")),
     ):
-        respuesta = cliente.post("/envases/nuevo", data={"nombre": "Caja Chica Día", "costo": "700"})
+        respuesta = cliente.post("/administracion/cajas/tipos/nuevo", data={"nombre": "Caja Chica Día", "costo": "700"})
 
     assert respuesta.status_code == 400
     assert "Ya existe un envase con ese nombre" in respuesta.text
 
 
-def test_ver_comercial_tiene_el_boton_envases():
+def test_ver_comercial_ya_no_tiene_ENVASES_que_vive_en_Cajas_de_Administracion():
+    """El precio de las cajas lo carga Administración desde el 04/10 (dueño)."""
     with patch("app.main.listar_estado_alertas", return_value=_foto_alertas()):
         respuesta = cliente.get("/comercial")
 
     assert respuesta.status_code == 200
-    assert 'href="/envases"' in respuesta.text
-    assert "Envases" in respuesta.text
+    assert 'href="/envases"' not in respuesta.text
+    vieja = cliente.get("/envases", follow_redirects=False)
+    assert (vieja.status_code, vieja.headers["location"]) == (301, "/administracion/cajas/tipos")
 
 
 # --- tipo_retiro Cooperativa ---
@@ -30703,6 +30697,10 @@ PANTALLAS_SIN_LINK_DECIDIDAS = {
     # los links viejos; lo afirma tests/test_administracion_reordenada.py.
     "/administracion/stock/ajustar":
         "absorbida por Cotejo y ajuste: el ajuste se hace en la tarjeta (04/10)",
+    # LOS DOS "PRÓXIMAMENTE" DE PRECIOS (dueño, 04/10): salieron del hub
+    # porque no hacían nada; su dirección sigue abriendo el "en construcción".
+    "/precios/resultado-negociacion": "Próximamente: salió de Precios el 04/10 y sigue abriendo",
+    "/precios/generar-listado": "Próximamente: salió de Precios el 04/10 y sigue abriendo",
     "/administracion/stock/inicial":
         "Stock inicial del corte quedó SOLO en Gerencia, /gerencia/stock/inicial (04/10)",
 }

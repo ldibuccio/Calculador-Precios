@@ -258,7 +258,8 @@ planteo del stock de cajas escribí, con todas las letras, que en este
 sistema ya hay tres pantallas que se llaman "Stock" y que no había que
 agregar una cuarta. Dos mensajes después bauticé la pantalla nueva
 "Envases", que es el nombre de una pantalla que ya existe** (`/envases`, el
-catálogo de envases con su costo, en Comercial).
+catálogo de envases con su costo, en Comercial; desde el 04/10 vive en
+Administración → Cajas → Tipos de caja y su costo).
 
 Y no se cobró en la próxima lectura como suele: se cobró en el acto, y de
 la peor forma. La función de render se llamó `_renderizar_pantalla_envases`,

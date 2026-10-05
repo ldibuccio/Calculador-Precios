@@ -246,5 +246,9 @@ baja**. El precio de las cajas lo carga Administración.
   direcciones viejas (`/compras/cajas`, sus movimientos y la cuenta de un
   colega) llevan con un 301 a las de Administración. La alerta de pocas cajas
   de Compras lleva a la pantalla de Alertas de Compras, que trae la caja, las
-  que quedan y el umbral. Envases sale de Comercial en el PR de Comercial.
+  que quedan y el umbral.
+- **Salió Envases de Comercial** (PR de Comercial, 04/10): `/envases` lleva
+  con un 301 a Tipos de caja y su costo, y sus formularios viejos ya no
+  escriben (sin clave, cualquiera habría podido cambiar el costo). La pantalla
+  vive SOLO en Administración.
 

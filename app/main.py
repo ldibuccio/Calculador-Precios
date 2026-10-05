@@ -10756,6 +10756,13 @@ async def guardar_y_exportar_precios_cargar_manual_excel(request: Request):
     return _respuesta_listado_generado(cliente, cambios, "excel")
 
 
+@app.get("/precios/cargar-precios")
+def ver_las_formas_de_cargar_precios(request: Request):
+    """Cargar precios (dueño, 04/10): a mano o desde un archivo, detrás de un
+    solo botón de Precios."""
+    return templates.TemplateResponse(request, "precios_cargar_precios.html", {})
+
+
 @app.get("/precios/generar-listado")
 def ver_generar_listado_precios(request: Request):
     return _renderizar_en_construccion(
@@ -11417,22 +11424,25 @@ def _validar_costo_envase(texto: str) -> tuple[str | None, float | None]:
     return None, valor
 
 
-# LOS TIPOS DE CAJA Y SU COSTO POR DOS CAMINOS (dueño, 04/10): el precio de
-# las cajas lo carga Administración, desde adentro de Cajas. La pantalla es
-# la misma que Comercial tenía en /envases y el costo es el MISMO que leen la
-# rentabilidad y el costeo (`costos_envases`). Va en su propia pantalla y no
-# en la de Cajas, que es SOLO stock (dueño, 17/09). El sector sale del
-# PREFIJO (corolario 63).
-_CAMINOS_DE_ENVASES = {
-    "comercial": {"sector": "comercial", "base": "/envases", "atras": "/comercial",
-                  "titulo": "Envases"},
-    "administracion": {"sector": "administracion", "base": "/administracion/cajas/tipos",
-                       "atras": "/administracion/cajas", "titulo": "Tipos de caja"},
-}
+# LOS TIPOS DE CAJA Y SU COSTO VIVEN SOLO EN ADMINISTRACIÓN (dueño, 04/10):
+# el precio de las cajas lo carga Administración, desde adentro de Cajas. Es
+# la pantalla que Comercial tenía en /envases y el costo es el MISMO que leen
+# la rentabilidad y el costeo (`costos_envases`). Va en su propia pantalla y
+# no en la de Cajas, que es SOLO stock (dueño, 17/09). Salió de Comercial: su
+# dirección vieja lleva acá, y sus formularios ya no escriben (sin clave
+# cualquiera habría podido cambiar el costo).
+_CAMINO_DE_ENVASES = {"sector": "administracion", "base": "/administracion/cajas/tipos",
+                      "atras": "/administracion/cajas", "titulo": "Tipos de caja"}
 
 
 def _camino_de_envases(request: Request) -> dict:
-    return _CAMINOS_DE_ENVASES["administracion" if request.url.path.startswith("/administracion/") else "comercial"]
+    return _CAMINO_DE_ENVASES
+
+
+@app.get("/envases")
+def envases_va_a_tipos_de_caja(request: Request):
+    consulta = f"?{request.url.query}" if request.url.query else ""
+    return RedirectResponse(url="/administracion/cajas/tipos" + consulta, status_code=301)
 
 
 def _renderizar_pantalla_envases(
@@ -11467,13 +11477,11 @@ def _renderizar_pantalla_envases(
     )
 
 
-@app.get("/envases")
 @app.get("/administracion/cajas/tipos")
 def ver_envases(request: Request, aviso: str | None = None):
     return _renderizar_pantalla_envases(request, aviso=aviso)
 
 
-@app.post("/envases/nuevo")
 @app.post("/administracion/cajas/tipos/nuevo")
 def agregar_envase(request: Request, nombre: str = Form(""), costo: str = Form("")):
     error, nombre_valor = _validar_nombre(nombre)
@@ -11494,7 +11502,6 @@ def agregar_envase(request: Request, nombre: str = Form(""), costo: str = Form("
     return RedirectResponse(url=f"{_camino_de_envases(request)['base']}?{parametros}", status_code=303)
 
 
-@app.post("/envases/{envase_id}/costo")
 @app.post("/administracion/cajas/tipos/{envase_id}/costo")
 def cambiar_costo_envase(request: Request, envase_id: int, costo: str = Form("")):
     error, costo_valor = _validar_costo_envase(costo)
@@ -11513,7 +11520,6 @@ def cambiar_costo_envase(request: Request, envase_id: int, costo: str = Form("")
     return RedirectResponse(url=f"{_camino_de_envases(request)['base']}?{parametros}", status_code=303)
 
 
-@app.post("/envases/{envase_id}/baja")
 @app.post("/administracion/cajas/tipos/{envase_id}/baja")
 def dar_de_baja_envase(request: Request, envase_id: int):
     """Baja de un envase: fila nueva con costo 0 vigente desde hoy — mismo criterio de historial, nada se borra."""
