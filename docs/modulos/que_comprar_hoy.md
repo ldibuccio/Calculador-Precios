@@ -358,3 +358,21 @@ un artículo sin ninguna ficha y con `unidad_conteo`, la rama de kilos lo
 etiquetaría mal. `sin_ficha_Y_con_conteo` dio 0 en Palmala (63 activos, 15 sin
 ficha) y 0 en Frutamax (38 activos, 5 sin ficha). El día que aparezca uno, esa
 rama es la que hay que volver a mirar.
+
+### Al entrar, nada tildado; lo pedido en bultos enteros para arriba (dueño, 05/10)
+
+- **Al entrar NUNCA hay nada tildado**, ni aunque el listado de hoy ya se
+  haya guardado: se tilda, se aprieta Actualizar, y recién ahí calcula. Hasta
+  v1098 la pantalla "se abría como se dejó": el tilde volvía por el LISTADO
+  DEL DÍA (`elegidas` = las cargas del borrador), no por el autocompletado
+  del navegador, que ya estaba apagado. Ahora lo guardado se muestra solo en
+  la vuelta del guardado (`?actualizado=1`, que pone la redirección del
+  POST), y la pantalla va con `Cache-Control: no-store` para que el "atrás"
+  del navegador no restaure una vieja con tildes. El PDF sigue saliendo de
+  lo guardado. Lo cuida `tests/test_que_comprar_sin_tildes.py`, que abre la
+  pantalla después de guardar el mismo día y exige cero tildes.
+- **Lo que pide cada cliente va en bultos ENTEROS y PARA ARRIBA**
+  (`bultos_pedidos`): "De quién sale" dice "Día 26/09 12 blt (205 kg)", y
+  "Piden bultos" es la SUMA de los de cada cliente (dos de 1,2 son 2 y 2: 4,
+  no 3). El stock sigue al entero más cercano (28/09). El navegador lo rehace
+  igual al mover el por bulto, y el PDF dice lo mismo.

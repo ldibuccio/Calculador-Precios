@@ -317,7 +317,7 @@ def test_una_fila_SIN_NADA_QUE_DECIR_sale_con_las_celdas_VACIAS():
         "x", ["EJEMPLO Dia 27/09"], [vacia, normal], _main._formatear_numero,
         _main._formatear_sin_decimales))
     fila_vacia = texto[texto.index("EJEMPLO Vacia"):texto.index("EJEMPLO Normal")]
-    assert fila_vacia.split() == ["EJEMPLO", "Vacia", "EJEMPLO", "Dia", "26/09", "240", "240", "kg"]
+    assert fila_vacia.split() == ["EJEMPLO", "Vacia", "EJEMPLO", "Dia", "26/09", "240", "kg", "240", "kg"]
     fila_normal = texto[texto.index("EJEMPLO Normal"):]
     for dato in ("18 kg", "13", "2 blt", "40 kg", "12 cj", "3 cj", "9 cj"):
         assert dato in fila_normal, dato
@@ -359,3 +359,12 @@ def test_el_NEGATIVO_se_ve_en_rojo_en_la_PANTALLA_y_en_el_PDF():
         "x", ["EJEMPLO Dia 27/09"], [fila, rival], _main._formatear_numero,
         _main._formatear_sin_decimales))
     assert texto.count("sistema -5 blt sueltos") == 1
+
+
+def test_DE_QUIEN_SALE_va_en_BULTOS_enteros_para_arriba_como_la_pantalla():
+    """Dueño, 05/10: lo que pide cada cliente, en bultos sin decimales."""
+    fila = _fila(1, "EJEMPLO Bultos", de_quien=[("EJEMPLO Dia 26/09", 205.0)],
+                 de_quien_bultos=[("EJEMPLO Dia 26/09", 205.0, 12)])
+    texto, _p = _texto_pdf(generar_pdf_que_comprar(
+        "x", ["EJEMPLO Dia 26/09"], [fila], _main._formatear_numero, _main._formatear_sin_decimales))
+    assert "EJEMPLO Dia 26/09 12 blt (205 kg)" in " ".join(texto.split())

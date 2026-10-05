@@ -343,7 +343,7 @@ def test_el_POST_guarda_las_CARGAS_tildadas_y_REDIRIGE():
     """POST-redirect-GET: recargar despues de guardar no vuelve a guardar."""
     respuesta, guardar = _postear({"accion": "guardar", "carga": ["3", "5"]})
     assert respuesta.status_code == 303
-    assert respuesta.headers["location"] == "/compras/que-comprar"
+    assert respuesta.headers["location"] == "/compras/que-comprar?actualizado=1"
     assert guardar.call_args.args[1] == {3, 5}
 
 
@@ -390,7 +390,7 @@ def test_SALGO_A_COMPRAR_guarda_PRIMERO_y_saca_la_foto_de_TODO_el_catalogo():
                side_effect=lambda *a: orden.append("salir")) as salir:
         respuesta = _cliente.post("/compras/que-comprar", data={"accion": "salgo", "carga": ["3"]},
                                   follow_redirects=False)
-    assert respuesta.headers["location"] == "/compras/que-comprar"
+    assert respuesta.headers["location"] == "/compras/que-comprar?actualizado=1"
     assert orden == ["guardar", "salir"]
     assert guardar.call_args.args[1] == {3}
     assert foto.call_args.args[0] == [1, 9]
@@ -471,10 +471,11 @@ def _render(contexto):
 
 def _fila(articulo_id, nombre):
     return {"articulo_id": articulo_id, "nombre": nombre, "sufijo": "k", "pide": 240.0,
-            "de_quien": [("Dia 26/09", 240.0)], "ya_tengo": 40.0, "en_piso": 40.0,
+            "de_quien": [("Dia 26/09", 240.0)], "de_quien_bultos": [("Dia 26/09", 240.0, 14)],
+            "ya_tengo": 40.0, "en_piso": 40.0,
             "sueltos": 2, "cajas": 0, "comprado_cajones": 0.0, "comprado": 0.0,
             "kilaje": 18.0, "falta": 200.0, "cajones": 12,
-            "a_comprar": 12, "pide_bultos": 13, "stock_bultos": 2, "palabra": "kg",
+            "a_comprar": 12, "pide_bultos": 14, "stock_bultos": 2, "palabra": "kg",
             "de_partida": 40.0, "en_camino": 0.0, "en_camino_cajones": 0.0,
             "a_comprar_magnitud": 200.0}
 
@@ -898,15 +899,16 @@ def test_sin_POR_BULTO_no_hay_bultos_que_mostrar(kilaje):
 
 
 def test_la_FILA_trae_los_bultos_ENTEROS_y_A_COMPRAR_sigue_PARA_ARRIBA():
-    """205 kg de a 18: piden 11 bultos (11,4 al más cercano) y a comprar son
-    12 (para arriba, decisión del 21/09: quedarse corto es peor). Las dos
-    reglas en la misma fila, a propósito."""
+    """205 kg de a 18 son 11,4: piden 12 bultos (dueño, 05/10: lo que pide
+    cada cliente, sin decimales y PARA ARRIBA) y el stock, 73 de a 18, va al
+    más cercano: 4. A comprar sigue para arriba (21/09)."""
     filas = _filas_de_que_comprar(
         [_aporte("Dia", a1=205.0)], ARTICULOS, UNIDADES,
         piso={1: {"magnitud": 73.0, "sueltos": 2, "cajas": 0}},
         comprado={}, kilajes={1: 18.0})
     fila = filas[0]
-    assert fila["pide_bultos"] == 11
+    assert fila["pide_bultos"] == 12
+    assert fila["de_quien_bultos"] == [("Dia", 205.0, 12)]
     assert fila["stock_bultos"] == 4          # 73/18 = 4,06
     assert fila["a_comprar"] == 8             # (205-73)/18 = 7,3 -> para arriba
     assert fila["pide"] == 205.0              # la cuenta sigue en la magnitud
@@ -916,11 +918,30 @@ def test_el_NAVEGADOR_redondea_IGUAL_que_el_server_en_el_medio():
     """El JS recalcula la columna al mover el kilaje. Con 73 de a 2 son 36,5:
     el server dice 37, y el navegador tiene que decir 37 al tipear el mismo
     kilaje, o el número cambia sin que cambie ningún dato."""
-    fila = dict(_fila(3, "TOMATE"), pide=73.0, en_piso=205.0, kilaje=2.0,
-                pide_bultos=37, stock_bultos=103)
+    fila = dict(_fila(3, "TOMATE"), pide=73.0, en_piso=205.0, kilaje=2.0, de_quien=[("Dia 26/09", 73.0)],
+                de_quien_bultos=[("Dia 26/09", 73.0, 37)], pide_bultos=37, stock_bultos=103)
     leido = _recalcular_en_el_navegador(_render(_contexto([fila])), 2)
     assert leido["bultos"] == "37"
     assert leido["stock"] == "103 blt"        # 102,5 -> 103
     leido = _recalcular_en_el_navegador(_render(_contexto([fila])), 18)
-    assert leido["bultos"] == "4"             # 4,06
+    assert leido["bultos"] == "5"             # 4,06: lo PEDIDO va para arriba (05/10)
     assert leido["stock"] == "11 blt"         # 11,39
+
+
+def test_LO_QUE_PIDE_CADA_CLIENTE_va_en_bultos_ENTEROS_para_arriba_y_se_SUMA():
+    """Dueño, 05/10: "lo que pide cada cliente, en bultos, sin decimales:
+    redondeado para arriba". Dos clientes de 24 kg de a 20 reciben 2 y 2:
+    "Piden bultos" es 4. El RIVAL es redondear el total (48/20 = 2,4 -> 3)."""
+    filas = _filas_de_que_comprar(
+        [_aporte("Dia 26/09", a1=24.0), _aporte("Tailem 26/09", a1=24.0)], ARTICULOS, UNIDADES,
+        piso={1: {"magnitud": 0.0, "sueltos": 0, "cajas": 0}}, comprado={}, kilajes={1: 20.0})
+    fila = filas[0]
+    assert fila["de_quien_bultos"] == [("Dia 26/09", 24.0, 2), ("Tailem 26/09", 24.0, 2)]
+    assert fila["pide_bultos"] == 4
+    html = _render(_contexto([dict(fila, sufijo="kg")]))
+    assert ">Dia 26/09 <b>2 blt</b> (24 kg) · Tailem 26/09 <b>2 blt</b> (24 kg)</div>" in " ".join(html.split())
+    # el navegador, al mover el por bulto, dice lo mismo
+    leido = _recalcular_en_el_navegador(html, 20)
+    assert leido["bultos"] == "4"
+    leido = _recalcular_en_el_navegador(html, 25)
+    assert leido["bultos"] == "2"           # 24/25 = 0,96 -> 1 cada uno
