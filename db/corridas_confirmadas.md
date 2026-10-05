@@ -358,3 +358,16 @@ PALMALA   tareas_8 · columnas_de_4 4 · tipos_nuevos_1 1 · campos_1 1 · una_v
 Las cuatro columnas y los cinco CHECK nuevos están en las dos. Las dos
 tareas de Frutamax (las de una vez de Compras) siguen con sus ocurrencias:
 el cambio de los CHECK no rechazó ninguna fila. Palmala no tiene tareas.
+
+## 05/10 — `vacios_marca_texto_2_sena_tarde`: la seña cargada después (PR #119)
+
+Corrido por Lionel en las dos bases ANTES del merge del #119. Verificado
+por mí por el conector "Supabase Lectura" el 05/10 a las 23:42 UTC:
+
+```
+FRUTAMAX  vacios_marca_texto_2_sena_tarde · faltan_vincular 0 · la_921_vinculada 1 · testigo_compras 879
+PALMALA   vacios_marca_texto_2_sena_tarde · faltan_vincular 0 · la_921_vinculada 0 · testigo_compras 798
+```
+
+La única afectada era la 921 de Frutamax (Saturno, marca Camila, 20
+cajones): ahora está en la pila de su marca. Palmala no tenía ninguna.
