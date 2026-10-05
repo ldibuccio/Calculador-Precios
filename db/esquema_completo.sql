@@ -2052,7 +2052,12 @@ create table remitos_fotos (
     id        bigint generated always as identity primary key,
     remito_id bigint not null references remitos (id),
     foto_ruta text not null check (btrim(foto_ruta) <> ''),
-    creado_en timestamptz not null default now()
+    creado_en timestamptz not null default now(),
+    -- Quien la subio (dueño, 05/10, db/remitos_fotos_1_quien.sql): las fotos
+    -- se AGREGAN despues de recibido, nunca se reemplazan ni se borran.
+    cargada_por text not null default 'administracion'
+        constraint remitos_fotos_cargada_por_check
+        check (cargada_por in ('administracion', 'gerencia'))
 );
 create index remitos_fotos_por_remito on remitos_fotos (remito_id);
 comment on table remitos_fotos is 'Las fotos del remito FIRMADO que trae el camionero (una o mas, obligatorias al recibir). Bucket "comandas", prefijo "remitos".';

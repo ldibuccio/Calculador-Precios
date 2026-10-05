@@ -109,6 +109,7 @@ from app.db import (
     orden_para_emitir,
     ordenes_sin_remito,
     recibir_remito,
+    agregar_fotos_a_remito,
     remito_por_id,
     remitos_con_rechazo_distinto,
     borrar_carga_de_compra,
@@ -20595,6 +20596,10 @@ def _remito_para_mostrar(remito: dict, hoy: date) -> dict:
                                else remito["recibido_el"].astimezone(ARGENTINA).strftime("%d/%m/%Y %H:%M"))
     for correccion in remito.get("numeros", []):
         correccion["corregido_texto"] = correccion["corregido_el"].astimezone(ARGENTINA).strftime("%d/%m/%Y %H:%M")
+    # Cada foto con su fecha y quién (dueño, 05/10).
+    for foto in remito.get("fotos", []):
+        foto["cuando"] = foto["creado_en"].astimezone(ARGENTINA).strftime("%d/%m/%Y %H:%M")
+        foto["quien"] = {"administracion": "Administración", "gerencia": "Gerencia"}.get(foto.get("cargada_por"), "—")
     return remito
 
 
@@ -20829,6 +20834,42 @@ def ver_foto_de_remito(request: Request, remito_id: int, foto_id: int):
     if foto is None:
         raise HTTPException(status_code=404, detail="Esa foto no es de este remito")
     return _ir_a_la_foto(foto["ruta"], status_code=303)
+
+
+@app.post("/administracion/facturacion/remito/{remito_id}/fotos")
+@app.post("/gerencia/facturacion/remito/{remito_id}/fotos")
+async def agregar_fotos_a_remito_ruta(request: Request, remito_id: int):
+    """FOTOS DE UN REMITO RECIBIDO (dueño, 05/10): se AGREGAN, del firmado u
+    otras, con fecha y quién (el sector, del PREFIJO: corolario 63). Nunca se
+    reemplazan ni se borran desde acá. Si la base rebota, las fotos subidas se
+    borran (no tienen fila que las nombre)."""
+    camino = _camino_de_facturacion(request)
+    if camino["sector"] == "gerencia":
+        puerta = _puerta_de_gerencia_para_escribir(request)
+        if puerta is not None:
+            return puerta
+    volver = f"{camino['base']}/facturacion/remito/{remito_id}"
+    formulario = await request.form()
+    fotos = [f for f in formulario.getlist("fotos") if isinstance(f, StarletteUploadFile)]
+    error, comprimidas = await _fotos_de_pesada_comprimidas(fotos)
+    if error:
+        return RedirectResponse(url=f"{volver}?" + urlencode({"error": error}) + "#fotos", status_code=303)
+    rutas: list[str] = []
+    try:
+        for comprimida in comprimidas:
+            rutas.append(subir_foto_comanda(comprimida, f"remito-{remito_id}", prefijo=PREFIJO_REMITO))
+        agregar_fotos_a_remito(remito_id, rutas, sector=camino["sector"])
+    except Exception as error_db:
+        for ruta in rutas:
+            try:
+                borrar_foto_comanda(ruta)
+            except Exception:
+                logger.exception("No se pudo borrar la foto huérfana del remito %s", ruta)
+        texto = str(error_db) if isinstance(error_db, RemitoNoSePuede) else f"No se pudo guardar: {error_db}"
+        return RedirectResponse(url=f"{volver}?" + urlencode({"error": f"{texto} Las fotos no se guardaron."})
+                                + "#fotos", status_code=303)
+    aviso = "Foto agregada." if len(rutas) == 1 else f"{len(rutas)} fotos agregadas."
+    return RedirectResponse(url=f"{volver}?" + urlencode({"aviso": aviso}) + "#fotos", status_code=303)
 
 
 @app.post("/gerencia/facturacion/remito/{remito_id}/numero")

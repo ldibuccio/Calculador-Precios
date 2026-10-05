@@ -40,6 +40,13 @@ facturación y la cobranza no se hacen acá. La regla pura vive en
   observado: N renglones con cambios". La foto del remito firmado es
   obligatoria (bucket "comandas", prefijo `remitos`, tabla `remitos_fotos`).
   Hasta el 01/10 se cargaban kilos y bultos RECHAZADOS; se cambió a recibidos.
+- **FOTOS DE UN REMITO RECIBIDO (dueño, 05/10)**: al abrirlo de nuevo se
+  pueden AGREGAR más (del firmado u otras), desde Administración o Gerencia
+  (con su clave). Cada foto dice fecha (`creado_en`) y quién (`cargada_por`,
+  el sector; las de Recibir son de Administración). **Nunca se reemplazan ni
+  se borran desde el remito**: la ruta solo inserta y un remito sin recibir
+  no toma fotos sueltas (van al recibirlo). Migración
+  `db/remitos_fotos_1_quien.sql`. Tests: `tests/test_remitos_fotos_agregar.py`.
 - **EL REMITO RECIBIDO NO MUEVE STOCK.** Los bultos rechazados entran al
   depósito por el circuito de rechazo de siempre (`movimientos_stock` con
   `pedido_renglon_id`), que es independiente. El cotejo es aparte: rechazo
