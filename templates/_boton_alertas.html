@@ -3,23 +3,24 @@
    el de Comercial—:
    - con alertas: ROJO, y dice "Alertas (N)";
    - sin alertas: VERDE, y dice "Sin alertas".
-   N = las que tienen casos, y sale de `banner.activas`, que arma
-   _banner_alertas() con la misma lectura que el banner. Una alerta sin
-   calcular o con error sale en el banner pero no se cuenta: no se sabe si
-   tiene casos.
+   N = los renglones del panel: las que tienen casos más LO QUE NO SE SABE
+   (`banner.renglones`, de _banner_alertas()). Una alerta que no se pudo
+   calcular, una sin calcular o la foto vieja NO dejan el botón en verde
+   (dueño, 05/10): "Sin alertas" ahí sería mentira.
 
    Pone la CLASE y el TEXTO, y no el botón entero: el link al detalle queda
    escrito en cada hub para que el barrido de pantallas sin link lo encuentre.
-   El banner va como argumento: un macro importado no ve el contexto.
+   `banner` (lo que arma _banner_alertas(): el estado de las alertas del
+   hub) va como argumento: un macro importado no ve el contexto.
    Uso: {% import "_boton_alertas.html" as boton_alertas %}
         class="... {{ boton_alertas.clase(banner) }}" … {{ boton_alertas.texto(banner) }}
    y `{{ boton_alertas.estilos() }}` adentro del <style>. #}
 {% macro clase(banner) -%}
-{{ 'con-alertas' if banner and banner.activas else 'sin-alertas' }}
+{{ 'con-alertas' if banner and banner.renglones else 'sin-alertas' }}
 {%- endmacro %}
 
 {% macro texto(banner) -%}
-{% if banner and banner.activas %}Alertas ({{ banner.activas }}){% else %}Sin alertas{% endif %}
+{% if banner and banner.renglones %}Alertas ({{ banner.renglones }}){% else %}Sin alertas{% endif %}
 {%- endmacro %}
 
 {# Va DESPUÉS de las reglas del botón (`.franja-boton`, `.boton`): con la
@@ -30,13 +31,11 @@
 {% endmacro %}
 
 
-{# CÓMO SE DICE UNA ALERTA CON CASOS: lo usan la cinta del banner y el panel
-   de Alertas de la franja de cada hub (04/10). Escrito UNA vez: si no, un día
-   la cinta dice "desde el 02/10" y el panel no. La alerta que trae su propia
-   frase con el número adentro la usa; si no, el título corto con la cantidad
-   y la FECHA del caso más viejo —"Pedidos incompletos (3)" no dice si es de
-   hoy o de la semana pasada, y esa es justo la diferencia entre ir ahora o
-   después—. #}
+{# CÓMO SE DICE UNA ALERTA CON CASOS en el panel de Alertas de la franja.
+   La alerta que trae su propia frase con el número adentro la usa; si no, el
+   título corto con la cantidad y la FECHA del caso más viejo —"Pedidos
+   incompletos (3)" no dice si es de hoy o de la semana pasada, y esa es justo
+   la diferencia entre ir ahora o después—. #}
 {% macro texto_de_alerta(a) -%}
 {% if a.texto %}{{ a.texto }}{% else %}{{ a.titulo_corto }} ({{ a.casos }}){% if a.mas_viejo %} — desde el {{ a.mas_viejo|fecha_corta }}{% endif %}{% endif %}
 {%- endmacro %}

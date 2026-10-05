@@ -55,8 +55,9 @@
   <div class="aviso">{{ aviso }}</div>
   {% endif %}
 
-  {% include "_banner_alertas.html" %}
-  {# LA FRANJA (dueño, 04/10): Tareas y Alertas en una línea, plegadas. #}
+  {# LA FRANJA (dueño, 04/10): Tareas y Alertas en una línea, plegadas. La
+     cinta corrida de avisos se sacó de todo el sistema (dueño, 05/10): lo que
+     decía lo dice el panel de Alertas. #}
   {% call franja_hub.franja(tareas_hub, banner) %}
     <a class="franja-ver" href="/compras/alertas">Ver el detalle de las alertas</a>
   {% endcall %}

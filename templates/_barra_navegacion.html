@@ -133,6 +133,7 @@
     overflow-wrap: anywhere;
   }
   .barra-titulo.ajustado-nowrap { white-space: nowrap; }
+  .barra-titulo.ajustado-palabras { overflow-wrap: normal; }
   .barra-empresa {
     /* Con dos empresas corriendo el mismo sistema en dos URLs idénticas,
        el error más fácil es cargar datos en la empresa equivocada. Este
@@ -226,6 +227,7 @@
     const titulo = document.querySelector(".barra-titulo");
     if (!titulo) return;
     function ajustarTitulo() {
+      titulo.classList.remove("ajustado-palabras");
       titulo.classList.add("ajustado-nowrap");
       let tam = 2.0;
       titulo.style.fontSize = tam + "rem";
@@ -235,6 +237,20 @@
       }
       if (titulo.scrollWidth > titulo.clientWidth) {
         titulo.classList.remove("ajustado-nowrap");
+        // EN DOS RENGLONES, LAS PALABRAS ENTERAS (dueño, 05/10): a 313px con
+        // candado, "Administración" no entraba ni a 0.9rem y se partía en
+        // "Administrac / ión". Se corta entre palabras y se sigue achicando
+        // hasta que entre la más larga, con piso en 0.75rem (12px). Una
+        // palabra se corta por la mitad solo si ni así entra: el nombre de
+        // un proveedor sin espacios, que no puede estirar la página.
+        titulo.classList.add("ajustado-palabras");
+        while (tam > 0.75 && titulo.scrollWidth > titulo.clientWidth) {
+          tam -= 0.05;
+          titulo.style.fontSize = tam + "rem";
+        }
+        if (titulo.scrollWidth > titulo.clientWidth) {
+          titulo.classList.remove("ajustado-palabras");
+        }
       }
     }
     ajustarTitulo();
