@@ -1,0 +1,84 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Cuenta del fletero</title>
+{% import "_fletes.html" as _fletes %}
+{% import "_pestanas_fletes.html" as _pestanas %}
+<style>
+{{ _fletes.estilos() }}
+{{ _pestanas.estilos() }}
+  .viaje { display: flex; gap: 0.7rem; align-items: flex-start; }
+  .viaje input[type=checkbox] { width: 24px; height: 24px; margin: 0.6rem 0.2rem; flex-shrink: 0; }
+  .viaje .cuerpo { flex: 1; min-width: 0; }
+  .pagado { color: #15803d; font-weight: 600; }
+  .a-pagar { color: #b45309; font-weight: 600; }
+</style>
+</head>
+<body>
+  {% set barra_sector = "administracion" %}
+  {% set barra_titulo = "Fletes" %}
+  {% set barra_atras = "/administracion" %}
+  {% include "_barra_navegacion.html" %}
+  {{ _pestanas.pestanas("cuenta") }}
+
+  {% if aviso %}<div class="aviso">{{ aviso }}</div>{% endif %}
+  {% if error %}<div class="error">{{ error }}</div>{% endif %}
+
+  <form class="tarjeta" method="get" action="/administracion/fletes/cuenta">
+    <div class="campos">
+      <label>¿De qué fletero?
+        <select name="fletero_id">
+          <option value="">Todos</option>
+          {% for f in fleteros %}<option value="{{ f.id }}" {% if f.id == fletero_id %}selected{% endif %}>{{ f.nombre }}</option>{% endfor %}
+        </select>
+      </label>
+      <label>Desde<input type="date" name="desde" value="{{ desde.isoformat() }}"></label>
+      <label>Hasta<input type="date" name="hasta" value="{{ hasta.isoformat() }}"></label>
+    </div>
+    <div class="acciones">
+      <button type="submit">Filtrar</button>
+      <a href="/administracion/fletes/cuenta/pdf?{{ consulta }}">PDF</a>
+      <a href="/administracion/fletes/cuenta/excel?{{ consulta }}">Excel</a>
+    </div>
+  </form>
+
+  <div class="tarjeta">
+    <h2>{{ filtro_texto }}</h2>
+    <div class="renglon"><div class="renglon-cabeza"><span>Total</span><span class="plata">{{ totales.precio|moneda }}</span></div>
+      <div class="dato">Frutamax {{ totales.parte_frutamax|moneda }} · Palmala {{ totales.parte_palmala|moneda }}</div></div>
+    <div class="renglon"><div class="renglon-cabeza"><span class="a-pagar">A pagar</span><span class="plata">{{ totales.a_pagar|moneda }}</span></div></div>
+    <div class="renglon"><div class="renglon-cabeza"><span class="pagado">Pagado</span><span class="plata">{{ totales.pagado|moneda }}</span></div></div>
+  </div>
+
+  {% if filas %}
+  <form class="tarjeta" method="post" action="/administracion/fletes/cuenta/pagar">
+    <input type="hidden" name="fletero_id" value="{{ fletero_id or '' }}">
+    <input type="hidden" name="desde" value="{{ desde.isoformat() }}">
+    <input type="hidden" name="hasta" value="{{ hasta.isoformat() }}">
+    {% for f in filas %}
+    <div class="renglon viaje">
+      {% if not f.pagado_el %}<input type="checkbox" name="viaje_id" value="{{ f.id }}" aria-label="Pagado: {{ f.camion }} a {{ f.sucursal }} el {{ f.fecha.strftime('%d/%m') }}">{% endif %}
+      <div class="cuerpo">
+        <div class="renglon-cabeza"><span>{{ f.fecha.strftime('%d/%m/%Y') }} · {{ f.sucursal }}</span><span class="plata">{{ f.precio|moneda }}</span></div>
+        <div class="dato">{{ f.camion }}{% if not fletero_id %} · {{ f.fletero }}{% endif %} · Frutamax {{ f.parte_frutamax|moneda }} · Palmala {{ f.parte_palmala|moneda }}</div>
+        <div class="dato">{% if f.pagado_el %}<span class="pagado">Pagado el {{ f.pagado_el.strftime('%d/%m/%Y') }}</span>{% else %}<span class="a-pagar">A pagar</span>{% endif %}
+          · <a href="/administracion/fletes/dia?fecha={{ f.fecha.isoformat() }}&amp;cliente_id={{ f.cliente_id }}&amp;fletero_id={{ f.fletero_id }}">ver el flete</a></div>
+      </div>
+    </div>
+    {% endfor %}
+    {% if filas|selectattr('pagado_el', 'none')|list %}
+    <div class="campos" style="margin-top: 0.8rem;">
+      <label>¿Qué día se pagó?<input type="date" name="pagado_el" value="{{ hoy.isoformat() }}"></label>
+    </div>
+    <div class="acciones"><button type="submit">Marcar pagados los tildados</button></div>
+    {% endif %}
+  </form>
+  {% else %}
+  <div class="tarjeta dato">No hay viajes en esas fechas{% if fletero_id %} para ese fletero{% endif %}.</div>
+  {% endif %}
+
+{% include "_pie_version.html" %}
+</body>
+</html>

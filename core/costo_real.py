@@ -340,6 +340,7 @@ def calcular_rentabilidad_real(
     cajas_del_deposito: dict | None = None,
     kilos_recibidos: dict | None = None,
     segunda: list[dict] | None = None,
+    fletes: list[dict] | None = None,
 ) -> dict:
     """Arma el reporte real a partir de datos ya traídos (puro, testeable sin base).
 
@@ -388,6 +389,12 @@ def calcular_rentabilidad_real(
     de esa fecha no hubo remitos en este sistema: el día sigue como siempre,
     con los enviados, y no es provisorio (dueño, 01/10). None (los llamadores
     viejos) es no saber nada de remitos: no marca ningún día.
+
+    fletes: la parte de ESTA empresa del flete del rango, por día y sucursal
+    ([{fecha, sucursal, pesos}], `flete_por_dia_y_sucursal`; dueño, 05/10).
+    Es una línea APARTE: resta de la renta total y no se reparte por
+    artículo, así que los grupos no la tienen. None = no se resta (con
+    filtro de artículo o grupo, el flete no es de ninguno).
 
     segunda: los lotes de segunda al puesto del rango (`lotes_de_segunda`),
     ya filtrados por artículo y grupo. Lo cobrado suma "Recupero de segunda"
@@ -866,8 +873,16 @@ def calcular_rentabilidad_real(
         "afuera_motivos": len(afuera_por_motivo),
     }
     _cerrar_cuenta(totales)
+    # EL FLETE, aparte (dueño, 05/10): resta de la renta y la utilidad se
+    # rehace sobre la misma mercadería.
+    totales["flete"] = sum(float(f["pesos"]) for f in (fletes or []))
+    if totales["flete"]:
+        totales["renta_pesos"] -= totales["flete"]
+        totales["utilidad_pct"] = (totales["renta_pesos"] / totales["costo_mercaderia"] * 100
+                                   if totales["costo_mercaderia"] > 0 else None)
 
     return {
+        "fletes": list(fletes or []),
         "grupos": grupos,
         "totales": totales,
         "afuera_por_motivo": afuera_por_motivo,

@@ -321,12 +321,33 @@ def generar_pdf_rentabilidad_real(
                     f"({_formatear_numero(totales.get('bultos_segunda_cobrados', 0))} bultos que pagó el puesto) "
                     if totales.get("bultos_segunda_cobrados") else ""
                 )
+                + (
+                    f"— flete {_formatear_moneda(totales['flete'])} (la parte de esta empresa) "
+                    if totales.get("flete") else ""
+                )
                 + "— "
                 f"renta {_formatear_moneda(totales['renta_pesos'])} (utilidad {_formatear_pct(totales['utilidad_pct'])} sobre mercadería)."
                 + segunda,
                 estilo_total,
             )
         )
+
+    # EL FLETE, aparte (dueño, 05/10): la parte de esta empresa, por día y
+    # sucursal; con filtro de artículo o grupo no se resta, y se dice.
+    if resultado.get("fletes"):
+        elementos.append(Spacer(1, 8))
+        elementos.append(Paragraph(
+            f"Flete {_formatear_moneda(totales['flete'])} (la parte de esta empresa, resta de la renta total): "
+            + ", ".join(f"{f['fecha'].strftime('%d/%m')} {f['sucursal']} {_formatear_moneda(f['pesos'])}"
+                        for f in resultado["fletes"]) + ".",
+            ParagraphStyle("flete", fontName="Helvetica", fontSize=9, textColor=colors.black),
+        ))
+    elif resultado.get("flete_no_se_resta"):
+        elementos.append(Spacer(1, 8))
+        elementos.append(Paragraph(
+            "Con un artículo o un grupo elegido, el flete no se resta: no es de ningún artículo.",
+            ParagraphStyle("flete", fontName="Helvetica", fontSize=9, textColor=GRIS_TEXTO_AYUDA),
+        ))
 
     if resultado.get("segunda_sin_cobrar"):
         elementos.append(Spacer(1, 8))
@@ -558,6 +579,28 @@ def generar_excel_rentabilidad_real(
             celda = hoja.cell(row=fila_actual, column=19, value=round(float(totales["utilidad_pct"]) / 100, 4))
             celda.font = fuente_total
             celda.number_format = "0.0%"
+
+    # EL FLETE, aparte (dueño, 05/10): debajo del total, por día y sucursal.
+    if resultado.get("fletes"):
+        fila_actual += 2
+        hoja.cell(row=fila_actual, column=1, value="Flete (la parte de esta empresa, resta de la renta total)"
+                  ).font = fuente_total
+        for f in resultado["fletes"]:
+            fila_actual += 1
+            celda = hoja.cell(row=fila_actual, column=1, value=f["fecha"])
+            celda.number_format = "DD/MM/YYYY"
+            hoja.cell(row=fila_actual, column=2, value=f["sucursal"])
+            celda = hoja.cell(row=fila_actual, column=3, value=round(float(f["pesos"]), 2))
+            celda.number_format = '"$"#,##0'
+        fila_actual += 1
+        hoja.cell(row=fila_actual, column=2, value="Total flete").font = fuente_total
+        celda = hoja.cell(row=fila_actual, column=3, value=round(float(totales["flete"]), 2))
+        celda.font = fuente_total
+        celda.number_format = '"$"#,##0'
+    elif resultado.get("flete_no_se_resta"):
+        fila_actual += 2
+        hoja.cell(row=fila_actual, column=1,
+                  value="Con un artículo o un grupo elegido, el flete no se resta: no es de ningún artículo.")
 
     for columna, ancho in enumerate(
         (26, 13, 14, 13, 15, 11, 11, 12, 14, 18, 17, 21, 13, 13, 14, 17, 20, 13, 11, 18, 22, 18, 20), start=1

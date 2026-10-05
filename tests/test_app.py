@@ -24983,6 +24983,7 @@ def test_rentabilidad_real_junta_historia_completa_y_ancla_precios_por_fecha():
         patch("app.main.cajas_perdidas_del_deposito_por_articulo", return_value={}),
         # Los lotes de segunda al puesto (02/10), con los MISMOS filtros.
         patch("app.main.lotes_de_segunda", return_value=[]) as mock_segunda,
+        patch("app.main.flete_por_dia_y_sucursal", return_value=[]),
         patch("app.main.entradas_y_salidas_stock_articulos", return_value={1: (entradas, _salidas_fifo(4.0))}),
         patch("app.main.salidas_stock_articulos", return_value={1: salidas}),
         patch("app.main.calcular_listados_para_negociar_precios",

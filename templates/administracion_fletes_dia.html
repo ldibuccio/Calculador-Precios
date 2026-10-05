@@ -1,0 +1,83 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Flete del día</title>
+{% import "_fletes.html" as _fletes %}
+{% import "_pestanas_fletes.html" as _pestanas %}
+<style>
+{{ _fletes.estilos() }}
+{{ _pestanas.estilos() }}
+</style>
+</head>
+<body>
+  {% set barra_sector = "administracion" %}
+  {% set barra_titulo = "Fletes" %}
+  {% set barra_atras = "/administracion" %}
+  {% include "_barra_navegacion.html" %}
+  {{ _pestanas.pestanas("dia") }}
+
+  {% if aviso %}<div class="aviso">{{ aviso }}</div>{% endif %}
+  {% if error %}<div class="error">{{ error }}</div>{% endif %}
+
+  {% if not fleteros %}
+  <div class="nota">Todavía no hay fleteros: cargalos en <a href="/administracion/fletes/fleteros">Fleteros y camiones</a>.</div>
+  {% endif %}
+
+  <form class="tarjeta" method="get" action="/administracion/fletes/dia">
+    <div class="campos">
+      <label>¿Para qué día?<input type="date" name="fecha" value="{{ fecha.isoformat() }}"></label>
+      <label>¿Para qué cliente?
+        <select name="cliente_id">
+          {% for c in clientes %}<option value="{{ c.id }}" {% if cliente and c.id == cliente.id %}selected{% endif %}>{{ c.nombre }}</option>{% endfor %}
+        </select>
+      </label>
+      <label>¿Qué fletero?
+        <select name="fletero_id">
+          <option value="">Elegí</option>
+          {% for f in fleteros %}<option value="{{ f.id }}" {% if fletero and f.id == fletero.id %}selected{% endif %}>{{ f.nombre }}</option>{% endfor %}
+        </select>
+      </label>
+    </div>
+    <div class="acciones"><button type="submit">Ver</button></div>
+  </form>
+
+  {% if flete %}
+    {{ _fletes.mensaje(flete) }}
+    {{ _fletes.detalle(flete) }}
+    <div class="tarjeta">
+      {% if flete.se_corrige_hoy %}
+      <div class="acciones"><a href="/administracion/fletes/{{ flete.id }}/corregir">Corregir el flete</a></div>
+      {% elif flete.pagado %}
+      <p class="dato">Tiene viajes pagados: ya no se corrige.</p>
+      {% else %}
+      <p class="dato">Pasó el día en que se confirmó: lo corrige Gerencia.</p>
+      <div class="acciones"><a href="/gerencia/fletes/{{ flete.id }}/corregir">Corregir desde Gerencia</a></div>
+      {% endif %}
+    </div>
+  {% elif sucursales %}
+  <form class="tarjeta" method="post" action="/administracion/fletes/dia/armar">
+    <input type="hidden" name="fecha" value="{{ fecha.isoformat() }}">
+    <input type="hidden" name="cliente_id" value="{{ cliente.id }}">
+    <input type="hidden" name="fletero_id" value="{{ fletero.id }}">
+    {{ _fletes.pallets(sucursales) }}
+    <div class="acciones"><button type="submit">Armar flete</button></div>
+  </form>
+  {% endif %}
+
+  {% if del_dia %}
+  <div class="tarjeta">
+    <h2>Fletes del {{ fecha.strftime('%d/%m/%Y') }}</h2>
+    {% for f in del_dia %}
+    <div class="renglon">
+      <div class="renglon-cabeza"><a href="/administracion/fletes/dia?fecha={{ fecha.isoformat() }}&amp;cliente_id={{ f.cliente_id }}&amp;fletero_id={{ f.fletero_id }}">{{ f.fletero }}</a><span class="plata">{{ f.costo|moneda }}</span></div>
+      <div class="dato">{{ f.cliente }}</div>
+    </div>
+    {% endfor %}
+  </div>
+  {% endif %}
+
+{% include "_pie_version.html" %}
+</body>
+</html>

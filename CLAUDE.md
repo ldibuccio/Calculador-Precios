@@ -264,6 +264,9 @@ Módulos (se lee el que se va a tocar):
   la Casilla de pedidos en Administración.
 - `docs/modulos/que_comprar_hoy.md`: decisiones de Qué comprar hoy (el diseño
   sigue en `docs/que_comprar_hoy.md`).
+- `docs/modulos/fletes.md`: Fletes (Administración → Pedidos), el armado más
+  barato, el reparto por pallets, corregir y la línea Flete de Rentabilidad
+  Real.
 
 Registros:
 - `db/corridas_confirmadas.md`: migraciones de octubre en adelante.

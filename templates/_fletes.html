@@ -1,0 +1,101 @@
+{# LO COMÚN DE LAS PANTALLAS DE FLETES: el estilo, y cómo se muestra un flete
+   confirmado (la pestaña del día y la de corregir lo muestran igual). #}
+{% macro estilos() %}
+  :root { font-family: -apple-system, system-ui, sans-serif; }
+  body { margin: 0; padding: 1rem; background: #f5f5f5; color: #222; }
+  .tarjeta { background: #fff; border-radius: 10px; padding: 1rem; margin-bottom: 1rem;
+    box-shadow: 0 1px 3px rgba(0, 0, 0, 0.1); overflow-wrap: anywhere; }
+  .error { background: #fee2e2; color: #991b1b; padding: 0.75rem 1rem; border-radius: 8px; margin-bottom: 1rem; }
+  .aviso { background: #dcfce7; color: #166534; padding: 0.75rem 1rem; border-radius: 8px; margin-bottom: 1rem; }
+  .nota { background: #fef9c3; color: #713f12; padding: 0.75rem 1rem; border-radius: 8px; margin-bottom: 1rem; }
+  h2 { font-size: 1.05rem; margin: 0 0 0.5rem; }
+  .ayuda { color: #555; font-size: 0.88rem; margin: 0 0 0.6rem; }
+  .campos { display: flex; flex-wrap: wrap; gap: 0.6rem; }
+  .campos label { flex: 1 1 8rem; font-size: 0.88rem; color: #444; }
+  .campos input, .campos select { display: block; width: 100%; box-sizing: border-box; margin-top: 0.2rem;
+    padding: 0.6rem; border: 1px solid #ccc; border-radius: 8px; font-size: 1rem; background: #fff;
+    min-height: 44px; font-family: inherit; }
+  .acciones { display: flex; flex-wrap: wrap; gap: 0.6rem; margin-top: 0.8rem; }
+  .acciones button, .acciones a { flex: 1 1 9rem; min-height: 48px; padding: 0.7rem; border-radius: 8px;
+    font-size: 1rem; font-weight: 600; text-align: center; text-decoration: none; box-sizing: border-box;
+    font-family: inherit; display: flex; align-items: center; justify-content: center; }
+  .acciones button { background: #2563eb; color: #fff; border: none; }
+  .acciones a, .acciones button.secundario { background: #fff; color: #2563eb; border: 1px solid #2563eb; }
+  .renglon { padding: 0.55rem 0; border-top: 1px solid #eee; }
+  .renglon:first-of-type { border-top: none; }
+  .renglon-cabeza { display: flex; justify-content: space-between; gap: 0.6rem; font-weight: 600; }
+  .dato { color: #555; font-size: 0.88rem; }
+  .plata { white-space: nowrap; }
+  .negativo { color: #dc2626; }
+  .mensaje { padding: 0.7rem; border: 1px solid #ccc; border-radius: 8px; font-size: 1rem; line-height: 1.4;
+    background: #f8fafc; white-space: pre-wrap; overflow-wrap: anywhere; user-select: all; -webkit-user-select: all; }
+  .par label { flex: 1 1 5rem; }
+  details { margin-top: 0.5rem; }
+  summary { min-height: 44px; display: flex; align-items: center; color: #2563eb; font-weight: 600; cursor: pointer; }
+{% endmacro %}
+
+{% macro detalle(flete) %}
+<div class="tarjeta">
+  <h2>{{ flete.fletero }} · {{ flete.fecha.strftime('%d/%m/%Y') }}</h2>
+  <p class="dato">{{ flete.cliente }} · confirmado el {{ flete.confirmado_el|fecha_hora }}</p>
+  {% for s in flete.sucursales %}
+  <div class="renglon">
+    <div class="renglon-cabeza"><span>{{ s.nombre }}</span><span class="plata">{{ s.pallets }} pallets</span></div>
+    <div class="dato">Frutamax {{ s.pallets_frutamax }} · Palmala {{ s.pallets_palmala }}</div>
+    {% for v in s.viajes %}
+    <div class="dato">{{ v.camion }} · {{ v.precio|moneda }} (Frutamax {{ v.parte_frutamax|moneda }} · Palmala {{ v.parte_palmala|moneda }}){% if v.pagado_el %} · pagado el {{ v.pagado_el.strftime('%d/%m/%Y') }}{% endif %}</div>
+    {% endfor %}
+  </div>
+  {% endfor %}
+  <div class="renglon">
+    <div class="renglon-cabeza"><span>Total</span><span class="plata">{{ flete.costo|moneda }}</span></div>
+    <div class="dato">Frutamax {{ flete.parte_frutamax|moneda }} · Palmala {{ flete.parte_palmala|moneda }}</div>
+  </div>
+</div>
+{% endmacro %}
+
+{# El mensaje para el fletero: ENTERO a 313px (un bloque que crece con el
+   texto, no una caja con scroll) y se copia con un toque. Si el celular no
+   deja usar el portapapeles, queda seleccionado para copiarlo a mano. #}
+{% macro mensaje(flete) %}
+<div class="tarjeta">
+  <h2>Mensaje para el fletero</h2>
+  <p class="mensaje" id="mensaje-whatsapp">{{ flete.mensaje }}</p>
+  <div class="acciones">
+    <button type="button" id="copiar-whatsapp">Copiar para WhatsApp</button>
+  </div>
+  <p class="dato" id="copiado" hidden>Copiado: pegalo en el chat del fletero.</p>
+</div>
+<script>
+  (function () {
+    var texto = document.getElementById("mensaje-whatsapp");
+    var listo = document.getElementById("copiado");
+    function aMano() {
+      var rango = document.createRange();
+      rango.selectNodeContents(texto);
+      var seleccion = window.getSelection();
+      seleccion.removeAllRanges();
+      seleccion.addRange(rango);
+      try { if (document.execCommand("copy")) { listo.hidden = false; } } catch (e) {}
+    }
+    document.getElementById("copiar-whatsapp").addEventListener("click", function () {
+      if (navigator.clipboard && navigator.clipboard.writeText) {
+        navigator.clipboard.writeText(texto.textContent).then(function () { listo.hidden = false; }, aMano);
+      } else { aMano(); }
+    });
+  })();
+</script>
+{% endmacro %}
+
+{# Los pallets de cada sucursal, por empresa. #}
+{% macro pallets(sucursales) %}
+<h2>¿Cuántos pallets van a cada sucursal?</h2>
+<p class="ayuda">Por ejemplo: a Vicente López 10 de Frutamax y 8 de Palmala. La que no lleva nada queda en 0.</p>
+{% for s in sucursales %}
+<fieldset class="campos par" style="border: none; padding: 0; margin: 0 0 0.6rem;">
+  <legend style="font-weight: 600; padding: 0; margin-bottom: 0.2rem;">{{ s.nombre }}</legend>
+  <label>Frutamax<input type="number" name="fm_{{ s.codigo }}" min="0" step="1" inputmode="numeric" value="{{ s.pallets_frutamax }}"></label>
+  <label>Palmala<input type="number" name="pm_{{ s.codigo }}" min="0" step="1" inputmode="numeric" value="{{ s.pallets_palmala }}"></label>
+</fieldset>
+{% endfor %}
+{% endmacro %}

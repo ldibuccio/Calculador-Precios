@@ -1,0 +1,100 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Fleteros y camiones</title>
+{% import "_fletes.html" as _fletes %}
+{% import "_pestanas_fletes.html" as _pestanas %}
+<style>
+{{ _fletes.estilos() }}
+{{ _pestanas.estilos() }}
+  .inactivo { color: #6b7280; font-weight: 400; font-size: 0.85rem; }
+  .camion { padding: 0.6rem 0; border-top: 1px solid #eee; }
+</style>
+</head>
+<body>
+  {% set barra_sector = "administracion" %}
+  {% set barra_titulo = "Fletes" %}
+  {% set barra_atras = "/administracion" %}
+  {% include "_barra_navegacion.html" %}
+  {{ _pestanas.pestanas("fleteros") }}
+
+  {% if aviso %}<div class="aviso">{{ aviso }}</div>{% endif %}
+  {% if error %}<div class="error">{{ error }}</div>{% endif %}
+
+  {% for f in fleteros %}
+  <div class="tarjeta">
+    <h2>{{ f.nombre }}{% if not f.activo %} <span class="inactivo">(ya no trabaja)</span>{% endif %}</h2>
+    {% if f.telefono %}<p class="dato">{{ f.telefono }}</p>{% endif %}
+    {% for c in f.camiones %}
+    <div class="camion">
+      <div class="renglon-cabeza"><span>{{ c.nombre }} · {{ c.pallets }} pallets</span><span class="plata">{% if c.precio is not none %}{{ c.precio|moneda }}{% else %}sin precio hoy{% endif %}</span></div>
+      <div class="dato">Tiene {{ c.cantidad }}{% if c.precios %} · {% for p in c.precios[:3] %}{{ p.precio|moneda }} desde el {{ p.vigente_desde.strftime('%d/%m/%Y') }}{% if not loop.last %} · {% endif %}{% endfor %}{% endif %}</div>
+      <details>
+        <summary>Precio nuevo</summary>
+        <form method="post" action="/administracion/fletes/camiones/{{ c.id }}/precio">
+          <div class="campos">
+            <label>¿Cuánto cobra el viaje?<input type="text" name="precio" inputmode="decimal" placeholder="Ej.: 120.000"></label>
+            <label>¿Desde qué día?<input type="date" name="vigente_desde" value="{{ hoy.isoformat() }}"></label>
+          </div>
+          <div class="acciones"><button type="submit">Guardar precio</button></div>
+        </form>
+      </details>
+      <details>
+        <summary>Cambiar el camión</summary>
+        <form method="post" action="/administracion/fletes/camiones/{{ c.id }}">
+          <div class="campos">
+            <label>Nombre<input type="text" name="nombre" value="{{ c.nombre }}"></label>
+            <label>¿Cuántos pallets lleva?<input type="number" name="pallets" min="1" inputmode="numeric" value="{{ c.pallets }}"></label>
+            <label>¿Cuántos tiene?<input type="number" name="cantidad" min="0" inputmode="numeric" value="{{ c.cantidad }}"></label>
+          </div>
+          <div class="acciones"><button type="submit">Guardar</button></div>
+        </form>
+      </details>
+    </div>
+    {% else %}
+    <p class="dato">Todavía no tiene camiones.</p>
+    {% endfor %}
+    <details>
+      <summary>Agregar un camión</summary>
+      <form method="post" action="/administracion/fletes/fleteros/{{ f.id }}/camiones/nuevo">
+        <p class="ayuda">Por ejemplo: Grande, lleva 12 pallets, tiene 2, cobra 120.000 el viaje.</p>
+        <div class="campos">
+          <label>Nombre<input type="text" name="nombre" placeholder="Ej.: Grande"></label>
+          <label>¿Cuántos pallets lleva?<input type="number" name="pallets" min="1" inputmode="numeric"></label>
+          <label>¿Cuántos tiene?<input type="number" name="cantidad" min="0" inputmode="numeric" value="1"></label>
+          <label>¿Cuánto cobra el viaje?<input type="text" name="precio" inputmode="decimal" placeholder="Ej.: 120.000"></label>
+          <label>¿Desde qué día?<input type="date" name="vigente_desde" value="{{ hoy.isoformat() }}"></label>
+        </div>
+        <div class="acciones"><button type="submit">Agregar camión</button></div>
+      </form>
+    </details>
+    <details>
+      <summary>Cambiar el fletero</summary>
+      <form method="post" action="/administracion/fletes/fleteros/{{ f.id }}">
+        <div class="campos">
+          <label>Nombre<input type="text" name="nombre" value="{{ f.nombre }}"></label>
+          <label>Teléfono<input type="tel" name="telefono" value="{{ f.telefono or '' }}"></label>
+          <label>¿Sigue trabajando?
+            <select name="activo"><option value="si" {% if f.activo %}selected{% endif %}>Sí</option><option value="no" {% if not f.activo %}selected{% endif %}>No</option></select>
+          </label>
+        </div>
+        <div class="acciones"><button type="submit">Guardar</button></div>
+      </form>
+    </details>
+  </div>
+  {% endfor %}
+
+  <form class="tarjeta" method="post" action="/administracion/fletes/fleteros/nuevo">
+    <h2>Agregar un fletero</h2>
+    <div class="campos">
+      <label>Nombre<input type="text" name="nombre" placeholder="Ej.: Juan"></label>
+      <label>Teléfono<input type="tel" name="telefono" placeholder="Ej.: 11 5555-0000"></label>
+    </div>
+    <div class="acciones"><button type="submit">Agregar fletero</button></div>
+  </form>
+
+{% include "_pie_version.html" %}
+</body>
+</html>
