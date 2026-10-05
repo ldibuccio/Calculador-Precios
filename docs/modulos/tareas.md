@@ -16,7 +16,9 @@ en `core/tareas.py`.
 - **La franja de arriba** (dueño, 04/10; antes era un recuadro propio) va en
   los hubs de Compras, Administración y Gerencia (solo esos tres), debajo del
   banner de alertas: UNA línea con dos botones lado a lado, **Tareas** y
-  **Alertas**, que arranca plegada. Tareas dice "Sin tareas pendientes" en
+  **Alertas**, que arranca plegada. Los dos son OVALADOS (dueño, 04/10), para
+  no confundirlos con los botones de acción del hub, que siguen con la punta
+  de 8px; "Alertas (N)" va en un renglón y Tareas se queda el resto. Tareas dice "Sin tareas pendientes" en
   gris, o "Tareas pendientes (3)" destacado, y en ROJO si alguna venció.
   Alertas dice "Sin alertas" en VERDE o "Alertas (N)" en ROJO (dueño, 04/10),
   N = las que tienen casos; el mismo color va en el botón de Alertas de
@@ -36,7 +38,7 @@ en `core/tareas.py`.
   hub, así no mueven el corte de los tests. Las palabras de cada alerta salen
   de `_boton_alertas.html`, las mismas que la cinta del banner. Medido a
   313px: sin desborde y sin solapes, los dos botones a la misma altura y de
-  44px (`tests/test_franja_hubs.py`).
+  44px, ovalados, y el de acción con 8px (`tests/test_franja_hubs.py`).
 - **Lo que el sector ve es una OCURRENCIA** (`tareas_ocurrencias`): cada vez
   que la tarea sale, con el título y el detalle de ese momento (editar la
   tarea no reescribe lo que ya salió). La de una sola vez sale al crearla. La
