@@ -14,8 +14,8 @@ vive en app/db.py (sección TAREAS) y las reglas, las palabras y los archivos
 en `core/tareas.py`.
 
 - **La franja de arriba** (dueño, 04/10; antes era un recuadro propio) va en
-  los hubs de Compras, Administración y Gerencia (solo esos tres), debajo de
-  la barra: UNA línea con dos botones lado a lado, **Tareas** y
+  los hubs de Compras, Administración y Gerencia (solo esos tres), debajo del
+  banner de alertas: UNA línea con dos botones lado a lado, **Tareas** y
   **Alertas**, que arranca plegada. Los dos son OVALADOS (dueño, 04/10), para
   no confundirlos con los botones de acción del hub, que siguen con la punta
   de 8px; "Alertas (N)" va en un renglón y Tareas se queda el resto. Tareas dice "Sin tareas pendientes" en
@@ -27,15 +27,14 @@ en `core/tareas.py`.
   (dueño, 05/10): una alerta que no se pudo calcular, una sin calcular
   todavía, la foto vieja o la base que no contesta suman al botón y van en
   el panel, después de las que tienen casos, con link a Auditoría.
-- **La cinta corrida de avisos se sacó de TODO el sistema** (dueño, 05/10:
-  "no la pidió nunca y no la quiere en ningún lado"), y `_banner_alertas.html`
-  ya no existe. Depósito, Logística, Puesto y Fichas quedaron sin avisos
-  arriba y sin botón en su lugar: sus alertas se ven en Auditoría y en otro
-  sector si lo declaran. Comercial, que tiene botón sin panel, muestra lo
-  que no se sabe arriba de su pantalla de Alertas (las cuatro pantallas de
-  Alertas lo traen). Lo cuida `tests/test_sin_cinta_de_avisos.py`, y la
-  lista decidida de módulos con y sin botón está en `tests/test_app.py`
-  (`MODULOS_CON_BOTON_DE_ALERTAS`).
+- **La cinta corrida de avisos** (`templates/_banner_alertas.html`, dueño,
+  05/10): SE QUEDA en Compras, Administración y Gerencia, tal como estaba,
+  junto con el botón de Alertas; también en Puesto y Fichas. SALE de
+  Depósito, Logística y Comercial, sin nada en su lugar: las alertas de
+  Depósito y Logística se ven en Auditoría y en otro sector si lo declaran.
+  Comercial, que tiene botón sin panel, muestra lo que no se sabe arriba de
+  su pantalla de Alertas (las cuatro pantallas de Alertas lo traen). Lo
+  cuida `tests/test_cinta_de_avisos.py`, con la lista decidida de dónde va.
   Cada botón despliega lo suyo ABAJO de la línea, a todo el ancho, y abrir
   uno cierra el otro: botón y panel van separados (con dos `<details>` lado a
   lado, lo desplegado quedaba en media columna a 313px). Desplegada, cada

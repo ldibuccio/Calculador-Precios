@@ -10,8 +10,8 @@ también cuentan, porque son renglones del panel.
 El de Tareas queda como estaba (lo cuida tests/test_tareas.py).
 
 Auditoría, Depósito, Logística y Puesto no tienen botón de Alertas: Auditoría
-ES el tablero de alertas, y los otros tres quedaron sin avisos arriba cuando
-el dueño sacó la cinta corrida de todo el sistema (05/10).
+ES el tablero de alertas, Puesto tiene solo la cinta, y Depósito y Logística
+quedaron sin avisos arriba cuando el dueño les sacó la cinta (05/10).
 
 El color lo decide el navegador (corolario 32): se mide con getComputedStyle.
 """

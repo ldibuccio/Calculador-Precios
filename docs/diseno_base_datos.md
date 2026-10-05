@@ -1427,7 +1427,7 @@ por un retiro que nadie hizo. No era un caso teórico.
 ## A DECIDIR MIRANDO, no razonando (04/09): si la alerta de pedidos incompletos se va del banner
 
 > **Cerrado el 05/10 por otro lado:** el dueño sacó la cinta de alertas de
-> todo el sistema, Depósito incluido. Lo de abajo queda como historia.
+> Depósito. Lo de abajo queda como historia.
 
 Está tomada la decisión de **no decidir todavía**, y eso es a propósito. Queda
 escrito para que cuando se retome, la discusión no se vuelva a hacer de cero.

@@ -2761,6 +2761,7 @@ def ver_fichas(request: Request, cliente_id: int | None = None, error: str | Non
             "fichas": fichas,
             "error": error,
             "aviso": aviso,
+            "banner": _banner_alertas("fichas"),
         },
     )
 
@@ -18540,12 +18541,12 @@ def _detalle_vacios_para_devolver() -> dict:
 
 
 def _banner_alertas(modulo: str) -> dict:
-    """El estado de las alertas de un hub: lo que muestra su botón de Alertas.
+    """El estado de las alertas de un hub: la cinta, el botón de Alertas y su panel.
 
-    Se llama "banner" por la cinta corrida que lo mostraba hasta el 05/10 (el
-    dueño la sacó de todo el sistema). Hoy lo usan el botón y el panel de la
-    franja de Compras, Administración y Gerencia, el botón de Comercial, y los
-    avisos de arriba de la pantalla de Alertas de cada sector.
+    Lo usan la cinta corrida (Compras, Administración, Gerencia, Puesto y
+    Fichas; Depósito, Logística y Comercial no la tienen desde el 05/10), el
+    botón y el panel de la franja de los tres primeros, el botón de Comercial,
+    y los avisos de arriba de la pantalla de Alertas de cada sector.
 
     UNA sola consulta, siempre: lee la foto del último cálculo y filtra en
     memoria (ver app/alertas.py). Si la consulta falla, el hub sale igual —es
@@ -18569,8 +18570,8 @@ def _banner_alertas(modulo: str) -> dict:
     # del hub. Una sin calcular o con error no se sabe si tiene casos: va en
     # `problemas`, con la foto vencida.
     con_casos = [a for a in alertas if a["casos"] and not a["error"]]
-    # LO QUE NO SE SABE (dueño, 05/10): lo dice la cinta y, en los hubs sin
-    # cinta, el panel de Alertas de la franja; y el botón no se pone verde.
+    # LO QUE NO SE SABE (dueño, 05/10): además de la cinta, lo dice el panel
+    # de Alertas de la franja, y el botón no se pone verde.
     problemas = []
     for a in alertas:
         if a["error"]:
@@ -21657,7 +21658,7 @@ def exportar_ingresos_deposito_excel(
 @app.get("/puesto")
 def ver_puesto(request: Request):
     """Hub del módulo Puesto (la venta en el puesto del Mercado, aparte de la distribución)."""
-    return templates.TemplateResponse(request, "puesto.html", {})
+    return templates.TemplateResponse(request, "puesto.html", {"banner": _banner_alertas("puesto")})
 
 
 @app.get("/puesto/envases")
