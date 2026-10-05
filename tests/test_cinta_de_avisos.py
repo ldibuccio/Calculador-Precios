@@ -1,11 +1,13 @@
-"""La cinta corrida de avisos se sacó de TODO el sistema (dueño, 05/10).
+"""La cinta corrida de avisos y el panel de Alertas (dueño, 05/10).
 
-- Ninguna pantalla la tiene: ni los hubs con botón de Alertas (Compras,
-  Administración, Gerencia, Comercial) ni Depósito, Logística, Puesto y
-  Fichas, que quedan sin avisos arriba (y sin botón en su lugar).
-- Lo que solo decía la cinta —no se pudo calcular, sin calcular todavía, la
-  foto vieja— va adentro del panel de Alertas de la franja, y en Comercial,
-  que tiene botón sin panel, arriba de la pantalla a la que lleva el botón.
+- La cinta SE QUEDA en Compras, Administración y Gerencia, tal como estaba,
+  junto con el botón de Alertas; también en Puesto y Fichas. SALE de
+  Depósito, Logística y Comercial, y en Depósito y Logística no va nada en
+  su lugar.
+- Lo que decía la cinta además de las alertas con casos —no se pudo
+  calcular, sin calcular todavía, la foto vieja— va TAMBIÉN adentro del
+  panel de Alertas de la franja, y en Comercial, que tiene botón sin panel y
+  ya no tiene cinta, arriba de la pantalla a la que lleva el botón.
 - El título de la barra no se corta a mitad de palabra en el celular
   ("Administrac / ión" a 313px con candado).
 """
@@ -23,8 +25,8 @@ sys.path.insert(0, RAIZ)
 from tests.test_administracion_reordenada import CLAVES, _cliente  # noqa: E402
 
 HUBS_CON_FRANJA = ("compras", "administracion", "gerencia")
-SIN_CINTA = ("/compras", "/administracion", "/gerencia", "/comercial", "/deposito", "/logistica", "/puesto",
-             "/fichas")
+CON_CINTA = {"compras", "administracion", "gerencia", "puesto", "fichas"}
+SIN_CINTA = {"deposito", "logistica", "comercial"}
 
 
 def _foto(horas=0, con_error=(), faltan=(), casos=None):
@@ -54,31 +56,42 @@ def _sector(ruta):
     return nombre if nombre in HUBS_CON_FRANJA else None
 
 
-def test_NINGUNA_plantilla_tiene_la_cinta():
-    encontradas = set()
+def test_la_cinta_esta_EXACTAMENTE_en_las_plantillas_decididas():
+    """Lo encontrado contra lo decidido, en las dos direcciones."""
+    con_cinta = set()
     for nombre in os.listdir(os.path.join(RAIZ, "templates")):
         fuente = open(os.path.join(RAIZ, "templates", nombre), encoding="utf-8").read()
-        if re.search(r'_banner_alertas\.html|class="banner-(avisos|cinta)"|@keyframes banner-correr', fuente):
-            encontradas.add(nombre)
-    assert encontradas == set()
-    assert not os.path.exists(os.path.join(RAIZ, "templates", "_banner_alertas.html"))
+        if re.search(r'\{% include "_banner_alertas\.html" %\}', fuente):
+            con_cinta.add(nombre.removesuffix(".html"))
+    assert con_cinta == CON_CINTA
+    assert not CON_CINTA & SIN_CINTA
 
 
-@pytest.mark.parametrize("ruta", SIN_CINTA)
-def test_ninguna_pantalla_muestra_la_cinta_ni_con_TODO_lo_que_la_hacia_aparecer(ruta):
+def _todo_lo_que_llena_la_cinta():
     """Una alerta con casos de CADA alerta del registro, una con error, una
-    sin calcular y la foto vieja: lo que antes llenaba la cinta."""
+    sin calcular y la foto vieja."""
     import app.main as m
-    todas = {d.codigo: 3 for d in m.ALERTAS}
-    html = _get(ruta, _foto(horas=40, con_error=("compras_sin_precio",), faltan=("cajas_a_reponer",),
-                            casos=todas), _sector(ruta))
-    cuerpo = html.split("</style>")[-1]
+    return _foto(horas=40, con_error=("compras_sin_precio",), faltan=("cajas_a_reponer",),
+                 casos={d.codigo: 3 for d in m.ALERTAS})
+
+
+@pytest.mark.parametrize("sector", sorted(SIN_CINTA))
+def test_DEPOSITO_LOGISTICA_y_COMERCIAL_no_muestran_la_cinta_ni_con_todo_lo_que_la_llenaria(sector):
+    html = _get(f"/{sector}", _todo_lo_que_llena_la_cinta())
     assert "banner-cinta" not in html and "banner-avisos" not in html
-    assert '<span class="copia" aria-hidden="true">' not in cuerpo
+    assert '<span class="copia" aria-hidden="true">' not in html
 
 
-@pytest.mark.parametrize("ruta", ["/deposito", "/logistica", "/puesto"])
-def test_DEPOSITO_LOGISTICA_y_PUESTO_quedan_SIN_avisos_arriba_y_sin_boton(ruta):
+@pytest.mark.parametrize("sector", sorted(CON_CINTA))
+def test_los_que_se_QUEDAN_con_la_cinta_la_muestran(sector):
+    """El rival de arriba: la misma foto, y acá la cinta sí aparece."""
+    html = _get(f"/{sector}", _todo_lo_que_llena_la_cinta(), _sector(f"/{sector}"))
+    cinta = html.split('class="banner-cinta"')[1].split('<span class="copia"')[0]
+    assert "no se actualizaron desde entonces" in cinta
+
+
+@pytest.mark.parametrize("ruta", ["/deposito", "/logistica"])
+def test_DEPOSITO_y_LOGISTICA_quedan_SIN_avisos_arriba_y_sin_boton(ruta):
     import app.main as m
     sector = ruta.strip("/")
     suyas = [d for d in m.ALERTAS if sector in d.modulos]

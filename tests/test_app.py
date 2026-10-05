@@ -4561,9 +4561,9 @@ def test_compras_sin_precio_manda_a_COMERCIAL_A_SU_PROPIA_PANTALLA():
                                 "Compras sin precio de compra cargado")
     assert '<a class="link" href="/compras/pendientes">' in bloque_compras
 
-    # LA OTRA PUNTA era la cinta de Comercial, que el dueño sacó de todo el
-    # sistema el 05/10: hoy el botón de Comercial lleva a esta pantalla, y lo
-    # cuida tests/test_sin_cinta_de_avisos.py.
+    # LA OTRA PUNTA era la cinta de Comercial, que el dueño sacó el 05/10:
+    # hoy el botón de Comercial lleva a esta pantalla, y lo cuida
+    # tests/test_cinta_de_avisos.py.
 
 
 # `unidad_conteo` va porque en producción va: es lo que el artículo declara
@@ -10876,7 +10876,7 @@ def test_los_pedidos_incompletos_se_ven_TAMBIEN_en_compras():
 
     Es la MISMA alerta y la MISMA cuenta: `modulos` decide dónde aparece, no
     cuántas veces se calcula. Desde el 05/10 el hub de Depósito no muestra
-    alertas (el dueño sacó la cinta de todo el sistema): ni la consulta hace.
+    alertas (el dueño le sacó la cinta): ni la consulta hace.
     """
     foto = _foto_alertas({"pedidos_incompletos": (3, date(2026, 9, 2))})
     with patch("app.main.listar_estado_alertas", return_value=foto) as mock_foto:
@@ -10905,6 +10905,26 @@ def test_ver_compras_error_al_leer_las_alertas_no_rompe_la_pantalla():
     assert respuesta.status_code == 200
     assert 'data-franja-boton="alertas">Alertas (1)</button>' in respuesta.text   # no se sabe: no es verde
     assert 'href="/compras/cargar-compra"' in respuesta.text
+
+
+def test_banner_corre_y_duplica_el_contenido_para_el_loop():
+    # La cinta se anima proporcional a cuántos avisos lleva, y el contenido va
+    # dos veces (la copia oculta a lectores de pantalla) para que el corte del
+    # loop no se note.
+    foto = _foto_alertas({
+        "compras_sin_precio": (4, date(2026, 7, 30)),
+        "guias_r_costo_incompleto": (1, date(2026, 8, 5)),
+    })
+    with patch("app.main.listar_estado_alertas", return_value=foto):
+        respuesta = cliente.get("/compras")
+
+    assert respuesta.status_code == 200
+    assert 'class="banner-cinta" style="animation-duration: 24s;"' in respuesta.text
+    # DENTRO DE LA CINTA: desde el 04/10 el panel de Alertas de la franja del
+    # hub también la nombra, y eso no es el loop.
+    cinta = respuesta.text.split('class="banner-cinta"')[1].split('class="banner-avisos"')[0].split("</div>")[0]
+    assert cinta.count("Compras sin precio de compra cargado (4)") == 2
+    assert '<span class="copia" aria-hidden="true">' in respuesta.text
 
 
 def test_el_panel_avisa_cuando_la_foto_esta_vencida_aunque_no_haya_ninguna_alerta():
@@ -10945,38 +10965,47 @@ def test_el_panel_muestra_la_alerta_que_no_se_pudo_calcular():
 
 
 # Dónde se ve una alerta en el hub de su módulo (dueño, 05/10): con botón de
-# Alertas, los cuatro de acá; sin avisos arriba, los otros —el dueño sacó la
-# cinta de todo el sistema y no quiso nada en su lugar—. Ahí la alerta se ve
-# en Auditoría (y en otro sector, si lo declara).
+# Alertas, con la cinta o con los dos; y sin avisos arriba Depósito y
+# Logística —el dueño les sacó la cinta y no quiso nada en su lugar—. Ahí la
+# alerta se ve en Auditoría (y en otro sector, si lo declara).
 MODULOS_CON_BOTON_DE_ALERTAS = {"compras", "administracion", "gerencia", "comercial"}
-MODULOS_SIN_AVISOS = {"deposito", "logistica", "puesto", "fichas"}
+MODULOS_CON_CINTA = {"compras", "administracion", "gerencia", "puesto", "fichas"}
+MODULOS_SIN_AVISOS = {"deposito", "logistica"}
 
 
-def test_toda_alerta_con_modulo_suma_al_boton_de_ese_modulo():
-    """La garantía: una alerta no queda invisible en un hub con botón.
+def test_toda_alerta_con_modulo_se_ve_en_el_hub_de_ese_modulo():
+    """La garantía: una alerta no queda invisible en un hub con botón o cinta.
 
     Recorre los módulos que declara EL REGISTRO —no una lista escrita a mano
     acá— y compara contra lo DECIDIDO, en las dos direcciones: un módulo
-    nuevo obliga a decidir si tiene botón. En cada hub con botón entra con
-    una alerta suya en 1, y el botón tiene que decir "Alertas (1)".
+    nuevo obliga a decidir dónde se ve. En cada hub entra con una alerta suya
+    en 1: el botón tiene que decir "Alertas (1)" y la cinta, nombrarla.
     """
     from app.main import ALERTAS
 
     modulos = {modulo for definicion in ALERTAS for modulo in definicion.modulos}
-    assert modulos == MODULOS_CON_BOTON_DE_ALERTAS | MODULOS_SIN_AVISOS
-    assert not MODULOS_CON_BOTON_DE_ALERTAS & MODULOS_SIN_AVISOS
+    assert modulos == MODULOS_CON_BOTON_DE_ALERTAS | MODULOS_CON_CINTA | MODULOS_SIN_AVISOS
+    assert not (MODULOS_CON_BOTON_DE_ALERTAS | MODULOS_CON_CINTA) & MODULOS_SIN_AVISOS
 
-    for modulo in sorted(MODULOS_CON_BOTON_DE_ALERTAS):
+    for modulo in sorted(MODULOS_CON_BOTON_DE_ALERTAS | MODULOS_CON_CINTA):
         definicion = next(d for d in ALERTAS if modulo in d.modulos)
         foto = _foto_alertas({definicion.codigo: (1, date(2026, 8, 1))})
-        with patch("app.main.listar_estado_alertas", return_value=foto):
+        with ExitStack() as pila:
+            pila.enter_context(patch("app.main.listar_estado_alertas", return_value=foto))
+            # Los datos que piden algunas de esas pantallas para poder abrir.
+            pila.enter_context(patch("app.main.listar_clientes", return_value=CLIENTES_DE_PRUEBA))
             respuesta = cliente.get(f"/{modulo}")
 
         assert respuesta.status_code == 200, f"/{modulo} no abre"
         marcado = " ".join(respuesta.text.split())
-        assert re.search(r'(data-franja-boton="alertas">|<span>)Alertas \(1\)(</button>|</span>)', marcado), (
-            f"La alerta {definicion.codigo} dice ir a {modulo}, pero el botón de /{modulo} no la cuenta"
-        )
+        if modulo in MODULOS_CON_BOTON_DE_ALERTAS:
+            assert re.search(r'(data-franja-boton="alertas">|<span>)Alertas \(1\)(</button>|</span>)', marcado), (
+                f"La alerta {definicion.codigo} dice ir a {modulo}, pero el botón de /{modulo} no la cuenta"
+            )
+        if modulo in MODULOS_CON_CINTA:
+            assert 'class="banner-avisos"' in marcado, (
+                f"La alerta {definicion.codigo} dice ir a {modulo}, pero /{modulo} no muestra la cinta"
+            )
 
 
 def test_ver_compras_muestra_el_aviso_cuando_viene_en_la_url():
