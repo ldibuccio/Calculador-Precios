@@ -76,6 +76,7 @@ from core.motor_costeo import (
 import psycopg2
 
 from app.db import (
+    a_donde_fue_la_compra,
     FleteNoSePuede,
     actualizar_camion,
     actualizar_fletero,
@@ -8642,6 +8643,15 @@ def ver_detalle_compra(request: Request, compra_id: int, aviso: str | None = Non
         logger.exception("No se pudieron leer las devoluciones de la compra %s", compra_id)
         devoluciones = []
 
+    # A DÓNDE FUE (dueño, 05/10): lo de esta compra que salió al cliente.
+    # Como las devoluciones: si la cuenta falla, el detalle se abre igual y
+    # el cuadro dice que no se pudo leer.
+    try:
+        a_donde = a_donde_fue_la_compra(compra_id)
+    except (psycopg2.Error, RuntimeError):
+        logger.exception("No se pudo armar A dónde fue de la compra %s", compra_id)
+        a_donde = None
+
     diferencia_cajones_recepcion = None
     diferencia_contenido_recepcion = None
     if compra["cantidad_cajones_real"] is not None:
@@ -8664,6 +8674,7 @@ def ver_detalle_compra(request: Request, compra_id: int, aviso: str | None = Non
             "diferencia_contenido_recepcion": diferencia_contenido_recepcion,
             "devoluciones": devoluciones,
             "bultos_devueltos": round(sum(d["bultos"] for d in devoluciones), 2),
+            "a_donde": a_donde,
             "aviso": aviso,
             "error": error,
         },

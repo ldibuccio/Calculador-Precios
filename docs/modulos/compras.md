@@ -57,6 +57,23 @@ si alguna plantilla vuelve a tener su propia copia de la tabla.
 - Los filtros de la búsqueda viajan Buscar → Detalle → Editar, y Guardar
   vuelve al Detalle; su Volver vuelve a la misma búsqueda.
 
+## Detalle de la compra: "A dónde fue" (05/10, dueño)
+
+Un cuadro en el Detalle con lo que salió de esa compra al cliente, renglón
+armado por renglón armado: fecha del pedido, cliente, sucursal (con su nombre
+de `clientes_sucursales`), orden de compra, número de remito, bultos y kilos
+ENVIADOS y, si el remito volvió, bultos y kilos RECIBIDOS. Si la compra no se
+recibió, o se recibió y no salió nada, lo dice.
+
+- **Sale del FIFO del sistema** (`a_donde_fue_la_compra`, que usa
+  `atribuir_costos_fifo`), no de una cuenta propia. Dos caminos: el armado que
+  tomó del lote de la compra, y el que tomó de una guía R que consumió de la
+  compra; ahí le toca la PARTE de la guía que vino de esta compra
+  (`reprocesos_consumos`).
+- Un renglón que salió de dos compras se muestra con lo de ESTA y dice "de un
+  renglón de N"; los kilos (enviados y recibidos) van en la misma proporción.
+- Tests: `tests/test_a_donde_fue.py`, contra Postgres, con la compra rival.
+
 ## Reingreso por rechazo: el motivo viene escrito (02/10, dueño)
 
 "Rechazo por calidad", editable o borrable. Vacío se comporta como siempre

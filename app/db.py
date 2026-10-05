@@ -4164,6 +4164,98 @@ def dependencias_del_lote_de_compra(
     return resultado
 
 
+
+def a_donde_fue_la_compra(compra_id: int) -> dict:
+    """A DÓNDE FUE (dueño, 05/10): la mercadería de esta compra que salió al
+    cliente, renglón armado por renglón armado, para el cuadro del detalle.
+
+    Por dos caminos, y el segundo es el de Día:
+      - DIRECTO: armados que tomaron del lote de la compra;
+      - POR UNA GUÍA R: la guía consumió de la compra (`reprocesos_consumos`,
+        un documento congelado) y después un armado tomó del lote de la guía.
+        A esa guía le corresponde la PARTE de lo que consumió que vino de esta
+        compra (todo, si es la guía de una compra que vino armada).
+
+    El reparto es el FIFO del sistema (`atribuir_costos_fifo`, el mismo de
+    Corregir Recepción y de la Rentabilidad Real), no uno escrito acá. Los
+    kilos enviados y recibidos de cada renglón van en la misma proporción que
+    sus bultos de esta compra.
+
+    Devuelve {"recepcionada", "renglones": [...], "bultos"}. Sin recepción no
+    hay lote, y sin renglones la compra todavía no salió: la pantalla lo dice.
+    """
+    from core.costo_real import atribuir_costos_fifo
+
+    conexion = obtener_conexion()
+    try:
+        with conexion.cursor() as cursor:
+            cursor.execute("SELECT articulo_id, estado FROM compras WHERE id = %s", (compra_id,))
+            fila = cursor.fetchone()
+            if fila is None or fila[1] != "recepcionado":
+                return {"recepcionada": False, "renglones": [], "bultos": 0.0}
+            articulo_id = fila[0]
+            # LA PARTE DE CADA GUÍA R que vino de esta compra.
+            cursor.execute(
+                "SELECT rc.reproceso_id, sum(rc.bultos) FILTER (WHERE rc.compra_id = %s), sum(rc.bultos) "
+                "FROM reprocesos_consumos rc JOIN reprocesos rp ON rp.id = rc.reproceso_id "
+                "WHERE rp.anulado_el IS NULL AND rc.reproceso_id IN "
+                "(SELECT reproceso_id FROM reprocesos_consumos WHERE compra_id = %s) "
+                "GROUP BY rc.reproceso_id", (compra_id, compra_id))
+            parte_de_guia = {g: float(de_aca) / float(total) for g, de_aca, total in cursor.fetchall()
+                             if de_aca and total}
+            entradas, salidas = _entradas_y_salidas_stock(cursor, articulo_id)
+            por_renglon: dict = {}
+            for salida in atribuir_costos_fifo(entradas, salidas):
+                if salida.get("tipo") != "armado" or salida.get("renglon_id") is None:
+                    continue
+                de_aca = 0.0
+                for c in salida["consumos_lotes"]:
+                    if c["tipo_lote"] == "guia" and c["origen_id"] == compra_id:
+                        de_aca += c["bultos"]
+                    elif c["tipo_lote"] == "reproceso" and c["origen_id"] in parte_de_guia:
+                        de_aca += c["bultos"] * parte_de_guia[c["origen_id"]]
+                if de_aca > 0:
+                    por_renglon[salida["renglon_id"]] = por_renglon.get(salida["renglon_id"], 0.0) + de_aca
+            if not por_renglon:
+                return {"recepcionada": True, "renglones": [], "bultos": 0.0}
+            cursor.execute(
+                """
+                SELECT r.id, p.fecha_operacion, cl.nombre AS cliente, r.sucursal,
+                       coalesce(cs.nombre, r.sucursal) AS sucursal_nombre, ps.orden_compra,
+                       re.numero AS remito, re.recibido_el,
+                       """ + _SQL_BULTOS_DE_PRIMERA + """ AS bultos_renglon, r.kilos_enviados,
+                       rr.bultos_recibidos, rr.kilos_recibidos
+                FROM pedidos_renglones r
+                JOIN pedidos p ON p.id = r.pedido_id
+                JOIN clientes cl ON cl.id = p.cliente_id
+                LEFT JOIN clientes_sucursales cs ON cs.cliente_id = p.cliente_id AND cs.codigo = r.sucursal
+                LEFT JOIN pedidos_sucursales ps ON ps.pedido_id = r.pedido_id AND ps.sucursal = r.sucursal
+                LEFT JOIN remitos re ON re.pedido_sucursal_id = ps.id
+                LEFT JOIN remitos_renglones rr ON rr.remito_id = re.id AND rr.pedido_renglon_id = r.id
+                WHERE r.id = ANY(%s)
+                ORDER BY p.fecha_operacion, r.sucursal, r.id
+                """, (sorted(por_renglon),))
+            filas = _filas_como_dicts(cursor)
+    finally:
+        conexion.close()
+    renglones = []
+    for f in filas:
+        bultos = round(por_renglon[f["id"]], 2)
+        total = float(f["bultos_renglon"] or 0)
+        parte = min(bultos / total, 1.0) if total > 0 else 1.0
+        volvio = f["recibido_el"] is not None and f["bultos_recibidos"] is not None
+
+        def _proporcion(valor):
+            return round(float(valor) * parte, 2) if valor is not None else None
+        renglones.append(dict(
+            f, bultos=bultos, de_un_renglon_de=total if parte < 1 else None,
+            kilos_enviados=_proporcion(f["kilos_enviados"]),
+            bultos_recibidos=_proporcion(f["bultos_recibidos"]) if volvio else None,
+            kilos_recibidos=_proporcion(f["kilos_recibidos"]) if volvio else None,
+            remito_volvio=volvio))
+    return {"recepcionada": True, "renglones": renglones, "bultos": round(sum(r["bultos"] for r in renglones), 2)}
+
+
 def _guias_en_origen_vivas(cursor, compra_id: int) -> list[int]:
     """Las guías R que ESTA compra generó por venir armada, y que siguen vivas.
 
