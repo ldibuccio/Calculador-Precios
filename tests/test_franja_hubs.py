@@ -98,6 +98,16 @@ def test_la_FRANJA_a_313px_es_UNA_linea_arranca_plegada_y_abre_de_a_uno():
             pagina.set_content(html)
             botones = pagina.locator("[data-franja-boton]")
             cajas = [botones.nth(i).bounding_box() for i in range(2)]
+            # OVALADOS (dueño, 04/10): la punta llega a la mitad del alto; el
+            # botón de acción del hub, el RIVAL, sigue con 8px
+            puntas = pagina.evaluate("""() => ({
+              franja: [...document.querySelectorAll('[data-franja-boton]')].map(b => [
+                parseFloat(getComputedStyle(b).borderTopLeftRadius), b.getBoundingClientRect().height]),
+              accion: getComputedStyle(document.querySelector('a.boton[href="/administracion/stock/cotejo"]'))
+                .borderTopLeftRadius,
+              renglones_alertas: (() => { const r = document.createRange();
+                r.selectNodeContents(document.querySelector('[data-franja-boton=alertas]'));
+                return new Set([...r.getClientRects()].map(c => Math.round(c.top))).size; })()})""")
             fondo_tareas = pagina.evaluate(
                 "() => getComputedStyle(document.querySelector('[data-franja-boton=tareas]')).backgroundColor")
             al_llegar = estado(pagina)
@@ -113,6 +123,9 @@ def test_la_FRANJA_a_313px_es_UNA_linea_arranca_plegada_y_abre_de_a_uno():
     # una sola línea: los dos a la misma altura, uno al lado del otro, y de 44px
     assert cajas[0]["y"] == cajas[1]["y"] and cajas[0]["x"] + cajas[0]["width"] <= cajas[1]["x"]
     assert min(c["height"] for c in cajas) >= 44
+    assert len(puntas["franja"]) == 2 and all(radio >= alto / 2 for radio, alto in puntas["franja"]), puntas
+    assert puntas["accion"] == "8px", puntas
+    assert puntas["renglones_alertas"] == 1, puntas            # "Alertas (1)" no se parte
     assert fondo_tareas == "rgb(220, 38, 38)"                     # una vencida: rojo
     assert al_llegar == {"tareas": "none", "alertas": "none", "expandidos": ["false", "false"]}
     assert con_tareas["tareas"] != "none" and con_tareas["alertas"] == "none"
