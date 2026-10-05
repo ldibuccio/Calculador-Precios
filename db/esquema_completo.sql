@@ -2057,7 +2057,9 @@ create table tareas (
   sector text not null check (sector in ('compras', 'administracion', 'gerencia')),
   titulo text not null check (btrim(titulo) <> ''),
   detalle text,
-  tipo text not null check (tipo in ('una_vez', 'cada_dias', 'semanal', 'mensual')),
+  -- db/tareas_8 (05/10): anual, y X dias despues de hecha (cada_dias).
+  tipo text not null constraint tareas_tipo_check check (tipo in
+    ('una_vez', 'cada_dias', 'semanal', 'mensual', 'anual', 'despues_de_hecha')),
   vence_el date,
   cada_dias integer,
   dia_semana integer,
@@ -2070,19 +2072,32 @@ create table tareas (
   actualizado_en timestamptz not null default now(),
   -- Quién la cargó: Gerencia, o el sector para sí mismo (db/tareas_5, 02/10).
   creada_por text not null,
+  anual_dia integer,
+  anual_mes integer,
+  -- Eliminar (duenio, 05/10): estado 'baja' con quien y cuando.
+  eliminada_el timestamptz,
+  eliminada_por text,
   constraint tareas_creada_por check (
     creada_por in ('compras', 'administracion', 'gerencia')
     and (creada_por = 'gerencia' or creada_por = sector)),
   constraint tareas_campos_de_su_tipo check (
     (tipo = 'una_vez' and vence_el is not null and cada_dias is null
-      and dia_semana is null and dias_mes is null and desde is null)
+      and dia_semana is null and dias_mes is null and desde is null
+      and anual_dia is null and anual_mes is null)
     or (tipo <> 'una_vez' and vence_el is null and desde is not null
-      and (tipo = 'cada_dias') = coalesce(cada_dias >= 1, false)
+      and (tipo in ('cada_dias', 'despues_de_hecha')) = coalesce(cada_dias >= 1, false)
       and (tipo = 'semanal') = coalesce(dia_semana between 0 and 6, false)
       and (tipo = 'mensual') = coalesce(cardinality(dias_mes) >= 1
         and 1 <= all(dias_mes) and 31 >= all(dias_mes), false)
-      and (dias_mes is null or cardinality(dias_mes) >= 1))),
-  constraint tareas_una_vez_no_se_pausa check (tipo <> 'una_vez' or estado = 'activa')
+      and (dias_mes is null or cardinality(dias_mes) >= 1)
+      and (tipo = 'anual') = coalesce(anual_mes between 1 and 12
+        and anual_dia between 1 and 31, false)
+      and (tipo = 'anual') = (anual_dia is not null or anual_mes is not null))),
+  constraint tareas_una_vez_no_se_pausa check (tipo <> 'una_vez' or estado in ('activa', 'baja')),
+  constraint tareas_eliminada_coherente check (
+    (eliminada_el is null) = (eliminada_por is null)
+    and (eliminada_por is null or eliminada_por in ('compras', 'administracion', 'gerencia'))
+    and (eliminada_el is null or estado = 'baja'))
 );
 comment on table tareas is
   'Tareas que Gerencia le carga a un sector (duenio, 02/10): de una vez, con '
@@ -2094,8 +2109,8 @@ create table tareas_ocurrencias (
   vence_el date not null,
   titulo text not null,
   detalle text,
-  estado text not null default 'pendiente'
-    check (estado in ('pendiente', 'hecha', 'no_hecha')),
+  estado text not null default 'pendiente' constraint tareas_ocurrencias_estado_check
+    check (estado in ('pendiente', 'hecha', 'no_hecha', 'eliminada')),
   atrasada boolean not null default false,
   hecha_el timestamptz,
   hecha_por text check (hecha_por in ('compras', 'administracion', 'gerencia')),

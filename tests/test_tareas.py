@@ -70,16 +70,21 @@ def _cliente(monkeypatch, *sectores):
 
 # --- las reglas, en la base ------------------------------------------------------
 
-def test_una_de_UNA_VEZ_sale_al_crearla_y_la_marca_SU_sector_con_nota(base):
+def test_una_de_UNA_VEZ_sale_EL_DIA_de_su_vencimiento_y_la_marca_SU_sector_con_nota(base):
+    """Dueño, 05/10: una tarea aparece como pendiente RECIÉN el día de su
+    vencimiento; antes está programada (la pantalla de Tareas la muestra)."""
     d, sql = base
+    vence = LUNES + timedelta(days=3)
     d.crear_tarea(creada_por="gerencia", sector="administracion", titulo="EJ Pagar luz", detalle=None, tipo="una_vez",
-                  vence_el=LUNES + timedelta(days=3), hoy=LUNES)
-    (tarea,) = d.tareas_pendientes_del_sector("administracion", LUNES)
-    assert d.tareas_pendientes_del_sector("compras", LUNES) == []
+                  vence_el=vence, hoy=LUNES)
+    assert d.tareas_pendientes_del_sector("administracion", LUNES) == []
+    assert d.tareas_pendientes_del_sector("administracion", vence - timedelta(days=1)) == []
+    (tarea,) = d.tareas_pendientes_del_sector("administracion", vence)
+    assert d.tareas_pendientes_del_sector("compras", vence) == []
     with pytest.raises(ValueError, match="ya no está pendiente para este sector"):
         d.marcar_tarea_hecha(tarea["id"], sector="compras", nota=None)
     d.marcar_tarea_hecha(tarea["id"], sector="administracion", nota="  EJ pagada en el banco ")
-    assert d.tareas_pendientes_del_sector("administracion", LUNES) == []
+    assert d.tareas_pendientes_del_sector("administracion", vence) == []
     (fila,) = sql("SELECT estado, hecha_por, nota, hecha_el IS NOT NULL FROM tareas_ocurrencias")
     assert fila == ("hecha", "administracion", "EJ pagada en el banco", True)
     with pytest.raises(ValueError, match="ya no está pendiente"):
@@ -221,7 +226,7 @@ def test_la_FRANJA_dice_las_tareas_en_gris_destacado_o_ROJO_y_arranca_plegada(ba
     with patch("app.main._hoy_argentina", return_value=LUNES + timedelta(days=2)):
         sin = cliente.get("/compras").text.split("</style>")[-1]
         d.crear_tarea(creada_por="gerencia", sector="compras", titulo="EJ Llamar al puesto", detalle=None,
-                      tipo="una_vez", vence_el=LUNES + timedelta(days=5), hoy=LUNES)
+                      tipo="una_vez", vence_el=LUNES + timedelta(days=2), hoy=LUNES)   # vence hoy
         al_dia = cliente.get("/compras").text.split("</style>")[-1]
         _semanal(d)                                             # la semanal del LUNES ya pasó: vencida
         con_vencida = cliente.get("/compras").text.split("</style>")[-1]
@@ -231,7 +236,7 @@ def test_la_FRANJA_dice_las_tareas_en_gris_destacado_o_ROJO_y_arranca_plegada(ba
     for marcado in (sin, al_dia, con_vencida):
         panel = marcado.split('id="franja-tareas"')[1].split('id="franja-alertas"')[0]
         assert panel.startswith(' data-franja-panel="tareas" hidden>')         # plegado al llegar
-        assert panel.count('<a class="tareas-nueva" href="/compras/tareas">Nueva tarea</a>') == 1
+        assert panel.count('<a class="tareas-nueva" href="/compras/tareas#nueva">Nueva tarea</a>') == 1
         assert marcado.index("data-franja") < marcado.index('<div class="tarjeta">')   # arriba de los botones
     assert con_vencida.count('action="/compras/tareas/') == 2
 

@@ -150,7 +150,7 @@ def test_ADMINISTRACION_tambien_carga_y_el_RECUADRO_tiene_Nueva_tarea_y_dice_qui
             "titulo": "EJ Cobrar vale", "tipo": "una_vez", "vence_el": LUNES.isoformat()}).status_code == 303
         hubs = {s: cliente.get(f"/{s}").text.split("</style>")[-1] for s in ("compras", "administracion", "gerencia")}
     for sector, marcado in hubs.items():
-        assert marcado.count(f'<a class="tareas-nueva" href="/{sector}/tareas">Nueva tarea</a>') == 1, sector
+        assert marcado.count(f'<a class="tareas-nueva" href="/{sector}/tareas#nueva">Nueva tarea</a>') == 1, sector
     assert "la cargó Administración" in hubs["administracion"]
     assert sql("SELECT sector, creada_por FROM tareas") == [("administracion", "administracion")]
 
@@ -256,8 +256,8 @@ def test_la_PANTALLA_de_un_sector_se_ve_bien_a_313px(base, monkeypatch):
     _mensual(d, [2], creada_por="gerencia", titulo="EJEMPLOSINESPACIOSQUENOSEPUEDEPARTIRPORNINGUNLADO")
     with patch("app.main._hoy_argentina", return_value=LUNES):
         pagina = _cliente(monkeypatch, "compras").get("/compras/tareas").text
-    assert pagina.count("<details>") >= 2
-    pagina = pagina.replace("<details>", "<details open>")
+    assert pagina.count("<details") >= 2
+    pagina = re.sub(r"<details(?=[ >])", "<details open", pagina)
     medicion = medir_sync(pagina, ancho=313)
     assert medicion["pares"] > 0
     assert medicion["desborde_pagina"] == 0, medicion["desborde_pagina"]
