@@ -321,7 +321,7 @@
        distintos y para cosas distintas. Sin total por artículo — sumarlas no
        le sirve a nadie que tenga que ir a buscarlas. #}
     {% macro renglon(p) %}
-      <a class="porcion{% if p.negativo %} negativa{% endif %}" href="/administracion/stock/remanente/porcion?articulo_id={{ p.articulo_id }}&fecha={{ fecha }}{% if p.ficha_id %}&ficha_id={{ p.ficha_id }}{% endif %}{% if p.es_segunda %}&segunda=1{% endif %}">
+      <a class="porcion{% if p.negativo %} negativa{% endif %}" href="/administracion/stock/remanente/porcion?articulo_id={{ p.articulo_id }}&fecha={{ fecha }}{% if p.ficha_id %}&ficha_id={{ p.ficha_id }}{% endif %}{% if p.es_segunda %}&segunda=1{% endif %}{{ y_volver(aqui(request)) }}">
         <span class="que">{{ p.nombre }}</span>
         {% if p.negativo %}
         <span class="cuanto-falta"><span class="numero-negativo">{{ p.bultos|numero }}</span>
@@ -420,7 +420,7 @@
       Y si la guía R está cargada, mirale la fecha: <strong>una guía R fechada más de
       {{ dias_margen_guia_r }} días después del armado no lo cubre</strong>.</p>
     {% for p in porciones_esperando %}
-    <a class="espera" href="/administracion/stock/sistema/{{ p.articulo_id }}">
+    <a class="espera" href="/administracion/stock/sistema/{{ p.articulo_id }}{{ q_volver(aqui(request)) }}">
       {# El nombre es el del ARTÍCULO (sale de `articulos.nombre`), no el de
          una porción: en esta pantalla todo lo demás está nombrado por
          porción, y sin decirlo este renglón se lee como una pila. #}
@@ -449,7 +449,7 @@
       que la explique, alguien pudo sacar de más, o una salida se llevó ese lote porque lo señalaron
       con el dedo. <strong>No es un error del sistema: es la señal.</strong></p>
     {% for n in negativos %}
-    <a class="negativo" href="/administracion/stock/sistema/{{ n.articulo_id }}">
+    <a class="negativo" href="/administracion/stock/sistema/{{ n.articulo_id }}{{ q_volver(aqui(request)) }}">
       <span class="nombre">{{ n.nombre }}</span>
       <span class="falta">Faltan explicar {{ n.faltan|numero }} bultos · <span class="ir">ver de qué lotes salió</span></span>
     </a>

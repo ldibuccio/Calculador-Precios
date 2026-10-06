@@ -111,7 +111,7 @@
     <h2>{{ vales|length }} vale{{ '' if vales|length == 1 else 's' }} · {{ total_filtrado|moneda }}</h2>
     {% for v in vales %}
     <div class="fila">
-      <a class="abrir" href="{{ camino.base }}/vales/{{ v.id }}">
+      <a class="abrir" href="{{ camino.base }}/vales/{{ v.id }}{{ q_volver(aqui(request)) }}">
         <div class="fila-cabeza">
           <span class="fila-que">{{ v.proveedor }}{% if v.numero %} · vale {{ v.numero }}{% endif %}</span>
           <span>{{ v.importe|moneda }}</span>

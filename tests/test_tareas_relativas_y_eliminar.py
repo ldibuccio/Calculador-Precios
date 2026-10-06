@@ -197,7 +197,7 @@ def test_la_PANTALLA_del_sector_tiene_PARA_HACER_PROGRAMADAS_y_HECHAS_y_ELIMINAR
     assert "EJ Hecha" in hechas and "«EJ listo»" in hechas
     assert "EJ RIVAL" not in pagina
     # eliminar: la suya sí, la de Gerencia no
-    assert para_hacer.count(f'action="/compras/tareas/{hoy_}/eliminar"') == 1
+    assert para_hacer.count(f'action="/compras/tareas/{hoy_}/eliminar?volver=') == 1
     assert "/eliminar" not in programadas
     # el recuadro del hub: solo lo de hoy
     panel = hub.split('id="franja-tareas"')[1].split('id="franja-alertas"')[0]

@@ -70,7 +70,8 @@
 <body>
   {% set barra_sector = "administracion" %}
   {% set barra_titulo = "Recibir remito " ~ remito.numero %}
-  {% set barra_atras = "/administracion/facturacion" %}
+  {% set volver = vuelta(request, "") %}
+  {% set barra_atras = volver or "/administracion/facturacion" %}
   {% from "_info.html" import info %}
   {% include "_barra_navegacion.html" %}
 
@@ -83,10 +84,10 @@
 
   {% if remito.estado != "emitido" %}
     <div class="tarjeta">
-      <div class="ojo">Este remito no está en viaje: {{ remito.estado_texto|lower }}. <a href="/administracion/facturacion/remito/{{ remito.id }}">Ver el remito</a></div>
+      <div class="ojo">Este remito no está en viaje: {{ remito.estado_texto|lower }}. <a href="/administracion/facturacion/remito/{{ remito.id }}{{ q_volver(volver) }}">Ver el remito</a></div>
     </div>
   {% else %}
-  <form method="post" action="/administracion/facturacion/remito/{{ remito.id }}/recibir" enctype="multipart/form-data">
+  <form method="post" action="/administracion/facturacion/remito/{{ remito.id }}/recibir{{ q_volver(volver) }}" enctype="multipart/form-data">
     <div class="tarjeta">
       {# LA EXPLICACIÓN VA A LA "i" (dueño, 02/10): arranca cerrada. #}
       <h2>Lo que dice el remito firmado {% call info("Cómo se carga lo recibido") %}Bultos y kilos vienen con lo que se envió menos lo que Depósito ya cargó como rechazado: cambiá solo lo que el súper anotó distinto. Si rechazó bultos, poné los que se quedó y los kilos de esos bultos. Esto no mueve stock: lo rechazado lo ingresa Depósito.{% endcall %}</h2>

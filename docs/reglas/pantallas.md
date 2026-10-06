@@ -280,3 +280,35 @@ El dueño eligió "un color por recuadro" y no "un color por lo que hace".
   Precios por Período y Márgenes por Artículo); los dos "Próximamente"
   salieron y sus direcciones siguen abriendo.
 
+
+
+## Volver a la lista con sus filtros (05/10, dueño)
+
+"Si listé 10 remitos de septiembre, entré en uno, lo cargué y vuelvo, tengo
+que ver esos mismos 10 sin volver a filtrar." Vale para toda pantalla lista →
+detalle → volver.
+
+- **La lista manda su dirección** —con su consulta, sin `aviso` ni `error`—
+  en el parámetro `volver` de cada link al detalle:
+  `href="/ruta/{{ id }}{{ q_volver(aqui(request)) }}"` (o `y_volver` si el
+  link ya tiene `?`). El link sigue escrito tal cual, para el barrido de
+  pantallas sin link.
+- **El detalle vuelve** con `vuelta(request, defecto)`: la barra, el
+  "Volver" y los links a sus pasos (emitir, recibir). Sin `volver` (un
+  favorito, un link viejo), su lista de siempre. Solo direcciones internas
+  (`direccion_de_vuelta`): `//otro.sitio` o `https://…` caen al defecto.
+- **Después de guardar** también: los formularios del detalle mandan
+  `{{ q_volver(volver) }}` en el `action`, y el middleware
+  `mantener_la_vuelta_despues_de_guardar` pega el `volver` a la redirección;
+  si la redirección va a la lista misma, va a la lista CON sus filtros.
+- **Las pantallas que llevan los filtros en su propia dirección** (Detalle de
+  la compra) los mantienen con `consulta(request)`.
+
+Arreglado el 05/10 (tenían el problema): Armar remito → remito / emitir
+(volvía a Facturación), Facturación y la búsqueda para Recibir → remito, Vales
+a cobrar y Movimientos de vales → vale, Movimientos de vacíos → el proveedor
+(volvía a Vacíos), Remanente → artículo y extracto (perdía el tipo),
+Movimientos del depósito → Resumen proveedores, Pedido del día y Casilla →
+Revisar pedido, Guías R → "Volver a la lista", la barra de la Ficha, la barra
+y las fotos de la balanza del Detalle de la compra, Vino armada, y guardar en
+Tareas. Tests: `tests/test_volver_con_filtros.py`.

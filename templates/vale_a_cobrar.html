@@ -85,7 +85,10 @@
 <body>
   {% set barra_sector = camino.sector %}
   {% set barra_titulo = "Vale a cobrar" %}
-  {% set barra_atras = camino.base ~ "/vales" %}
+  {# VUELVE A LA LISTA DE LA QUE VINO, con sus filtros (dueño, 05/10): Vales a
+     cobrar o Movimientos de vales. Ver `vuelta` en app/main.py. #}
+  {% set volver = vuelta(request, "") %}
+  {% set barra_atras = volver or (camino.base ~ "/vales") %}
   {% include "_barra_navegacion.html" %}
 
   {% if aviso %}<div class="aviso">{{ aviso }}</div>{% endif %}
@@ -125,13 +128,13 @@
         {% set clave = 'original' if f.id is none else f.id %}
         <details class="foto-accion">
           <summary>Cambiar o borrar</summary>
-          <form method="post" action="/gerencia/vales/{{ vale.id }}/fotos/reemplazar" enctype="multipart/form-data">
+          <form method="post" action="/gerencia/vales/{{ vale.id }}/fotos/reemplazar{{ q_volver(volver) }}" enctype="multipart/form-data">
             <input type="hidden" name="foto" value="{{ clave }}">
             <input type="file" name="nueva" id="reemplazar-{{ clave }}" accept="image/*"
                    onchange="if (this.files.length) this.form.submit();">
             <label class="boton-anexar" for="reemplazar-{{ clave }}">Reemplazar por otra</label>
           </form>
-          <form method="post" action="/gerencia/vales/{{ vale.id }}/fotos/borrar">
+          <form method="post" action="/gerencia/vales/{{ vale.id }}/fotos/borrar{{ q_volver(volver) }}">
             <input type="hidden" name="foto" value="{{ clave }}">
             <label class="chico"><input type="checkbox" name="confirmo" value="si" required> Sí, borrar esta foto</label>
             <button type="submit">Borrar la foto</button>
@@ -145,7 +148,7 @@
     <p class="vacio">Este vale no tiene ninguna foto.</p>
     {% endif %}
     {# Se anexa en CUALQUIER estado (dueño, 30/09); borrar es de Gerencia (02/10). #}
-    <form class="anexar" method="post" action="{{ camino.base }}/vales/{{ vale.id }}/fotos" enctype="multipart/form-data">
+    <form class="anexar" method="post" action="{{ camino.base }}/vales/{{ vale.id }}/fotos{{ q_volver(volver) }}" enctype="multipart/form-data">
       <input type="file" name="fotos" id="fotos-vale" accept="image/*" multiple
              onchange="if (this.files.length) this.form.submit();">
       <label class="boton-anexar" for="fotos-vale">＋ Anexar foto</label>
@@ -177,7 +180,7 @@
   {% if 'cobrado' in salidas %}
   <div class="tarjeta salida">
     <h2>Cobrado</h2>
-    <form method="post" action="/administracion/vales/{{ vale.id }}/cobrar">
+    <form method="post" action="/administracion/vales/{{ vale.id }}/cobrar{{ q_volver(volver) }}">
       <label>Fecha<input type="date" name="fecha" value="{{ hoy.isoformat() }}" max="{{ hoy.isoformat() }}" required></label>
       <label>Importe cobrado<input type="text" inputmode="decimal" name="importe_cobrado" value="{{ vale.importe|sin_decimales }}" required></label>
       <label>Ingreso a caja (opcional)<input type="text" name="ingreso_a_caja" autocomplete="off"></label>
@@ -188,7 +191,7 @@
   {% if 'cruzado' in salidas %}
   <div class="tarjeta salida">
     <h2>Cruzado con el proveedor</h2>
-    <form method="post" action="/administracion/vales/{{ vale.id }}/cruzar">
+    <form method="post" action="/administracion/vales/{{ vale.id }}/cruzar{{ q_volver(volver) }}">
       <label>Fecha<input type="date" name="fecha" value="{{ hoy.isoformat() }}" max="{{ hoy.isoformat() }}" required></label>
       <label>Nº de liquidación o referencia<input type="text" name="referencia" autocomplete="off" required></label>
       <button type="submit">Registrar el cruce</button>
@@ -201,7 +204,7 @@
   {% if puede_corregir %}
   <div class="tarjeta salida">
     <h2>Corregir el vale</h2>
-    <form method="post" action="/gerencia/vales/{{ vale.id }}/corregir">
+    <form method="post" action="/gerencia/vales/{{ vale.id }}/corregir{{ q_volver(volver) }}">
       {% if corrige_proveedor %}
       <label>Proveedor
         <select name="proveedor_id" required>

@@ -326,7 +326,7 @@
     {% if guia_id and not guia_no_existe %}
     <p class="pisando">Mostrando <strong>la guía R{{ guia_id }}</strong>, venga de la fecha que venga.
       El rango y el artículo no se están aplicando.
-      <a href="/administracion/stock/guias-r">Volver a la lista</a></p>
+      <a href="{{ aqui(request, 'guia') }}">Volver a la lista</a></p>
     {% endif %}
     {# QUÉ SE CORRIGE SIN ANULAR, leído del código y no supuesto (25/09): la
      ficha (asignar-ficha), el día en que se armó (cambiar-fecha, que rechaza
@@ -357,7 +357,7 @@
   <div class="vacio-guia">
     <p><strong>No existe ninguna guía R{{ guia_id }}.</strong> Revisá el número — no es que
       esté fuera del rango de fechas: se buscó en todas.</p>
-    <p><a href="/administracion/stock/guias-r">Volver a la lista</a></p>
+    <p><a href="{{ aqui(request, 'guia') }}">Volver a la lista</a></p>
   </div>
   {% elif guias %}
   {% for g in guias %}

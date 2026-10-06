@@ -77,7 +77,10 @@
 <body>
   {% set barra_sector = camino.sector %}
   {% set barra_titulo = "Remito " ~ remito.numero %}
-  {% set barra_atras = camino.base ~ "/facturacion" %}
+  {# VUELVE A LA LISTA DE LA QUE VINO, con sus filtros (dueño, 05/10): Armar
+     remito, Facturación o la búsqueda por número. Ver `vuelta` en app/main.py. #}
+  {% set volver = vuelta(request, "") %}
+  {% set barra_atras = volver or (camino.base ~ "/facturacion") %}
   {% include "_barra_navegacion.html" %}
 
   {% if aviso %}<div class="aviso">{{ aviso }}</div>{% endif %}
@@ -94,7 +97,7 @@
     {% if remito.factura_numero %}<p class="dato">Factura {{ remito.factura_numero }}, anotada el {{ remito.facturado_dia.strftime("%d/%m/%Y") }}</p>{% endif %}
     {% if remito.recibido_dia %}<p class="dato">{% if remito.renglones_cambiados %}Volvió observado: {{ remito.renglones_cambiados }} renglón{{ "es" if remito.renglones_cambiados != 1 }} con cambios{% else %}Volvió sin observaciones{% endif %}.</p>{% endif %}
     {% if remito.estado == "emitido" and camino.sector == "administracion" %}
-      <div class="botones"><a class="primario" href="/administracion/facturacion/remito/{{ remito.id }}/recibir">Recibir</a></div>
+      <div class="botones"><a class="primario" href="/administracion/facturacion/remito/{{ remito.id }}/recibir{{ q_volver(volver) }}">Recibir</a></div>
     {% endif %}
   </div>
 
@@ -144,7 +147,7 @@
      Solo se agregan: no hay reemplazar ni borrar desde acá. #}
   {% if remito.recibido_hora %}
   <form method="post" enctype="multipart/form-data"
-        action="{{ camino.base }}/facturacion/remito/{{ remito.id }}/fotos">
+        action="{{ camino.base }}/facturacion/remito/{{ remito.id }}/fotos{{ q_volver(volver) }}">
     {{ fotos_para_subir.tarjeta(titulo="¿Hay más fotos de este remito?", boton="＋ Agregar foto") }}
     <div class="tarjeta">
       <button type="submit" class="primario">Guardar las fotos</button>
@@ -160,7 +163,7 @@
       {% endfor %}
     {% endif %}
     {% if camino.sector == "gerencia" %}
-      <form method="post" action="/gerencia/facturacion/remito/{{ remito.id }}/numero">
+      <form method="post" action="/gerencia/facturacion/remito/{{ remito.id }}/numero{{ q_volver(volver) }}">
         <label>Número correcto
           <input type="text" name="numero" required value="{{ remito.numero }}">
         </label>

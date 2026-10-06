@@ -115,7 +115,7 @@
     {% if m.tipo == "devolucion" and m.foto_ruta %}
     <a class="ir" href="/administracion/vacios/devolucion/{{ m.id }}/foto?proveedor_id={{ m.proveedor_id }}">Ver el vale</a>
     {% elif m.tipo != "entrada" %}
-    <a class="ir" href="/administracion/vacios/{{ m.proveedor_id }}?abrir=movimientos">Ver en el proveedor</a>
+    <a class="ir" href="/administracion/vacios/{{ m.proveedor_id }}?abrir=movimientos{{ y_volver(aqui(request)) }}">Ver en el proveedor</a>
     {% endif %}
   </div>
   {% else %}

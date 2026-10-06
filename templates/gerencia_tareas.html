@@ -53,7 +53,7 @@
 {% macro eliminar(sector, tarea_id, tipo) %}
 <details class="eliminar">
   <summary>Eliminar la tarea</summary>
-  <form method="post" action="/{{ sector }}/tareas/{{ tarea_id }}/eliminar">
+  <form method="post" action="/{{ sector }}/tareas/{{ tarea_id }}/eliminar{{ q_volver(aqui(request)) }}">
     <p class="fila-dato">{% if tipo != 'una_vez' %}Es repetitiva: deja de salir. {% endif %}Lo que ya se hizo queda en el registro de Gerencia.</p>
     <div class="acciones"><button type="submit" class="peligro">Sí, eliminar</button></div>
   </form>
@@ -65,6 +65,9 @@
   {% set barra_sector = sector %}
   {% set barra_titulo = "Tareas" %}
   {% set barra_atras = "/" ~ sector %}
+  {# Cada formulario manda la dirección de ESTA lista, con sus filtros: al
+     guardar se vuelve a la misma lista filtrada (dueño, 05/10). #}
+  {% set volver = aqui(request) %}
   {% include "_barra_navegacion.html" %}
 
   {% if aviso %}<div class="aviso">{{ aviso }}</div>{% endif %}
@@ -74,7 +77,7 @@
     {# "Nueva tarea" del recuadro del hub llega acá con #nueva y lo abre. #}
     <details id="nueva">
       <summary>Nueva tarea{% if sector != 'gerencia' %} de {{ sectores[sector] }}{% endif %}</summary>
-      <form method="post" action="/{{ sector }}/tareas">
+      <form method="post" action="/{{ sector }}/tareas{{ q_volver(volver) }}">
         <div class="campos">
           {% if sector == 'gerencia' %}
           <label>¿Para qué sector?
@@ -149,7 +152,7 @@
       {% if r.maneja %}
       <details>
         <summary>Editar o pausar</summary>
-        <form method="post" action="/{{ sector }}/tareas/{{ r.id }}/editar">
+        <form method="post" action="/{{ sector }}/tareas/{{ r.id }}/editar{{ q_volver(volver) }}">
           <div class="campos">
             <label class="ancho">Título<input type="text" name="titulo" value="{{ r.titulo }}" required></label>
             <label class="ancho">Detalle<input type="text" name="detalle" value="{{ r.detalle or '' }}"></label>
@@ -184,7 +187,7 @@
           </div>
           <div class="acciones"><button type="submit">Guardar cambios</button></div>
         </form>
-        <form method="post" action="/{{ sector }}/tareas/{{ r.id }}/estado">
+        <form method="post" action="/{{ sector }}/tareas/{{ r.id }}/estado{{ q_volver(volver) }}">
           <div class="acciones">
             {% if r.estado == 'activa' %}<button type="submit" name="estado" value="pausada" class="gris">Pausar</button>
             {% else %}<button type="submit" name="estado" value="activa" class="gris">Reanudar</button>{% endif %}
@@ -255,7 +258,7 @@
       {% if o.estado == 'hecha' and o.la_ultima %}
       <details>
         <summary>Volver a pendiente</summary>
-        <form method="post" action="/gerencia/tareas/ocurrencias/{{ o.id }}/pendiente">
+        <form method="post" action="/gerencia/tareas/ocurrencias/{{ o.id }}/pendiente{{ q_volver(volver) }}">
           <div class="campos"><label class="ancho">Motivo<input type="text" name="motivo" required></label></div>
           <div class="acciones"><button type="submit" class="peligro">Volver a pendiente</button></div>
         </form>

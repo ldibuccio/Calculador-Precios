@@ -134,7 +134,7 @@ def test_la_PANTALLA_de_un_sector_carga_para_si_y_no_ofrece_tocar_las_de_Gerenci
     assert 'name="sector"' not in marcado                                           # no pregunta el sector
     assert "Registro" not in marcado                                                # el registro es de Gerencia
     (propia,) = sql("SELECT id FROM tareas WHERE creada_por = 'compras'")[0]
-    assert marcado.count('action="/compras/tareas/%d/estado"' % propia) == 1
+    assert marcado.count('action="/compras/tareas/%d/estado?volver=' % propia) == 1
     assert 'action="/compras/tareas/%d/estado"' % de_gerencia not in marcado
     assert "La cargó Gerencia: solo Gerencia la cambia." in marcado
     assert tocar.status_code == 400
