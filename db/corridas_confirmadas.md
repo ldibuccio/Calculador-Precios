@@ -371,3 +371,14 @@ PALMALA   vacios_marca_texto_2_sena_tarde · faltan_vincular 0 · la_921_vincula
 
 La única afectada era la 921 de Frutamax (Saturno, marca Camila, 20
 cajones): ahora está en la pila de su marca. Palmala no tenía ninguna.
+## 05/10 — `en_su_envase_1_renglon`: Mango y Cherry en su envase o a caja (pedido 6)
+
+Corrido por Lionel en las dos bases ANTES del merge. Verificado por mí por
+el conector "Supabase Lectura" el 05/10 a las 23:42 UTC:
+
+```
+FRUTAMAX  en_su_envase_1_renglon · columna 1 · checks 1 · en_su_envase 0 · testigo_compras 879
+PALMALA   en_su_envase_1_renglon · columna 1 · checks 1 · en_su_envase 0 · testigo_compras 798
+```
+
+Lo armado hasta hoy quedó en false (a caja), como se armó.
