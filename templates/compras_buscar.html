@@ -582,7 +582,7 @@
                      justamente esos, donde la ausencia ya significa algo. #}
                   {% if se_muestra_vino_armada(c.motivo_vino_armada) %}
                   {% if c.motivo_vino_armada is none %}
-                  <a class="boton boton-vino-armada" href="/compras/{{ c.id }}/vino-armada">Vino armada</a>
+                  <a class="boton boton-vino-armada" href="/compras/{{ c.id }}/vino-armada{{ q_volver(aqui(request)) }}">Vino armada</a>
                   {% else %}
                   <span class="boton boton-vino-armada-no" title="{{ c.motivo_vino_armada.texto }}">{{ etiqueta_vino_armada(c.motivo_vino_armada) }}</span>
                   {% endif %}

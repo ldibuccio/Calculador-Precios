@@ -348,7 +348,7 @@
         <div class="detalle">{{ m.remitente }} · llegó {{ m.recibido_el|fecha_hora }} · {{ m.cliente_nombre }}{% if m.motivo %} · {{ m.motivo }}{% endif %}</div>
         {% if m.estado in ("pendiente", "error") %}
         <div class="acciones">
-          <a class="boton-chico boton-confirmar-mail" href="/deposito/pedido/mails/{{ m.id }}/revisar">Revisar y confirmar</a>
+          <a class="boton-chico boton-confirmar-mail" href="/deposito/pedido/mails/{{ m.id }}/revisar{{ q_volver(aqui(request)) }}">Revisar y confirmar</a>
           <form method="post" action="/administracion/casilla-pedidos/mails/{{ m.id }}/ignorar"
                 onsubmit="return confirm('¿Marcar este mail como ignorado? No se carga ningún pedido con él.')">
             <button type="submit" class="boton-chico boton-ignorar">Ignorar</button>

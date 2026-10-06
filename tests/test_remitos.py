@@ -14,6 +14,7 @@ los CHECK son la mitad de la regla. Los nombres son de EJEMPLO.
   cliente 2 EJ Otro    pedido 2 (05/09): VL renglón 21 armado
   precios de la ficha 1: $90 desde 01/08, $100 desde 01/09, $120 desde 10/09
 """
+import re
 import os
 import sys
 from datetime import date, datetime, timedelta, timezone
@@ -500,7 +501,7 @@ def test_RECIBIR_por_la_pantalla_sube_la_foto_y_sin_foto_rebota(base, monkeypatc
     remito_id = d.emitir_remito(1, "VL", "R-0001")
     cliente = _cliente(monkeypatch, "administracion")
     busca = cliente.get("/administracion/facturacion/recibir", params={"numero": "r-0001"}, follow_redirects=False)
-    assert busca.status_code == 303 and busca.headers["location"].endswith(f"/remito/{remito_id}/recibir")
+    assert busca.status_code == 303 and busca.headers["location"].split("?")[0].endswith(f"/remito/{remito_id}/recibir")
     formulario = cliente.get(f"/administracion/facturacion/remito/{remito_id}/recibir")
     assert 'value="50"' in formulario.text                  # precargado con lo enviado
     ids = {r["pedido_renglon_id"]: r["id"] for r in d.remito_por_id(remito_id)["renglones"]}
@@ -590,8 +591,8 @@ def test_ARMAR_REMITO_ofrece_emitir_o_muestra_el_remito_de_cada_sucursal(base, m
     cliente = _cliente(monkeypatch, "administracion")
     marcado = _marcado(cliente.get("/administracion/pedidos/buscar", params={
         "cliente_id": 1, "fecha_desde": "2026-09-05", "fecha_hasta": "2026-09-05"}))
-    assert f'href="/administracion/facturacion/remito/{remito_id}">Remito R-0001' in marcado
-    assert 'href="/administracion/facturacion/emitir?pedido_id=1&sucursal=BZ"' in marcado
+    assert re.search(rf'href="/administracion/facturacion/remito/{remito_id}\?volver=[^"]+">Remito R-0001', marcado)
+    assert 'href="/administracion/facturacion/emitir?pedido_id=1&sucursal=BZ&amp;volver=' in marcado
 
 
 def test_el_hub_de_Administracion_y_el_de_Gerencia_llevan_a_Facturacion(monkeypatch):

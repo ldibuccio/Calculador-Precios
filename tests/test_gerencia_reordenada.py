@@ -168,8 +168,11 @@ def test_el_MAIL_que_ya_se_proceso_vuelve_a_PEDIDOS_DE_DEPOSITO_y_no_a_la_casill
     assert respuesta.status_code == 303
     assert respuesta.headers["location"].startswith("/deposito/pedido?aviso=")
     revision = open(os.path.join(RAIZ, "templates", "deposito_pedido_revision.html"), encoding="utf-8").read()
-    assert '{% set barra_atras = "/deposito/pedido" if mail else' in revision
-    assert '<a class="volver" href="/deposito/pedido">Volver a Pedidos (sin guardar)</a>' in revision
+    # Sin `volver` (dueño, 05/10: si vino de una lista, vuelve a ESA), el
+    # defecto sigue siendo Pedidos de Depósito y nunca la Casilla.
+    assert '{% set barra_atras = (volver or "/deposito/pedido") if mail else' in revision
+    assert "<a class=\"volver\" href=\"{{ volver or '/deposito/pedido' }}\">" in revision
+    assert "Volver a Pedidos (sin guardar)" in revision
 
 
 def test_a_313px_el_hub_de_GERENCIA_y_las_pestanas_de_COBRANZAS_no_se_salen(galpon):

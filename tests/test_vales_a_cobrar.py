@@ -311,7 +311,7 @@ def test_ADMINISTRACION_ve_el_total_y_cobra_desde_el_detalle(base, monkeypatch):
     assert listado.status_code == 200
     marcado = _marcado(listado)
     assert "$12.345 en cartera" in marcado and "1 vale sin aplicar" in marcado
-    assert f'href="/administracion/vales/{vid}"' in marcado and "30 días en cartera" in marcado
+    assert f'href="/administracion/vales/{vid}?volver=' in marcado and "30 días en cartera" in marcado
     marcado = _marcado(detalle)
     assert f'action="/administracion/vales/{vid}/cobrar"' in marcado
     assert f'action="/administracion/vales/{vid}/cruzar"' in marcado

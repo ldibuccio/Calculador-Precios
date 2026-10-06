@@ -240,7 +240,8 @@
 <body>
   {% set barra_sector = "administracion" %}
   {% set barra_titulo = "Resumen proveedores" %}
-  {% set barra_atras = "/administracion/ingresos" %}
+  {# Vuelve a Movimientos del depósito CON SUS FILTROS (dueño, 05/10). #}
+  {% set barra_atras = vuelta(request, "/administracion/ingresos") %}
   {% from "_info.html" import info %}
   {% include "_barra_navegacion.html" %}
 

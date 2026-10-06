@@ -101,7 +101,8 @@
 <body>
   {% set barra_sector = "comercial" %}
   {% set barra_titulo = "Agregar ficha" if modo == "nueva" else "Editar ficha" %}
-  {% set barra_atras = "/fichas" %}
+  {# A la lista de fichas DE ESE CLIENTE, como los "Volver" (dueño, 05/10). #}
+  {% set barra_atras = "/fichas?cliente_id=" ~ cliente_id if cliente_id else "/fichas" %}
   {% from "_info.html" import info %}
   {% include "_barra_navegacion.html" %}
 

@@ -1364,7 +1364,7 @@ def test_MOVIMIENTOS_cada_fila_dice_proveedor_marca_signo_y_POR_DONDE_ENTRO():
 def test_MOVIMIENTOS_linkea_el_REGISTRO_y_nunca_una_pantalla_de_Compras():
     """La compra no se linkea: su detalle vive bajo la clave de Compras (corolario 56)."""
     marcado = _movimientos("/administracion/vacios/movimientos")[0].text.split("</style>")[-1]
-    hrefs = re.findall(r'<a class="ir" href="([^"]+)"', marcado)
+    hrefs = [h.split("&amp;volver=")[0] for h in re.findall(r'<a class="ir" href="([^"]+)"', marcado)]
     assert hrefs == ["/administracion/vacios/devolucion/3/foto?proveedor_id=7",
                      "/administracion/vacios/7?abrir=movimientos",
                      "/administracion/vacios/8?abrir=movimientos",

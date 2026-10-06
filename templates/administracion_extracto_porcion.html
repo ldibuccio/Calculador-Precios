@@ -233,7 +233,7 @@
     {% endif %}
   </div>
 
-  <a class="ir-al-detalle" href="/administracion/stock/sistema/{{ articulo_id }}">
+  <a class="ir-al-detalle" href="/administracion/stock/sistema/{{ articulo_id }}{{ q_volver(aqui(request)) }}">
     <span class="que">Ver el detalle del artículo</span>
     <span class="alcance">De qué lote salió cada bulto. Es el artículo entero,
       no solo esta porción.</span>

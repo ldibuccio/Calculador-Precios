@@ -119,7 +119,10 @@
 <body>
 {% set barra_sector = camino.sector %}
 {% set barra_titulo = p.nombre %}
-{% set barra_atras = camino.base ~ "/vacios" %}
+{# Vuelve a la lista de la que vino, con sus filtros (dueño, 05/10): Vacíos
+   o Movimientos de vacíos. Ver `vuelta` en app/main.py. #}
+{% set volver = vuelta(request, "") %}
+{% set barra_atras = volver or (camino.base ~ "/vacios") %}
 {% from "_info.html" import info %}
 {% import "_movimiento_vacio.html" as movimiento %}
 {% include "_barra_navegacion.html" %}
@@ -157,7 +160,7 @@
 <details class="accion" id="devolver" name="accion"{% if abierta == "devolver" %} open{% endif %}>
   <summary><strong>Devolver cajones</strong>
     <span class="que-hace">Resta cajones de una marca: se los llevó el proveedor.</span></summary>
-  <form method="post" action="{{ camino.base }}/vacios/{{ p.id }}/devolucion" enctype="multipart/form-data">
+  <form method="post" action="{{ camino.base }}/vacios/{{ p.id }}/devolucion{{ q_volver(volver) }}" enctype="multipart/form-data">
     <div class="fila">
       <div class="campo">
         <label for="marca_vacio_id">¿De qué cajones?</label>
@@ -205,7 +208,7 @@
     <span class="que-hace">Mueve cajones entre marcas o les pone marca a los sin marca.</span></summary>
   {% set sin_marca = pilas_para_elegir[0].stock %}
   <p class="sin-marca-total{% if sin_marca %} hay{% endif %}">Sin marca: {{ sin_marca|numero }} cajones</p>
-  <form method="post" action="/administracion/vacios/{{ p.id }}/asignacion">
+  <form method="post" action="/administracion/vacios/{{ p.id }}/asignacion{{ q_volver(volver) }}">
     <div class="fila">
       <div class="campo">
         <label for="asig_desde">¿De qué cajones salen?</label>
@@ -251,14 +254,14 @@
     <p>¿Juntar «{{ juntar.se_va }}» con «{{ juntar.queda }}»? Todos los cajones y
        movimientos de «{{ juntar.se_va }}» pasan a «{{ juntar.queda }}», y
        «{{ juntar.se_va }}» deja de existir.</p>
-    <form method="post" action="/administracion/vacios/{{ p.id }}/marca/{{ juntar.se_va_id }}/juntar">
+    <form method="post" action="/administracion/vacios/{{ p.id }}/marca/{{ juntar.se_va_id }}/juntar{{ q_volver(volver) }}">
       <input type="hidden" name="queda_id" value="{{ juntar.queda_id }}">
       <button type="submit">Juntarlas</button>
     </form>
   </div>
   {% endif %}
   {% for m in marcas %}
-  <form method="post" action="/administracion/vacios/{{ p.id }}/marca/{{ m.id }}/renombrar">
+  <form method="post" action="/administracion/vacios/{{ p.id }}/marca/{{ m.id }}/renombrar{{ q_volver(volver) }}">
     <div class="fila">
       <div class="campo">
         <label for="renombrar_{{ m.id }}">{{ m.nombre }}</label>
@@ -272,7 +275,7 @@
   <p class="vacio">Todavía no tiene marcas: sus cajones van a "sin marca".</p>
   {% endfor %}
   {% if marcas %}<p class="ayuda">Si el nombre ya es de otra marca, te ofrece juntarlas.</p>{% endif %}
-  <form method="post" action="{{ camino.base }}/vacios/{{ p.id }}/marca" class="marca-nueva">
+  <form method="post" action="{{ camino.base }}/vacios/{{ p.id }}/marca{{ q_volver(volver) }}" class="marca-nueva">
     <div class="fila">
       <div class="campo">
         <label for="nombre_marca">Marca nueva</label>
@@ -295,7 +298,7 @@
   <p class="propuesta">Del Cotejo: contados {{ propuesta.contado|numero }} el {{ propuesta.fecha.strftime('%d/%m') }},
     ese día el sistema decía {{ propuesta.sistema|numero }}. {{ "Faltan" if propuesta.sentido == "faltan" else "Sobran" }} {{ propuesta.cantidad|numero }}.</p>
   {% endif %}
-  <form method="post" action="/administracion/vacios/{{ p.id }}/ajuste">
+  <form method="post" action="/administracion/vacios/{{ p.id }}/ajuste{{ q_volver(volver) }}">
     <div class="fila">
       <div class="campo">
         <label for="ajuste_marca">¿Qué cajones?</label>
@@ -345,7 +348,7 @@
       <a href="{{ camino.base }}/vacios/devolucion/{{ m.id }}/foto?proveedor_id={{ p.id }}">Ver el vale</a>
       {% endif %}
       {% if not m.antes_del_arranque %}
-      <form method="post" action="{{ camino.base }}/vacios/devolucion/{{ m.id }}/anular">
+      <form method="post" action="{{ camino.base }}/vacios/devolucion/{{ m.id }}/anular{{ q_volver(volver) }}">
         <input type="hidden" name="proveedor_id" value="{{ p.id }}">
         <button class="anular" type="submit">Anular</button>
       </form>
@@ -353,7 +356,7 @@
     </div>
     {% elif m.tipo in ("ajuste", "asignacion") and not m.antes_del_arranque %}
     <div class="acciones">
-      <form method="post" action="/administracion/vacios/movimiento/{{ m.tipo }}/{{ m.id }}/anular">
+      <form method="post" action="/administracion/vacios/movimiento/{{ m.tipo }}/{{ m.id }}/anular{{ q_volver(volver) }}">
         <input type="hidden" name="proveedor_id" value="{{ p.id }}">
         <button class="anular" type="submit">Anular</button>
       </form>

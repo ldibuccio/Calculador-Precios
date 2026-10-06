@@ -83,7 +83,9 @@
 <body>
   {% set barra_sector = "compras" %}
   {% set barra_titulo = "Vino armada en caja nuestra" %}
-  {% set barra_atras = "/compras/buscar" %}
+  {# A Buscar compras CON SUS FILTROS (dueño, 05/10). Ver `vuelta`. #}
+  {% set volver = vuelta(request, "/compras/buscar") %}
+  {% set barra_atras = volver %}
   {% include "_barra_navegacion.html" %}
 
   <div class="tarjeta">
@@ -112,14 +114,14 @@
 
   {% if bloqueo %}
   <div class="bloqueo">{{ bloqueo }}</div>
-  <a class="boton boton-secundario" href="/compras/buscar">Volver a Buscar Compras</a>
+  <a class="boton boton-secundario" href="{{ volver }}">Volver a Buscar Compras</a>
   {% elif not cajas %}
   {# Sin cajas de este artículo no hay nada que elegir, y decirlo es la
      respuesta: un selector vacío se lee como "no tiene cajas" sin explicar
      que la ficha es lo que falta. #}
   <div class="bloqueo">Este artículo no tiene ninguna caja cargada, así que no hay en cuál
     haber venido armado. Cargá la ficha del cliente primero.</div>
-  <a class="boton boton-secundario" href="/compras/buscar">Volver a Buscar Compras</a>
+  <a class="boton boton-secundario" href="{{ volver }}">Volver a Buscar Compras</a>
   {% else %}
 
   {% if dependencias %}
@@ -163,7 +165,7 @@
   </div>
   {% endif %}
 
-  <form method="post" action="/compras/{{ compra.id }}/vino-armada" class="tarjeta">
+  <form method="post" action="/compras/{{ compra.id }}/vino-armada{{ q_volver(volver) }}" class="tarjeta">
     <label for="ficha_en_origen_id">¿En qué caja vino armada?</label>
     <select id="ficha_en_origen_id" name="ficha_en_origen_id" required>
       <option value="" selected disabled>Elegí la caja...</option>
@@ -175,7 +177,7 @@
       {{ compra.cantidad_cajones_real|numero }} bultos recibidos: el lote pasa a estar trabajado
       y las cajas quedan en esa ficha.</p>
     <button type="submit" class="boton-guardar">Sí, vino armada — cargar la guía R</button>
-    <a class="boton boton-secundario" href="/compras/buscar">Cancelar</a>
+    <a class="boton boton-secundario" href="{{ volver }}">Cancelar</a>
   </form>
   {% endif %}
   {% include "_confirmar_vino_armada.html" %}

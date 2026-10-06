@@ -311,9 +311,9 @@
         {% endif %}
         {# EL REMITO de esta orden de compra (dueño, 01/10): uno por sucursal. #}
         {% if s.remito_id %}
-        <a class="remito-link" href="/administracion/facturacion/remito/{{ s.remito_id }}">Remito {{ s.remito_numero }}</a>
+        <a class="remito-link" href="/administracion/facturacion/remito/{{ s.remito_id }}{{ q_volver(aqui(request)) }}">Remito {{ s.remito_numero }}</a>
         {% elif s.sucursal and s.filas %}
-        <a class="remito-link emitir" href="/administracion/facturacion/emitir?pedido_id={{ g.pedido_id }}&sucursal={{ s.sucursal|urlencode }}">Emitir remito</a>
+        <a class="remito-link emitir" href="/administracion/facturacion/emitir?pedido_id={{ g.pedido_id }}&sucursal={{ (s.sucursal|urlencode) }}{{ y_volver(aqui(request)) }}">Emitir remito</a>
         {% endif %}
       </div>
       {% for f in s.filas %}

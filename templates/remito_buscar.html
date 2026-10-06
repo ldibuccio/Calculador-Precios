@@ -85,12 +85,12 @@
     {% for r in encontrados %}
       <div class="fila">
         <div class="fila-cabeza">
-          <a class="fila-que" href="/administracion/facturacion/remito/{{ r.id }}">Remito {{ r.numero }}</a>
+          <a class="fila-que" href="/administracion/facturacion/remito/{{ r.id }}{{ q_volver(aqui(request)) }}">Remito {{ r.numero }}</a>
           <span class="estado {{ r.estado }}">{{ r.estado_texto }}</span>
         </div>
         <div class="fila-dato">{{ r.cliente }} · {{ r.sucursal }} · pedido del {{ r.fecha_pedido.strftime("%d/%m") }}</div>
         {% if r.estado == "emitido" %}
-        <div class="botones"><a class="primario" href="/administracion/facturacion/remito/{{ r.id }}/recibir">Recibir</a></div>
+        <div class="botones"><a class="primario" href="/administracion/facturacion/remito/{{ r.id }}/recibir{{ q_volver(aqui(request)) }}">Recibir</a></div>
         {% endif %}
       </div>
     {% else %}

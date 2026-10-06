@@ -88,7 +88,7 @@
         </div>
         {% if es_admin %}
         <div class="botones">
-          <a class="primario" href="/administracion/facturacion/emitir?pedido_id={{ o.pedido_id }}&sucursal={{ o.sucursal|urlencode }}">Emitir remito</a>
+          <a class="primario" href="/administracion/facturacion/emitir?pedido_id={{ o.pedido_id }}&sucursal={{ (o.sucursal|urlencode) }}{{ y_volver(aqui(request)) }}">Emitir remito</a>
         </div>
         {% endif %}
       </div>
@@ -103,13 +103,13 @@
     {% for r in emitidos %}
       <div class="fila">
         <div class="fila-cabeza">
-          <a class="fila-que" href="{{ camino.base }}/facturacion/remito/{{ r.id }}">Remito {{ r.numero }}</a>
+          <a class="fila-que" href="{{ camino.base }}/facturacion/remito/{{ r.id }}{{ q_volver(aqui(request)) }}">Remito {{ r.numero }}</a>
           <span class="fila-dato {{ 'tarde' if r.sin_volver }}">hace {{ r.dias_emitido }} día{{ "s" if r.dias_emitido != 1 }}</span>
         </div>
         <div class="fila-dato">{{ r.cliente }} · {{ r.sucursal }} · pedido del {{ r.fecha_pedido.strftime("%d/%m") }}</div>
         {% if es_admin %}
         <div class="botones">
-          <a class="primario" href="/administracion/facturacion/remito/{{ r.id }}/recibir">Recibir</a>
+          <a class="primario" href="/administracion/facturacion/remito/{{ r.id }}/recibir{{ q_volver(aqui(request)) }}">Recibir</a>
         </div>
         {% endif %}
       </div>
@@ -138,7 +138,7 @@
         <div class="fila-dato"><span class="{{ 'tarde' if r.sin_factura }}">recibido hace {{ r.dias_recibido }} día{{ "s" if r.dias_recibido != 1 }}</span></div>
         {% endif %}
         <div class="fila-cabeza">
-          <a class="fila-dato" href="{{ camino.base }}/facturacion/remito/{{ r.id }}">Ver el remito</a>
+          <a class="fila-dato" href="{{ camino.base }}/facturacion/remito/{{ r.id }}{{ q_volver(aqui(request)) }}">Ver el remito</a>
           <span class="importe">{{ r.importe.total|moneda }}</span>
         </div>
         {% if r.importe.sin_precio %}<div class="fila-dato tarde">{{ r.importe.sin_precio }} renglón{{ "es" if r.importe.sin_precio != 1 }} sin precio: no suma{{ "n" if r.importe.sin_precio != 1 }}.</div>{% endif %}
@@ -169,7 +169,7 @@
     {% for r in facturados %}
       <div class="fila">
         <div class="fila-cabeza">
-          <a class="fila-que" href="{{ camino.base }}/facturacion/remito/{{ r.id }}">Remito {{ r.numero }}</a>
+          <a class="fila-que" href="{{ camino.base }}/facturacion/remito/{{ r.id }}{{ q_volver(aqui(request)) }}">Remito {{ r.numero }}</a>
           <span class="importe">{{ r.importe.total|moneda }}</span>
         </div>
         <div class="fila-dato">Factura {{ r.factura_numero }} · {{ r.facturado_dia.strftime("%d/%m/%Y") }} · {{ r.cliente }} · {{ r.sucursal }}</div>

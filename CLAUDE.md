@@ -96,6 +96,11 @@ desde la versión larga de este archivo el 03/10.
 - **Una pantalla con dos sectores y clave saca el sector del PREFIJO**, no de
   `?origen=` (corolario 63), y las cuatro mitades del camino (barra, atrás,
   `action`, descargas) se revisan.
+- **"Atrás" desde un detalle vuelve a la lista de la que vino, CON SUS
+  FILTROS** (dueño, 05/10): la lista manda su dirección en `volver`
+  (`{{ q_volver(aqui(request)) }}`), el detalle la usa con `vuelta(request,
+  defecto)`, y sus formularios la siguen mandando (el middleware
+  `mantener_la_vuelta_despues_de_guardar` la pega a la redirección).
 - **Un link de una alerta es por sector** (`destinos_por_sector`): la url de
   un sector puede ser una pared en otro (corolario 56).
 - **Los hubs se leen como Depósito**: un dibujo en cada botón y un color por

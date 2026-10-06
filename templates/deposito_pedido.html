@@ -363,7 +363,7 @@
       {% if m.estado == "error" and m.motivo %}
       <div class="motivo-error">{{ m.motivo }}</div>
       {% endif %}
-      <a class="boton-revisar" href="/deposito/pedido/mails/{{ m.id }}/revisar">Revisar y confirmar</a>
+      <a class="boton-revisar" href="/deposito/pedido/mails/{{ m.id }}/revisar{{ q_volver(aqui(request)) }}">Revisar y confirmar</a>
     </div>
     {% endfor %}
   </div>

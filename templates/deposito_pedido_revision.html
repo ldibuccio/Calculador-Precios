@@ -114,10 +114,13 @@
 <body>
   {% set barra_sector = "deposito" %}
   {% set barra_titulo = "Revisar Pedido" %}
-  {# Desde un mail, el atrás es Pedidos de DEPÓSITO y no la Casilla: esta
-     pantalla es de Depósito, sin clave, y la Casilla vive en Administración
-     desde el 04/10 (dueño). #}
-  {% set barra_atras = "/deposito/pedido" if mail else "/deposito/pedido/cargar?cliente_id=" ~ cliente_id ~ "&fecha=" ~ fecha %}
+  {# Desde un mail, el atrás es la lista de la que vino, con sus filtros
+     (dueño, 05/10): Pedidos de Depósito o la Casilla de Administración —el
+     que viene de la Casilla ya tiene la clave—. Sin `volver`, Pedidos de
+     DEPÓSITO y no la Casilla: esta pantalla es de Depósito, sin clave, y un
+     operario no tiene por qué toparse con la puerta de Administración. #}
+  {% set volver = vuelta(request, "") %}
+  {% set barra_atras = (volver or "/deposito/pedido") if mail else "/deposito/pedido/cargar?cliente_id=" ~ cliente_id ~ "&fecha=" ~ fecha %}
   {% include "_barra_navegacion.html" %}
 
   {% if metodo_lectura == "estructura" %}
@@ -174,7 +177,7 @@
   {% endif %}
   {% endif %}
 
-  <form method="post" action="/deposito/pedido/cargar/confirmar" id="form-confirmar">
+  <form method="post" action="/deposito/pedido/cargar/confirmar{{ q_volver(volver) }}" id="form-confirmar">
     <input type="hidden" name="cliente_id" value="{{ cliente_id }}">
     <input type="hidden" name="fecha" value="{{ fecha }}">
     {% if mail %}<input type="hidden" name="mail_id" value="{{ mail.id }}">{% endif %}
@@ -235,7 +238,7 @@
     <div class="tarjeta">
       <button type="submit" class="guardar">Guardar pedido</button>
       {% if mail %}
-      <a class="volver" href="/deposito/pedido">Volver a Pedidos (sin guardar)</a>
+      <a class="volver" href="{{ volver or '/deposito/pedido' }}">{% if volver %}Volver (sin guardar){% else %}Volver a Pedidos (sin guardar){% endif %}</a>
       {% else %}
       <a class="volver" href="/deposito/pedido/cargar?cliente_id={{ cliente_id }}&fecha={{ fecha }}">Volver (pegar de nuevo)</a>
       {% endif %}

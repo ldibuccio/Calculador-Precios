@@ -21,7 +21,7 @@ import unicodedata
 from dataclasses import dataclass
 from datetime import date, datetime, time, timedelta, timezone
 from decimal import Decimal, InvalidOperation
-from urllib.parse import urlencode
+from urllib.parse import urlencode, urlsplit
 from uuid import uuid4
 
 from starlette.datastructures import UploadFile as StarletteUploadFile
@@ -1808,6 +1808,72 @@ templates.env.globals["ICONOS_DEPOSITO"] = _ICONOS_DEPOSITO
 # Los de Administración, Compras, Gerencia y Comercial (dueño, 04/10): el
 # mismo juego que Depósito, en su propio archivo.
 templates.env.globals["ICONOS_HUBS"] = ICONOS_HUBS
+
+
+# VOLVER A LA LISTA CON SUS FILTROS (dueño, 05/10): "si listé 10 remitos de
+# septiembre, entré en uno, lo cargué y vuelvo, tengo que ver esos mismos 10
+# sin volver a filtrar". La lista manda su propia dirección —con su consulta—
+# en el parámetro `volver` de cada link al detalle; el detalle la usa para la
+# barra, el "Volver" y las redirecciones después de guardar, y la sigue
+# pasando mientras se navega adentro. Sin `volver` (un link viejo, un
+# favorito), cada pantalla tiene su lista por defecto.
+#
+# Solo direcciones INTERNAS: empieza con "/" y no con "//" ni "/\". Si no,
+# `volver` sería una puerta para mandar a cualquiera a otro sitio.
+def direccion_de_vuelta(valor: str | None, defecto: str) -> str:
+    valor = (valor or "").strip()
+    if not valor.startswith("/") or valor[1:2] in ("/", "\\") or any(c in valor for c in "\r\n"):
+        return defecto
+    return valor
+
+
+def vuelta(request: Request, defecto: str) -> str:
+    """A dónde vuelve ESTA pantalla: el `volver` que trajo, o su lista por defecto."""
+    return direccion_de_vuelta(request.query_params.get("volver"), defecto)
+
+
+def aqui(request: Request, *sin: str) -> str:
+    """La dirección de esta pantalla con sus filtros: lo que una lista manda como `volver`.
+
+    Sin `aviso` ni `error`: son el cartel de lo último que se hizo, no un
+    filtro, y al volver se mostrarían de nuevo (o dos veces). `sin` saca
+    además otros parámetros (la guía abierta, para volver a la lista)."""
+    afuera = {"aviso", "error", *sin}
+    filtros = [(k, v) for k, v in request.query_params.multi_items() if k not in afuera]
+    return request.url.path + (f"?{urlencode(filtros)}" if filtros else "")
+
+
+def con_volver(url: str, volver: str | None) -> str:
+    """`url` con el `volver` pegado (si lo hay), para un link o una redirección."""
+    if not volver:
+        return url
+    return url + ("&" if "?" in url else "?") + urlencode({"volver": volver})
+
+
+def q_volver(volver: str | None) -> str:
+    """"?volver=…" para pegar al final de un `action` sin consulta, o vacío."""
+    return f"?{urlencode({'volver': volver})}" if volver else ""
+
+
+def consulta(request: Request) -> str:
+    """"?filtros" de esta pantalla (sin aviso ni error), o vacío: para las
+    pantallas que llevan los filtros de su lista en su propia dirección,
+    como el Detalle de la compra."""
+    _, _, filtros = aqui(request).partition("?")
+    return f"?{filtros}" if filtros else ""
+
+
+def y_volver(volver: str | None) -> str:
+    """"&volver=…" para pegar al final de un link que ya tiene consulta, o vacío."""
+    return f"&{urlencode({'volver': volver})}" if volver else ""
+
+
+templates.env.globals["q_volver"] = q_volver
+templates.env.globals["y_volver"] = y_volver
+templates.env.globals["consulta"] = consulta
+templates.env.globals["vuelta"] = vuelta
+templates.env.globals["aqui"] = aqui
+templates.env.globals["con_volver"] = con_volver
 
 # |tojson es la forma correcta de meter un texto de la base adentro de una
 # cadena de JavaScript: escapa < > & ' como \u00XX, así que el navegador los
@@ -8689,13 +8755,15 @@ def ver_detalle_compra(request: Request, compra_id: int, aviso: str | None = Non
     )
 
 
-def _volver_al_detalle(compra_id: int, **parametros) -> RedirectResponse:
-    return RedirectResponse(url=f"/compras/{compra_id}/detalle?{urlencode(parametros)}#pesaje",
+def _volver_al_detalle(compra_id: int, request: Request, **parametros) -> RedirectResponse:
+    """Al Detalle, CON los filtros de Buscar compras que trajo (dueño, 05/10)."""
+    filtros = [(k, v) for k, v in request.query_params.multi_items() if k not in ("aviso", "error")]
+    return RedirectResponse(url=f"/compras/{compra_id}/detalle?{urlencode(filtros + list(parametros.items()))}#pesaje",
                             status_code=303)
 
 
 @app.post("/compras/{compra_id}/fotos-balanza")
-async def agregar_fotos_de_pesada(compra_id: int, fotos: list[UploadFile] = File(...)):
+async def agregar_fotos_de_pesada(request: Request, compra_id: int, fotos: list[UploadFile] = File(...)):
     """Fotos de la pesada cargadas DESPUÉS de recibir (dueño, 29/09): la que no
     se sacó en el momento, o una más. Van a `fotos_recepcion`, igual que las de
     la recepción, y con el mismo pipeline (1000 px, calidad 60).
@@ -8717,10 +8785,10 @@ async def agregar_fotos_de_pesada(compra_id: int, fotos: list[UploadFile] = File
         comprimida = _comprimir_foto_jpeg(crudo) if crudo else None
         if comprimida is None:
             return _volver_al_detalle(
-                compra_id, error=f"«{foto.filename or 'Un archivo'}» no es una foto. No se subió ninguna.")
+                compra_id, request, error=f"«{foto.filename or 'Un archivo'}» no es una foto. No se subió ninguna.")
         comprimidas.append(comprimida)
     if not comprimidas:
-        return _volver_al_detalle(compra_id, error="No llegó ninguna foto.")
+        return _volver_al_detalle(compra_id, request, error="No llegó ninguna foto.")
 
     guardadas = 0
     for comprimida in comprimidas:
@@ -8730,10 +8798,10 @@ async def agregar_fotos_de_pesada(compra_id: int, fotos: list[UploadFile] = File
         except Exception as error:
             logger.exception("No se pudo guardar una foto de pesada de la compra %s", compra_id)
             return _volver_al_detalle(
-                compra_id, error=f"Se guardaron {guardadas} de {len(comprimidas)} fotos: {error}")
+                compra_id, request, error=f"Se guardaron {guardadas} de {len(comprimidas)} fotos: {error}")
         guardadas += 1
     return _volver_al_detalle(
-        compra_id, aviso="Foto de pesada agregada." if guardadas == 1
+        compra_id, request, aviso="Foto de pesada agregada." if guardadas == 1
         else f"{guardadas} fotos de pesada agregadas.")
 
 
@@ -8760,7 +8828,7 @@ def ver_foto_de_pesada(compra_id: int, foto_id: int):
 
 
 @app.post("/compras/{compra_id}/fotos-balanza/{foto_id}/borrar")
-def borrar_foto_de_pesada(compra_id: int, foto_id: int):
+def borrar_foto_de_pesada(request: Request, compra_id: int, foto_id: int):
     """Una foto de pesada subida por error. La confirmación la pide la pantalla;
     acá se borra la fila y después el archivo, que es solo de esta compra."""
     try:
@@ -8776,7 +8844,7 @@ def borrar_foto_de_pesada(compra_id: int, foto_id: int):
         borrar_foto_comanda(ruta)
     except Exception:
         logger.exception("No se pudo borrar del Storage la foto de pesada %s (la fila ya se sacó)", ruta)
-    return _volver_al_detalle(compra_id, aviso="Foto de pesada borrada.")
+    return _volver_al_detalle(compra_id, request, aviso="Foto de pesada borrada.")
 
 
 def _renderizar_pantalla_corregir_recepcion(
@@ -13824,7 +13892,9 @@ def ver_extracto_de_porcion(request: Request, articulo_id: int, fecha: str | Non
                 _pilas_de_cajones(articulo_id, hasta, quedo)
                 if ficha_id is None and not es_segunda else []
             ),
-            "volver": f"/administracion/stock/remanente?fecha={hasta.isoformat()}",
+            # La lista de la que vino, CON SUS FILTROS (dueño, 05/10): hasta
+            # entonces se rearmaba con la fecha sola y perdía el tipo.
+            "volver": vuelta(request, f"/administracion/stock/remanente?fecha={hasta.isoformat()}"),
         },
     )
 
@@ -20342,6 +20412,38 @@ def _renovar_si_desliza(puerta: Puerta, request: Request, respuesta):
 
 
 @app.middleware("http")
+async def mantener_la_vuelta_despues_de_guardar(request: Request, call_next):
+    """VOLVER A LA LISTA CON SUS FILTROS, también después de guardar (dueño, 05/10).
+
+    Un formulario del detalle manda su `volver` en el `action`. Si la respuesta
+    es una redirección interna (lo normal después de guardar: al mismo detalle
+    con un aviso), se le pega el `volver` para que la pantalla siguiente siga
+    sabiendo a qué lista volver. Y si la redirección va A LA LISTA misma (por
+    ejemplo después de eliminar), va a la lista CON SUS FILTROS, más el aviso.
+    Una por una en cada ruta serían decenas, y la que se olvide es la que el
+    dueño encuentra.
+    """
+    respuesta = await call_next(request)
+    volver = direccion_de_vuelta(request.query_params.get("volver"), "")
+    destino = respuesta.headers.get("location", "")
+    if (request.method != "POST" or not volver or respuesta.status_code not in (302, 303)
+            or not destino.startswith("/") or destino.startswith("//") or "volver=" in destino):
+        return respuesta
+    sin_fragmento, _, fragmento = destino.partition("#")
+    if sin_fragmento == volver:
+        return respuesta
+    camino, _, consulta = sin_fragmento.partition("?")
+    lista = urlsplit(volver)
+    if camino == lista.path:
+        # A la lista: la de los filtros, con lo que la redirección agregaba (el aviso).
+        nuevo = volver + (("&" if lista.query else "?") + consulta if consulta else "")
+    else:
+        nuevo = con_volver(sin_fragmento, volver)
+    respuesta.headers["location"] = nuevo + (f"#{fragmento}" if fragmento else "")
+    return respuesta
+
+
+@app.middleware("http")
 async def deslizar_acceso_de_gerencia(request: Request, call_next):
     """Cada request a /gerencia corre el reloj de su cookie.
 
@@ -20907,7 +21009,8 @@ def emitir_remito_ruta(request: Request, pedido_id: int = Form(...), sucursal: s
     except RemitoNoSePuede as error:
         return _renderizar_emitir(request, pedido_id, sucursal, numero=numero, error=str(error), status_code=400)
     aviso = "Remito emitido: lo que salió quedó congelado."
-    return RedirectResponse(url=f"/administracion/facturacion/remito/{remito_id}?" + urlencode({"aviso": aviso}),
+    return RedirectResponse(url=con_volver(f"/administracion/facturacion/remito/{remito_id}?"
+                                           + urlencode({"aviso": aviso}), vuelta(request, "")),
                             status_code=303)
 
 
@@ -20924,8 +21027,8 @@ def buscar_remito_para_recibir(request: Request, numero: str = ""):
             raise HTTPException(status_code=500, detail=f"Error al conectar con la base de datos: {error_db}") from error_db
         en_viaje = [r for r in encontrados if r["estado"] == "emitido"]
         if len(en_viaje) == 1:
-            return RedirectResponse(url=f"/administracion/facturacion/remito/{en_viaje[0]['id']}/recibir",
-                                    status_code=303)
+            return RedirectResponse(url=con_volver(f"/administracion/facturacion/remito/{en_viaje[0]['id']}/recibir",
+                                                   aqui(request)), status_code=303)
     return templates.TemplateResponse(request, "remito_buscar.html", {
         "numero": numero, "encontrados": encontrados,
     })
@@ -21000,7 +21103,8 @@ async def recibir_remito_ruta(request: Request, remito_id: int):
             return rebote(str(error_db))
         return rebote(f"No se pudo guardar: {error_db}", 500)
     aviso = "Remito recibido." if len(rutas) == 1 else f"Remito recibido, con {len(rutas)} fotos."
-    return RedirectResponse(url=f"/administracion/facturacion/remito/{remito_id}?" + urlencode({"aviso": aviso}),
+    return RedirectResponse(url=con_volver(f"/administracion/facturacion/remito/{remito_id}?"
+                                           + urlencode({"aviso": aviso}), vuelta(request, "")),
                             status_code=303)
 
 
@@ -21070,12 +21174,18 @@ async def agregar_fotos_a_remito_ruta(request: Request, remito_id: int):
         puerta = _puerta_de_gerencia_para_escribir(request)
         if puerta is not None:
             return puerta
-    volver = f"{camino['base']}/facturacion/remito/{remito_id}"
+    al_remito = f"{camino['base']}/facturacion/remito/{remito_id}"
+    lista = vuelta(request, "")
+
+    def volver(**mensaje):
+        return RedirectResponse(url=con_volver(f"{al_remito}?" + urlencode(mensaje), lista) + "#fotos",
+                                status_code=303)
+
     formulario = await request.form()
     fotos = [f for f in formulario.getlist("fotos") if isinstance(f, StarletteUploadFile)]
     error, comprimidas = await _fotos_de_pesada_comprimidas(fotos)
     if error:
-        return RedirectResponse(url=f"{volver}?" + urlencode({"error": error}) + "#fotos", status_code=303)
+        return volver(error=error)
     rutas: list[str] = []
     try:
         for comprimida in comprimidas:
@@ -21088,10 +21198,8 @@ async def agregar_fotos_a_remito_ruta(request: Request, remito_id: int):
             except Exception:
                 logger.exception("No se pudo borrar la foto huérfana del remito %s", ruta)
         texto = str(error_db) if isinstance(error_db, RemitoNoSePuede) else f"No se pudo guardar: {error_db}"
-        return RedirectResponse(url=f"{volver}?" + urlencode({"error": f"{texto} Las fotos no se guardaron."})
-                                + "#fotos", status_code=303)
-    aviso = "Foto agregada." if len(rutas) == 1 else f"{len(rutas)} fotos agregadas."
-    return RedirectResponse(url=f"{volver}?" + urlencode({"aviso": aviso}) + "#fotos", status_code=303)
+        return volver(error=f"{texto} Las fotos no se guardaron.")
+    return volver(aviso="Foto agregada." if len(rutas) == 1 else f"{len(rutas)} fotos agregadas.")
 
 
 @app.post("/gerencia/facturacion/remito/{remito_id}/numero")
@@ -21104,10 +21212,12 @@ def corregir_numero_de_remito_ruta(request: Request, remito_id: int, numero: str
     try:
         corregir_numero_de_remito(remito_id, numero)
     except RemitoNoSePuede as error:
-        return RedirectResponse(url=f"/gerencia/facturacion/remito/{remito_id}?" + urlencode({"error": str(error)}),
+        return RedirectResponse(url=con_volver(f"/gerencia/facturacion/remito/{remito_id}?"
+                                               + urlencode({"error": str(error)}), vuelta(request, "")),
                                 status_code=303)
     aviso = "Número corregido. El anterior queda en el registro."
-    return RedirectResponse(url=f"/gerencia/facturacion/remito/{remito_id}?" + urlencode({"aviso": aviso}),
+    return RedirectResponse(url=con_volver(f"/gerencia/facturacion/remito/{remito_id}?"
+                                           + urlencode({"aviso": aviso}), vuelta(request, "")),
                             status_code=303)
 
 

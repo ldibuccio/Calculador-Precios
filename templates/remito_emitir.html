@@ -68,7 +68,8 @@
 <body>
   {% set barra_sector = "administracion" %}
   {% set barra_titulo = "Emitir remito" %}
-  {% set barra_atras = "/administracion/facturacion" %}
+  {% set volver = vuelta(request, "") %}
+  {% set barra_atras = volver or "/administracion/facturacion" %}
   {% include "_barra_navegacion.html" %}
 
   {% if error %}<div class="error">{{ error }}</div>{% endif %}
@@ -77,7 +78,7 @@
     <h2>{{ orden.cliente }} · {{ orden.sucursal }}</h2>
     <p class="cuenta">Pedido del {{ orden.fecha.strftime("%d/%m/%Y") }} · OC {{ orden.orden_compra or "sin orden de compra" }}</p>
     {% if orden.remito_id %}
-      <div class="ojo">Esta orden ya tiene su remito: <a href="/administracion/facturacion/remito/{{ orden.remito_id }}">Remito {{ orden.remito_numero }}</a>. Si tiene un error, lo anula Gerencia y se emite de nuevo.</div>
+      <div class="ojo">Esta orden ya tiene su remito: <a href="/administracion/facturacion/remito/{{ orden.remito_id }}{{ q_volver(volver) }}">Remito {{ orden.remito_numero }}</a>. Si tiene un error, lo anula Gerencia y se emite de nuevo.</div>
     {% elif not orden.es_el_vigente %}
       <div class="ojo">Este pedido fue reemplazado por otro del mismo día: el remito va contra el vigente.</div>
     {% endif %}
@@ -101,7 +102,7 @@
     {% if sin_kilos %}
       <div class="ojo">Faltan los kilos enviados de {{ sin_kilos|length }} renglón{{ "es" if sin_kilos|length != 1 }}: cargalos en Armar Pedido antes de emitir.</div>
     {% else %}
-    <form method="post" action="/administracion/facturacion/emitir" class="campos">
+    <form method="post" action="/administracion/facturacion/emitir{{ q_volver(volver) }}" class="campos">
       <input type="hidden" name="pedido_id" value="{{ orden.pedido_id }}">
       <input type="hidden" name="sucursal" value="{{ orden.sucursal }}">
       <label>Número del remito oficial

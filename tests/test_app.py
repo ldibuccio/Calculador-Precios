@@ -18493,7 +18493,7 @@ def test_el_MOVIMIENTO_lleva_al_DETALLE_del_articulo_que_tiene_el_desglose_por_k
 
     marcado = respuesta.text.split("</style>")[-1]
     assert respuesta.status_code == 200
-    assert 'href="/administracion/stock/sistema/1"' in marcado
+    assert 'href="/administracion/stock/sistema/1?volver=' in marcado
 
 
 def test_el_link_al_detalle_DICE_QUE_ES_EL_ARTICULO_ENTERO_y_no_esta_porcion():
@@ -18805,7 +18805,7 @@ def test_el_negativo_esta_EN_LA_LISTA_marcado_y_ADEMAS_en_su_bloque_de_abajo():
     # Y sigue estando abajo, DESPUÉS de la lista, con su link al detalle.
     assert 'class="bloque-negativos"' in cuerpo
     assert cuerpo.index('class="porcion"') < cuerpo.index('class="bloque-negativos"')
-    assert 'href="/administracion/stock/sistema/2"' in cuerpo
+    assert 'href="/administracion/stock/sistema/2?volver=' in cuerpo
 
 
 def test_un_negativo_muestra_el_NUMERO_REAL_en_rojo_y_dice_que_paso():
@@ -19356,7 +19356,7 @@ def test_ver_casilla_pedidos_muestra_el_estado_y_el_boton_revisar_ahora():
     assert "está configurada" in respuesta.text
     # El mail pendiente, con sus dos acciones.
     assert "Pedido del dia" in respuesta.text
-    assert 'href="/deposito/pedido/mails/9/revisar"' in respuesta.text
+    assert 'href="/deposito/pedido/mails/9/revisar?volver=' in respuesta.text
     assert 'action="/administracion/casilla-pedidos/mails/9/ignorar"' in respuesta.text
 
 
@@ -19943,7 +19943,7 @@ def test_ver_casilla_muestra_las_acciones_en_un_mail_con_error():
     # El error se ve (pill + motivo) y el mail sigue accionable: reintentar o ignorar.
     assert ">Error<" in respuesta.text
     assert "La lectura falló: se cortó" in respuesta.text
-    assert 'href="/deposito/pedido/mails/9/revisar"' in respuesta.text
+    assert 'href="/deposito/pedido/mails/9/revisar?volver=' in respuesta.text
     assert 'action="/administracion/casilla-pedidos/mails/9/ignorar"' in respuesta.text
 
 
@@ -21934,8 +21934,8 @@ def test_ver_pedido_muestra_los_mails_trabados_del_cliente_con_revisar():
     assert "pedido estimado del 23/08/2026" in texto
     assert "pedido estimado del 22/08/2026" in texto
     # El botón lleva directo a la revisión (mismo circuito de siempre).
-    assert 'href="/deposito/pedido/mails/9/revisar"' in texto
-    assert 'href="/deposito/pedido/mails/8/revisar"' in texto
+    assert 'href="/deposito/pedido/mails/9/revisar?volver=' in texto
+    assert 'href="/deposito/pedido/mails/8/revisar?volver=' in texto
     # Con un error, la tarjeta se marca fuerte.
     assert "tarjeta-mails-trabados con-error" in texto
 

@@ -157,7 +157,8 @@
 <body>
   {% set barra_sector = "compras" %}
   {% set barra_titulo = "Detalle" %}
-  {% set barra_atras = "/compras/buscar" %}
+  {# A Buscar compras CON SUS FILTROS, como el "Volver" de abajo (dueño, 05/10). #}
+  {% set barra_atras = "/compras/buscar" ~ consulta(request) %}
   {% from "_info.html" import info %}
   {% include "_barra_navegacion.html" %}
 
@@ -376,7 +377,7 @@
           {% if f.movimiento_id %}
           <span class="foto-pesada-hora foto-de-devolucion">De la devolución al proveedor</span>
           {% else %}
-          <form method="post" action="/compras/{{ compra.id }}/fotos-balanza/{{ f.id }}/borrar"
+          <form method="post" action="/compras/{{ compra.id }}/fotos-balanza/{{ f.id }}/borrar{{ consulta(request) }}"
                 onsubmit="return confirm('¿Borrar esta foto de la pesada? No se puede deshacer.');">
             <button type="submit" class="borrar-pesada">Borrar</button>
           </form>
@@ -387,7 +388,7 @@
       {% else %}
       <p class="fotos-guia-vacio">Esta compra no tiene foto de la balanza.</p>
       {% endif %}
-      <form class="fotos-guia-subir" method="post" action="/compras/{{ compra.id }}/fotos-balanza"
+      <form class="fotos-guia-subir" method="post" action="/compras/{{ compra.id }}/fotos-balanza{{ consulta(request) }}"
             enctype="multipart/form-data">
         {# Sin `capture`: en el celular ofrece la cámara Y la galería. #}
         <input type="file" name="fotos" id="fotos-pesada" accept="image/*" multiple

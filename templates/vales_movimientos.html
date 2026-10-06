@@ -88,7 +88,7 @@
     <h2>{{ movimientos|length }} movimiento{{ '' if movimientos|length == 1 else 's' }}</h2>
     {% for m in movimientos %}
     <div class="fila">
-      <a class="abrir" href="{{ camino.base }}/vales/{{ m.vale.id }}">
+      <a class="abrir" href="{{ camino.base }}/vales/{{ m.vale.id }}{{ q_volver(aqui(request)) }}">
         <div class="fila-cabeza">
           <span class="fila-que">{{ texto_del_movimiento[m.que] }} · {{ m.vale.proveedor }}</span>
           <span class="{{ 'suma' if m.que == 'entrada' else 'resta' }}">{{ '+' if m.que == 'entrada' else '−' }}{{ m.importe|moneda }}</span>
