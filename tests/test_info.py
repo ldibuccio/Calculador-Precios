@@ -227,6 +227,8 @@ PANTALLAS_CON_I = {
     "fichas_historial.html", "gerencia_costos_fijos_cargar.html",
     "gerencia_costos_fijos_indices.html", "gerencia_costos_fijos_plan.html",
     "gerencia_ingreso_retroactivo.html", "gerencia_juntar_proveedores.html", "gerencia_perdidas.html",
+    # Con fecha anterior (dueño, 05/10): cuándo frena y para qué es la contraseña.
+    "administracion_retroactivo.html", "gerencia_clave_retroactivo.html",
     "gerencia_rentabilidad.html", "gerencia_rentabilidad_real.html", "negociar.html",
     "precios_cargar_foto.html", "precios_consulta.html", "precios_vigencias.html",
     "remito_recibir.html",

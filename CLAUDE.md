@@ -268,6 +268,8 @@ Módulos (se lee el que se va a tocar):
   la Casilla de pedidos en Administración.
 - `docs/modulos/que_comprar_hoy.md`: decisiones de Qué comprar hoy (el diseño
   sigue en `docs/que_comprar_hoy.md`).
+- `docs/modulos/retroactivo.md`: Depósito solo con la fecha de hoy, y "Con
+  fecha anterior" de Administración con la contraseña especial de Gerencia.
 - `docs/modulos/fletes.md`: Fletes (Administración → Pedidos), el armado más
   barato, el reparto por pallets, corregir y la línea Flete de Rentabilidad
   Real.

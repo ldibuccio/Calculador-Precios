@@ -67,6 +67,9 @@
   <div class="tarjeta">
     <h2>Corregir</h2>
     <a class="boton color-2" href="/gerencia/compras/ingreso-retroactivo">{{ ICONOS_HUBS['fecha_anterior']|safe }}<span>Ingreso con fecha anterior</span></a>
+    {# La contraseña especial de "Con fecha anterior" de Administración
+       (dueño, 05/10): la fija y la cambia Gerencia. #}
+    <a class="boton color-2" href="/gerencia/clave-retroactivo">{{ ICONOS_HUBS['clave']|safe }}<span>Contraseña de fecha anterior</span></a>
     <a class="boton color-2" href="/gerencia/proveedores/juntar">{{ ICONOS_HUBS['juntar']|safe }}<span>Juntar dos proveedores</span></a>
     {# Vino de Administración el 04/10 (dueño): se usó una sola vez, el 05/09,
        y escribe con la fecha del corte. #}

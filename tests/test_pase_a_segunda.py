@@ -54,8 +54,10 @@ def test_la_pantalla_pide_lo_que_hace_falta_y_NADA_MAS():
     marcado = respuesta.text.split("</style>")[-1]
 
     assert respuesta.status_code == 200
-    for campo in ('name="cantidad"', 'name="motivo"', 'name="fecha"', 'name="lote"'):
+    for campo in ('name="cantidad"', 'name="motivo"', 'name="lote"'):
         assert campo in marcado, f"falta {campo}"
+    # Depósito pasa con la fecha de HOY (dueño, 05/10): no se elige el día.
+    assert 'name="fecha"' not in marcado
 
     # SIN FOTO, y es una decisión: en la merma la foto cierra la perilla de
     # tapar un faltante —lo tirado ya no se puede contar— y acá los bultos
@@ -153,6 +155,8 @@ def test_el_pase_NO_manda_foto_ni_destino_de_rechazo_y_la_FICHA_va_en_None_si_so
         }, follow_redirects=False)
 
     _, kwargs = mock_mov.call_args
+    # retroactivo_quien en None: desde Depósito nunca es con fecha anterior.
+    assert kwargs.pop("retroactivo_quien") is None
     assert set(kwargs) == {"bultos_segunda", "lote_tipo", "lote_origen_id", "ficha_id"}, (
         f"el pase manda campos que no le corresponden: {set(kwargs)}"
     )
@@ -236,8 +240,6 @@ def test_el_LOTE_se_puede_dirigir_igual_que_en_la_merma():
     ({"cantidad": "-5"}, "mayor"),
     ({"motivo": ""}, "Elegí el motivo"),
     ({"motivo": "porque si"}, "no está en la lista"),
-    ({"fecha": "2099-01-01"}, "no puede ser futura"),
-    ({"fecha": "no es fecha"}, "no es válida"),
     ({"lote": "inventado:9"}, "no es válido"),
 ])
 def test_lo_que_REBOTA_y_no_llega_a_escribir(datos, esperado):
@@ -264,7 +266,6 @@ def test_el_REBOTE_conserva_lo_que_ya_estaba_cargado():
         })
     marcado = respuesta.text.split("</style>")[-1]
 
-    assert 'value="2026-09-18"' in marcado, "perdió la fecha"
     assert re.search(r'value="golpeado"[^>]*selected', marcado), "perdió el motivo"
     assert re.search(r'value="guia:1"[^>]*selected', marcado), "perdió el lote"
 

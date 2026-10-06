@@ -16,7 +16,7 @@
   .error { background: #fee2e2; color: #991b1b; padding: 0.75rem 1rem; border-radius: 8px; margin-bottom: 1rem; }
   .aviso { background: #dcfce7; color: #14532d; padding: 0.75rem 1rem; border-radius: 8px; margin-bottom: 1rem; }
   label { display: block; margin-top: 0.75rem; font-size: 0.9rem; color: #444; }
-  select, input[type=number], input[type=text] {
+  select, input[type=number], input[type=text], input[type=date], input[type=password] {
     width: 100%; padding: 0.65rem; margin-top: 0.25rem; border: 1px solid #ccc;
     border-radius: 8px; font-size: 1rem; box-sizing: border-box; background: #fff;
   }
@@ -43,7 +43,8 @@
   {# La misma pantalla en Depósito y en Administración (dueño, 01/10): el
      camino sale del prefijo, y con él la barra, el atrás y los formularios. #}
   {% set barra_sector = camino.sector %}
-  {% set barra_titulo = "Devolver Mercadería" %}
+  {% import "_campos_retroactivo.html" as retroactivo %}
+  {% set barra_titulo = "Devolver con fecha anterior" if camino.retro else "Devolver Mercadería" %}
   {% set barra_atras = camino.base %}
   {% from "_info.html" import info %}
   {% include "_barra_navegacion.html" %}
@@ -98,6 +99,9 @@
       <label for="motivo">¿Por qué?</label>
       <input type="text" id="motivo" name="motivo" maxlength="200" required
              placeholder="Se puso fea, vino de más…" value="{{ precarga.motivo or '' }}">
+      {% if camino.retro %}
+      {{ retroactivo.campos("¿Qué día se devolvió?", precarga, ayer) }}
+      {% endif %}
     </div>
     {{ fotos_para_subir.tarjeta("Fotos (opcional)", "＋ Agregar foto") }}
     <div class="tarjeta">

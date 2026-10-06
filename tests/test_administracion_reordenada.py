@@ -37,6 +37,9 @@ GRUPOS_DECIDIDOS = {
         ("/administracion/stock/cotejo", "Cotejo y ajuste"),
         ("/administracion/stock/guias-r", "Guías R"),
         ("/administracion/devolver", "Devolver mercadería"),
+        # CON FECHA ANTERIOR (dueño, 05/10): ingreso, devolución, merma y pase
+        # con un día pasado, con la contraseña especial.
+        ("/administracion/retroactivo", "Con fecha anterior"),
     ],
     "Pedidos": [
         ("/deposito/pedido/cargar", "Cargar pedido"),

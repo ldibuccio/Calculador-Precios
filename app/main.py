@@ -110,6 +110,11 @@ from app.db import (
     ordenes_sin_remito,
     recibir_remito,
     agregar_fotos_a_remito,
+    clave_especial,
+    clave_especial_correcta,
+    fijar_clave_especial,
+    listar_retroactivos,
+    que_tomo_esa_mercaderia,
     remito_por_id,
     remitos_con_rechazo_distinto,
     borrar_carga_de_compra,
@@ -9082,6 +9087,21 @@ def ver_corregir_recepcion_url_vieja(compra_id: int):
     return RedirectResponse(url=f"/gerencia/compras/{compra_id}/corregir-recepcion", status_code=301)
 
 
+# EL INGRESO CON FECHA ANTERIOR TIENE DOS PUERTAS (dueño, 05/10): Gerencia,
+# con su clave, y Administración, con la contraseña especial y quién lo
+# carga. Es la misma pantalla y la misma escritura; el camino sale del prefijo.
+_CAMINOS_DEL_INGRESO_RETROACTIVO = {
+    "gerencia": {"retro": False, "sector": "gerencia", "atras": "/gerencia",
+                 "accion": "/gerencia/compras/ingreso-retroactivo"},
+    "retroactivo": {"retro": True, "sector": "administracion", "atras": "/administracion/retroactivo",
+                    "accion": "/administracion/retroactivo/ingreso"},
+}
+
+
+def _camino_del_ingreso_retroactivo(request: Request) -> dict:
+    return _CAMINOS_DEL_INGRESO_RETROACTIVO["retroactivo" if _es_retroactivo(request) else "gerencia"]
+
+
 def _renderizar_ingreso_retroactivo(request: Request, *, precarga=None, error=None,
                                     aviso=None, status_code: int = 200):
     try:
@@ -9099,6 +9119,7 @@ def _renderizar_ingreso_retroactivo(request: Request, *, precarga=None, error=No
             "precarga": precarga or {},
             "error": error,
             "aviso": aviso,
+            "camino": _camino_del_ingreso_retroactivo(request),
         }
     except Exception as error_db:
         raise HTTPException(status_code=500, detail=f"Error al conectar con la base de datos: {error_db}") from error_db
@@ -9190,7 +9211,66 @@ def juntar_proveedores_ruta(request: Request, queda: str = Form(""), va: str = F
     )
 
 
+_TIPOS_DEL_RETROACTIVO = {
+    "ingreso": "Ingreso", "devolucion": "Devolución al proveedor",
+    "merma": "Merma", "pase_a_segunda": "Pase a segunda",
+}
+
+
+@app.get("/administracion/retroactivo")
+def ver_retroactivo_administracion(request: Request):
+    """CON FECHA ANTERIOR, desde Administración (dueño, 05/10): las cuatro
+    cargas y el registro de lo cargado (qué, de qué día, quién y cuándo)."""
+    try:
+        clave = clave_especial()
+        registro = listar_retroactivos()
+    except Exception as error_db:
+        raise HTTPException(status_code=500, detail=f"Error al conectar con la base de datos: {error_db}") from error_db
+    for fila in registro:
+        fila["que"] = _TIPOS_DEL_RETROACTIVO.get(fila["tipo"], fila["tipo"])
+        fila["cuando"] = fila["cargado_el"].astimezone(ARGENTINA).strftime("%d/%m/%Y %H:%M")
+    return templates.TemplateResponse(request, "administracion_retroactivo.html", {
+        "clave_fijada": clave is not None, "registro": registro,
+    })
+
+
+@app.get("/gerencia/clave-retroactivo")
+def ver_clave_retroactivo(request: Request, aviso: str | None = None, error: str | None = None):
+    """La contraseña especial del retroactivo de Administración: la fija y la
+    cambia Gerencia (dueño, 05/10). Nunca se muestra: solo cuándo se cambió."""
+    puerta = _puerta_de_gerencia_para_escribir(request)
+    if puerta is not None:
+        return puerta
+    try:
+        clave = clave_especial()
+    except Exception as error_db:
+        raise HTTPException(status_code=500, detail=f"Error al conectar con la base de datos: {error_db}") from error_db
+    cambiada = (clave["cambiada_el"].astimezone(ARGENTINA).strftime("%d/%m/%Y %H:%M") if clave else None)
+    return templates.TemplateResponse(request, "gerencia_clave_retroactivo.html", {
+        "cambiada": cambiada, "aviso": aviso, "error": error,
+    })
+
+
+@app.post("/gerencia/clave-retroactivo")
+def guardar_clave_retroactivo(request: Request, clave: str = Form(""), repetida: str = Form("")):
+    puerta = _puerta_de_gerencia_para_escribir(request)
+    if puerta is not None:
+        return puerta
+    if clave != repetida:
+        return RedirectResponse("/gerencia/clave-retroactivo?" + urlencode(
+            {"error": "Las dos contraseñas no son iguales."}), status_code=303)
+    try:
+        fijar_clave_especial(clave)
+    except ValueError as motivo:
+        return RedirectResponse("/gerencia/clave-retroactivo?" + urlencode({"error": str(motivo)}),
+                                status_code=303)
+    return RedirectResponse("/gerencia/clave-retroactivo?" + urlencode(
+        {"aviso": "Contraseña especial guardada. Desde ahora Administración tiene que usar esta."}),
+        status_code=303)
+
+
 @app.get("/gerencia/compras/ingreso-retroactivo")
+@app.get("/administracion/retroactivo/ingreso")
 def ver_ingreso_retroactivo(request: Request, aviso: str | None = None):
     """Cargar mercadería que ENTRÓ ANTES y nunca se cargó, con la fecha de ese día.
 
@@ -9213,13 +9293,15 @@ def ver_ingreso_retroactivo(request: Request, aviso: str | None = None):
     —pasa igual al corregir una recepción— pero con esta pantalla va a
     pasar más seguido.
     """
-    puerta = _puerta_de_gerencia_para_escribir(request)
-    if puerta is not None:
-        return puerta
+    if not _es_retroactivo(request):
+        puerta = _puerta_de_gerencia_para_escribir(request)
+        if puerta is not None:
+            return puerta
     return _renderizar_ingreso_retroactivo(request, aviso=aviso)
 
 
 @app.post("/gerencia/compras/ingreso-retroactivo")
+@app.post("/administracion/retroactivo/ingreso")
 def cargar_ingreso_retroactivo(
     request: Request,
     proveedor_id: str = Form(""),
@@ -9230,6 +9312,8 @@ def cargar_ingreso_retroactivo(
     importe: str = Form(""),
     fecha_recepcion: str = Form(""),
     ficha_en_origen_id: str = Form(""),
+    clave_especial: str = Form(""),
+    quien: str = Form(""),
 ):
     """Crea la compra YA RECEPCIONADA Y RETIRADA, fechada el día que entró.
 
@@ -9248,9 +9332,11 @@ def cargar_ingreso_retroactivo(
     `crear_compra` contra `corte_modelo`, no esta pantalla: acá se traduce
     el error, no se re-decide.
     """
-    puerta = _puerta_de_gerencia_para_escribir(request)
-    if puerta is not None:
-        return puerta
+    camino = _camino_del_ingreso_retroactivo(request)
+    if not camino["retro"]:
+        puerta = _puerta_de_gerencia_para_escribir(request)
+        if puerta is not None:
+            return puerta
 
     precarga = {
         "proveedor_id": proveedor_id, "articulo_id": articulo_id,
@@ -9263,6 +9349,7 @@ def cargar_ingreso_retroactivo(
         # que es la peor forma de perderla — el que reintenta no vuelve a
         # mirar un campo que ya llenó.
         "ficha_en_origen_id": ficha_en_origen_id,
+        "quien": quien,
     }
 
     error, cajones = _validar_cantidad_cajones(cantidad_cajones)
@@ -9312,6 +9399,12 @@ def cargar_ingreso_retroactivo(
     if error is None:
         error, segunda = _validar_segunda_magnitud(segunda_por_cajon, segunda_magnitud_del_articulo(articulo))
 
+    # Desde Administración: el día ANTERIOR a hoy, quién y la contraseña
+    # especial, cada vez (dueño, 05/10).
+    quien_valor = None
+    if error is None and camino["retro"]:
+        error, _dia, quien_valor = _validar_retroactivo(fecha_recepcion, clave_especial, quien)
+
     if error:
         return _renderizar_ingreso_retroactivo(request, precarga=precarga, error=error, status_code=400)
 
@@ -9330,6 +9423,7 @@ def cargar_ingreso_retroactivo(
             ficha_en_origen_id=ficha_marcada,
             segunda_por_cajon=segunda_por_cajon,
             codigo_llegada=None,  # se eligió el proveedor, no su puesto
+            retroactivo_quien=quien_valor,
         )
     except ValueError as rechazo:
         return _renderizar_ingreso_retroactivo(request, precarga=precarga, error=str(rechazo), status_code=400)
@@ -9342,9 +9436,9 @@ def cargar_ingreso_retroactivo(
         f"Cargados {_formatear_numero(cajones)} bultos de {articulo['nombre']} "
         f"con fecha de entrada {dia:%d/%m/%Y}."
     )
-    return RedirectResponse(
-        url=f"/gerencia/compras/ingreso-retroactivo?{urlencode({'aviso': aviso})}", status_code=303
-    )
+    if quien_valor:
+        aviso += f" Cargado por {quien_valor}."
+    return RedirectResponse(url=f"{camino['accion']}?{urlencode({'aviso': aviso})}", status_code=303)
 
 
 @app.get("/gerencia/compras/{compra_id}/corregir-recepcion")
@@ -12472,13 +12566,19 @@ def _compras_con_resto_del_proveedor(proveedor_id: int) -> list[dict]:
 # viaja a la escritura como `cargada_desde`: la regla —la compra, el tope de
 # lo que queda, el motivo, las fotos, cancelar el costo— es la misma función.
 _CAMINOS_DE_DEVOLVER = {
-    "deposito": {"sector": "deposito", "base": "/deposito", "volver": "Volver a Depósito"},
+    "deposito": {"sector": "deposito", "base": "/deposito", "volver": "Volver a Depósito", "retro": False},
     "administracion": {"sector": "administracion", "base": "/administracion",
-                       "volver": "Volver a Administración"},
+                       "volver": "Volver a Administración", "retro": False},
+    # CON FECHA ANTERIOR (dueño, 05/10): la misma pantalla, con el día, quién
+    # y la contraseña especial. Ver `_validar_retroactivo`.
+    "retroactivo": {"sector": "administracion", "base": "/administracion/retroactivo",
+                    "volver": "Volver a Con fecha anterior", "retro": True},
 }
 
 
 def _camino_de_devolver(request: Request) -> dict:
+    if _es_retroactivo(request):
+        return _CAMINOS_DE_DEVOLVER["retroactivo"]
     return _CAMINOS_DE_DEVOLVER["administracion" if request.url.path.startswith("/administracion")
                                 else "deposito"]
 
@@ -12496,13 +12596,15 @@ def _renderizar_devolver_mercaderia(request: Request, *, proveedor_id: int | Non
         request, "deposito_devolver.html",
         {"proveedores": proveedores, "proveedor": proveedor, "compras": compras,
          "precarga": precarga or {}, "error": error, "aviso": aviso,
-         "camino": _camino_de_devolver(request)},
+         "camino": _camino_de_devolver(request),
+         "ayer": (_hoy_argentina() - timedelta(days=1)).isoformat()},
         status_code=status_code,
     )
 
 
 @app.get("/deposito/devolver")
 @app.get("/administracion/devolver")
+@app.get("/administracion/retroactivo/devolver")
 def ver_devolver_mercaderia(request: Request, proveedor_id: str | None = None, aviso: str | None = None):
     """Devolver mercadería al proveedor: primero el proveedor, después sus compras con lo que queda."""
     return _renderizar_devolver_mercaderia(
@@ -12511,12 +12613,16 @@ def ver_devolver_mercaderia(request: Request, proveedor_id: str | None = None, a
 
 @app.post("/deposito/devolver")
 @app.post("/administracion/devolver")
+@app.post("/administracion/retroactivo/devolver")
 async def devolver_mercaderia_ruta(
     request: Request,
     proveedor_id: str = Form(""),
     compra_id: str = Form(""),
     cantidad: str = Form(""),
     motivo: str = Form(""),
+    fecha: str = Form(""),
+    clave_especial: str = Form(""),
+    quien: str = Form(""),
 ):
     """Guarda la devolución desde depósito, con sus fotos.
 
@@ -12529,7 +12635,7 @@ async def devolver_mercaderia_ruta(
     fotos = [f for f in (await request.form()).getlist("fotos") if isinstance(f, StarletteUploadFile)]
     fotos_elegidas = sum(1 for f in fotos if f.filename)
     proveedor_valor = _id_opcional_desde_query(proveedor_id)
-    precarga = {"compra_id": compra_id, "cantidad": cantidad, "motivo": motivo}
+    precarga = {"compra_id": compra_id, "cantidad": cantidad, "motivo": motivo, "fecha": fecha, "quien": quien}
 
     def rebote(error: str, status_code: int = 400):
         if fotos_elegidas:
@@ -12558,6 +12664,16 @@ async def devolver_mercaderia_ruta(
     motivo_limpio = re.sub(r"\s+", " ", motivo).strip()
     if not motivo_limpio:
         return rebote("El motivo es obligatorio.")
+    camino = _camino_de_devolver(request)
+    fecha_valor, quien_valor = _hoy_argentina(), None
+    if camino["retro"]:
+        error, fecha_valor, quien_valor = _validar_retroactivo(fecha, clave_especial, quien)
+        if not error:
+            error = _freno_del_retroactivo(compra["articulo_id"], {
+                "tipo": "devolucion_deposito", "cantidad": cantidad_valor, "fecha": fecha_valor,
+                "lote_tipo": "guia", "lote_origen_id": compra["compra_id"]})
+        if error:
+            return rebote(error)
     error, comprimidas = await _fotos_de_pesada_comprimidas(fotos)
     if error:
         return rebote(error)
@@ -12568,8 +12684,8 @@ async def devolver_mercaderia_ruta(
             rutas.append(subir_foto_comanda(comprimida, f"devolucion-{compra['compra_id']}",
                                             prefijo=PREFIJO_PESAJE))
         crear_devolucion_deposito(compra["compra_id"], cantidad_valor, motivo_limpio,
-                                  _hoy_argentina(), fotos_pesada=rutas,
-                                  cargada_desde=_camino_de_devolver(request)["sector"])
+                                  fecha_valor, fotos_pesada=rutas,
+                                  cargada_desde=camino["sector"], retroactivo_quien=quien_valor)
     except Exception as error_db:
         for ruta in rutas:
             try:
@@ -12588,6 +12704,8 @@ async def devolver_mercaderia_ruta(
         aviso += " La compra dejó seña: esos cajones salen de Vacíos."
     if rutas:
         aviso += " Con 1 foto." if len(rutas) == 1 else f" Con {len(rutas)} fotos."
+    if camino["retro"]:
+        aviso += f" Con fecha {fecha_valor:%d/%m/%Y}, cargada por {quien_valor}."
     parametros = urlencode({"proveedor_id": proveedor_valor, "aviso": aviso})
     return RedirectResponse(url=f"{_camino_de_devolver(request)['base']}/devolver?{parametros}",
                             status_code=303)
@@ -14830,6 +14948,63 @@ def _validar_costo_stock_inicial(costo: str, que: str) -> tuple[str | None, floa
 TIPOS_LOTE_STOCK = ("guia", "reproceso", "reingreso_rechazo", "ajuste", "stock_inicial")
 
 
+# DEPÓSITO CARGA CON LA FECHA DE HOY; ADMINISTRACIÓN, CON FECHA ANTERIOR
+# (dueño, 05/10). La merma, el pase a segunda y la devolución al proveedor son
+# las MISMAS pantallas y las mismas rutas en los dos caminos: el camino sale
+# del PREFIJO (corolario 63). En Depósito no se elige fecha. En
+# `/administracion/retroactivo/...` se elige una fecha ANTERIOR a hoy y se
+# pide la contraseña especial y quién lo carga, cada vez.
+_CAMINOS_DE_STOCK = {
+    "deposito": {"retro": False, "sector": "deposito", "base": "/deposito/stock", "atras": "/deposito"},
+    "retroactivo": {"retro": True, "sector": "administracion", "base": "/administracion/retroactivo",
+                    "atras": "/administracion/retroactivo"},
+}
+
+
+def _es_retroactivo(request: Request) -> bool:
+    return request.url.path.startswith("/administracion/retroactivo")
+
+
+def _camino_de_stock(request: Request) -> dict:
+    return _CAMINOS_DE_STOCK["retroactivo" if _es_retroactivo(request) else "deposito"]
+
+
+def _validar_retroactivo(fecha: str, clave: str, quien: str) -> tuple[str | None, date | None, str | None]:
+    """Los tres datos del retroactivo de Administración: (error, fecha, quién).
+
+    La fecha es ANTERIOR a hoy (lo de hoy se carga desde Depósito), quién lo
+    carga es obligatorio, y la contraseña especial se pide CADA VEZ: no queda
+    en una cookie. Va lo último, así un error de la contraseña no se come los
+    demás datos del formulario.
+    """
+    quien_limpio = " ".join((quien or "").split())
+    try:
+        fecha_valor = date.fromisoformat((fecha or "").strip())
+    except ValueError:
+        return "Poné el día en que pasó.", None, None
+    if fecha_valor >= _hoy_argentina():
+        return "Acá va una fecha ANTERIOR a hoy: lo de hoy se carga desde Depósito.", None, None
+    if not quien_limpio:
+        return "Poné quién lo carga.", None, None
+    try:
+        correcta = clave_especial_correcta(clave or "")
+    except Exception as error_db:
+        return f"No se pudo leer la contraseña especial: {error_db}", None, None
+    if correcta is None:
+        return "Gerencia todavía no fijó la contraseña especial.", None, None
+    if not correcta:
+        return "La contraseña especial no es correcta.", None, None
+    return None, fecha_valor, quien_limpio
+
+
+def _freno_del_retroactivo(articulo_id: int, salida: dict) -> str | None:
+    """SOLO SI ESA MERCADERÍA NO SE USÓ: el texto que frena, o None."""
+    motivos = que_tomo_esa_mercaderia(articulo_id, salida)
+    if not motivos:
+        return None
+    return " ".join(motivos) + " Hasta que eso se elimine, no se puede cargar con esa fecha."
+
+
 def _renderizar_pantalla_merma(
     request: Request, *, precarga=None, aviso=None, error=None, articulo_id=None, status_code: int = 200
 ):
@@ -14868,6 +15043,8 @@ def _renderizar_pantalla_merma(
             "fichas_por_articulo": fichas,
             "motivos": MOTIVOS_MERMA,
             "hoy": _hoy_argentina().isoformat(),
+            "ayer": (_hoy_argentina() - timedelta(days=1)).isoformat(),
+            "camino": _camino_de_stock(request),
             "precarga": precarga or {},
             "aviso": aviso,
             "error": error,
@@ -14919,6 +15096,7 @@ def _lotes_con_resto(articulo_id: int) -> list[dict]:
 
 
 @app.get("/deposito/stock/merma")
+@app.get("/administracion/retroactivo/merma")
 def ver_merma_stock(request: Request, aviso: str | None = None, articulo_id: str | None = None):
     """La carga de merma. Con un artículo elegido, muestra además sus lotes para poder dirigir la merma a uno."""
     return _renderizar_pantalla_merma(request, aviso=aviso, articulo_id=articulo_id)
@@ -14974,6 +15152,8 @@ def _renderizar_pase_a_segunda(
             "lotes": lotes,
             "motivos": MOTIVOS_MERMA,
             "hoy": _hoy_argentina().isoformat(),
+            "ayer": (_hoy_argentina() - timedelta(days=1)).isoformat(),
+            "camino": _camino_de_stock(request),
             "precarga": precarga or {},
             "aviso": aviso,
             "error": error,
@@ -14983,12 +15163,14 @@ def _renderizar_pase_a_segunda(
 
 
 @app.get("/deposito/stock/pase-a-segunda")
+@app.get("/administracion/retroactivo/pase-a-segunda")
 def ver_pase_a_segunda(request: Request, aviso: str | None = None, articulo_id: str | None = None):
     """Pasar de primera a segunda. Con un artículo elegido muestra sus lotes."""
     return _renderizar_pase_a_segunda(request, aviso=aviso, articulo_id=articulo_id)
 
 
 @app.post("/deposito/stock/pase-a-segunda")
+@app.post("/administracion/retroactivo/pase-a-segunda")
 def cargar_pase_a_segunda(
     request: Request,
     articulo_id: str = Form(""),
@@ -14997,6 +15179,8 @@ def cargar_pase_a_segunda(
     fecha: str = Form(""),
     lote: str = Form(""),
     que_pasa: str = Form(""),
+    clave_especial: str = Form(""),
+    quien: str = Form(""),
 ):
     """La mercadería que ya no da para primera: sale del stock y entra al pool de segunda.
 
@@ -15027,15 +15211,10 @@ def cargar_pase_a_segunda(
     elif not error and motivo_limpio not in MOTIVOS_MERMA:
         error = "Ese motivo no está en la lista."
 
-    fecha_valor = _hoy_argentina()
-    if not error and fecha.strip():
-        try:
-            fecha_valor = date.fromisoformat(fecha.strip())
-        except ValueError:
-            error = "La fecha del pase no es válida."
-        else:
-            if fecha_valor > _hoy_argentina():
-                error = "La fecha del pase no puede ser futura."
+    # Depósito: SIEMPRE hoy (dueño, 05/10). Con fecha anterior, solo el
+    # retroactivo de Administración, con su contraseña.
+    camino = _camino_de_stock(request)
+    fecha_valor, quien_valor = _hoy_argentina(), None
 
     articulo = None
     if not error:
@@ -15078,13 +15257,21 @@ def cargar_pase_a_segunda(
             else:
                 lote_etiqueta = elegido["etiqueta"]
 
+    if not error and camino["retro"]:
+        error, fecha_valor, quien_valor = _validar_retroactivo(fecha, clave_especial, quien)
+        if not error:
+            error = _freno_del_retroactivo(articulo["id"], {
+                "tipo": "pase_a_segunda", "cantidad": cantidad_valor, "fecha": fecha_valor,
+                "ficha_id": ficha["id"] if ficha else None,
+                "lote_tipo": lote_tipo, "lote_origen_id": lote_origen_id})
+
     if error:
         # `que_pasa` va en la precarga como todo lo demás: el que reintenta
         # corrige el campo que la pantalla le señaló y no revisa los que ya
         # había llenado.
         precarga = {"articulo_id": articulo_id, "cantidad": cantidad,
                     "motivo": motivo_limpio, "fecha": fecha, "lote": lote,
-                    "que_pasa": que_pasa.strip()}
+                    "que_pasa": que_pasa.strip(), "quien": quien}
         return _renderizar_pase_a_segunda(
             request, precarga=precarga, articulo_id=articulo_id, error=error, status_code=400
         )
@@ -15095,6 +15282,7 @@ def cargar_pase_a_segunda(
             bultos_segunda=cantidad_valor,
             lote_tipo=lote_tipo, lote_origen_id=lote_origen_id,
             ficha_id=ficha["id"] if ficha else None,
+            retroactivo_quien=quien_valor,
         )
     except Exception as error_db:
         return _renderizar_pase_a_segunda(
@@ -15107,8 +15295,10 @@ def cargar_pase_a_segunda(
              f"{articulo['nombre']}{de_donde} ({motivo_limpio}).")
     if lote_etiqueta:
         aviso += f" Salieron de: {lote_etiqueta}."
+    if camino["retro"]:
+        aviso += f" Con fecha {fecha_valor:%d/%m/%Y}, cargado por {quien_valor}."
     return RedirectResponse(
-        url=f"/deposito/stock/pase-a-segunda?{urlencode({'aviso': aviso})}", status_code=303
+        url=f"{camino['base']}/pase-a-segunda?{urlencode({'aviso': aviso})}", status_code=303
     )
 
 
@@ -15170,6 +15360,7 @@ async def _foto_de_merma_subida(archivo, nombre: str) -> tuple[str | None, str |
 
 
 @app.post("/deposito/stock/merma")
+@app.post("/administracion/retroactivo/merma")
 async def cargar_merma_stock_ruta(
     request: Request,
     articulo_id: str = Form(""),
@@ -15180,6 +15371,8 @@ async def cargar_merma_stock_ruta(
     lote: str = Form(""),
     foto: UploadFile | None = File(None),
     sin_foto_confirmado: str = Form(""),
+    clave_especial: str = Form(""),
+    quien: str = Form(""),
 ):
     """El operario da de baja lo que se tiró, de CUALQUIERA de las tres porciones.
 
@@ -15209,15 +15402,10 @@ async def cargar_merma_stock_ruta(
     elif not error and motivo_limpio not in MOTIVOS_MERMA:
         error = "Ese motivo no está en la lista."
 
-    fecha_valor = _hoy_argentina()
-    if not error and fecha.strip():
-        try:
-            fecha_valor = date.fromisoformat(fecha.strip())
-        except ValueError:
-            error = "La fecha de la merma no es válida."
-        else:
-            if fecha_valor > _hoy_argentina():
-                error = "La fecha de la merma no puede ser futura."
+    # Depósito: SIEMPRE hoy (dueño, 05/10). Con fecha anterior, solo el
+    # retroactivo de Administración, con su contraseña.
+    camino = _camino_de_stock(request)
+    fecha_valor, quien_valor = _hoy_argentina(), None
 
     articulo = ficha = None
     es_segunda = False
@@ -15251,6 +15439,18 @@ async def cargar_merma_stock_ruta(
             else:
                 lote_etiqueta = elegido["etiqueta"]
 
+    if not error and camino["retro"]:
+        if es_segunda:
+            error = ("Con fecha anterior se dan de baja bultos sueltos o cajas de una ficha: "
+                     "la merma de segunda se carga desde Depósito.")
+        else:
+            error, fecha_valor, quien_valor = _validar_retroactivo(fecha, clave_especial, quien)
+            if not error:
+                error = _freno_del_retroactivo(articulo["id"], {
+                    "tipo": "merma", "cantidad": cantidad_valor, "fecha": fecha_valor,
+                    "ficha_id": ficha["id"] if ficha else None,
+                    "lote_tipo": lote_tipo, "lote_origen_id": lote_origen_id})
+
     if not error:
         error = _falta_el_tilde_de_sin_foto(foto, sin_foto_confirmado)
 
@@ -15263,7 +15463,7 @@ async def cargar_merma_stock_ruta(
     if error:
         precarga = {
             "articulo_id": articulo_id, "que_merma": que_merma.strip(), "cantidad": cantidad,
-            "motivo": motivo_limpio, "fecha": fecha, "lote": lote,
+            "motivo": motivo_limpio, "fecha": fecha, "lote": lote, "quien": quien,
         }
         return _renderizar_pantalla_merma(
             request, precarga=precarga, articulo_id=articulo_id, error=error, status_code=400
@@ -15278,6 +15478,7 @@ async def cargar_merma_stock_ruta(
                 articulo["id"], "merma", -cantidad_valor, motivo_limpio, fecha_valor,
                 lote_tipo=lote_tipo, lote_origen_id=lote_origen_id,
                 foto_ruta=foto_ruta, ficha_id=ficha["id"] if ficha else None,
+                retroactivo_quien=quien_valor,
             )
     except Exception as error_db:
         return _renderizar_pantalla_merma(
@@ -15299,7 +15500,9 @@ async def cargar_merma_stock_ruta(
     # mercadería y puede sacarla.
     if foto_ruta is None:
         aviso += " SIN FOTO."
-    return RedirectResponse(url=f"/deposito/stock/merma?{urlencode({'aviso': aviso})}", status_code=303)
+    if camino["retro"]:
+        aviso += f" Con fecha {fecha_valor:%d/%m/%Y}, cargada por {quien_valor}."
+    return RedirectResponse(url=f"{camino['base']}/merma?{urlencode({'aviso': aviso})}", status_code=303)
 
 
 def _costo_congelado_para_reingreso(renglon: dict) -> float | None:

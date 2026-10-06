@@ -1,6 +1,7 @@
 """El reorden de Gerencia y el fin de Sistema (dueño, 04/10).
 
-- Gerencia: diez botones en tres grupos (Mirar, Corregir, Mantenimiento).
+- Gerencia: diez botones en tres grupos (Mirar, Corregir, Mantenimiento); once
+  desde el 05/10, con la contraseña especial de "Con fecha anterior".
   Rentabilidad (De pedidos · Real), Pérdidas (Mercadería · Cajas) y
   Facturación y cobranzas (Remitos y facturas · Vales · Segunda) llevan
   pestañas. Las de Facturación y cobranzas salen SOLO entrando por Gerencia:
@@ -29,6 +30,9 @@ GRUPOS_DECIDIDOS = {
               ("1", "/gerencia/costos-fijos", "Costos fijos"),
               ("1", "/gerencia/facturacion", "Facturación y cobranzas")],
     "Corregir": [("2", "/gerencia/compras/ingreso-retroactivo", "Ingreso con fecha anterior"),
+                 # La contraseña especial de "Con fecha anterior" de
+                 # Administración (dueño, 05/10): la fija Gerencia.
+                 ("2", "/gerencia/clave-retroactivo", "Contraseña de fecha anterior"),
                  ("2", "/gerencia/proveedores/juntar", "Juntar dos proveedores"),
                  ("2", "/gerencia/stock/inicial", "Stock inicial del corte")],
     "Mantenimiento": [("3", "/gerencia/tareas", "Tareas"), ("3", "/gerencia/backups", "Backups"),
@@ -71,7 +75,7 @@ def test_el_hub_de_GERENCIA_tiene_DIEZ_botones_en_tres_grupos_con_su_color():
     with patch.dict(os.environ, CLAVES):
         marcado = _cliente(m, "gerencia").get("/gerencia").text.split("</style>")[-1]
     assert {t: [tuple(b) for b in botones] for t, botones in _grupos_con_color(marcado).items()} == GRUPOS_DECIDIDOS
-    assert marcado.count('<a class="boton ') == 10
+    assert marcado.count('<a class="boton ') == 11
 
 
 def test_NINGUN_boton_viejo_de_Gerencia_desaparece_y_cada_pantalla_VIEJA_abre(galpon):
@@ -192,6 +196,6 @@ def test_a_313px_el_hub_de_GERENCIA_y_las_pestanas_de_COBRANZAS_no_se_salen(galp
                 pagina.close()
         finally:
             navegador.close()
-    assert medidas["hub"]["desborde"] == 0 and medidas["hub"]["botones"] == 10, medidas["hub"]
+    assert medidas["hub"]["desborde"] == 0 and medidas["hub"]["botones"] == 11, medidas["hub"]
     assert medidas["vales"]["desborde"] == 0 and len(medidas["vales"]["pestanas"]) == 3
     assert all(p["alto"] == 44 and not p["desborda"] for p in medidas["vales"]["pestanas"]), medidas["vales"]

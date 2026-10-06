@@ -91,9 +91,12 @@
 </style>
 </head>
 <body>
-  {% set barra_sector = "deposito" %}
-  {% set barra_titulo = "Pasar a segunda" %}
-  {% set barra_atras = "/deposito" %}
+  {# DEPÓSITO CARGA CON LA FECHA DE HOY; Administración, con fecha anterior y
+     la contraseña especial (dueño, 05/10). El camino sale del prefijo. #}
+  {% import "_campos_retroactivo.html" as retroactivo %}
+  {% set barra_sector = camino.sector %}
+  {% set barra_titulo = "Pase a segunda con fecha anterior" if camino.retro else "Pasar a segunda" %}
+  {% set barra_atras = camino.atras %}
   {% include "_barra_navegacion.html" %}
 
   {% if aviso %}
@@ -106,7 +109,7 @@
   <div class="tarjeta">
     {# El artículo se elige aparte y recarga, igual que en Merma: con el
        artículo el server sabe qué lotes tiene y recién ahí puede ofrecerlos. #}
-    <form method="get" action="/deposito/stock/pase-a-segunda">
+    <form method="get" action="{{ camino.base }}/pase-a-segunda">
       <label for="articulo_id">Artículo</label>
       <select id="articulo_id" name="articulo_id" required onchange="this.form.submit()">
         <option value="" {% if not articulo_elegido %}selected{% endif %} disabled>Elegí un artículo...</option>
@@ -117,7 +120,7 @@
     </form>
 
     {% if articulo_elegido %}
-    <form method="post" action="/deposito/stock/pase-a-segunda" id="formulario">
+    <form method="post" action="{{ camino.base }}/pase-a-segunda" id="formulario">
       <input type="hidden" name="articulo_id" value="{{ articulo_elegido.id }}">
 
       {# LO QUE PASA, antes del número. Lo segundo es lo operativo —dónde los
@@ -165,9 +168,9 @@
         {% endfor %}
       </select>
 
-      <label for="fecha">Día en que pasaron</label>
-      <input type="date" id="fecha" name="fecha" max="{{ hoy }}"
-             value="{{ precarga.fecha or hoy }}">
+      {% if camino.retro %}
+      {{ retroactivo.campos("¿Qué día pasaron a segunda?", precarga, ayer) }}
+      {% endif %}
 
       {# EL LOTE, igual que en Merma y por la misma razón: es opcional y
          arranca en el más viejo. El operario no tiene que pensar salvo que
