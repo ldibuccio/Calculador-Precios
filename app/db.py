@@ -2485,7 +2485,11 @@ def obtener_detalle_compra(compra_id: int) -> dict | None:
                        -- mismo día darían días distintos en UTC.
                        ((c.procesada_el AT TIME ZONE 'America/Argentina/Buenos_Aires')::date
                         < (c.cargado_el AT TIME ZONE 'America/Argentina/Buenos_Aires')::date)
-                           AS cargada_retroactiva
+                           AS cargada_retroactiva,
+                       -- Desde el 05/10 también la carga Administración, con
+                       -- la contraseña especial: ahí queda quién.
+                       (SELECT rt.quien FROM retroactivos rt WHERE rt.compra_id = c.id
+                         ORDER BY rt.id LIMIT 1) AS retroactivo_quien
                 FROM compras c
                 JOIN articulos a ON a.id = c.articulo_id
                 JOIN proveedores p ON p.id = c.proveedor_id
@@ -2625,8 +2629,12 @@ def crear_compra(
     codigo_llegada: str | None,
     marca: str | None = None,
     fotos_pesada: tuple[str, ...] | list[str] = (),
+    retroactivo_quien: str | None = None,
 ) -> int:
     """Inserta una compra cargada por el comprador, con su guía asignada. Devuelve su id.
+
+    `retroactivo_quien`: el ingreso con fecha anterior desde Administración
+    (dueño, 05/10). Queda en `retroactivos` en la MISMA transacción.
 
     `fotos_pesada` son las rutas (ya subidas al Storage) de las fotos de la
     pesada que Depósito saca en el ingreso directo (dueño, 30/09). Van a
@@ -2741,6 +2749,9 @@ def crear_compra(
                     "INSERT INTO fotos_recepcion (compra_id, foto_ruta) VALUES (%s, %s) ON CONFLICT DO NOTHING",
                     (compra_id, foto_ruta),
                 )
+            if retroactivo_quien is not None:
+                _registrar_retroactivo(cursor, "ingreso", fecha_operacion, retroactivo_quien,
+                                       compra_id=compra_id)
         conexion.commit()
         return compra_id
     finally:
@@ -9379,7 +9390,7 @@ SECTORES_DE_LA_DEVOLUCION = ("deposito", "administracion")
 
 def crear_devolucion_deposito(compra_id: int, cantidad: float, motivo: str, fecha_operacion,
                               fotos_pesada: tuple[str, ...] | list[str] = (), *,
-                              cargada_desde: str) -> int:
+                              cargada_desde: str, retroactivo_quien: str | None = None) -> int:
     """Lo que queda en el piso y se le devuelve al proveedor (dueño, 30/09). Devuelve el id.
 
     Un movimiento `devolucion_deposito` con la cantidad NEGATIVA —sale del
@@ -9424,6 +9435,9 @@ def crear_devolucion_deposito(compra_id: int, cantidad: float, motivo: str, fech
                  cargada_desde),
             )
             (movimiento_id,) = cursor.fetchone()
+            if retroactivo_quien is not None:
+                _registrar_retroactivo(cursor, "devolucion", fecha_operacion, retroactivo_quien,
+                                       movimiento_id=movimiento_id)
             # CON movimiento_id: es la foto de ESTA devolución, no una pesada.
             # El detalle de la compra no ofrece borrarla y borrar_foto_recepcion
             # la rechaza (dueño, 30/09): es respaldo, no un error de carga.
@@ -12488,8 +12502,12 @@ def crear_movimiento_stock(
     ficha_id: int | None = None,
     proveedor_devolucion_id: int | None = None,
     compra_devolucion_id: int | None = None,
+    retroactivo_quien: str | None = None,
 ) -> float:
     """Un movimiento de stock (ajuste/merma/reingreso): fila nueva, NUNCA pisa el stock. Devuelve el stock resultante.
+
+    `retroactivo_quien`: cargado CON FECHA ANTERIOR desde Administración
+    (dueño, 05/10). Queda en `retroactivos` en la MISMA transacción.
 
     Guarda la foto del sistema del momento (stock_sistema, SIN este
     movimiento) — igual que ajustes_vacios: sin ese rastro, cualquier
@@ -12571,11 +12589,15 @@ def crear_movimiento_stock(
                  pedido_renglon_id, costo_por_bulto, destino_rechazo, bultos_segunda,
                  lote_tipo, lote_origen_id, ficha_id, proveedor_devolucion_id, compra_devolucion_id),
             )
-            if foto_ruta:
-                # RETURNING y no currval(pg_get_serial_sequence(...)): el
-                # segundo también anda, pero se apoya en cómo se llama la
-                # secuencia y no se puede leer de un vistazo.
+            # RETURNING y no currval(pg_get_serial_sequence(...)): el segundo
+            # también anda, pero se apoya en cómo se llama la secuencia y no
+            # se puede leer de un vistazo. Se lee solo si alguien lo necesita.
+            if foto_ruta or retroactivo_quien is not None:
                 (movimiento_id,) = cursor.fetchone()
+            if retroactivo_quien is not None:
+                _registrar_retroactivo(cursor, tipo, fecha_operacion, retroactivo_quien,
+                                       movimiento_id=movimiento_id)
+            if foto_ruta:
                 cursor.execute(
                     "INSERT INTO fotos_merma (movimiento_id, foto_ruta) VALUES (%s, %s)",
                     (movimiento_id, foto_ruta),
@@ -20626,3 +20648,194 @@ def flete_por_dia_y_sucursal(cliente_id: int, desde: date, hasta: date, empresa:
             return _filas_como_dicts(cursor)
     finally:
         conexion.close()
+
+
+# ============================================================================
+# RETROACTIVO DESDE ADMINISTRACIÓN (dueño, 05/10)
+#
+# Ingreso, devolución al proveedor, merma y pase a segunda con FECHA ANTERIOR.
+# Detrás de una CONTRASEÑA ESPECIAL (distinta de la de Administración, se fija
+# y se cambia desde Gerencia, se pide cada vez) y solo si esa mercadería no la
+# tomó ya un armado o una guía R. Lo cargado queda en `retroactivos`: quién y
+# cuándo. Depósito ya no elige fecha: carga siempre con la de hoy.
+# ============================================================================
+
+CLAVE_DEL_RETROACTIVO = "retroactivo"
+_ITERACIONES_DE_LA_CLAVE = 200_000
+
+
+def _hash_de_clave(clave: str, sal: str) -> str:
+    import hashlib
+    return hashlib.pbkdf2_hmac("sha256", clave.encode("utf-8"), bytes.fromhex(sal),
+                               _ITERACIONES_DE_LA_CLAVE).hex()
+
+
+def fijar_clave_especial(clave: str, nombre: str = CLAVE_DEL_RETROACTIVO) -> None:
+    """Fija o cambia la contraseña especial. Se guarda SOLO su hash con sal."""
+    import secrets
+    if len((clave or "").strip()) < 6:
+        raise ValueError("La contraseña especial tiene que tener al menos 6 caracteres.")
+    sal = secrets.token_hex(16)
+    conexion = obtener_conexion()
+    try:
+        with conexion.cursor() as cursor:
+            cursor.execute(
+                """
+                INSERT INTO claves_especiales (nombre, sal, hash) VALUES (%s, %s, %s)
+                ON CONFLICT (nombre) DO UPDATE SET sal = EXCLUDED.sal, hash = EXCLUDED.hash,
+                                                    cambiada_el = now()
+                """,
+                (nombre, sal, _hash_de_clave(clave, sal)),
+            )
+        conexion.commit()
+    finally:
+        conexion.close()
+
+
+def clave_especial(nombre: str = CLAVE_DEL_RETROACTIVO) -> dict | None:
+    """{"cambiada_el"} si está fijada, None si Gerencia todavía no la fijó. Nunca devuelve el hash."""
+    conexion = obtener_conexion()
+    try:
+        with conexion.cursor() as cursor:
+            cursor.execute("SELECT cambiada_el FROM claves_especiales WHERE nombre = %s", (nombre,))
+            fila = cursor.fetchone()
+        return {"cambiada_el": fila[0]} if fila else None
+    finally:
+        conexion.close()
+
+
+def clave_especial_correcta(clave: str, nombre: str = CLAVE_DEL_RETROACTIVO) -> bool | None:
+    """True/False según la contraseña; None si Gerencia todavía no la fijó."""
+    import hmac
+    conexion = obtener_conexion()
+    try:
+        with conexion.cursor() as cursor:
+            cursor.execute("SELECT sal, hash FROM claves_especiales WHERE nombre = %s", (nombre,))
+            fila = cursor.fetchone()
+    finally:
+        conexion.close()
+    if fila is None:
+        return None
+    sal, guardado = fila
+    return hmac.compare_digest(_hash_de_clave(clave or "", sal), guardado)
+
+
+def _registrar_retroactivo(cursor, tipo: str, fecha_del_hecho, quien: str, *,
+                           compra_id: int | None = None, movimiento_id: int | None = None) -> None:
+    quien = " ".join((quien or "").split())
+    if not quien:
+        raise ValueError("Falta quién lo carga.")
+    cursor.execute(
+        "INSERT INTO retroactivos (tipo, fecha_del_hecho, quien, compra_id, movimiento_id) "
+        "VALUES (%s, %s, %s, %s, %s)",
+        (tipo, fecha_del_hecho, quien, compra_id, movimiento_id),
+    )
+
+
+def listar_retroactivos(limite: int = 50) -> list[dict]:
+    """Lo último cargado con fecha anterior: qué, de qué día, quién y cuándo."""
+    conexion = obtener_conexion()
+    try:
+        with conexion.cursor() as cursor:
+            cursor.execute(
+                """
+                SELECT rt.id, rt.tipo, rt.fecha_del_hecho, rt.quien, rt.cargado_el,
+                       rt.compra_id, rt.movimiento_id,
+                       a.nombre AS articulo_nombre,
+                       COALESCE(c.cantidad_cajones_real, ABS(m.cantidad)) AS bultos
+                FROM retroactivos rt
+                LEFT JOIN compras c ON c.id = rt.compra_id
+                LEFT JOIN movimientos_stock m ON m.id = rt.movimiento_id
+                LEFT JOIN articulos a ON a.id = COALESCE(c.articulo_id, m.articulo_id)
+                ORDER BY rt.cargado_el DESC, rt.id DESC
+                LIMIT %s
+                """,
+                (limite,),
+            )
+            return _filas_como_dicts(cursor)
+    finally:
+        conexion.close()
+
+
+def que_tomo_esa_mercaderia(articulo_id: int, salida: dict) -> list[str]:
+    """SOLO SI ESA MERCADERÍA NO SE USÓ (dueño, 05/10): qué armado o guía R ya
+    la tomó. Vacío = se puede cargar con esa fecha.
+
+    Se rejuega el FIFO del sistema dos veces —como está y con esta salida en
+    su fecha— y se mira cada armado y cada guía R POSTERIOR: si alguno cambia
+    de qué lote sale (o se queda sin lote), esa mercadería ya la había tomado
+    él. Y si la salida misma no encuentra lote, ese día no había esa
+    mercadería. No escribe nada.
+
+    `salida`: {"tipo", "cantidad" (bultos, positivo), "fecha", y opcionales
+    "ficha_id", "lote_tipo", "lote_origen_id"}, con la misma forma que una
+    fila de `_SQL_SALIDAS_STOCK`. Su momento es AHORA, igual que el
+    `creado_en` del movimiento que se va a insertar.
+    """
+    from core.costo_real import atribuir_costos_fifo
+
+    ahora = datetime.now(timezone.utc)
+    nueva = {
+        "fecha_orden": salida["fecha"], "momento_orden": ahora, "tipo": salida["tipo"],
+        "fecha": salida["fecha"], "cantidad": float(salida["cantidad"]), "de_segunda": 0,
+        "unidades": None, "cliente_id": None, "motivo": None, "bultos_segunda": None,
+        "lote_tipo": salida.get("lote_tipo"), "lote_origen_id": salida.get("lote_origen_id"),
+        "ficha_id": salida.get("ficha_id"), "ficha_con_envase": False, "en_su_envase": False,
+        "renglon_id": None, "orden": (salida["fecha"], ahora), "_la_nueva": True,
+    }
+    conexion = obtener_conexion()
+    try:
+        with conexion.cursor() as cursor:
+            entradas, salidas = _entradas_y_salidas_stock(cursor, articulo_id)
+            if salida["fecha"] <= _fecha_corte(cursor):
+                return ["Esa fecha es del corte del modelo o anterior: el sistema no tiene ese stock."]
+
+            def clave(s):
+                return (s["tipo"], s.get("renglon_id"), s["momento_orden"])
+
+            def huella(s):
+                return (round(float(s.get("bultos_sin_costo") or 0), 4),
+                        sorted((c["tipo_lote"], c["origen_id"], round(float(c["bultos"]), 4))
+                               for c in s["consumos_lotes"]))
+
+            # La salida DIRIGIDA a un lote (la devolución va a su compra; la
+            # merma puede elegir uno) no puede salir de un lote que ese día
+            # todavía no había entrado: el FIFO se la daría igual.
+            if salida.get("lote_tipo") is not None:
+                lote = next((e for e in entradas if e["tipo_lote"] == salida["lote_tipo"]
+                             and e["origen_id"] == salida.get("lote_origen_id")), None)
+                if lote is not None and lote["fecha_orden"] > salida["fecha"]:
+                    return [f"El {salida['fecha']:%d/%m} no había esa mercadería en el depósito."]
+
+            antes = {clave(s): huella(s) for s in atribuir_costos_fifo(entradas, [dict(x) for x in salidas])}
+            con_la_nueva = sorted([dict(x) for x in salidas] + [nueva], key=lambda s: s["orden"])
+            despues = atribuir_costos_fifo(entradas, con_la_nueva)
+
+            motivos = []
+            for s in despues:
+                if s.get("_la_nueva"):
+                    if float(s.get("bultos_sin_costo") or 0) > 0:
+                        motivos.append(f"El {salida['fecha']:%d/%m} no había esa mercadería en el depósito.")
+                    continue
+                if s["tipo"] not in ("armado", "reproceso_toma") or s["orden"] <= nueva["orden"]:
+                    continue
+                if antes.get(clave(s)) != huella(s):
+                    motivos.append(_quien_la_tomo(cursor, articulo_id, s))
+            return motivos
+    finally:
+        conexion.close()
+
+
+def _quien_la_tomo(cursor, articulo_id: int, salida: dict) -> str:
+    if salida["tipo"] == "armado":
+        cursor.execute(
+            "SELECT cl.nombre FROM pedidos_renglones r JOIN pedidos p ON p.id = r.pedido_id "
+            "JOIN clientes cl ON cl.id = p.cliente_id WHERE r.id = %s", (salida["renglon_id"],))
+        fila = cursor.fetchone()
+        cliente = fila[0] if fila else "un cliente"
+        return f"La tomó el armado del pedido de {cliente} del {salida['fecha']:%d/%m}."
+    cursor.execute("SELECT id FROM reprocesos WHERE articulo_id = %s AND creado_en = %s "
+                   "AND anulado_el IS NULL", (articulo_id, salida["momento_orden"]))
+    fila = cursor.fetchone()
+    numero = f" R{fila[0]}" if fila else " R"
+    return f"La tomó la guía{numero} del {salida['fecha']:%d/%m}."

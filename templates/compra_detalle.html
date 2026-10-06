@@ -191,7 +191,7 @@
        tres meses viene a mirar justamente estas fechas. #}
     <p class="cargada-retroactiva">⚠ <strong>Cargada con fecha anterior.</strong>
       Entró al stock el {{ compra.procesada_el|fecha_corta }} y se cargó recién el
-      {{ compra.cargado_el|fecha_corta }}, desde Gerencia → Ingreso con fecha anterior.
+      {{ compra.cargado_el|fecha_corta }}, {% if compra.retroactivo_quien %}desde Administración → Con fecha anterior, por {{ compra.retroactivo_quien }}{% else %}desde Gerencia → Ingreso con fecha anterior{% endif %}.
       Es mercadería que ya estaba en el galpón y nunca se había cargado.</p>
     {% endif %}
   </div>

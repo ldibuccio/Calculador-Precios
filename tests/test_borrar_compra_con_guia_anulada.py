@@ -248,6 +248,7 @@ FK_A_COMPRAS_DECIDIDAS = {
     ("reprocesos", "compra_origen_id"): "frena siempre, viva o anulada: el CHECK no la deja en NULL",
     ("vacios_deposito_devoluciones", "compra_id"): "frena y la nombra",
     ("movimientos_stock", "compra_devolucion_id"): "frena y la nombra",
+    ("retroactivos", "compra_id"): "on delete cascade: el registro del ingreso con fecha anterior se va con la compra",
 }
 
 

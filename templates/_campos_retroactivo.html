@@ -1,0 +1,17 @@
+{#- CON FECHA ANTERIOR, desde Administración (dueño, 05/10): el día, quién lo
+    carga y la contraseña especial que fija Gerencia, que se pide CADA VEZ. Lo
+    usan la merma, el pase a segunda y la devolución al proveedor; el ingreso
+    ya tenía su fecha y usa solo `quien_y_clave`. -#}
+{% macro quien_y_clave(precarga) %}
+  <label for="quien">¿Quién lo carga?</label>
+  <input type="text" id="quien" name="quien" required maxlength="80"
+         placeholder="Ej.: Marta" value="{{ precarga.quien or '' }}">
+  <label for="clave_especial">Contraseña especial</label>
+  <input type="password" id="clave_especial" name="clave_especial" required autocomplete="new-password">
+{% endmacro %}
+
+{% macro campos(etiqueta_fecha, precarga, ayer) %}
+  <label for="fecha">{{ etiqueta_fecha }}</label>
+  <input type="date" id="fecha" name="fecha" required max="{{ ayer }}" value="{{ precarga.fecha or '' }}">
+  {{ quien_y_clave(precarga) }}
+{% endmacro %}

@@ -1,0 +1,72 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Con fecha anterior</title>
+<style>
+  :root { font-family: -apple-system, system-ui, sans-serif; }
+  body { margin: 0; padding: 1rem; background: #f5f5f5; color: #222; }
+  .tarjeta {
+    background: #fff; border-radius: 10px; padding: 1rem; margin-bottom: 1rem;
+    box-shadow: 0 1px 3px rgba(0, 0, 0, 0.1); overflow-wrap: anywhere;
+  }
+  h2 { font-size: 1.05rem; margin: 0 0 0.6rem; }
+  .boton {
+    display: flex; align-items: center; gap: 0.6rem; min-height: 52px; padding: 0.7rem 0.9rem;
+    margin-top: 0.6rem; border-radius: 10px; background: #eff6ff; color: #1e3a8a;
+    text-decoration: none; font-weight: 600; box-sizing: border-box;
+  }
+  .boton svg { width: 1.5rem; height: 1.5rem; flex: none; }
+  .ojo { background: #fef3c7; color: #78350f; padding: 0.75rem 1rem; border-radius: 8px; margin: 0 0 1rem; }
+  .ayuda { color: #555; font-size: 0.9rem; margin: 0; }
+  .registro { list-style: none; margin: 0; padding: 0; }
+  .registro li { padding: 0.55rem 0; border-top: 1px solid #eee; }
+  .registro li:first-child { border-top: none; }
+  .registro .que { font-weight: 700; display: block; }
+  .registro .detalle { color: #555; font-size: 0.9rem; display: block; }
+  .vacio { color: #666; font-style: italic; }
+</style>
+</head>
+<body>
+  {% set barra_sector = "administracion" %}
+  {% set barra_titulo = "Con fecha anterior" %}
+  {% set barra_atras = "/administracion" %}
+  {% from "_info.html" import info %}
+  {% include "_barra_navegacion.html" %}
+
+  {# CON FECHA ANTERIOR (dueño, 05/10): lo que pasó un día y no se cargó.
+     Cada carga pide el día, quién lo carga y la contraseña especial que fija
+     Gerencia. Lo de hoy se carga desde Depósito. #}
+  {% if not clave_fijada %}
+  <p class="ojo">Gerencia todavía no fijó la contraseña especial: hasta entonces no se puede cargar nada con fecha anterior.</p>
+  {% endif %}
+
+  <div class="tarjeta">
+    <h2>¿Qué pasó y no se cargó?</h2>
+    <p class="ayuda">Cada una pide el día, quién lo carga y la contraseña especial. {% call info("Cuándo no deja") %}Una devolución, una merma o un pase con fecha anterior sacan mercadería de ese día. Si un armado o una guía R posterior ya tomó esa mercadería, la pantalla dice cuál y no deja cargarlo hasta que eso se elimine.{% endcall %}</p>
+    <a class="boton" href="/administracion/retroactivo/ingreso">{{ ICONOS_HUBS['fecha_anterior']|safe }}<span>Ingreso con fecha anterior</span></a>
+    <a class="boton" href="/administracion/retroactivo/devolver">{{ ICONOS_HUBS['devolver']|safe }}<span>Devolución al proveedor</span></a>
+    <a class="boton" href="/administracion/retroactivo/merma">{{ ICONOS_HUBS['perdidas']|safe }}<span>Merma</span></a>
+    <a class="boton" href="/administracion/retroactivo/pase-a-segunda">{{ ICONOS_HUBS['movimientos']|safe }}<span>Pase a segunda</span></a>
+  </div>
+
+  <div class="tarjeta">
+    <h2>Lo cargado con fecha anterior</h2>
+    {% if registro %}
+    <ul class="registro">
+      {% for r in registro %}
+      <li>
+        <span class="que">{{ r.que }} del {{ r.fecha_del_hecho.strftime("%d/%m/%Y") }}{% if r.articulo_nombre %} · {{ r.articulo_nombre }}{% endif %}{% if r.bultos is not none %} · {{ r.bultos|numero }} bultos{% endif %}</span>
+        <span class="detalle">Cargado por {{ r.quien }} el {{ r.cuando }}</span>
+      </li>
+      {% endfor %}
+    </ul>
+    {% else %}
+    <p class="vacio">Todavía no se cargó nada con fecha anterior.</p>
+    {% endif %}
+  </div>
+
+{% include "_pie_version.html" %}
+</body>
+</html>

@@ -170,9 +170,12 @@
 </style>
 </head>
 <body>
-  {% set barra_sector = "deposito" %}
-  {% set barra_titulo = "Merma" %}
-  {% set barra_atras = "/deposito" %}
+  {# DEPÓSITO CARGA CON LA FECHA DE HOY; Administración, con fecha anterior y
+     la contraseña especial (dueño, 05/10). El camino sale del prefijo. #}
+  {% import "_campos_retroactivo.html" as retroactivo %}
+  {% set barra_sector = camino.sector %}
+  {% set barra_titulo = "Merma con fecha anterior" if camino.retro else "Merma" %}
+  {% set barra_atras = camino.atras %}
   {% from "_info.html" import info %}
   {% include "_barra_navegacion.html" %}
 
@@ -189,7 +192,7 @@
   <div class="tarjeta">
     {# El artículo se elige aparte y recarga: con el artículo el server
        sabe qué lotes tiene y recién ahí puede ofrecerlos. #}
-    <form method="get" action="/deposito/stock/merma">
+    <form method="get" action="{{ camino.base }}/merma">
       <label for="articulo_id">Artículo</label>
       <select id="articulo_id" name="articulo_id" required onchange="this.form.submit()">
         <option value="" {% if not articulo_elegido %}selected{% endif %} disabled>Elegí un artículo...</option>
@@ -200,7 +203,7 @@
     </form>
 
     {% if articulo_elegido %}
-    <form method="post" action="/deposito/stock/merma" enctype="multipart/form-data">
+    <form method="post" action="{{ camino.base }}/merma" enctype="multipart/form-data">
       <input type="hidden" name="articulo_id" value="{{ articulo_elegido.id }}">
 
       {# LAS TRES PORCIONES, en el mismo orden que el Stock Físico: los
@@ -218,9 +221,11 @@
                  {% if precarga.que_merma == "sueltos" or not precarga.que_merma %}checked{% endif %}>
           <label for="qm-sueltos">Bultos sueltos<span class="detalle">sin procesar</span></label>
 
+          {% if not camino.retro %}
           <input type="radio" id="qm-segunda" name="que_merma" value="segunda"
                  {% if precarga.que_merma == "segunda" %}checked{% endif %}>
           <label for="qm-segunda">Segunda<span class="detalle">del pool</span></label>
+          {% endif %}
 
           {% for ficha in fichas_por_articulo.get(articulo_elegido.id|string, []) %}
           <input type="radio" id="qm-{{ ficha.id }}" name="que_merma" value="{{ ficha.id }}"
@@ -246,9 +251,9 @@
         {% endfor %}
       </select>
 
-      <label for="fecha">Día en que se tiró</label>
-      <input type="date" id="fecha" name="fecha" max="{{ hoy }}"
-             value="{{ precarga.fecha or hoy }}">
+      {% if camino.retro %}
+      {{ retroactivo.campos("¿Qué día se tiró?", precarga, ayer) }}
+      {% endif %}
 
       {# EL LOTE, y SOLO para los sueltos: las cajas de una ficha y el pool
          de segunda no tienen lotes que elegir. Es OPCIONAL y arranca en el

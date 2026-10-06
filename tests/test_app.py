@@ -22154,7 +22154,7 @@ def test_merma_guarda_negativa_y_el_aviso_no_muestra_el_stock():
     # "sueltos" es la porción por default.
     mock_crear.assert_called_once_with(
         1, "merma", -3.0, "podrido", date(2026, 9, 9), lote_tipo=None, lote_origen_id=None,
-        foto_ruta=None, ficha_id=None,
+        foto_ruta=None, ficha_id=None, retroactivo_quien=None,
     )
     mock_seg.assert_not_called()
     # Pantalla de OPERARIO: el aviso repite lo cargado, JAMÁS el stock.
@@ -22715,7 +22715,7 @@ def test_merma_dirigida_a_un_lote_guarda_el_lote_y_lo_dice_en_el_aviso():
     assert respuesta.status_code == 303
     mock_crear.assert_called_once_with(
         2, "merma", -10.0, "podrido", date(2026, 8, 26),
-        lote_tipo="reproceso", lote_origen_id=9, foto_ruta=None, ficha_id=None,
+        lote_tipo="reproceso", lote_origen_id=9, foto_ruta=None, ficha_id=None, retroactivo_quien=None,
     )
     assert "Salieron+de%3A+Gu%C3%ADa+R9+armada+para+D%C3%ADa" in respuesta.headers["location"]
 

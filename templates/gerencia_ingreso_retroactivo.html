@@ -43,9 +43,12 @@
 </style>
 </head>
 <body>
-  {% set barra_sector = "gerencia" %}
+  {# DOS PUERTAS (dueño, 05/10): Gerencia con su clave, y Administración con
+     la contraseña especial y quién lo carga. El camino sale del prefijo. #}
+  {% import "_campos_retroactivo.html" as retroactivo %}
+  {% set barra_sector = camino.sector %}
   {% set barra_titulo = "Ingreso con fecha anterior" %}
-  {% set barra_atras = "/gerencia" %}
+  {% set barra_atras = camino.atras %}
   {% from "_info.html" import info %}
   {% include "_barra_navegacion.html" %}
 
@@ -60,7 +63,7 @@
       Si la mercadería está entrando ahora, esto no va: usá
       <strong>Depósito → Ingresar</strong>.</p>
 
-    <form method="post" action="/gerencia/compras/ingreso-retroactivo" data-unidad-al-lado>
+    <form method="post" action="{{ camino.accion }}" data-unidad-al-lado>
       <label for="proveedor">Proveedor</label>
       <select id="proveedor" name="proveedor_id" required>
         <option value="" {% if not precarga.proveedor_id %}selected{% endif %} disabled>Elegí el proveedor...</option>
@@ -128,11 +131,15 @@
         <strong>Vacío</strong> es otra cosa: que el precio todavía no se sabe, y la compra
         queda en la lista de pendientes de precio.</p>
 
+      {% if camino.retro %}
+      {{ retroactivo.quien_y_clave(precarga) }}
+      {% endif %}
+
       <button type="submit" class="boton-guardar">Cargar con esa fecha</button>
     </form>
   </div>
 
-  <a class="volver" href="/gerencia">Volver a Gerencia</a>
+  <a class="volver" href="{{ camino.atras }}">{% if camino.retro %}Volver a Con fecha anterior{% else %}Volver a Gerencia{% endif %}</a>
 {% include "_confirmar_vino_armada.html" %}
 {% include "_pie_version.html" %}
 <script>

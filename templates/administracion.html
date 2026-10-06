@@ -65,6 +65,9 @@
        cada devolución guarda desde qué sector se cargó. Va en Stock y no en
        Facturación: saca mercadería del piso. #}
     <a class="boton color-1" href="/administracion/devolver">{{ ICONOS_HUBS['devolver']|safe }}<span>Devolver mercadería</span></a>
+    {# CON FECHA ANTERIOR (dueño, 05/10): ingreso, devolución, merma y pase con
+       un día pasado, con la contraseña especial que fija Gerencia. #}
+    <a class="boton color-1" href="/administracion/retroactivo">{{ ICONOS_HUBS['fecha_anterior']|safe }}<span>Con fecha anterior</span></a>
   </div>
 
   <div class="tarjeta">

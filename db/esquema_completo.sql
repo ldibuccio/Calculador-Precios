@@ -2062,6 +2062,30 @@ create table remitos_fotos (
 create index remitos_fotos_por_remito on remitos_fotos (remito_id);
 comment on table remitos_fotos is 'Las fotos del remito FIRMADO que trae el camionero (una o mas, obligatorias al recibir). Bucket "comandas", prefijo "remitos".';
 
+-- RETROACTIVO DESDE ADMINISTRACION (dueño, 05/10): db/retroactivo_1.
+-- La contraseña especial (solo su hash con sal, se fija desde Gerencia) y el
+-- registro de lo cargado con fecha anterior: quién y cuándo.
+create table claves_especiales (
+    nombre text primary key check (nombre in ('retroactivo')),
+    sal text not null check (btrim(sal) <> ''),
+    hash text not null check (btrim(hash) <> ''),
+    cambiada_el timestamptz not null default now()
+);
+create table retroactivos (
+    id bigint generated always as identity primary key,
+    tipo text not null check (tipo in ('ingreso', 'devolucion', 'merma', 'pase_a_segunda')),
+    fecha_del_hecho date not null,
+    quien text not null check (btrim(quien) <> ''),
+    cargado_el timestamptz not null default now(),
+    -- Si se elimina la compra, su registro se va con ella: no queda nada a
+    -- qué apuntar. Los movimientos no se borran nunca (se anulan).
+    compra_id bigint references compras (id) on delete cascade,
+    movimiento_id bigint references movimientos_stock (id),
+    constraint retroactivos_a_que_apunta check (
+        (tipo = 'ingreso' and compra_id is not null and movimiento_id is null)
+        or (tipo <> 'ingreso' and movimiento_id is not null and compra_id is null))
+);
+
 -- TAREAS (dueño, 02/10): db/tareas_1 a _3.
 create table tareas (
   id bigint generated always as identity primary key,
