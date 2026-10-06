@@ -395,3 +395,16 @@ PALMALA   remitos_fotos_1_quien · columna 1 · checks 1 · fotos 1 · de_admini
 ```
 
 Las fotos que había entraron todas por Recibir: quedaron de Administración.
+
+## 06/10 — `retroactivo_1_clave_y_registro`: contraseña especial y registro de lo cargado con fecha anterior (pedido 7, PR #124)
+
+Corrido por Lionel en las dos bases ANTES del merge. Verificado por mí por
+el conector "Supabase Lectura" el 06/10 a las 10:17 UTC:
+
+```
+FRUTAMAX  retroactivo_1_clave_y_registro · tablas 2 · checks 1 · claves 0 · registrados 0 · testigo_compras 879
+PALMALA   retroactivo_1_clave_y_registro · tablas 2 · checks 1 · claves 0 · registrados 0 · testigo_compras 798
+```
+
+Sin contraseña fijada todavía: hasta que Gerencia la fije, Administración no
+puede cargar nada con fecha anterior.
