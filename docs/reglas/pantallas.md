@@ -276,8 +276,9 @@ El dueño eligió "un color por recuadro" y no "un color por lo que hace".
   Gerencia. Sistema desapareció (`docs/modulos/pedidos.md`).
 - **Comercial** tiene cuatro botones (Alertas, Precios, Clientes, Fichas
   logísticas): Envases se fue a Cajas de Administración. **Precios** tiene
-  cuatro (Cargar precios —primero desde el 07/10—, Consultar, Precios por
-  Período y Márgenes por Artículo); los dos "Próximamente" salieron y sus
+  cinco (Cargar precios —primero desde el 07/10—, Consultar, Precios por
+  Período, Márgenes por Artículo y Precios Cotizaciones, sumado el 07/10, ver
+  `docs/modulos/fichas_y_precios.md`); los dos "Próximamente" salieron y sus
   direcciones siguen abriendo. Adentro de Cargar precios, en este orden:
   "Cargar precios manuales" y "Cargar precios por foto", con el mismo
   nombre en el título de cada pantalla.

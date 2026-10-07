@@ -2066,6 +2066,10 @@ def listar_compras_para_costeo(fecha_desde, fecha_hasta) -> list[dict]:
     diga Logística NO cuenta: un retiro cancelado (estado_retiro =
     'cancelado') no saca la compra del cálculo, porque el retiro no es
     el dato real — el dato real es lo que Depósito recibió o no recibió.
+
+    `compra_id` y `proveedor_nombre` no entran en ninguna cuenta: son para
+    decir DE QUÉ COMPRAS sale el costo (Precios Cotizaciones, 07/10). El JOIN a
+    proveedores no cambia las filas: `compras.proveedor_id` es NOT NULL.
     """
     conexion = obtener_conexion()
     try:
@@ -2073,6 +2077,7 @@ def listar_compras_para_costeo(fecha_desde, fecha_hasta) -> list[dict]:
             cursor.execute(
                 """
                 SELECT c.articulo_id, a.nombre AS articulo_nombre, c.fecha_operacion,
+                       c.id AS compra_id, p.nombre AS proveedor_nombre,
                        COALESCE(c.cantidad_cajones_real, c.cantidad_cajones) AS cantidad_cajones,
                        COALESCE(c.contenido_por_cajon_real, c.contenido_por_cajon) AS contenido_por_cajon,
                        COALESCE(c.cantidad_kilos_real, c.cantidad_kilos) AS cantidad_kilos,
@@ -2080,6 +2085,7 @@ def listar_compras_para_costeo(fecha_desde, fecha_hasta) -> list[dict]:
                        c.importe, c.cargado_el
                 FROM compras c
                 JOIN articulos a ON a.id = c.articulo_id
+                JOIN proveedores p ON p.id = c.proveedor_id
                 WHERE c.fecha_operacion BETWEEN %s AND %s
                   AND c.estado IS DISTINCT FROM 'rechazado'
                   AND c.estado IS DISTINCT FROM 'no_ingresado'

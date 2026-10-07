@@ -228,6 +228,35 @@ def _costear_compras(compras: list[dict], magnitud: str) -> tuple[float | None, 
     return plata_total / cantidad_total, cantidad_total, sin_precio, sin_la_magnitud
 
 
+def _compras_del_costo(compras: list[dict], magnitud: str | None) -> list[dict]:
+    """Las compras de la ventana, cada una con si ENTRÓ al costo y por qué no.
+
+    Mismo criterio que `_costear_compras`, en el mismo orden: sin importe no
+    entra, sin la magnitud de la ficha tampoco. Sin magnitud (la ficha vende
+    en una unidad que el artículo no declara) no entra ninguna.
+    """
+    filas = []
+    for compra in sorted(compras, key=lambda c: (c["fecha_operacion"], c.get("compra_id") or 0)):
+        if magnitud is None:
+            motivo = "la ficha vende en otra unidad"
+        elif compra["importe"] is None:
+            motivo = "sin precio de compra"
+        elif total_de_la_compra(compra, magnitud) is None:
+            motivo = "no declaró esa cantidad"
+        else:
+            motivo = None
+        filas.append({
+            "compra_id": compra.get("compra_id"),
+            "fecha_operacion": compra["fecha_operacion"],
+            "proveedor_nombre": compra.get("proveedor_nombre"),
+            "importe": float(compra["importe"]) if compra["importe"] is not None else None,
+            "cantidad_cajones": float(compra["cantidad_cajones"]) if compra["cantidad_cajones"] is not None else None,
+            "entra": motivo is None,
+            "motivo": motivo,
+        })
+    return filas
+
+
 def _contenido_por_cajon_de(compra: dict, magnitud: str) -> float | None:
     """Cuánto trae UN cajón de esta compra, en la magnitud pedida.
 
@@ -805,6 +834,11 @@ def _listado_para_negociar_precios(
                 # ES costo_actual, exacto (ver _promedios_por_cajon).
                 "importe_por_cajon": importe_por_cajon,
                 "contenido_por_cajon": contenido_por_cajon,
+                # DE QUÉ COMPRAS SALE el costo (Precios Cotizaciones, 07/10):
+                # la MISMA ventana que costeó `_costear_compras`, con la
+                # marca de cuáles entraron. No es otra cuenta: es la lista
+                # que la cuenta de arriba ya recorrió.
+                "compras_del_costo": _compras_del_costo(compras_ventana1, magnitud),
             }
         )
 
@@ -1204,3 +1238,58 @@ def calcular_precio_sugerido_desglosado(
         "entra_bulto": entra_bulto,
         "utilidad_aproximada": utilidad_aproximada,
     }
+
+
+DIAS_SIN_COMPRAS_TEXTO = f"sin compras en los últimos {LIMITE_APARICION_DIAS} días"
+
+
+def calcular_precios_sugeridos(cliente_id: int, momento_referencia: datetime | None = None) -> list[dict]:
+    """PRECIOS COTIZACIONES de TODAS las fichas del cliente (dueño, 07/10).
+
+    Para un cliente nuevo, con condiciones y fichas pero sin ninguna venta.
+    La cuenta NO es nueva: es `calcular_listado_para_negociar_precios`, la
+    misma de Márgenes y de Cargar precios manuales (costo de las compras de
+    la ventana, envase de la ficha, condiciones del cliente). Esa cuenta no
+    mira ventas: arranca de las fichas y de las compras de todos.
+
+    Lo único que agrega es lo que esa cuenta deja afuera: la ficha cuyo
+    artículo no tuvo compras en los últimos 15 días no aparece allá, y acá
+    sale igual, "sin costo" y diciendo por qué, en vez de desaparecer.
+
+    Cada fila: ficha_id, ficha_nombre, articulo_nombre, unidad_venta,
+    costo_actual, costo_envase_unidad_venta, precio_sugerido,
+    fecha_ultima_compra, compras_del_costo, y `sin_costo` / `sin_sugerido`:
+    el motivo en palabras, o None.
+    """
+    fichas = listar_fichas_por_cliente(cliente_id)
+    listado = {fila["ficha_id"]: fila for fila in calcular_listado_para_negociar_precios(cliente_id, momento_referencia)}
+
+    filas = []
+    for ficha in fichas:
+        nombre = (ficha.get("nombre_cliente") or "").strip() or ficha["articulo_nombre"]
+        fila = listado.get(ficha["id"])
+        if fila is None:
+            filas.append({
+                "ficha_id": ficha["id"], "ficha_nombre": nombre, "articulo_nombre": ficha["articulo_nombre"],
+                "unidad_venta": ficha["unidad_venta"], "costo_actual": None, "costo_envase_unidad_venta": None,
+                "precio_sugerido": None, "fecha_ultima_compra": None, "compras_del_costo": [],
+                "sin_costo": DIAS_SIN_COMPRAS_TEXTO, "sin_sugerido": None,
+            })
+            continue
+        sin_costo = None
+        if fila["costo_actual"] is None:
+            sin_costo = (f"la ficha vende por {fila['unidad_venta']} y el artículo no lo declara"
+                         if fila["sin_conversion_de_unidad"]
+                         else f"ninguna compra del {fila['fecha_ultima_compra'].strftime('%d/%m')} sirve para el costo")
+        sin_sugerido = None
+        if sin_costo is None and fila["precio_sugerido"] is None:
+            sin_sugerido = "el cliente no tiene utilidad cargada"
+        filas.append({
+            "ficha_id": ficha["id"], "ficha_nombre": nombre, "articulo_nombre": ficha["articulo_nombre"],
+            "unidad_venta": ficha["unidad_venta"], "costo_actual": fila["costo_actual"],
+            "costo_envase_unidad_venta": fila["costo_envase_unidad_venta"],
+            "precio_sugerido": fila["precio_sugerido"], "fecha_ultima_compra": fila["fecha_ultima_compra"],
+            "compras_del_costo": fila["compras_del_costo"], "sin_costo": sin_costo, "sin_sugerido": sin_sugerido,
+        })
+    filas.sort(key=lambda f: (f["ficha_nombre"].lower(), f["ficha_id"]))
+    return filas

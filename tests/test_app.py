@@ -8992,19 +8992,20 @@ def test_costeo_prueba_ya_no_existe():
 # --- /precios: botonera de Lista de Precios ---
 
 
-def test_ver_precios_muestra_la_botonera_con_los_cuatro_accesos_en_orden():
-    """Desde el 04/10 (dueño) son cuatro: Modificar y Carga foto van detrás de
-    "Cargar precios", y los dos "Próximamente" salieron."""
+def test_ver_precios_muestra_la_botonera_con_los_cinco_accesos_en_orden():
+    """Desde el 04/10 (dueño): Modificar y Carga foto van detrás de "Cargar
+    precios", y los dos "Próximamente" salieron. El 07/10 se sumó "Precios
+    Cotizaciones", al final."""
     respuesta = cliente.get("/precios")
 
     assert respuesta.status_code == 200
-    for href in ("/precios/consultar", "/precios/cargar-precios", "/precios/vigencias", "/negociar"):
+    for href in ("/precios/consultar", "/precios/cargar-precios", "/precios/vigencias", "/negociar", "/precios/cotizaciones"):
         assert f'href="{href}"' in respuesta.text, href
     assert "Cargar Precios Nuevos" not in respuesta.text
     assert "Próximamente" not in respuesta.text
     assert 'href="/precios/resultado-negociacion"' not in respuesta.text
 
-    orden = ["Cargar precios", "Consultar Precios", "Precios por Período", "Márgenes por Artículo"]
+    orden = ["Cargar precios", "Consultar Precios", "Precios por Período", "Márgenes por Artículo", "Precios Cotizaciones"]
     marcado = respuesta.text.split("</style>")[-1]
     posiciones = [marcado.index(f"<span>{texto}</span>") for texto in orden]
     assert posiciones == sorted(posiciones)

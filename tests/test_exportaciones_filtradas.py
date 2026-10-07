@@ -93,6 +93,10 @@ EXPORTACIONES = {
     "/precios/cargar/guardar-y-exportar-excel": "lista entera, la pantalla no filtra",
     "/precios/cargar-foto/guardar-y-exportar-pdf": "lista entera, la pantalla no filtra",
     "/precios/cargar-foto/guardar-y-exportar-excel": "lista entera, la pantalla no filtra",
+    # Precios Cotizaciones (07/10): el único filtro es el cliente, y viaja en el
+    # mismo formulario que los precios; lo cuida tests/test_precios_cotizaciones.py.
+    "/precios/cotizaciones/exportar-pdf": "tests/test_precios_cotizaciones.py",
+    "/precios/cotizaciones/exportar-excel": "tests/test_precios_cotizaciones.py",
 }
 
 # Rutas que devuelven una imagen o un archivo subido, no una exportación.
