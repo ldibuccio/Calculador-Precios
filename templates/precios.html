@@ -32,12 +32,13 @@
   {% endif %}
 
   {# CUATRO BOTONES (dueño, 04/10; eran siete). Modificar y Carga foto son la
-     misma carga —a mano o desde un archivo— y van detrás de "Cargar precios".
+     misma carga —a mano o desde un archivo— y van detrás de "Cargar precios",
+     que es el PRIMER botón (dueño, 07/10).
      Salieron los dos "Próximamente", que no hacían nada: sus direcciones
      siguen abriendo el aviso de "en construcción". #}
   <div class="tarjeta">
-    <a class="boton color-1" href="/precios/consultar">{{ ICONOS_HUBS['consultar']|safe }}<span>Consultar Precios</span></a>
     <a class="boton color-1" href="/precios/cargar-precios">{{ ICONOS_HUBS['cargar_precios']|safe }}<span>Cargar precios</span></a>
+    <a class="boton color-1" href="/precios/consultar">{{ ICONOS_HUBS['consultar']|safe }}<span>Consultar Precios</span></a>
     <a class="boton color-1" href="/precios/vigencias">{{ ICONOS_HUBS['periodo']|safe }}<span>Precios por Período</span></a>
     <a class="boton color-1" href="/negociar">{{ ICONOS_HUBS['margenes']|safe }}<span>Márgenes por Artículo</span></a>
   </div>

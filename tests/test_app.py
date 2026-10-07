@@ -9004,14 +9004,16 @@ def test_ver_precios_muestra_la_botonera_con_los_cuatro_accesos_en_orden():
     assert "Próximamente" not in respuesta.text
     assert 'href="/precios/resultado-negociacion"' not in respuesta.text
 
-    orden = ["Consultar Precios", "Cargar precios", "Precios por Período", "Márgenes por Artículo"]
+    orden = ["Cargar precios", "Consultar Precios", "Precios por Período", "Márgenes por Artículo"]
     marcado = respuesta.text.split("</style>")[-1]
     posiciones = [marcado.index(f"<span>{texto}</span>") for texto in orden]
     assert posiciones == sorted(posiciones)
 
     cargar = cliente.get("/precios/cargar-precios").text
     assert cargar.index('href="/precios/cargar"') < cargar.index('href="/precios/cargar-foto"')
-    assert "<span>Modificar Precios</span>" in cargar and "<span>Carga Foto Precios</span>" in cargar
+    assert cargar.count("<span>Cargar precios manuales</span>") == 1
+    assert cargar.count("<span>Cargar precios por foto</span>") == 1
+    assert "Modificar Precios" not in cargar and "Carga Foto" not in cargar
 
 
 def test_ver_precios_guardado_muestra_mensaje_de_confirmacion():
