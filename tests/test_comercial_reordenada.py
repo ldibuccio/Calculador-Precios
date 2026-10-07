@@ -5,7 +5,8 @@
   precio de las cajas lo carga Administración. Su dirección vieja lleva allá
   y sus formularios viejos ya no escriben.
 - Precios: de siete botones a cuatro. Modificar y Carga foto quedaron detrás
-  de "Cargar precios"; los dos "Próximamente" salieron (no hacían nada).
+  de "Cargar precios"; los dos "Próximamente" salieron (no hacían nada). El
+  07/10 se sumó un quinto, "Precios Cotizaciones".
 - El estilo de Depósito: un dibujo en cada botón y un color por recuadro.
 """
 import os
@@ -26,7 +27,9 @@ _BOTON = re.compile(r'<a class="boton color-(\d)" href="([^"]*)"><svg [^>]*>.*?<
 # cuida tests/test_boton_alertas.py.
 COMERCIAL = [("1", "/precios", "Precios"), ("1", "/clientes", "Clientes"), ("1", "/fichas", "Fichas logísticas")]
 PRECIOS = [("1", "/precios/cargar-precios", "Cargar precios"), ("1", "/precios/consultar", "Consultar Precios"),
-           ("1", "/precios/vigencias", "Precios por Período"), ("1", "/negociar", "Márgenes por Artículo")]
+           ("1", "/precios/vigencias", "Precios por Período"), ("1", "/negociar", "Márgenes por Artículo"),
+           # Dueño, 07/10: el precio de cada ficha de un cliente nuevo.
+           ("1", "/precios/cotizaciones", "Precios Cotizaciones")]
 # Dueño, 07/10: Cargar precios primero; adentro, manuales y después por foto.
 CARGAR_PRECIOS = [("1", "/precios/cargar", "Cargar precios manuales"),
                   ("1", "/precios/cargar-foto", "Cargar precios por foto")]
@@ -58,7 +61,7 @@ def test_COMERCIAL_tiene_cuatro_botones_y_ya_no_Envases():
     assert 'href="/envases"' not in marcado
 
 
-def test_PRECIOS_tiene_cuatro_botones_y_CARGAR_PRECIOS_las_dos_formas():
+def test_PRECIOS_tiene_cinco_botones_y_CARGAR_PRECIOS_las_dos_formas():
     from fastapi.testclient import TestClient
     import app.main as m
     cliente = TestClient(m.app)

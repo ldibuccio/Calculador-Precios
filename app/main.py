@@ -49,9 +49,11 @@ from app.costeo import (
     calcular_listado_para_negociar_precios,
     calcular_listados_para_negociar_precios,
     calcular_objetivos_de_compra,
+    calcular_precios_sugeridos,
     magnitud_de_la_ficha,
     magnitud_del_articulo,
 )
+from core.exportar_precios_cotizaciones import generar_excel_precios_cotizaciones, generar_pdf_precios_cotizaciones
 # LAS TRES FUNCIONES DEL MOTOR, importadas directo y sin envolver. El
 # Análisis de Artículo no calcula ninguna rentabilidad propia: elige a cuál
 # de las tres llamar según qué campo se editó. La cuarta
@@ -9986,6 +9988,123 @@ def ver_objetivo_de_compra(request: Request, cliente_id: int | None = None):
             "utilidad_objetivo": objetivos["utilidad_objetivo"],
         },
     )
+
+
+def _condiciones_en_palabras(cliente_id: int) -> str:
+    """Las condiciones del cliente con que se calcula el sugerido, en una línea."""
+    conceptos = listar_conceptos_editables_por_cliente(cliente_id)
+    partes = []
+    if conceptos["utilidad_pct"] is not None:
+        partes.append(f"Utilidad {_formatear_porcentaje_simple(conceptos['utilidad_pct'])} sobre la mercadería")
+    else:
+        partes.append("Sin utilidad cargada")
+    partes += [f"{t['nombre']} +{_formatear_porcentaje_simple(t['valor_pct'])}" for t in conceptos["tasas_suma"]]
+    partes += [f"{t['nombre']} −{_formatear_porcentaje_simple(t['valor_pct'])}" for t in conceptos["tasas_resta"]]
+    return " · ".join(partes)
+
+
+def _formatear_porcentaje_simple(valor_pct: float) -> str:
+    return f"{valor_pct:g}".replace(".", ",") + "%"
+
+
+def _precio_tipeado(texto) -> float | None:
+    texto = str(texto or "").strip()
+    try:
+        return float(texto) if texto else None
+    except ValueError:
+        return None
+
+
+def _precios_cotizaciones_con_lo_tipeado(cliente_id: int, form=None) -> list[dict]:
+    """Las filas de `calcular_precios_sugeridos` con el precio de cada casillero.
+
+    Sin formulario (la pantalla recién abierta), el casillero es el sugerido
+    redondeado al peso. Con formulario (exportar), es lo que quedó tipeado:
+    el archivo sale con lo mismo que la pantalla, corregido o no.
+    """
+    filas = calcular_precios_sugeridos(cliente_id)
+    for fila in filas:
+        sugerido = round(fila["precio_sugerido"]) if fila["precio_sugerido"] is not None else None
+        precio = sugerido if form is None else _precio_tipeado(form.get(f"pendiente_precio_{fila['ficha_id']}"))
+        fila["precio"] = precio
+        fila["corregido"] = precio is not None and precio != sugerido
+    return filas
+
+
+def _cliente_de_cotizaciones(cliente_id) -> dict:
+    try:
+        clientes = listar_clientes()
+    except Exception as error_db:
+        raise HTTPException(status_code=500, detail=f"Error al conectar con la base de datos: {error_db}") from error_db
+    cliente = next((c for c in clientes if c["id"] == cliente_id), None)
+    if cliente is None:
+        raise HTTPException(status_code=404, detail="Cliente no encontrado")
+    return cliente
+
+
+@app.get("/precios/cotizaciones")
+def ver_precios_cotizaciones(request: Request, cliente_id: str | None = None, aviso: str | None = None):
+    """PRECIOS COTIZACIONES (dueño, 07/10): el precio de cada ficha de un cliente
+    nuevo, con el costo de lo que ya se compró. La cuenta es la de Márgenes
+    (ver `calcular_precios_sugeridos`)."""
+    cliente_id = _id_opcional_desde_query(cliente_id)
+    try:
+        clientes = listar_clientes()
+    except Exception as error_db:
+        raise HTTPException(status_code=500, detail=f"Error al conectar con la base de datos: {error_db}") from error_db
+    contexto = {"clientes": clientes, "cliente_id": cliente_id, "aviso": aviso, "filas": None}
+    if cliente_id is not None:
+        cliente = next((c for c in clientes if c["id"] == cliente_id), None)
+        if cliente is None:
+            raise HTTPException(status_code=404, detail="Cliente no encontrado")
+        contexto.update({
+            "cliente_nombre": cliente["nombre"],
+            "filas": _precios_cotizaciones_con_lo_tipeado(cliente_id),
+            "condiciones": _condiciones_en_palabras(cliente_id),
+            "fecha": _hoy_argentina().strftime("%d/%m/%Y"),
+        })
+    return templates.TemplateResponse(request, "precios_cotizaciones.html", contexto)
+
+
+async def _exportar_precios_cotizaciones(request: Request, formato: str):
+    form = await request.form()
+    cliente_id = _id_opcional_desde_query(form.get("cliente_id"))
+    cliente = _cliente_de_cotizaciones(cliente_id)
+    filas = _precios_cotizaciones_con_lo_tipeado(cliente_id, form)
+    a_mano = sum(1 for f in filas if f["corregido"])
+    encabezado = (f"Cliente: {cliente['nombre']} · {_hoy_argentina().strftime('%d/%m/%Y')} · "
+                  f"{a_mano} precio{'s' if a_mano != 1 else ''} corregido{'s' if a_mano != 1 else ''} a mano")
+    condiciones = _condiciones_en_palabras(cliente_id)
+    nombre = f"precios_cotizaciones_{cliente_id}_{_hoy_argentina().isoformat()}"
+    if formato == "pdf":
+        return Response(content=generar_pdf_precios_cotizaciones(encabezado, condiciones, filas),
+                        media_type="application/pdf",
+                        headers={"Content-Disposition": f'attachment; filename="{nombre}.pdf"'})
+    return Response(content=generar_excel_precios_cotizaciones(encabezado, condiciones, filas),
+                    media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                    headers={"Content-Disposition": f'attachment; filename="{nombre}.xlsx"'})
+
+
+@app.post("/precios/cotizaciones/exportar-pdf")
+async def exportar_precios_cotizaciones_pdf(request: Request):
+    return await _exportar_precios_cotizaciones(request, "pdf")
+
+
+@app.post("/precios/cotizaciones/exportar-excel")
+async def exportar_precios_cotizaciones_excel(request: Request):
+    return await _exportar_precios_cotizaciones(request, "excel")
+
+
+@app.post("/precios/cotizaciones/guardar")
+async def guardar_precios_cotizaciones(request: Request):
+    """"Guardar como precios del cliente": vigentes DESDE HOY, por el MISMO
+    camino que Cargar precios manuales (`_guardar_pendientes_carga_manual`):
+    misma validación, mismo historial, y solo se escribe lo que cambió."""
+    form = await request.form()
+    cliente, cambios = _guardar_pendientes_carga_manual(form)
+    aviso = f"Se guardaron {len(cambios)} precio{'s' if len(cambios) != 1 else ''} de {cliente['nombre']}, vigentes desde hoy."
+    return RedirectResponse(url=f"/precios/cotizaciones?{urlencode({'cliente_id': cliente['id'], 'aviso': aviso})}",
+                            status_code=303)
 
 
 @app.get("/negociar")

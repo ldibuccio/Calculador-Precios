@@ -1,0 +1,106 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Precios Cotizaciones</title>
+<style>
+  :root { font-family: -apple-system, system-ui, sans-serif; }
+  body { margin: 0; padding: 1rem; background: #f5f5f5; color: #222; }
+  .tarjeta {
+    background: #fff; border-radius: 10px; padding: 1rem; margin-bottom: 1rem;
+    box-shadow: 0 1px 3px rgba(0, 0, 0, 0.1); overflow-wrap: anywhere;
+  }
+  .aviso { background: #dcfce7; color: #166534; padding: 0.75rem 1rem; border-radius: 8px; margin-bottom: 1rem; }
+  label { display: block; font-size: 0.9rem; color: #444; }
+  select, input[type="number"] {
+    display: block; width: 100%; box-sizing: border-box; margin-top: 0.25rem; padding: 0.65rem;
+    border: 1px solid #ccc; border-radius: 8px; font-size: 1rem; min-height: 44px; background: #fff;
+  }
+  .condiciones { color: #444; font-size: 0.9rem; margin: 0; }
+  .ficha { padding: 0.75rem 0; border-top: 1px solid #eee; }
+  .ficha:first-of-type { border-top: none; }
+  .ficha-nombre { font-weight: 700; }
+  .dato { margin: 0.2rem 0; font-size: 0.92rem; }
+  .compras { color: #555; font-size: 0.85rem; margin: 0.2rem 0 0.4rem; }
+  .sin-costo { color: #b45309; font-weight: 600; }
+  .sugerido { font-weight: 700; font-size: 1.05rem; }
+  .vacio { color: #666; font-style: italic; }
+  .botones { display: flex; flex-wrap: wrap; gap: 0.5rem; }
+  .botones button {
+    flex: 1 1 9rem; min-height: 48px; border-radius: 8px; font-size: 1rem; font-weight: 600; cursor: pointer;
+  }
+  .primario { background: #2563eb; color: #fff; border: none; }
+  .secundario { background: #fff; color: #2563eb; border: 1px solid #2563eb; }
+</style>
+</head>
+<body>
+  {% set barra_sector = "comercial" %}
+  {% set barra_titulo = "Precios Cotizaciones" %}
+  {% set barra_atras = "/precios" %}
+  {% include "_barra_navegacion.html" %}
+
+  {% if aviso %}<div class="aviso">{{ aviso }}</div>{% endif %}
+
+  <div class="tarjeta">
+    <form method="get" action="/precios/cotizaciones">
+      <label for="cliente_id">¿Para qué cliente?</label>
+      <select id="cliente_id" name="cliente_id" onchange="this.form.submit()" required>
+        <option value="" {% if not cliente_id %}selected{% endif %} disabled>Elegí un cliente...</option>
+        {% for c in clientes %}
+        <option value="{{ c.id }}" {% if cliente_id == c.id %}selected{% endif %}>{{ c.nombre }}</option>
+        {% endfor %}
+      </select>
+    </form>
+  </div>
+
+  {% if filas is not none %}
+  <div class="tarjeta">
+    <p class="condiciones"><strong>Condiciones de {{ cliente_nombre }}:</strong> {{ condiciones }}</p>
+    <p class="condiciones">Costo de lo que ya compramos, al {{ fecha }}.</p>
+  </div>
+
+  {% if not filas %}
+  <div class="tarjeta"><p class="vacio">{{ cliente_nombre }} no tiene fichas logísticas: cargalas en Fichas logísticas.</p></div>
+  {% else %}
+  <form method="post" action="/precios/cotizaciones/guardar" id="form-cotizaciones">
+    <input type="hidden" name="cliente_id" value="{{ cliente_id }}">
+    <div class="tarjeta">
+      {% for f in filas %}
+      <div class="ficha" data-ficha="{{ f.ficha_id }}">
+        <div class="ficha-nombre">{{ f.ficha_nombre }}</div>
+        {% if f.costo_actual is none %}
+          <p class="dato sin-costo">Sin costo: {{ f.sin_costo }}</p>
+        {% else %}
+          <p class="dato">Costo de compra: <strong>{{ f.costo_actual|moneda }}</strong> por {{ f.unidad_venta }}</p>
+          <p class="dato">Envase: {{ f.costo_envase_unidad_venta|moneda }} por {{ f.unidad_venta }}</p>
+        {% endif %}
+        {% if f.compras_del_costo %}
+          <p class="compras">De las compras:
+            {% for c in f.compras_del_costo %}{{ c.fecha_operacion.strftime("%d/%m") }} {{ c.proveedor_nombre or "" }}
+              {%- if c.entra %} {{ c.importe|moneda }} × {{ c.cantidad_cajones|sin_decimales }}{% else %} (no entra: {{ c.motivo }}){% endif %}{% if not loop.last %} · {% endif %}{% endfor %}
+          </p>
+        {% endif %}
+        {% if f.precio_sugerido is not none %}
+          <p class="dato sugerido">Precio sugerido: {{ f.precio_sugerido|moneda }} por {{ f.unidad_venta }}</p>
+        {% elif f.sin_sugerido %}
+          <p class="dato sin-costo">Sin precio sugerido: {{ f.sin_sugerido }}</p>
+        {% endif %}
+        <label>¿A cuánto se lo vendés, por {{ f.unidad_venta }}?
+          <input type="number" name="pendiente_precio_{{ f.ficha_id }}" min="0" step="any" inputmode="decimal"
+                 value="{{ f.precio if f.precio is not none else '' }}" placeholder="Ej: 1500">
+        </label>
+      </div>
+      {% endfor %}
+    </div>
+    <div class="tarjeta botones">
+      <button type="submit" class="primario">Guardar como precios del cliente</button>
+      <button type="submit" class="secundario" formaction="/precios/cotizaciones/exportar-pdf">Bajar PDF</button>
+      <button type="submit" class="secundario" formaction="/precios/cotizaciones/exportar-excel">Bajar Excel</button>
+    </div>
+  </form>
+  {% endif %}
+  {% endif %}
+{% include "_pie_version.html" %}
+</body>
+</html>

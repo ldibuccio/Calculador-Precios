@@ -268,7 +268,8 @@ Módulos (se lee el que se va a tocar):
   importe, el hub de 7.
 - `docs/modulos/magnitudes.md`: kilos y conteo.
 - `docs/modulos/perdidas.md`: pérdidas, y su botón con dos pestañas.
-- `docs/modulos/fichas_y_precios.md`: borrar una ficha y sus precios, y el "Precio anterior" del listado.
+- `docs/modulos/fichas_y_precios.md`: borrar una ficha y sus precios, el "Precio anterior" del listado
+  y Precios Cotizaciones (cliente nuevo, la cuenta de Márgenes).
 - `docs/modulos/pedidos.md`: renglón agregado por teléfono, segunda al cliente,
   la Casilla de pedidos en Administración.
 - `docs/modulos/que_comprar_hoy.md`: decisiones de Qué comprar hoy (el diseño

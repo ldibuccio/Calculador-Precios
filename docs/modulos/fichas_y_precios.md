@@ -183,3 +183,37 @@ semanas.
 
 Tests: `tests/test_precio_anterior.py`, contra Postgres (cambió hoy, no
 cambió, no existía ayer, cambió hace días y recargado igual).
+
+## Precios Cotizaciones: el precio de un cliente NUEVO (dueño, 07/10)
+
+Caso: un cliente con condiciones y fichas cargadas y sin ninguna operación.
+Comercial → Precios → **Precios Cotizaciones**, sin sector nuevo. El botón,
+el título de la pantalla y el del PDF y el Excel se llaman así; adentro, cada
+ficha muestra su "Precio sugerido".
+
+- **La cuenta NO es nueva**: es `calcular_listado_para_negociar_precios`
+  (`app/costeo.py`), la misma de Márgenes por Artículo y del cuadro de
+  Cargar precios manuales. No mira ventas: arranca de las fichas del
+  cliente y de las compras de todos. Costo = plata / cantidad de las compras
+  del último día con compra y el anterior; envase de la ficha; utilidad solo
+  sobre la mercadería; tasas que suman y restan en el denominador.
+  Márgenes también muestra el sugerido de un cliente sin ventas (en
+  "Todos"): las ventas solo alimentan la columna de incidencia.
+- **Lo que agrega `calcular_precios_sugeridos`** es la ficha que esa cuenta
+  deja afuera: sin compras del artículo en los últimos 15 días sale "sin
+  costo" y dice por qué, en vez de desaparecer. Nunca inventa un costo.
+- **De qué compras sale**: cada fila del listado lleva `compras_del_costo`,
+  la misma ventana que costeó, con cuáles entraron y por qué no las otras
+  (sin precio, no declaró esa cantidad). Por eso `listar_compras_para_costeo`
+  trae `compra_id` y `proveedor_nombre`, que no entran en ninguna cuenta.
+- **Cada precio se corrige a mano** en su casillero (arranca en el sugerido
+  redondeado al peso). PDF y Excel salen del mismo formulario: lo que quedó
+  en cada casillero, con "(a mano)" en los corregidos, y el encabezado dice
+  el cliente, la fecha, cuántos se corrigieron y las condiciones.
+- **"Guardar como precios del cliente"** usa el MISMO camino que Cargar
+  precios manuales (`_guardar_pendientes_carga_manual`): vigentes desde hoy,
+  solo lo que cambió, y un casillero vacío no escribe nada.
+
+Tests: `tests/test_precios_cotizaciones.py`, contra Postgres (la cuenta es la
+de Márgenes, el "sin costo", la pantalla, PDF/Excel con lo corregido y
+guardar).
