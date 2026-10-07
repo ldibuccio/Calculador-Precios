@@ -24,6 +24,10 @@
   .dato { margin: 0.2rem 0; font-size: 0.92rem; }
   .compras { color: #555; font-size: 0.85rem; margin: 0.2rem 0 0.4rem; }
   .sin-costo { color: #b45309; font-weight: 600; }
+  .a-mano { color: #92400e; background: #fef3c7; padding: 0.3rem 0.6rem; border-radius: 6px; font-size: 0.85rem; margin: 0.3rem 0; }
+  .a-mano[hidden] { display: none; }
+  .campos { display: flex; flex-wrap: wrap; gap: 0.6rem; margin: 0.4rem 0; }
+  .campos label { flex: 1 1 9rem; }
   .sugerido { font-weight: 700; font-size: 1.05rem; }
   .vacio { color: #666; font-style: italic; }
   .botones { display: flex; flex-wrap: wrap; gap: 0.5rem; }
@@ -57,7 +61,7 @@
   {% if filas is not none %}
   <div class="tarjeta">
     <p class="condiciones"><strong>Condiciones de {{ cliente_nombre }}:</strong> {{ condiciones }}</p>
-    <p class="condiciones">Costo de lo que ya compramos, al {{ fecha }}.</p>
+    <p class="condiciones">Costo de lo que ya compramos, al {{ fecha }}. Lo que corrijas acá vale solo para esta cotización: no cambia compras, stock ni costos.</p>
   </div>
 
   {% if not filas %}
@@ -67,27 +71,36 @@
     <input type="hidden" name="cliente_id" value="{{ cliente_id }}">
     <div class="tarjeta">
       {% for f in filas %}
-      <div class="ficha" data-ficha="{{ f.ficha_id }}">
+      <div class="ficha" data-ficha="{{ f.ficha_id }}" data-costo-original="{{ f.costo_inicial }}" data-cantidad-original="{{ f.cantidad_inicial }}">
         <div class="ficha-nombre">{{ f.ficha_nombre }}</div>
-        {% if f.costo_actual is none %}
-          <p class="dato sin-costo">Sin costo: {{ f.sin_costo }}</p>
-        {% else %}
-          <p class="dato">Costo de compra: <strong>{{ f.costo_actual|moneda }}</strong> por {{ f.unidad_venta }}</p>
-          <p class="dato">Envase: {{ f.costo_envase_unidad_venta|moneda }} por {{ f.unidad_venta }}</p>
+        {% if f.sin_costo %}
+          <p class="dato sin-costo">Sin costo: {{ f.sin_costo }}. Cargá el costo y lo que trae el cajón para cotizarlo.</p>
         {% endif %}
         {% if f.compras_del_costo %}
           <p class="compras">De las compras:
-            {% for c in f.compras_del_costo %}{{ c.fecha_operacion.strftime("%d/%m") }} {{ c.proveedor_nombre or "" }}
+            {% for c in f.compras_del_costo %}compra #{{ c.compra_id }} del {{ c.fecha_operacion.strftime("%d/%m") }} {{ c.proveedor_nombre or "" }}
               {%- if c.entra %} {{ c.importe|moneda }} × {{ c.cantidad_cajones|sin_decimales }}{% else %} (no entra: {{ c.motivo }}){% endif %}{% if not loop.last %} · {% endif %}{% endfor %}
           </p>
         {% endif %}
-        {% if f.precio_sugerido is not none %}
-          <p class="dato sugerido">Precio sugerido: {{ f.precio_sugerido|moneda }} por {{ f.unidad_venta }}</p>
-        {% elif f.sin_sugerido %}
+        <div class="campos">
+          <label>¿Cuánto cuesta el cajón?
+            <input type="number" name="costo_{{ f.ficha_id }}" data-campo="costo" min="0" step="any" inputmode="decimal"
+                   value="{{ f.costo_inicial }}" placeholder="Ej: 2000">
+          </label>
+          <label>{{ f.pregunta_cantidad }}
+            <input type="number" name="cantidad_{{ f.ficha_id }}" data-campo="cantidad" min="0" step="any" inputmode="decimal"
+                   value="{{ f.cantidad_inicial }}" placeholder="Ej: 18">
+          </label>
+        </div>
+        <p class="a-mano" data-costo-a-mano hidden>Costo a mano: no es el de la compra.</p>
+        <p class="dato">Costo: <strong data-costo-unidad>{{ f.costo_actual|moneda if f.costo_actual is not none else "—" }}</strong> por {{ f.unidad_venta }}
+          · Envase: <span data-envase-unidad>{{ f.costo_envase_unidad_venta|moneda if f.costo_envase_unidad_venta is not none else "—" }}</span> por {{ f.unidad_venta }}</p>
+        {% if f.sin_sugerido %}
           <p class="dato sin-costo">Sin precio sugerido: {{ f.sin_sugerido }}</p>
         {% endif %}
+        <p class="dato sugerido">Precio sugerido: <span data-sugerido>{{ f.precio_sugerido|moneda if f.precio_sugerido is not none else "—" }}</span> por {{ f.unidad_venta }}</p>
         <label>¿A cuánto se lo vendés, por {{ f.unidad_venta }}?
-          <input type="number" name="pendiente_precio_{{ f.ficha_id }}" min="0" step="any" inputmode="decimal"
+          <input type="number" name="pendiente_precio_{{ f.ficha_id }}" data-campo="precio" min="0" step="any" inputmode="decimal"
                  value="{{ f.precio if f.precio is not none else '' }}" placeholder="Ej: 1500">
         </label>
       </div>
@@ -100,6 +113,47 @@
     </div>
   </form>
   {% endif %}
+  {% endif %}
+  {% if filas %}
+  <script>
+  // EL SUGERIDO SE RECALCULA EN EL MOMENTO (dueño, 07/10), pero la cuenta NO
+  // está acá: se le pide al servidor (/precios/cotizaciones/calcular), que usa
+  // la misma de Márgenes. El precio que se tocó a mano no se pisa nunca.
+  (function () {
+    var clienteId = {{ cliente_id|tojson }};
+    document.querySelectorAll(".ficha[data-ficha]").forEach(function (fila) {
+      var costo = fila.querySelector('[data-campo="costo"]');
+      var cantidad = fila.querySelector('[data-campo="cantidad"]');
+      var precio = fila.querySelector('[data-campo="precio"]');
+      var espera = null, pedido = 0;
+      precio.addEventListener("input", function () { fila.dataset.precioAMano = "1"; });
+      function recalcular() {
+        fila.querySelector("[data-costo-a-mano]").hidden =
+          costo.value === fila.dataset.costoOriginal && cantidad.value === fila.dataset.cantidadOriginal;
+        clearTimeout(espera);
+        espera = setTimeout(function () {
+          var este = ++pedido;
+          var datos = new URLSearchParams({cliente_id: clienteId, ficha_id: fila.dataset.ficha,
+                                           costo: costo.value, cantidad: cantidad.value});
+          fetch("/precios/cotizaciones/calcular", {method: "POST", body: datos})
+            .then(function (r) { return r.ok ? r.json() : null; })
+            .then(function (j) {
+              if (!j || este !== pedido) return;
+              fila.querySelector("[data-sugerido]").textContent = j.texto || "—";
+              fila.querySelector("[data-costo-unidad]").textContent = j.costo_unidad || "—";
+              fila.querySelector("[data-envase-unidad]").textContent = j.envase_unidad || "—";
+              if (fila.dataset.precioAMano !== "1") {
+                precio.value = j.precio_sugerido === null ? "" : j.precio_sugerido;
+              }
+              fila.dataset.recalculado = String(este);
+            });
+        }, 250);
+      }
+      costo.addEventListener("input", recalcular);
+      cantidad.addEventListener("input", recalcular);
+    });
+  })();
+  </script>
   {% endif %}
 {% include "_pie_version.html" %}
 </body>
