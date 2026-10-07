@@ -206,14 +206,35 @@ ficha muestra su "Precio sugerido".
   la misma ventana que costeó, con cuáles entraron y por qué no las otras
   (sin precio, no declaró esa cantidad). Por eso `listar_compras_para_costeo`
   trae `compra_id` y `proveedor_nombre`, que no entran en ninguna cuenta.
-- **Cada precio se corrige a mano** en su casillero (arranca en el sugerido
-  redondeado al peso). PDF y Excel salen del mismo formulario: lo que quedó
-  en cada casillero, con "(a mano)" en los corregidos, y el encabezado dice
-  el cliente, la fecha, cuántos se corrigieron y las condiciones.
+- **Tres casilleros por renglón (dueño, 07/10, el ajuste): COSTO del cajón,
+  lo que TRAE el cajón (kilos, unidades o cubetas, según la ficha) y PRECIO.**
+  Con compra, costo y cantidad arrancan con el cajón de las compras de la
+  ventana (`importe_por_cajon` y `contenido_por_cajon`, cuyo cociente ES el
+  costo de Márgenes) y se ve el número de cada compra. Sin compra arrancan
+  vacíos y se cargan a mano: ningún artículo de la ficha queda sin poder
+  cotizarse. El renglón dice "Costo a mano" cuando el cajón no es el de la
+  compra.
+- **El sugerido se recalcula en el momento, pero la cuenta está en Python**:
+  la pantalla le pide a `/precios/cotizaciones/calcular`, que llama a
+  `precio_de_la_cotizacion` (las mismas piezas: plata / cantidad,
+  `envases_por_unidad_de_venta` y `precio_sugerido_multi_concepto`). No hay
+  una segunda copia en JavaScript. Con el cajón de la compra da EXACTO lo de
+  Márgenes (hay test).
+- **El precio tocado a mano no se pisa**: si después se cambia el costo o la
+  cantidad, el sugerido nuevo se ve al lado y el casillero queda como está.
+- **Precio vacío o en 0 = no se le cotiza ese artículo**: no sale en el PDF
+  ni en el Excel y no se guarda.
+- **El PDF y el Excel son el LISTADO PARA EL CLIENTE**, titulados "Precios
+  Cotizaciones": cliente, fecha, artículo, presentación ("Caja de 10
+  kilos") y precio. Sin costos, compras, proveedores, condiciones ni marcas
+  de "a mano": eso queda en la pantalla.
+- **Costo y cantidad del cajón viven solo en la cotización**: no viajan al
+  guardar y no tocan compras, stock ni costos.
 - **"Guardar como precios del cliente"** usa el MISMO camino que Cargar
   precios manuales (`_guardar_pendientes_carga_manual`): vigentes desde hoy,
-  solo lo que cambió, y un casillero vacío no escribe nada.
+  solo lo que cambió; le llegan solo los precios que valen.
 
 Tests: `tests/test_precios_cotizaciones.py`, contra Postgres (la cuenta es la
-de Márgenes, el "sin costo", la pantalla, PDF/Excel con lo corregido y
-guardar).
+de Márgenes, el "sin costo", la pantalla, costo a mano sin compra, kilos
+editados, el precio a mano que no se pisa —en Chromium—, 0/vacío fuera del
+PDF, el Excel y el guardado, y el PDF sin datos internos).

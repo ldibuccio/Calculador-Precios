@@ -51,6 +51,7 @@ from app.costeo import (
     calcular_objetivos_de_compra,
     calcular_precios_sugeridos,
     magnitud_de_la_ficha,
+    precio_de_la_cotizacion_del_cliente,
     magnitud_del_articulo,
 )
 from core.exportar_precios_cotizaciones import generar_excel_precios_cotizaciones, generar_pdf_precios_cotizaciones
@@ -10015,19 +10016,76 @@ def _precio_tipeado(texto) -> float | None:
         return None
 
 
-def _precios_cotizaciones_con_lo_tipeado(cliente_id: int, form=None) -> list[dict]:
-    """Las filas de `calcular_precios_sugeridos` con el precio de cada casillero.
+def _precio_que_vale(texto) -> float | None:
+    """El precio de un casillero, solo si sirve: vacío, 0, negativo o no número es None.
 
-    Sin formulario (la pantalla recién abierta), el casillero es el sugerido
-    redondeado al peso. Con formulario (exportar), es lo que quedó tipeado:
-    el archivo sale con lo mismo que la pantalla, corregido o no.
+    Un renglón sin precio que valga NO sale en el PDF ni en el Excel y NO se
+    guarda (dueño, 07/10): es un artículo que no se le cotiza.
+    """
+    precio = _precio_tipeado(texto)
+    return precio if precio is not None and precio > 0 else None
+
+
+def _precios_cotizaciones_de_la_pantalla(cliente_id: int) -> list[dict]:
+    """Las filas de `calcular_precios_sugeridos` con lo que arranca en cada casillero.
+
+    Costo y cantidad del cajón: los de las compras (vacíos si no hay). Precio:
+    el sugerido redondeado al peso (vacío si no hay).
     """
     filas = calcular_precios_sugeridos(cliente_id)
     for fila in filas:
-        sugerido = round(fila["precio_sugerido"]) if fila["precio_sugerido"] is not None else None
-        precio = sugerido if form is None else _precio_tipeado(form.get(f"pendiente_precio_{fila['ficha_id']}"))
-        fila["precio"] = precio
-        fila["corregido"] = precio is not None and precio != sugerido
+        fila["precio"] = round(fila["precio_sugerido"]) if fila["precio_sugerido"] is not None else None
+        fila["costo_inicial"] = _numero_para_casillero(fila["costo_bulto"])
+        fila["cantidad_inicial"] = _numero_para_casillero(fila["cantidad_bulto"])
+        fila["pregunta_cantidad"] = _PREGUNTA_CANTIDAD_DEL_CAJON.get(
+            fila["unidad_venta"], "¿Cuánto trae el cajón?")
+    return filas
+
+
+_PREGUNTA_CANTIDAD_DEL_CAJON = {"kilo": "¿Cuántos kilos trae el cajón?",
+                                "unidad": "¿Cuántas unidades trae el cajón?",
+                                "cubeta": "¿Cuántas cubetas trae el cajón?"}
+
+
+def _numero_para_casillero(valor) -> str:
+    """Un número para un <input type=number>: con punto, hasta dos decimales y sin ceros de más."""
+    if valor is None:
+        return ""
+    return f"{float(valor):.2f}".rstrip("0").rstrip(".")
+
+
+_PLURAL_DE_LA_UNIDAD = {"kilo": "kilos", "unidad": "unidades", "cubeta": "cubetas"}
+
+
+def _presentacion_de_la_ficha(ficha: dict) -> str:
+    """Cómo se le entrega al cliente: "Caja Grande de 10 kilos"."""
+    contenido = ficha["contenido_caja"]
+    if contenido is None:
+        return ficha["envase_nombre"] or "—"
+    cantidad = f"{float(contenido):g} {_PLURAL_DE_LA_UNIDAD.get(ficha['unidad_venta'], ficha['unidad_venta'])}"
+    return f"{ficha['envase_nombre'] or 'Bulto'} de {cantidad}"
+
+
+def _filas_del_listado_de_cotizacion(cliente_id: int, form) -> list[dict]:
+    """El LISTADO PARA EL CLIENTE (dueño, 07/10): artículo, presentación y precio.
+
+    Nada interno: ni costos, ni compras, ni condiciones, ni qué se tocó a
+    mano. Solo los renglones con un precio que valga, en el orden de la
+    pantalla.
+    """
+    filas = []
+    for ficha in listar_fichas_por_cliente(cliente_id):
+        precio = _precio_que_vale(form.get(f"pendiente_precio_{ficha['id']}"))
+        if precio is None:
+            continue
+        filas.append({
+            "articulo": (ficha.get("nombre_cliente") or "").strip() or ficha["articulo_nombre"],
+            "presentacion": _presentacion_de_la_ficha(ficha),
+            "precio": precio,
+            "unidad_venta": ficha["unidad_venta"],
+            "ficha_id": ficha["id"],
+        })
+    filas.sort(key=lambda f: (f["articulo"].lower(), f["ficha_id"]))
     return filas
 
 
@@ -10059,28 +10117,53 @@ def ver_precios_cotizaciones(request: Request, cliente_id: str | None = None, av
             raise HTTPException(status_code=404, detail="Cliente no encontrado")
         contexto.update({
             "cliente_nombre": cliente["nombre"],
-            "filas": _precios_cotizaciones_con_lo_tipeado(cliente_id),
+            "filas": _precios_cotizaciones_de_la_pantalla(cliente_id),
             "condiciones": _condiciones_en_palabras(cliente_id),
             "fecha": _hoy_argentina().strftime("%d/%m/%Y"),
         })
     return templates.TemplateResponse(request, "precios_cotizaciones.html", contexto)
 
 
+@app.post("/precios/cotizaciones/calcular")
+async def calcular_precio_de_la_cotizacion(request: Request):
+    """El sugerido de UN renglón cuando se tipea el costo o los kilos del cajón.
+
+    La cuenta vive acá, en Python (`precio_de_la_cotizacion`), y la pantalla
+    la pide: así no hay una segunda copia en JavaScript. No escribe nada.
+    """
+    form = await request.form()
+    cliente_id = _id_opcional_desde_query(form.get("cliente_id"))
+    ficha_id = _id_opcional_desde_query(form.get("ficha_id"))
+    if cliente_id is None or ficha_id is None:
+        raise HTTPException(status_code=400, detail="Falta el cliente o la ficha")
+    try:
+        resultado = precio_de_la_cotizacion_del_cliente(
+            cliente_id, ficha_id, _precio_tipeado(form.get("costo")), _precio_tipeado(form.get("cantidad")))
+    except Exception as error_db:
+        raise HTTPException(status_code=500, detail=f"Error al conectar con la base de datos: {error_db}") from error_db
+    if resultado is None:
+        raise HTTPException(status_code=404, detail="La ficha no es de este cliente")
+    precio = resultado["precio_sugerido"]
+    return JSONResponse({
+        "precio_sugerido": round(precio) if precio is not None else None,
+        "texto": _formatear_moneda(precio) if precio is not None else "",
+        "costo_unidad": _formatear_moneda(resultado["costo_unidad"]) if resultado["costo_unidad"] is not None else "",
+        "envase_unidad": _formatear_moneda(resultado["envase_unidad"]) if resultado["envase_unidad"] is not None else "",
+    })
+
+
 async def _exportar_precios_cotizaciones(request: Request, formato: str):
     form = await request.form()
     cliente_id = _id_opcional_desde_query(form.get("cliente_id"))
     cliente = _cliente_de_cotizaciones(cliente_id)
-    filas = _precios_cotizaciones_con_lo_tipeado(cliente_id, form)
-    a_mano = sum(1 for f in filas if f["corregido"])
-    encabezado = (f"Cliente: {cliente['nombre']} · {_hoy_argentina().strftime('%d/%m/%Y')} · "
-                  f"{a_mano} precio{'s' if a_mano != 1 else ''} corregido{'s' if a_mano != 1 else ''} a mano")
-    condiciones = _condiciones_en_palabras(cliente_id)
+    filas = _filas_del_listado_de_cotizacion(cliente_id, form)
+    fecha = _hoy_argentina().strftime("%d/%m/%Y")
     nombre = f"precios_cotizaciones_{cliente_id}_{_hoy_argentina().isoformat()}"
     if formato == "pdf":
-        return Response(content=generar_pdf_precios_cotizaciones(encabezado, condiciones, filas),
+        return Response(content=generar_pdf_precios_cotizaciones(cliente["nombre"], fecha, filas),
                         media_type="application/pdf",
                         headers={"Content-Disposition": f'attachment; filename="{nombre}.pdf"'})
-    return Response(content=generar_excel_precios_cotizaciones(encabezado, condiciones, filas),
+    return Response(content=generar_excel_precios_cotizaciones(cliente["nombre"], fecha, filas),
                     media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
                     headers={"Content-Disposition": f'attachment; filename="{nombre}.xlsx"'})
 
@@ -10099,9 +10182,18 @@ async def exportar_precios_cotizaciones_excel(request: Request):
 async def guardar_precios_cotizaciones(request: Request):
     """"Guardar como precios del cliente": vigentes DESDE HOY, por el MISMO
     camino que Cargar precios manuales (`_guardar_pendientes_carga_manual`):
-    misma validación, mismo historial, y solo se escribe lo que cambió."""
+    misma validación, mismo historial, y solo se escribe lo que cambió.
+
+    Al camino le llegan SOLO el cliente y los precios que valen: un casillero
+    vacío o en 0 no se guarda (dueño, 07/10), y el costo y los kilos del cajón
+    no viajan — viven en la cotización y no tocan compras, stock ni costos.
+    """
     form = await request.form()
-    cliente, cambios = _guardar_pendientes_carga_manual(form)
+    lo_que_se_guarda = {"cliente_id": form.get("cliente_id", "")}
+    for clave in form.keys():
+        if clave.startswith("pendiente_precio_") and _precio_que_vale(form.get(clave)) is not None:
+            lo_que_se_guarda[clave] = form.get(clave)
+    cliente, cambios = _guardar_pendientes_carga_manual(lo_que_se_guarda)
     aviso = f"Se guardaron {len(cambios)} precio{'s' if len(cambios) != 1 else ''} de {cliente['nombre']}, vigentes desde hoy."
     return RedirectResponse(url=f"/precios/cotizaciones?{urlencode({'cliente_id': cliente['id'], 'aviso': aviso})}",
                             status_code=303)

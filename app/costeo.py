@@ -1273,6 +1273,7 @@ def calcular_precios_sugeridos(cliente_id: int, momento_referencia: datetime | N
                 "ficha_id": ficha["id"], "ficha_nombre": nombre, "articulo_nombre": ficha["articulo_nombre"],
                 "unidad_venta": ficha["unidad_venta"], "costo_actual": None, "costo_envase_unidad_venta": None,
                 "precio_sugerido": None, "fecha_ultima_compra": None, "compras_del_costo": [],
+                "costo_bulto": None, "cantidad_bulto": None,
                 "sin_costo": DIAS_SIN_COMPRAS_TEXTO, "sin_sugerido": None,
             })
             continue
@@ -1290,6 +1291,65 @@ def calcular_precios_sugeridos(cliente_id: int, momento_referencia: datetime | N
             "costo_envase_unidad_venta": fila["costo_envase_unidad_venta"],
             "precio_sugerido": fila["precio_sugerido"], "fecha_ultima_compra": fila["fecha_ultima_compra"],
             "compras_del_costo": fila["compras_del_costo"], "sin_costo": sin_costo, "sin_sugerido": sin_sugerido,
+            # EL CAJÓN de donde sale el costo: plata y cantidad por cajón de
+            # las compras de la ventana. Su cociente ES costo_actual (ver
+            # _promedios_por_cajon), así que editar uno de los dos y volver a
+            # dividir es la misma cuenta, no otra.
+            "costo_bulto": fila["importe_por_cajon"] if sin_costo is None else None,
+            "cantidad_bulto": fila["contenido_por_cajon"] if sin_costo is None else None,
         })
     filas.sort(key=lambda f: (f["ficha_nombre"].lower(), f["ficha_id"]))
     return filas
+
+
+def precio_de_la_cotizacion(ficha: dict, costo_bulto: float, cantidad_bulto: float,
+                            costo_envase: float, conceptos_cliente: dict) -> dict | None:
+    """El sugerido de UN renglón de Precios Cotizaciones con el cajón tipeado (dueño, 07/10).
+
+    Para cuando el costo o los kilos del cajón se cargan o se corrigen a mano.
+    No es otra cuenta: son las MISMAS piezas que `_listado_para_negociar_precios`
+    —costo = plata / cantidad del cajón, el envase de la ficha por la regla de
+    `envases_por_unidad_de_venta` y `precio_sugerido_multi_concepto` con las
+    condiciones del cliente—, aplicadas a un cajón en vez de a las compras.
+
+    `costo_envase` es el costo vigente de UN envase de la ficha. Nada de esto
+    se guarda: vive en la cotización.
+
+    None si el cajón no se puede dividir (falta un número o no es positivo).
+    `precio_sugerido` en None si el cliente no tiene utilidad cargada.
+    """
+    if not costo_bulto or not cantidad_bulto or costo_bulto <= 0 or cantidad_bulto <= 0:
+        return None
+    costo_unidad = float(costo_bulto) / float(cantidad_bulto)
+    envase_unidad = 0.0
+    if ficha["envase_id"]:
+        envase_unidad = float(costo_envase) * envases_por_unidad_de_venta(
+            ficha["contenido_caja"], bool(ficha["envase_variable"]), float(cantidad_bulto))
+    precio = None
+    if conceptos_cliente["utilidad"] is not None:
+        precio = calcular_precio_sugerido(
+            costo_producto=costo_unidad,
+            costo_envase=envase_unidad,
+            tasas_suman=conceptos_cliente["tasas_suman"],
+            tasas_restan=conceptos_cliente["tasas_restan"],
+            utilidad=conceptos_cliente["utilidad"],
+        )
+    return {"costo_unidad": costo_unidad, "envase_unidad": envase_unidad, "precio_sugerido": precio}
+
+
+def precio_de_la_cotizacion_del_cliente(cliente_id: int, ficha_id: int, costo_bulto: float,
+                                        cantidad_bulto: float) -> dict | None:
+    """`precio_de_la_cotizacion` con la ficha, el envase y las condiciones de HOY leídos de la base.
+
+    None si la ficha no es de ese cliente.
+    """
+    hoy = datetime.now(ARGENTINA).date()
+    ficha = next((f for f in listar_fichas_por_cliente(cliente_id) if f["id"] == ficha_id), None)
+    if ficha is None:
+        return None
+    costos = {c["envase_id"]: float(c["costo"]) for c in listar_costos_envases_vigentes(hoy)}
+    costo_envase = costos.get(ficha["envase_id"], SIN_ENVASE) if ficha["envase_id"] else SIN_ENVASE
+    resultado = precio_de_la_cotizacion(ficha, costo_bulto, cantidad_bulto, costo_envase,
+                                        listar_conceptos_vigentes_por_cliente(cliente_id, hoy))
+    return resultado if resultado is not None else {"costo_unidad": None, "envase_unidad": None,
+                                                    "precio_sugerido": None}

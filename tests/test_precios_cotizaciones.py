@@ -132,7 +132,7 @@ def test_una_ficha_SIN_COMPRAS_RECIENTES_sale_SIN_COSTO_en_vez_de_desaparecer(ba
     assert 2 not in {f["ficha_id"] for f in calcular_listado_para_negociar_precios(1)}
 
 
-def test_la_PANTALLA_muestra_costo_compras_envase_condiciones_y_sugerido(base):
+def test_la_PANTALLA_muestra_compras_condiciones_y_los_TRES_CASILLEROS(base):
     from fastapi.testclient import TestClient
     m, _ = base
     pagina = TestClient(m.app).get("/precios/cotizaciones", params={"cliente_id": 1})
@@ -143,17 +143,128 @@ def test_la_PANTALLA_muestra_costo_compras_envase_condiciones_y_sugerido(base):
     marcado = pagina.text.split("</style>")[-1]
     assert "Utilidad 20% sobre la mercadería · IVA +10% · flete −10%" in marcado
     tomate = marcado.split('data-ficha="1"')[1].split('data-ficha="2"')[0]
-    assert "Costo de compra: <strong>$115</strong> por kilo" in tomate
-    assert "Envase: $12 por kilo" in tomate
-    assert "Precio sugerido: $150 por kilo" in tomate
+    # El cajón de las compras: (1600 + 2080) / 2 = $1840, 16 kilos -> $115 el kilo.
+    assert re.search(r'name="costo_1"[^>]*value="1840"', tomate)
+    assert re.search(r'name="cantidad_1"[^>]*value="16"', tomate)
+    assert "¿Cuántos kilos trae el cajón?" in tomate
+    assert "Costo: <strong data-costo-unidad>$115</strong> por kilo" in tomate
+    assert "Envase: <span data-envase-unidad>$12</span> por kilo" in tomate
+    assert "Precio sugerido: <span data-sugerido>$150</span> por kilo" in tomate
     assert re.search(r'name="pendiente_precio_1"[^>]*value="150"', tomate)
+    assert "compra #2 del " in tomate and "compra #1 del " in tomate
     assert "EJEMPLO Puesto Dos (no entra: sin precio de compra)" in tomate
-    assert "$9.999" not in marcado
+    assert "$9.999" not in marcado and "compra #3 " not in marcado     # el RIVAL fuera de la ventana
+    # Sin compra: los tres casilleros arrancan VACÍOS y se pueden cargar.
     zapallo = marcado.split('data-ficha="2"')[1]
     assert "Sin costo: sin compras en los últimos 15 días" in zapallo
-    assert re.search(r'name="pendiente_precio_2"[^>]*value=""', zapallo)
+    for campo in ("costo_2", "cantidad_2", "pendiente_precio_2"):
+        assert re.search(r'name="%s"[^>]*value=""' % campo, zapallo), campo
     for jerga in ("ficha_id", "costo_actual", "utilidad_objetivo", "None"):
-        assert jerga not in re.sub(r"<[^>]+>", " ", marcado), jerga
+        visible = re.sub(r"<[^>]+>", " ", re.sub(r"<script.*?</script>", " ", marcado, flags=re.S))
+        assert jerga not in visible, jerga
+
+
+def _calcular(m, **datos):
+    from fastapi.testclient import TestClient
+    respuesta = TestClient(m.app).post("/precios/cotizaciones/calcular", data={"cliente_id": "1", **datos})
+    assert respuesta.status_code == 200, respuesta.text
+    return respuesta.json()
+
+
+def test_COSTO_A_MANO_en_un_articulo_SIN_COMPRA_da_su_sugerido(base):
+    """Zapallo no tiene compra: $3000 el cajón de 20 kilos -> $150 el kilo,
+    envase 120/10 = $12, sugerido = (150 × 1,20 + 12) / 1 = $192."""
+    m, sql = base
+    antes = sql("select count(*), sum(importe) from compras")
+    respuesta = _calcular(m, ficha_id="2", costo="3000", cantidad="20")
+    assert respuesta == {"precio_sugerido": 192, "texto": "$192", "costo_unidad": "$150", "envase_unidad": "$12"}
+    # Vive solo en la cotización: no toca compras ni precios.
+    assert sql("select count(*), sum(importe) from compras") == antes
+    assert sql("select count(*) from precios_venta_historial") == [(0,)]
+
+
+def test_KILOS_EDITADOS_recalculan_con_la_MISMA_cuenta(base):
+    m, _ = base
+    from app.costeo import calcular_listado_para_negociar_precios
+    # Con el cajón de la compra, da EXACTO lo de Márgenes: es la misma cuenta.
+    de_margenes = {f["ficha_id"]: f for f in calcular_listado_para_negociar_precios(1)}[1]["precio_sugerido"]
+    assert _calcular(m, ficha_id="1", costo="1840", cantidad="16")["precio_sugerido"] == round(de_margenes) == 150
+    # 20 kilos en vez de 16: $92 el kilo -> (92 × 1,20 + 12) / 1 = $122,40.
+    assert _calcular(m, ficha_id="1", costo="1840", cantidad="20") == {
+        "precio_sugerido": 122, "texto": "$122", "costo_unidad": "$92", "envase_unidad": "$12"}
+    # Sin uno de los dos números no hay cuenta, y no inventa.
+    assert _calcular(m, ficha_id="1", costo="1840", cantidad="")["texto"] == ""
+    # Una ficha de OTRO cliente no se calcula con estas condiciones.
+    from fastapi.testclient import TestClient
+    otra = TestClient(m.app).post("/precios/cotizaciones/calcular",
+                                  data={"cliente_id": "1", "ficha_id": "3", "costo": "1840", "cantidad": "16"})
+    assert otra.status_code == 404
+
+
+def test_el_PRECIO_A_MANO_no_se_pisa_y_el_COSTO_A_MANO_se_marca(base):
+    """En un navegador de verdad: el recálculo es de la pantalla."""
+    pytest.importorskip("playwright", reason="lo que hace la pantalla lo decide el navegador")
+    from fastapi.testclient import TestClient
+    from playwright.sync_api import sync_playwright
+    from scripts.medir_layout import CHROMIUM
+    m, _ = base
+    cliente = TestClient(m.app)
+    origen = "http://cotizacion.test"
+
+    def atender(ruta, pedido):
+        camino = pedido.url[len(origen):]
+        if pedido.method == "POST":
+            r = cliente.post(camino, content=pedido.post_data_buffer,
+                             headers={"content-type": pedido.headers.get("content-type", "")})
+        else:
+            r = cliente.get(camino)
+        ruta.fulfill(status=r.status_code, body=r.content,
+                     headers={"content-type": r.headers.get("content-type", "text/html")})
+
+    with sync_playwright() as pw:
+        navegador = pw.chromium.launch(executable_path=CHROMIUM)
+        try:
+            pagina = navegador.new_page(viewport={"width": 360, "height": 800})
+            pagina.route(origen + "/**", atender)
+            pagina.goto(origen + "/precios/cotizaciones?cliente_id=1")
+
+            def fila(n):
+                return pagina.locator('.ficha[data-ficha="%d"]' % n)
+
+            def esperar_recalculo(n, vez):
+                pagina.wait_for_function(
+                    "([n, v]) => document.querySelector(`.ficha[data-ficha='${n}']`).dataset.recalculado === v",
+                    arg=[n, str(vez)])
+
+            def marca_visible(n):
+                return fila(n).locator("[data-costo-a-mano]").evaluate("e => getComputedStyle(e).display !== 'none'")
+
+            tomate = fila(1)
+            assert marca_visible(1) is False
+            # El precio se toca a mano y DESPUÉS los kilos: el precio no se pisa.
+            tomate.locator('[data-campo="precio"]').fill("170")
+            tomate.locator('[data-campo="cantidad"]').fill("20")
+            esperar_recalculo(1, 1)
+            assert tomate.locator("[data-sugerido]").inner_text() == "$122"
+            assert tomate.locator('[data-campo="precio"]').input_value() == "170"
+            assert marca_visible(1) is True
+            # Vuelve al cajón de la compra: la marca se va.
+            tomate.locator('[data-campo="cantidad"]').fill("16")
+            esperar_recalculo(1, 2)
+            assert marca_visible(1) is False
+            assert tomate.locator("[data-sugerido]").inner_text() == "$150"
+            assert tomate.locator('[data-campo="precio"]').input_value() == "170"
+
+            # Sin compra y SIN tocar el precio: el precio sigue al sugerido.
+            zapallo = fila(2)
+            zapallo.locator('[data-campo="costo"]').fill("3000")
+            zapallo.locator('[data-campo="cantidad"]').fill("20")
+            esperar_recalculo(2, 1)
+            assert zapallo.locator("[data-sugerido]").inner_text() == "$192"
+            assert zapallo.locator('[data-campo="precio"]').input_value() == "192"
+            assert marca_visible(2) is True
+        finally:
+            navegador.close()
 
 
 def _texto_del_pdf(contenido: bytes) -> str:
@@ -161,43 +272,52 @@ def _texto_del_pdf(contenido: bytes) -> str:
     return "\n".join(p.get_textpage().get_text_range() for p in pdfium.PdfDocument(contenido))
 
 
-def test_PDF_y_EXCEL_salen_con_LO_DE_LA_PANTALLA_y_lo_corregido_a_mano(base):
+# Lo que es de adentro y no puede llegarle al cliente.
+DATOS_INTERNOS = ("$115", "$1.840", "$12", "Puesto", "compra", "Costo", "costo", "IVA", "flete", "Utilidad",
+                  "a mano", "Envase:", "sugerido")
+
+
+def test_PDF_y_EXCEL_son_el_LISTADO_PARA_EL_CLIENTE_sin_datos_internos_ni_renglones_en_0(base):
     from fastapi.testclient import TestClient
     from openpyxl import load_workbook
     m, _ = base
     cliente = TestClient(m.app)
-    formulario = {"cliente_id": "1", "pendiente_precio_1": "165", "pendiente_precio_2": "300"}
+    formulario = {"cliente_id": "1", "costo_1": "1840", "cantidad_1": "20", "pendiente_precio_1": "165",
+                  "costo_2": "3000", "cantidad_2": "20", "pendiente_precio_2": "0"}
     excel = cliente.post("/precios/cotizaciones/exportar-excel", data=formulario)
     assert excel.status_code == 200
     hoja = load_workbook(io.BytesIO(excel.content)).active
-    celdas = [[c for c in fila] for fila in hoja.iter_rows(values_only=True)]
-    assert celdas[0][0] == "Precios Cotizaciones" and hoja.title == "Precios Cotizaciones"
-    assert celdas[1][0].startswith("Cliente: EJEMPLO Nuevo · ") and celdas[1][0].endswith("2 precios corregidos a mano")
-    assert celdas[2][0] == "Utilidad 20% sobre la mercadería · IVA +10% · flete −10%"
-    filas = {fila[0]: fila for fila in celdas[5:]}
-    assert set(filas) == {"EJEMPLO Tomate", "EJEMPLO Zapallo"}
-    tomate = filas["EJEMPLO Tomate"]
-    assert (tomate[1], tomate[3], tomate[4], tomate[5]) == ("$115 por kilo", "$12", "$150", "$165 (a mano)")
-    assert re.fullmatch(r"\d\d/\d\d EJEMPLO Puesto Dos \$2\.080 × 10 · \d\d/\d\d EJEMPLO Puesto Uno \$1\.600 × 10 · "
-                        r"\d\d/\d\d EJEMPLO Puesto Dos \(no entra: sin precio de compra\)", tomate[2])
-    zapallo = filas["EJEMPLO Zapallo"]
-    assert (zapallo[1], zapallo[4], zapallo[5]) == (
-        "sin costo (sin compras en los últimos 15 días)", "sin costo", "$300 (a mano)")
+    celdas = [tuple(c for c in fila if c is not None) for fila in hoja.iter_rows(values_only=True)]
+    celdas = [fila for fila in celdas if fila]
+    assert hoja.title == "Precios Cotizaciones"
+    assert celdas[0] == ("Precios Cotizaciones",)
+    assert re.fullmatch(r"Cliente: EJEMPLO Nuevo · Fecha: \d\d/\d\d/\d{4}", celdas[1][0])
+    assert celdas[2:] == [("Artículo", "Presentación", "Precio"),
+                          ("EJEMPLO Tomate", "EJEMPLO Caja de 10 kilos", "$165 por kilo")]   # Zapallo en 0: afuera
+    todo = " ".join(str(c) for fila in celdas for c in fila)
+    for interno in DATOS_INTERNOS:
+        assert interno not in todo, interno
+
+    formulario["pendiente_precio_2"] = ""                                   # vacío: también afuera
     pdf = cliente.post("/precios/cotizaciones/exportar-pdf", data=formulario)
     assert pdf.status_code == 200 and pdf.headers["content-type"] == "application/pdf"
     texto = " ".join(_texto_del_pdf(pdf.content).split())
     assert texto.startswith("Precios Cotizaciones"), texto[:60]
-    for esperado in ("Cliente: EJEMPLO Nuevo", "2 precios corregidos a mano", "IVA +10%",
-                     "EJEMPLO Tomate", "$150", "$165 (a mano)", "$300 (a mano)"):
+    for esperado in ("Cliente: EJEMPLO Nuevo", "EJEMPLO Tomate", "EJEMPLO Caja de 10 kilos", "$165 por kilo"):
         assert esperado in texto, esperado
+    assert "Zapallo" not in texto
+    for interno in DATOS_INTERNOS:
+        assert interno not in texto, interno
 
 
-def test_GUARDAR_los_deja_como_precios_vigentes_DESDE_HOY_y_solo_los_del_cliente(base):
+def test_GUARDAR_los_deja_como_precios_vigentes_DESDE_HOY_y_solo_los_que_valen(base):
     from fastapi.testclient import TestClient
     m, sql = base
+    compras_antes = sql("select count(*), sum(importe) from compras")
     respuesta = TestClient(m.app).post(
         "/precios/cotizaciones/guardar",
-        data={"cliente_id": "1", "pendiente_precio_1": "150", "pendiente_precio_2": ""},
+        data={"cliente_id": "1", "costo_1": "1840", "cantidad_1": "20", "pendiente_precio_1": "150",
+              "costo_2": "3000", "cantidad_2": "20", "pendiente_precio_2": "0"},
         follow_redirects=False)
     try:
         assert respuesta.status_code == 303
@@ -207,5 +327,7 @@ def test_GUARDAR_los_deja_como_precios_vigentes_DESDE_HOY_y_solo_los_del_cliente
                    "from precios_venta_historial") == [(1, 1, 1, 150.0, hoy)]
         from app.db import listar_precios_vigentes_por_cliente
         assert [(p["ficha_id"], float(p["precio"])) for p in listar_precios_vigentes_por_cliente(1, hoy)] == [(1, 150.0)]
+        # El costo y los kilos de la cotización no tocaron las compras.
+        assert sql("select count(*), sum(importe) from compras") == compras_antes
     finally:
         sql("delete from precios_venta_historial")
