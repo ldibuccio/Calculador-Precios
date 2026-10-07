@@ -25,9 +25,11 @@ _BOTON = re.compile(r'<a class="boton color-(\d)" href="([^"]*)"><svg [^>]*>.*?<
 # El de Alertas va aparte: su color es el del estado (rojo o verde), y lo
 # cuida tests/test_boton_alertas.py.
 COMERCIAL = [("1", "/precios", "Precios"), ("1", "/clientes", "Clientes"), ("1", "/fichas", "Fichas logísticas")]
-PRECIOS = [("1", "/precios/consultar", "Consultar Precios"), ("1", "/precios/cargar-precios", "Cargar precios"),
+PRECIOS = [("1", "/precios/cargar-precios", "Cargar precios"), ("1", "/precios/consultar", "Consultar Precios"),
            ("1", "/precios/vigencias", "Precios por Período"), ("1", "/negociar", "Márgenes por Artículo")]
-CARGAR_PRECIOS = [("1", "/precios/cargar", "Modificar Precios"), ("1", "/precios/cargar-foto", "Carga Foto Precios")]
+# Dueño, 07/10: Cargar precios primero; adentro, manuales y después por foto.
+CARGAR_PRECIOS = [("1", "/precios/cargar", "Cargar precios manuales"),
+                  ("1", "/precios/cargar-foto", "Cargar precios por foto")]
 
 # LOS SIETE DE PRECIOS hasta el 04/10: dónde quedó cada uno.
 PRECIOS_VIEJOS = {
@@ -67,6 +69,18 @@ def test_PRECIOS_tiene_cuatro_botones_y_CARGAR_PRECIOS_las_dos_formas():
     assert "Próximamente" not in precios.text
     assert '<a class="barra-boton" href="/precios" aria-label="Volver atrás">' in cargar.text
 
+
+def test_cada_forma_de_CARGAR_PRECIOS_se_titula_como_su_boton():
+    """Dueño, 07/10: el botón y el título de la pantalla dicen lo mismo."""
+    from fastapi.testclient import TestClient
+    import app.main as m
+    cliente = TestClient(m.app)
+    for _, ruta, nombre in CARGAR_PRECIOS:
+        with patch("app.main.listar_clientes", return_value=[{"id": 1, "nombre": "EJ Cliente"}]):
+            pagina = cliente.get(ruta)
+        assert pagina.status_code == 200, ruta
+        assert pagina.text.count(f"<title>{nombre}</title>") == 1, ruta
+        assert pagina.text.count(f'<div class="barra-titulo">{nombre}</div>') == 1, ruta
 
 def test_NINGUN_boton_viejo_de_Precios_desaparece_y_cada_pantalla_VIEJA_abre():
     from fastapi.testclient import TestClient
