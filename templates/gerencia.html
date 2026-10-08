@@ -45,8 +45,8 @@
     <a class="franja-ver" href="/gerencia/alertas">Ver el detalle de las alertas</a>
   {% endcall %}
 
-  {# ONCE BOTONES EN TRES GRUPOS (dueño, 04/10; eran 13, más Stock inicial
-     que vino de Administración). Lo que mira lo mismo desde dos o tres
+  {# DOCE BOTONES EN TRES GRUPOS (dueño, 04/10; eran 13, más Stock inicial
+     que vino de Administración; el 08/10 se sumó el Panel de control). Lo que mira lo mismo desde dos o tres
      lados quedó en un botón con pestañas (_pestanas_gerencia.html):
      Rentabilidad (De pedidos · Real), Pérdidas (Mercadería · Cajas) y
      Facturación y cobranzas (Remitos y facturas · Vales · Segunda). #}
@@ -54,6 +54,8 @@
     <h2>Mirar</h2>
     {# El manejo del dinero, con su clave. La Auditoría vive en su propio
        sector (/auditoria), sin clave: es control operativo, no plata. #}
+    {# El tablero de un pantallazo (dueño, 08/10): primero, porque es el resumen de todo. #}
+    <a class="boton color-1" href="/gerencia/panel">{{ ICONOS_HUBS['panel']|safe }}<span>Panel de control</span></a>
     <a class="boton color-1" href="/gerencia/rentabilidad">{{ ICONOS_HUBS['rentabilidad']|safe }}<span>Rentabilidad</span></a>
     <a class="boton color-1" href="/gerencia/perdidas">{{ ICONOS_HUBS['perdidas']|safe }}<span>Pérdidas</span></a>
     <a class="boton color-1" href="/gerencia/costos-fijos">{{ ICONOS_HUBS['costos_fijos']|safe }}<span>Costos fijos</span></a>

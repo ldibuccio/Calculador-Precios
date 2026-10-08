@@ -13589,13 +13589,16 @@ FALTANTES_DE_PRUEBA = [
      "cajones_faltantes": 6, "contenido_faltante": 108},
 ]
 
+# Como los devuelve `listar_pedidos_incompletos`, con su `motivo` (08/10): la
+# cruz cuenta como incompleto y el detalle la nombra.
 INCOMPLETOS_DE_PRUEBA = [
     {"pedido_id": 71, "fecha_operacion": date(2026, 8, 5), "cliente": "EJEMPLO Cli",
-     "sucursal": "VL", "articulo": "EJEMPLO Uno", "pedido": 15, "armado": 12, "faltante": 3},
+     "sucursal": "VL", "articulo": "EJEMPLO Uno", "pedido": 15, "armado": 12, "faltante": 3, "motivo": "de_menos"},
     {"pedido_id": 71, "fecha_operacion": date(2026, 8, 5), "cliente": "EJEMPLO Cli",
-     "sucursal": "BZ", "articulo": "EJEMPLO Dos", "pedido": 10, "armado": 4, "faltante": 6},
+     "sucursal": "BZ", "articulo": "EJEMPLO Dos", "pedido": 10, "armado": None, "faltante": 10, "motivo": "cruz"},
     {"pedido_id": 72, "fecha_operacion": date(2026, 8, 4), "cliente": "EJEMPLO Cli",
-     "sucursal": "VL", "articulo": "EJEMPLO Tres", "pedido": 20, "armado": None, "faltante": 20},
+     "sucursal": "VL", "articulo": "EJEMPLO Tres", "pedido": 20, "armado": None, "faltante": 20,
+     "motivo": "sin_armar"},
 ]
 
 
@@ -13848,8 +13851,10 @@ def test_el_bloque_de_incompletos_dice_LAS_DOS_CUENTAS():
     assert "2 pedidos, 3 renglones" in marcado
     for columna in ("Cliente", "Suc.", "Pedido", "Armado", "Faltante"):
         assert f"<th>{columna}</th>" in marcado, columna
-    # Sin armar es NULL y se dice así: un 0 se lee como "se armó cero".
-    assert "sin armar" in marcado
+    # Sin armar es NULL y se dice así: un 0 se lee como "se armó cero". Y la
+    # cruz se nombra: "no se arma" es una decisión, no un olvido.
+    assert marcado.count('<td data-rotulo="Armado">sin armar</td>') == 1
+    assert marcado.count('<td data-rotulo="Armado">cruz</td>') == 1
 
 
 def test_una_alerta_SIN_detalle_muestra_el_numero_y_el_link_como_hoy():

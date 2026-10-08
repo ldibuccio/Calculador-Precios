@@ -54,6 +54,16 @@ from app.costeo import (
     precio_de_la_cotizacion_del_cliente,
     magnitud_del_articulo,
 )
+from core.panel_control import (
+    estado_de_las_cajas,
+    faltantes_por_unidad,
+    meses_para_comparar,
+    resumen_de_mermas,
+    resumen_de_pedidos_incompletos,
+    resumen_de_rechazos,
+    resumen_de_segunda,
+    utilidad_de_ahora,
+)
 from core.exportar_precios_cotizaciones import generar_excel_precios_cotizaciones, generar_pdf_precios_cotizaciones
 # LAS TRES FUNCIONES DEL MOTOR, importadas directo y sin envolver. El
 # Análisis de Artículo no calcula ninguna rentabilidad propia: elige a cuál
@@ -280,6 +290,7 @@ from app.db import (
     obtener_subcuenta_costos_fijos,
     devoluciones_vinculadas_por_rango,
     listar_cajones_faltantes,
+    listar_compras_pesadas,
     listar_pedidos_incompletos,
     listar_pedidos_para_reingreso,
     listar_renglones_para_reingreso,
@@ -1433,6 +1444,7 @@ templates.env.filters["miles"] = _entero_con_miles
 templates.env.filters["fecha_corta"] = _formatear_fecha_corta
 templates.env.filters["moneda"] = _formatear_moneda
 templates.env.filters["porcentaje"] = _formatear_porcentaje
+templates.env.filters["pct"] = lambda valor: "" if valor is None else f"{float(valor):.1f}%".replace(".", ",")
 templates.env.filters["sin_decimales"] = _formatear_sin_decimales
 templates.env.filters["sufijo_unidad"] = _sufijo_unidad
 templates.env.filters["tamano"] = _formatear_bytes
@@ -18407,8 +18419,10 @@ def _detalle_pedidos_incompletos() -> dict:
         fila["articulo"] or "(sin identificar)",
         _formatear_numero(fila["pedido"]),
         # Sin armar es NULL y se dice así: un 0 sería un número que nadie
-        # cargó, y encima se lee como "se armó cero", que es otra cosa.
-        _formatear_numero(fila["armado"]) if fila["armado"] is not None else "sin armar",
+        # cargó, y encima se lee como "se armó cero", que es otra cosa. La
+        # cruz se nombra (dueño, 08/10): "no se arma" es una decisión.
+        ("cruz" if fila["motivo"] == "cruz" else
+         _formatear_numero(fila["armado"]) if fila["armado"] is not None else "sin armar"),
         _formatear_numero(fila["faltante"]),
     ] for fila in filas]
     pedidos = len({fila["pedido_id"] for fila in filas})
@@ -18707,7 +18721,7 @@ ALERTAS = [
     ),
     DefinicionAlerta(
         codigo="pedidos_incompletos",
-        titulo="Pedidos con renglones incompletos (se armó menos de lo pedido)",
+        titulo="Pedidos con renglones incompletos (se armó menos de lo pedido o no se armó)",
         # En el banner va corto: es una cinta que corre en 390px y el título
         # largo se leía a medias, con el número recién al final. En Auditoría
         # sigue el largo, que ahí sobra lugar y la aclaración sirve.
@@ -19961,7 +19975,8 @@ def exportar_rentabilidad_excel(
 _EMPRESA_DEL_FLETE = "palmala" if "palmala" in NOMBRE_EMPRESA.lower() else "frutamax"
 
 
-def _datos_rentabilidad_real(cliente_id: int, fecha_desde, fecha_hasta, articulo_id, grupo) -> dict:
+def _datos_rentabilidad_real(cliente_id: int, fecha_desde, fecha_hasta, articulo_id, grupo,
+                             solo_lo_vendido: bool = False) -> dict:
     """Junta los datos y llama al motor puro de la Rentabilidad REAL (core/costo_real.py).
 
     La TEÓRICA queda intacta (es la red del dueño); esta es la cuenta
@@ -20053,10 +20068,178 @@ def _datos_rentabilidad_real(cliente_id: int, fecha_desde, fecha_hasta, articulo
         articulos_datos, margenes_por_fecha, cliente_id, fecha_desde, fecha_hasta,
         devoluciones=devoluciones, cajas_del_deposito=cajas_del_deposito,
         kilos_recibidos=recibidos, segunda=segunda, fletes=fletes,
+        solo_lo_vendido=solo_lo_vendido,
     )
     resultado["flete_no_se_resta"] = fletes is None
     resultado["empresa_del_flete"] = NOMBRE_EMPRESA
     return resultado
+
+
+# EL PANEL DE CONTROL de Gerencia (dueño, 08/10): cuadros grandes, cada uno con
+# UN número, y al tocarlo su detalle. NINGUNA cuenta es nueva: cada cuadro llama
+# a la que ya usa su pantalla (ver core/panel_control.py).
+CUADROS_DEL_PANEL = ("rentabilidad", "cajas", "pedidos", "peso", "vales", "vacios", "rechazos", "mermas", "segunda")
+TITULOS_DEL_PANEL = {
+    "rentabilidad": "Rentabilidad por cliente",
+    "cajas": "Cajas",
+    "pedidos": "Pedidos incompletos",
+    "peso": "Ingresos debajo del peso",
+    "vales": "Vales a cobrar",
+    "vacios": "Vacíos en depósito",
+    "rechazos": "Rechazos",
+    "mermas": "Mermas",
+    "segunda": "Segunda",
+}
+
+
+def _clientes_con_ficha() -> list[dict]:
+    """Los clientes que tienen al menos una ficha, por nombre."""
+    con_ficha = {f["cliente_id"] for f in listar_fichas_de_todos_los_clientes()}
+    return sorted((c for c in listar_clientes() if c["id"] in con_ficha), key=lambda c: c["nombre"].lower())
+
+
+def _panel_rentabilidad(hoy) -> list[dict]:
+    """Por cliente: el mes, los últimos 7 días (los de Rentabilidad Real por
+    defecto) y "ahora". Mes y 7 días son la Rentabilidad Real SIN mermas ni
+    segunda (dueño, 08/10: tienen sus cuadros); "ahora" es el promedio de
+    Márgenes por Artículo."""
+    filas = []
+    for cliente in _clientes_con_ficha():
+        rangos = {"mes": (hoy.replace(day=1), hoy), "semana": (hoy - timedelta(days=7), hoy)}
+        fila = {"cliente_id": cliente["id"], "cliente": cliente["nombre"], "rangos": rangos}
+        for clave, (desde, hasta) in rangos.items():
+            real = _datos_rentabilidad_real(cliente["id"], desde, hasta, None, None, solo_lo_vendido=True)
+            fila[clave] = real["totales"]["utilidad_pct"]
+        articulos = calcular_listado_para_negociar_precios(cliente["id"])
+        facturado = facturacion_por_ficha(cliente["id"], hoy - timedelta(days=VENTANA_INCIDENCIA_DIAS), hoy)
+        agregar_incidencia(articulos, facturado["por_ficha"])
+        fila["ahora"] = utilidad_de_ahora(articulos)
+        filas.append(fila)
+    return filas
+
+
+def _panel_cajas() -> dict:
+    return estado_de_las_cajas(stock_de_envases())
+
+
+def _panel_pedidos(hoy) -> dict:
+    """La lista de la alerta de pedidos incompletos (misma ventana y misma definición, con la cruz)."""
+    return resumen_de_pedidos_incompletos(
+        listar_pedidos_incompletos(hoy - timedelta(days=DIAS_PASADOS_LISTADO_PEDIDOS)))
+
+
+def _panel_peso(hoy) -> dict:
+    """Cada unidad del cajón por su lado (dueño, 08/10): el % de kilos es el
+    número grande; unidades y cubetas, abajo. No se convierte nada."""
+    resultado = {}
+    for clave, rango in meses_para_comparar(hoy).items():
+        resultado[clave] = dict(faltantes_por_unidad(listar_compras_pesadas(rango["desde"], rango["hasta"])), **rango)
+    resultado["desde_la_foto"] = fecha_de_la_primera_foto_de_balanza()
+    return resultado
+
+
+def _panel_vales(hoy) -> dict:
+    return resumen_de_la_cartera(hoy)
+
+
+def _panel_vacios() -> dict:
+    proveedores = stock_de_vacios_deposito()
+    return {"total": total_de_vacios_en_galpon(proveedores), "proveedores": proveedores}
+
+
+def _panel_rechazos(hoy) -> dict:
+    """Septiembre entero contra octubre a hoy: los reingresos de TODOS los
+    clientes con ficha, contra su facturación a precio de lista."""
+    clientes = _clientes_con_ficha()
+    resultado = {}
+    for clave, rango in meses_para_comparar(hoy).items():
+        devoluciones, facturacion, bultos = [], 0.0, 0.0
+        for cliente in clientes:
+            devoluciones += devoluciones_vinculadas_por_rango(cliente["id"], rango["desde"], rango["hasta"])
+            facturado = facturacion_por_ficha(cliente["id"], rango["desde"], rango["hasta"])
+            facturacion += sum(facturado["por_ficha"].values())
+            bultos += sum(facturado["bultos_por_ficha"].values())
+        resultado[clave] = dict(resumen_de_rechazos(devoluciones, facturacion, bultos), **rango)
+    return resultado
+
+
+def _perdidas_de_los_dos_meses(hoy, memo: dict) -> dict:
+    """La cuenta de Pérdidas del mes anterior y del corriente, UNA vez por pedido:
+    la usan Mermas y Segunda, y rejuega el FIFO."""
+    if "perdidas" not in memo:
+        memo["perdidas"] = {clave: dict(perdidas_por_periodo(rango["desde"], rango["hasta"]), **rango)
+                            for clave, rango in meses_para_comparar(hoy).items()}
+    return memo["perdidas"]
+
+
+def _panel_mermas(hoy, memo) -> dict:
+    return {clave: dict(resumen_de_mermas(p), desde=p["desde"], hasta=p["hasta"])
+            for clave, p in _perdidas_de_los_dos_meses(hoy, memo).items()}
+
+
+def _panel_segunda(hoy, memo) -> dict:
+    return {clave: dict(resumen_de_segunda(p, lotes_de_segunda(desde=p["desde"], hasta=p["hasta"])),
+                        desde=p["desde"], hasta=p["hasta"])
+            for clave, p in _perdidas_de_los_dos_meses(hoy, memo).items()}
+
+
+_DATOS_DEL_PANEL = {
+    "rentabilidad": lambda hoy: _panel_rentabilidad(hoy),
+    "cajas": lambda hoy: _panel_cajas(),
+    "pedidos": lambda hoy: _panel_pedidos(hoy),
+    "peso": lambda hoy: _panel_peso(hoy),
+    "vales": lambda hoy: _panel_vales(hoy),
+    "vacios": lambda hoy: _panel_vacios(),
+    "rechazos": lambda hoy: _panel_rechazos(hoy),
+}
+_DATOS_DEL_PANEL_CON_MEMO = {
+    "mermas": _panel_mermas,
+    "segunda": _panel_segunda,
+}
+
+
+def _datos_del_cuadro(cuadro: str, hoy, memo: dict):
+    if cuadro in _DATOS_DEL_PANEL_CON_MEMO:
+        return _DATOS_DEL_PANEL_CON_MEMO[cuadro](hoy, memo)
+    return _DATOS_DEL_PANEL[cuadro](hoy)
+
+
+@app.get("/gerencia/panel")
+def ver_panel_de_control(request: Request):
+    """El tablero: un cuadro por tema, en el orden del dueño."""
+    hoy = _hoy_argentina()
+    try:
+        memo: dict = {}
+        datos = {cuadro: _datos_del_cuadro(cuadro, hoy, memo) for cuadro in CUADROS_DEL_PANEL}
+    except Exception as error_db:
+        raise HTTPException(status_code=500, detail=f"Error al leer el panel: {error_db}") from error_db
+    return templates.TemplateResponse(request, "gerencia_panel.html", {
+        "datos": datos, "cuadros": CUADROS_DEL_PANEL, "titulos": TITULOS_DEL_PANEL, "hoy": hoy,
+    })
+
+
+# UNA DIRECCIÓN ESCRITA POR CUADRO, y no "/gerencia/panel/{cuadro}": así el
+# humo las abre a las siete contra el esquema real, en vez de una sola.
+@app.get("/gerencia/panel/rentabilidad")
+@app.get("/gerencia/panel/cajas")
+@app.get("/gerencia/panel/pedidos")
+@app.get("/gerencia/panel/peso")
+@app.get("/gerencia/panel/vales")
+@app.get("/gerencia/panel/vacios")
+@app.get("/gerencia/panel/rechazos")
+@app.get("/gerencia/panel/mermas")
+@app.get("/gerencia/panel/segunda")
+def ver_detalle_del_panel(request: Request):
+    """El detalle de UN cuadro: los mismos datos que el número, abiertos."""
+    cuadro = request.url.path.rstrip("/").rsplit("/", 1)[1]
+    hoy = _hoy_argentina()
+    try:
+        datos = _datos_del_cuadro(cuadro, hoy, {})
+    except Exception as error_db:
+        raise HTTPException(status_code=500, detail=f"Error al leer el panel: {error_db}") from error_db
+    return templates.TemplateResponse(request, "gerencia_panel_detalle.html", {
+        "cuadro": cuadro, "titulo": TITULOS_DEL_PANEL[cuadro], "dato": datos, "hoy": hoy,
+    })
 
 
 @app.get("/gerencia/cajas-perdidas")

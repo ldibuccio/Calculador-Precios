@@ -9977,14 +9977,16 @@ def facturacion_por_ficha(cliente_id: int, fecha_desde, fecha_hasta) -> dict:
                     -- Lo ENTREGADO, sin mirar el precio todavía: de acá salen
                     -- los días. Una sola definición de "esto salió del
                     -- galpón", que después se valúa o no.
-                    SELECT v.fecha_operacion, r.ficha_id, r.kilos_enviados
+                    SELECT v.fecha_operacion, r.ficha_id, r.kilos_enviados,
+                           COALESCE(r.cantidad_armada, r.cantidad) AS bultos
                     FROM vigentes v
                     JOIN pedidos_renglones r ON r.pedido_id = v.id
                     WHERE r.ficha_id IS NOT NULL AND r.anulado_el IS NULL
                       AND r.kilos_enviados IS NOT NULL
                 )
                 SELECT e.ficha_id, SUM(e.kilos_enviados * p.precio) AS facturado,
-                       (SELECT COUNT(DISTINCT fecha_operacion) FROM entregas) AS dias
+                       (SELECT COUNT(DISTINCT fecha_operacion) FROM entregas) AS dias,
+                       SUM(e.bultos) AS bultos
                 FROM entregas e
                 -- LEFT y no CROSS: la ficha sin precio vigente a esa fecha
                 -- tiene que seguir contando su DÍA aunque no sume plata. Con
@@ -10005,6 +10007,10 @@ def facturacion_por_ficha(cliente_id: int, fecha_desde, fecha_hasta) -> dict:
         return {
             "por_ficha": {f[0]: float(f[1]) for f in filas if f[1] is not None},
             "dias": dias,
+            # LOS BULTOS de las MISMAS entregas, con o sin precio (Panel de
+            # control, 08/10: "bultos vendidos" contra los rechazados). Son
+            # los armados: `cantidad_armada`, o lo pedido si se armó justo.
+            "bultos_por_ficha": {f[0]: float(f[3]) for f in filas if f[3] is not None},
         }
     finally:
         conexion.close()
@@ -10242,7 +10248,10 @@ def listar_cajones_faltantes(desde, hasta, umbral_cajones) -> list[dict]:
 # y no sale ninguna fila. Que una base que no pesa no diga nada es correcto;
 # lo que NO puede pasar es que ese cero se lea como "acá no hay problema",
 # y por eso `contar` devuelve la fecha del piso al lado del número.
-_SQL_DIFERENCIA_DE_KILOS = """
+# LAS COMPRAS PESADAS: recibidas, con el cajón pesado, desde que se saca la foto
+# de la balanza. Es el recorte de la alerta de kilos faltantes Y del cuadro
+# "Debajo del peso" del Panel de control, escrito una vez.
+_SQL_COMPRAS_PESADAS = """
     FROM compras c
     JOIN articulos a ON a.id = c.articulo_id
     JOIN proveedores p ON p.id = c.proveedor_id
@@ -10252,8 +10261,42 @@ _SQL_DIFERENCIA_DE_KILOS = """
       AND c.fecha_operacion >= %s AND c.fecha_operacion <= %s
       AND c.fecha_operacion >= (SELECT MIN(""" + _SQL_FECHA_DEL_LOTE_DE_COMPRA.format(col="f.creado_en") + """)
                                   FROM fotos_recepcion f)
+"""
+
+_SQL_DIFERENCIA_DE_KILOS = _SQL_COMPRAS_PESADAS + """
       AND (c.contenido_por_cajon - c.contenido_por_cajon_real) >= %s
 """
+
+
+def listar_compras_pesadas(desde, hasta) -> list[dict]:
+    """TODAS las compras pesadas del rango (las que pesaron de menos, de más o justo).
+
+    El cuadro "Debajo del peso" del Panel de control (dueño, 08/10) necesita
+    el total declarado de lo recibido, no solo las que faltaron: por eso no
+    lleva el umbral de la alerta. Mismas columnas que `listar_diferencia_de_kilos`.
+    """
+    conexion = obtener_conexion()
+    try:
+        with conexion.cursor() as cursor:
+            cursor.execute(
+                """
+                SELECT c.id, c.fecha_operacion, a.nombre AS articulo,
+                       a.unidad_compra, p.nombre AS proveedor,
+                       p.codigo_puesto AS puesto,
+                       c.contenido_por_cajon AS contenido_comprado,
+                       c.contenido_por_cajon_real AS contenido_recibido,
+                       c.cantidad_cajones_real AS cajones_recibidos
+                """
+                + _SQL_COMPRAS_PESADAS
+                + """
+                ORDER BY c.fecha_operacion DESC, c.id DESC
+                """,
+                (desde, hasta),
+            )
+            columnas = [descripcion[0] for descripcion in cursor.description]
+            return [dict(zip(columnas, fila)) for fila in cursor.fetchall()]
+    finally:
+        conexion.close()
 
 # El piso, solo, para poder MOSTRARLO. Es la misma expresión que el `where`
 # de arriba y por eso sale de un solo lugar: si la consulta recorta por una
@@ -10390,6 +10433,10 @@ def listar_pedidos_incompletos(fecha_desde) -> list[dict]:
     mostrar como renglón es la otra mitad del criterio —un pedido CERRADO con
     renglones sin armar—, así que ésos también entran acá, con lo armado en
     NULL: el renglón no se armó, y decir 0 sería inventar un número.
+
+    LA CRUZ TAMBIÉN (dueño, 08/10): un renglón con la cruz ("este no se
+    arma") es un pedido incompleto, en la alerta y en el Panel de control.
+    `motivo` dice cuál es cada uno: 'de_menos', 'sin_armar' o 'cruz'.
     """
     conexion = obtener_conexion()
     try:
@@ -10407,17 +10454,21 @@ def listar_pedidos_incompletos(fecha_desde) -> list[dict]:
                        r.sucursal,
                        COALESCE(a.nombre, r.texto_descripcion, r.texto_codigo) AS articulo,
                        r.cantidad AS pedido, r.cantidad_armada AS armado,
-                       r.cantidad - COALESCE(r.cantidad_armada, 0) AS faltante
+                       r.cantidad - COALESCE(r.cantidad_armada, 0) AS faltante,
+                       CASE WHEN r.anulado_el IS NOT NULL THEN 'cruz'
+                            WHEN r.armado_el IS NULL THEN 'sin_armar'
+                            ELSE 'de_menos' END AS motivo
                 FROM vigentes v
                 JOIN clientes cl ON cl.id = v.cliente_id
                 JOIN pedidos_renglones r ON r.pedido_id = v.id
                 LEFT JOIN articulos a ON a.id = r.articulo_id
-                WHERE r.articulo_id IS NOT NULL AND r.anulado_el IS NULL
+                WHERE r.articulo_id IS NOT NULL
                   AND r.sucursal IS NOT NULL
                   AND (
-                        (r.armado_el IS NOT NULL AND r.cantidad_armada IS NOT NULL
+                        (r.anulado_el IS NULL AND r.armado_el IS NOT NULL AND r.cantidad_armada IS NOT NULL
                          AND r.cantidad_armada < r.cantidad)
-                     OR (v.armado_cerrado_el IS NOT NULL AND r.armado_el IS NULL)
+                     OR (r.anulado_el IS NULL AND v.armado_cerrado_el IS NOT NULL AND r.armado_el IS NULL)
+                     OR r.anulado_el IS NOT NULL
                   )
                 ORDER BY v.fecha_operacion DESC, cl.nombre, r.sucursal,
                          COALESCE(a.nombre, r.texto_descripcion, r.texto_codigo)
@@ -10433,9 +10484,10 @@ def listar_pedidos_incompletos(fecha_desde) -> list[dict]:
 def contar_pedidos_incompletos(fecha_desde) -> dict:
     """Pedidos vigentes desde una fecha que salieron con mercadería incompleta, y el más viejo.
 
-    Incompleto = algún renglón armado con MENOS bultos que los pedidos, o
+    Incompleto = algún renglón armado con MENOS bultos que los pedidos,
     renglones sin armar en un pedido ya cerrado con Terminar (un pedido a medio
-    armar todavía no es noticia). Solo renglones armables (con sucursal e
+    armar todavía no es noticia), o algún renglón con la CRUZ ("este no se
+    arma": dueño, 08/10). Es la misma definición que `listar_pedidos_incompletos`. Solo renglones armables (con sucursal e
     identificados), mismo criterio que los conteos de Armar.
 
     El "<" es a propósito y arregla un bug: la versión vieja de Auditoría
@@ -10462,13 +10514,17 @@ def contar_pedidos_incompletos(fecha_desde) -> dict:
                            (SELECT COUNT(*) FROM pedidos_renglones r
                             WHERE r.pedido_id = p.id AND r.articulo_id IS NOT NULL
                               AND r.anulado_el IS NULL AND r.sucursal IS NOT NULL
-                              AND r.armado_el IS NULL) AS renglones_sin_armar
+                              AND r.armado_el IS NULL) AS renglones_sin_armar,
+                           (SELECT COUNT(*) FROM pedidos_renglones r
+                            WHERE r.pedido_id = p.id AND r.articulo_id IS NOT NULL
+                              AND r.anulado_el IS NOT NULL AND r.sucursal IS NOT NULL) AS renglones_con_cruz
                     FROM pedidos p
                     WHERE p.anulado_el IS NULL AND p.fecha_operacion >= %s
                     ORDER BY p.cliente_id, p.fecha_operacion, p.creado_en DESC
                 ) vigentes
                 WHERE renglones_cortos > 0
                    OR (armado_cerrado_el IS NOT NULL AND renglones_sin_armar > 0)
+                   OR renglones_con_cruz > 0
                 """,
                 (fecha_desde,),
             )

@@ -1,0 +1,151 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Panel de control</title>
+<style>
+  :root { font-family: -apple-system, system-ui, sans-serif; }
+  body { margin: 0; padding: 1rem; background: #f5f5f5; color: #222; }
+  .cuadros { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 0.75rem; }
+  .cuadro {
+    display: block; background: #fff; border-radius: 12px; padding: 0.9rem; color: #222; text-decoration: none;
+    box-shadow: 0 1px 3px rgba(0, 0, 0, 0.12); min-height: 44px; overflow-wrap: anywhere;
+  }
+  .cuadro.ancho { grid-column: 1 / -1; }
+  .cuadro-titulo { font-size: 0.85rem; font-weight: 700; color: #555; text-transform: uppercase; letter-spacing: 0.02em; }
+  .cuadro-numero { font-size: 2.3rem; font-weight: 800; line-height: 1.1; margin: 0.3rem 0 0.15rem; }
+  .cuadro-pie { font-size: 0.82rem; color: #555; }
+  .rojo { color: #dc2626; }
+  .verde { color: #15803d; }
+  .nota { font-size: 0.75rem; color: #777; margin-top: 0.45rem; }
+  .tabla { width: 100%; border-collapse: collapse; margin-top: 0.4rem; }
+  .tabla th { font-size: 0.72rem; color: #666; font-weight: 600; text-align: right; padding: 0.15rem 0.2rem;
+    white-space: nowrap; }
+  .tabla th:first-child, .tabla td:first-child { text-align: left; }
+  .tabla td { font-size: 1.05rem; font-weight: 800; text-align: right; padding: 0.25rem 0.2rem; border-top: 1px solid #eee;
+    white-space: nowrap; }
+  .tabla td:first-child { font-size: 0.9rem; font-weight: 600; white-space: normal; }
+  .marca { display: block; font-size: 0.65rem; font-weight: 600; color: #b45309; }
+  .dos { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 0.5rem; margin-top: 0.3rem; }
+  .dos .cuadro-numero { font-size: 1.9rem; }
+  .mes { font-size: 0.78rem; color: #555; font-weight: 600; }
+</style>
+</head>
+<body>
+  {% set barra_sector = "gerencia" %}
+  {% set barra_titulo = "Panel de control" %}
+  {% set barra_atras = "/gerencia" %}
+  {% include "_barra_navegacion.html" %}
+  {% set MESES = ["", "Enero", "Febrero", "Marzo", "Abril", "Mayo", "Junio", "Julio", "Agosto", "Septiembre", "Octubre", "Noviembre", "Diciembre"] %}
+
+  <div class="cuadros">
+    {# 1. RENTABILIDAD POR CLIENTE #}
+    <a class="cuadro ancho" href="/gerencia/panel/rentabilidad" data-cuadro="rentabilidad">
+      <div class="cuadro-titulo">{{ titulos.rentabilidad }}</div>
+      <table class="tabla">
+        <tr><th>Cliente</th><th>Mes</th><th>7 días</th><th>Ahora</th></tr>
+        {% for f in datos.rentabilidad %}
+        <tr>
+          <td>{{ f.cliente }}</td>
+          {% for valor in (f.mes, f.semana, f.ahora.pct) %}
+          <td class="{{ 'rojo' if valor is not none and valor < 0 }}">{{ valor|pct if valor is not none else "—" }}
+            {%- if loop.last and f.ahora.sin_ventas %}<span class="marca">sin ventas</span>{% endif %}</td>
+          {% endfor %}
+        </tr>
+        {% else %}
+        <tr><td colspan="4">Ningún cliente tiene fichas.</td></tr>
+        {% endfor %}
+      </table>
+      <div class="nota">Ganancia sobre el costo de la mercadería, como en Rentabilidad Real; sin mermas ni segunda (ver sus cuadros).</div>
+    </a>
+
+    {# 2. CAJAS #}
+    <a class="cuadro" href="/gerencia/panel/cajas" data-cuadro="cajas">
+      <div class="cuadro-titulo">{{ titulos.cajas }}</div>
+      <div class="cuadro-numero {{ 'rojo' if datos.cajas.bajas else 'verde' }}">{{ datos.cajas.bajas }}</div>
+      <div class="cuadro-pie">{{ "tipo bajo" if datos.cajas.bajas == 1 else "tipos bajos" }} de {{ datos.cajas.filas|length }}</div>
+    </a>
+
+    {# 3. PEDIDOS INCOMPLETOS #}
+    <a class="cuadro" href="/gerencia/panel/pedidos" data-cuadro="pedidos">
+      <div class="cuadro-titulo">{{ titulos.pedidos }}</div>
+      <div class="cuadro-numero {{ 'rojo' if datos.pedidos.pedidos else 'verde' }}">{{ datos.pedidos.pedidos }}</div>
+      <div class="cuadro-pie">en los últimos 7 días</div>
+    </a>
+
+    {# 4. DEBAJO DEL PESO #}
+    <a class="cuadro ancho" href="/gerencia/panel/peso" data-cuadro="peso">
+      <div class="cuadro-titulo">{{ titulos.peso }}</div>
+      <div class="dos">
+        {% for clave in ("anterior", "actual") %}{% set m = datos.peso[clave] %}
+        <div>
+          <div class="mes">{{ MESES[m.desde.month] }}{% if clave == "actual" %} (a hoy){% endif %}</div>
+          <div class="cuadro-numero">{{ m.kilo.pct|pct if m.kilo.pct is not none else "—" }}</div>
+          <div class="cuadro-pie">de los kilos declarados</div>
+          <div class="cuadro-pie" data-unidad="unidad">Unidades: {{ m.unidad.pct|pct if m.unidad.pct is not none else "—" }}</div>
+          <div class="cuadro-pie" data-unidad="cubeta">Cubetas: {{ m.cubeta.pct|pct if m.cubeta.pct is not none else "—" }}</div>
+        </div>
+        {% endfor %}
+      </div>
+    </a>
+
+    {# 5. VALES A COBRAR #}
+    <a class="cuadro" href="/gerencia/panel/vales" data-cuadro="vales">
+      <div class="cuadro-titulo">{{ titulos.vales }}</div>
+      <div class="cuadro-numero">{{ datos.vales.total|moneda }}</div>
+      <div class="cuadro-pie">{{ datos.vales.cantidad }} {{ "vale" if datos.vales.cantidad == 1 else "vales" }} en cartera</div>
+    </a>
+
+    {# 6. VACÍOS EN DEPÓSITO #}
+    <a class="cuadro" href="/gerencia/panel/vacios" data-cuadro="vacios">
+      <div class="cuadro-titulo">{{ titulos.vacios }}</div>
+      <div class="cuadro-numero {{ 'rojo' if datos.vacios.total < 0 }}">{{ datos.vacios.total }}</div>
+      <div class="cuadro-pie">cajones vacíos</div>
+    </a>
+
+    {# 7. RECHAZOS #}
+    <a class="cuadro ancho" href="/gerencia/panel/rechazos" data-cuadro="rechazos">
+      <div class="cuadro-titulo">{{ titulos.rechazos }}</div>
+      <table class="tabla">
+        <tr><th></th>{% for clave in ("anterior", "actual") %}<th>{{ MESES[datos.rechazos[clave].desde.month] }}{% if clave == "actual" %} (a hoy){% endif %}</th>{% endfor %}</tr>
+        <tr><td>En plata</td>{% for clave in ("anterior", "actual") %}{% set r = datos.rechazos[clave] %}
+          <td>{{ r.pct_plata|pct if r.pct_plata is not none else "—" }}<span class="cuadro-pie" style="display:block;font-weight:400">{{ r.pesos|moneda }}</span></td>{% endfor %}</tr>
+        <tr><td>En bultos</td>{% for clave in ("anterior", "actual") %}{% set r = datos.rechazos[clave] %}
+          <td>{{ r.pct_bultos|pct if r.pct_bultos is not none else "—" }}<span class="cuadro-pie" style="display:block;font-weight:400">{{ r.bultos|sin_decimales }} bultos</span></td>{% endfor %}</tr>
+      </table>
+      <div class="nota">El rechazo al costo, contra la facturación a precio de lista.</div>
+    </a>
+
+    {# 8. MERMAS #}
+    <a class="cuadro ancho" href="/gerencia/panel/mermas" data-cuadro="mermas">
+      <div class="cuadro-titulo">{{ titulos.mermas }}</div>
+      <div class="dos">
+        {% for clave in ("anterior", "actual") %}{% set m = datos.mermas[clave] %}
+        <div>
+          <div class="mes">{{ MESES[m.desde.month] }}{% if clave == "actual" %} (a hoy){% endif %}</div>
+          <div class="cuadro-numero {{ 'rojo' if m.total > 0 }}">{{ m.total|moneda }}</div>
+          <div class="cuadro-pie">{{ m.bultos|sin_decimales }} bultos tirados</div>
+        </div>
+        {% endfor %}
+      </div>
+    </a>
+
+    {# 9. SEGUNDA #}
+    <a class="cuadro ancho" href="/gerencia/panel/segunda" data-cuadro="segunda">
+      <div class="cuadro-titulo">{{ titulos.segunda }}</div>
+      <div class="dos">
+        {% for clave in ("anterior", "actual") %}{% set s = datos.segunda[clave] %}
+        <div>
+          <div class="mes">{{ MESES[s.desde.month] }}{% if clave == "actual" %} (a hoy){% endif %}</div>
+          <div class="cuadro-numero {{ 'rojo' if s.perdida > 0 }}">{{ s.perdida|moneda }}</div>
+          <div class="cuadro-pie">costo {{ s.costo|moneda }} · cobrado {{ s.cobrado|moneda }}</div>
+        </div>
+        {% endfor %}
+      </div>
+      <div class="nota">Lo que se perdió: el costo de lo pasado a segunda menos lo que pagó el puesto.</div>
+    </a>
+  </div>
+{% include "_pie_version.html" %}
+</body>
+</html>

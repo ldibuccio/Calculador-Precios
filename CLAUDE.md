@@ -276,6 +276,9 @@ Módulos (se lee el que se va a tocar):
   sigue en `docs/que_comprar_hoy.md`).
 - `docs/modulos/retroactivo.md`: Depósito solo con la fecha de hoy, y "Con
   fecha anterior" de Administración con la contraseña especial de Gerencia.
+- `docs/modulos/panel_control.md`: el Panel de control de Gerencia (nueve
+  cuadros que reusan cuentas; rentabilidad sin mermas ni segunda, que tienen
+  sus cuadros; la cruz cuenta como pedido incompleto).
 - `docs/modulos/fletes.md`: Fletes (Administración → Pedidos), el armado más
   barato, el reparto por pallets, corregir y la línea Flete de Rentabilidad
   Real.
