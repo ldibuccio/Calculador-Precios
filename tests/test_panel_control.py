@@ -168,13 +168,25 @@ def test_MERMAS_es_el_renglon_de_Perdidas_con_su_detalle():
     assert [f["destino"] for f in resultado["filas"]] == ["merma"]
 
 
-def test_SEGUNDA_es_el_costo_de_lo_pasado_MENOS_lo_que_pago_el_puesto():
+def test_SEGUNDA_es_el_costo_de_TODO_lo_que_fue_a_segunda_MENOS_lo_que_pago_el_puesto():
     lotes = [{"articulo_id": 1, "articulo": "EJEMPLO Tomate", "importe": 300.0},
-             {"articulo_id": 2, "articulo": "EJEMPLO Zapallo", "importe": 50.0},     # cobrado sin pase en el mes
+             {"articulo_id": 2, "articulo": "EJEMPLO Zapallo", "importe": 50.0},     # cobrado sin nada en el mes
              {"articulo_id": 1, "articulo": "EJEMPLO Tomate", "importe": None}]     # sin cobrar: no suma cero
-    resultado = resumen_de_segunda(PERDIDAS, lotes)
-    assert (resultado["perdida"], resultado["costo"], resultado["cobrado"]) == (650.0, 1000.0, 350.0)
-    assert resultado["lotes_sin_cobrar"] == 1
-    assert [(f["articulo"], f["perdida"]) for f in resultado["filas"]] == [
-        ("EJEMPLO Tomate", 700.0), ("EJEMPLO Zapallo", -50.0)]
+    rechazos = [{"articulo_id": 1, "articulo": "EJEMPLO Tomate", "pesos": 600.0, "bultos": 3.0}]
+    resultado = resumen_de_segunda(PERDIDAS, lotes, rechazos, rechazos_sin_costo=2.0)
+    assert resultado["por_origen"] == {"pase": 1000.0, "rechazo": 600.0, "reproceso": 0.0}
+    assert (resultado["perdida"], resultado["costo"], resultado["cobrado"]) == (1250.0, 1600.0, 350.0)
+    assert (resultado["bultos"], resultado["rechazos_sin_costo"], resultado["lotes_sin_cobrar"]) == (5.0, 2.0, 1)
+    assert [(f["articulo"], f["pase"], f["rechazo"], f["perdida"]) for f in resultado["filas"]] == [
+        ("EJEMPLO Tomate", 1000.0, 600.0, 1300.0), ("EJEMPLO Zapallo", 0.0, 0.0, -50.0)]
+
+
+def test_un_RECHAZO_a_segunda_que_se_COBRA_no_da_perdida_NEGATIVA():
+    """Sin pases: lo único que fue a segunda es un rechazo de $2.000 y el
+    puesto pagó $800. Lo perdido es $1.200, no −$800."""
+    sin_pases = {"renglones": {"segunda": {"total": 0.0, "bultos": 0.0}}, "detalle": []}
+    resultado = resumen_de_segunda(sin_pases, [{"articulo_id": 1, "articulo": "EJEMPLO Tomate", "importe": 800.0}],
+                                   [{"articulo_id": 1, "articulo": "EJEMPLO Tomate", "pesos": 2000.0, "bultos": 4.0}],
+                                   rechazos_sin_costo=0.0)
+    assert resultado["perdida"] == 1200.0
 

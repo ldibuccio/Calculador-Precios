@@ -184,20 +184,28 @@
   {% for clave in ("anterior", "actual") %}{% set s = dato[clave] %}
   <div class="tarjeta" data-mes="{{ clave }}">
     <h2>{{ MESES[s.desde.month] }}{% if clave == "actual" %} (del 1 a hoy){% endif %}</h2>
-    <p class="grande {{ 'rojo' if s.perdida > 0 }}">{{ s.perdida|moneda }}</p>
-    <p class="dato">Costo de lo pasado a segunda {{ s.costo|moneda }} ({{ s.bultos|sin_decimales }} bultos) · cobrado al puesto {{ s.cobrado|moneda }}</p>
+    {% if s.perdida < 0 %}
+    <p class="grande verde" data-resultado="recuperado">{{ (-s.perdida)|moneda }} recuperado</p>
+    {% else %}
+    <p class="grande {{ 'rojo' if s.perdida > 0 }}" data-resultado="perdido">{{ s.perdida|moneda }} perdido</p>
+    {% endif %}
+    <p class="dato">Costo de lo que fue a segunda {{ s.costo|moneda }} ({{ s.bultos|sin_decimales }} bultos) · cobrado al puesto {{ s.cobrado|moneda }}</p>
+    <p class="dato" data-origen="pase">Pases: {{ s.por_origen.pase|moneda }}</p>
+    <p class="dato" data-origen="rechazo">Rechazos: {{ s.por_origen.rechazo|moneda }}</p>
+    <p class="dato" data-origen="reproceso">Reprocesos: {{ s.por_origen.reproceso|moneda }} (su costo ya está en las cajas armadas)</p>
+    {% if s.rechazos_sin_costo %}<p class="nota">{{ s.rechazos_sin_costo|sin_decimales }} bultos rechazados sin costo cargado: no están en la plata.</p>{% endif %}
     {% if s.lotes_sin_cobrar %}<p class="nota">{{ s.lotes_sin_cobrar }} {{ "lote" if s.lotes_sin_cobrar == 1 else "lotes" }} al puesto sin cobrar todavía.</p>{% endif %}
     {% for f in s.filas %}
     <div class="fila">
-      <div class="fila-que">{{ f.articulo }} · <span class="{{ 'rojo' if f.perdida > 0 }}">{{ f.perdida|moneda }}</span></div>
-      <div class="fila-dato">{{ f.bultos|sin_decimales }} bultos pasados · costo {{ f.costo|moneda }} · cobrado {{ f.cobrado|moneda }}</div>
+      <div class="fila-que">{{ f.articulo }} · {% if f.perdida < 0 %}<span class="verde">{{ (-f.perdida)|moneda }} recuperado</span>{% else %}<span class="{{ 'rojo' if f.perdida > 0 }}">{{ f.perdida|moneda }} perdido</span>{% endif %}</div>
+      <div class="fila-dato">{{ f.bultos|sin_decimales }} bultos · pases {{ f.pase|moneda }} · rechazos {{ f.rechazo|moneda }} · cobrado {{ f.cobrado|moneda }}</div>
     </div>
     {% else %}
-    <p class="vacio">No hubo pases a segunda ni cobros.</p>
+    <p class="vacio">No fue nada a segunda ni hubo cobros.</p>
     {% endfor %}
   </div>
   {% endfor %}
-  <p class="nota">El pase cae en el mes en que se pasó; lo cobrado, en el mes en que el lote salió al puesto. El puesto paga la segunda junta, sea de pases, de rechazos o de reprocesos.</p>
+  <p class="nota">El puesto paga la segunda junta, así que el costo es de toda la que fue a segunda: los pases (como en Pérdidas), los rechazos que no volvieron al stock (como en Rentabilidad Real: al costo del armado más la caja) y los reprocesos. La segunda de una guía R va a $0: su costo ya está en las cajas armadas, y lo que paga el puesto por ella es recupero. Cada cosa cae en el mes en que pasó; lo cobrado, en el mes en que el lote salió al puesto.</p>
   {% endif %}
 {% include "_pie_version.html" %}
 </body>
