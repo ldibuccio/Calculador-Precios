@@ -7920,7 +7920,8 @@ def test_el_selector_de_reproceso_no_esconde_el_articulo_con_deficit():
 
 def test_facturacion_por_ficha_usa_kilos_enviados_y_precio_de_la_fecha():
     conexion, cursor = _conexion_falsa()
-    cursor.fetchall.return_value = [(1, 1500.50, 4), (2, 300, 4)]
+    # ficha, facturado, días, bultos (Panel de control, 08/10).
+    cursor.fetchall.return_value = [(1, 1500.50, 4, 12), (2, 300, 4, 3)]
 
     with patch("app.db.obtener_conexion", return_value=conexion):
         facturado = facturacion_por_ficha(1, date(2026, 8, 8), date(2026, 9, 7))
@@ -7943,6 +7944,9 @@ def test_facturacion_por_ficha_usa_kilos_enviados_y_precio_de_la_fecha():
     assert "LEFT JOIN LATERAL" in consulta
     assert "COUNT(DISTINCT fecha_operacion)" in consulta
     assert facturado["dias"] == 4
+    # Los bultos de las MISMAS entregas: los armados.
+    assert "COALESCE(r.cantidad_armada, r.cantidad) AS bultos" in consulta
+    assert facturado["bultos_por_ficha"] == {1: 12.0, 2: 3.0}
 
 
 def test_facturacion_por_ficha_no_puede_leer_renglones_de_otro_cliente():
@@ -7986,13 +7990,14 @@ def test_facturacion_por_ficha_cuenta_el_dia_aunque_no_haya_precio():
     que ir a mirar."""
     conexion, cursor = _conexion_falsa()
     # Una sola ficha, sin precio: facturado NULL y dias = 1.
-    cursor.fetchall.return_value = [(7, None, 1)]
+    cursor.fetchall.return_value = [(7, None, 1, 2)]
 
     with patch("app.db.obtener_conexion", return_value=conexion):
         facturado = facturacion_por_ficha(1, date(2026, 8, 8), date(2026, 9, 7))
 
     assert facturado["por_ficha"] == {}   # no suma como cero: no aparece
     assert facturado["dias"] == 1         # pero el día se cuenta
+    assert facturado["bultos_por_ficha"] == {7: 2.0}   # y sus bultos salieron igual
 
 
 def test_facturacion_por_ficha_excluye_el_renglon_anulado():

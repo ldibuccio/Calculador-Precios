@@ -357,8 +357,15 @@ def calcular_rentabilidad_real(
     kilos_recibidos: dict | None = None,
     segunda: list[dict] | None = None,
     fletes: list[dict] | None = None,
+    solo_lo_vendido: bool = False,
 ) -> dict:
     """Arma el reporte real a partir de datos ya traídos (puro, testeable sin base).
+
+    solo_lo_vendido (Panel de control, dueño 08/10): la venta contra el costo
+    de lo vendido A ESE CLIENTE, sin mermas ni pases a segunda (mercadería y
+    caja del depósito) ni lo que pagó el puesto por la segunda: esas tienen
+    sus propios cuadros. Apagado —la pantalla de Rentabilidad Real— entran
+    todas, como siempre. Lo del cliente sigue: sus rechazos y el flete.
 
     articulos_datos: [{articulo_id, nombre, grupo, entradas, salidas}] —
     entradas y salidas de TODA la historia del artículo (la atribución
@@ -575,6 +582,9 @@ def calcular_rentabilidad_real(
                 fila["costo_mercaderia"] += salida["costo"]
                 fila["costo_envase"] += unidades * envase_unidad
 
+            elif salida["tipo"] in ("merma", "pase_a_segunda") and solo_lo_vendido:
+                continue
+
             elif salida["tipo"] == "merma":
                 if salida["bultos_sin_costo"] > 0:
                     for motivo, cuantos in salida["motivos_sin_costo"].items():
@@ -634,7 +644,7 @@ def calcular_rentabilidad_real(
         # desaparecer en silencio, que es la única forma en que un tercer
         # destino se puede enterar de que existe.
         columna_del_destino = {"merma": "costo_mermas", "segunda": "costo_segunda"}
-        for destino, columna in columna_del_destino.items():
+        for destino, columna in ({} if solo_lo_vendido else columna_del_destino).items():
             cajas, pesos = (cajas_del_deposito or {}).get(
                 (destino, articulo["articulo_id"]), (0.0, 0.0))
             if not (cajas or pesos):
@@ -747,7 +757,7 @@ def calcular_rentabilidad_real(
     # cobro. Un lote sin cobrar no suma nada y no vuelve provisorio el día:
     # solo se cuenta, para que el día diga "N lotes de segunda sin cobrar".
     # $0 es un cobro, no un pendiente.
-    for lote in segunda or []:
+    for lote in ([] if solo_lo_vendido else segunda or []):
         if not (fecha_desde <= lote["fecha"] <= fecha_hasta):
             continue
         if lote["importe"] is None:
