@@ -20098,7 +20098,19 @@ def _clientes_con_ficha() -> list[dict]:
     return sorted((c for c in listar_clientes() if c["id"] in con_ficha), key=lambda c: c["nombre"].lower())
 
 
-def _panel_rentabilidad(hoy) -> list[dict]:
+def _real_sin_perdidas(cliente_id: int, desde, hasta, memo: dict | None) -> dict:
+    """La Rentabilidad Real del panel (sin mermas ni segunda), UNA vez por
+    cliente y rango en cada pedido: la usan Rentabilidad y Segunda."""
+    clave = ("real", cliente_id, desde, hasta)
+    if memo is None or clave not in memo:
+        real = _datos_rentabilidad_real(cliente_id, desde, hasta, None, None, solo_lo_vendido=True)
+        if memo is None:
+            return real
+        memo[clave] = real
+    return memo[clave]
+
+
+def _panel_rentabilidad(hoy, memo: dict | None = None) -> list[dict]:
     """Por cliente: el mes, los últimos 7 días (los de Rentabilidad Real por
     defecto) y "ahora". Mes y 7 días son la Rentabilidad Real SIN mermas ni
     segunda (dueño, 08/10: tienen sus cuadros); "ahora" es el promedio de
@@ -20108,8 +20120,7 @@ def _panel_rentabilidad(hoy) -> list[dict]:
         rangos = {"mes": (hoy.replace(day=1), hoy), "semana": (hoy - timedelta(days=7), hoy)}
         fila = {"cliente_id": cliente["id"], "cliente": cliente["nombre"], "rangos": rangos}
         for clave, (desde, hasta) in rangos.items():
-            real = _datos_rentabilidad_real(cliente["id"], desde, hasta, None, None, solo_lo_vendido=True)
-            fila[clave] = real["totales"]["utilidad_pct"]
+            fila[clave] = _real_sin_perdidas(cliente["id"], desde, hasta, memo)["totales"]["utilidad_pct"]
         articulos = calcular_listado_para_negociar_precios(cliente["id"])
         facturado = facturacion_por_ficha(cliente["id"], hoy - timedelta(days=VENTANA_INCIDENCIA_DIAS), hoy)
         agregar_incidencia(articulos, facturado["por_ficha"])
@@ -20177,14 +20188,38 @@ def _panel_mermas(hoy, memo) -> dict:
             for clave, p in _perdidas_de_los_dos_meses(hoy, memo).items()}
 
 
+def _rechazos_a_segunda(desde, hasta, memo) -> tuple[list[dict], float]:
+    """Los rechazos que se perdieron (a segunda o a reproceso) de todos los
+    clientes con ficha, por artículo, valuados por la Rentabilidad Real
+    (`rechazos_perdidos`: costo congelado más la caja). Y los bultos que no
+    se pudieron valuar (sin costo congelado)."""
+    por_articulo: dict = {}
+    sin_costo = 0.0
+    for cliente in _clientes_con_ficha():
+        real = _real_sin_perdidas(cliente["id"], desde, hasta, memo)
+        for grupo in real["grupos"]:
+            for fila in grupo["filas"]:
+                if fila["rechazos_bultos"] or fila["rechazos_perdidos"]:
+                    articulo = por_articulo.setdefault(fila["articulo_id"], {
+                        "articulo_id": fila["articulo_id"], "articulo": fila["articulo_nombre"],
+                        "pesos": 0.0, "bultos": 0.0})
+                    articulo["pesos"] += fila["rechazos_perdidos"]
+                    articulo["bultos"] += fila["rechazos_bultos"]
+        sin_costo += sum(m["bultos"] for m in real["afuera_por_motivo"] if m["motivo"] == "rechazo_sin_costo")
+    return list(por_articulo.values()), sin_costo
+
+
 def _panel_segunda(hoy, memo) -> dict:
-    return {clave: dict(resumen_de_segunda(p, lotes_de_segunda(desde=p["desde"], hasta=p["hasta"])),
-                        desde=p["desde"], hasta=p["hasta"])
-            for clave, p in _perdidas_de_los_dos_meses(hoy, memo).items()}
+    resultado = {}
+    for clave, p in _perdidas_de_los_dos_meses(hoy, memo).items():
+        rechazos, sin_costo = _rechazos_a_segunda(p["desde"], p["hasta"], memo)
+        resultado[clave] = dict(
+            resumen_de_segunda(p, lotes_de_segunda(desde=p["desde"], hasta=p["hasta"]), rechazos, sin_costo),
+            desde=p["desde"], hasta=p["hasta"])
+    return resultado
 
 
 _DATOS_DEL_PANEL = {
-    "rentabilidad": lambda hoy: _panel_rentabilidad(hoy),
     "cajas": lambda hoy: _panel_cajas(),
     "pedidos": lambda hoy: _panel_pedidos(hoy),
     "peso": lambda hoy: _panel_peso(hoy),
@@ -20193,6 +20228,7 @@ _DATOS_DEL_PANEL = {
     "rechazos": lambda hoy: _panel_rechazos(hoy),
 }
 _DATOS_DEL_PANEL_CON_MEMO = {
+    "rentabilidad": _panel_rentabilidad,
     "mermas": _panel_mermas,
     "segunda": _panel_segunda,
 }

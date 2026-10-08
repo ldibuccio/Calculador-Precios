@@ -169,26 +169,51 @@ def resumen_de_mermas(perdidas: dict) -> dict:
             "filas": [f for f in perdidas["detalle"] if f["destino"] == "merma"]}
 
 
-def resumen_de_segunda(perdidas: dict, lotes: list[dict]) -> dict:
-    """Lo que se perdió en segunda: el costo de lo pasado (Pérdidas) menos lo que pagó el puesto.
+# LA SEGUNDA DE UNA GUÍA R VA A $0 (dueño, 08/10): su costo ya está en las cajas
+# armadas —el costo del cajón entero viaja a la primera ("reproceso_toma",
+# neutro en plata)— y no se mueve. Lo que paga el puesto por ella es recupero.
+COSTO_DE_LA_SEGUNDA_DEL_REPROCESO = 0.0
 
-    `lotes` son los lotes de segunda al puesto del mismo período
-    (`lotes_de_segunda`, por la fecha de la salida). Lo cobrado es el importe
-    de los cobrados; los que no se cobraron todavía se cuentan aparte.
+
+def resumen_de_segunda(perdidas: dict, lotes: list[dict], rechazos: list[dict], rechazos_sin_costo: float) -> dict:
+    """Lo que se perdió en segunda: el costo de TODO lo que fue a segunda menos lo que pagó el puesto.
+
+    El puesto paga la segunda junta, así que el costo también es de toda
+    (dueño, 08/10), abierto por origen:
+      - pase: el renglón de segunda de Pérdidas (`perdidas_por_periodo`),
+        mercadería más caja;
+      - rechazo: lo que la Rentabilidad Real llama "rechazos perdidos" (los
+        que fueron a segunda o a reproceso: los bultos al costo congelado del
+        armado más la caja), de todos los clientes — `rechazos` trae una
+        fila por artículo con `pesos` y `bultos`;
+      - reproceso: `COSTO_DE_LA_SEGUNDA_DEL_REPROCESO`.
+    `lotes` son los lotes al puesto del mismo período (`lotes_de_segunda`,
+    por la fecha de la salida); los que no se cobraron se cuentan aparte. Los
+    rechazos sin costo congelado no suman cero en silencio: se cuentan.
     """
     renglon = perdidas["renglones"]["segunda"]
     cobrados = [l for l in lotes if l["importe"] is not None]
     cobrado = sum(l["importe"] for l in cobrados)
+    por_origen = {"pase": renglon["total"], "rechazo": sum(r["pesos"] for r in rechazos),
+                  "reproceso": COSTO_DE_LA_SEGUNDA_DEL_REPROCESO}
+    vacia = {"bultos": 0.0, "pase": 0.0, "rechazo": 0.0, "cobrado": 0.0}
     por_articulo: dict = {}
     for fila in perdidas["detalle"]:
         if fila["destino"] == "segunda":
-            por_articulo[fila["articulo_id"]] = {"articulo": fila["articulo"], "bultos": fila["bultos"],
-                                                 "costo": fila["total"], "cobrado": 0.0}
+            articulo = por_articulo.setdefault(fila["articulo_id"], dict(vacia, articulo=fila["articulo"]))
+            articulo["pase"] += fila["total"]
+            articulo["bultos"] += fila["bultos"]
+    for fila in rechazos:
+        articulo = por_articulo.setdefault(fila["articulo_id"], dict(vacia, articulo=fila["articulo"]))
+        articulo["rechazo"] += fila["pesos"]
+        articulo["bultos"] += fila["bultos"]
     for lote in cobrados:
-        fila = por_articulo.setdefault(lote["articulo_id"], {"articulo": lote["articulo"], "bultos": 0.0,
-                                                             "costo": 0.0, "cobrado": 0.0})
-        fila["cobrado"] += lote["importe"]
-    filas = sorted(({**f, "perdida": f["costo"] - f["cobrado"]} for f in por_articulo.values()),
-                   key=lambda f: (-f["perdida"], f["articulo"]))
-    return {"perdida": renglon["total"] - cobrado, "costo": renglon["total"], "cobrado": cobrado,
-            "bultos": renglon["bultos"], "lotes_sin_cobrar": len(lotes) - len(cobrados), "filas": filas}
+        articulo = por_articulo.setdefault(lote["articulo_id"], dict(vacia, articulo=lote["articulo"]))
+        articulo["cobrado"] += lote["importe"]
+    filas = sorted(({**f, "costo": f["pase"] + f["rechazo"], "perdida": f["pase"] + f["rechazo"] - f["cobrado"]}
+                    for f in por_articulo.values()), key=lambda f: (-f["perdida"], f["articulo"]))
+    costo = sum(por_origen.values())
+    return {"perdida": costo - cobrado, "costo": costo, "por_origen": por_origen, "cobrado": cobrado,
+            "bultos": renglon["bultos"] + sum(r["bultos"] for r in rechazos),
+            "rechazos_sin_costo": rechazos_sin_costo,
+            "lotes_sin_cobrar": len(lotes) - len(cobrados), "filas": filas}

@@ -63,13 +63,27 @@ el panel solo la resume. En orden:
 8. **Mermas**: el renglón de mermas de Pérdidas (`perdidas_por_periodo`):
    mercadería al costo de su lote más la caja si era caja armada; mes anterior
    contra mes en curso; detalle por artículo con bultos y costo.
-9. **Segunda**: lo que se perdió = el costo de lo pasado a segunda (el
-   renglón de segunda de Pérdidas) menos lo que pagó el puesto
-   (`lotes_de_segunda` cobrados, por la fecha de la salida). Abajo, el costo y
-   lo cobrado por separado; los lotes sin cobrar se cuentan aparte. El puesto
-   paga la segunda junta (de pases, de rechazos o de reprocesos): los lotes no
-   dicen de dónde vino cada bulto. Es el mismo criterio que el "Recupero de
-   segunda" de la Rentabilidad Real.
+9. **Segunda** (corregido el 08/10): lo que se perdió = el costo de TODA la
+   mercadería que fue a segunda en el período menos TODO lo que pagó el
+   puesto (`lotes_de_segunda` cobrados, por la fecha de la salida). El puesto
+   paga la segunda junta, así que los dos lados miden lo mismo. El costo,
+   abierto por origen (`resumen_de_segunda`):
+   - **pase**: el renglón de segunda de Pérdidas (mercadería más caja);
+   - **rechazo**: los "rechazos perdidos" de la Rentabilidad Real de todos los
+     clientes con ficha (destino segunda o reproceso: el costo congelado del
+     armado más la caja), por la fecha del reingreso; los que no tienen costo
+     congelado se cuentan aparte;
+   - **reproceso**: `COSTO_DE_LA_SEGUNDA_DEL_REPROCESO` = $0 (dueño, 08/10):
+     su costo ya está en las cajas armadas (el del cajón entero viaja a la
+     primera) y no se mueve; lo que paga el puesto por ella es recupero. El
+     cuadro lo dice en chico: "reprocesos a $0: su costo ya está en las cajas
+     armadas".
+   Si lo cobrado supera al costo, el número sale como **"recuperado", en
+   verde**, nunca como una pérdida negativa (también por artículo).
+   Abajo, en chico, el costo por origen y lo cobrado; los lotes sin cobrar se
+   cuentan aparte. La Rentabilidad Real no cambia.
 
 La cuenta de Pérdidas rejuega el FIFO: el tablero la pide una sola vez por mes
-y la comparten Mermas y Segunda (`_perdidas_de_los_dos_meses`).
+y la comparten Mermas y Segunda (`_perdidas_de_los_dos_meses`). Lo mismo la
+Rentabilidad Real de cada cliente y rango (`_real_sin_perdidas`), que la
+comparten Rentabilidad y Segunda.

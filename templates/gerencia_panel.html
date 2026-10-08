@@ -138,12 +138,23 @@
         {% for clave in ("anterior", "actual") %}{% set s = datos.segunda[clave] %}
         <div>
           <div class="mes">{{ MESES[s.desde.month] }}{% if clave == "actual" %} (a hoy){% endif %}</div>
-          <div class="cuadro-numero {{ 'rojo' if s.perdida > 0 }}">{{ s.perdida|moneda }}</div>
-          <div class="cuadro-pie">costo {{ s.costo|moneda }} · cobrado {{ s.cobrado|moneda }}</div>
+          {# Lo que el puesto pagó de más se RECUPERÓ (dueño, 08/10): en verde y
+             con su nombre, nunca como una pérdida negativa. #}
+          {% if s.perdida < 0 %}
+          <div class="cuadro-numero verde" data-resultado="recuperado">{{ (-s.perdida)|moneda }}</div>
+          <div class="cuadro-pie">recuperado</div>
+          {% else %}
+          <div class="cuadro-numero {{ 'rojo' if s.perdida > 0 }}" data-resultado="perdido">{{ s.perdida|moneda }}</div>
+          <div class="cuadro-pie">perdido</div>
+          {% endif %}
+          <div class="cuadro-pie" data-origen="pase">pases {{ s.por_origen.pase|moneda }}</div>
+          <div class="cuadro-pie" data-origen="rechazo">rechazos {{ s.por_origen.rechazo|moneda }}</div>
+          <div class="cuadro-pie" data-cobrado>cobrado {{ s.cobrado|moneda }}</div>
         </div>
         {% endfor %}
       </div>
-      <div class="nota">Lo que se perdió: el costo de lo pasado a segunda menos lo que pagó el puesto.</div>
+      <div class="nota">El costo de toda la mercadería que fue a segunda menos lo que pagó el puesto.</div>
+      <div class="nota" data-nota="reproceso">reprocesos a $0: su costo ya está en las cajas armadas</div>
     </a>
   </div>
 {% include "_pie_version.html" %}

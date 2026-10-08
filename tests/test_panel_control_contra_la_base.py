@@ -45,7 +45,11 @@ DESDE_7 = HOY - timedelta(days=7)
 #     #3 04/10 una compra en UNIDADES              -> fuera de los kilos
 #     #4 15/09 10 de 20 que pesaron 19             -> septiembre: 10 de 200
 #     #5 30/08 RIVAL: antes de la primera foto
-#   Un rechazo de 1 bulto a $400 el 06/10 del renglón completo.
+#   Un rechazo de 1 bulto a $400 el 06/10 del renglón completo, que vuelve al
+#   stock, y otro de 2 bultos a $400 el 07/10 que va a SEGUNDA: el puesto
+#   pagó $300 por ese lote. Lo perdido en segunda: $800 − $300 = $500.
+#   En septiembre el puesto pagó $900 por un lote de segunda de guía R (a $0 de
+#   costo) y no fue nada más a segunda: se RECUPERARON $900.
 SIEMBRA = """
 insert into clientes (id, nombre) overriding system value
   values (1, 'EJEMPLO Día'), (2, 'EJEMPLO Pedidos Ya'), (3, 'EJEMPLO Sin ficha');
@@ -81,6 +85,15 @@ insert into fotos_recepcion (compra_id, foto_ruta, creado_en) values (4, 'pesaje
 insert into movimientos_stock (articulo_id, fecha_operacion, tipo, cantidad, motivo, stock_sistema,
                                pedido_renglon_id, destino_rechazo, cliente_id, costo_por_bulto)
   values (1, '2026-10-06', 'reingreso_rechazo', 1, 'EJEMPLO volvió', 0, 11, 'stock', 1, 400);
+insert into movimientos_stock (articulo_id, fecha_operacion, tipo, cantidad, motivo, stock_sistema,
+                               pedido_renglon_id, destino_rechazo, bultos_segunda, cliente_id, costo_por_bulto)
+  values (1, '2026-10-07', 'reingreso_rechazo', 2, 'EJEMPLO a segunda', 0, 11, 'segunda', 2, 1, 400);
+insert into remitos_segunda (id, articulo_id, bultos, fecha_operacion, destino) overriding system value
+  values (80, 1, 2, '2026-10-07', 'puesto');
+insert into segunda_cobros (salida_id, importe, fecha_cobro, sector) values (80, 300, '2026-10-08', 'gerencia');
+insert into remitos_segunda (id, articulo_id, bultos, fecha_operacion, destino) overriding system value
+  values (81, 1, 6, '2026-09-25', 'puesto');
+insert into segunda_cobros (salida_id, importe, fecha_cobro, sector) values (81, 900, '2026-09-26', 'gerencia');
 """
 
 
@@ -181,8 +194,8 @@ def test_el_TABLERO_dice_un_numero_por_cuadro_en_el_orden_del_dueno(base):
     assert 'data-unidad="unidad">Unidades: 25,0%<' in peso
     assert peso.count('data-unidad="cubeta">Cubetas: —<') == 2
     rechazos = cuadro("rechazos")
-    # Octubre: $400 al costo de $10.000 facturados = 4,0%; 1 bulto de 10 = 10,0%.
-    assert "4,0%" in rechazos and "10,0%" in rechazos and "$400" in rechazos and "1 bultos" in rechazos
+    # Octubre: 3 bultos a $400 = $1.200 de $10.000 facturados = 12,0%; 3 de 10 = 30,0%.
+    assert "12,0%" in rechazos and "30,0%" in rechazos and "$1.200" in rechazos and "3 bultos" in rechazos
 
 
 def test_cada_DETALLE_abre_y_PEDIDOS_distingue_armado_de_menos_de_la_cruz(base):
@@ -218,7 +231,54 @@ def test_la_MISMA_PANTALLA_de_Gerencia_tiene_el_boton_del_panel(base):
     assert hub.count('href="/gerencia/panel"') == 1
 
 
-# ---- Con UN SOLO CLIENTE, el panel da igual que la Rentabilidad Real ----
+def test_un_RECHAZO_que_va_a_SEGUNDA_y_se_cobra_da_costo_MENOS_cobrado_y_no_negativo(base):
+    """Del pedido del dueño (08/10): lo cobrado incluía la segunda de los
+    rechazos y el costo no. Con un rechazo de 2 bultos a $400 a segunda y $300
+    cobrados por ese lote, lo perdido es $500 —antes salía −$300."""
+    m = base
+    with patch.object(m, "_hoy_argentina", return_value=HOY):
+        octubre = m._panel_segunda(HOY, {})["actual"]
+    assert octubre["por_origen"] == {"pase": 0.0, "rechazo": 800.0, "reproceso": 0.0}
+    assert (octubre["costo"], octubre["cobrado"], octubre["perdida"]) == (800.0, 300.0, 500.0)
+    assert octubre["perdida"] >= 0
+    (tomate,) = octubre["filas"]
+    assert (tomate["articulo"], tomate["rechazo"], tomate["cobrado"], tomate["perdida"]) == (
+        "EJEMPLO Tomate", 800.0, 300.0, 500.0)
+    cliente, claves = _cliente_gerencia(m)
+    with patch.dict(os.environ, claves), patch.object(m, "_hoy_argentina", return_value=HOY):
+        cuadro = cliente.get("/gerencia/panel").text.split('data-cuadro="segunda"')[1].split("</a>")[0]
+    actual = cuadro.split("Octubre")[1]
+    assert '<div class="cuadro-numero rojo" data-resultado="perdido">$500</div>' in actual
+    assert 'data-origen="rechazo">rechazos $800<' in actual and "cobrado $300" in actual
+
+
+
+def test_si_el_puesto_pago_MAS_que_el_costo_se_ve_RECUPERADO_en_verde_y_no_una_perdida_negativa(base):
+    """Septiembre: $900 cobrados por segunda de guía R, a $0 de costo (dueño,
+    08/10: su costo ya está en las cajas armadas)."""
+    m = base
+    septiembre = m._panel_segunda(HOY, {})["anterior"]
+    assert septiembre["por_origen"] == {"pase": 0.0, "rechazo": 0.0, "reproceso": 0.0}
+    assert (septiembre["cobrado"], septiembre["perdida"]) == (900.0, -900.0)
+    cliente, claves = _cliente_gerencia(m)
+    with patch.dict(os.environ, claves), patch.object(m, "_hoy_argentina", return_value=HOY):
+        tablero = cliente.get("/gerencia/panel").text.split("</style>")[-1]
+        detalle = cliente.get("/gerencia/panel/segunda").text.split("</style>")[-1]
+    cuadro = tablero.split('data-cuadro="segunda"')[1].split("</a>")[0]
+    anterior, actual = cuadro.split("Septiembre")[1].split("Octubre")
+    assert anterior.count('<div class="cuadro-numero verde" data-resultado="recuperado">$900</div>') == 1
+    assert '<div class="cuadro-pie">recuperado</div>' in anterior
+    assert 'data-resultado="perdido">$500<' in actual and '<div class="cuadro-pie">perdido</div>' in actual
+    assert "-$" not in cuadro and "$-" not in cuadro
+    assert cuadro.count("reprocesos a $0: su costo ya está en las cajas armadas") == 1
+    septiembre_detalle = detalle.split('data-mes="anterior"')[1].split('data-mes="actual"')[0]
+    assert '<p class="grande verde" data-resultado="recuperado">$900 recuperado</p>' in septiembre_detalle
+    assert '<span class="verde">$900 recuperado</span>' in septiembre_detalle
+    assert "-$" not in septiembre_detalle and "$-" not in septiembre_detalle
+
+# ---- El galpón de un solo cliente, con merma, pase y segunda cobrada. OJO:
+# `preparar_base` recrea LA MISMA base, así que desde acá la de arriba ya no
+# existe: los tests de `base` van todos antes de esta línea. ----
 
 @pytest.fixture(scope="module")
 def galpon_de_un_cliente():
@@ -271,7 +331,9 @@ def test_MERMAS_y_SEGUNDA_son_la_cuenta_de_PERDIDAS_y_lo_cobrado_al_puesto(galpo
     assert f'cuadro-numero rojo">{moneda(merma)}<' in cuadro_mermas
     cuadro_segunda = tablero.split('data-cuadro="segunda"')[1].split("</a>")[0]
     assert f">{moneda(segunda - 250)}<" in cuadro_segunda
-    assert f"costo {moneda(segunda)} · cobrado $250" in cuadro_segunda
+    assert f'data-origen="pase">pases {moneda(segunda)}<' in cuadro_segunda
+    assert 'data-origen="rechazo">rechazos $0<' in cuadro_segunda
+    assert "cobrado $250" in cuadro_segunda
     septiembre_segunda = detalle_segunda.split('data-mes="anterior"')[1].split('data-mes="actual"')[0]
     assert "EJEMPLO Tomate" in septiembre_segunda and "cobrado $250" in septiembre_segunda
     assert detalle_mermas.split('data-mes="anterior"')[1].count('class="fila"') == len(
