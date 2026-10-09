@@ -36,6 +36,8 @@ GRUPOS_DECIDIDOS = {
         ("/administracion/stock/remanente", "Stock del Depósito"),
         ("/administracion/stock/cotejo", "Cotejo y ajuste"),
         ("/administracion/stock/guias-r", "Guías R"),
+        # Guías mercadería (dueño, 09/10): Buscar compras, solo para mirar y sumar fotos.
+        ("/administracion/guias-mercaderia", "Guías mercadería"),
         ("/administracion/devolver", "Devolver mercadería"),
         # CON FECHA ANTERIOR (dueño, 05/10): ingreso, devolución, merma y pase
         # con un día pasado, con la contraseña especial.

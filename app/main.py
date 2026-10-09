@@ -3689,6 +3689,26 @@ def ver_cargar_listado_compras(request: Request):
     return templates.TemplateResponse(request, "compra_listado.html", {"proveedores": proveedores})
 
 
+# GUÍAS MERCADERÍA (dueño, 09/10): Buscar compras y su Detalle también desde
+# Administración, SOLO PARA MIRAR Y SUMAR FOTOS (de la comanda y de la pesada).
+# Son las MISMAS rutas con un segundo prefijo, y el sector sale del PREFIJO
+# (corolario 63). En Administración no hay Editar, Vino armada, Eliminar ni
+# borrar fotos, ni nada de Gerencia: las plantillas no los dibujan y, sobre
+# todo, esas rutas NO EXISTEN bajo /administracion/guias-mercaderia — y las de
+# /compras piden la clave de Compras, que la cookie de Administración no trae.
+CAMINOS_DE_GUIAS = {
+    "compras": {"sector": "compras", "titulo": "Buscar Compras", "atras": "/compras",
+                "lista": "/compras/buscar", "base": "/compras", "escribe": True},
+    "administracion": {"sector": "administracion", "titulo": "Guías mercadería", "atras": "/administracion",
+                       "lista": "/administracion/guias-mercaderia", "base": "/administracion/guias-mercaderia",
+                       "escribe": False},
+}
+
+
+def _camino_de_guias(request: Request) -> dict:
+    return CAMINOS_DE_GUIAS["administracion" if request.url.path.startswith("/administracion") else "compras"]
+
+
 def _renderizar_pantalla_buscar_compras(
     request: Request,
     fecha_desde: str | None = None,
@@ -3798,6 +3818,7 @@ def _renderizar_pantalla_buscar_compras(
             "total_importes": _moneda_de_compras(total_de_importes(compras)) + cola_sin_precio(compras),
             "aviso": aviso,
             "aviso_tope": aviso_tope,
+            "camino": _camino_de_guias(request),
         },
         status_code=status_code,
     )
@@ -3825,6 +3846,7 @@ def _resumen_de_filtros(fecha_desde, fecha_hasta, proveedor_nombre, articulo_nom
 
 
 @app.get("/compras/buscar")
+@app.get("/administracion/guias-mercaderia")
 def ver_buscar_compras(
     request: Request,
     fecha_desde: str | None = None,
@@ -3875,6 +3897,7 @@ def _textos_de_filtros(proveedor_id: int | None = None, articulo_id: int | None 
 
 
 @app.get("/compras/buscar/exportar-pdf")
+@app.get("/administracion/guias-mercaderia/exportar-pdf")
 def exportar_listado_compras_pdf(fecha_desde: str = "", fecha_hasta: str = "", proveedor_id: str = "", articulo_id: str = ""):
     """Genera el Listado de Compras (con los mismos filtros de la búsqueda) en PDF — no se guarda en ningún lado."""
     fecha_desde_valor, fecha_hasta_valor, proveedor_id_valor, articulo_id_valor = _leer_filtros_buscar_compras(
@@ -3898,6 +3921,7 @@ def exportar_listado_compras_pdf(fecha_desde: str = "", fecha_hasta: str = "", p
 
 
 @app.get("/compras/buscar/exportar-excel")
+@app.get("/administracion/guias-mercaderia/exportar-excel")
 def exportar_listado_compras_excel(fecha_desde: str = "", fecha_hasta: str = "", proveedor_id: str = "", articulo_id: str = ""):
     """Genera el Listado de Compras (con los mismos filtros de la búsqueda) en Excel — no se guarda en ningún lado."""
     fecha_desde_valor, fecha_hasta_valor, proveedor_id_valor, articulo_id_valor = _leer_filtros_buscar_compras(
@@ -8568,6 +8592,7 @@ async def eliminar_varias_compras_ruta(request: Request):
 
 
 @app.get("/compras/{compra_id}/foto")
+@app.get("/administracion/guias-mercaderia/{compra_id}/foto")
 def ver_foto_compra(compra_id: int):
     """Genera una URL firmada nueva para la foto de esta compra y redirige ahí. 404 si no tiene foto guardada.
 
@@ -8609,6 +8634,7 @@ def _url_vuelta_fotos(compra_id: int, volver: str, query_filtros: str) -> str:
 
 
 @app.get("/compras/{compra_id}/fotos/{foto_id}/ver")
+@app.get("/administracion/guias-mercaderia/{compra_id}/fotos/{foto_id}/ver")
 def ver_foto_de_guia(compra_id: int, foto_id: int):
     """URL firmada de UNA foto de la guía de esta compra (para las miniaturas y el toque para agrandar)."""
     try:
@@ -8626,6 +8652,7 @@ def ver_foto_de_guia(compra_id: int, foto_id: int):
 
 
 @app.post("/compras/{compra_id}/fotos")
+@app.post("/administracion/guias-mercaderia/{compra_id}/fotos")
 async def subir_foto_a_guia(
     request: Request,
     compra_id: int,
@@ -8676,6 +8703,11 @@ async def subir_foto_a_guia(
     except Exception as error_db:
         raise HTTPException(status_code=500, detail=f"Error al conectar con la base de datos: {error_db}") from error_db
 
+    camino = _camino_de_guias(request)
+    if not camino["escribe"]:
+        # Guías mercadería no tiene Editar: vuelve siempre a su Detalle.
+        destino = f"{camino['base']}/{compra_id}/detalle" + (f"?{query_filtros}" if query_filtros else "")
+        return RedirectResponse(url=destino, status_code=303)
     return RedirectResponse(url=_url_vuelta_fotos(compra_id, volver, query_filtros), status_code=303)
 
 
@@ -8716,6 +8748,7 @@ def borrar_foto_de_guia_ruta(
 
 
 @app.get("/compras/{compra_id}/detalle")
+@app.get("/administracion/guias-mercaderia/{compra_id}/detalle")
 def ver_detalle_compra(request: Request, compra_id: int, aviso: str | None = None,
                        error: str | None = None):
     """Historia completa de una compra: carga, retiro y recepción. Los números no se editan acá.
@@ -8782,6 +8815,7 @@ def ver_detalle_compra(request: Request, compra_id: int, aviso: str | None = Non
             "a_donde": a_donde,
             "aviso": aviso,
             "error": error,
+            "camino": _camino_de_guias(request),
         },
     )
 
@@ -8789,11 +8823,13 @@ def ver_detalle_compra(request: Request, compra_id: int, aviso: str | None = Non
 def _volver_al_detalle(compra_id: int, request: Request, **parametros) -> RedirectResponse:
     """Al Detalle, CON los filtros de Buscar compras que trajo (dueño, 05/10)."""
     filtros = [(k, v) for k, v in request.query_params.multi_items() if k not in ("aviso", "error")]
-    return RedirectResponse(url=f"/compras/{compra_id}/detalle?{urlencode(filtros + list(parametros.items()))}#pesaje",
+    base = _camino_de_guias(request)["base"]
+    return RedirectResponse(url=f"{base}/{compra_id}/detalle?{urlencode(filtros + list(parametros.items()))}#pesaje",
                             status_code=303)
 
 
 @app.post("/compras/{compra_id}/fotos-balanza")
+@app.post("/administracion/guias-mercaderia/{compra_id}/fotos-balanza")
 async def agregar_fotos_de_pesada(request: Request, compra_id: int, fotos: list[UploadFile] = File(...)):
     """Fotos de la pesada cargadas DESPUÉS de recibir (dueño, 29/09): la que no
     se sacó en el momento, o una más. Van a `fotos_recepcion`, igual que las de

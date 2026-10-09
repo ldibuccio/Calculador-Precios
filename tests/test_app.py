@@ -32463,8 +32463,11 @@ def test_la_puerta_a_gerencia_no_cuelga_de_NINGUN_condicional():
                 abiertos.pop()
         return abiertos
 
+    # La ÚNICA condición es el SECTOR (dueño, 09/10): en Guías mercadería,
+    # desde Administración, no hay Editar. No depende de ningún dato de la
+    # compra, que es lo que este test cuida.
     assert condicionales_antes("templates/compra_detalle.html",
-                               'href="/compras/{{ compra.id }}/editar') == []
+                               'href="/compras/{{ compra.id }}/editar') == ["camino.escribe"]
     assert condicionales_antes("templates/compra_form.html",
                                'href="/gerencia/compras/{{ compra.id }}/editar"') == ['modo == "editar"']
 

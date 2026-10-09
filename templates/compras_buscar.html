@@ -292,6 +292,19 @@
     td:nth-child(8) > .menu-acciones[open] { flex: 1 0 100%; }
     /* El checkbox más grande y alineado con el título: es el que se toca. */
     td:nth-child(1) input { width: 1.15rem; height: 1.15rem; }
+    /* GUÍAS MERCADERÍA (Administración, solo mirar): no hay casilleros para
+       eliminar. La celda queda —el CSS ubica las columnas por posición— y el
+       "Seleccionar todas" de la cabecera se va. */
+    .solo-lectura thead th:first-child, .solo-lectura td:nth-child(1) { display: none; }
+    .solo-lectura tr {
+      grid-template-columns: auto 1fr;
+      grid-template-areas:
+        "articulo articulo"
+        "prov     prov"
+        "fecha    cantidad"
+        "importe  sena"
+        "acciones acciones";
+    }
   }
   /* El encabezado de los filtros es un BOTÓN de dedo, no un link: 44px de
      alto y el resumen abajo del título, que en 390px no entran en la misma
@@ -373,11 +386,14 @@
 </style>
 </head>
 <body>
-  {% set barra_sector = "compras" %}
-  {% set barra_titulo = "Buscar Compras" %}
-  {% set barra_atras = "/compras" %}
+  {# GUÍAS MERCADERÍA (dueño, 09/10): la misma pantalla desde Administración,
+     solo para mirar (`camino.escribe` falso): sin pestaña de Sin precio, sin
+     Eliminar, sin Vino armada. Las rutas que escriben tampoco existen ahí. #}
+  {% set barra_sector = camino.sector %}
+  {% set barra_titulo = camino.titulo %}
+  {% set barra_atras = camino.atras %}
   {% include "_barra_navegacion.html" %}
-  {{ pestanas_compras.buscar("todas") }}
+  {% if camino.escribe %}{{ pestanas_compras.buscar("todas") }}{% endif %}
 
   <div class="tarjeta">
     {# LOS FILTROS ARRANCAN PLEGADOS, y no es una preferencia de estilo: esta
@@ -397,7 +413,7 @@
         <span class="filtros-titulo">Filtros</span>
         <span class="filtros-resumen">{{ resumen_filtros }}</span>
       </summary>
-    <form method="get" action="/compras/buscar" id="form-buscar">
+    <form method="get" action="{{ camino.lista }}" id="form-buscar">
       <label for="fecha_desde">Desde</label>
       <input type="date" id="fecha_desde" name="fecha_desde" value="{{ fecha_desde }}">
 
@@ -440,8 +456,15 @@
     {% if compras %}
     <button type="button" class="boton" id="boton-exportar" onclick="mostrarOpcionesExportar()">Exportar</button>
     <div id="opciones-exportar" style="display: none;">
+      {# Los dos href escritos enteros, uno por sector: así el barrido de
+         pantallas sin link los ve (con `camino.lista` no puede resolverlos). #}
+      {% if camino.escribe %}
       <a class="boton" href="/compras/buscar/exportar-pdf?fecha_desde={{ fecha_desde }}&fecha_hasta={{ fecha_hasta }}&proveedor_id={{ proveedor_id if proveedor_id is not none else '' }}&articulo_id={{ articulo_id if articulo_id is not none else '' }}">Exportar PDF</a>
       <a class="boton" href="/compras/buscar/exportar-excel?fecha_desde={{ fecha_desde }}&fecha_hasta={{ fecha_hasta }}&proveedor_id={{ proveedor_id if proveedor_id is not none else '' }}&articulo_id={{ articulo_id if articulo_id is not none else '' }}">Exportar Excel</a>
+      {% else %}
+      <a class="boton" href="/administracion/guias-mercaderia/exportar-pdf?fecha_desde={{ fecha_desde }}&fecha_hasta={{ fecha_hasta }}&proveedor_id={{ proveedor_id if proveedor_id is not none else '' }}&articulo_id={{ articulo_id if articulo_id is not none else '' }}">Exportar PDF</a>
+      <a class="boton" href="/administracion/guias-mercaderia/exportar-excel?fecha_desde={{ fecha_desde }}&fecha_hasta={{ fecha_hasta }}&proveedor_id={{ proveedor_id if proveedor_id is not none else '' }}&articulo_id={{ articulo_id if articulo_id is not none else '' }}">Exportar Excel</a>
+      {% endif %}
     </div>
     {% endif %}
   </div>
@@ -469,6 +492,7 @@
       físicamente adentro de él. Los filtros activos viajan como campos
       ocultos, así el backend puede volver a mostrar esta misma búsqueda.
     -->
+    {% if camino.escribe %}
     <form method="post" action="/compras/eliminar-varias" id="form-borrado-multiple"
           onsubmit="return confirmarBorradoMultiple();">
       <input type="hidden" name="fecha_desde" value="{{ fecha_desde }}">
@@ -480,11 +504,12 @@
             style="display: none;">
       Eliminar seleccionadas (0)
     </button>
+    {% endif %}
     <div class="tabla-scroll">
-      <table>
+      <table{% if not camino.escribe %} class="solo-lectura"{% endif %}>
         <thead>
           <tr>
-            <th><input type="checkbox" id="check-todas"></th>
+            <th>{% if camino.escribe %}<input type="checkbox" id="check-todas">{% endif %}</th>
             <th>Fecha</th>
             <th>Proveedor</th>
             <th>Artículo</th>
@@ -496,8 +521,8 @@
         </thead>
         <tbody>
           {% for c in compras %}
-          <tr data-detalle="/compras/{{ c.id }}/detalle?fecha_desde={{ fecha_desde }}&fecha_hasta={{ fecha_hasta }}&proveedor_id={{ proveedor_id if proveedor_id is not none else '' }}&articulo_id={{ articulo_id if articulo_id is not none else '' }}">
-            <td><input type="checkbox" name="compra_id" value="{{ c.id }}" class="check-fila" form="form-borrado-multiple"></td>
+          <tr data-detalle="{{ camino.base }}/{{ c.id }}/detalle?fecha_desde={{ fecha_desde }}&fecha_hasta={{ fecha_hasta }}&proveedor_id={{ proveedor_id if proveedor_id is not none else '' }}&articulo_id={{ articulo_id if articulo_id is not none else '' }}">
+            <td>{% if camino.escribe %}<input type="checkbox" name="compra_id" value="{{ c.id }}" class="check-fila" form="form-borrado-multiple">{% endif %}</td>
             <td>{{ c.fecha_operacion.strftime("%d/%m/%Y") }}</td>
             <td>{{ c.proveedor_nombre }} ({{ c.codigo_llegada }})</td>
             {# EL NOMBRE ES UN LINK DE VERDAD, además del click en la fila. La
@@ -505,7 +530,7 @@
                pero un renglón que navega sin ser un link no se alcanza con el
                teclado y no dice que se pueda tocar. El link lo hace visible y
                lo hace funcionar sin JS. #}
-            <td><a class="link-detalle" href="/compras/{{ c.id }}/detalle?fecha_desde={{ fecha_desde }}&fecha_hasta={{ fecha_hasta }}&proveedor_id={{ proveedor_id if proveedor_id is not none else '' }}&articulo_id={{ articulo_id if articulo_id is not none else '' }}">{{ c.articulo_nombre }}</a></td>
+            <td><a class="link-detalle" href="{{ camino.base }}/{{ c.id }}/detalle?fecha_desde={{ fecha_desde }}&fecha_hasta={{ fecha_hasta }}&proveedor_id={{ proveedor_id if proveedor_id is not none else '' }}&articulo_id={{ articulo_id if articulo_id is not none else '' }}">{{ c.articulo_nombre }}</a></td>
             <td>{{ c.cantidad_cajones|numero }} cajones × {{ magnitudes_del_cajon(c) }}</td>
             <td>{% if c.importe is not none %}{{ c.importe|moneda }}{% else %}<span class="sin-precio">SIN PRECIO</span>{% endif %}</td>
             {# LA SEÑA, vacía si no dejó. En celular no hay cabecera, así que
@@ -552,9 +577,9 @@
                   {# UN SOLO BOTÓN, "DETALLE" (dueño, 02/10): Editar salió de
                      la lista y vive adentro del Detalle. Los filtros viajan en
                      la URL para que Volver y Guardar vuelvan a ESTA búsqueda. #}
-                  <a class="boton boton-detalle" href="/compras/{{ c.id }}/detalle?fecha_desde={{ fecha_desde }}&fecha_hasta={{ fecha_hasta }}&proveedor_id={{ proveedor_id if proveedor_id is not none else '' }}&articulo_id={{ articulo_id if articulo_id is not none else '' }}">Detalle</a>
+                  <a class="boton boton-detalle" href="{{ camino.base }}/{{ c.id }}/detalle?fecha_desde={{ fecha_desde }}&fecha_hasta={{ fecha_hasta }}&proveedor_id={{ proveedor_id if proveedor_id is not none else '' }}&articulo_id={{ articulo_id if articulo_id is not none else '' }}">Detalle</a>
                   {% if c.tiene_comanda %}
-                  <a class="boton boton-ver-foto" href="/compras/{{ c.id }}/foto" target="_blank" rel="noopener">Ver comanda</a>
+                  <a class="boton boton-ver-foto" href="{{ camino.base }}/{{ c.id }}/foto" target="_blank" rel="noopener">Ver comanda</a>
                   {% endif %}
                   {% if c.tiene_pesaje %}
                   <a class="boton boton-ver-foto" href="/deposito/recepcion/{{ c.id }}/foto-balanza/ver" target="_blank" rel="noopener">Ver pesaje</a>
@@ -580,13 +605,14 @@
                      armada y está registrada" se ven igual — y la segunda es
                      el estado bueno. Los únicos dos que sí se esconden son
                      justamente esos, donde la ausencia ya significa algo. #}
-                  {% if se_muestra_vino_armada(c.motivo_vino_armada) %}
+                  {% if camino.escribe and se_muestra_vino_armada(c.motivo_vino_armada) %}
                   {% if c.motivo_vino_armada is none %}
                   <a class="boton boton-vino-armada" href="/compras/{{ c.id }}/vino-armada{{ q_volver(aqui(request)) }}">Vino armada</a>
                   {% else %}
                   <span class="boton boton-vino-armada-no" title="{{ c.motivo_vino_armada.texto }}">{{ etiqueta_vino_armada(c.motivo_vino_armada) }}</span>
                   {% endif %}
                   {% endif %}
+                  {% if camino.escribe %}
                   <form class="form-eliminar" method="post" action="/compras/{{ c.id }}/eliminar"
                         onsubmit="return confirm('¿Eliminar la compra de {{ c.articulo_nombre }}?');">
                     <input type="hidden" name="fecha_desde" value="{{ fecha_desde }}">
@@ -595,6 +621,7 @@
                     <input type="hidden" name="articulo_id" value="{{ articulo_id if articulo_id is not none else '' }}">
                     <button type="submit" class="boton-eliminar">Eliminar</button>
                   </form>
+                  {% endif %}
                 </div>
               </details>
             </td>
