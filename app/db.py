@@ -9084,6 +9084,12 @@ def marcar_renglon_armado(renglon_id: int, cantidad_armada=None, kilos_enviados=
     try:
         with conexion.cursor() as cursor:
             en_su_envase = _como_sale_el_renglon(cursor, renglon_id, en_su_envase)
+            # EN SU ENVASE, LOS KILOS LOS DICE EL QUE ARMA (dueño, 09/10): el
+            # descartable del proveedor puede ser de 5 o de 7 kg, y la ficha
+            # dice el de la caja de Día. Precargados de la ficha, uno de 7 se
+            # facturaba de 5.
+            if en_su_envase and kilos_enviados in (None, ""):
+                raise ComoSaleNoPermitido("En su envase hay que poner cuántos kilos va cada bulto.")
             if segunda > 0:
                 cursor.execute(
                     """
