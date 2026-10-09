@@ -157,3 +157,32 @@ había salido `DO`. Es el corolario de siempre —la verificación se corre
 después y mira el estado final, no que el comando no se haya quejado— con
 la precisión de que **contar por nombre es lo que la hizo servir**: un
 "¿existe algún check?" habría dado 1 y tapado el problema igual.
+
+
+## Candados (RLS) en todas las tablas (dueño, 09/10)
+
+En Supabase, una tabla de `public` sin RLS se lee por la API con la clave
+pública (`anon`). El 09/10 Frutamax tenía 50 de 106 sin candado, Palmala 50 de
+98 y Ganadería ninguna (17 de 17 con candado). `db/rls_1_frutamax.sql` y
+`db/rls_1_palmala.sql` lo prenden en todas, sin políticas para `anon`.
+
+- **El sistema no se entera**: entra como `postgres`, que es el dueño de
+  todas las tablas y tiene `bypassrls`. Prueba de producción: `revision_tick`
+  ya tenía candado y el latido se escribe cada minuto.
+- **El conector "Supabase Lectura"** entra como `supabase_read_only_user`,
+  con `bypassrls`: lee todo igual.
+- **`lectura_claudia`** (sin `bypassrls`) leía las 50 tablas sin candado. Para
+  que no pierda nada, cada una de esas recibe la política `lectura_claudia_lee`
+  (solo lectura). Las 56 que ya tenían candado siguen como estaban: ahí lee
+  cero filas, igual que antes.
+- **`backup_estado`** inserta en `backups_corridas` con su política
+  (`backup_estado_inserta`), que no se toca. **`backup_lectura`** (Ganadería)
+  tiene `bypassrls`.
+- **La vista `vales_papel_revision`** corría con los permisos del dueño, y
+  `anon` la podía leer en Frutamax: pasa a `security_invoker = true`.
+- **De acá en adelante**: toda tabla nueva lleva su `enable row level
+  security` en la migración, y en `esquema_completo.sql` va arriba del bloque
+  final que pone los candados. `tests/test_rls.py` exige que la base de
+  prueba no tenga ninguna tabla sin candado, que toda migración nueva que
+  crea una tabla lo ponga, y que el sistema lea y escriba con un usuario como
+  el de Supabase mientras el mismo usuario sin `bypassrls` no ve nada.

@@ -2406,3 +2406,19 @@ create table panel_fotos (
 create unique index panel_fotos_un_intento_por_turno
   on panel_fotos (turno) where turno is not null;
 create index panel_fotos_por_fecha on panel_fotos (calculada_el desc);
+-- CANDADOS (RLS) EN TODAS LAS TABLAS DE public (dueño, 09/10). db/rls_1_*.sql.
+-- Sin políticas para anon: por la API de Supabase con la clave pública no se
+-- lee nada. El sistema entra como postgres (dueño y con bypassrls): no lo
+-- afecta. ESTE BLOQUE VA SIEMPRE AL FINAL: una tabla nueva va ARRIBA, con su
+-- propio `alter table ... enable row level security` en su migración, y
+-- tests/test_rls.py exige que la base de prueba no tenga ninguna sin candado.
+-- ----------------------------------------------------------------------------
+do $$
+declare t record;
+begin
+  for t in select c.relname from pg_class c join pg_namespace s on s.oid = c.relnamespace
+            where s.nspname = 'public' and c.relkind = 'r' and not c.relrowsecurity loop
+    execute format('alter table public.%I enable row level security', t.relname);
+  end loop;
+end $$;
+alter view vales_papel_revision set (security_invoker = true);

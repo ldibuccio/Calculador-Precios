@@ -117,6 +117,10 @@ desde la versión larga de este archivo el 03/10.
   como primera columna y un testigo de la base.
 - **Ningún bloque pasa los 2500 caracteres; el código arriba y la explicación
   al pie.** Ante un error raro de sintaxis, primero se mira qué quedó escrito.
+- **Toda tabla nueva nace con candado (RLS)** (dueño, 09/10): su migración
+  lleva `alter table X enable row level security`, sin políticas para
+  `anon`, y en `db/esquema_completo.sql` va ARRIBA del bloque final de
+  candados. Lo exige `tests/test_rls.py`.
 - **`if not exists` sirve para ESTRUCTURA, nunca para CONTENIDO** (listas,
   umbrales, textos): ahí va `drop ... if exists` y recrear.
 - **Los nombres se verifican contra `db/esquema_completo.sql`**, y la base de
@@ -237,7 +241,7 @@ Reglas:
 - `docs/reglas/pantallas.md`: mobile-first, rótulos, exportaciones, la "i",
   esconder contenedores, el estilo de los hubs.
 - `docs/reglas/sql_y_conector.md`: editor de Supabase, conector de lectura,
-  `if not exists`.
+  `if not exists`, candados (RLS) en todas las tablas.
 - `docs/reglas/git_ci_y_deploy.md`: push silencioso, CI, sello, deploy,
   corolarios 90 y 92.
 
