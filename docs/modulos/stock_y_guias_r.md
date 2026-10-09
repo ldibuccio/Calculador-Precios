@@ -122,6 +122,14 @@ caja** —consume cajas, la regla de siempre—. Se guarda en
 `pedidos_renglones.en_su_envase` (`db/en_su_envase_1_renglon.sql`); lo armado
 antes queda en false (se armó con sus guías R). Desarmar y anular lo limpian.
 
+**En su envase, los kilos los dice el que arma (dueño, 09/10).** El
+descartable del proveedor puede ser de 5 o de 7 kg y la ficha dice el de la
+caja de Día: precargado de la ficha, uno de 7 se facturaba de 5. Al elegir
+"En su envase" el kilaje por bulto queda VACÍO y obligatorio, con botones "5
+kg" y "7 kg"; al elegir "Reprocesado a caja" vuelve el de la ficha. Lo exige
+también `marcar_renglon_armado` (sin kilos, `ComoSaleNoPermitido`). Los
+botones salen en las dos fichas (Mango y Cherry).
+
 La condición de esta sección pasa a ser `envase_id IS NOT NULL AND NOT
 en_su_envase`, y la respetan, además de los cuatro lugares de arriba:
 

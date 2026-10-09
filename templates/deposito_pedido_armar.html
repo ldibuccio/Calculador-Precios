@@ -132,6 +132,12 @@
   .form-parcial { display: none; margin-top: 0.3rem; }
   .como-sale { border: none; padding: 0; margin: 0.4rem 0; display: flex; flex-wrap: wrap; gap: 0.4rem; }
   .como-sale legend { font-weight: 600; margin-bottom: 0.3rem; }
+  .kilos-rapidos { display: flex; flex-wrap: wrap; gap: 0.5rem; margin: 0.4rem 0; }
+  .kilos-rapidos[hidden] { display: none; }
+  .kilos-rapidos button {
+    min-height: 44px; min-width: 64px; padding: 0 0.9rem; border: 1px solid #1e3a8a; border-radius: 8px;
+    background: #eff6ff; color: #1e3a8a; font-weight: 700; font-size: 1rem;
+  }
   .como-sale label {
     display: flex; align-items: center; gap: 0.4rem; min-height: 44px; padding: 0 0.7rem;
     border: 1px solid #cbd5e1; border-radius: 8px; background: #fff;
@@ -653,11 +659,17 @@
              salir en el envase en que vinieron, que no gasta cajas, o
              reprocesados a caja. Se elige en cada renglón y sin default: las
              dos pasan. `required` frena el tilde hasta elegir. #}
+          {# EN SU ENVASE, el kilaje queda VACÍO y obligatorio (dueño, 09/10):
+             el descartable del proveedor puede ser de 5 o de 7 kg y la ficha
+             dice el de la caja. Los botones lo cargan de un toque. A caja,
+             vuelve lo de la ficha. Lo exige también el server. #}
           {% if r.elige_envase %}
           <fieldset class="como-sale">
             <legend>¿Cómo sale?</legend>
-            <label><input type="radio" name="como_sale" value="su_envase" required> En su envase</label>
-            <label><input type="radio" name="como_sale" value="caja" required> Reprocesado a caja</label>
+            <label><input type="radio" name="como_sale" value="su_envase" required
+                          onchange="comoSale('{{ r.id }}', true)"> En su envase</label>
+            <label><input type="radio" name="como_sale" value="caja" required
+                          onchange="comoSale('{{ r.id }}', false)"> Reprocesado a caja</label>
           </fieldset>
           {% endif %}
           {% if r.sin_cajas_de_la_ficha %}
@@ -675,6 +687,12 @@
                    oninput="actualizarTotal('{{ r.id }}')">
             <span class="unidad">{{ r.sufijo_unidad }}</span>
           </div>
+          {% if r.elige_envase %}
+          <div class="kilos-rapidos" id="rapidos-{{ r.id }}" hidden>
+            <button type="button" onclick="kilosRapidos('{{ r.id }}', 5)">5 kg</button>
+            <button type="button" onclick="kilosRapidos('{{ r.id }}', 7)">7 kg</button>
+          </div>
+          {% endif %}
           {% if r.total_sugerido is not none %}
           <p class="ayuda-kilos" id="total-{{ r.id }}" data-inicial="Manda {{ r.cantidad|numero }} bultos × {{ r.contenido_caja|numero }} {{ r.sufijo_unidad }} = {{ r.total_sugerido|numero }} {{ r.sufijo_unidad }}.">Manda {{ r.cantidad|numero }} bultos × {{ r.contenido_caja|numero }} {{ r.sufijo_unidad }} = {{ r.total_sugerido|numero }} {{ r.sufijo_unidad }}.</p>
           {% else %}
@@ -853,6 +871,19 @@
     function numeroCorto(n) {
       return parseFloat(n.toFixed(2)).toString();
     }
+    // EN SU ENVASE: el kilaje se vacía y se vuelve obligatorio; a caja,
+    // vuelve el de la ficha (el value con el que se dibujó la pantalla).
+    function comoSale(renglonId, enSuEnvase) {
+      const campo = document.getElementById("porbulto-" + renglonId);
+      campo.value = enSuEnvase ? "" : campo.defaultValue;
+      campo.required = enSuEnvase;
+      document.getElementById("rapidos-" + renglonId).hidden = !enSuEnvase;
+      actualizarTotal(renglonId);
+    }
+    function kilosRapidos(renglonId, kilos) {
+      document.getElementById("porbulto-" + renglonId).value = kilos;
+      actualizarTotal(renglonId);
+    }
     function actualizarTotal(renglonId) {
       const form = document.getElementById("armar-" + renglonId);
       const aviso = document.getElementById("total-" + renglonId);
@@ -861,7 +892,8 @@
       const pedida = parseFloat(form.querySelector('[name="cantidad_pedida"]').value);
       const bultos = armada > 0 ? armada : pedida;
       if (!porBulto || !bultos) {
-        aviso.textContent = aviso.dataset.inicial;
+        aviso.textContent = form.querySelector('[name="kilos_por_bulto"]').required
+          ? "¿Cuántos kilos va cada bulto en su envase?" : aviso.dataset.inicial;
         return;
       }
       const sufijo = form.dataset.sufijo ? " " + form.dataset.sufijo : "";

@@ -97,7 +97,9 @@ def base(monkeypatch):
 
 
 def _armar(d, sql, renglon_id, en_su_envase, hora):
-    d.marcar_renglon_armado(renglon_id, None, None, en_su_envase=en_su_envase)
+    # En su envase los kilos son obligatorios (dueño, 09/10): 3 bultos de 10.
+    kilos = 30 if en_su_envase else None
+    d.marcar_renglon_armado(renglon_id, None, kilos, en_su_envase=en_su_envase)
     sql("UPDATE pedidos_renglones SET armado_el = %s WHERE id = %s", (f"2026-09-08 {hora}-03", renglon_id))
 
 
@@ -209,7 +211,7 @@ def test_la_PANTALLA_pide_como_sale_solo_en_su_ficha_y_el_tilde_sin_elegir_rebot
     datos = {"cliente_id": "1", "fecha": "2026-09-08", "sucursal": "VL", "cantidad_pedida": "3"}
     sin_elegir = cliente.post("/deposito/pedido/1/renglones/1/armar", data=datos)
     assert sin_elegir.status_code == 400 and "Elegí cómo sale" in sin_elegir.text
-    elegido = cliente.post("/deposito/pedido/1/renglones/1/armar", data={**datos, "como_sale": "su_envase"},
+    elegido = cliente.post("/deposito/pedido/1/renglones/1/armar", data={**datos, "como_sale": "su_envase", "kilos_por_bulto": "10"},
                            follow_redirects=False)
     assert elegido.status_code == 303
     assert sql("SELECT en_su_envase FROM pedidos_renglones WHERE id = 1") == [(True,)]
@@ -310,3 +312,75 @@ def test_ARMAR_con_la_pregunta_no_desborda_a_313px(base):
     assert html.count("<legend>¿Cómo sale?</legend>") == 2       # identidad: la pantalla con la pregunta
     medicion = _que_se_sale(html, 313)
     assert medicion["pagina"] == 0 and medicion["salidos"] == [], medicion
+
+
+# --- EN SU ENVASE, LOS KILOS LOS DICE EL QUE ARMA (dueño, 09/10) -------------
+
+def test_EN_SU_ENVASE_sin_kilos_NO_se_tilda_y_a_caja_si(base):
+    """El descartable puede ser de 5 o de 7 kg: precargado de la ficha, uno de 7
+    se facturaba de 5. El rival: a caja, sin kilos, se tilda como siempre."""
+    d, sql = base
+    with pytest.raises(d.ComoSaleNoPermitido, match="cuántos kilos va cada bulto"):
+        d.marcar_renglon_armado(1, None, None, en_su_envase=True)
+    assert sql("SELECT armado_el FROM pedidos_renglones WHERE id = 1") == [(None,)]
+    d.marcar_renglon_armado(1, None, 21, en_su_envase=True)
+    d.marcar_renglon_armado(2, None, None, en_su_envase=False)
+    assert sql("SELECT id, en_su_envase, kilos_enviados::float FROM pedidos_renglones "
+               "WHERE id IN (1, 2) ORDER BY id") == [(1, True, 21.0), (2, False, None)]
+
+
+def test_la_PANTALLA_en_su_envase_VACIA_el_kilaje_y_ofrece_5_y_7(base):
+    """Se mide en el navegador: el atributo es la intención, el CSS el efecto."""
+    pytest.importorskip("playwright", reason="lo que pasa al tocar lo decide el navegador")
+    from fastapi.testclient import TestClient
+    from playwright.sync_api import sync_playwright
+
+    from app.main import app
+    from scripts.medir_layout import CHROMIUM
+    d, sql = base
+    with patch("app.main._hoy_argentina", return_value=date(2026, 9, 8)):
+        html = TestClient(app, base_url="https://testserver").get(
+            "/deposito/pedido/armar?cliente_id=1&fecha=2026-09-08&sucursal=VL").text
+    assert html.count('class="kilos-rapidos"') == 2          # identidad: los dos renglones del Mango
+    with sync_playwright() as p:
+        navegador = p.chromium.launch(executable_path=CHROMIUM)
+        pagina = navegador.new_page(viewport={"width": 390, "height": 844})
+        pagina.set_content(html)
+
+        def estado():
+            return pagina.evaluate("""() => {
+                const campo = document.getElementById('porbulto-1');
+                const rapidos = document.getElementById('rapidos-1');
+                return {valor: campo.value, obligatorio: campo.required,
+                        botones: getComputedStyle(rapidos).display !== 'none',
+                        total: document.getElementById('total-1').textContent.trim()};
+            }""")
+        antes = estado()
+        pagina.check('#armar-1 input[value="su_envase"]')
+        en_su_envase = estado()
+        pagina.click('#rapidos-1 button:has-text("7 kg")')
+        con_siete = estado()
+        pagina.check('#armar-1 input[value="caja"]')
+        a_caja = estado()
+        navegador.close()
+    assert antes == {"valor": "10", "obligatorio": False, "botones": False, "total": antes["total"]}
+    assert en_su_envase["valor"] == "" and en_su_envase["obligatorio"] and en_su_envase["botones"]
+    assert en_su_envase["total"] == "¿Cuántos kilos va cada bulto en su envase?"
+    assert con_siete["valor"] == "7" and con_siete["total"].startswith("Manda 3 bultos × 7")
+    assert a_caja == {"valor": "10", "obligatorio": False, "botones": False, "total": a_caja["total"]}
+
+
+def test_el_POST_en_su_envase_sin_kilos_rebota_con_el_motivo(base):
+    from fastapi.testclient import TestClient
+
+    from app.main import app
+    d, sql = base
+    cliente = TestClient(app, base_url="https://testserver")
+    datos = {"cliente_id": "1", "fecha": "2026-09-08", "sucursal": "VL", "cantidad_pedida": "3",
+             "como_sale": "su_envase"}
+    sin_kilos = cliente.post("/deposito/pedido/1/renglones/1/armar", data=datos)
+    assert sin_kilos.status_code == 400 and "cuántos kilos va cada bulto" in sin_kilos.text
+    con_siete = cliente.post("/deposito/pedido/1/renglones/1/armar", data={**datos, "kilos_por_bulto": "7"},
+                             follow_redirects=False)
+    assert con_siete.status_code == 303
+    assert sql("SELECT kilos_enviados::float FROM pedidos_renglones WHERE id = 1") == [(21.0,)]
