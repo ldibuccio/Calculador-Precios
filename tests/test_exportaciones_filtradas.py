@@ -66,6 +66,10 @@ EXPORTACIONES = {
     # dibuja la pantalla.
     "/gerencia/tareas/exportar-pdf": "tests/test_tareas.py",
     "/gerencia/tareas/exportar-excel": "tests/test_tareas.py",
+    # Guías mercadería (dueño, 09/10): la MISMA función que Buscar compras,
+    # con el mismo link de la pantalla y otro prefijo.
+    "/administracion/guias-mercaderia/exportar-pdf": "misma función que /compras/buscar/exportar-pdf",
+    "/administracion/guias-mercaderia/exportar-excel": "misma función que /compras/buscar/exportar-excel",
     # El mismo Excel que la de Gerencia, con la misma función y otra puerta.
     "/administracion/vales/movimientos-excel": "misma función que /gerencia/vales/movimientos-excel",
     # El filtro por tipo lo cuida tests/test_remanente_por_tipo.py.
@@ -106,7 +110,8 @@ EXPORTACIONES = {
 }
 
 # Rutas que devuelven una imagen o un archivo subido, no una exportación.
-NO_SON_EXPORTACIONES = {"/compras/{compra_id}/fotos", "/deposito/pedido/{pedido_id}/fotos"}
+NO_SON_EXPORTACIONES = {"/compras/{compra_id}/fotos", "/deposito/pedido/{pedido_id}/fotos",
+                        "/administracion/guias-mercaderia/{compra_id}/fotos"}
 
 
 def _rutas_que_exportan():

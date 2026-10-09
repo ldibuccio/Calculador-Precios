@@ -57,6 +57,23 @@ si alguna plantilla vuelve a tener su propia copia de la tabla.
 - Los filtros de la búsqueda viajan Buscar → Detalle → Editar, y Guardar
   vuelve al Detalle; su Volver vuelve a la misma búsqueda.
 
+## Guías mercadería: Buscar compras desde Administración (09/10, dueño)
+
+- Botón **"Guías mercadería"** en Administración → Stock, debajo de Guías R:
+  `/administracion/guias-mercaderia`. Es la MISMA pantalla y el mismo Detalle
+  que Buscar compras (las mismas funciones con un segundo prefijo; el sector
+  sale del prefijo, `_camino_de_guias`), con PDF y Excel.
+- **Solo se mira y se suman fotos** de la comanda y de la pesada. No hay
+  Editar, Vino armada, Eliminar, Eliminar seleccionadas, borrar fotos, la
+  pestaña Sin precio ni nada de Gerencia (`camino.escribe` falso).
+- **El bloqueo está en el servidor**: bajo el prefijo de Administración solo
+  existen las rutas decididas (listar, exportar, detalle, ver foto, sumar
+  foto); las que escriben de `/compras` piden la clave de Compras y las de
+  `/gerencia` la de Gerencia, que la cookie de Administración no trae.
+- Lo cuida `tests/test_guias_mercaderia.py` (las rutas decididas contra las
+  encontradas, y un POST armado a mano con la cookie de Administración que
+  rebota sin llamar a la función).
+
 ## Detalle de la compra: "A dónde fue" (05/10, dueño)
 
 Un cuadro en el Detalle con lo que salió de esa compra al cliente, renglón
