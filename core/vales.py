@@ -186,3 +186,79 @@ def generar_excel_movimientos_vales(desde: date, hasta: date, filtro: str,
     salida = BytesIO()
     libro.save(salida)
     return salida.getvalue()
+
+
+# VALES POR PROVEEDOR (dueño, 09/10): los vales EN CARTERA agrupados, un
+# renglón por proveedor con cuántos y cuánto, de mayor a menor importe, y el
+# total general abajo. Recibe los vales de `resumen_de_la_cartera`, la MISMA
+# lista que suma el cuadro del Panel de control: no hay otra consulta, así
+# que el total general no puede dar distinto del panel.
+
+def vales_por_proveedor(vales: list[dict]) -> dict:
+    grupos: dict = {}
+    for vale in vales:
+        grupo = grupos.setdefault(vale["proveedor_id"], {
+            "proveedor_id": vale["proveedor_id"], "proveedor": vale["proveedor"], "cantidad": 0, "total": 0.0})
+        grupo["cantidad"] += 1
+        grupo["total"] += float(vale["importe"] or 0)
+    filas = sorted(({**g, "total": round(g["total"], 2)} for g in grupos.values()),
+                   key=lambda g: (-g["total"], g["proveedor"].lower()))
+    return {"filas": filas, "cantidad": len(vales), "total": total_de(vales)}
+
+
+TITULO_POR_PROVEEDOR = "Vales por proveedor"
+QUE_SE_MUESTRA_POR_PROVEEDOR = "En cartera: ni cobrados ni aplicados a una liquidación · todos los proveedores"
+
+
+def generar_excel_vales_por_proveedor(hoy: date, agrupados: dict) -> bytes:
+    """Lo mismo que la pantalla: un renglón por proveedor y el total abajo.
+    Los importes van como NÚMERO, para poder sumarlos."""
+    libro = Workbook()
+    hoja = libro.active
+    hoja.title = "Vales por proveedor"
+    hoja.cell(row=1, column=1, value=TITULO_POR_PROVEEDOR).font = Font(bold=True, size=14)
+    hoja.cell(row=2, column=1, value=f"Al {hoy.strftime('%d/%m/%Y')} · {QUE_SE_MUESTRA_POR_PROVEEDOR}")
+    relleno = PatternFill(start_color="DEEFE3", end_color="DEEFE3", fill_type="solid")
+    for columna, encabezado in enumerate(("Proveedor", "Vales", "Importe"), start=1):
+        celda = hoja.cell(row=4, column=columna, value=encabezado)
+        celda.font = Font(bold=True, color=VERDE_ENCABEZADO_HEX)
+        celda.fill = relleno
+    fila = 5
+    for grupo in agrupados["filas"]:
+        for columna, valor in enumerate((grupo["proveedor"], grupo["cantidad"], grupo["total"]), start=1):
+            hoja.cell(row=fila, column=columna, value=valor)
+        fila += 1
+    for columna, valor in enumerate(("Total", agrupados["cantidad"], agrupados["total"]), start=1):
+        hoja.cell(row=fila, column=columna, value=valor).font = Font(bold=True)
+    for letra, ancho in zip("ABC", (34, 10, 16)):
+        hoja.column_dimensions[letra].width = ancho
+    salida = BytesIO()
+    libro.save(salida)
+    return salida.getvalue()
+
+
+def generar_pdf_vales_por_proveedor(hoy: date, agrupados: dict) -> bytes:
+    """A4 vertical, con lo que se muestra en el encabezado (la pantalla no
+    tiene filtros: son todos los vales en cartera)."""
+    from reportlab.lib.units import mm
+    from reportlab.platypus import Paragraph
+
+    from core.exportar_vacios import _documento_pdf, _estilos_pdf, _tabla_seccion_pdf
+
+    buffer = BytesIO()
+    documento, encabezado = _documento_pdf(buffer, TITULO_POR_PROVEEDOR,
+                                           f"Al {hoy.strftime('%d/%m/%Y')} · {QUE_SE_MUESTRA_POR_PROVEEDOR}")
+    estilos = _estilos_pdf()
+
+    def _p(texto, estilo="dato"):
+        texto = str(texto).replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
+        return Paragraph(texto, estilos[estilo])
+
+    filas = [[_p(g["proveedor"]), _p(g["cantidad"], "numero"), _p(f"${_miles(g['total'])}", "numero")]
+             for g in agrupados["filas"]] or [[_p("No hay vales en cartera.", "vacio"), "", ""]]
+    filas.append([_p("Total", "numero"), _p(agrupados["cantidad"], "numero"),
+                  _p(f"${_miles(agrupados['total'])}", "numero")])
+    tabla = _tabla_seccion_pdf(f"{len(agrupados['filas'])} proveedores con vales en cartera",
+                               ["Proveedor", "Vales", "Importe"], filas, [104 * mm, 30 * mm, 44 * mm], estilos)
+    documento.build([tabla], onFirstPage=encabezado, onLaterPages=encabezado)
+    return buffer.getvalue()

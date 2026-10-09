@@ -64,7 +64,11 @@ def _datos(cuadro, hoy, memo):
         return {**{clave: dict(faltantes_por_unidad(compras), **rango) for clave, rango in MESES.items()},
                 "desde_la_foto": None}
     if cuadro == "vales":
-        return {"total": DIEZ_CIFRAS, "cantidad": 1234567890, "vales": []}
+        from core.vales import vales_por_proveedor
+        vales = [{"proveedor_id": 1, "proveedor": "EJEMPLO Proveedor con un nombre bastante largo SRL",
+                  "importe": DIEZ_CIFRAS - 1}, {"proveedor_id": 2, "proveedor": "EJ Dos", "importe": 1.0}]
+        return {"total": DIEZ_CIFRAS, "cantidad": 1234567890, "vales": vales,
+                "por_proveedor": vales_por_proveedor(vales)}
     if cuadro == "vacios":
         return {"total": -1234567890, "proveedores": []}
     if cuadro == "rechazos":

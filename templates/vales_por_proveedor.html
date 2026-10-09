@@ -1,0 +1,47 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Vales por proveedor</title>
+<style>
+  :root { font-family: -apple-system, system-ui, sans-serif; }
+  body { margin: 0; padding: 1rem; background: #f5f5f5; color: #222; }
+  .tarjeta {
+    background: #fff; border-radius: 10px; padding: 1rem; margin-bottom: 1rem;
+    box-shadow: 0 1px 3px rgba(0, 0, 0, 0.1); overflow-wrap: anywhere;
+  }
+  .acciones { display: flex; flex-wrap: wrap; gap: 0.6rem; margin-top: 0.8rem; }
+  .acciones a {
+    flex: 1 1 9rem; min-height: 48px; padding: 0.7rem; border-radius: 8px; font-size: 1rem; font-weight: 600;
+    text-align: center; text-decoration: none; box-sizing: border-box; background: #fff; color: #2563eb;
+    border: 1px solid #2563eb;
+  }
+  .total { font-size: 1.5rem; font-weight: 700; margin: 0; }
+  .total-dato { color: #444; margin: 0.2rem 0 0; }
+</style>
+</head>
+<body>
+  {% set barra_sector = camino.sector %}
+  {% set barra_titulo = "Vales por proveedor" %}
+  {% set barra_atras = camino.base ~ "/vales" %}
+  {% include "_barra_navegacion.html" %}
+
+  <div class="tarjeta">
+    <p class="total" data-total>{{ agrupados.total|moneda }} en cartera</p>
+    <p class="total-dato">{{ agrupados.cantidad }} vale{{ '' if agrupados.cantidad == 1 else 's' }} de {{ agrupados.filas|length }} proveedor{{ '' if agrupados.filas|length == 1 else 'es' }}: ni cobrados ni aplicados a una liquidación.</p>
+    <div class="acciones">
+      {# Los href escritos enteros, uno por sector (el barrido de links los lee). #}
+      {% if camino.sector == 'gerencia' %}<a href="/gerencia/vales">Lista común</a>
+      <a href="/gerencia/vales/por-proveedor/pdf">PDF</a>
+      <a href="/gerencia/vales/por-proveedor/excel">Excel</a>
+      {% else %}<a href="/administracion/vales">Lista común</a>
+      <a href="/administracion/vales/por-proveedor/pdf">PDF</a>
+      <a href="/administracion/vales/por-proveedor/excel">Excel</a>{% endif %}
+    </div>
+  </div>
+
+  {% include "_vales_por_proveedor_filas.html" %}
+{% include "_pie_version.html" %}
+</body>
+</html>

@@ -31,6 +31,9 @@
   .fila { padding: 0.55rem 0; border-top: 1px solid #eee; }
   .fila-cabeza { display: flex; justify-content: space-between; gap: 0.6rem; }
   .fila-que { font-weight: 600; }
+  {# Un número nunca se parte (dueño, 09/10): con un nombre largo al lado,
+     "$8.379.000" salía en tres renglones. #}
+  .fila-cabeza .importe { white-space: nowrap; }
   .fila-dato { color: #555; font-size: 0.88rem; }
   .suma { color: #15803d; font-weight: 700; white-space: nowrap; }
   .resta { color: #dc2626; font-weight: 700; white-space: nowrap; }
@@ -54,7 +57,8 @@
 <body>
   {% set barra_sector = camino.sector %}
   {% set barra_titulo = "Vales a cobrar" %}
-  {% set barra_atras = camino.base %}
+  {# Desde Vales por proveedor (o el Panel) vuelve ahí; si no, al hub. #}
+  {% set barra_atras = vuelta(request, camino.base) %}
   {% include "_barra_navegacion.html" %}
   {% if camino.sector == "gerencia" %}{{ pestanas_gerencia.facturacion("vales") }}{% endif %}
 
@@ -69,14 +73,17 @@
     <div class="acciones">
       {# Los dos href escritos enteros, uno por sector: así el barrido de
          pantallas sin link los ve (con `camino.base` no puede resolverlos). #}
-      {% if camino.sector == 'gerencia' %}<a href="/gerencia/vales/movimientos">Movimientos</a>
+      {% if camino.sector == 'gerencia' %}<a href="/gerencia/vales/por-proveedor">Vales por proveedor</a>
+      <a href="/gerencia/vales/movimientos">Movimientos</a>
       <a href="/gerencia/vales/cargar">Cargar vale</a>
-      {% else %}<a href="/administracion/vales/movimientos">Movimientos</a>
+      {% else %}<a href="/administracion/vales/por-proveedor">Vales por proveedor</a>
+      <a href="/administracion/vales/movimientos">Movimientos</a>
       <a href="/administracion/vales/cargar">Cargar vale</a>{% endif %}
     </div>
   </div>
 
   <form class="tarjeta" method="get" action="{{ camino.base }}/vales">
+    {% if request.query_params.get("volver") %}<input type="hidden" name="volver" value="{{ vuelta(request, camino.base) }}">{% endif %}
     <div class="filtros">
       <label>Estado
         <select name="estado">
@@ -114,7 +121,7 @@
       <a class="abrir" href="{{ camino.base }}/vales/{{ v.id }}{{ q_volver(aqui(request)) }}">
         <div class="fila-cabeza">
           <span class="fila-que">{{ v.proveedor }}{% if v.numero %} · vale {{ v.numero }}{% endif %}</span>
-          <span>{{ v.importe|moneda }}</span>
+          <span class="importe">{{ v.importe|moneda }}</span>
         </div>
         <div class="fila-dato">{{ v.fecha.strftime('%d/%m/%Y') }} · {{ texto_del_origen[v.origen] }}
           {%- if v.cajones %} · {{ v.cajones }} cajón{{ '' if v.cajones == 1 else 'es' }}{% endif %}

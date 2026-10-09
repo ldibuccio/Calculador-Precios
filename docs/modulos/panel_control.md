@@ -47,7 +47,8 @@ el panel solo la resume. En orden:
    pesó de más no compensa. Mismo recorte que la alerta de kilos faltantes
    (`_SQL_COMPRAS_PESADAS`: recibidas, pesadas, desde la primera foto).
 5. **Vales a cobrar**: el total en cartera de `resumen_de_la_cartera` (ni
-   cobrados ni aplicados a una liquidación).
+   cobrados ni aplicados a una liquidación). El detalle abre agrupado por
+   proveedor, igual que Vales por proveedor (`docs/modulos/vales.md`).
 6. **Vacíos en depósito**: `total_de_vacios_en_galpon` sobre
    `stock_de_vacios_deposito`, todas las marcas; detalle por proveedor y marca.
 7. **Rechazos**: el mes anterior cerrado y el corriente a hoy.

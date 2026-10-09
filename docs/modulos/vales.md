@@ -119,3 +119,28 @@ Lo cuida `tests/test_vales_a_cobrar.py`, contra Postgres.
 
 Migraciones `db/vales_manual_1` a `_3`, verificación en `_4`. Lo cuida
 `tests/test_vales_carga_manual.py`, contra Postgres.
+
+### Vales por proveedor (09/10, dueño)
+
+- Botón **"Vales por proveedor"** en Vales a cobrar (Administración y
+  Gerencia): `/…/vales/por-proveedor`, un renglón por proveedor con cuántos
+  vales tiene EN CARTERA y cuánta plata, de mayor a menor importe, y el total
+  general abajo. Sin filtros: son siempre todos los vales en cartera.
+- Sale de `resumen_de_la_cartera` (la misma lista que el total de arriba,
+  las alertas y el cuadro del Panel de control) agrupada por
+  `vales_por_proveedor` (`core/vales.py`): la suma no puede dar distinto.
+- Tocar un proveedor abre la lista común con su filtro (`proveedor_id`), y
+  su "Atrás" vuelve a la vista agrupada (`volver`). "Lista común" vuelve a
+  la lista de siempre.
+- El detalle del cuadro "Vales a cobrar" del Panel abre igual de agrupado
+  (`templates/_vales_por_proveedor_filas.html`, la misma plantilla).
+- PDF y Excel de la vista agrupada (`/por-proveedor/pdf` y `/excel`); el
+  encabezado dice que son los vales en cartera de todos los proveedores.
+
+- **Un importe nunca se parte** (dueño, 09/10): en la lista común, con un
+  proveedor de nombre largo al lado, "$8.379.000" salía en tres renglones.
+  El importe de cada renglón va sin quiebre (`.fila-cabeza .importe`), y
+  también en la vista agrupada.
+
+Lo cuida `tests/test_vales_por_proveedor.py` (el importe, medido en un
+navegador a 313px).

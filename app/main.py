@@ -642,9 +642,12 @@ from core.vales import (
     estado_del_filtro as estado_del_filtro_vales,
     fecha_del_filtro as fecha_del_filtro_vales,
     generar_excel_movimientos_vales,
+    generar_excel_vales_por_proveedor,
+    generar_pdf_vales_por_proveedor,
     texto_de_la_foto as texto_de_la_foto_vale,
     texto_de_la_salida as texto_de_la_salida_vale,
     total_de as total_de_vales,
+    vales_por_proveedor,
 )
 from core.vales import hora_argentina as hora_argentina_vale
 from app.iconos_hubs import ICONOS_HUBS
@@ -20150,7 +20153,10 @@ def _panel_peso(hoy) -> dict:
 
 
 def _panel_vales(hoy) -> dict:
-    return resumen_de_la_cartera(hoy)
+    """El total en cartera y, para el detalle, los mismos vales agrupados por
+    proveedor (dueño, 09/10)."""
+    resumen = resumen_de_la_cartera(hoy)
+    return {**resumen, "por_proveedor": vales_por_proveedor(resumen["vales"])}
 
 
 def _panel_vacios() -> dict:
@@ -21786,6 +21792,55 @@ def exportar_movimientos_de_vales(request: Request, desde: str = "", hasta: str 
     return Response(content=contenido,
                     media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
                     headers={"Content-Disposition": f'attachment; filename="{nombre}"'})
+
+
+# VALES POR PROVEEDOR (dueño, 09/10): los vales EN CARTERA, un renglón por
+# proveedor, de mayor a menor importe. Sale de `resumen_de_la_cartera`, la
+# misma lista que suma el cuadro del Panel de control. Las rutas van ANTES
+# de `/vales/{vale_id}`.
+
+def _vales_agrupados() -> dict:
+    try:
+        return vales_por_proveedor(resumen_de_la_cartera(_hoy_argentina())["vales"])
+    except Exception as error_db:
+        raise HTTPException(status_code=500, detail=f"Error al conectar con la base de datos: {error_db}") from error_db
+
+
+@app.get("/administracion/vales/por-proveedor")
+@app.get("/gerencia/vales/por-proveedor")
+def ver_vales_por_proveedor(request: Request):
+    """Cuántos vales y cuánta plata tiene cada proveedor en cartera."""
+    sin_clave = _sin_clave_de_vales(request)
+    if sin_clave is not None:
+        return sin_clave
+    return templates.TemplateResponse(request, "vales_por_proveedor.html", {
+        "camino": _camino_de_vales(request), "agrupados": _vales_agrupados(), "hoy": _hoy_argentina(),
+    })
+
+
+@app.get("/administracion/vales/por-proveedor/excel")
+@app.get("/gerencia/vales/por-proveedor/excel")
+def exportar_excel_vales_por_proveedor(request: Request):
+    sin_clave = _sin_clave_de_vales(request)
+    if sin_clave is not None:
+        return sin_clave
+    hoy = _hoy_argentina()
+    contenido = generar_excel_vales_por_proveedor(hoy, _vales_agrupados())
+    return Response(content=contenido,
+                    media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                    headers={"Content-Disposition": f'attachment; filename="Vales_por_proveedor_{hoy.isoformat()}.xlsx"'})
+
+
+@app.get("/administracion/vales/por-proveedor/pdf")
+@app.get("/gerencia/vales/por-proveedor/pdf")
+def exportar_pdf_vales_por_proveedor(request: Request):
+    sin_clave = _sin_clave_de_vales(request)
+    if sin_clave is not None:
+        return sin_clave
+    hoy = _hoy_argentina()
+    contenido = generar_pdf_vales_por_proveedor(hoy, _vales_agrupados())
+    return Response(content=contenido, media_type="application/pdf",
+                    headers={"Content-Disposition": f'attachment; filename="Vales_por_proveedor_{hoy.isoformat()}.pdf"'})
 
 
 # CARGAR UN VALE A MANO (dueño, 02/10): Gerencia y Administración dan de alta
