@@ -18,8 +18,10 @@ en `core/tareas.py`.
   banner de alertas: UNA línea con dos botones lado a lado, **Tareas** y
   **Alertas**, que arranca plegada. Los dos son OVALADOS (dueño, 04/10), para
   no confundirlos con los botones de acción del hub, que siguen con la punta
-  de 8px; "Alertas (N)" va en un renglón y Tareas se queda el resto. Tareas dice "Sin tareas pendientes" en
-  gris, o "Tareas pendientes (3)" destacado, y en ROJO si alguna venció.
+  de 8px; "Alertas (N)" va en un renglón y Tareas se queda el resto. Tareas se pinta igual que
+  Alertas (dueño, 09/10): "Sin tareas pendientes" en VERDE, "Tareas
+  pendientes (3)" en ROJO (venza hoy o ya haya vencido); gris solo si no se
+  pudieron leer. Los colores son los de `_boton_alertas.html`, una vez.
   Alertas dice "Sin alertas" en VERDE o "Alertas (N)" en ROJO (dueño, 04/10),
   N = los renglones del panel; el mismo color va en el botón de Alertas de
   Comercial (`templates/_boton_alertas.html`, lo cuida

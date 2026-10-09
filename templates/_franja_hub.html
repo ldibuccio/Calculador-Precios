@@ -2,9 +2,10 @@
    UNA línea con dos botones lado a lado, Tareas y Alertas, y cada uno
    despliega lo suyo ABAJO de la línea, a todo el ancho. Arranca plegada.
 
-   - Tareas: "Sin tareas pendientes" en gris, o "Tareas pendientes (N)"
-     destacado, y en ROJO si alguna ya pasó su día. Despliega la lista y,
-     abajo, "Nueva tarea" (también sin pendientes).
+   - Tareas, igual que Alertas (dueño, 09/10): "Sin tareas pendientes" en
+     VERDE, o "Tareas pendientes (N)" en ROJO. Si no se pudieron leer, gris:
+     verde ahí sería mentira. Despliega la lista y, abajo, "Nueva tarea"
+     (también sin pendientes).
    - Alertas: "Sin alertas" o "Alertas (N)", con N = los renglones del panel.
      Despliega cada una con su link, después LO QUE NO SE SABE (no se pudo
      calcular, sin calcular todavía, la foto vieja: lo mismo que la cinta,
@@ -37,9 +38,7 @@
     overflow-wrap: anywhere; }
   {# "Alertas (13)" entra en un renglón; Tareas, que dice más, se queda el resto. #}
   .franja-boton[data-franja-boton="alertas"] { flex: 0 0 auto; white-space: nowrap; }
-  .franja-boton.destacada { background: #2563eb; border-color: #2563eb; color: #fff; }
 {{ _boton_alertas.estilos() }}
-  .franja-boton.roja { background: #dc2626; border-color: #dc2626; color: #fff; }
   .franja-boton[aria-expanded="true"] { outline: 3px solid #93c5fd; outline-offset: 1px; }
   .franja-panel { margin-top: 0.5rem; background: #fff; border-radius: 8px; box-shadow: 0 1px 3px rgba(0, 0, 0, 0.1);
     overflow-wrap: anywhere; }
@@ -64,10 +63,10 @@
     <button type="button" class="franja-boton" aria-expanded="false" aria-controls="franja-tareas"
             data-franja-boton="tareas">Tareas: no se pudieron leer</button>
     {% elif _cuantas %}
-    <button type="button" class="franja-boton {{ 'roja' if tareas_hub.vencidas else 'destacada' }}" aria-expanded="false"
+    <button type="button" class="franja-boton con-tareas" aria-expanded="false"
             aria-controls="franja-tareas" data-franja-boton="tareas">Tareas pendientes ({{ _cuantas }})</button>
     {% else %}
-    <button type="button" class="franja-boton" aria-expanded="false" aria-controls="franja-tareas"
+    <button type="button" class="franja-boton sin-tareas" aria-expanded="false" aria-controls="franja-tareas"
             data-franja-boton="tareas">Sin tareas pendientes</button>
     {% endif %}
     {# Rojo con alertas, verde sin (dueño, 04/10): _boton_alertas.html. #}

@@ -216,23 +216,43 @@ def _boton_de_tareas(marcado):
     return boton
 
 
-def test_la_FRANJA_dice_las_tareas_en_gris_destacado_o_ROJO_y_arranca_plegada(base, monkeypatch):
-    """Dueño, 04/10: "Sin tareas pendientes" en gris; "Tareas pendientes (N)"
-    destacado; en rojo si alguna está vencida. "Nueva tarea" se despliega
-    SIEMPRE, también sin pendientes."""
+def test_la_FRANJA_dice_las_tareas_en_VERDE_o_ROJO_como_alertas_y_arranca_plegada(base, monkeypatch):
+    """Dueño, 09/10: igual que el botón de Alertas. "Sin tareas pendientes" en
+    VERDE; "Tareas pendientes (N)" en ROJO, venza hoy o ya haya vencido.
+    "Nueva tarea" se despliega SIEMPRE, también sin pendientes."""
     from unittest.mock import patch
     d, _ = base
     cliente = _cliente(monkeypatch, "compras")
     with patch("app.main._hoy_argentina", return_value=LUNES + timedelta(days=2)):
-        sin = cliente.get("/compras").text.split("</style>")[-1]
+        paginas = [cliente.get("/compras").text]
         d.crear_tarea(creada_por="gerencia", sector="compras", titulo="EJ Llamar al puesto", detalle=None,
                       tipo="una_vez", vence_el=LUNES + timedelta(days=2), hoy=LUNES)   # vence hoy
-        al_dia = cliente.get("/compras").text.split("</style>")[-1]
+        paginas.append(cliente.get("/compras").text)
         _semanal(d)                                             # la semanal del LUNES ya pasó: vencida
-        con_vencida = cliente.get("/compras").text.split("</style>")[-1]
-    assert _boton_de_tareas(sin) == ("franja-boton", "Sin tareas pendientes")
-    assert _boton_de_tareas(al_dia) == ("franja-boton destacada", "Tareas pendientes (1)")
-    assert _boton_de_tareas(con_vencida) == ("franja-boton roja", "Tareas pendientes (2)")
+        paginas.append(cliente.get("/compras").text)
+    sin, al_dia, con_vencida = (p.split("</style>")[-1] for p in paginas)
+    assert _boton_de_tareas(sin) == ("franja-boton sin-tareas", "Sin tareas pendientes")
+    assert _boton_de_tareas(al_dia) == ("franja-boton con-tareas", "Tareas pendientes (1)")
+    assert _boton_de_tareas(con_vencida) == ("franja-boton con-tareas", "Tareas pendientes (2)")
+    # El COLOR lo decide el navegador (corolario 32): el mismo verde y el mismo
+    # rojo que el botón de Alertas.
+    pytest.importorskip("playwright", reason="lo que se ve lo decide el navegador")
+    from playwright.sync_api import sync_playwright
+    from scripts.medir_layout import CHROMIUM
+    from tests.test_boton_alertas import ROJO, VERDE
+    with sync_playwright() as pw:
+        navegador = pw.chromium.launch(executable_path=CHROMIUM)
+        try:
+            colores = []
+            for html in paginas:
+                pagina = navegador.new_page(viewport={"width": 313, "height": 700})
+                pagina.set_content(html)
+                colores.append(pagina.evaluate(
+                    "() => getComputedStyle(document.querySelector('[data-franja-boton=tareas]')).backgroundColor"))
+                pagina.close()
+        finally:
+            navegador.close()
+    assert colores == [VERDE, ROJO, ROJO]
     for marcado in (sin, al_dia, con_vencida):
         panel = marcado.split('id="franja-tareas"')[1].split('id="franja-alertas"')[0]
         assert panel.startswith(' data-franja-panel="tareas" hidden>')         # plegado al llegar
