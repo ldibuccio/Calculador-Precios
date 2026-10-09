@@ -24,6 +24,7 @@ from decimal import Decimal, InvalidOperation
 from urllib.parse import urlencode, urlsplit
 from uuid import uuid4
 
+import httpx
 from starlette.datastructures import UploadFile as StarletteUploadFile
 from fastapi import FastAPI, File, Form, HTTPException, Query, Request, UploadFile
 from fastapi.responses import JSONResponse, RedirectResponse, Response
@@ -652,6 +653,7 @@ from core.vales import (
 from core.vales import hora_argentina as hora_argentina_vale
 from app.iconos_hubs import ICONOS_HUBS
 from core.backup import HORAS_PARA_LA_ALERTA, TEXTO_DE_LA_PARTE, TEXTO_DEL_DESTINO, causa_legible
+from core import backup_github
 from core.tareas import (
     DIAS_DE_LA_SEMANA as DIAS_DE_LA_SEMANA_TAREA,
     MESES as MESES_DE_TAREA,
@@ -11761,6 +11763,28 @@ def ver_fotos_de_mas_de_3_anios(request: Request, aviso: str | None = None, erro
     })
 
 
+# LA LLAVE DE GITHUB, para la pantalla (ver core/backup_github.py). Se le
+# pregunta a GitHub una vez por hora como mucho: la pantalla no puede tardar
+# lo que tarde GitHub cada vez que alguien entra.
+_LLAVE_DE_GITHUB: dict = {"leida_el": None, "llave": None}
+
+
+def _cliente_de_github(segundos: float):
+    """El cliente HTTP para hablar con GitHub (los tests lo cambian por uno de mentira)."""
+    return httpx.Client(timeout=segundos)
+
+
+def _llave_de_github(ahora=None) -> dict:
+    ahora = ahora or datetime.now(ARGENTINA)
+    leida = _LLAVE_DE_GITHUB["leida_el"]
+    if leida is None or ahora - leida > timedelta(hours=1):
+        with _cliente_de_github(5) as cliente:
+            _LLAVE_DE_GITHUB["llave"] = backup_github.leer_la_llave(
+                cliente, os.environ.get(backup_github.TOKEN_ENV_VAR))
+        _LLAVE_DE_GITHUB["leida_el"] = ahora
+    return backup_github.aviso_de_la_llave(_LLAVE_DE_GITHUB["llave"], ahora)
+
+
 @app.get("/gerencia/backups")
 def ver_backups(request: Request):
     """Plan B de backup (dueño, 02/10): la fecha del último backup exitoso de
@@ -11776,7 +11800,7 @@ def ver_backups(request: Request):
     return templates.TemplateResponse(request, "gerencia_backups.html", {
         "estado": estado, "corridas": corridas, "horas_para_la_alerta": HORAS_PARA_LA_ALERTA,
         "texto_de_la_parte": TEXTO_DE_LA_PARTE, "texto_del_destino": TEXTO_DEL_DESTINO,
-        "causa_legible": causa_legible,
+        "causa_legible": causa_legible, "llave": _llave_de_github(),
     })
 
 
@@ -26661,6 +26685,32 @@ SEGUNDOS_TIMEOUT_TICK = 120
 # — y con tope, una alerta colgada no puede dejar el bucle parado para siempre.
 SEGUNDOS_TIMEOUT_ALERTAS = 180
 
+# Tope para pedirle a GitHub que lance el backup (una llamada HTTP).
+SEGUNDOS_TIMEOUT_LANZAR_BACKUP = 60
+
+# Cuándo se lanzó el backup de hoy y cuándo fue el último intento. En memoria:
+# si la aplicación se reinicia en la ventana y lo lanza otra vez, el workflow
+# se saltea el segundo (ya hubo uno bueno ese día).
+_LANZADOR_DE_BACKUP: dict = {"lanzado_el": None, "ultimo_intento": None}
+
+
+def _lanzar_backup_si_toca(ahora=None, cliente=None) -> None:
+    """A las 03:47 de Argentina le pide a GitHub que corra el Backup (dueño,
+    09/10). Sin la llave cargada no hace nada: quedan los horarios de GitHub."""
+    token = os.environ.get(backup_github.TOKEN_ENV_VAR)
+    ahora = ahora or datetime.now(ARGENTINA)
+    estado = _LANZADOR_DE_BACKUP
+    if not token or not backup_github.toca_lanzar(ahora, estado["ultimo_intento"], estado["lanzado_el"]):
+        return
+    estado["ultimo_intento"] = ahora
+    if cliente is None:
+        with _cliente_de_github(30) as propio:
+            backup_github.lanzar(propio, token)
+    else:
+        backup_github.lanzar(cliente, token)
+    estado["lanzado_el"] = ahora.date()
+    logger.info("Backup lanzado en GitHub")
+
 
 def _recalcular_alertas_si_toca() -> None:
     """Recalcula las alertas si la foto más nueva ya pasó las HORAS_RECALCULO.
@@ -26723,6 +26773,18 @@ async def _bucle_revision_casillas() -> None:
             )
         except Exception:
             logger.exception("El recálculo de alertas falló — sigue en el próximo ciclo")
+
+        # El backup de la madrugada (dueño, 09/10): a las 03:47 se lo pide a
+        # GitHub. Con su propio try y su propio tope.
+        try:
+            await asyncio.wait_for(
+                asyncio.to_thread(_lanzar_backup_si_toca), timeout=SEGUNDOS_TIMEOUT_LANZAR_BACKUP
+            )
+        except asyncio.TimeoutError:
+            logger.error("Lanzar el backup superó los %s segundos — se reintenta más tarde",
+                         SEGUNDOS_TIMEOUT_LANZAR_BACKUP)
+        except Exception:
+            logger.exception("No se pudo lanzar el backup en GitHub — se reintenta en 15 minutos")
 
         await asyncio.sleep(SEGUNDOS_TICK_REVISION)
 

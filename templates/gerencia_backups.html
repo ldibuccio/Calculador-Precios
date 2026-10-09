@@ -28,6 +28,10 @@
   .destino.mal { background: #fee2e2; color: #991b1b; }
   .corrida .detalle { color: #555; font-size: 0.85rem; margin-top: 0.25rem; }
   .vacio { color: #666; font-style: italic; }
+  .llave { padding: 0.6rem 0.8rem; border-radius: 8px; margin-bottom: 1rem; font-size: 0.92rem; }
+  .llave.rojo { background: #fee2e2; color: #991b1b; font-weight: 600; }
+  .llave.amarillo { background: #fef3c7; color: #92400e; font-weight: 600; }
+  .llave.ok { background: #fff; color: #555; }
 </style>
 </head>
 <body>
@@ -37,16 +41,22 @@
   {% set barra_atras = "/gerencia" %}
   {% include "_barra_navegacion.html" %}
 
+  {# La llave con la que el sistema lanza el backup a las 03:47 (dueño, 09/10):
+     avisa si falta, si no anda o si vence en menos de un mes. #}
+  <div class="llave {{ llave.nivel }}" data-llave="{{ llave.nivel }}">{{ llave.texto }}</div>
+
   {% for e in estado %}
   <div class="tarjeta{{ ' vieja' if e.vieja else '' }}" data-parte="{{ e.parte }}">
     <h2>{{ e.texto }}
-      {% if loop.first %}{% call info("Cómo funciona") %}Todos los días a la madrugada (03:47) GitHub copia
-        el código, las bases (Frutamax, Palmala y Ganadería) y las fotos a <strong>OneDrive</strong> y a
-        <strong>Google Drive</strong>, cifrado. Un backup cuenta como bueno solo si llegó a los
-        <strong>dos</strong>; el de las bases, además, si se pudo restaurar y dio las mismas filas.
-        Si pasan más de {{ horas_para_la_alerta // 24 }} días sin uno bueno, sale en las alertas de
-        Gerencia. GitHub a veces la larga con horas de atraso; si no salió bien, a las 07:17 hay otra
-        de respaldo. Sin la clave de cifrado impresa, ninguna copia se puede abrir.{% endcall %}{% endif %}</h2>
+      {% if loop.first %}{% call info("Cómo funciona") %}Todos los días a las 03:47 el sistema le pide a
+        GitHub que copie el código, las bases (Frutamax, Palmala y Ganadería) y las fotos a
+        <strong>OneDrive</strong> y a <strong>Google Drive</strong>, cifrado. Para eso usa una llave de
+        GitHub que vence una vez por año: este cartel avisa un mes antes. Un backup cuenta como bueno
+        solo si llegó a los <strong>dos</strong>; el de las bases, además, si se pudo restaurar y dio las
+        mismas filas. Si pasan más de {{ horas_para_la_alerta // 24 }} días sin uno bueno, sale en las
+        alertas de Gerencia. GitHub tiene además dos horarios propios de respaldo (llegan con horas de
+        atraso) que solo copian si ese día todavía no hubo un backup bueno. Sin la clave de cifrado
+        impresa, ninguna copia se puede abrir.{% endcall %}{% endif %}</h2>
     <p class="dato">Último backup bueno</p>
     {% if e.ultima_exitosa %}
     <p class="fecha{{ ' vieja' if e.vieja else '' }}">{{ e.ultima_exitosa|fecha_hora }}</p>
