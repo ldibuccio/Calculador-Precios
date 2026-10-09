@@ -659,17 +659,19 @@
              salir en el envase en que vinieron, que no gasta cajas, o
              reprocesados a caja. Se elige en cada renglón y sin default: las
              dos pasan. `required` frena el tilde hasta elegir. #}
-          {# EN SU ENVASE, el kilaje queda VACÍO y obligatorio (dueño, 09/10):
-             el descartable del proveedor puede ser de 5 o de 7 kg y la ficha
-             dice el de la caja. Los botones lo cargan de un toque. A caja,
-             vuelve lo de la ficha. Lo exige también el server. #}
+          {# EN SU ENVASE, en las fichas por KILO (Cherry) el kilaje queda
+             VACÍO y obligatorio (dueño, 09/10): el descartable del proveedor
+             puede ser de 5 o de 7 kg y la ficha dice el de la caja. Los
+             botones lo cargan de un toque. A caja, vuelve lo de la ficha.
+             Las por unidad (Mango) salen con sus 10 en las dos formas: ni
+             se vacía ni hay botones. #}
           {% if r.elige_envase %}
           <fieldset class="como-sale">
             <legend>¿Cómo sale?</legend>
             <label><input type="radio" name="como_sale" value="su_envase" required
-                          onchange="comoSale('{{ r.id }}', true)"> En su envase</label>
+                          {% if r.kilos_en_su_envase %}onchange="comoSale('{{ r.id }}', true)"{% endif %}> En su envase</label>
             <label><input type="radio" name="como_sale" value="caja" required
-                          onchange="comoSale('{{ r.id }}', false)"> Reprocesado a caja</label>
+                          {% if r.kilos_en_su_envase %}onchange="comoSale('{{ r.id }}', false)"{% endif %}> Reprocesado a caja</label>
           </fieldset>
           {% endif %}
           {% if r.sin_cajas_de_la_ficha %}
@@ -687,7 +689,7 @@
                    oninput="actualizarTotal('{{ r.id }}')">
             <span class="unidad">{{ r.sufijo_unidad }}</span>
           </div>
-          {% if r.elige_envase %}
+          {% if r.kilos_en_su_envase %}
           <div class="kilos-rapidos" id="rapidos-{{ r.id }}" hidden>
             <button type="button" onclick="kilosRapidos('{{ r.id }}', 5)">5 kg</button>
             <button type="button" onclick="kilosRapidos('{{ r.id }}', 7)">7 kg</button>
