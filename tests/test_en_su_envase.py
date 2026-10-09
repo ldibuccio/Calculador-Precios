@@ -329,45 +329,75 @@ def test_EN_SU_ENVASE_sin_kilos_NO_se_tilda_y_a_caja_si(base):
                "WHERE id IN (1, 2) ORDER BY id") == [(1, True, 21.0), (2, False, None)]
 
 
-def test_la_PANTALLA_en_su_envase_VACIA_el_kilaje_y_ofrece_5_y_7(base):
-    """Se mide en el navegador: el atributo es la intención, el CSS el efecto."""
+def _armar_en_el_navegador(html, pasos):
+    """Abre la pantalla en un navegador de verdad, hace `pasos` y devuelve el
+    estado del renglón 1 después de cada uno (el CSS decide si se ve)."""
     pytest.importorskip("playwright", reason="lo que pasa al tocar lo decide el navegador")
-    from fastapi.testclient import TestClient
     from playwright.sync_api import sync_playwright
 
-    from app.main import app
     from scripts.medir_layout import CHROMIUM
-    d, sql = base
-    with patch("app.main._hoy_argentina", return_value=date(2026, 9, 8)):
-        html = TestClient(app, base_url="https://testserver").get(
-            "/deposito/pedido/armar?cliente_id=1&fecha=2026-09-08&sucursal=VL").text
-    assert html.count('class="kilos-rapidos"') == 2          # identidad: los dos renglones del Mango
+    estados = []
     with sync_playwright() as p:
         navegador = p.chromium.launch(executable_path=CHROMIUM)
         pagina = navegador.new_page(viewport={"width": 390, "height": 844})
         pagina.set_content(html)
-
-        def estado():
-            return pagina.evaluate("""() => {
+        for paso in [None, *pasos]:
+            if paso is not None:
+                paso(pagina)
+            estados.append(pagina.evaluate("""() => {
                 const campo = document.getElementById('porbulto-1');
                 const rapidos = document.getElementById('rapidos-1');
                 return {valor: campo.value, obligatorio: campo.required,
-                        botones: getComputedStyle(rapidos).display !== 'none',
+                        botones: rapidos !== null && getComputedStyle(rapidos).display !== 'none',
                         total: document.getElementById('total-1').textContent.trim()};
-            }""")
-        antes = estado()
-        pagina.check('#armar-1 input[value="su_envase"]')
-        en_su_envase = estado()
-        pagina.click('#rapidos-1 button:has-text("7 kg")')
-        con_siete = estado()
-        pagina.check('#armar-1 input[value="caja"]')
-        a_caja = estado()
+            }"""))
         navegador.close()
+    return estados
+
+
+def _pantalla_de_armar():
+    from fastapi.testclient import TestClient
+
+    from app.main import app
+    with patch("app.main._hoy_argentina", return_value=date(2026, 9, 8)):
+        return TestClient(app, base_url="https://testserver").get(
+            "/deposito/pedido/armar?cliente_id=1&fecha=2026-09-08&sucursal=VL").text
+
+
+def test_la_PANTALLA_en_su_envase_por_KILO_vacia_el_kilaje_y_ofrece_5_y_7(base):
+    """La ficha por kilo es la del Cherry: acá la del fixture pasa a kilo."""
+    pytest.importorskip("playwright", reason="lo que pasa al tocar lo decide el navegador")
+    d, sql = base
+    sql("UPDATE fichas_logistica SET unidad_venta = 'kilo' WHERE id = 1")
+    html = _pantalla_de_armar()
+    assert html.count('class="kilos-rapidos"') == 2          # identidad: los dos renglones de la ficha
+    antes, en_su_envase, con_siete, a_caja = _armar_en_el_navegador(html, [
+        lambda p: p.check('#armar-1 input[value="su_envase"]'),
+        lambda p: p.click('#rapidos-1 button:has-text("7 kg")'),
+        lambda p: p.check('#armar-1 input[value="caja"]'),
+    ])
     assert antes == {"valor": "10", "obligatorio": False, "botones": False, "total": antes["total"]}
     assert en_su_envase["valor"] == "" and en_su_envase["obligatorio"] and en_su_envase["botones"]
     assert en_su_envase["total"] == "¿Cuántos kilos va cada bulto en su envase?"
     assert con_siete["valor"] == "7" and con_siete["total"].startswith("Manda 3 bultos × 7")
     assert a_caja == {"valor": "10", "obligatorio": False, "botones": False, "total": a_caja["total"]}
+
+
+def test_el_MANGO_por_unidad_sale_con_sus_10_en_las_DOS_formas_y_sin_botones(base):
+    """Dueño, 09/10: el Mango sale siempre por 10 unidades, en su envase o en
+    caja de Día. Cambia el envase, nunca la cantidad."""
+    pytest.importorskip("playwright", reason="lo que pasa al tocar lo decide el navegador")
+    d, sql = base
+    html = _pantalla_de_armar()
+    assert html.count("<legend>¿Cómo sale?</legend>") == 2   # identidad: la pregunta sigue
+    assert html.count('class="kilos-rapidos"') == 0
+    antes, en_su_envase, a_caja = _armar_en_el_navegador(html, [
+        lambda p: p.check('#armar-1 input[value="su_envase"]'),
+        lambda p: p.check('#armar-1 input[value="caja"]'),
+    ])
+    for estado in (antes, en_su_envase, a_caja):
+        assert (estado["valor"], estado["obligatorio"], estado["botones"]) == ("10", False, False), estado
+    assert en_su_envase["total"] == antes["total"] and "10" in antes["total"]
 
 
 def test_el_POST_en_su_envase_sin_kilos_rebota_con_el_motivo(base):

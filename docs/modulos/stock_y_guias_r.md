@@ -127,8 +127,10 @@ descartable del proveedor puede ser de 5 o de 7 kg y la ficha dice el de la
 caja de Día: precargado de la ficha, uno de 7 se facturaba de 5. Al elegir
 "En su envase" el kilaje por bulto queda VACÍO y obligatorio, con botones "5
 kg" y "7 kg"; al elegir "Reprocesado a caja" vuelve el de la ficha. Lo exige
-también `marcar_renglon_armado` (sin kilos, `ComoSaleNoPermitido`). Los
-botones salen en las dos fichas (Mango y Cherry).
+también `marcar_renglon_armado` (sin kilos, `ComoSaleNoPermitido`). **Solo en
+las fichas por KILO (Cherry).** El Mango (ficha por unidad) sale SIEMPRE por
+10 unidades, en su envase o en caja de Día: cambia el envase, nunca la
+cantidad, así que ni se vacía ni hay botones (dueño, 09/10).
 
 La condición de esta sección pasa a ser `envase_id IS NOT NULL AND NOT
 en_su_envase`, y la respetan, además de los cuatro lugares de arriba:

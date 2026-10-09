@@ -25897,6 +25897,10 @@ def ver_armar_pedido(request: Request, cliente_id: str | None = None, fecha: str
             r.get("ficha_id") in fichas_con_envase and r["ficha_id"] not in con_cajas
         )
         r["elige_envase"] = r.get("ficha_id") in fichas_que_eligen_envase
+        # EN SU ENVASE, LOS KILOS LOS DICE EL QUE ARMA, solo en las fichas por
+        # KILO (Cherry: el descartable es de 5 o de 7). Las por unidad (Mango)
+        # salen siempre con las mismas 10 en las dos formas (dueño, 09/10).
+        r["kilos_en_su_envase"] = r["elige_envase"] and unidad == "kilo"
     for r in armados:
         # Con qué comparar para la marca "editado a mano": el cálculo de
         # ficha sobre los bultos que realmente armó.
