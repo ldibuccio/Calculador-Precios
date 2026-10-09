@@ -6,8 +6,9 @@ vigentes, en corto, están en CLAUDE.md.
 ## PLAN B DE BACKUP (02/10, dueño)
 
 Todo se tiene que poder reconstruir aunque desaparezcan Supabase, Railway o
-GitHub. **Todos los días a las 03:47 de Argentina** (`.github/workflows/backup.yml`,
-cron `47 6 * * *` UTC; hasta el 03/10 era `0 7 * * *`, ver abajo) tres partes van a **OneDrive Y Google Drive** de Lionel,
+GitHub. **Todos los días a las 03:47 de Argentina** (`.github/workflows/backup.yml`;
+desde el 09/10 lo lanza el sistema y el cron `47 6 * * *` UTC queda de
+respaldo, ver abajo) tres partes van a **OneDrive Y Google Drive** de Lionel,
 **cifradas con rclone crypt**. La regla pura vive en `core/backup.py`, la
 corrida en `scripts/backup.py`, y cómo se vuelve todo en `RESTAURAR.md`, que
 también se sube SIN cifrar a la carpeta `Backup-Sistema` de cada nube.
@@ -97,3 +98,27 @@ rastro: no hay corrida roja que mirar, simplemente no hay corrida.
   anduvo. Detalle en `db/corridas_confirmadas.md`.
 - **Lo que avisa si las dos se pierden** sigue siendo la alerta
   `backups_viejos` de Gerencia (más de 48 horas sin uno bueno).
+
+### Desde el 09/10 lo lanza el sistema (dueño)
+
+Del 04/10 al 08/10 las dos corridas programadas salieron TODOS los días entre
+6 y 8 horas y media tarde (la de las 03:47 corría a las 11). Las lanzadas a
+mano salen en el momento. Así que:
+
+- **El reloj de fondo del sistema** (el mismo que recalcula Alertas y Panel)
+  le pide a GitHub que corra el Backup a las 03:47 de Argentina
+  (`_lanzar_backup_si_toca`, `core/backup_github.py`), con `origen=sistema`.
+  Ventana de 03:47 a 07:00; si GitHub no contesta, reintenta cada 15 minutos.
+- **Los dos schedule quedan de respaldo**: `hace_falta` saltea cualquier
+  corrida programada o del sistema si hoy ya hubo un Backup bueno. Una
+  corrida lanzada a mano desde GitHub siempre corre.
+- **La llave** es la variable `BACKUP_GITHUB_TOKEN` de Railway: un token
+  fine-grained de GitHub, solo el repo Calculador-Precios, solo permiso de
+  Actions (lectura y escritura), con vencimiento de un año. Sin la llave el
+  sistema no lanza nada y quedan los schedule.
+- **Gerencia → Backups avisa** arriba si la llave falta, si no anda, o si
+  vence en menos de 30 días (`DIAS_DE_AVISO`): la fecha la manda GitHub en
+  cada respuesta (`github-authentication-token-expiration`). Se le pregunta
+  una vez por hora como mucho.
+- Si la llave está en las dos aplicaciones, las dos lanzan: el workflow corre
+  de a uno y el segundo se saltea.

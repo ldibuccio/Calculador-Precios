@@ -138,9 +138,11 @@ primera vez más, por las fotos). Cuando termine:
   con una carpeta `cifrado` (nombres raros: es lo cifrado) y el archivo
   `LEEME-RESTAURAR.md`, que se lee.
 
-De ahí en adelante corre solo todos los días a la madrugada (03:47; GitHub a
-veces la larga horas tarde) y, si esa no salió bien, otra vez a las 07:17. Si
-algo se atrasa más de 2 días, aparece en las alertas de Gerencia.
+De ahí en adelante corre solo todos los días a las 03:47: lo lanza el sistema
+con una llave de GitHub que vence una vez por año (Gerencia → Backups avisa un
+mes antes). Si esa no salió bien, GitHub tiene dos horarios de respaldo, que
+llegan con horas de atraso. Si algo se atrasa más de 2 días, aparece en las
+alertas de Gerencia.
 
 ## Una vez por año
 

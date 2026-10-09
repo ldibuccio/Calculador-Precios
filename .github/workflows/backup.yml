@@ -1,5 +1,7 @@
-# PLAN B DE BACKUP (dueño, 02/10): todos los días a las 03:47 de Argentina
-# (hasta el 03/10 era a las 04:00 en punto; ver el schedule).
+# PLAN B DE BACKUP (dueño, 02/10): todos los días a las 03:47 de Argentina.
+# Desde el 09/10 lo LANZA EL SISTEMA (core/backup_github.py), porque los
+# horarios de GitHub salían entre 6 y 8 horas tarde; los dos `schedule` de
+# abajo quedan de respaldo.
 #
 # Código, bases (Frutamax, Palmala, Ganadería) y fotos van a OneDrive Y a
 # Google Drive, CIFRADOS con la clave que Lionel tiene impresa. SIN ESA CLAVE
@@ -14,17 +16,22 @@
 name: Backup
 
 on:
-  # GitHub NO garantiza los schedule: con carga los atrasa o los DESCARTA, y
-  # la hora en punto es la más cargada. El 03/10 el de las 07:00 UTC no se
-  # creó nunca (cero corridas `schedule` en el repo). Por eso:
-  #   - la corrida va a un minuto que no es en punto (06:47 UTC = 03:47 AR);
-  #   - y hay una de RESPALDO a las 10:17 UTC (07:17 AR) que solo hace el
+  # GitHub NO garantiza los schedule: con carga los atrasa o los DESCARTA. Del
+  # 04/10 al 08/10 los dos salieron TODOS los días entre 6 y 8 horas y media
+  # tarde (el de las 03:47 corría a las 11). Por eso, desde el 09/10:
+  #   - a las 03:47 de Argentina lo lanza el SISTEMA (workflow_dispatch con
+  #     origen "sistema"), que sale en el momento;
+  #   - los dos schedule quedan de RESPALDO: cualquiera de los dos solo hace el
   #     backup si hoy (Argentina) todavía no hubo ninguno bueno.
-  # Si se cambia una de las dos horas, cambiar también CRON_RESPALDO abajo.
   schedule:
-    - cron: "47 6 * * *"    # 06:47 UTC = 03:47 de Argentina (sin horario de verano)
-    - cron: "17 10 * * *"   # 10:17 UTC = 07:17 de Argentina: el respaldo
+    - cron: "47 6 * * *"    # 06:47 UTC = 03:47 de Argentina (respaldo)
+    - cron: "17 10 * * *"   # 10:17 UTC = 07:17 de Argentina (respaldo)
   workflow_dispatch:
+    inputs:
+      origen:
+        description: "quién lo lanza: a_mano (siempre corre) o sistema (se saltea si hoy ya hubo uno bueno)"
+        required: false
+        default: a_mano
 
 # Una corrida a la vez: dos juntas se pisarían el token renovado de OneDrive.
 concurrency:
@@ -41,10 +48,13 @@ env:
   ESTADO_PALMALA_URL: ${{ secrets.ESTADO_PALMALA_URL }}
 
 jobs:
-  # ¿HACE FALTA? Siempre que sí, salvo en la corrida de RESPALDO: ésa se saltea
-  # si hoy (Argentina) ya hubo un Backup que terminó bien. Si la consulta a
-  # GitHub falla, se hace el backup igual: uno de más no rompe nada (las
-  # diarias llevan la fecha en el nombre y las fotos son incrementales).
+  # ¿HACE FALTA? Lanzado a mano desde GitHub, siempre. Lanzado por el sistema
+  # o por un schedule, solo si hoy (Argentina) todavía no hubo un Backup que
+  # terminó bien. Como corren de a uno (concurrency), si el sistema lo lanza
+  # dos veces (Frutamax y Palmala) el segundo encuentra el bueno y se saltea.
+  # Si la consulta a GitHub falla, se hace el backup igual: uno de más no rompe
+  # nada (las diarias llevan la fecha en el nombre y las fotos son
+  # incrementales).
   hace_falta:
     runs-on: ubuntu-latest
     timeout-minutes: 5
@@ -57,11 +67,10 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
           EVENTO: ${{ github.event_name }}
-          CRON: ${{ github.event.schedule }}
-          CRON_RESPALDO: "17 10 * * *"
+          ORIGEN: ${{ github.event.inputs.origen }}
         run: |
-          if [ "$EVENTO" != "schedule" ] || [ "$CRON" != "$CRON_RESPALDO" ]; then
-            echo "correr=true" >> "$GITHUB_OUTPUT"; echo "corrida normal: se hace"; exit 0
+          if [ "$EVENTO" = "workflow_dispatch" ] && [ "$ORIGEN" != "sistema" ]; then
+            echo "correr=true" >> "$GITHUB_OUTPUT"; echo "lanzado a mano: se hace"; exit 0
           fi
           desde=$(TZ=America/Argentina/Buenos_Aires date +%Y-%m-%dT00:00:00-03:00)
           if n=$(gh api -X GET "repos/${{ github.repository }}/actions/workflows/backup.yml/runs" \
