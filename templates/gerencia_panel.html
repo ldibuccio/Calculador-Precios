@@ -39,6 +39,15 @@
   .dos { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 0.5rem; margin-top: 0.3rem; }
   .dos .cuadro-numero { font-size: 1.9rem; }
   .mes { font-size: 0.78rem; color: #555; font-weight: 600; }
+  .foto { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 0.6rem;
+    margin-bottom: 0.75rem; }
+  .foto-cuando { font-size: 0.9rem; color: #444; font-weight: 600; }
+  .foto form { margin: 0; flex: 0 1 auto; }
+  .foto button { min-height: 44px; padding: 0.5rem 1rem; border-radius: 8px; border: 1px solid #2563eb;
+    background: #fff; color: #2563eb; font-weight: 600; font-size: 0.95rem; }
+  .aviso-foto { background: #fef3c7; color: #92400e; padding: 0.6rem 0.9rem; border-radius: 8px;
+    margin-bottom: 0.75rem; font-weight: 600; }
+  .error { background: #fee2e2; color: #991b1b; padding: 0.6rem 0.9rem; border-radius: 8px; margin-bottom: 0.75rem; }
 </style>
 </head>
 <body>
@@ -47,6 +56,15 @@
   {% set barra_atras = "/gerencia" %}
   {% include "_barra_navegacion.html" %}
   {% set MESES = ["", "Enero", "Febrero", "Marzo", "Abril", "Mayo", "Junio", "Julio", "Agosto", "Septiembre", "Octubre", "Noviembre", "Diciembre"] %}
+
+  {# LA FOTO (dueño, 09/10): el tablero se calcula a las 06:00 y a las 14:00
+     y acá se muestra lo último calculado; el botón lo recalcula ya, para todos. #}
+  <div class="foto">
+    <span class="foto-cuando" data-actualizado>{{ foto.actualizado }}</span>
+    <form method="post" action="/gerencia/panel/actualizar"><button type="submit">Actualizar ahora</button></form>
+  </div>
+  {% if foto.fallo %}<div class="aviso-foto" data-fallo>{{ foto.fallo }} Se muestra lo último que se pudo calcular.</div>{% endif %}
+  {% if error %}<div class="error">{{ error }}</div>{% endif %}
 
   <div class="cuadros">
     {# 1. RENTABILIDAD POR CLIENTE #}

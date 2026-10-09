@@ -526,6 +526,10 @@ from app.db import (
     obtener_proveedor,
     obtener_ultimo_disponible_cliente,
     listar_estado_alertas,
+    candado_panel,
+    foto_buena_del_panel,
+    guardar_foto_del_panel,
+    intentos_automaticos_del_panel,
     agregar_foto_recepcion,
     borrar_foto_recepcion,
     listar_fotos_de_recepcion,
@@ -652,6 +656,13 @@ from core.vales import (
 )
 from core.vales import hora_argentina as hora_argentina_vale
 from app.iconos_hubs import ICONOS_HUBS
+from core.panel_foto import (
+    a_texto as foto_a_texto,
+    de_texto as foto_de_texto,
+    estado_de_la_foto,
+    hay_que_calcular as hay_que_calcular_el_panel,
+    turno_vigente as turno_vigente_del_panel,
+)
 from core.backup import HORAS_PARA_LA_ALERTA, TEXTO_DE_LA_PARTE, TEXTO_DEL_DESTINO, causa_legible
 from core import backup_github
 from core.tareas import (
@@ -20270,18 +20281,88 @@ def _datos_del_cuadro(cuadro: str, hoy, memo: dict):
     return _DATOS_DEL_PANEL[cuadro](hoy)
 
 
+def calcular_el_panel(hoy) -> dict:
+    """Los nueve cuadros del tablero. Es lo que tarda: se corre a las 06:00 y
+    a las 14:00, y con el botón "Actualizar ahora"."""
+    memo: dict = {}
+    return {cuadro: _datos_del_cuadro(cuadro, hoy, memo) for cuadro in CUADROS_DEL_PANEL}
+
+
+def actualizar_foto_del_panel(turno=None) -> bool:
+    """Calcula el tablero y guarda la foto. `turno` es el horario programado
+    (06:00 o 14:00) y None es "Actualizar ahora". Devuelve False si no
+    calculó: otro ya estaba calculando, o ese turno ya se intentó.
+
+    Un turno que falla queda ANOTADO con su error (el tablero avisa "no se
+    pudo actualizar a las 14:00") y no se reintenta. Con el botón, el error
+    no se anota: se le muestra al que tocó, y vuelve a salir para arriba."""
+    with candado_panel() as tomado:
+        if not tomado:
+            logger.info("El panel ya se está calculando en otro lado: esta corrida se saltea")
+            return False
+        if turno is not None and turno in {i["turno"] for i in intentos_automaticos_del_panel()}:
+            return False
+        arranque = datetime.now(timezone.utc)
+        try:
+            datos = foto_a_texto(calcular_el_panel(_hoy_argentina()))
+        except Exception as error:
+            if turno is None:
+                raise
+            logger.exception("El panel no se pudo calcular para el turno %s", turno)
+            guardar_foto_del_panel(turno=turno, datos_json=None, error=str(error)[:500] or type(error).__name__)
+            return True
+        guardar_foto_del_panel(turno=turno, datos_json=datos,
+                               duracion_ms=int((datetime.now(timezone.utc) - arranque).total_seconds() * 1000))
+        logger.info("Panel calculado (%s)", turno or "a mano")
+        return True
+
+
+def _actualizar_panel_si_toca(ahora=None) -> None:
+    """Colgado del bucle de las alertas: si el turno vigente (06:00 o 14:00)
+    todavía no se intentó, se calcula ahora."""
+    ahora = ahora or datetime.now(ARGENTINA)
+    if not hay_que_calcular_el_panel([i["turno"] for i in intentos_automaticos_del_panel()], ahora):
+        return
+    actualizar_foto_del_panel(turno_vigente_del_panel(ahora))
+
+
 @app.get("/gerencia/panel")
-def ver_panel_de_control(request: Request):
-    """El tablero: un cuadro por tema, en el orden del dueño."""
-    hoy = _hoy_argentina()
+def ver_panel_de_control(request: Request, error: str | None = None):
+    """El tablero, de la ÚLTIMA FOTO: no calcula nada al entrar (dueño, 09/10).
+    Solo si todavía no hay ninguna foto buena la calcula ahora, una vez."""
     try:
-        memo: dict = {}
-        datos = {cuadro: _datos_del_cuadro(cuadro, hoy, memo) for cuadro in CUADROS_DEL_PANEL}
+        buena = foto_buena_del_panel()
+        if buena is None:
+            actualizar_foto_del_panel()
+            buena = foto_buena_del_panel()
+        intentos = intentos_automaticos_del_panel()
     except Exception as error_db:
         raise HTTPException(status_code=500, detail=f"Error al leer el panel: {error_db}") from error_db
+    if buena is None:
+        raise HTTPException(status_code=500, detail="El panel no se pudo calcular.")
+    datos = foto_de_texto(buena["datos_json"])
     return templates.TemplateResponse(request, "gerencia_panel.html", {
-        "datos": datos, "cuadros": CUADROS_DEL_PANEL, "titulos": TITULOS_DEL_PANEL, "hoy": hoy,
+        "datos": datos, "cuadros": CUADROS_DEL_PANEL, "titulos": TITULOS_DEL_PANEL,
+        "foto": estado_de_la_foto(buena, intentos, datetime.now(ARGENTINA)), "error": error,
     })
+
+
+@app.post("/gerencia/panel/actualizar")
+def actualizar_panel_ahora(request: Request):
+    """Recalcula el tablero en el momento y deja la foto nueva para todos."""
+    puerta = _puerta_de_gerencia_para_escribir(request)
+    if puerta is not None:
+        return puerta
+    try:
+        calculo = actualizar_foto_del_panel()
+    except Exception as error:
+        logger.exception("El panel no se pudo actualizar a mano")
+        return RedirectResponse(url="/gerencia/panel?" + urlencode(
+            {"error": f"No se pudo actualizar: {error}"}), status_code=303)
+    if not calculo:
+        return RedirectResponse(url="/gerencia/panel?" + urlencode(
+            {"error": "Ya se está actualizando. Probá de nuevo en un rato."}), status_code=303)
+    return RedirectResponse(url="/gerencia/panel", status_code=303)
 
 
 # UNA DIRECCIÓN ESCRITA POR CUADRO, y no "/gerencia/panel/{cuadro}": así el
@@ -26712,6 +26793,11 @@ def _lanzar_backup_si_toca(ahora=None, cliente=None) -> None:
     logger.info("Backup lanzado en GitHub")
 
 
+# Tope para el cálculo del panel, dos veces por día. Si se pasa, el bucle
+# sigue; el hilo termina solo y deja su foto (o su error) cuando termina.
+SEGUNDOS_TIMEOUT_PANEL = 300
+
+
 def _recalcular_alertas_si_toca() -> None:
     """Recalcula las alertas si la foto más nueva ya pasó las HORAS_RECALCULO.
 
@@ -26785,6 +26871,20 @@ async def _bucle_revision_casillas() -> None:
                          SEGUNDOS_TIMEOUT_LANZAR_BACKUP)
         except Exception:
             logger.exception("No se pudo lanzar el backup en GitHub — se reintenta en 15 minutos")
+
+        # El Panel de control, a las 06:00 y a las 14:00 (dueño, 09/10). Con su
+        # propio try y su propio tope, igual que las alertas.
+        try:
+            await asyncio.wait_for(
+                asyncio.to_thread(_actualizar_panel_si_toca), timeout=SEGUNDOS_TIMEOUT_PANEL
+            )
+        except asyncio.TimeoutError:
+            logger.error(
+                "El cálculo del panel superó los %s segundos y se abandonó — el bucle sigue",
+                SEGUNDOS_TIMEOUT_PANEL,
+            )
+        except Exception:
+            logger.exception("El cálculo del panel falló — sigue en el próximo ciclo")
 
         await asyncio.sleep(SEGUNDOS_TICK_REVISION)
 

@@ -2386,3 +2386,23 @@ end $f$;
 create trigger viaje_pagado_no_se_toca
   before update or delete on fletes_viajes
   for each row execute function viaje_pagado_no_se_toca();
+
+-- ----------------------------------------------------------------------------
+-- LA FOTO DEL PANEL DE CONTROL (dueño, 09/10). db/panel_foto_1_tabla.sql.
+-- El tablero se calcula a las 06:00 y a las 14:00 (y con "Actualizar
+-- ahora") y al entrar se lee la última foto buena. Ver core/panel_foto.py.
+-- ----------------------------------------------------------------------------
+create table panel_fotos (
+  id bigint generated always as identity primary key,
+  turno timestamptz,
+  calculada_el timestamptz not null default now(),
+  ok boolean not null,
+  datos jsonb,
+  error text,
+  duracion_ms integer,
+  constraint panel_fotos_ok_con_datos check (ok = (datos is not null)),
+  constraint panel_fotos_falla_con_error check (ok or error is not null)
+);
+create unique index panel_fotos_un_intento_por_turno
+  on panel_fotos (turno) where turno is not null;
+create index panel_fotos_por_fecha on panel_fotos (calculada_el desc);

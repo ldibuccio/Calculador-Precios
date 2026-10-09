@@ -16328,6 +16328,81 @@ def listar_estado_alertas() -> list[dict]:
         conexion.close()
 
 
+# ----------------------------------------------------------------------------
+# LA FOTO DEL PANEL DE CONTROL (ver core/panel_foto.py para el porqué)
+# ----------------------------------------------------------------------------
+
+# Otro candado, distinto del de las alertas: el bucle y el botón "Actualizar
+# ahora" no pueden calcular el panel a la vez.
+CLAVE_CANDADO_PANEL = 8_270_002
+
+# Las fotos viejas no sirven para nada: se guardan las últimas, y la base no
+# crece dos filas por día para siempre.
+FOTOS_DEL_PANEL_QUE_SE_GUARDAN = 30
+
+
+@contextmanager
+def candado_panel():
+    """Como `candado_alertas`: True si lo consiguió, y se suelta al cerrar la conexión."""
+    conexion = obtener_conexion()
+    try:
+        with conexion.cursor() as cursor:
+            cursor.execute("SELECT pg_try_advisory_lock(%s)", (CLAVE_CANDADO_PANEL,))
+            (tomado,) = cursor.fetchone()
+        yield tomado
+    finally:
+        conexion.close()
+
+
+def guardar_foto_del_panel(*, turno, datos_json: str | None, error: str | None = None,
+                           duracion_ms: int | None = None) -> None:
+    """Una foto bien calculada (`datos_json`) o un intento que falló (`error`).
+    `turno` es el horario programado; None es "Actualizar ahora". La base no
+    deja dos intentos del mismo turno (`panel_fotos_un_intento_por_turno`)."""
+    conexion = obtener_conexion()
+    try:
+        with conexion.cursor() as cursor:
+            cursor.execute(
+                "INSERT INTO panel_fotos (turno, ok, datos, error, duracion_ms) "
+                "VALUES (%s, %s, %s::jsonb, %s, %s)",
+                (turno, datos_json is not None, datos_json, error, duracion_ms))
+            cursor.execute(
+                "DELETE FROM panel_fotos WHERE id NOT IN "
+                "(SELECT id FROM panel_fotos ORDER BY calculada_el DESC, id DESC LIMIT %s) "
+                # la última buena no se borra nunca, aunque haya 30 fallas después
+                "AND id <> coalesce((SELECT id FROM panel_fotos WHERE ok "
+                "ORDER BY calculada_el DESC, id DESC LIMIT 1), 0)",
+                (FOTOS_DEL_PANEL_QUE_SE_GUARDAN,))
+        conexion.commit()
+    finally:
+        conexion.close()
+
+
+def foto_buena_del_panel() -> dict | None:
+    """La última foto bien calculada: {calculada_el, datos_json}, o None."""
+    conexion = obtener_conexion()
+    try:
+        with conexion.cursor() as cursor:
+            cursor.execute("SELECT calculada_el, datos::text FROM panel_fotos WHERE ok "
+                           "ORDER BY calculada_el DESC, id DESC LIMIT 1")
+            fila = cursor.fetchone()
+        return {"calculada_el": fila[0], "datos_json": fila[1]} if fila else None
+    finally:
+        conexion.close()
+
+
+def intentos_automaticos_del_panel() -> list[dict]:
+    """Los intentos de los turnos programados, bien o mal, del más nuevo al más viejo."""
+    conexion = obtener_conexion()
+    try:
+        with conexion.cursor() as cursor:
+            cursor.execute("SELECT turno, calculada_el, ok FROM panel_fotos WHERE turno IS NOT NULL "
+                           "ORDER BY calculada_el DESC, id DESC")
+            return [{"turno": t, "calculada_el": c, "ok": ok} for t, c, ok in cursor.fetchall()]
+    finally:
+        conexion.close()
+
+
 # ---------------------------------------------------------------------------
 # STOCK DE CAJAS NUESTRAS
 # ---------------------------------------------------------------------------

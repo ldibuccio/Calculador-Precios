@@ -16,7 +16,7 @@ con montos enormes, y se le dan a la ruta en vez de leerlos de la base.
 """
 import os
 import sys
-from datetime import date
+from datetime import date, datetime, timezone
 from unittest.mock import patch
 
 import pytest
@@ -86,9 +86,25 @@ def _datos(cuadro, hoy, memo):
     raise AssertionError(cuadro)
 
 
+def _foto():
+    """El tablero se lee de la FOTO (dueño, 09/10): la de los nueve cuadros con
+    diez cifras, pasada por el JSON como en la base, y un turno de las 14:00
+    que falló después, para que el aviso de arriba también se mida."""
+    from core.panel_foto import a_texto
+    import app.main as m
+    calculada = datetime(2026, 10, 9, 9, 1, tzinfo=timezone.utc)          # 06:01 de Argentina
+    datos = a_texto({cuadro: _datos(cuadro, HOY, {}) for cuadro in m.CUADROS_DEL_PANEL})
+    fallo = {"turno": datetime(2026, 10, 9, 17, 0, tzinfo=timezone.utc),
+             "calculada_el": datetime(2026, 10, 9, 17, 2, tzinfo=timezone.utc), "ok": False}
+    return {"calculada_el": calculada, "datos_json": datos}, [fallo]
+
+
 def _paginas():
     import app.main as m
+    buena, intentos = _foto()
     with patch.dict(os.environ, CLAVES), patch.object(m, "_hoy_argentina", return_value=HOY), \
+            patch.object(m, "foto_buena_del_panel", return_value=buena), \
+            patch.object(m, "intentos_automaticos_del_panel", return_value=intentos), \
             patch.object(m, "_datos_del_cuadro", side_effect=_datos):
         cliente = _cliente(m, "gerencia")
         paginas = {"/gerencia/panel": cliente.get("/gerencia/panel")}
@@ -152,6 +168,9 @@ def test_ningun_NUMERO_del_panel_se_parte_ni_se_sale_con_DIEZ_cifras(ancho):
     # Lo que tiene que estar ENTERO en el tablero (el texto, antes de medir).
     for entero in ("$8.379.000.000", "$5.378.445.999", "$5.378.446.000", "-1234567890", "1234567890"):
         assert entero in tablero, entero
+    assert "No se pudo actualizar a las 14:00." in tablero and "Actualizar ahora" in tablero
+    # Las fechas vuelven de la foto como fechas: sin eso los meses salen vacíos, sin error.
+    assert tablero.count('<div class="mes">Septiembre</div>') == 3 and tablero.count('<div class="mes">Octubre (a hoy)</div>') == 3
     with sync_playwright() as pw:
         navegador = pw.chromium.launch(executable_path=CHROMIUM)
         try:

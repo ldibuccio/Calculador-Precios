@@ -103,3 +103,32 @@ de desbordar, y el script no se entera de que tiene que achicar. Debajo de
 360px el título del cuadro va más chico, para que "INCOMPLETOS" entre en medio
 cuadro. Test con montos de diez cifras a 390 y 313px, que mira también que
 ninguna PALABRA se parta, en `tests/test_panel_numeros_enteros.py`.
+
+## La foto: 06:00 y 14:00 (dueño, 09/10)
+
+El tablero tardaba en abrir porque calculaba los nueve cuadros en cada
+entrada. Ahora se calcula a las **06:00 y a las 14:00** (hora Argentina) y
+al entrar se muestra **lo último calculado**, de `panel_fotos`
+(db/panel_foto_1_tabla.sql). Arriba dice "Actualizado hoy a las 14:00", y el
+botón **"Actualizar ahora"** (`POST /gerencia/panel/actualizar`) recalcula en
+el momento y deja la foto nueva para todos. **Los detalles de cada cuadro se
+siguen calculando al tocarlos.** La lógica pura (turnos, el JSON con fechas,
+lo que se dice arriba) está en `core/panel_foto.py`.
+
+- **Lo dispara el mismo bucle que las Alertas** (`_bucle_revision_casillas`,
+  el que mira el reloj cada minuto dentro de la aplicación): si el turno
+  vigente (el último de las 06:00 o las 14:00 que ya pasó) no se intentó, se
+  calcula (`_actualizar_panel_si_toca`). Si la aplicación estuvo caída a las
+  14:00, lo calcula cuando vuelve.
+- **Un turno se intenta UNA vez** (`panel_fotos_un_intento_por_turno`). Si
+  falla, queda anotado con su error y el tablero muestra la última foto
+  buena con el aviso "No se pudo actualizar a las 14:00". No se reintenta
+  solo: para eso está el botón. Un error del botón no se anota: se le
+  muestra al que lo tocó.
+- Sin ninguna foto buena (la primera vez), el tablero la calcula al entrar.
+- Se guardan las últimas 30 fotos (`FOTOS_DEL_PANEL_QUE_SE_GUARDAN`), y la
+  última buena no se borra nunca.
+- Un candado propio (`candado_panel`) evita que el bucle y el botón
+  calculen a la vez.
+
+Lo cuida `tests/test_panel_foto.py`.

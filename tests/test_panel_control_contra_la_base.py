@@ -114,6 +114,22 @@ def _base_con(siembra):
     return url
 
 
+@pytest.fixture(autouse=True)
+def _sin_foto_del_panel():
+    """El tablero muestra la ÚLTIMA FOTO (dueño, 09/10): cada test arranca sin
+    ninguna, así su primera entrada la calcula con SU día y SUS datos."""
+    yield
+    if os.environ.get("DATABASE_URL"):
+        import app.db as d
+        conexion = d.obtener_conexion()
+        try:
+            with conexion.cursor() as cursor:
+                cursor.execute("DELETE FROM panel_fotos")
+            conexion.commit()
+        finally:
+            conexion.close()
+
+
 @pytest.fixture(scope="module")
 def base():
     url = _base_con(SIEMBRA)
