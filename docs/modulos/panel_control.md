@@ -87,3 +87,18 @@ La cuenta de Pérdidas rejuega el FIFO: el tablero la pide una sola vez por mes
 y la comparten Mermas y Segunda (`_perdidas_de_los_dos_meses`). Lo mismo la
 Rentabilidad Real de cada cliente y rango (`_real_sin_perdidas`), que la
 comparten Rentabilidad y Segunda.
+
+## Un número nunca se parte (dueño, 09/10)
+
+En el celular "$8.379.000" salía "$8.379." arriba y "000" abajo. Los números
+del tablero y de los detalles van marcados `data-ajustar` (sin quiebre:
+`white-space: nowrap`) y su cuadro `data-ajustar-contenedor`;
+`templates/_ajustar_numeros.html` le achica la letra a todos los números de un
+cuadro juntos, en la misma proporción (Septiembre y Octubre quedan iguales),
+hasta que entran enteros. Los cuadros del tablero van con `overflow-wrap:
+break-word` y no `anywhere`: con `anywhere`, una tabla angosta (Rechazos,
+Rentabilidad) parte el rótulo de al lado ("En plata") letra por letra en vez
+de desbordar, y el script no se entera de que tiene que achicar. Debajo de
+360px el título del cuadro va más chico, para que "INCOMPLETOS" entre en medio
+cuadro. Test con montos de diez cifras a 390 y 313px, que mira también que
+ninguna PALABRA se parta, en `tests/test_panel_numeros_enteros.py`.

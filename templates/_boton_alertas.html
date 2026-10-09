@@ -24,10 +24,12 @@
 {%- endmacro %}
 
 {# Va DESPUÉS de las reglas del botón (`.franja-boton`, `.boton`): con la
-   misma especificidad gana la última, sin `!important`. #}
+   misma especificidad gana la última, sin `!important`.
+   EL BOTÓN DE TAREAS DE LA FRANJA SE PINTA IGUAL (dueño, 09/10): rojo con
+   tareas pendientes, verde sin. Los mismos dos colores, escritos una vez. #}
 {% macro estilos() %}
-  .con-alertas { background: #dc2626; border-color: #dc2626; color: #fff; }
-  .sin-alertas { background: #15803d; border-color: #15803d; color: #fff; }
+  .con-alertas, .con-tareas { background: #dc2626; border-color: #dc2626; color: #fff; }
+  .sin-alertas, .sin-tareas { background: #15803d; border-color: #15803d; color: #fff; }
 {% endmacro %}
 
 

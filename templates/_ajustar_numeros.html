@@ -1,0 +1,35 @@
+{# UN NÚMERO NUNCA SE PARTE EN DOS RENGLONES (dueño, 09/10): "$8.379." arriba
+   y "000" abajo se lee como otro número. Los números van sin quiebre
+   (`white-space: nowrap` en el CSS de cada pantalla) y, si el de un cuadro no
+   entra, este script le ACHICA LA LETRA hasta que entra entero.
+
+   Se marca con atributos y no con clases:
+     data-ajustar-contenedor  el cuadro (o la tarjeta) que no se puede pasar;
+     data-ajustar             cada número de adentro que se puede achicar.
+   Todos los números de un cuadro se achican JUNTOS y en la misma proporción,
+   así Septiembre y Octubre lado a lado quedan del mismo tamaño.
+
+   Lo mide el navegador (corolario 32): el cuadro desborda si su contenido es
+   más ancho que él, y un número desborda si es más ancho que su lugar. Al
+   terminar, cada cuadro queda con `data-ajustado` (lo leen los tests). #}
+<script>
+  (function () {
+    function ajustar() {
+      document.querySelectorAll("[data-ajustar-contenedor]").forEach(function (caja) {
+        var numeros = caja.querySelectorAll("[data-ajustar]");
+        numeros.forEach(function (n) { n.style.fontSize = ""; });
+        for (var vuelta = 0; vuelta < 60; vuelta++) {
+          var desborda = caja.scrollWidth > caja.clientWidth + 1;
+          numeros.forEach(function (n) { if (n.scrollWidth > n.clientWidth + 1) { desborda = true; } });
+          if (!desborda) { break; }
+          numeros.forEach(function (n) {
+            n.style.fontSize = (parseFloat(getComputedStyle(n).fontSize) * 0.93) + "px";
+          });
+        }
+        caja.setAttribute("data-ajustado", "");
+      });
+    }
+    ajustar();
+    window.addEventListener("resize", ajustar);
+  })();
+</script>

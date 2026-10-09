@@ -11,6 +11,7 @@
     box-shadow: 0 1px 3px rgba(0, 0, 0, 0.1); overflow-wrap: anywhere; }
   h2 { font-size: 1.05rem; margin: 0 0 0.4rem; }
   .grande { font-size: 2rem; font-weight: 800; margin: 0.1rem 0; }
+  [data-ajustar] { white-space: nowrap; overflow-wrap: normal; }
   .dato { margin: 0.2rem 0; font-size: 0.92rem; }
   .nota { font-size: 0.8rem; color: #666; margin: 0.4rem 0 0; }
   .fila { padding: 0.55rem 0; border-top: 1px solid #eee; }
@@ -36,13 +37,13 @@
   {% set TEXTO_DEL_MOTIVO = {"de_menos": "Armado de menos", "sin_armar": "No se armó", "cruz": "No se armó (cruz)"} %}
 
   {% if cuadro == "rentabilidad" %}
-  <div class="tarjeta">
+  <div data-ajustar-contenedor class="tarjeta">
     <p class="nota">Ganancia sobre el costo de la mercadería, como en Rentabilidad Real. Mes y 7 días son la
       venta contra el costo de lo vendido a cada cliente, sin mermas ni segunda (ver sus cuadros). "Ahora"
       es el precio vigente contra el costo de hoy, como en Márgenes por Artículo.</p>
   </div>
   {% for f in dato %}
-  <div class="tarjeta" data-cliente="{{ f.cliente_id }}">
+  <div data-ajustar-contenedor class="tarjeta" data-cliente="{{ f.cliente_id }}">
     <h2>{{ f.cliente }}</h2>
     <p class="dato">Mes (del {{ f.rangos.mes[0].strftime("%d/%m") }} a hoy):
       <strong class="{{ 'rojo' if f.mes is not none and f.mes < 0 }}">{{ f.mes|pct if f.mes is not none else "sin ventas" }}</strong></p>
@@ -54,15 +55,15 @@
     <a class="ir" href="/gerencia/rentabilidad-real?cliente_id={{ f.cliente_id }}&amp;fecha_desde={{ f.rangos.mes[0].isoformat() }}&amp;fecha_hasta={{ f.rangos.mes[1].isoformat() }}">Ver el mes en Rentabilidad Real</a>
   </div>
   {% else %}
-  <div class="tarjeta"><p class="vacio">Ningún cliente tiene fichas.</p></div>
+  <div data-ajustar-contenedor class="tarjeta"><p class="vacio">Ningún cliente tiene fichas.</p></div>
   {% endfor %}
 
   {% elif cuadro == "cajas" %}
-  <div class="tarjeta">
-    <p class="grande {{ 'rojo' if dato.bajas else 'verde' }}">{{ dato.bajas }}</p>
+  <div data-ajustar-contenedor class="tarjeta">
+    <p data-ajustar class="grande {{ 'rojo' if dato.bajas else 'verde' }}">{{ dato.bajas }}</p>
     <p class="dato">{{ "tipo de caja por debajo" if dato.bajas == 1 else "tipos de caja por debajo" }} del aviso de reposición, de {{ dato.filas|length }}.</p>
   </div>
-  <div class="tarjeta">
+  <div data-ajustar-contenedor class="tarjeta">
     {% for c in dato.filas %}
     <div class="fila" data-envase="{{ c.id }}">
       <div class="fila-que">{{ c.nombre }} · <span class="{{ COLOR_DEL_ESTADO[c.estado] }}">{{ TEXTO_DEL_ESTADO[c.estado] }}</span></div>
@@ -75,11 +76,11 @@
   </div>
 
   {% elif cuadro == "pedidos" %}
-  <div class="tarjeta">
-    <p class="grande {{ 'rojo' if dato.pedidos else 'verde' }}">{{ dato.pedidos }}</p>
+  <div data-ajustar-contenedor class="tarjeta">
+    <p data-ajustar class="grande {{ 'rojo' if dato.pedidos else 'verde' }}">{{ dato.pedidos }}</p>
     <p class="dato">{{ "pedido salió incompleto" if dato.pedidos == 1 else "pedidos salieron incompletos" }} en los últimos 7 días ({{ dato.renglones|length }} {{ "renglón" if dato.renglones|length == 1 else "renglones" }}).</p>
   </div>
-  <div class="tarjeta">
+  <div data-ajustar-contenedor class="tarjeta">
     {% for r in dato.renglones %}
     <div class="fila" data-motivo="{{ r.motivo }}">
       <div class="fila-que">{{ r.cliente }} · {{ r.fecha_operacion.strftime("%d/%m") }} · {{ r.sucursal }}</div>
@@ -95,9 +96,9 @@
   {% set NOMBRE = {"kilo": "kilos", "unidad": "unidades", "cubeta": "cubetas"} %}
   {% set CORTO = {"kilo": "kg", "unidad": "u", "cubeta": "cub."} %}
   {% for clave in ("anterior", "actual") %}{% set m = dato[clave] %}
-  <div class="tarjeta" data-mes="{{ clave }}">
+  <div data-ajustar-contenedor class="tarjeta" data-mes="{{ clave }}">
     <h2>{{ MESES[m.desde.month] }}{% if clave == "actual" %} (del 1 a hoy){% endif %}</h2>
-    <p class="grande">{{ m.kilo.pct|pct if m.kilo.pct is not none else "—" }}</p>
+    <p data-ajustar class="grande">{{ m.kilo.pct|pct if m.kilo.pct is not none else "—" }}</p>
     {% for unidad in ("kilo", "unidad", "cubeta") %}{% set u = m[unidad] %}
     <p class="dato" data-unidad="{{ unidad }}"><strong>{{ NOMBRE[unidad]|capitalize }}: {{ u.pct|pct if u.pct is not none else "—" }}</strong>
       · faltaron {{ u.faltante|sin_decimales }} de {{ u.declarados|sin_decimales }} {{ NOMBRE[unidad] }} declarados, en {{ u.compras }} {{ "compra" if u.compras == 1 else "compras" }}</p>
@@ -115,11 +116,11 @@
   {% if dato.desde_la_foto %}<p class="nota">Solo compras desde la primera foto de la balanza ({{ dato.desde_la_foto.strftime("%d/%m/%Y") }}).</p>{% endif %}
 
   {% elif cuadro == "vales" %}
-  <div class="tarjeta">
-    <p class="grande">{{ dato.total|moneda }}</p>
+  <div data-ajustar-contenedor class="tarjeta">
+    <p data-ajustar class="grande">{{ dato.total|moneda }}</p>
     <p class="dato">{{ dato.cantidad }} {{ "vale en cartera" if dato.cantidad == 1 else "vales en cartera" }}: ni cobrados ni aplicados a una liquidación.</p>
   </div>
-  <div class="tarjeta">
+  <div data-ajustar-contenedor class="tarjeta">
     {% for v in dato.vales %}
     <div class="fila" data-vale="{{ v.id }}">
       <div class="fila-que"><a href="/gerencia/vales/{{ v.id }}">{{ v.proveedor }} · {{ v.importe|moneda }}</a></div>
@@ -131,11 +132,11 @@
   </div>
 
   {% elif cuadro == "vacios" %}
-  <div class="tarjeta">
-    <p class="grande {{ 'rojo' if dato.total < 0 }}">{{ dato.total }}</p>
+  <div data-ajustar-contenedor class="tarjeta">
+    <p data-ajustar class="grande {{ 'rojo' if dato.total < 0 }}">{{ dato.total }}</p>
     <p class="dato">cajones vacíos en el depósito, todas las marcas.</p>
   </div>
-  <div class="tarjeta">
+  <div data-ajustar-contenedor class="tarjeta">
     {% for p in dato.proveedores %}
     <div class="fila" data-proveedor="{{ p.id }}">
       <div class="fila-que">{{ p.nombre }} · <span class="{{ 'rojo' if p.stock < 0 }}">{{ p.stock }}</span></div>
@@ -150,7 +151,7 @@
 
   {% elif cuadro == "rechazos" %}
   {% for clave in ("anterior", "actual") %}{% set r = dato[clave] %}
-  <div class="tarjeta" data-mes="{{ clave }}">
+  <div data-ajustar-contenedor class="tarjeta" data-mes="{{ clave }}">
     <h2>{{ MESES[r.desde.month] }}{% if clave == "actual" %} (del 1 a hoy){% endif %}</h2>
     <p class="dato">En plata: <strong>{{ r.pct_plata|pct if r.pct_plata is not none else "—" }}</strong>
       · rechazado {{ r.pesos|moneda }} al costo, de {{ r.facturacion|moneda }} facturados a precio de lista</p>
@@ -163,9 +164,9 @@
 
   {% elif cuadro == "mermas" %}
   {% for clave in ("anterior", "actual") %}{% set m = dato[clave] %}
-  <div class="tarjeta" data-mes="{{ clave }}">
+  <div data-ajustar-contenedor class="tarjeta" data-mes="{{ clave }}">
     <h2>{{ MESES[m.desde.month] }}{% if clave == "actual" %} (del 1 a hoy){% endif %}</h2>
-    <p class="grande {{ 'rojo' if m.total > 0 }}">{{ m.total|moneda }}</p>
+    <p data-ajustar class="grande {{ 'rojo' if m.total > 0 }}">{{ m.total|moneda }}</p>
     <p class="dato">{{ m.bultos|sin_decimales }} bultos tirados · mercadería {{ m.mercaderia|moneda }} · cajas {{ m.cajas|moneda }}</p>
     {% if m.bultos_sin_costo %}<p class="nota">{{ m.bultos_sin_costo|sin_decimales }} bultos sin costo cargado: están en los bultos, no en la plata.</p>{% endif %}
     {% for f in m.filas %}
@@ -182,12 +183,12 @@
 
   {% elif cuadro == "segunda" %}
   {% for clave in ("anterior", "actual") %}{% set s = dato[clave] %}
-  <div class="tarjeta" data-mes="{{ clave }}">
+  <div data-ajustar-contenedor class="tarjeta" data-mes="{{ clave }}">
     <h2>{{ MESES[s.desde.month] }}{% if clave == "actual" %} (del 1 a hoy){% endif %}</h2>
     {% if s.perdida < 0 %}
-    <p class="grande verde" data-resultado="recuperado">{{ (-s.perdida)|moneda }} recuperado</p>
+    <p data-ajustar class="grande verde" data-resultado="recuperado">{{ (-s.perdida)|moneda }} recuperado</p>
     {% else %}
-    <p class="grande {{ 'rojo' if s.perdida > 0 }}" data-resultado="perdido">{{ s.perdida|moneda }} perdido</p>
+    <p data-ajustar class="grande {{ 'rojo' if s.perdida > 0 }}" data-resultado="perdido">{{ s.perdida|moneda }} perdido</p>
     {% endif %}
     <p class="dato">Costo de lo que fue a segunda {{ s.costo|moneda }} ({{ s.bultos|sin_decimales }} bultos) · cobrado al puesto {{ s.cobrado|moneda }}</p>
     <p class="dato" data-origen="pase">Pases: {{ s.por_origen.pase|moneda }}</p>
@@ -207,6 +208,7 @@
   {% endfor %}
   <p class="nota">El puesto paga la segunda junta, así que el costo es de toda la que fue a segunda: los pases (como en Pérdidas), los rechazos que no volvieron al stock (como en Rentabilidad Real: al costo del armado más la caja) y los reprocesos. La segunda de una guía R va a $0: su costo ya está en las cajas armadas, y lo que paga el puesto por ella es recupero. Cada cosa cae en el mes en que pasó; lo cobrado, en el mes en que el lote salió al puesto.</p>
   {% endif %}
+{% include "_ajustar_numeros.html" %}
 {% include "_pie_version.html" %}
 </body>
 </html>

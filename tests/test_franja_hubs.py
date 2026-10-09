@@ -2,8 +2,8 @@
 
 UNA línea con dos botones lado a lado, Tareas y Alertas, que despliegan lo
 suyo abajo, a todo el ancho. Arranca plegada y entra en una línea a 313px.
-Tareas: "Sin tareas pendientes" en gris, o "Tareas pendientes (N)" destacado,
-y en rojo si alguna venció; adentro la lista y "Nueva tarea". Alertas: "Sin
+Tareas: "Sin tareas pendientes" en verde, o "Tareas pendientes (N)" en rojo,
+como Alertas (dueño, 09/10); adentro la lista y "Nueva tarea". Alertas: "Sin
 alertas" o "Alertas (N)". Los nombres son de EJEMPLO.
 """
 import os

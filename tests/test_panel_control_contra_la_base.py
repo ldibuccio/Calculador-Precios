@@ -248,7 +248,7 @@ def test_un_RECHAZO_que_va_a_SEGUNDA_y_se_cobra_da_costo_MENOS_cobrado_y_no_nega
     with patch.dict(os.environ, claves), patch.object(m, "_hoy_argentina", return_value=HOY):
         cuadro = cliente.get("/gerencia/panel").text.split('data-cuadro="segunda"')[1].split("</a>")[0]
     actual = cuadro.split("Octubre")[1]
-    assert '<div class="cuadro-numero rojo" data-resultado="perdido">$500</div>' in actual
+    assert '<div data-ajustar class="cuadro-numero rojo" data-resultado="perdido">$500</div>' in actual
     assert 'data-origen="rechazo">rechazos $800<' in actual and "cobrado $300" in actual
 
 
@@ -266,13 +266,13 @@ def test_si_el_puesto_pago_MAS_que_el_costo_se_ve_RECUPERADO_en_verde_y_no_una_p
         detalle = cliente.get("/gerencia/panel/segunda").text.split("</style>")[-1]
     cuadro = tablero.split('data-cuadro="segunda"')[1].split("</a>")[0]
     anterior, actual = cuadro.split("Septiembre")[1].split("Octubre")
-    assert anterior.count('<div class="cuadro-numero verde" data-resultado="recuperado">$900</div>') == 1
+    assert anterior.count('<div data-ajustar class="cuadro-numero verde" data-resultado="recuperado">$900</div>') == 1
     assert '<div class="cuadro-pie">recuperado</div>' in anterior
     assert 'data-resultado="perdido">$500<' in actual and '<div class="cuadro-pie">perdido</div>' in actual
     assert "-$" not in cuadro and "$-" not in cuadro
     assert cuadro.count("reprocesos a $0: su costo ya está en las cajas armadas") == 1
     septiembre_detalle = detalle.split('data-mes="anterior"')[1].split('data-mes="actual"')[0]
-    assert '<p class="grande verde" data-resultado="recuperado">$900 recuperado</p>' in septiembre_detalle
+    assert '<p data-ajustar class="grande verde" data-resultado="recuperado">$900 recuperado</p>' in septiembre_detalle
     assert '<span class="verde">$900 recuperado</span>' in septiembre_detalle
     assert "-$" not in septiembre_detalle and "$-" not in septiembre_detalle
 
