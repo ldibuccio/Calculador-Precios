@@ -120,16 +120,10 @@
     <p data-ajustar class="grande">{{ dato.total|moneda }}</p>
     <p class="dato">{{ dato.cantidad }} {{ "vale en cartera" if dato.cantidad == 1 else "vales en cartera" }}: ni cobrados ni aplicados a una liquidación.</p>
   </div>
-  <div data-ajustar-contenedor class="tarjeta">
-    {% for v in dato.vales %}
-    <div class="fila" data-vale="{{ v.id }}">
-      <div class="fila-que"><a href="/gerencia/vales/{{ v.id }}">{{ v.proveedor }} · {{ v.importe|moneda }}</a></div>
-      <div class="fila-dato">{{ v.fecha.strftime("%d/%m/%Y") }}{% if v.numero %} · N° {{ v.numero }}{% endif %}{% if v.dias is not none %} · {{ v.dias }} días en cartera{% endif %}</div>
-    </div>
-    {% else %}
-    <p class="vacio">No hay vales en cartera.</p>
-    {% endfor %}
-  </div>
+  {# Agrupado por proveedor, igual que Vales por proveedor (dueño, 09/10). #}
+  {% set agrupados = dato.por_proveedor %}{% set camino = {"base": "/gerencia"} %}
+  {% include "_vales_por_proveedor_filas.html" %}
+  <p class="nota"><a href="/gerencia/vales/por-proveedor">Abrir Vales por proveedor (PDF y Excel)</a></p>
 
   {% elif cuadro == "vacios" %}
   <div data-ajustar-contenedor class="tarjeta">

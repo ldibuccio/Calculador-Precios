@@ -1,0 +1,36 @@
+{# Los vales en cartera, un renglón por proveedor, de mayor a menor importe,
+   con el total abajo (dueño, 09/10). Lo usan Vales por proveedor y el
+   detalle del cuadro del Panel de control: necesita `agrupados` y
+   `camino.base`. Tocar un proveedor abre la lista común con su filtro, y su "Atrás"
+   vuelve acá.
+   Los estilos van acá, acotados a la tarjeta, para que se vea igual en las
+   dos pantallas. #}
+<style>
+  [data-por-proveedor] .fila { padding: 0; border-top: 1px solid #eee; }
+  [data-por-proveedor] .fila:first-of-type { border-top: none; }
+  [data-por-proveedor] .fila a { display: flex; justify-content: space-between; gap: 0.6rem; align-items: center;
+    min-height: 44px; padding: 0.45rem 0; color: inherit; text-decoration: none; }
+  [data-por-proveedor] .fila-que { font-weight: 600; }
+  [data-por-proveedor] .fila-dato { color: #555; font-size: 0.88rem; }
+  [data-por-proveedor] .importe { font-weight: 700; white-space: nowrap; }
+  [data-por-proveedor] .pie { display: flex; justify-content: space-between; gap: 0.6rem;
+    border-top: 2px solid #222; padding-top: 0.55rem; margin-top: 0.2rem; font-weight: 700; }
+  [data-por-proveedor] .pie span:last-child { white-space: nowrap; }
+  [data-por-proveedor] .vacio { color: #666; font-style: italic; }
+</style>
+<div class="tarjeta" data-por-proveedor>
+  {% for g in agrupados.filas %}
+  <div class="fila" data-proveedor="{{ g.proveedor_id }}">
+    <a href="{{ camino.base }}/vales?proveedor_id={{ g.proveedor_id }}{{ y_volver(aqui(request)) }}">
+      <span><span class="fila-que">{{ g.proveedor }}</span><br>
+        <span class="fila-dato">{{ g.cantidad }} vale{{ '' if g.cantidad == 1 else 's' }}</span></span>
+      <span class="importe">{{ g.total|moneda }}</span>
+    </a>
+  </div>
+  {% else %}
+  <p class="vacio">No hay vales en cartera.</p>
+  {% endfor %}
+  {% if agrupados.filas %}
+  <div class="pie" data-total-general><span>Total · {{ agrupados.cantidad }} vale{{ '' if agrupados.cantidad == 1 else 's' }}</span><span>{{ agrupados.total|moneda }}</span></div>
+  {% endif %}
+</div>

@@ -74,6 +74,12 @@ EXPORTACIONES = {
     # La pantalla no tiene filtros: el stock de todas las pilas.
     "/administracion/vacios/stock/excel": "sin filtros en la pantalla",
     "/administracion/vacios/stock/pdf": "sin filtros en la pantalla",
+    # Vales por proveedor (09/10): la pantalla no tiene filtros, son todos los
+    # vales en cartera; lo dice el encabezado. Lo cuida tests/test_vales_por_proveedor.py.
+    "/administracion/vales/por-proveedor/pdf": "sin filtros en la pantalla",
+    "/administracion/vales/por-proveedor/excel": "sin filtros en la pantalla",
+    "/gerencia/vales/por-proveedor/pdf": "sin filtros en la pantalla",
+    "/gerencia/vales/por-proveedor/excel": "sin filtros en la pantalla",
     # La pantalla filtra solo por fecha, y el link la lleva.
     "/puesto/envases/stock/exportar-pdf": "solo fecha",
     "/puesto/envases/stock/exportar-excel": "solo fecha",
