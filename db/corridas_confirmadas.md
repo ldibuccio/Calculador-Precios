@@ -443,3 +443,17 @@ tablas que recibieron `lectura_claudia_lee`. Desde la sesión en la nube no
 sale la conexión directa a la base (puerto 5432 cortado); queda para una
 sesión local con `LECTURA_FRUTAMAX_URL`: `select count(*) from compras`
 tiene que dar lo mismo que por el conector (962 el 09/10).
+
+## 09/10 — `lote_dia_anterior_1_historial`: historial de "De qué guía salió un pedido" (PR #139)
+
+Corrido por Lionel en Frutamax y Palmala ANTES del merge. Verificado por mí
+por el conector "Supabase Lectura" el 09/10 a las 22:24 UTC:
+
+```
+FRUTAMAX  lote_dia_anterior_1_historial · tablas 1 · checks 1 · indices 1 · con_candado 1 · correcciones 0 · elegidos 0 · testigo_compras 964
+PALMALA   lote_dia_anterior_1_historial · tablas 1 · checks 1 · indices 1 · con_candado 1 · correcciones 0 · elegidos 0 · testigo_compras 869
+```
+
+La tabla nació con candado y SIN la política `lectura_claudia_lee`:
+`lectura_claudia` no la ve. Decisión del dueño (09/10): se le suma en la
+próxima migración que haya, no en una propia.
