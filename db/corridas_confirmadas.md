@@ -408,3 +408,16 @@ PALMALA   retroactivo_1_clave_y_registro · tablas 2 · checks 1 · claves 0 · 
 
 Sin contraseña fijada todavía: hasta que Gerencia la fije, Administración no
 puede cargar nada con fecha anterior.
+
+## 09/10 — `panel_foto_1_tabla`: la foto del Panel de control (06:00 y 14:00)
+
+Corrido por Lionel en las dos bases ANTES del merge. Verificado por mí por
+el conector "Supabase Lectura" el 09/10 a las 10:49 UTC:
+
+```
+FRUTAMAX  panel_foto_1_tabla · tablas 1 · checks 2 · indices 2 · fotos 0 · testigo_compras 961
+PALMALA   panel_foto_1_tabla · tablas 1 · checks 2 · indices 2 · fotos 0 · testigo_compras 867
+```
+
+Sin fotos todavía: la primera la saca el sistema en el primer turno después
+del deploy (o la primera entrada al tablero).
