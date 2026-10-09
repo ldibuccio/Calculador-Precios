@@ -1,0 +1,90 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>De qué guía salió un pedido</title>
+<style>
+  :root { font-family: -apple-system, system-ui, sans-serif; }
+  body { margin: 0; padding: 1rem; background: #f5f5f5; color: #222; }
+  .tarjeta {
+    background: #fff; border-radius: 10px; padding: 1rem; margin-bottom: 1rem;
+    box-shadow: 0 1px 3px rgba(0, 0, 0, 0.1); overflow-wrap: anywhere;
+  }
+  h2 { font-size: 1.05rem; margin: 0 0 0.6rem; }
+  .ayuda { color: #555; font-size: 0.9rem; margin: 0 0 0.6rem; }
+  .filtros { display: flex; flex-wrap: wrap; gap: 0.6rem; align-items: flex-end; }
+  .filtros label { display: flex; flex-direction: column; gap: 0.25rem; font-weight: 600; flex: 1 1 10rem; min-width: 0; }
+  .filtros input, .filtros select {
+    min-height: 44px; padding: 0.4rem 0.5rem; font-size: 1rem; border: 1px solid #ccc;
+    border-radius: 8px; box-sizing: border-box; width: 100%; max-width: 100%;
+  }
+  .filtros button {
+    min-height: 44px; padding: 0 1.2rem; border: none; border-radius: 8px; background: #1e3a8a;
+    color: #fff; font-weight: 700; font-size: 1rem;
+  }
+  .renglones { list-style: none; margin: 0; padding: 0; }
+  .renglones li { border-top: 1px solid #eee; }
+  .renglones li:first-child { border-top: none; }
+  .renglon {
+    display: flex; flex-wrap: wrap; justify-content: space-between; gap: 0.3rem 0.8rem;
+    align-items: center; min-height: 44px; padding: 0.5rem 0; color: inherit; text-decoration: none;
+  }
+  .renglon .que { font-weight: 700; }
+  .renglon .detalle { color: #555; font-size: 0.9rem; }
+  .marca { background: #ede9fe; color: #5b21b6; border-radius: 6px; padding: 0.1rem 0.45rem; font-size: 0.8rem; font-weight: 700; }
+  .de-hoy { color: #78350f; font-size: 0.85rem; }
+  .vacio { color: #666; font-style: italic; margin: 0; }
+</style>
+</head>
+<body>
+  {% set barra_sector = "administracion" %}
+  {% set barra_titulo = "De qué guía salió un pedido" %}
+  {% set barra_atras = "/administracion/retroactivo" %}
+  {% from "_info.html" import info %}
+  {% include "_barra_navegacion.html" %}
+
+  {# DE QUÉ LOTE SALIÓ UN PEDIDO DE UN DÍA ANTERIOR (dueño, 09/10). Se elige el
+     día del pedido y, si hace falta, el cliente; cada renglón armado lleva a
+     su pantalla, donde se corrige con la contraseña especial. #}
+  <div class="tarjeta">
+    <h2>¿De qué día es el pedido?</h2>
+    <p class="ayuda">Ej.: el pedido de Día del 05/10 salió de la guía R711 y no de la R683. {% call info("Cuándo no deja") %}Lo armado hoy lo corrige el que lo armó, desde Depósito → Armar pedido → Elegir el lote. Lo de días anteriores se corrige acá, con la contraseña especial, y queda anotado quién lo cambió. Si esa mercadería ya la tomó otro armado o una guía R, la pantalla dice cuál y no deja.{% endcall %}</p>
+    <form class="filtros" method="get" action="{{ base }}">
+      <label>Día del pedido
+        <input type="date" name="fecha" required value="{{ fecha.isoformat() }}">
+      </label>
+      <label>Cliente
+        <select name="cliente_id">
+          <option value="">Todos</option>
+          {% for c in clientes %}
+          <option value="{{ c.id }}"{% if c.id == cliente_id %} selected{% endif %}>{{ c.nombre }}</option>
+          {% endfor %}
+        </select>
+      </label>
+      <button type="submit">Buscar</button>
+    </form>
+  </div>
+
+  {% for g in grupos %}
+  <div class="tarjeta" data-grupo>
+    <h2>{{ g.titulo }}</h2>
+    <ul class="renglones">
+      {% for r in g.renglones %}
+      <li>
+        <a class="renglon" href="{{ base }}/{{ r.renglon_id }}{{ q_volver(volver) }}" data-renglon="{{ r.renglon_id }}">
+          <span><span class="que">{{ r.nombre_venta }}</span> <span class="detalle">· {{ r.bultos|numero }} bultos · armado el {{ r.armado_a_las }}</span></span>
+          {% if r.correcciones %}<span class="marca">Corregido</span>{% endif %}
+          {% if r.de_hoy %}<span class="de-hoy">Armado hoy: lo corrige Depósito</span>{% endif %}
+        </a>
+      </li>
+      {% endfor %}
+    </ul>
+  </div>
+  {% else %}
+  <div class="tarjeta"><p class="vacio">Ese día no hay renglones armados{% if cliente_id %} de ese cliente{% endif %}.</p></div>
+  {% endfor %}
+
+{% include "_pie_version.html" %}
+</body>
+</html>

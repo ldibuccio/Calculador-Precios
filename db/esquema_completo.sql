@@ -2406,6 +2406,25 @@ create table panel_fotos (
 create unique index panel_fotos_un_intento_por_turno
   on panel_fotos (turno) where turno is not null;
 create index panel_fotos_por_fecha on panel_fotos (calculada_el desc);
+-- DE QUÉ LOTE SALIÓ UN PEDIDO DE UN DÍA ANTERIOR (dueño, 09/10).
+-- db/lote_dia_anterior_1_historial.sql. El historial de cada corrección hecha
+-- desde Administración → Con fecha anterior: quién, cuándo, de dónde salía
+-- antes y de dónde sale ahora (los lotes con su nombre y bultos, y lo que
+-- quedó sin lote) y el costo del renglón antes y después.
+create table pedidos_renglones_lotes_correcciones (
+  id bigint generated always as identity primary key,
+  renglon_id bigint not null references pedidos_renglones (id) on delete cascade,
+  quien text not null,
+  corregido_el timestamptz not null default now(),
+  antes jsonb not null,
+  ahora jsonb not null,
+  costo_antes numeric,
+  costo_ahora numeric,
+  constraint lotes_correcciones_con_quien check (btrim(quien) <> '')
+);
+create index lotes_correcciones_por_renglon
+  on pedidos_renglones_lotes_correcciones (renglon_id);
+alter table pedidos_renglones_lotes_correcciones enable row level security;
 -- CANDADOS (RLS) EN TODAS LAS TABLAS DE public (dueño, 09/10). db/rls_1_*.sql.
 -- Sin políticas para anon: por la API de Supabase con la clave pública no se
 -- lee nada. El sistema entra como postgres (dueño y con bypassrls): no lo

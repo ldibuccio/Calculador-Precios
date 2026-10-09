@@ -129,6 +129,9 @@ from app.db import (
     fijar_clave_especial,
     listar_retroactivos,
     que_tomo_esa_mercaderia,
+    corregir_lotes_de_dia_anterior,
+    renglon_para_corregir_lote,
+    renglones_armados_del_dia,
     remito_por_id,
     remitos_con_rechazo_distinto,
     borrar_carga_de_compra,
@@ -9369,6 +9372,114 @@ def ver_retroactivo_administracion(request: Request):
     })
 
 
+# DE QUÉ LOTE SALIÓ UN PEDIDO DE UN DÍA ANTERIOR (dueño, 09/10). "Elegir el
+# lote" de Depósito es del día del armado; uno armado antes se corrige acá, con
+# la contraseña especial, el control de lo que ya se usó y su historial.
+LOTE_DE_PEDIDO = "/administracion/retroactivo/lote-de-pedido"
+
+
+@app.get(LOTE_DE_PEDIDO)
+def ver_lote_de_pedido(request: Request, fecha: str = "", cliente_id: str = ""):
+    """Los renglones armados de los pedidos de un día, para elegir cuál corregir."""
+    ayer = _hoy_argentina() - timedelta(days=1)
+    try:
+        fecha_valor = date.fromisoformat(fecha.strip()) if fecha.strip() else ayer
+    except ValueError:
+        fecha_valor = ayer
+    cliente_valor = int(cliente_id) if cliente_id.strip().isdigit() else None
+    try:
+        renglones = renglones_armados_del_dia(fecha_valor, cliente_valor)
+        clientes = listar_clientes()
+    except Exception as error_db:
+        raise HTTPException(status_code=500, detail=f"Error al conectar con la base de datos: {error_db}") from error_db
+    hoy = _hoy_argentina()
+    grupos = []
+    for r in renglones:
+        r["de_hoy"] = r["dia_del_armado"] >= hoy
+        r["armado_a_las"] = r["armado_el"].astimezone(ARGENTINA).strftime("%d/%m %H:%M")
+        titulo = r["cliente_nombre"] + (f" · {r['sucursal_nombre']}" if r["sucursal_nombre"] else "")
+        if not grupos or grupos[-1]["titulo"] != titulo:
+            grupos.append({"titulo": titulo, "renglones": []})
+        grupos[-1]["renglones"].append(r)
+    return templates.TemplateResponse(request, "administracion_lote_de_pedido.html", {
+        "fecha": fecha_valor, "ayer": ayer.isoformat(), "cliente_id": cliente_valor,
+        "clientes": clientes, "grupos": grupos, "volver": aqui(request), "base": LOTE_DE_PEDIDO,
+    })
+
+
+def _pantalla_lote_del_renglon(request: Request, renglon_id: int, *, error=None, aviso=None,
+                               precarga=None, status_code: int = 200):
+    try:
+        renglon = renglon_para_corregir_lote(renglon_id)
+    except Exception as error_db:
+        raise HTTPException(status_code=500, detail=f"Error al conectar con la base de datos: {error_db}") from error_db
+    if renglon is None:
+        raise HTTPException(status_code=404, detail="Ese renglón no está armado.")
+    renglon["de_hoy"] = renglon["dia_del_armado"] >= _hoy_argentina()
+    renglon["armado_a_las"] = renglon["armado_el"].astimezone(ARGENTINA).strftime("%d/%m/%Y %H:%M")
+    for cambio in renglon["historial"]:
+        cambio["cuando"] = cambio["corregido_el"].astimezone(ARGENTINA).strftime("%d/%m/%Y %H:%M")
+        cambio["diferencia"] = (None if cambio["costo_antes"] is None or cambio["costo_ahora"] is None
+                                else float(cambio["costo_ahora"]) - float(cambio["costo_antes"]))
+    precarga = precarga or {}
+    for lote in renglon["lotes"]:
+        lote["clave"] = f"{lote['tipo_lote']}:{lote['origen_id']}"
+        # El número crudo y no `|numero`: un input type=number no lee la coma.
+        lote["valor"] = precarga.get("bultos", {}).get(lote["clave"], f"{lote['bultos']:g}")
+    defecto = f"{LOTE_DE_PEDIDO}?{urlencode({'fecha': renglon['fecha_operacion'].isoformat()})}"
+    return templates.TemplateResponse(request, "administracion_lote_del_renglon.html", {
+        "r": renglon, "error": error, "aviso": aviso, "quien": precarga.get("quien", ""),
+        "atras": vuelta(request, defecto), "volver": request.query_params.get("volver"),
+        "accion": f"{LOTE_DE_PEDIDO}/{renglon_id}",
+    }, status_code=status_code)
+
+
+@app.get(LOTE_DE_PEDIDO + "/{renglon_id}")
+def ver_lote_del_renglon(request: Request, renglon_id: int, aviso: str | None = None):
+    return _pantalla_lote_del_renglon(request, renglon_id, aviso=aviso)
+
+
+@app.post(LOTE_DE_PEDIDO + "/{renglon_id}")
+def corregir_lote_del_renglon(
+    request: Request,
+    renglon_id: int,
+    lote: list[str] = Form([]),
+    bultos: list[str] = Form([]),
+    quien: str = Form(""),
+    clave_especial: str = Form(""),
+):
+    """Guarda de qué lote salió, si pasa la contraseña y el control. El día
+    del armado no se toca: cambia de dónde salió esa misma salida."""
+    elegidos, valores = [], {}
+    for clave, texto in zip(lote, bultos):
+        tipo, _, origen = clave.partition(":")
+        valores[clave] = texto
+        try:
+            cantidad = float((texto or "0").replace(",", ".") or 0)
+        except ValueError:
+            cantidad = -1
+        if cantidad < 0 or not origen.isdigit():
+            return _pantalla_lote_del_renglon(request, renglon_id, error="Los bultos tienen que ser números.",
+                                              precarga={"quien": quien, "bultos": valores}, status_code=400)
+        elegidos.append({"lote_tipo": tipo, "lote_origen_id": int(origen), "bultos": cantidad})
+    precarga = {"quien": quien, "bultos": valores}
+    error = _clave_y_quien_del_retroactivo(clave_especial, quien)
+    if error is None:
+        try:
+            motivos = corregir_lotes_de_dia_anterior(renglon_id, elegidos, quien=quien, hoy=_hoy_argentina())
+        except ValueError as motivo:
+            error = str(motivo)
+        except Exception as error_db:
+            raise HTTPException(status_code=500, detail=f"No se pudo corregir: {error_db}") from error_db
+        else:
+            if motivos:
+                error = " ".join(motivos) + " Hasta que eso se corrija, no se puede cambiar de dónde salió."
+    if error is not None:
+        return _pantalla_lote_del_renglon(request, renglon_id, error=error, precarga=precarga, status_code=400)
+    return RedirectResponse(f"{LOTE_DE_PEDIDO}/{renglon_id}?" + urlencode(
+        {"aviso": "Listo: quedó corregido de dónde salió, con quién lo hizo."}), status_code=303)
+
+
 @app.get("/gerencia/clave-retroactivo")
 def ver_clave_retroactivo(request: Request, aviso: str | None = None, error: str | None = None):
     """La contraseña especial del retroactivo de Administración: la fija y la
@@ -15351,17 +15462,27 @@ def _validar_retroactivo(fecha: str, clave: str, quien: str) -> tuple[str | None
         return "Poné el día en que pasó.", None, None
     if fecha_valor >= _hoy_argentina():
         return "Acá va una fecha ANTERIOR a hoy: lo de hoy se carga desde Depósito.", None, None
-    if not quien_limpio:
-        return "Poné quién lo carga.", None, None
+    error = _clave_y_quien_del_retroactivo(clave, quien_limpio)
+    if error is not None:
+        return error, None, None
+    return None, fecha_valor, quien_limpio
+
+
+def _clave_y_quien_del_retroactivo(clave: str, quien: str) -> str | None:
+    """Quién lo hace (obligatorio) y la contraseña especial, que se pide CADA
+    VEZ. El error que frena, o None. La contraseña va lo último, así un error
+    de ella no se come los demás datos del formulario."""
+    if not " ".join((quien or "").split()):
+        return "Poné quién lo carga."
     try:
         correcta = clave_especial_correcta(clave or "")
     except Exception as error_db:
-        return f"No se pudo leer la contraseña especial: {error_db}", None, None
+        return f"No se pudo leer la contraseña especial: {error_db}"
     if correcta is None:
-        return "Gerencia todavía no fijó la contraseña especial.", None, None
+        return "Gerencia todavía no fijó la contraseña especial."
     if not correcta:
-        return "La contraseña especial no es correcta.", None, None
-    return None, fecha_valor, quien_limpio
+        return "La contraseña especial no es correcta."
+    return None
 
 
 def _freno_del_retroactivo(articulo_id: int, salida: dict) -> str | None:
@@ -18048,16 +18169,18 @@ def anular_reproceso_ruta(
     articulo_id: str = Form(""),
     guia: str = Form(""),
 ):
+    """CON EL CONTROL DE "CON FECHA ANTERIOR" (dueño, 09/10): si las cajas de
+    la guía ya salieron, no se anula y la pantalla dice quién las tomó."""
     try:
-        anular_reproceso(reproceso_id)
+        motivos = anular_reproceso(reproceso_id)
     except Exception as error_db:
         raise HTTPException(status_code=500, detail=f"No se pudo anular la guía: {error_db}") from error_db
 
-    return RedirectResponse(
-        url=f"/administracion/stock/guias-r?"
-            f"{urlencode(_filtros_de_guias_r(fecha_desde, fecha_hasta, articulo_id, guia))}",
-        status_code=303,
-    )
+    parametros = _filtros_de_guias_r(fecha_desde, fecha_hasta, articulo_id, guia)
+    if motivos:
+        parametros["error"] = (f"La guía R{reproceso_id} no se anuló: " + " ".join(motivos)
+                               + " Hasta que eso se corrija, no se puede anular.")
+    return RedirectResponse(url=f"/administracion/stock/guias-r?{urlencode(parametros)}", status_code=303)
 
 
 @app.get("/gerencia")
@@ -25792,6 +25915,10 @@ def ver_armar_pedido(request: Request, cliente_id: str | None = None, fecha: str
         # — eso lo dice el propio aviso rojo, que si no se leería como un
         # error de cálculo del sistema.
         r["kilos_editados"] = editado and r["fuera_de_tolerancia"] is None
+        # "Elegir el lote" es del DÍA DEL ARMADO (dueño, 09/10): uno armado
+        # antes se corrige desde Administración → Con fecha anterior. Lo
+        # traba `guardar_lotes_elegidos`; acá solo no se ofrece.
+        r["de_otro_dia"] = r["armado_el"].astimezone(ARGENTINA).date() < _hoy_argentina()
 
     contexto.update(
         {
@@ -26036,6 +26163,7 @@ def guardar_lotes_del_renglon_ruta(
                      "bultos": fila["bultos"]}
                     for fila in (reparto_valor or [])
                 ],
+                hoy=_hoy_argentina(),
             )
         except ValueError as rechazo:
             # 400 y no 500: no se rompió nada, se pidió algo que no puede

@@ -9216,6 +9216,18 @@ def contenido_por_bulto_de_lotes(claves: list[tuple[str, int]]) -> dict[str, dic
     }
 
 
+def _lotes_ofrecidos_al_renglon(entradas: list[dict], salidas: list[dict], esta: dict) -> tuple[dict, list[dict]]:
+    """(reparto, lotes que se le ofrecen): lo que había A LA FECHA DEL ARMADO
+    contando solo las salidas ANTERIORES, filtrado por la pared. Lo usan el
+    desglose de Depósito y la corrección de un día anterior de Administración:
+    las dos ofrecen y aceptan lo mismo."""
+    from core.stock import lotes_ofrecidos, reparto_a_la_fecha, salidas_para_reparto
+
+    anteriores = [s for s in salidas if s["orden"] < esta["orden"]]
+    reparto = reparto_a_la_fecha(entradas, salidas_para_reparto(anteriores), esta["orden"][0])
+    return reparto, lotes_ofrecidos(reparto["lotes"], esta)
+
+
 def desglose_de_renglon_armado(renglon_id: int) -> dict | None:
     """De qué lotes salió este renglón armado, para mostrárselo al que lo armó.
 
@@ -9237,7 +9249,7 @@ def desglose_de_renglon_armado(renglon_id: int) -> dict | None:
     emparejamiento": se cierra con la función de emparejamiento única, no
     escribiendo acá una tercera versión del reparto.
     """
-    from core.stock import lotes_ofrecidos, propuesta_fifo, reparto_a_la_fecha, salidas_para_reparto
+    from core.stock import propuesta_fifo
 
     conexion = obtener_conexion()
     try:
@@ -9263,8 +9275,7 @@ def desglose_de_renglon_armado(renglon_id: int) -> dict | None:
     if esta is None:
         return None
 
-    anteriores = [s for s in salidas if s["orden"] < esta["orden"]]
-    reparto = reparto_a_la_fecha(entradas, salidas_para_reparto(anteriores), esta["orden"][0])
+    reparto, ofrecidos = _lotes_ofrecidos_al_renglon(entradas, salidas, esta)
     elegidos = esta.get("lotes_elegidos")
 
     # EL CAJÓN NO SE LISTA. En una ficha con envase un cajón no es una opción
@@ -9277,7 +9288,6 @@ def desglose_de_renglon_armado(renglon_id: int) -> dict | None:
     # Sale de `lotes_ofrecidos`, la MISMA que usa el reparto y la que
     # rechaza en guardar_lotes_elegidos: la pantalla no puede ofrecer algo
     # que el server después no acepte.
-    ofrecidos = lotes_ofrecidos(reparto["lotes"], esta)
     claves_ofrecidas = {(lote["tipo_lote"], lote["origen_id"]) for lote in ofrecidos}
 
     return {
@@ -9573,8 +9583,14 @@ def devoluciones_de_la_compra(compra_id: int) -> list[dict]:
     ]
 
 
-def guardar_lotes_elegidos(renglon_id: int, lotes: list[dict]) -> None:
+def guardar_lotes_elegidos(renglon_id: int, lotes: list[dict], *, hoy: date) -> None:
     """De qué lote dijo el que arma que sacó este renglón. Reemplaza lo anterior.
+
+    SOLO EL DÍA DEL ARMADO (dueño, 09/10). Un renglón armado un día anterior
+    a `hoy` (Argentina) se corrige desde Administración → Con fecha anterior,
+    con la contraseña especial, el control de lo que ya se usó y su historial
+    (`corregir_lotes_de_dia_anterior`). Acá se RECHAZA, también con la lista
+    vacía: volver al FIFO también cambia de dónde salió.
 
     Se guarda SOLO LA EXCEPCIÓN: con `lotes` vacío no queda ninguna fila, y un
     renglón sin filas se reparte por FIFO como siempre. Aceptar la propuesta
@@ -9603,50 +9619,75 @@ def guardar_lotes_elegidos(renglon_id: int, lotes: list[dict]) -> None:
     Escrito acá como una condición propia se separaría de la pared el día
     que la pared cambie, que es como se abrió este agujero.
     """
-    from core.stock import lote_ofrecido
-
     conexion = obtener_conexion()
     try:
         with conexion.cursor() as cursor:
+            articulo_id, dia_del_armado = _renglon_armado_para_corregir(cursor, renglon_id)
+            if dia_del_armado < hoy:
+                raise ValueError(
+                    "Ese renglón se armó un día anterior: de dónde salió se corrige desde "
+                    "Administración → Con fecha anterior, con la contraseña especial."
+                )
             if lotes:
-                cursor.execute(
-                    """
-                    SELECT articulo_id FROM pedidos_renglones
-                    WHERE id = %s AND armado_el IS NOT NULL AND anulado_el IS NULL
-                    """,
-                    (renglon_id,),
-                )
-                fila = cursor.fetchone()
-                # SIN AGREGADO a propósito: con un count(*) esto nunca sería
-                # None y el renglón inexistente pasaría de largo (corolario 27).
-                if fila is None:
-                    raise ValueError("Ese renglón no está armado: no se puede corregir de dónde salió.")
-                _, salidas = _entradas_y_salidas_stock(cursor, fila[0])
-                esta = next((s for s in salidas if s.get("renglon_id") == renglon_id), None)
-                if esta is None:
-                    raise ValueError("No se encontró la salida de ese renglón.")
-                for lote in lotes:
-                    candidato = {"tipo_lote": lote["lote_tipo"], "origen_id": lote["lote_origen_id"]}
-                    if not lote_ofrecido(candidato, esta):
-                        raise ValueError(
-                            "Esa mercadería sale en caja propia: no puede salir de un cajón. "
-                            "Lo que falta es la guía R que arme esas cajas."
-                        )
-            _borrar_lotes_elegidos(cursor, renglon_id)
-            for lote in lotes:
-                if float(lote["bultos"]) <= 0:
-                    continue
-                cursor.execute(
-                    """
-                    INSERT INTO pedidos_renglones_lotes_elegidos
-                        (renglon_id, lote_tipo, lote_origen_id, bultos)
-                    VALUES (%s, %s, %s, %s)
-                    """,
-                    (renglon_id, lote["lote_tipo"], lote["lote_origen_id"], lote["bultos"]),
-                )
+                _, salidas = _entradas_y_salidas_stock(cursor, articulo_id)
+                _rechazar_lotes_no_ofrecidos(_salida_del_renglon(salidas, renglon_id), lotes)
+            _escribir_lotes_elegidos(cursor, renglon_id, lotes)
         conexion.commit()
     finally:
         conexion.close()
+
+
+def _renglon_armado_para_corregir(cursor, renglon_id: int) -> tuple[int, date]:
+    """(artículo, día del armado en Argentina) de un renglón armado, o ValueError."""
+    cursor.execute(
+        """
+        SELECT articulo_id, (armado_el AT TIME ZONE 'America/Argentina/Buenos_Aires')::date
+        FROM pedidos_renglones
+        WHERE id = %s AND armado_el IS NOT NULL AND anulado_el IS NULL
+        FOR UPDATE
+        """,
+        (renglon_id,),
+    )
+    fila = cursor.fetchone()
+    # SIN AGREGADO a propósito: con un count(*) esto nunca sería
+    # None y el renglón inexistente pasaría de largo (corolario 27).
+    if fila is None or fila[0] is None:
+        raise ValueError("Ese renglón no está armado: no se puede corregir de dónde salió.")
+    return fila[0], fila[1]
+
+
+def _salida_del_renglon(salidas: list[dict], renglon_id: int) -> dict:
+    esta = next((s for s in salidas if s.get("renglon_id") == renglon_id), None)
+    if esta is None:
+        raise ValueError("No se encontró la salida de ese renglón.")
+    return esta
+
+
+def _rechazar_lotes_no_ofrecidos(esta: dict, lotes: list[dict]) -> None:
+    from core.stock import lote_ofrecido
+
+    for lote in lotes:
+        candidato = {"tipo_lote": lote["lote_tipo"], "origen_id": lote["lote_origen_id"]}
+        if not lote_ofrecido(candidato, esta):
+            raise ValueError(
+                "Esa mercadería sale en caja propia: no puede salir de un cajón. "
+                "Lo que falta es la guía R que arme esas cajas."
+            )
+
+
+def _escribir_lotes_elegidos(cursor, renglon_id: int, lotes: list[dict]) -> None:
+    _borrar_lotes_elegidos(cursor, renglon_id)
+    for lote in lotes:
+        if float(lote["bultos"]) <= 0:
+            continue
+        cursor.execute(
+            """
+            INSERT INTO pedidos_renglones_lotes_elegidos
+                (renglon_id, lote_tipo, lote_origen_id, bultos)
+            VALUES (%s, %s, %s, %s)
+            """,
+            (renglon_id, lote["lote_tipo"], lote["lote_origen_id"], lote["bultos"]),
+        )
 
 
 def desmarcar_renglon_armado(renglon_id: int) -> bool:
@@ -15429,26 +15470,6 @@ def listar_reprocesos_por_rango(fecha_desde, fecha_hasta, articulo_id=None,
         conexion.close()
 
 
-def anular_reproceso(reproceso_id: int) -> None:
-    """Anula una guía R (baja lógica): lo tomado vuelve a sus lotes y la primera sale del stock, solos.
-
-    Como el stock y el FIFO vivos nunca guardaron asignaciones, no hay
-    nada que descoser: excluir la guía de las sumas alcanza, y la
-    repetición reasigna en la próxima consulta. Los consumos quedan como
-    registro de la guía anulada. Corregir = anular y cargar de nuevo.
-    """
-    conexion = obtener_conexion()
-    try:
-        with conexion.cursor() as cursor:
-            cursor.execute(
-                "UPDATE reprocesos SET anulado_el = now() WHERE id = %s AND anulado_el IS NULL",
-                (reproceso_id,),
-            )
-        conexion.commit()
-    finally:
-        conexion.close()
-
-
 def crear_salida_de_segunda(articulo_id: int, bultos: float, fecha_operacion,
                             destino: str = "puesto", motivo: str | None = None,
                             foto_ruta: str | None = None) -> None:
@@ -20927,14 +20948,6 @@ def que_tomo_esa_mercaderia(articulo_id: int, salida: dict) -> list[str]:
             if salida["fecha"] <= _fecha_corte(cursor):
                 return ["Esa fecha es del corte del modelo o anterior: el sistema no tiene ese stock."]
 
-            def clave(s):
-                return (s["tipo"], s.get("renglon_id"), s["momento_orden"])
-
-            def huella(s):
-                return (round(float(s.get("bultos_sin_costo") or 0), 4),
-                        sorted((c["tipo_lote"], c["origen_id"], round(float(c["bultos"]), 4))
-                               for c in s["consumos_lotes"]))
-
             # La salida DIRIGIDA a un lote (la devolución va a su compra; la
             # merma puede elegir uno) no puede salir de un lote que ese día
             # todavía no había entrado: el FIFO se la daría igual.
@@ -20944,23 +20957,56 @@ def que_tomo_esa_mercaderia(articulo_id: int, salida: dict) -> list[str]:
                 if lote is not None and lote["fecha_orden"] > salida["fecha"]:
                     return [f"El {salida['fecha']:%d/%m} no había esa mercadería en el depósito."]
 
-            antes = {clave(s): huella(s) for s in atribuir_costos_fifo(entradas, [dict(x) for x in salidas])}
+            antes = atribuir_costos_fifo(entradas, [dict(x) for x in salidas])
             con_la_nueva = sorted([dict(x) for x in salidas] + [nueva], key=lambda s: s["orden"])
             despues = atribuir_costos_fifo(entradas, con_la_nueva)
 
             motivos = []
-            for s in despues:
-                if s.get("_la_nueva"):
-                    if float(s.get("bultos_sin_costo") or 0) > 0:
-                        motivos.append(f"El {salida['fecha']:%d/%m} no había esa mercadería en el depósito.")
-                    continue
-                if s["tipo"] not in ("armado", "reproceso_toma") or s["orden"] <= nueva["orden"]:
-                    continue
-                if antes.get(clave(s)) != huella(s):
-                    motivos.append(_quien_la_tomo(cursor, articulo_id, s))
-            return motivos
+            la_nueva = next(s for s in despues if s.get("_la_nueva"))
+            if float(la_nueva.get("bultos_sin_costo") or 0) > 0:
+                motivos.append(f"El {salida['fecha']:%d/%m} no había esa mercadería en el depósito.")
+            return motivos + _quienes_cambian(cursor, articulo_id, antes, despues, despues_de=nueva["orden"],
+                                              saltear=lambda s: s.get("_la_nueva"))
     finally:
         conexion.close()
+
+
+def _clave_de_salida(s: dict) -> tuple:
+    return (s["tipo"], s.get("renglon_id"), s["momento_orden"])
+
+
+def _huella_de_salida(s: dict) -> tuple:
+    """De qué lotes salió y cuánto quedó sin lote: lo que no puede cambiarle a otro."""
+    return (round(float(s.get("bultos_sin_costo") or 0), 4),
+            sorted((c["tipo_lote"], c["origen_id"], round(float(c["bultos"]), 4))
+                   for c in s["consumos_lotes"]))
+
+
+def _quienes_cambian(cursor, articulo_id: int, antes: list[dict], despues: list[dict], *,
+                     despues_de=None, saltear=None) -> list[str]:
+    """EL CONTROL DE "CON FECHA ANTERIOR", uno solo para todo lo que mueve el
+    pasado (dueño, 05/10 y 09/10): el FIFO rejugado como está (`antes`) y con
+    el cambio puesto (`despues`). Cada armado y cada guía R que queda saliendo
+    de otro lote, o con más sin lote, dice quién la tomó. Vacío = no rompe
+    nada. `despues_de`: solo las salidas posteriores a ese orden.
+
+    Lo usan la carga con fecha anterior, la corrección de lote de un día
+    anterior y la anulación de una guía R. Si cada uno comparara a su
+    manera, serían tres reglas para la misma pregunta."""
+    huellas = {_clave_de_salida(s): _huella_de_salida(s) for s in antes}
+    motivos = []
+    for s in despues:
+        if saltear is not None and saltear(s):
+            continue
+        if s["tipo"] not in ("armado", "reproceso_toma"):
+            continue
+        if despues_de is not None and s["orden"] <= despues_de:
+            continue
+        if huellas.get(_clave_de_salida(s)) != _huella_de_salida(s):
+            motivo = _quien_la_tomo(cursor, articulo_id, s)
+            if motivo not in motivos:
+                motivos.append(motivo)
+    return motivos
 
 
 def _quien_la_tomo(cursor, articulo_id: int, salida: dict) -> str:
@@ -20976,3 +21022,288 @@ def _quien_la_tomo(cursor, articulo_id: int, salida: dict) -> str:
     fila = cursor.fetchone()
     numero = f" R{fila[0]}" if fila else " R"
     return f"La tomó la guía{numero} del {salida['fecha']:%d/%m}."
+
+
+# ============================================================================
+# DE QUÉ LOTE SALIÓ UN PEDIDO DE UN DÍA ANTERIOR (dueño, 09/10)
+#
+# "Elegir el lote" de Depósito queda para el día del armado. Un renglón armado
+# un día anterior se corrige desde Administración → Con fecha anterior, con la
+# contraseña especial, el MISMO control que la carga con fecha anterior
+# (`_quienes_cambian`) y su historial: quién, cuándo, de dónde salía antes, de
+# dónde sale ahora y la diferencia de costo. La fecha del armado no se toca:
+# se cambia de dónde salió esa misma salida.
+# ============================================================================
+
+_NOMBRES_DE_LOTE = {"stock_inicial": "Stock inicial", "reingreso_rechazo": "Rechazo que volvió",
+                    "ajuste": "Ajuste"}
+
+
+def _etiqueta_de_lote(lote: dict) -> str:
+    """"Guía R683 del 04/10", "Guía de EJEMPLO Puesto del 03/10", "Ajuste del 02/10"."""
+    fecha = lote.get("fecha_lote") or lote.get("fecha_orden")
+    dia = f" del {fecha:%d/%m}" if fecha else ""
+    if lote["tipo_lote"] == "reproceso":
+        return f"Guía R{lote['origen_id']}{dia}"
+    if lote["tipo_lote"] == "guia":
+        return f"Guía de {lote['detalle']}{dia}" if lote.get("detalle") else f"Guía{dia}"
+    return f"{_NOMBRES_DE_LOTE.get(lote['tipo_lote'], lote['tipo_lote'])}{dia}"
+
+
+def _de_donde_salio(salida: dict, entradas: list[dict]) -> list[dict]:
+    """Los lotes de una salida ya rejugada, con su nombre, y lo que quedó sin lote."""
+    por_clave = {(e["tipo_lote"], e["origen_id"]): e for e in entradas}
+    partes = {}
+    for consumo in salida["consumos_lotes"]:
+        clave = (consumo["tipo_lote"], consumo["origen_id"])
+        parte = partes.setdefault(clave, {
+            "lote": _etiqueta_de_lote(por_clave.get(clave, consumo)), "tipo_lote": clave[0],
+            "origen_id": clave[1], "bultos": 0.0, "costo": 0.0})
+        parte["bultos"] = round(parte["bultos"] + float(consumo["bultos"]), 4)
+        parte["costo"] = (None if parte["costo"] is None or consumo["costo"] is None
+                          else round(parte["costo"] + float(consumo["costo"]), 2))
+    lista = list(partes.values())
+    sin_lote = round(float(salida["cantidad"]) - sum(p["bultos"] for p in lista), 4)
+    if sin_lote > 0:
+        lista.append({"lote": "Sin lote", "tipo_lote": None, "origen_id": None, "bultos": sin_lote,
+                      "costo": None})
+    return lista
+
+
+def _costo_de(salida: dict):
+    return None if salida.get("costo") is None else round(float(salida["costo"]), 2)
+
+
+def corregir_lotes_de_dia_anterior(renglon_id: int, lotes: list[dict], *, quien: str, hoy: date) -> list[str]:
+    """Cambia de qué lote salió un renglón armado ANTES de `hoy`. Devuelve los
+    motivos por los que NO se pudo (vacío = quedó guardado con su historial).
+
+    Lo imposible es ValueError: el renglón es de hoy (eso es de Depósito), un
+    lote que la pared no ofrece, uno que a la fecha del armado no estaba o no
+    tenía esos bultos, o un reparto que no cambia nada. Lo que frena el
+    control —una salida que ya usó esa mercadería, o más sin lote— vuelve en
+    la lista, con quién la usó. Todo en UNA transacción, con el renglón
+    trabado: el control y la escritura ven la misma base.
+    """
+    from core.costo_real import atribuir_costos_fifo
+
+    quien = " ".join((quien or "").split())
+    if not quien:
+        raise ValueError("Poné quién lo corrige.")
+    lotes = [{"lote_tipo": lote["lote_tipo"], "lote_origen_id": int(lote["lote_origen_id"]),
+              "bultos": round(float(lote["bultos"]), 4)}
+             for lote in lotes if float(lote["bultos"]) > 0]
+
+    conexion = obtener_conexion()
+    try:
+        with conexion.cursor() as cursor:
+            articulo_id, dia_del_armado = _renglon_armado_para_corregir(cursor, renglon_id)
+            if dia_del_armado >= hoy:
+                raise ValueError("Ese renglón se armó hoy: de dónde salió lo corrige el que lo armó, desde Depósito.")
+            entradas, salidas = _entradas_y_salidas_stock(cursor, articulo_id)
+            esta = _salida_del_renglon(salidas, renglon_id)
+            _rechazar_lotes_no_ofrecidos(esta, lotes)
+            _, ofrecidos = _lotes_ofrecidos_al_renglon(entradas, salidas, esta)
+            quedaban = {(lote["tipo_lote"], lote["origen_id"]): lote for lote in ofrecidos}
+            for lote in lotes:
+                ofrecido = quedaban.get((lote["lote_tipo"], lote["lote_origen_id"]))
+                if ofrecido is None or float(ofrecido["restante"]) <= 0:
+                    raise ValueError(f"El {dia_del_armado:%d/%m} ese lote no estaba en el depósito.")
+                if lote["bultos"] > round(float(ofrecido["restante"]), 4):
+                    raise ValueError(f"{_etiqueta_de_lote(ofrecido)}: cuando se armó quedaban "
+                                     f"{round(float(ofrecido['restante']), 2):g}, no {lote['bultos']:g}.")
+            if sum(lote["bultos"] for lote in lotes) > float(esta["cantidad"]) + 0.0001:
+                raise ValueError(f"Repartiste más bultos de los {float(esta['cantidad']):g} que se armaron.")
+
+            corregidas = []
+            for salida in salidas:
+                salida = dict(salida)
+                if salida.get("renglon_id") == renglon_id:
+                    salida.pop("lotes_elegidos", None)
+                    if lotes:
+                        salida["lotes_elegidos"] = lotes
+                corregidas.append(salida)
+            antes = atribuir_costos_fifo(entradas, [dict(s) for s in salidas])
+            despues = atribuir_costos_fifo(entradas, corregidas)
+            renglon_antes = next(s for s in antes if s.get("renglon_id") == renglon_id)
+            renglon_despues = next(s for s in despues if s.get("renglon_id") == renglon_id)
+            if _huella_de_salida(renglon_antes) == _huella_de_salida(renglon_despues):
+                raise ValueError("Con ese reparto sale de los mismos lotes que ya salía: no hay nada que corregir.")
+
+            de_antes = _de_donde_salio(renglon_antes, entradas)
+            de_ahora = _de_donde_salio(renglon_despues, entradas)
+            motivos = []
+            sin_lote_antes = sum(p["bultos"] for p in de_antes if p["tipo_lote"] is None)
+            sin_lote_ahora = sum(p["bultos"] for p in de_ahora if p["tipo_lote"] is None)
+            if sin_lote_ahora > sin_lote_antes + 0.0001:
+                motivos.append(f"Así, {round(sin_lote_ahora - sin_lote_antes, 2):g} bultos de este renglón "
+                               f"quedan sin lote: el {dia_del_armado:%d/%m} no había esa mercadería.")
+            motivos += _quienes_cambian(cursor, articulo_id, antes, despues,
+                                        saltear=lambda s: s.get("renglon_id") == renglon_id)
+            if motivos:
+                conexion.rollback()
+                return motivos
+
+            _escribir_lotes_elegidos(cursor, renglon_id, lotes)
+            cursor.execute(
+                """
+                INSERT INTO pedidos_renglones_lotes_correcciones
+                    (renglon_id, quien, antes, ahora, costo_antes, costo_ahora)
+                VALUES (%s, %s, %s::jsonb, %s::jsonb, %s, %s)
+                """,
+                (renglon_id, quien, json.dumps(de_antes, ensure_ascii=False),
+                 json.dumps(de_ahora, ensure_ascii=False), _costo_de(renglon_antes), _costo_de(renglon_despues)),
+            )
+        conexion.commit()
+        return []
+    finally:
+        conexion.close()
+
+
+def renglones_armados_del_dia(fecha: date, cliente_id: int | None = None) -> list[dict]:
+    """Los renglones armados de los pedidos vigentes de ese día, para elegir
+    cuál corregir: cliente, sucursal, qué, cuántos, cuándo se armó y si ya
+    tiene una corrección."""
+    conexion = obtener_conexion()
+    try:
+        with conexion.cursor() as cursor:
+            cursor.execute(
+                """
+                WITH vigentes AS (
+                    SELECT DISTINCT ON (cliente_id, fecha_operacion) id, cliente_id, fecha_operacion
+                    FROM pedidos WHERE anulado_el IS NULL
+                    ORDER BY cliente_id, fecha_operacion, creado_en DESC
+                )
+                SELECT r.id AS renglon_id, v.cliente_id, cl.nombre AS cliente_nombre, r.sucursal,
+                       COALESCE(cs.nombre, r.sucursal) AS sucursal_nombre,
+                       COALESCE(NULLIF(TRIM(fl.nombre_cliente), ''), a.nombre) AS nombre_venta,
+                       """ + _SQL_BULTOS_DE_PRIMERA + """ AS bultos,
+                       (r.armado_el AT TIME ZONE 'America/Argentina/Buenos_Aires')::date AS dia_del_armado,
+                       r.armado_el,
+                       (SELECT count(*) FROM pedidos_renglones_lotes_correcciones lc
+                         WHERE lc.renglon_id = r.id) AS correcciones
+                FROM pedidos_renglones r
+                JOIN vigentes v ON v.id = r.pedido_id
+                JOIN clientes cl ON cl.id = v.cliente_id
+                JOIN articulos a ON a.id = r.articulo_id
+                LEFT JOIN fichas_logistica fl ON fl.id = r.ficha_id
+                LEFT JOIN clientes_sucursales cs ON cs.cliente_id = v.cliente_id AND cs.codigo = r.sucursal
+                WHERE v.fecha_operacion = %s AND (%s::bigint IS NULL OR v.cliente_id = %s)
+                  AND r.armado_el IS NOT NULL AND r.anulado_el IS NULL
+                ORDER BY cl.nombre, sucursal_nombre NULLS FIRST, nombre_venta, r.id
+                """,
+                (fecha, cliente_id, cliente_id),
+            )
+            return _filas_como_dicts(cursor)
+    finally:
+        conexion.close()
+
+
+def renglon_para_corregir_lote(renglon_id: int) -> dict | None:
+    """El renglón armado con lo que la pantalla de Administración muestra: de
+    quién es, de dónde sale HOY (el FIFO rejugado, con su costo), lo que se le
+    ofrece a la fecha del armado y su historial. None si no está armado."""
+    from core.costo_real import atribuir_costos_fifo
+
+    conexion = obtener_conexion()
+    try:
+        with conexion.cursor() as cursor:
+            cursor.execute(
+                """
+                SELECT r.id AS renglon_id, r.articulo_id, p.fecha_operacion, cl.nombre AS cliente_nombre,
+                       COALESCE(cs.nombre, r.sucursal) AS sucursal_nombre,
+                       COALESCE(NULLIF(TRIM(fl.nombre_cliente), ''), a.nombre) AS nombre_venta,
+                       """ + _SQL_BULTOS_DE_PRIMERA + """ AS bultos,
+                       (r.armado_el AT TIME ZONE 'America/Argentina/Buenos_Aires')::date AS dia_del_armado,
+                       r.armado_el
+                FROM pedidos_renglones r
+                JOIN pedidos p ON p.id = r.pedido_id
+                JOIN clientes cl ON cl.id = p.cliente_id
+                JOIN articulos a ON a.id = r.articulo_id
+                LEFT JOIN fichas_logistica fl ON fl.id = r.ficha_id
+                LEFT JOIN clientes_sucursales cs ON cs.cliente_id = p.cliente_id AND cs.codigo = r.sucursal
+                WHERE r.id = %s AND r.armado_el IS NOT NULL AND r.anulado_el IS NULL
+                """,
+                (renglon_id,),
+            )
+            filas = _filas_como_dicts(cursor)
+            if not filas:
+                return None
+            renglon = filas[0]
+            entradas, salidas = _entradas_y_salidas_stock(cursor, renglon["articulo_id"])
+            cursor.execute(
+                """
+                SELECT quien, corregido_el, antes, ahora, costo_antes, costo_ahora
+                FROM pedidos_renglones_lotes_correcciones
+                WHERE renglon_id = %s ORDER BY corregido_el DESC, id DESC
+                """,
+                (renglon_id,),
+            )
+            renglon["historial"] = _filas_como_dicts(cursor)
+    finally:
+        conexion.close()
+
+    esta = next((s for s in salidas if s.get("renglon_id") == renglon_id), None)
+    renglon["sin_stock_del_sistema"] = esta is None
+    renglon["sale_de"], renglon["costo"], renglon["lotes"] = [], None, []
+    if esta is None:
+        return renglon
+    rejugada = next(s for s in atribuir_costos_fifo(entradas, salidas) if s.get("renglon_id") == renglon_id)
+    renglon["sale_de"] = _de_donde_salio(rejugada, entradas)
+    renglon["costo"] = _costo_de(rejugada)
+    _, ofrecidos = _lotes_ofrecidos_al_renglon(entradas, salidas, esta)
+    actuales = {(p["tipo_lote"], p["origen_id"]): p["bultos"] for p in renglon["sale_de"]}
+    renglon["lotes"] = [
+        {"tipo_lote": lote["tipo_lote"], "origen_id": lote["origen_id"], "lote": _etiqueta_de_lote(lote),
+         "restante": round(float(lote["restante"]), 2),
+         "costo_bulto": None if lote.get("costo_bulto") is None else float(lote["costo_bulto"]),
+         "bultos": actuales.get((lote["tipo_lote"], lote["origen_id"]), 0.0)}
+        for lote in ofrecidos if float(lote["restante"]) > 0
+    ]
+    return renglon
+
+
+def anular_reproceso(reproceso_id: int) -> list[str]:
+    """Anula una guía R (baja lógica): lo tomado vuelve a sus lotes y la primera sale del stock, solos.
+
+    Como el stock y el FIFO vivos nunca guardaron asignaciones, no hay
+    nada que descoser: excluir la guía de las sumas alcanza, y la
+    repetición reasigna en la próxima consulta. Los consumos quedan como
+    registro de la guía anulada. Corregir = anular y cargar de nuevo.
+
+    CON EL CONTROL DE "CON FECHA ANTERIOR" (dueño, 09/10): se rejuega el FIFO
+    sin la guía y, si un armado u otra guía R queda saliendo de otro lote o
+    sin lote —sus cajas ya salieron—, NO se anula y devuelve quién la tomó.
+    Vacío = anulada (o ya estaba anulada).
+    """
+    from core.costo_real import atribuir_costos_fifo
+
+    conexion = obtener_conexion()
+    try:
+        with conexion.cursor() as cursor:
+            cursor.execute(
+                "SELECT articulo_id, creado_en FROM reprocesos WHERE id = %s AND anulado_el IS NULL FOR UPDATE",
+                (reproceso_id,),
+            )
+            fila = cursor.fetchone()
+            if fila is None:
+                return []
+            articulo_id, creado_en = fila
+            entradas, salidas = _entradas_y_salidas_stock(cursor, articulo_id)
+            sin_la_guia = [e for e in entradas
+                           if not (e["tipo_lote"] == "reproceso" and e["origen_id"] == reproceso_id)]
+            sin_su_toma = [dict(s) for s in salidas
+                           if not (s["tipo"] == "reproceso_toma" and s["momento_orden"] == creado_en)]
+            motivos = _quienes_cambian(cursor, articulo_id, atribuir_costos_fifo(entradas, [dict(s) for s in salidas]),
+                                       atribuir_costos_fifo(sin_la_guia, sin_su_toma))
+            if motivos:
+                conexion.rollback()
+                return motivos
+            cursor.execute(
+                "UPDATE reprocesos SET anulado_el = now() WHERE id = %s AND anulado_el IS NULL",
+                (reproceso_id,),
+            )
+        conexion.commit()
+        return []
+    finally:
+        conexion.close()

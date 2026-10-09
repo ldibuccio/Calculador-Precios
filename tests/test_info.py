@@ -229,6 +229,8 @@ PANTALLAS_CON_I = {
     "gerencia_ingreso_retroactivo.html", "gerencia_juntar_proveedores.html", "gerencia_perdidas.html",
     # Con fecha anterior (dueño, 05/10): cuándo frena y para qué es la contraseña.
     "administracion_retroactivo.html", "gerencia_clave_retroactivo.html",
+    # De qué guía salió un pedido de un día anterior (dueño, 09/10): cuándo frena.
+    "administracion_lote_de_pedido.html", "administracion_lote_del_renglon.html",
     "gerencia_rentabilidad.html", "gerencia_rentabilidad_real.html", "negociar.html",
     "precios_cargar_foto.html", "precios_consulta.html", "precios_vigencias.html",
     "remito_recibir.html",
