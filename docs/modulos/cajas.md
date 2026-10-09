@@ -35,6 +35,13 @@ le devuelve nada al stock:
 modelo y no una lista: las tres primeras ya están restadas y no vuelven; la
 cuarta está restada UNA vez y se reusa sin pasar por una guía R nueva.
 
+**En la PLATA de la Rentabilidad Real, la cuarta sí lleva una regla** (dueño,
+09/10): cada venta cobra su caja, así que la caja de un rechazo a `stock` se
+cobraba en la venta rechazada Y en la que la reenvía. Desde el 09/10 el
+rechazo a `stock` le devuelve la caja igual que la mercadería
+(`core/costo_real.py`), y se cobra una sola vez. En septiembre de Frutamax
+eran $349.450. La devolución al proveedor no la devuelve: la caja se va.
+
 El neutro de la cuarta **no es una convención entre dos lugares** —que sería
 el corolario 21, correcto hasta que alguien agregue un tercer camino— sino
 una pared: un rechazo a `stock` deja un lote `reingreso_rechazo`, que es un
