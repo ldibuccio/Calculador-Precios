@@ -335,6 +335,30 @@ def test_las_FOTOS_suben_solo_lo_NUEVO_y_NUNCA_se_borra_lo_que_el_origen_borro(s
     assert (claro / "frutamax" / "comandas" / "2025-01-02" / "a.jpg").read_bytes() == b"foto uno"
 
 
+def test_una_foto_que_ENTRA_mientras_corre_la_copia_no_da_ROJO_y_va_en_la_SIGUIENTE(simulacro, monkeypatch):
+    """El 07/10 y el 08/10: una foto subida al Storage ENTRE la copia y el
+    control daba rojo sin que el destino tuviera la culpa. El control mira la
+    lista que se tomó al arrancar; la foto nueva va en la corrida siguiente."""
+    s = simulacro
+    verdadero = s["bk"].rclone
+
+    def con_una_foto_que_llega(*argumentos):
+        salida = verdadero(*argumentos)
+        if argumentos[0] == "copy" and argumentos[1].endswith("remitos"):
+            (s["storage"] / "remitos" / "llego_durante.jpg").write_bytes(b"foto que llega tarde")
+        return salida
+
+    monkeypatch.setattr(s["bk"], "rclone", con_una_foto_que_llega)
+    assert s["bk"].parte_fotos() == {"onedrive": (True, "2 fotos nuevas, 2 en el backup"),
+                                     "gdrive": (True, "2 fotos nuevas, 2 en el backup")}
+    monkeypatch.setattr(s["bk"], "rclone", verdadero)
+    assert s["bk"].parte_fotos() == {"onedrive": (True, "1 fotos nuevas, 3 en el backup"),
+                                     "gdrive": (True, "1 fotos nuevas, 3 en el backup")}
+    claro = s["tmp"] / "claro"
+    _descifrar(s, "gdrive", "fotos", claro)
+    assert (claro / "frutamax" / "remitos" / "llego_durante.jpg").read_bytes() == b"foto que llega tarde"
+
+
 def test_una_foto_CAMBIADA_en_el_backup_se_ve_y_la_parte_FALLA(simulacro):
     s = simulacro
     s["bk"].parte_fotos()
