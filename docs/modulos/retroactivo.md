@@ -33,3 +33,41 @@
 Migración `db/retroactivo_1_clave_y_registro.sql`. Tests:
 `tests/test_retroactivo_administracion.py`, contra Postgres, con el armado
 rival.
+
+## De qué guía salió un pedido de un día anterior (dueño, 09/10)
+
+- **"Elegir el lote" de Depósito es del DÍA DEL ARMADO.** En un renglón
+  armado un día anterior (`armado_el` en Argentina, antes de hoy) el botón no
+  está ("Armado otro día: el lote lo corrige Administración") y
+  `guardar_lotes_elegidos` lo rechaza si llega igual por un POST, también
+  vaciando: volver al FIFO también cambia de dónde salió.
+- **Administración → Con fecha anterior → "De qué guía salió un pedido"**
+  (`/administracion/retroactivo/lote-de-pedido`): se elige el día del pedido
+  y el cliente, y en el renglón se reparte entre los lotes que había A LA
+  FECHA DEL ARMADO (los mismos que ofrece Depósito,
+  `_lotes_ofrecidos_al_renglon`). Pide quién lo corrige y la contraseña
+  especial, cada vez.
+- **El MISMO control que la carga con fecha anterior** (`_quienes_cambian`,
+  app/db.py): se rejuega el FIFO como está y con la corrección puesta, y si
+  un armado o una guía R queda saliendo de otro lote o con más sin lote, no
+  guarda y dice cuál ("La tomó el armado del pedido de X del dd/mm"). Frena
+  también si el renglón mismo queda sin lote.
+- **Historial** (`pedidos_renglones_lotes_correcciones`): quién, cuándo, de
+  dónde salía antes, de dónde sale ahora (lotes con su nombre y bultos, y lo
+  sin lote) y el costo del renglón antes y después. Se ve en la pantalla del
+  renglón; la lista marca "Corregido".
+- **La fecha del armado no se toca**: se cambia de dónde salió esa misma
+  salida (`pedidos_renglones_lotes_elegidos`, como Depósito).
+- **Anular una guía R pasa por el mismo control** (`anular_reproceso`): sin la
+  guía, si un armado u otra guía R cambia de lote o queda sin lote, no se
+  anula y Guías R dice quién tomó sus cajas.
+
+**PENDIENTE DEL DUEÑO (09/10): qué tan estricto es el control.** Hoy frena si
+CUALQUIER armado o guía R cambia de lote, como la carga con fecha anterior.
+Al pasar un renglón a una guía más nueva, la vieja queda libre y el armado
+siguiente que el sistema había puesto en la nueva pasa a la vieja, aunque a
+la nueva le sobrara: eso también frena. Se le preguntó si frena solo cuando
+alguien queda sin mercadería o pierde un lote elegido a mano.
+
+Migración `db/lote_dia_anterior_1_historial.sql`. Tests:
+`tests/test_lote_dia_anterior.py`, contra Postgres, con el armado rival.

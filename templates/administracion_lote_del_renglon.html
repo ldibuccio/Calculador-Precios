@@ -1,0 +1,115 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>De qué guía salió</title>
+<style>
+  :root { font-family: -apple-system, system-ui, sans-serif; }
+  body { margin: 0; padding: 1rem; background: #f5f5f5; color: #222; }
+  .tarjeta {
+    background: #fff; border-radius: 10px; padding: 1rem; margin-bottom: 1rem;
+    box-shadow: 0 1px 3px rgba(0, 0, 0, 0.1); overflow-wrap: anywhere;
+  }
+  h2 { font-size: 1.05rem; margin: 0 0 0.6rem; }
+  .dato { margin: 0.2rem 0; }
+  .ayuda { color: #555; font-size: 0.9rem; margin: 0 0 0.6rem; }
+  .aviso { background: #dcfce7; color: #14532d; padding: 0.75rem 1rem; border-radius: 8px; margin: 0 0 1rem; }
+  .error { background: #fee2e2; color: #7f1d1d; padding: 0.75rem 1rem; border-radius: 8px; margin: 0 0 1rem; overflow-wrap: anywhere; }
+  .ojo { background: #fef3c7; color: #78350f; padding: 0.75rem 1rem; border-radius: 8px; margin: 0; }
+  .lineas { list-style: none; margin: 0; padding: 0; }
+  .lineas li { display: flex; flex-wrap: wrap; justify-content: space-between; gap: 0.2rem 0.8rem; padding: 0.4rem 0; border-top: 1px solid #eee; }
+  .lineas li:first-child { border-top: none; }
+  .total { font-weight: 700; margin: 0.5rem 0 0; }
+  .sin-lote { color: #b91c1c; font-weight: 700; }
+  .fila-lote { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 0.4rem 0.8rem; padding: 0.5rem 0; border-top: 1px solid #eee; }
+  .fila-lote:first-of-type { border-top: none; }
+  .fila-lote .que { font-weight: 700; display: block; }
+  .fila-lote .detalle { color: #555; font-size: 0.9rem; display: block; }
+  .fila-lote input { width: 6.5rem; min-height: 44px; font-size: 1rem; padding: 0.3rem 0.5rem; border: 1px solid #ccc; border-radius: 8px; box-sizing: border-box; }
+  form label { display: block; font-weight: 600; margin: 0.8rem 0 0.25rem; }
+  form input[type="text"], form input[type="password"] {
+    width: 100%; max-width: 100%; min-height: 44px; font-size: 1rem; padding: 0.4rem 0.5rem;
+    border: 1px solid #ccc; border-radius: 8px; box-sizing: border-box;
+  }
+  .guardar { margin-top: 1rem; min-height: 48px; width: 100%; border: none; border-radius: 10px; background: #1e3a8a; color: #fff; font-weight: 700; font-size: 1rem; }
+  .cambio { padding: 0.6rem 0; border-top: 1px solid #eee; }
+  .cambio:first-child { border-top: none; }
+  .cambio .quien { font-weight: 700; display: block; }
+  .cambio .detalle { color: #444; font-size: 0.9rem; display: block; }
+  .vacio { color: #666; font-style: italic; margin: 0; }
+</style>
+</head>
+<body>
+  {% set barra_sector = "administracion" %}
+  {% set barra_titulo = "De qué guía salió" %}
+  {% set barra_atras = atras %}
+  {% from "_info.html" import info %}
+  {% from "_campos_retroactivo.html" import quien_y_clave %}
+  {% include "_barra_navegacion.html" %}
+
+  {% if aviso %}<p class="aviso">{{ aviso }}</p>{% endif %}
+  {% if error %}<p class="error" data-error>{{ error }}</p>{% endif %}
+
+  <div class="tarjeta">
+    <h2>{{ r.nombre_venta }}</h2>
+    <p class="dato">{{ r.cliente_nombre }}{% if r.sucursal_nombre %} · {{ r.sucursal_nombre }}{% endif %}</p>
+    <p class="dato">Pedido del {{ r.fecha_operacion.strftime("%d/%m/%Y") }} · {{ r.bultos|numero }} bultos · armado el {{ r.armado_a_las }}</p>
+  </div>
+
+  <div class="tarjeta">
+    <h2>De dónde sale hoy</h2>
+    {% if r.sin_stock_del_sistema %}
+    <p class="vacio">Ese armado es del corte del modelo o anterior: el sistema no tiene de qué guía salió.</p>
+    {% else %}
+    <ul class="lineas" data-sale-de>
+      {% for p in r.sale_de %}
+      <li><span{% if p.tipo_lote is none %} class="sin-lote"{% endif %}>{{ p.bultos|numero }} de {{ p.lote }}</span><span>{{ p.costo|moneda }}</span></li>
+      {% endfor %}
+    </ul>
+    <p class="total">Costo del renglón: {% if r.costo is none %}sin precio completo{% else %}{{ r.costo|moneda }}{% endif %}</p>
+    {% endif %}
+  </div>
+
+  {% if not r.sin_stock_del_sistema %}
+  <div class="tarjeta">
+    {% if r.de_hoy %}
+    <p class="ojo">Se armó hoy: lo corrige el que lo armó, desde Depósito → Armar pedido → Elegir el lote.</p>
+    {% elif not r.lotes %}
+    <p class="ojo">El día del armado no había mercadería de este artículo para elegir.</p>
+    {% else %}
+    <h2>¿De qué guía salió de verdad?</h2>
+    <p class="ayuda">Ej.: 30 de la guía R711 y 0 de la R683. Lo que no repartas sale del más viejo primero. {% call info("Cuándo no deja") %}Se rearma el stock con el cambio puesto. Si otro armado o una guía R ya había usado esa mercadería, o alguno queda sin lote, la pantalla dice cuál y no guarda. La fecha del armado no cambia: cambia de dónde salió. Queda anotado quién lo cambió, cuándo, de dónde salía antes y la diferencia de costo.{% endcall %}</p>
+    <form method="post" action="{{ accion }}{{ q_volver(volver) }}">
+      {% for l in r.lotes %}
+      <div class="fila-lote">
+        <span><span class="que">{{ l.lote }}</span><span class="detalle">quedaban {{ l.restante|numero }}{% if l.costo_bulto is not none %} · {{ l.costo_bulto|moneda }} el bulto{% endif %}</span></span>
+        <input type="hidden" name="lote" value="{{ l.clave }}">
+        <input type="number" name="bultos" min="0" max="{{ l.restante }}" step="0.01" inputmode="decimal"
+               value="{{ l.valor }}" aria-label="Bultos de {{ l.lote }}">
+      </div>
+      {% endfor %}
+      {{ quien_y_clave({"quien": quien}) }}
+      <button type="submit" class="guardar">Guardar de dónde salió</button>
+    </form>
+    {% endif %}
+  </div>
+  {% endif %}
+
+  <div class="tarjeta">
+    <h2>Lo corregido</h2>
+    {% for c in r.historial %}
+    <div class="cambio" data-cambio>
+      <span class="quien">{{ c.quien }} · {{ c.cuando }}</span>
+      <span class="detalle">Antes: {% for p in c.antes %}{{ p.bultos|numero }} de {{ p.lote }}{% if not loop.last %}, {% endif %}{% endfor %}</span>
+      <span class="detalle">Ahora: {% for p in c.ahora %}{{ p.bultos|numero }} de {{ p.lote }}{% if not loop.last %}, {% endif %}{% endfor %}</span>
+      <span class="detalle">Costo: {{ c.costo_antes|moneda or "sin precio" }} → {{ c.costo_ahora|moneda or "sin precio" }}{% if c.diferencia is not none %} ({% if c.diferencia > 0 %}+{% endif %}{{ c.diferencia|moneda }}){% endif %}</span>
+    </div>
+    {% else %}
+    <p class="vacio">Todavía no se corrigió.</p>
+    {% endfor %}
+  </div>
+
+{% include "_pie_version.html" %}
+</body>
+</html>

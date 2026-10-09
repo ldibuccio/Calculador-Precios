@@ -6718,10 +6718,11 @@ def test_un_reparto_que_no_suma_lo_declarado_no_se_guarda():
 
 
 def test_anular_reproceso_es_baja_logica():
-    conexion, cursor = _conexion_falsa(filas_fetchone=[_CORTE])
+    conexion, cursor = _conexion_falsa(filas_fetchone=[(1, datetime(2026, 9, 7, 11, 0))])
 
-    with patch("app.db.obtener_conexion", return_value=conexion):
-        anular_reproceso(12)
+    with patch("app.db.obtener_conexion", return_value=conexion), \
+            patch("app.db._entradas_y_salidas_stock", return_value=([], [])):
+        assert anular_reproceso(12) == []
 
     consulta = cursor.execute.call_args.args[0]
     assert "UPDATE reprocesos SET anulado_el = now()" in consulta
@@ -7364,7 +7365,7 @@ def test_guardar_lotes_elegidos_borra_y_reescribe_y_los_ceros_no_entran():
     # es el caso de todos los días.
     salida = {"orden": (date(2026, 9, 7), datetime(2026, 9, 7, 11, 0)), "tipo": "armado",
               "cantidad": 5.0, "renglon_id": 55, "ficha_con_envase": False}
-    conexion, cursor = _conexion_falsa(filas_fetchone=[(1,)])
+    conexion, cursor = _conexion_falsa(filas_fetchone=[(1, date(2026, 9, 7))])
 
     with (
         patch("app.db.obtener_conexion", return_value=conexion),
@@ -7373,7 +7374,7 @@ def test_guardar_lotes_elegidos_borra_y_reescribe_y_los_ceros_no_entran():
         guardar_lotes_elegidos(55, [
             {"lote_tipo": "guia", "lote_origen_id": 101, "bultos": 5},
             {"lote_tipo": "guia", "lote_origen_id": 102, "bultos": 0},
-        ])
+        ], hoy=date(2026, 9, 7))
 
     consultas = [c.args[0] for c in cursor.execute.call_args_list]
     borrado = _sql_que_contiene(cursor, "DELETE FROM pedidos_renglones_lotes_elegidos")
@@ -7396,14 +7397,14 @@ def _guardar_elegido(lote_tipo, *, con_envase, renglon_id=55):
 
     salida = {"orden": (date(2026, 9, 7), datetime(2026, 9, 7, 11, 0)), "tipo": "armado",
               "cantidad": 5.0, "renglon_id": renglon_id, "ficha_con_envase": con_envase}
-    conexion, cursor = _conexion_falsa(filas_fetchone=[(1,)])
+    conexion, cursor = _conexion_falsa(filas_fetchone=[(1, date(2026, 9, 7))])
     with (
         patch("app.db.obtener_conexion", return_value=conexion),
         patch("app.db._entradas_y_salidas_stock", return_value=([], [salida])),
     ):
         guardar_lotes_elegidos(renglon_id, [
             {"lote_tipo": lote_tipo, "lote_origen_id": 101, "bultos": 5},
-        ])
+        ], hoy=date(2026, 9, 7))
     return cursor
 
 
@@ -7464,14 +7465,30 @@ def test_la_pared_del_POST_pregunta_por_pasadas_de_lotes_y_no_por_su_propia_cond
 def test_guardar_lotes_elegidos_vacio_deja_el_renglon_sin_correccion():
     from app.db import guardar_lotes_elegidos
 
-    conexion, cursor = _conexion_falsa()
+    conexion, cursor = _conexion_falsa(filas_fetchone=[(1, date(2026, 9, 7))])
 
     with patch("app.db.obtener_conexion", return_value=conexion):
-        guardar_lotes_elegidos(55, [])
+        guardar_lotes_elegidos(55, [], hoy=date(2026, 9, 7))
 
     consultas = [c.args[0] for c in cursor.execute.call_args_list]
-    assert len(consultas) == 1
-    assert "DELETE FROM pedidos_renglones_lotes_elegidos" in consultas[0]
+    # Mira de qué día es el armado (también vaciar cambia de dónde salió) y borra.
+    assert len(consultas) == 2
+    assert "armado_el AT TIME ZONE 'America/Argentina/Buenos_Aires'" in consultas[0]
+    assert "DELETE FROM pedidos_renglones_lotes_elegidos" in consultas[1]
+
+
+def test_guardar_lotes_elegidos_RECHAZA_un_armado_de_un_DIA_ANTERIOR_tambien_vaciando():
+    """"Elegir el lote" de Depósito es del día del armado (dueño, 09/10). El
+    rival: el mismo renglón con `hoy` igual al día del armado, que entra."""
+    from app.db import guardar_lotes_elegidos
+
+    for lotes in ([], [{"lote_tipo": "guia", "lote_origen_id": 101, "bultos": 5}]):
+        conexion, cursor = _conexion_falsa(filas_fetchone=[(1, date(2026, 9, 7))])
+        with patch("app.db.obtener_conexion", return_value=conexion), pytest.raises(ValueError) as rechazo:
+            guardar_lotes_elegidos(55, lotes, hoy=date(2026, 9, 8))
+        assert "Administración → Con fecha anterior" in str(rechazo.value)
+        assert not [c for c in cursor.execute.call_args_list if "DELETE" in c.args[0] or "INSERT" in c.args[0]]
+        conexion.commit.assert_not_called()
 
 
 from app.db import (  # noqa: E402

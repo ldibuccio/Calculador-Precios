@@ -205,6 +205,8 @@
   .salio-de { border-top: 1px dashed #ddd; margin-top: 0.55rem; padding-top: 0.55rem; }
   .salio-de-resumen { margin: 0 0 0.5rem; font-size: 0.85rem; color: #444; line-height: 1.35;
                       overflow-wrap: anywhere; }
+  .lote-otro-dia { margin: 0; max-width: 9rem; font-size: 0.8rem; color: #555; text-align: center;
+                   overflow-wrap: anywhere; }
   .boton-lotes {
     padding: 0.6rem 0.8rem;
     background: #fff;
@@ -788,8 +790,12 @@
         {# El desglose se pide RECIÉN al tocar: son números del sistema y no
            viajan a la pantalla hasta que alguien los pide. Y no hace falta
            una consulta por renglón al abrir la sección. #}
+        {% if r.de_otro_dia %}
+        <p class="lote-otro-dia">Armado otro día: el lote lo corrige Administración.</p>
+        {% else %}
         <button type="button" class="boton-lotes" onclick="verLotes({{ r.id }}, {{ pedido.id }})"
                 id="ver-lotes-{{ r.id }}">Elegir el lote</button>
+        {% endif %}
         <form method="post" action="/deposito/pedido/{{ pedido.id }}/renglones/{{ r.id }}/desarmar">
           <input type="hidden" name="cliente_id" value="{{ cliente_id }}">
           <input type="hidden" name="fecha" value="{{ fecha }}">
@@ -798,6 +804,7 @@
         </form>
       </div>
     </div>
+    {% if not r.de_otro_dia %}
     <div class="salio-de" id="salio-de-{{ r.id }}" hidden>
       <p class="salio-de-resumen" id="resumen-lotes-{{ r.id }}"></p>
       <form method="post" action="/deposito/pedido/{{ pedido.id }}/renglones/{{ r.id }}/lotes"
@@ -811,6 +818,7 @@
         <button type="submit" class="boton-guardar-lotes">Guardar de dónde salió</button>
       </form>
     </div>
+    {% endif %}
     {% endfor %}
     </div>
   </details>

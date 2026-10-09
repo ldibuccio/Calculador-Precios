@@ -17072,8 +17072,11 @@ def test_ARMAR_avisa_pero_NO_TRABA_el_tilde():
     con = _armar_pedido_el_dia(date(2026, 8, 22)).text.split("</style>")[-1]
     sin = _armar_pedido_el_dia(date(2026, 8, 21)).text.split("</style>")[-1]
 
-    tildes_con = con.count("/renglones/")
-    tildes_sin = sin.count("/renglones/")
+    # Solo los TILDES (armar y destildar). "Elegir el lote" no es un tilde, y
+    # desde el 09/10 un armado de otro día no lo ofrece: lo corrige
+    # Administración.
+    tildes_con = len(re.findall(r'/renglones/\d+/(?:armar|desarmar)"', con))
+    tildes_sin = len(re.findall(r'/renglones/\d+/(?:armar|desarmar)"', sin))
     assert 'class="otro-dia"' in con and 'class="otro-dia"' not in sin
     assert tildes_con > 0 and tildes_con == tildes_sin, (tildes_con, tildes_sin)
 
@@ -27448,7 +27451,9 @@ def test_un_renglon_SIN_TILDAR_no_tiene_desglose_que_mostrar():
 
 
 def test_guardar_de_donde_salio_manda_solo_lo_que_eligio():
-    with patch("app.main.guardar_lotes_elegidos") as mock_guardar:
+    # `hoy` viaja: el día del armado lo decide guardar_lotes_elegidos.
+    with patch("app.main.guardar_lotes_elegidos") as mock_guardar, \
+            patch("app.main._hoy_argentina", return_value=date(2026, 9, 2)):
         respuesta = cliente.post(
             "/deposito/pedido/7/renglones/55/lotes",
             data={"cliente_id": "1", "fecha": "2026-09-02", "sucursal": "VL",
@@ -27458,7 +27463,7 @@ def test_guardar_de_donde_salio_manda_solo_lo_que_eligio():
 
     assert respuesta.status_code == 303
     mock_guardar.assert_called_once_with(
-        55, [{"lote_tipo": "guia", "lote_origen_id": 101, "bultos": 5.0}]
+        55, [{"lote_tipo": "guia", "lote_origen_id": 101, "bultos": 5.0}], hoy=date(2026, 9, 2)
     )
 
 
@@ -27466,7 +27471,8 @@ def test_aceptar_la_propuesta_BORRA_la_correccion_y_vuelve_al_FIFO():
     """Se guarda SOLO la excepción: un reparto vacío no deja ninguna fila, y
     un renglón sin filas se reparte por FIFO como siempre. El default nunca
     se escribe, así que no puede quedar viejo cuando cambie el stock."""
-    with patch("app.main.guardar_lotes_elegidos") as mock_guardar:
+    with patch("app.main.guardar_lotes_elegidos") as mock_guardar, \
+            patch("app.main._hoy_argentina", return_value=date(2026, 9, 2)):
         respuesta = cliente.post(
             "/deposito/pedido/7/renglones/55/lotes",
             data={"cliente_id": "1", "fecha": "2026-09-02", "sucursal": "VL", "reparto": "[]"},
@@ -27474,7 +27480,7 @@ def test_aceptar_la_propuesta_BORRA_la_correccion_y_vuelve_al_FIFO():
         )
 
     assert respuesta.status_code == 303
-    mock_guardar.assert_called_once_with(55, [])
+    mock_guardar.assert_called_once_with(55, [], hoy=date(2026, 9, 2))
 
 
 def test_el_lote_que_la_pared_no_ofrece_vuelve_400_con_el_MOTIVO():

@@ -278,8 +278,10 @@ Módulos (se lee el que se va a tocar):
   la Casilla de pedidos en Administración.
 - `docs/modulos/que_comprar_hoy.md`: decisiones de Qué comprar hoy (el diseño
   sigue en `docs/que_comprar_hoy.md`).
-- `docs/modulos/retroactivo.md`: Depósito solo con la fecha de hoy, y "Con
-  fecha anterior" de Administración con la contraseña especial de Gerencia.
+- `docs/modulos/retroactivo.md`: Depósito solo con la fecha de hoy, "Con
+  fecha anterior" de Administración con la contraseña especial de Gerencia,
+  de qué guía salió un pedido de un día anterior y el control al anular una
+  guía R.
 - `docs/modulos/panel_control.md`: el Panel de control de Gerencia (nueve
   cuadros que reusan cuentas; rentabilidad sin mermas ni segunda, que tienen
   sus cuadros; la cruz cuenta como pedido incompleto).
