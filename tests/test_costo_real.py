@@ -840,7 +840,35 @@ def test_rechazo_que_queda_en_stock_no_es_perdida():
     fila = resultado["grupos"][0]["filas"][0]
     assert fila["rechazos_perdidos"] == 0.0
     assert fila["rechazos_bultos"] == 0.0
-    assert fila["costo_envase"] == 500.0 * 2.0  # el envase no se toca
+    # La caja vuelve con la mercadería (dueño, 09/10): se acredita igual.
+    # 5 bultos a 20 kg = 100 kg de envase a $2.
+    assert fila["costo_envase"] == 500.0 * 2.0 - 100 * 2.0
+    assert fila["costo_mercaderia"] == 25 * 500.0 - 5 * 2000.0
+
+
+def test_la_caja_que_vuelve_a_STOCK_y_se_REENVIA_se_cobra_UNA_sola_vez():
+    """Del dueño (09/10): el rechazo a stock se reenvía en la MISMA caja de
+    Día. Salen 25, vuelven 5 a stock y esos 5 salen de nuevo: en total
+    salieron 25 cajas, así que el envase es el de 25 y no el de 30. El RIVAL,
+    la devolución al proveedor, no acredita la caja: se fue con la
+    mercadería."""
+    fecha = date(2026, 8, 25)
+    otro_dia = date(2026, 8, 26)
+    resultado = calcular_rentabilidad_real(
+        _datos([_armado(fecha, 25, 500.0), _armado(otro_dia, 5, 100.0)]),
+        {fecha: {901: dict(MARGEN)}, otro_dia: {901: dict(MARGEN)}}, 1, fecha, otro_dia,
+        devoluciones=[_devolucion(5.0, fecha, destino="stock")],
+    )
+    fila = resultado["grupos"][0]["filas"][0]
+    # Las dos salidas cobran 600 kg de envase; el rechazo devuelve 100.
+    assert fila["costo_envase"] == (500.0 + 100.0) * 2.0 - 100 * 2.0
+
+    al_proveedor = calcular_rentabilidad_real(
+        _datos([_armado(fecha, 25, 500.0)]), {fecha: {901: dict(MARGEN)}}, 1, fecha, fecha,
+        devoluciones=[_devolucion(5.0, fecha, destino="devolucion_proveedor")],
+    )["grupos"][0]["filas"][0]
+    assert al_proveedor["costo_envase"] == 500.0 * 2.0          # la caja se fue: queda como costo
+    assert al_proveedor["cajas_perdidas"] == 5.0
 
 
 def test_rechazo_parcial_solo_pierde_lo_que_se_fue_a_segunda():
@@ -1171,16 +1199,20 @@ def test_la_caja_perdida_NO_suma_a_ninguna_cuenta_y_por_eso_es_seguro_mostrarla(
     """Es el mismo dinero, nombrado. Si sumara, estaría cobrado dos veces.
 
     EL CONTROL ES EL DESTINO 'stock', no otro número: con la misma venta y
-    la misma devolución, cambiar el destino a uno que se lleva la caja no
-    puede mover ni el costo total ni la renta. Un assert contra un número
-    escrito a mano pasaría igual si las dos ramas estuvieran mal.
+    la misma devolución, la única diferencia entre 'stock' y uno que se lleva
+    la caja es ESA caja —desde el 09/10 (dueño) 'stock' la devuelve, porque
+    vuelve y se reenvía en la misma, y al proveedor se va—. Así que el costo
+    total difiere en EXACTAMENTE una vez las cajas perdidas: si la línea de
+    cajas perdidas también sumara, la diferencia sería el doble. Un assert
+    contra un número escrito a mano pasaría igual si las dos ramas estuvieran
+    mal.
     """
     con_caja = _cajas("devolucion_proveedor")["totales"]
     sin_caja = _cajas("stock")["totales"]
 
     assert con_caja["cajas_perdidas_pesos"] > 0
-    assert con_caja["costo_total"] == sin_caja["costo_total"]
-    assert con_caja["renta_pesos"] == sin_caja["renta_pesos"]
+    assert con_caja["costo_total"] - sin_caja["costo_total"] == pytest.approx(con_caja["cajas_perdidas_pesos"])
+    assert sin_caja["renta_pesos"] - con_caja["renta_pesos"] == pytest.approx(con_caja["cajas_perdidas_pesos"])
 
 
 def test_una_ficha_SIN_ENVASE_no_pierde_ninguna_caja():

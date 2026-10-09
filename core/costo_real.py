@@ -149,7 +149,9 @@ DESTINOS_RECHAZO_PERDIDO = ("segunda", "reproceso")
 #
 # `stock` es la única de las cuatro que NO está, y es la única donde la caja
 # se reusa: vuelve llena, se rearma sin guía R nueva, y ya se descontó una
-# vez. Ver core/envases.py, que tiene el modelo entero.
+# vez. Ver core/envases.py, que tiene el modelo entero. En la PLATA pasa lo
+# mismo (dueño, 09/10): el rechazo a stock le acredita la caja a la venta que
+# se rechazó, y la salida que la reenvía —en la misma caja— la vuelve a cobrar.
 #
 # Es la misma lista que db/cajas_7_*.sql, y ahora COINCIDE con
 # DESTINOS_RECHAZO_PERDIDO en dos de sus tres miembros por casualidad y no
@@ -736,6 +738,14 @@ def calcular_rentabilidad_real(
             # cero de los dos lados, que es lo que se pidió.
             fila["costo_mercaderia"] -= bultos * costo
             fila["diferencia_devolucion_proveedor"] += diferencia_al_proveedor
+            if devolucion.get("destino_rechazo") == "stock":
+                # LA CAJA VUELVE CON LA MERCADERÍA Y SE REENVÍA EN LA MISMA
+                # (dueño, 09/10): se acredita igual que la mercadería, y la
+                # salida que la reenvía la vuelve a cobrar — una sola vez. Sin
+                # esto la caja de Día se cobraba dos veces ($349.450 en
+                # septiembre en Frutamax). Al proveedor NO: ahí la caja se va
+                # con la mercadería y queda como costo.
+                fila["costo_envase"] -= unidades * envase_unidad
         if la_caja_se_va and envase_unidad:
             fila = _fila(articulo)
             fila["cajas_perdidas"] += bultos
