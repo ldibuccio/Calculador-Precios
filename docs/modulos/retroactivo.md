@@ -47,27 +47,28 @@ rival.
   FECHA DEL ARMADO (los mismos que ofrece Depósito,
   `_lotes_ofrecidos_al_renglon`). Pide quién lo corrige y la contraseña
   especial, cada vez.
-- **El MISMO control que la carga con fecha anterior** (`_quienes_cambian`,
-  app/db.py): se rejuega el FIFO como está y con la corrección puesta, y si
-  un armado o una guía R queda saliendo de otro lote o con más sin lote, no
-  guarda y dice cuál ("La tomó el armado del pedido de X del dd/mm"). Frena
-  también si el renglón mismo queda sin lote.
+- **El control (dueño, 09/10)** (`_quienes_quedan_sin`, app/db.py): se
+  rejuega el FIFO como está y con la corrección puesta, y frena SOLO si un
+  armado o una guía R queda con más sin lote ("El armado del pedido de X del
+  dd/mm se queda sin mercadería") o pierde bultos de una guía que alguien
+  eligió a mano ("... pierde la guía que eligieron a mano"). Que el sistema
+  le cambie la guía a un armado que nadie eligió NO frena: lo liberado lo
+  toma el siguiente (el ejemplo R683 → R711). Frena también si el renglón
+  mismo queda sin lote. La carga con fecha anterior y anular una guía R
+  siguen con el estricto (`_quienes_cambian`).
 - **Historial** (`pedidos_renglones_lotes_correcciones`): quién, cuándo, de
   dónde salía antes, de dónde sale ahora (lotes con su nombre y bultos, y lo
   sin lote) y el costo del renglón antes y después. Se ve en la pantalla del
   renglón; la lista marca "Corregido".
 - **La fecha del armado no se toca**: se cambia de dónde salió esa misma
   salida (`pedidos_renglones_lotes_elegidos`, como Depósito).
-- **Anular una guía R pasa por el mismo control** (`anular_reproceso`): sin la
+- **Anular una guía R pasa por el control estricto** (`anular_reproceso`): sin la
   guía, si un armado u otra guía R cambia de lote o queda sin lote, no se
   anula y Guías R dice quién tomó sus cajas.
 
-**PENDIENTE DEL DUEÑO (09/10): qué tan estricto es el control.** Hoy frena si
-CUALQUIER armado o guía R cambia de lote, como la carga con fecha anterior.
-Al pasar un renglón a una guía más nueva, la vieja queda libre y el armado
-siguiente que el sistema había puesto en la nueva pasa a la vieja, aunque a
-la nueva le sobrara: eso también frena. Se le preguntó si frena solo cuando
-alguien queda sin mercadería o pierde un lote elegido a mano.
+**Hasta el 09/10 frenaba con el estricto**: pasar un renglón a una guía más
+nueva le cambiaba la guía al armado siguiente (aunque a la nueva le sobrara)
+y eso frenaba casi siempre. El dueño lo aflojó el mismo día.
 
 Migración `db/lote_dia_anterior_1_historial.sql`. Tests:
 `tests/test_lote_dia_anterior.py`, contra Postgres, con el armado rival.

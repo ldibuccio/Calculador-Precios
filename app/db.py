@@ -20996,9 +20996,9 @@ def _quienes_cambian(cursor, articulo_id: int, antes: list[dict], despues: list[
     de otro lote, o con más sin lote, dice quién la tomó. Vacío = no rompe
     nada. `despues_de`: solo las salidas posteriores a ese orden.
 
-    Lo usan la carga con fecha anterior, la corrección de lote de un día
-    anterior y la anulación de una guía R. Si cada uno comparara a su
-    manera, serían tres reglas para la misma pregunta."""
+    Lo usan la carga con fecha anterior y la anulación de una guía R. La
+    corrección de lote de un día anterior usa `_quienes_quedan_sin`, más
+    flojo por decisión del dueño (09/10)."""
     huellas = {_clave_de_salida(s): _huella_de_salida(s) for s in antes}
     motivos = []
     for s in despues:
@@ -21015,19 +21015,68 @@ def _quienes_cambian(cursor, articulo_id: int, antes: list[dict], despues: list[
     return motivos
 
 
-def _quien_la_tomo(cursor, articulo_id: int, salida: dict) -> str:
+def _quien_es(cursor, articulo_id: int, salida: dict) -> str:
+    """"el armado del pedido de X del dd/mm" o "la guía R7 del dd/mm"."""
     if salida["tipo"] == "armado":
         cursor.execute(
             "SELECT cl.nombre FROM pedidos_renglones r JOIN pedidos p ON p.id = r.pedido_id "
             "JOIN clientes cl ON cl.id = p.cliente_id WHERE r.id = %s", (salida["renglon_id"],))
         fila = cursor.fetchone()
         cliente = fila[0] if fila else "un cliente"
-        return f"La tomó el armado del pedido de {cliente} del {salida['fecha']:%d/%m}."
+        return f"el armado del pedido de {cliente} del {salida['fecha']:%d/%m}"
     cursor.execute("SELECT id FROM reprocesos WHERE articulo_id = %s AND creado_en = %s "
                    "AND anulado_el IS NULL", (articulo_id, salida["momento_orden"]))
     fila = cursor.fetchone()
     numero = f" R{fila[0]}" if fila else " R"
-    return f"La tomó la guía{numero} del {salida['fecha']:%d/%m}."
+    return f"la guía{numero} del {salida['fecha']:%d/%m}"
+
+
+def _quien_la_tomo(cursor, articulo_id: int, salida: dict) -> str:
+    return f"La tomó {_quien_es(cursor, articulo_id, salida)}."
+
+
+def _bultos_sin_lote(salida: dict) -> float:
+    """Lo que la salida no encontró en ningún lote (no lo "sin precio")."""
+    return round(float(salida["cantidad"]) - sum(float(c["bultos"]) for c in salida["consumos_lotes"]), 4)
+
+
+def _de_lo_elegido_a_mano(salida: dict) -> dict:
+    """{(tipo, origen): bultos que salieron de cada lote que alguien eligió a mano}."""
+    elegidos = {(e["lote_tipo"], e["lote_origen_id"]) for e in salida.get("lotes_elegidos") or []}
+    return {clave: round(sum(float(c["bultos"]) for c in salida["consumos_lotes"]
+                             if (c["tipo_lote"], c["origen_id"]) == clave), 4)
+            for clave in elegidos}
+
+
+def _quienes_quedan_sin(cursor, articulo_id: int, antes: list[dict], despues: list[dict], *,
+                        saltear=None) -> list[str]:
+    """EL CONTROL DE LA CORRECCIÓN DE LOTE (dueño, 09/10): frena SOLO si un
+    armado o una guía R queda con más sin lote (sin mercadería) o pierde
+    bultos de una guía que alguien eligió a mano. Que el sistema le cambie
+    la guía a un armado que nadie eligió no frena: era su adivinanza (lo
+    liberado lo toma el siguiente). La carga con fecha anterior y anular una
+    guía R siguen con `_quienes_cambian`, el estricto."""
+    previas = {_clave_de_salida(s): s for s in antes}
+    motivos = []
+    for s in despues:
+        if saltear is not None and saltear(s):
+            continue
+        if s["tipo"] not in ("armado", "reproceso_toma"):
+            continue
+        antes_de_s = previas.get(_clave_de_salida(s))
+        if antes_de_s is None:
+            continue
+        quien = _quien_es(cursor, articulo_id, s)
+        if _bultos_sin_lote(s) > _bultos_sin_lote(antes_de_s) + 0.0001:
+            motivo = f"{quien[0].upper()}{quien[1:]} se queda sin mercadería."
+        elif any(bultos < _de_lo_elegido_a_mano(antes_de_s).get(clave, 0) - 0.0001
+                 for clave, bultos in _de_lo_elegido_a_mano(s).items()):
+            motivo = f"{quien[0].upper()}{quien[1:]} pierde la guía que eligieron a mano."
+        else:
+            continue
+        if motivo not in motivos:
+            motivos.append(motivo)
+    return motivos
 
 
 # ============================================================================
@@ -21035,8 +21084,9 @@ def _quien_la_tomo(cursor, articulo_id: int, salida: dict) -> str:
 #
 # "Elegir el lote" de Depósito queda para el día del armado. Un renglón armado
 # un día anterior se corrige desde Administración → Con fecha anterior, con la
-# contraseña especial, el MISMO control que la carga con fecha anterior
-# (`_quienes_cambian`) y su historial: quién, cuándo, de dónde salía antes, de
+# contraseña especial, un control que frena solo si otro queda sin mercadería
+# o pierde lo elegido a mano (`_quienes_quedan_sin`) y su historial: quién,
+# cuándo, de dónde salía antes, de
 # dónde sale ahora y la diferencia de costo. La fecha del armado no se toca:
 # se cambia de dónde salió esa misma salida.
 # ============================================================================
@@ -21087,8 +21137,9 @@ def corregir_lotes_de_dia_anterior(renglon_id: int, lotes: list[dict], *, quien:
     Lo imposible es ValueError: el renglón es de hoy (eso es de Depósito), un
     lote que la pared no ofrece, uno que a la fecha del armado no estaba o no
     tenía esos bultos, o un reparto que no cambia nada. Lo que frena el
-    control —una salida que ya usó esa mercadería, o más sin lote— vuelve en
-    la lista, con quién la usó. Todo en UNA transacción, con el renglón
+    control —un armado o una guía R que queda sin mercadería o pierde lo que
+    alguien eligió a mano, o este renglón sin lote— vuelve en la lista, con
+    cuál. Todo en UNA transacción, con el renglón
     trabado: el control y la escritura ven la misma base.
     """
     from core.costo_real import atribuir_costos_fifo
@@ -21144,8 +21195,8 @@ def corregir_lotes_de_dia_anterior(renglon_id: int, lotes: list[dict], *, quien:
             if sin_lote_ahora > sin_lote_antes + 0.0001:
                 motivos.append(f"Así, {round(sin_lote_ahora - sin_lote_antes, 2):g} bultos de este renglón "
                                f"quedan sin lote: el {dia_del_armado:%d/%m} no había esa mercadería.")
-            motivos += _quienes_cambian(cursor, articulo_id, antes, despues,
-                                        saltear=lambda s: s.get("renglon_id") == renglon_id)
+            motivos += _quienes_quedan_sin(cursor, articulo_id, antes, despues,
+                                           saltear=lambda s: s.get("renglon_id") == renglon_id)
             if motivos:
                 conexion.rollback()
                 return motivos
