@@ -421,3 +421,25 @@ PALMALA   panel_foto_1_tabla · tablas 1 · checks 2 · indices 2 · fotos 0 · 
 
 Sin fotos todavía: la primera la saca el sistema en el primer turno después
 del deploy (o la primera entrada al tablero).
+
+## 09/10 — `rls_1`: candados (RLS) en todas las tablas de public (PR #136)
+
+Corrido por Lionel en Frutamax y Palmala ANTES del merge. Ganadería no
+llevó bloque: sus 17 tablas ya tenían candado; solo se verificó. Verificado
+por mí por el conector "Supabase Lectura" el 09/10 a las 12:04 UTC:
+
+```
+FRUTAMAX   rls_1 · sin_rls 0 · tablas 106 · politicas_claudia 50 · politicas_anon 0 · vista_cerrada true · testigo_compras 962
+PALMALA    rls_1 · sin_rls 0 · tablas 98 · politicas_claudia 0 · politicas_anon 0 · vista_cerrada true · testigo_compras 869
+GANADERIA  rls_1 · sin_rls 0 · tablas 17 · politicas_anon 0 · testigo_animales 299
+```
+
+El sistema sigue escribiendo con el candado puesto: `revision_tick` (el
+latido del bucle, cada minuto) quedó en 12:03:50 UTC en Frutamax y 12:04:12
+UTC en Palmala, los dos después de la corrida.
+
+**PENDIENTE**: probar en vivo que `lectura_claudia` lee alguna de las 50
+tablas que recibieron `lectura_claudia_lee`. Desde la sesión en la nube no
+sale la conexión directa a la base (puerto 5432 cortado); queda para una
+sesión local con `LECTURA_FRUTAMAX_URL`: `select count(*) from compras`
+tiene que dar lo mismo que por el conector (962 el 09/10).
