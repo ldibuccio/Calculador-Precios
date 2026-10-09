@@ -40,6 +40,10 @@ también se sube SIN cifrar a la carpeta `Backup-Sistema` de cada nube.
   Storage, `copy --ignore-existing` (incremental) y **nunca se borra**: lo que
   el plazo de 3 años borra en el sistema sigue en el backup. Se comprueba con
   checksum (`cryptcheck`), y por tamaño si el origen no da checksum.
+  **La copia y el control trabajan sobre la lista de fotos tomada AL
+  ARRANCAR** (`--files-from-raw`, dueño 09/10): el 07/10 y el 08/10 el
+  control dio rojo por una foto subida mientras corría la copia. Las que
+  entran después van en la copia siguiente.
 - **Rotación de código y bases**: las diarias de 30 días y, de cada uno de
   los últimos 12 meses, la PRIMERA copia. Se rota solo después de un éxito en
   ese destino. Las fotos no rotan.

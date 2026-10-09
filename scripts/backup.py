@@ -421,12 +421,23 @@ def parte_fotos() -> dict:
     """Incremental y sin borrar nunca: `copy --ignore-existing` sube solo lo
     nuevo y no pisa nada (una foto no cambia), y no hay `sync`, así que lo
     que el sistema borra por plazo sigue en el backup. Después, cryptcheck
-    compara el checksum de cada archivo del origen contra el subido."""
+    compara el checksum de cada archivo del origen contra el subido.
+
+    LA LISTA SE TOMA AL ARRANCAR (dueño, 09/10): el 07/10 y el 08/10 el
+    control dio rojo por UNA foto que se subió al Storage mientras corría la
+    copia (no estaba en la copia y sí en el control). Así que antes de
+    copiar se anota qué fotos hay en cada bucket, y la copia y el control
+    trabajan SOLO sobre esa lista (`--files-from`), en los dos destinos. Las
+    que entran después van en la copia siguiente."""
     origenes, fallas = {}, []
+    listas = Path(tempfile.mkdtemp(prefix="fotos_al_arrancar_"))
     for proyecto in proyectos():
         try:
             origen = origen_de_fotos(proyecto)
             buckets = [b.rstrip("/") for b in rclone("lsf", "--dirs-only", origen).splitlines() if b.strip()]
+            for bucket in buckets:
+                (listas / f"{proyecto}__{bucket}.txt").write_text(
+                    rclone("lsf", "-R", "--files-only", f"{origen}{bucket}"), encoding="utf-8")
             origenes[proyecto] = (origen, buckets)
         except Exception as error:  # noqa: BLE001
             fallas.append(f"{proyecto}: no se pudo leer el Storage: {error}")
@@ -436,10 +447,11 @@ def parte_fotos() -> dict:
         for proyecto, (origen, buckets) in origenes.items():
             for bucket in buckets:
                 desde, hacia = f"{origen}{bucket}", cifrado(destino, f"fotos/{proyecto}/{bucket}")
+                lista = str(listas / f"{proyecto}__{bucket}.txt")
                 try:
                     antes = _contar_archivos(hacia) if _existe(hacia) else 0
-                    rclone("copy", desde, hacia, "--ignore-existing")
-                    if not _comprobar_fotos(desde, hacia):
+                    rclone("copy", desde, hacia, "--ignore-existing", "--files-from-raw", lista)
+                    if not _comprobar_fotos(desde, hacia, lista):
                         sin_checksum.add(f"{proyecto}/{bucket}")
                     despues = _contar_archivos(hacia)
                     nuevos += despues - antes
@@ -454,19 +466,19 @@ def parte_fotos() -> dict:
     return _por_destino(a_un_destino)
 
 
-def _comprobar_fotos(desde: str, hacia: str) -> bool:
-    """Compara cada foto del origen contra la subida. Primero por CHECKSUM
-    (cryptcheck); si el origen no da checksums —un objeto S3 subido en partes
-    no trae MD5—, por TAMAÑO, que es lo que el dueño aceptó ("tamaño o
-    checksum"). Devuelve True si fue por checksum. Una diferencia de verdad
-    falla por los dos caminos."""
+def _comprobar_fotos(desde: str, hacia: str, lista: str) -> bool:
+    """Compara cada foto de la LISTA DEL ARRANQUE contra la subida. Primero
+    por CHECKSUM (cryptcheck); si el origen no da checksums —un objeto S3
+    subido en partes no trae MD5—, por TAMAÑO, que es lo que el dueño aceptó
+    ("tamaño o checksum"). Devuelve True si fue por checksum. Una diferencia
+    de verdad falla por los dos caminos."""
     try:
-        rclone("cryptcheck", desde, hacia, "--one-way")
+        rclone("cryptcheck", desde, hacia, "--one-way", "--files-from-raw", lista)
         return True
     except Falla as falla:
         if "hash" not in str(falla).lower():
             raise
-    rclone("check", desde, hacia, "--one-way", "--size-only")
+    rclone("check", desde, hacia, "--one-way", "--size-only", "--files-from-raw", lista)
     return False
 
 
