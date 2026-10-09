@@ -139,15 +139,103 @@ def test_la_correccion_que_no_le_cambia_nada_a_NADIE_entra_con_su_HISTORIAL(galp
     assert sql("SELECT armado_el = '2026-10-04 10:00-03' FROM pedidos_renglones WHERE id = 2") == [(True,)]
 
 
-def test_la_que_le_CAMBIA_el_lote_a_otro_armado_NO_entra_y_dice_CUAL(galpon):
+# EL EJEMPLO DEL DUEÑO, con guías R (dueño, 09/10): Tomate Perita de una ficha
+# con caja. R683 del 04/10 a $20.689 la caja y R711 del 05/10 a $16.057.
+PERITA = """
+insert into articulos (id, nombre) overriding system value values (3, 'EJEMPLO Tomate Perita');
+insert into envases (id, nombre) overriding system value values (1, 'EJEMPLO Caja Chica');
+insert into fichas_logistica (id, cliente_id, articulo_id, contenido_caja, unidad_venta, envase_id)
+  overriding system value values (4, 1, 3, 18, 'kilo', 1);
+insert into compras (id, proveedor_id, articulo_id, fecha_operacion, cantidad_cajones,
+                     contenido_por_cajon, cantidad_kilos, importe, estado, procesada_el,
+                     cantidad_cajones_real, contenido_por_cajon_real)
+  overriding system value
+  values (21, 1, 3, '2026-10-02', 80, 18, 1440, 10000, 'recepcionado', '2026-10-02 18:00-03', 80, 18);
+insert into reprocesos (id, articulo_id, fecha_operacion, bultos_tomados, bultos_primera, bultos_segunda,
+                        bultos_merma, costo_por_bulto_primera, cliente_id, ficha_id, envase_id,
+                        lleva_caja_nuestra, creado_en)
+  overriding system value
+  values (683, 3, '2026-10-04', 30, 30, 0, 0, 20689, 1, 4, 1, true, '2026-10-04 18:00-03'),
+         (711, 3, '2026-10-05', 30, 30, 0, 0, 16057, 1, 4, 1, true, '2026-10-05 08:00-03');
+insert into reprocesos_consumos (reproceso_id, origen, compra_id, bultos)
+  values (683, 'compra', 21, 30), (711, 'compra', 21, 30);
+insert into pedidos (id, cliente_id, fecha_operacion, origen) overriding system value
+  values (10, 1, '2026-10-05', 'texto'), (12, 1, '2026-10-07', 'texto');
+insert into pedidos_sucursales (pedido_id, sucursal) values (10, 'VL'), (12, 'VL');
+-- El 05/10 a las 17:28, 30 cajas: el sistema las pone en la R683 (la más vieja).
+-- El 06/10 a las 10:00, el armado siguiente: el sistema lo pone en la R711.
+insert into pedidos_renglones (id, pedido_id, sucursal, articulo_id, ficha_id, cantidad,
+                               cantidad_armada, armado_el)
+  overriding system value
+  values (31, 10, 'VL', 3, 4, 30, 30, '2026-10-05 17:28-03'),
+         (32, 3, 'CENTRO', 3, 4, %(siguiente)s, %(siguiente)s, '2026-10-06 10:00-03');
+"""
+
+
+def _a_la_guia(cliente, renglon_id, reparto):
+    return cliente.post(f"{BASE}/{renglon_id}", data={
+        "lote": [f"reproceso:{g}" for g in reparto], "bultos": [str(b) for b in reparto.values()],
+        "quien": "Marta", "clave_especial": CLAVE}, follow_redirects=False)
+
+
+def test_R683_a_R711_ENTRA_aunque_el_armado_siguiente_cambie_de_guia(galpon):
+    """Lo liberado de la R683 lo toma el armado del 06/10, que el sistema había
+    puesto en la R711. A la R711 le sobra: nadie queda sin mercadería y nadie
+    eligió a mano. Con el control estricto esto frenaba (dueño, 09/10)."""
     d, m, sql = galpon
-    respuesta = _corregir(_cliente(m, "administracion"), 1, {11: 0, 12: 6})
+    sql(PERITA, {"siguiente": 10})
+    respuesta = _a_la_guia(_cliente(m, "administracion"), 31, {683: 0, 711: 30})
+
+    assert respuesta.status_code == 303, re.findall(r"data-error>([^<]*)", respuesta.text)
+    assert sql("SELECT costo_antes::float, costo_ahora::float FROM pedidos_renglones_lotes_correcciones") \
+        == [(30 * 20689.0, 30 * 16057.0)]                     # 138.960 menos
+    from core.costo_real import atribuir_costos_fifo
+    entradas, salidas = d.entradas_y_salidas_stock_articulo(3)
+    siguiente = next(s for s in atribuir_costos_fifo(entradas, salidas) if s.get("renglon_id") == 32)
+    assert [(c["tipo_lote"], c["origen_id"], c["bultos"]) for c in siguiente["consumos_lotes"]] \
+        == [("reproceso", 683, 10)]                           # lo liberado lo tomó el siguiente
+
+
+def test_la_que_deja_a_un_pedido_SIN_MERCADERIA_no_entra_y_dice_CUAL(galpon):
+    """El 06/10 (pedido del 07/10) alguien eligió a mano la R711 para 30 cajas.
+    Si el del 05/10 pasa a la R711, ese armado se queda sin las suyas y la R683
+    liberada ya la tomó el de las 10:00: queda sin mercadería. El rival: el
+    de las 10:00, que estaba sin lote y pasa a tener, no frena."""
+    d, m, sql = galpon
+    sql(PERITA, {"siguiente": 30})
+    sql("""insert into pedidos_renglones (id, pedido_id, sucursal, articulo_id, ficha_id, cantidad,
+               cantidad_armada, armado_el) overriding system value
+           values (33, 12, 'VL', 3, 4, 30, 30, '2026-10-06 12:00-03')""")
+    sql("insert into pedidos_renglones_lotes_elegidos (renglon_id, lote_tipo, lote_origen_id, bultos) "
+        "values (33, 'reproceso', 711, 30)")
+    respuesta = _a_la_guia(_cliente(m, "administracion"), 31, {683: 0, 711: 30})
 
     assert respuesta.status_code == 400
     texto = _texto(respuesta.text)
-    assert "La tomó el armado del pedido de EJEMPLO Rival del 04/10." in texto
-    assert "Hasta que eso se corrija" in texto
-    assert _elegidos(sql) == [] and sql("SELECT count(*) FROM pedidos_renglones_lotes_correcciones") == [(0,)]
+    assert "El armado del pedido de EJEMPLO Verduleria del 07/10 se queda sin mercadería." in texto
+    assert "del 06/10" not in re.findall(r"data-error>([^<]*)", respuesta.text)[0]
+    assert sql("SELECT renglon_id FROM pedidos_renglones_lotes_elegidos") == [(33,)]
+    assert sql("SELECT count(*) FROM pedidos_renglones_lotes_correcciones") == [(0,)]
+
+
+def test_la_que_le_SACA_a_otro_la_guia_ELEGIDA_A_MANO_no_entra_aunque_alcance(galpon):
+    """El del 06/10 a las 12:00 eligió a mano 20 de la R711. Si el del 05/10
+    pasa a la R711, a él le toca la R683 liberada: no queda sin mercadería,
+    pero pierde lo que alguien eligió, y eso también frena (dueño, 09/10)."""
+    d, m, sql = galpon
+    sql(PERITA, {"siguiente": 10})
+    sql("""insert into pedidos_renglones (id, pedido_id, sucursal, articulo_id, ficha_id, cantidad,
+               cantidad_armada, armado_el) overriding system value
+           values (33, 12, 'VL', 3, 4, 20, 20, '2026-10-06 12:00-03')""")
+    sql("insert into pedidos_renglones_lotes_elegidos (renglon_id, lote_tipo, lote_origen_id, bultos) "
+        "values (33, 'reproceso', 711, 20)")
+    respuesta = _a_la_guia(_cliente(m, "administracion"), 31, {683: 0, 711: 30})
+
+    assert respuesta.status_code == 400
+    assert re.findall(r"data-error>([^<]*)", respuesta.text) == [
+        "El armado del pedido de EJEMPLO Verduleria del 07/10 pierde la guía que eligieron a mano. "
+        "Hasta que eso se corrija, no se puede cambiar de dónde salió."]
+    assert sql("SELECT count(*) FROM pedidos_renglones_lotes_correcciones") == [(0,)]
 
 
 def test_sin_CONTRASENA_o_sin_QUIEN_no_escribe_nada(galpon):
