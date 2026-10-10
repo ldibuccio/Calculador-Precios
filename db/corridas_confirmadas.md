@@ -457,3 +457,17 @@ PALMALA   lote_dia_anterior_1_historial · tablas 1 · checks 1 · indices 1 · 
 La tabla nació con candado y SIN la política `lectura_claudia_lee`:
 `lectura_claudia` no la ve. Decisión del dueño (09/10): se le suma en la
 próxima migración que haya, no en una propia.
+
+## 10/10 — `lote_dia_anterior_2_como_salio`: "Cómo salió" en el historial y lectura_claudia (PR #142)
+
+Corrido por Lionel en Frutamax y Palmala ANTES del merge. Verificado por mí
+por el conector "Supabase Lectura" el 10/10 a las 10:34 UTC:
+
+```
+FRUTAMAX  lote_dia_anterior_2_como_salio · columnas 5 · checks 3 · politica_claudia 1 · existe_claudia 1 · correcciones 0 · no_de_lote 0 · testigo_compras 964
+PALMALA   lote_dia_anterior_2_como_salio · columnas 5 · checks 3 · politica_claudia 0 · existe_claudia 0 · correcciones 0 · no_de_lote 0 · testigo_compras 869
+```
+
+Con esto `lectura_claudia` ya puede leer `pedidos_renglones_lotes_correcciones`
+en Frutamax (lo que quedó pendiente de `lote_dia_anterior_1`). En Palmala ese
+usuario no existe.
