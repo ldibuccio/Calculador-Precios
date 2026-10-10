@@ -72,3 +72,34 @@ y eso frenaba casi siempre. El dueño lo aflojó el mismo día.
 
 Migración `db/lote_dia_anterior_1_historial.sql`. Tests:
 `tests/test_lote_dia_anterior.py`, contra Postgres, con el armado rival.
+
+## Cómo salió un renglón de un día anterior: en su envase o en caja de Día (dueño, 09/10)
+
+El caso real: Cherry cargado como caja de Día que salió en el descartable del
+proveedor (5 o 7 kg), o al revés. En la misma pantalla del renglón ("De qué
+guía salió un pedido"), la parte "¿Cómo salió?" aparece solo en las fichas que
+eligen (`envase_id` y `envase_variable`: Mango y Cherry). Mismas reglas:
+Administración, contraseña de fecha anterior, quién, el control de la
+corrección de lote (`_quienes_quedan_sin`) y el historial.
+
+- **Lo hace `corregir_como_salio_de_dia_anterior`** (app/db.py): cambia
+  `pedidos_renglones.en_su_envase` y con él todo lo que lo lee. En su envase,
+  se liberan las cajas de la guía R y salen cajones de la compra; en caja de
+  Día, al revés. La caja de Día deja de cobrarse o se cobra
+  (`envase_por_unidad_del_renglon`). Lo elegido a mano se borra: era de la
+  otra forma.
+- **Kilos, solo en las fichas por kilo (Cherry)**: los kilos enviados pasan a
+  ser bultos × kilos por bulto (5 o 7, con botones). En su envase son
+  obligatorios; a caja, si no se ponen, los de la ficha. **El Mango no cambia
+  la cantidad**: 10 unidades en las dos formas.
+- **La fecha del armado no se toca. El remito ya emitido tampoco**: la
+  pantalla avisa "El remito N ya salió con X kg: no se toca. Se cobra lo que
+  firme el súper."
+- **Historial**: `que = 'como_salio'`, cómo salía y cómo sale, los kilos de
+  antes y de ahora (vacíos en Mango), de dónde salía y de dónde sale, y el
+  costo de la mercadería antes y después (la caja de Día va aparte).
+
+Migración `db/lote_dia_anterior_2_como_salio.sql` (suma también la regla de
+lectura de `lectura_claudia`, donde existe). Tests:
+`tests/test_como_salio_dia_anterior.py`, con el rival en su envase.
+

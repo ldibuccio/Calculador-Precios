@@ -2420,7 +2420,20 @@ create table pedidos_renglones_lotes_correcciones (
   ahora jsonb not null,
   costo_antes numeric,
   costo_ahora numeric,
-  constraint lotes_correcciones_con_quien check (btrim(quien) <> '')
+  -- CÓMO SALIÓ (dueño, 09/10, db/lote_dia_anterior_2_como_salio.sql): 'lote'
+  -- es de qué guía salió; 'como_salio', en su envase o en caja de Día, con los
+  -- kilos de antes y de ahora (solo en las fichas por kilo: Cherry).
+  que text not null default 'lote',
+  en_su_envase_antes boolean,
+  en_su_envase_ahora boolean,
+  kilos_antes numeric,
+  kilos_ahora numeric,
+  constraint lotes_correcciones_con_quien check (btrim(quien) <> ''),
+  constraint lotes_correcciones_que check (que in ('lote', 'como_salio')),
+  constraint lotes_correcciones_como_salio_entero check (
+    (que = 'como_salio') = (en_su_envase_antes is not null and en_su_envase_ahora is not null)),
+  constraint lotes_correcciones_kilos_solo_como_salio check (
+    que = 'como_salio' or (kilos_antes is null and kilos_ahora is null))
 );
 create index lotes_correcciones_por_renglon
   on pedidos_renglones_lotes_correcciones (renglon_id);

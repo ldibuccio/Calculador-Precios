@@ -130,7 +130,9 @@ kg" y "7 kg"; al elegir "Reprocesado a caja" vuelve el de la ficha. Lo exige
 también `marcar_renglon_armado` (sin kilos, `ComoSaleNoPermitido`). **Solo en
 las fichas por KILO (Cherry).** El Mango (ficha por unidad) sale SIEMPRE por
 10 unidades, en su envase o en caja de Día: cambia el envase, nunca la
-cantidad, así que ni se vacía ni hay botones (dueño, 09/10).
+cantidad, así que ni se vacía ni hay botones (dueño, 09/10). Un renglón de un
+día anterior que salió de la otra forma se corrige desde Administración (ver
+`docs/modulos/retroactivo.md`, "Cómo salió").
 
 La condición de esta sección pasa a ser `envase_id IS NOT NULL AND NOT
 en_su_envase`, y la respetan, además de los cuatro lugares de arriba:
