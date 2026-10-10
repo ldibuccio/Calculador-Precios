@@ -20926,10 +20926,11 @@ def que_tomo_esa_mercaderia(articulo_id: int, salida: dict) -> list[str]:
     la tomó. Vacío = se puede cargar con esa fecha.
 
     Se rejuega el FIFO del sistema dos veces —como está y con esta salida en
-    su fecha— y se mira cada armado y cada guía R POSTERIOR: si alguno cambia
-    de qué lote sale (o se queda sin lote), esa mercadería ya la había tomado
-    él. Y si la salida misma no encuentra lote, ese día no había esa
-    mercadería. No escribe nada.
+    su fecha— y frena si un armado o una guía R queda sin mercadería o pierde
+    lo que alguien eligió a mano (`_quienes_quedan_sin`, dueño, 10/10): esa
+    mercadería ya era de él. Que a otro le toque otra guía no frena. Y si la
+    salida misma no encuentra lote, ese día no había esa mercadería. No
+    escribe nada.
 
     `salida`: {"tipo", "cantidad" (bultos, positivo), "fecha", y opcionales
     "ficha_id", "lote_tipo", "lote_origen_id"}, con la misma forma que una
@@ -20971,8 +20972,8 @@ def que_tomo_esa_mercaderia(articulo_id: int, salida: dict) -> list[str]:
             la_nueva = next(s for s in despues if s.get("_la_nueva"))
             if float(la_nueva.get("bultos_sin_costo") or 0) > 0:
                 motivos.append(f"El {salida['fecha']:%d/%m} no había esa mercadería en el depósito.")
-            return motivos + _quienes_cambian(cursor, articulo_id, antes, despues, despues_de=nueva["orden"],
-                                              saltear=lambda s: s.get("_la_nueva"))
+            return motivos + _quienes_quedan_sin(cursor, articulo_id, antes, despues,
+                                                 saltear=lambda s: s.get("_la_nueva"))
     finally:
         conexion.close()
 
@@ -20986,33 +20987,6 @@ def _huella_de_salida(s: dict) -> tuple:
     return (round(float(s.get("bultos_sin_costo") or 0), 4),
             sorted((c["tipo_lote"], c["origen_id"], round(float(c["bultos"]), 4))
                    for c in s["consumos_lotes"]))
-
-
-def _quienes_cambian(cursor, articulo_id: int, antes: list[dict], despues: list[dict], *,
-                     despues_de=None, saltear=None) -> list[str]:
-    """EL CONTROL DE "CON FECHA ANTERIOR", uno solo para todo lo que mueve el
-    pasado (dueño, 05/10 y 09/10): el FIFO rejugado como está (`antes`) y con
-    el cambio puesto (`despues`). Cada armado y cada guía R que queda saliendo
-    de otro lote, o con más sin lote, dice quién la tomó. Vacío = no rompe
-    nada. `despues_de`: solo las salidas posteriores a ese orden.
-
-    Lo usan la carga con fecha anterior y la anulación de una guía R. La
-    corrección de lote de un día anterior usa `_quienes_quedan_sin`, más
-    flojo por decisión del dueño (09/10)."""
-    huellas = {_clave_de_salida(s): _huella_de_salida(s) for s in antes}
-    motivos = []
-    for s in despues:
-        if saltear is not None and saltear(s):
-            continue
-        if s["tipo"] not in ("armado", "reproceso_toma"):
-            continue
-        if despues_de is not None and s["orden"] <= despues_de:
-            continue
-        if huellas.get(_clave_de_salida(s)) != _huella_de_salida(s):
-            motivo = _quien_la_tomo(cursor, articulo_id, s)
-            if motivo not in motivos:
-                motivos.append(motivo)
-    return motivos
 
 
 def _quien_es(cursor, articulo_id: int, salida: dict) -> str:
@@ -21031,10 +21005,6 @@ def _quien_es(cursor, articulo_id: int, salida: dict) -> str:
     return f"la guía{numero} del {salida['fecha']:%d/%m}"
 
 
-def _quien_la_tomo(cursor, articulo_id: int, salida: dict) -> str:
-    return f"La tomó {_quien_es(cursor, articulo_id, salida)}."
-
-
 def _bultos_sin_lote(salida: dict) -> float:
     """Lo que la salida no encontró en ningún lote (no lo "sin precio")."""
     return round(float(salida["cantidad"]) - sum(float(c["bultos"]) for c in salida["consumos_lotes"]), 4)
@@ -21050,12 +21020,15 @@ def _de_lo_elegido_a_mano(salida: dict) -> dict:
 
 def _quienes_quedan_sin(cursor, articulo_id: int, antes: list[dict], despues: list[dict], *,
                         saltear=None) -> list[str]:
-    """EL CONTROL DE LA CORRECCIÓN DE LOTE (dueño, 09/10): frena SOLO si un
-    armado o una guía R queda con más sin lote (sin mercadería) o pierde
-    bultos de una guía que alguien eligió a mano. Que el sistema le cambie
-    la guía a un armado que nadie eligió no frena: era su adivinanza (lo
-    liberado lo toma el siguiente). La carga con fecha anterior y anular una
-    guía R siguen con `_quienes_cambian`, el estricto."""
+    """EL CONTROL DE "CON FECHA ANTERIOR", uno solo para todo lo que mueve el
+    pasado (dueño, 05/10 y 09/10): la carga con fecha anterior (merma, pase,
+    devolución), la corrección de lote y de cómo salió, y anular una guía R.
+    Se rejuega el FIFO como está (`antes`) y con el cambio puesto (`despues`),
+    y frena SOLO si un armado o una guía R queda con más sin lote (sin
+    mercadería) o pierde bultos de una guía que alguien eligió a mano. Que el
+    sistema le cambie la guía a un armado que nadie eligió no frena: era su
+    adivinanza (lo liberado lo toma el siguiente). Hasta el 09/10 frenaba
+    también eso (el estricto) y casi siempre frenaba."""
     previas = {_clave_de_salida(s): s for s in antes}
     motivos = []
     for s in despues:
@@ -21337,8 +21310,9 @@ def anular_reproceso(reproceso_id: int) -> list[str]:
     registro de la guía anulada. Corregir = anular y cargar de nuevo.
 
     CON EL CONTROL DE "CON FECHA ANTERIOR" (dueño, 09/10): se rejuega el FIFO
-    sin la guía y, si un armado u otra guía R queda saliendo de otro lote o
-    sin lote —sus cajas ya salieron—, NO se anula y devuelve quién la tomó.
+    sin la guía y, si un armado u otra guía R queda sin mercadería —sus cajas
+    ya salieron y nada las cubre— o pierde lo elegido a mano, NO se anula y
+    devuelve cuál. Que a otro armado le toque otra guía no frena (10/10).
     Vacío = anulada (o ya estaba anulada).
     """
     from core.costo_real import atribuir_costos_fifo
@@ -21359,8 +21333,9 @@ def anular_reproceso(reproceso_id: int) -> list[str]:
                            if not (e["tipo_lote"] == "reproceso" and e["origen_id"] == reproceso_id)]
             sin_su_toma = [dict(s) for s in salidas
                            if not (s["tipo"] == "reproceso_toma" and s["momento_orden"] == creado_en)]
-            motivos = _quienes_cambian(cursor, articulo_id, atribuir_costos_fifo(entradas, [dict(s) for s in salidas]),
-                                       atribuir_costos_fifo(sin_la_guia, sin_su_toma))
+            motivos = _quienes_quedan_sin(cursor, articulo_id,
+                                          atribuir_costos_fifo(entradas, [dict(s) for s in salidas]),
+                                          atribuir_costos_fifo(sin_la_guia, sin_su_toma))
             if motivos:
                 conexion.rollback()
                 return motivos

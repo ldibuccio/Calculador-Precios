@@ -10,10 +10,11 @@ saltea si ese día ya hubo un backup bueno.
 
 LA LLAVE (`BACKUP_GITHUB_TOKEN`, una variable de Railway): un token de GitHub
 "fine-grained", SOLO para el repo Calculador-Precios, SOLO con permiso de
-Actions, y con vencimiento de un año. GitHub dice cuándo vence en cada
-respuesta (el encabezado `github-authentication-token-expiration`), así que
-la pantalla de Backups lo lee de ahí y avisa un mes antes. La llave no se
-escribe nunca en un archivo ni en un log.
+Actions. NO VENCE: el dueño la regeneró sin vencimiento (09/10), y la
+pantalla de Backups lo dice en verde ("no tiene vencimiento"). Si alguna vez
+se carga una que vence, GitHub dice cuándo en cada respuesta (el encabezado
+`github-authentication-token-expiration`) y la pantalla avisa un mes antes.
+La llave no se escribe nunca en un archivo ni en un log.
 
 Si la llave está cargada en las dos aplicaciones (Frutamax y Palmala), las dos
 lanzan a las 03:47: el workflow corre de a uno (`concurrency`) y el segundo se

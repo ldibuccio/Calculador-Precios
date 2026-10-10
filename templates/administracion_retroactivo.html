@@ -44,7 +44,7 @@
 
   <div class="tarjeta">
     <h2>¿Qué pasó y no se cargó?</h2>
-    <p class="ayuda">Cada una pide el día, quién lo carga y la contraseña especial. {% call info("Cuándo no deja") %}Una devolución, una merma o un pase con fecha anterior sacan mercadería de ese día. Si un armado o una guía R posterior ya tomó esa mercadería, la pantalla dice cuál y no deja cargarlo hasta que eso se elimine.{% endcall %}</p>
+    <p class="ayuda">Cada una pide el día, quién lo carga y la contraseña especial. {% call info("Cuándo no deja") %}Una devolución, una merma o un pase con fecha anterior sacan mercadería de ese día. Si con eso un armado o una guía R queda sin mercadería, o pierde una guía que eligieron a mano, la pantalla dice cuál y no deja cargarlo. Que a otro pedido le toque otra guía no frena.{% endcall %}</p>
     <a class="boton" href="/administracion/retroactivo/ingreso">{{ ICONOS_HUBS['fecha_anterior']|safe }}<span>Ingreso con fecha anterior</span></a>
     <a class="boton" href="/administracion/retroactivo/devolver">{{ ICONOS_HUBS['devolver']|safe }}<span>Devolución al proveedor</span></a>
     <a class="boton" href="/administracion/retroactivo/merma">{{ ICONOS_HUBS['perdidas']|safe }}<span>Merma</span></a>

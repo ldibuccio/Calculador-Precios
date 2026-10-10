@@ -20,13 +20,16 @@
   quién —se escribe en la pantalla—, cuándo, y la compra o el movimiento),
   en la MISMA transacción que la carga. La pantalla "Con fecha anterior"
   lista lo cargado, y el detalle de la compra dice "por X".
-- **Solo si esa mercadería no se usó** (`que_tomo_esa_mercaderia`, app/db.py):
-  se rejuega el FIFO como está y con la salida nueva en su fecha; si un
-  armado o una guía R posterior cambia de qué lote sale, la pantalla dice
-  cuál ("La tomó el armado del pedido de X del dd/mm" / "La tomó la guía RN
-  del dd/mm") y no deja hasta que eso se elimine. También frena si ese día
-  no había esa mercadería (sin lote, o un lote elegido que todavía no había
-  entrado). El ingreso no se frena: agrega mercadería.
+- **Solo si esa mercadería no era de otro** (`que_tomo_esa_mercaderia`,
+  app/db.py): se rejuega el FIFO como está y con la salida nueva en su fecha,
+  con el control único `_quienes_quedan_sin` (dueño, 10/10): frena solo si un
+  armado o una guía R queda sin mercadería ("El armado del pedido de X del
+  dd/mm se queda sin mercadería" / "La guía RN del dd/mm se queda sin
+  mercadería") o pierde lo que alguien eligió a mano. Que a otro le toque
+  otra guía no frena. Hasta el 10/10 frenaba también eso. También frena si
+  ese día no había esa mercadería (sin lote, o un lote elegido que todavía
+  no había entrado). El ingreso no se frena: agrega mercadería. La
+  devolución, además, no deja devolver más de lo que queda de su compra.
 - **La merma de SEGUNDA con fecha anterior no está**: el pool de segunda no
   tiene lotes que rejugar. Se carga desde Depósito.
 
@@ -54,17 +57,18 @@ rival.
   eligió a mano ("... pierde la guía que eligieron a mano"). Que el sistema
   le cambie la guía a un armado que nadie eligió NO frena: lo liberado lo
   toma el siguiente (el ejemplo R683 → R711). Frena también si el renglón
-  mismo queda sin lote. La carga con fecha anterior y anular una guía R
-  siguen con el estricto (`_quienes_cambian`).
+  mismo queda sin lote. Desde el 10/10 es el mismo control para la carga con
+  fecha anterior y para anular una guía R.
 - **Historial** (`pedidos_renglones_lotes_correcciones`): quién, cuándo, de
   dónde salía antes, de dónde sale ahora (lotes con su nombre y bultos, y lo
   sin lote) y el costo del renglón antes y después. Se ve en la pantalla del
   renglón; la lista marca "Corregido".
 - **La fecha del armado no se toca**: se cambia de dónde salió esa misma
   salida (`pedidos_renglones_lotes_elegidos`, como Depósito).
-- **Anular una guía R pasa por el control estricto** (`anular_reproceso`): sin la
-  guía, si un armado u otra guía R cambia de lote o queda sin lote, no se
-  anula y Guías R dice quién tomó sus cajas.
+- **Anular una guía R pasa por el mismo control** (`anular_reproceso`): sin
+  la guía, si un armado u otra guía R queda sin mercadería o pierde lo
+  elegido a mano, no se anula y Guías R dice cuál. Si sus cajas las puede
+  cubrir otra guía, o lo que libera lo toma otro pedido, se anula (10/10).
 
 **Hasta el 09/10 frenaba con el estricto**: pasar un renglón a una guía más
 nueva le cambiaba la guía al armado siguiente (aunque a la nueva le sobrara)

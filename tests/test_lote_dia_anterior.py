@@ -310,10 +310,13 @@ def test_la_LISTA_lleva_al_renglon_y_el_renglon_VUELVE_con_sus_filtros(galpon):
     assert hub.count(f'href="{BASE}"') == 1
 
 
-def test_ANULAR_una_guia_R_cuyas_cajas_ya_salieron_NO_anula_y_dice_quien(galpon):
+def test_ANULAR_una_guia_R_cuyas_cajas_las_cubre_lo_que_LIBERA_se_anula(galpon):
+    """El 05/10 la guía R7 toma 2 cajones (de la 12) y da 2 de primera, y el
+    armado 4 de 9 sale de la 12 y de las 2 de la R7. Sin la guía, los 2
+    cajones que libera le alcanzan al armado: le cambia la guía, pero no queda
+    sin mercadería. Con el control flojo (dueño, 10/10) se anula; con el
+    estricto, esto frenaba."""
     d, m, sql = galpon
-    # El 05/10 la guía R7 toma 2 cajones (de la 12) y da 2 de primera. Ese
-    # mismo día el armado 4 de 9 sale de la 12 y de las 2 de la R7.
     sql("""insert into reprocesos (id, articulo_id, fecha_operacion, bultos_tomados, bultos_primera,
                bultos_segunda, bultos_merma, costo_por_bulto_primera, creado_en) overriding system value
            values (7, 1, '2026-10-05', 2, 2, 0, 0, 80, '2026-10-05 08:00-03')""")
@@ -321,15 +324,30 @@ def test_ANULAR_una_guia_R_cuyas_cajas_ya_salieron_NO_anula_y_dice_quien(galpon)
     sql("""insert into pedidos_renglones (id, pedido_id, sucursal, articulo_id, ficha_id, cantidad,
                cantidad_armada, armado_el) overriding system value
            values (4, 2, 'CENTRO', 1, 2, 9, 9, '2026-10-05 12:00-03')""")
-    adm = _cliente(m, "administracion")
-    respuesta = adm.post("/administracion/stock/guias-r/7/anular", follow_redirects=False)
-    assert respuesta.status_code == 303
-    assert "La+tom%C3%B3+el+armado+del+pedido+de+EJEMPLO+Rival+del+04%2F10" in respuesta.headers["location"]
-    assert sql("SELECT anulado_el IS NULL FROM reprocesos WHERE id = 7") == [(True,)]
-    # El rival: sin el armado 4, nadie usó sus cajas y se anula.
-    sql("UPDATE pedidos_renglones SET anulado_el = now(), armado_el = NULL, cantidad_armada = NULL WHERE id = 4")
-    assert adm.post("/administracion/stock/guias-r/7/anular", follow_redirects=False).status_code == 303
+    respuesta = _cliente(m, "administracion").post("/administracion/stock/guias-r/7/anular",
+                                                   follow_redirects=False)
+    assert respuesta.status_code == 303 and "error=" not in respuesta.headers["location"]
     assert sql("SELECT anulado_el IS NOT NULL FROM reprocesos WHERE id = 7") == [(True,)]
+
+
+def test_ANULAR_una_guia_R_que_deja_un_pedido_SIN_MERCADERIA_no_anula_y_dice_cual(galpon):
+    """Con la Perita: el 05/10 salen 30 cajas de la R683 y el 06/10 10 de la
+    R711. Sin la R683, las 30 del 05/10 pasan a la R711 y las 10 del 06/10
+    quedan sin cajas. El rival: anular la R711 sin el armado del 06/10 deja
+    a todos cubiertos y se anula."""
+    d, m, sql = galpon
+    sql(PERITA, {"siguiente": 10})
+    adm = _cliente(m, "administracion")
+    respuesta = adm.post("/administracion/stock/guias-r/683/anular", follow_redirects=False)
+    from urllib.parse import parse_qs, urlparse
+    error = parse_qs(urlparse(respuesta.headers["location"]).query)["error"][0]
+    assert error == ("La guía R683 no se anuló: El armado del pedido de EJEMPLO Verduleria del 06/10 "
+                     "se queda sin mercadería. Hasta que eso se corrija, no se puede anular.")
+    assert sql("SELECT anulado_el IS NULL FROM reprocesos WHERE id = 683") == [(True,)]
+    sql("UPDATE pedidos_renglones SET anulado_el = now(), armado_el = NULL, cantidad_armada = NULL WHERE id = 32")
+    assert "error=" not in adm.post("/administracion/stock/guias-r/711/anular",
+                                    follow_redirects=False).headers["location"]
+    assert sql("SELECT anulado_el IS NOT NULL FROM reprocesos WHERE id = 711") == [(True,)]
 
 
 def test_a_313px_las_dos_pantallas_no_desbordan(galpon):
