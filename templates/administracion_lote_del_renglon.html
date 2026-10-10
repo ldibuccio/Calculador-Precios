@@ -33,6 +33,16 @@
     border: 1px solid #ccc; border-radius: 8px; box-sizing: border-box;
   }
   .guardar { margin-top: 1rem; min-height: 48px; width: 100%; border: none; border-radius: 10px; background: #1e3a8a; color: #fff; font-weight: 700; font-size: 1rem; }
+  .como-sale { border: none; padding: 0; margin: 0.4rem 0; display: flex; flex-wrap: wrap; gap: 0.4rem 1rem; }
+  .como-sale legend { font-weight: 600; margin-bottom: 0.3rem; }
+  .como-sale label { display: flex; align-items: center; gap: 0.4rem; min-height: 44px; margin: 0; font-weight: 400; }
+  .kilos-rapidos { display: flex; flex-wrap: wrap; gap: 0.5rem; margin: 0.4rem 0; }
+  .kilos-rapidos button {
+    min-height: 44px; min-width: 64px; padding: 0 0.9rem; border: 1px solid #1e3a8a; border-radius: 8px;
+    background: #eff6ff; color: #1e3a8a; font-weight: 700; font-size: 1rem;
+  }
+  form input[type="number"].kilos { width: 7rem; min-height: 44px; font-size: 1rem; padding: 0.3rem 0.5rem;
+    border: 1px solid #ccc; border-radius: 8px; box-sizing: border-box; }
   .cambio { padding: 0.6rem 0; border-top: 1px solid #eee; }
   .cambio:first-child { border-top: none; }
   .cambio .quien { font-weight: 700; display: block; }
@@ -96,11 +106,56 @@
   </div>
   {% endif %}
 
+  {# CÓMO SALIÓ (dueño, 09/10): Cherry y Mango, en su envase o en caja de Día.
+     Solo en las fichas que lo eligen. Los kilos, solo en las por kilo. #}
+  {% if r.elige_envase and not r.sin_stock_del_sistema %}
+  <div class="tarjeta" data-como-salio>
+    <h2>¿Cómo salió?</h2>
+    <p class="dato">Hoy figura: <strong>{% if r.en_su_envase %}en su envase{% else %}en caja de Día{% endif %}</strong>{% if r.por_kilo and r.kilos_por_bulto is not none %} · {{ r.kilos_por_bulto|numero }} kg por bulto{% endif %}</p>
+    {% if r.de_hoy %}
+    <p class="ojo">Se armó hoy: lo corrige el que lo armó, desde Depósito.</p>
+    {% else %}
+    {% if r.remito_numero %}
+    <p class="ojo" data-remito>El remito {{ r.remito_numero }} ya salió con {{ r.remito_kilos|numero }} {% if r.por_kilo %}kg{% else %}unidades{% endif %}: no se toca. Se cobra lo que firme el súper.</p>
+    {% endif %}
+    <p class="ayuda">Ej.: figura en caja de Día y salió en el descartable de 7 kg. {% call info("Qué cambia") %}Se libera lo que se tomó mal y se toma lo que salió de verdad: en su envase salen cajones de la compra y no se cobra la caja de Día; en caja de Día salen cajas de la guía R y se cobra la caja. En Cherry los kilos enviados pasan a ser bultos por los kilos de cada bulto; en Mango no cambian. La fecha del armado no cambia, y el remito ya emitido tampoco. Si otro pedido queda sin mercadería o pierde una guía que eligieron a mano, no deja y dice cuál. Queda anotado quién, cuándo y qué cambió.{% endcall %}</p>
+    <form method="post" action="{{ accion }}/como-salio{{ q_volver(volver) }}">
+      <fieldset class="como-sale">
+        <legend>¿Cómo salió de verdad?</legend>
+        <label><input type="radio" name="como_sale" value="su_envase" required> En su envase</label>
+        <label><input type="radio" name="como_sale" value="caja" required> En caja de Día</label>
+      </fieldset>
+      {% if r.por_kilo %}
+      <label for="como-kilos">¿Cuántos kilos iba cada bulto?</label>
+      <input type="number" class="kilos" id="como-kilos" name="kilos_por_bulto" min="0.01" step="0.01"
+             inputmode="decimal" value="{{ r.como_kilos }}">
+      <div class="kilos-rapidos">
+        <button type="button" onclick="document.getElementById('como-kilos').value = 5">5 kg</button>
+        <button type="button" onclick="document.getElementById('como-kilos').value = 7">7 kg</button>
+      </div>
+      {% endif %}
+      <label for="quien-como">¿Quién lo corrige?</label>
+      <input type="text" id="quien-como" name="quien" required maxlength="80" placeholder="Ej.: Marta"
+             value="{{ r.como_quien }}">
+      <label for="clave-como">Contraseña especial</label>
+      <input type="password" id="clave-como" name="clave_especial" required autocomplete="new-password">
+      <button type="submit" class="guardar">Guardar cómo salió</button>
+    </form>
+    {% endif %}
+  </div>
+  {% endif %}
+
   <div class="tarjeta">
     <h2>Lo corregido</h2>
     {% for c in r.historial %}
     <div class="cambio" data-cambio>
       <span class="quien">{{ c.quien }} · {{ c.cuando }}</span>
+      {% if c.que == "como_salio" %}
+      <span class="detalle">Cómo salió: {% if c.en_su_envase_antes %}en su envase{% else %}en caja de Día{% endif %} → {% if c.en_su_envase_ahora %}en su envase{% else %}en caja de Día{% endif %}</span>
+      {% if c.kilos_antes is not none or c.kilos_ahora is not none %}
+      <span class="detalle">Kilos: {{ c.kilos_antes|numero }} → {{ c.kilos_ahora|numero }}</span>
+      {% endif %}
+      {% endif %}
       <span class="detalle">Antes: {% for p in c.antes %}{{ p.bultos|numero }} de {{ p.lote }}{% if not loop.last %}, {% endif %}{% endfor %}</span>
       <span class="detalle">Ahora: {% for p in c.ahora %}{{ p.bultos|numero }} de {{ p.lote }}{% if not loop.last %}, {% endif %}{% endfor %}</span>
       <span class="detalle">Costo: {{ c.costo_antes|moneda or "sin precio" }} → {{ c.costo_ahora|moneda or "sin precio" }}{% if c.diferencia is not none %} ({% if c.diferencia > 0 %}+{% endif %}{{ c.diferencia|moneda }}){% endif %}</span>

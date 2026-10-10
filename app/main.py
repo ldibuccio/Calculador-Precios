@@ -130,6 +130,7 @@ from app.db import (
     listar_retroactivos,
     que_tomo_esa_mercaderia,
     corregir_lotes_de_dia_anterior,
+    corregir_como_salio_de_dia_anterior,
     renglon_para_corregir_lote,
     renglones_armados_del_dia,
     remito_por_id,
@@ -9422,6 +9423,12 @@ def _pantalla_lote_del_renglon(request: Request, renglon_id: int, *, error=None,
         cambio["diferencia"] = (None if cambio["costo_antes"] is None or cambio["costo_ahora"] is None
                                 else float(cambio["costo_ahora"]) - float(cambio["costo_antes"]))
     precarga = precarga or {}
+    renglon["por_kilo"] = renglon.get("unidad_venta") == "kilo"
+    bultos = float(renglon["bultos_armados"] or 0)
+    renglon["kilos_por_bulto"] = (round(float(renglon["kilos_enviados"]) / bultos, 2)
+                                  if renglon["kilos_enviados"] is not None and bultos else None)
+    renglon["como_quien"] = precarga.get("como_quien", "")
+    renglon["como_kilos"] = precarga.get("como_kilos", "")
     for lote in renglon["lotes"]:
         lote["clave"] = f"{lote['tipo_lote']}:{lote['origen_id']}"
         # El número crudo y no `|numero`: un input type=number no lee la coma.
@@ -9432,6 +9439,47 @@ def _pantalla_lote_del_renglon(request: Request, renglon_id: int, *, error=None,
         "atras": vuelta(request, defecto), "volver": request.query_params.get("volver"),
         "accion": f"{LOTE_DE_PEDIDO}/{renglon_id}",
     }, status_code=status_code)
+
+
+@app.post(LOTE_DE_PEDIDO + "/{renglon_id}/como-salio")
+def corregir_como_salio_del_renglon(
+    request: Request,
+    renglon_id: int,
+    como_sale: str = Form(""),
+    kilos_por_bulto: str = Form(""),
+    quien: str = Form(""),
+    clave_especial: str = Form(""),
+):
+    """CÓMO SALIÓ, en su envase o en caja de Día (dueño, 09/10): mismas reglas
+    que de qué guía salió. La fecha del armado y el remito emitido no se tocan."""
+    precarga = {"como_quien": quien, "como_kilos": kilos_por_bulto}
+    en_su_envase = {"su_envase": True, "caja": False}.get(como_sale.strip())
+    error = None
+    kilos = None
+    if en_su_envase is None:
+        error = "Elegí cómo salió: en su envase o en caja de Día."
+    elif kilos_por_bulto.strip():
+        try:
+            kilos = float(kilos_por_bulto.replace(",", "."))
+        except ValueError:
+            error = "Los kilos por bulto tienen que ser un número."
+    if error is None:
+        error = _clave_y_quien_del_retroactivo(clave_especial, quien)
+    if error is None:
+        try:
+            motivos = corregir_como_salio_de_dia_anterior(renglon_id, en_su_envase, kilos, quien=quien,
+                                                          hoy=_hoy_argentina())
+        except ValueError as motivo:
+            error = str(motivo)
+        except Exception as error_db:
+            raise HTTPException(status_code=500, detail=f"No se pudo corregir: {error_db}") from error_db
+        else:
+            if motivos:
+                error = " ".join(motivos) + " Hasta que eso se corrija, no se puede cambiar cómo salió."
+    if error is not None:
+        return _pantalla_lote_del_renglon(request, renglon_id, error=error, precarga=precarga, status_code=400)
+    return RedirectResponse(f"{LOTE_DE_PEDIDO}/{renglon_id}?" + urlencode(
+        {"aviso": "Listo: quedó corregido cómo salió, con quién lo hizo."}), status_code=303)
 
 
 @app.get(LOTE_DE_PEDIDO + "/{renglon_id}")

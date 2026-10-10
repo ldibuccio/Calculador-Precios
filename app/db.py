@@ -21272,7 +21272,14 @@ def renglon_para_corregir_lote(renglon_id: int) -> dict | None:
                        COALESCE(NULLIF(TRIM(fl.nombre_cliente), ''), a.nombre) AS nombre_venta,
                        """ + _SQL_BULTOS_DE_PRIMERA + """ AS bultos,
                        (r.armado_el AT TIME ZONE 'America/Argentina/Buenos_Aires')::date AS dia_del_armado,
-                       r.armado_el
+                       r.armado_el, r.en_su_envase, r.kilos_enviados,
+                       COALESCE(r.cantidad_armada, r.cantidad) AS bultos_armados,
+                       (fl.envase_id IS NOT NULL AND COALESCE(fl.envase_variable, false)) AS elige_envase,
+                       fl.unidad_venta, fl.contenido_caja,
+                       (SELECT rm.numero FROM remitos_renglones rr JOIN remitos rm ON rm.id = rr.remito_id
+                         WHERE rr.pedido_renglon_id = r.id LIMIT 1) AS remito_numero,
+                       (SELECT rr.kilos_enviados FROM remitos_renglones rr
+                         WHERE rr.pedido_renglon_id = r.id LIMIT 1) AS remito_kilos
                 FROM pedidos_renglones r
                 JOIN pedidos p ON p.id = r.pedido_id
                 JOIN clientes cl ON cl.id = p.cliente_id
@@ -21290,7 +21297,8 @@ def renglon_para_corregir_lote(renglon_id: int) -> dict | None:
             entradas, salidas = _entradas_y_salidas_stock(cursor, renglon["articulo_id"])
             cursor.execute(
                 """
-                SELECT quien, corregido_el, antes, ahora, costo_antes, costo_ahora
+                SELECT quien, corregido_el, antes, ahora, costo_antes, costo_ahora, que,
+                       en_su_envase_antes, en_su_envase_ahora, kilos_antes, kilos_ahora
                 FROM pedidos_renglones_lotes_correcciones
                 WHERE renglon_id = %s ORDER BY corregido_el DESC, id DESC
                 """,
@@ -21359,6 +21367,112 @@ def anular_reproceso(reproceso_id: int) -> list[str]:
             cursor.execute(
                 "UPDATE reprocesos SET anulado_el = now() WHERE id = %s AND anulado_el IS NULL",
                 (reproceso_id,),
+            )
+        conexion.commit()
+        return []
+    finally:
+        conexion.close()
+
+
+def corregir_como_salio_de_dia_anterior(renglon_id: int, en_su_envase: bool, kilos_por_bulto, *,
+                                        quien: str, hoy: date) -> list[str]:
+    """CÓMO SALIÓ UN RENGLÓN DE UN DÍA ANTERIOR (dueño, 09/10): en su envase
+    (el descartable del proveedor) o en caja de Día, en Cherry y Mango.
+    Devuelve los motivos por los que NO se pudo (vacío = quedó guardado).
+
+    La fecha del armado no se toca. Cambia `en_su_envase` y con él todo lo
+    que lo lee: las cajas de la guía R se liberan y se toman los cajones de
+    la compra (o al revés), la caja de Día deja de cobrarse (o se cobra), y
+    en las fichas por KILO (Cherry) los kilos enviados pasan a ser bultos ×
+    los kilos por bulto nuevos. En las por unidad (Mango) la cantidad no
+    cambia nunca: 10 unidades en las dos formas. Lo que había elegido a mano
+    se borra (era de la otra forma). El remito ya emitido no se toca.
+
+    El control es el de la corrección de lote (`_quienes_quedan_sin`): frena
+    si otro armado o una guía R queda sin mercadería o pierde lo elegido a
+    mano, o si este renglón queda sin lote. Historial en
+    `pedidos_renglones_lotes_correcciones` con que = 'como_salio'.
+    """
+    from core.costo_real import atribuir_costos_fifo
+
+    quien = " ".join((quien or "").split())
+    if not quien:
+        raise ValueError("Poné quién lo corrige.")
+    conexion = obtener_conexion()
+    try:
+        with conexion.cursor() as cursor:
+            articulo_id, dia_del_armado = _renglon_armado_para_corregir(cursor, renglon_id)
+            if dia_del_armado >= hoy:
+                raise ValueError("Ese renglón se armó hoy: cómo salió lo corrige el que lo armó, desde Depósito.")
+            cursor.execute(
+                """
+                SELECT r.en_su_envase, r.kilos_enviados, COALESCE(r.cantidad_armada, r.cantidad),
+                       f.unidad_venta, f.contenido_caja, f.envase_id IS NOT NULL AND f.envase_variable
+                FROM pedidos_renglones r
+                LEFT JOIN fichas_logistica f ON f.id = r.ficha_id
+                WHERE r.id = %s
+                """,
+                (renglon_id,),
+            )
+            antes_envase, kilos_antes, bultos, unidad, contenido, elige = cursor.fetchone()
+            if not elige:
+                raise ValueError("Este renglón sale como dice su ficha: no se elige si va en su envase o en caja.")
+            if bool(antes_envase) == bool(en_su_envase):
+                raise ValueError("Ya figura así: no hay nada que corregir.")
+            kilos_ahora = kilos_antes
+            if unidad == "kilo":
+                if kilos_por_bulto is None:
+                    if en_su_envase:
+                        raise ValueError("En su envase hay que poner cuántos kilos va cada bulto.")
+                    kilos_por_bulto = contenido
+                if kilos_por_bulto is None or float(kilos_por_bulto) <= 0:
+                    raise ValueError("Los kilos por bulto tienen que ser más que cero.")
+                kilos_ahora = round(float(bultos) * float(kilos_por_bulto), 2)
+
+            entradas, salidas = _entradas_y_salidas_stock(cursor, articulo_id)
+            _salida_del_renglon(salidas, renglon_id)
+            corregidas = []
+            for salida in salidas:
+                salida = dict(salida)
+                if salida.get("renglon_id") == renglon_id:
+                    salida.pop("lotes_elegidos", None)
+                    salida["en_su_envase"] = bool(en_su_envase)
+                    salida["ficha_con_envase"] = not en_su_envase
+                corregidas.append(salida)
+            antes = atribuir_costos_fifo(entradas, [dict(s) for s in salidas])
+            despues = atribuir_costos_fifo(entradas, corregidas)
+            renglon_antes = next(s for s in antes if s.get("renglon_id") == renglon_id)
+            renglon_despues = next(s for s in despues if s.get("renglon_id") == renglon_id)
+
+            motivos = []
+            sin_lote = _bultos_sin_lote(renglon_despues) - _bultos_sin_lote(renglon_antes)
+            if sin_lote > 0.0001:
+                que_falta = "cajones de la compra" if en_su_envase else "cajas armadas de esta ficha"
+                motivos.append(f"Así, {round(sin_lote, 2):g} bultos de este renglón quedan sin lote: "
+                               f"el {dia_del_armado:%d/%m} no había {que_falta}.")
+            motivos += _quienes_quedan_sin(cursor, articulo_id, antes, despues,
+                                           saltear=lambda s: s.get("renglon_id") == renglon_id)
+            if motivos:
+                conexion.rollback()
+                return motivos
+
+            cursor.execute(
+                "UPDATE pedidos_renglones SET en_su_envase = %s, kilos_enviados = %s WHERE id = %s",
+                (bool(en_su_envase), kilos_ahora, renglon_id),
+            )
+            _borrar_lotes_elegidos(cursor, renglon_id)
+            cursor.execute(
+                """
+                INSERT INTO pedidos_renglones_lotes_correcciones
+                    (renglon_id, quien, que, antes, ahora, costo_antes, costo_ahora,
+                     en_su_envase_antes, en_su_envase_ahora, kilos_antes, kilos_ahora)
+                VALUES (%s, %s, 'como_salio', %s::jsonb, %s::jsonb, %s, %s, %s, %s, %s, %s)
+                """,
+                (renglon_id, quien,
+                 json.dumps(_de_donde_salio(renglon_antes, entradas), ensure_ascii=False),
+                 json.dumps(_de_donde_salio(renglon_despues, entradas), ensure_ascii=False),
+                 _costo_de(renglon_antes), _costo_de(renglon_despues), bool(antes_envase), bool(en_su_envase),
+                 None if unidad != "kilo" else kilos_antes, None if unidad != "kilo" else kilos_ahora),
             )
         conexion.commit()
         return []
