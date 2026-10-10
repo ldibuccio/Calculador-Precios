@@ -89,7 +89,7 @@
     <p class="ojo">El día del armado no había mercadería de este artículo para elegir.</p>
     {% else %}
     <h2>¿De qué guía salió de verdad?</h2>
-    <p class="ayuda">Ej.: 30 de la guía R711 y 0 de la R683. Lo que no repartas sale del más viejo primero. {% call info("Cuándo no deja") %}Se rearma el stock con el cambio puesto. Si otro armado o una guía R ya había usado esa mercadería, o alguno queda sin lote, la pantalla dice cuál y no guarda. La fecha del armado no cambia: cambia de dónde salió. Queda anotado quién lo cambió, cuándo, de dónde salía antes y la diferencia de costo.{% endcall %}</p>
+    <p class="ayuda">Ej.: 30 de la guía R711 y 0 de la R683. Lo que no repartas sale del más viejo primero. {% call info("Cuándo no deja") %}Se rearma el stock con el cambio puesto. Si otro armado o una guía R queda sin mercadería o pierde una guía que eligieron a mano, la pantalla dice cuál y no guarda. Que a otro pedido le toque otra guía no frena. La fecha del armado no cambia: cambia de dónde salió. Queda anotado quién lo cambió, cuándo, de dónde salía antes y la diferencia de costo.{% endcall %}</p>
     <form method="post" action="{{ accion }}{{ q_volver(volver) }}">
       {% for l in r.lotes %}
       <div class="fila-lote">

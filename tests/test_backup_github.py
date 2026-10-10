@@ -116,6 +116,17 @@ def test_el_AVISO_salta_un_MES_antes_y_en_rojo_si_vencio_falta_o_no_anda():
         assert bg.aviso_de_la_llave({"estado": estado, "vence": None}, ahora)["nivel"] == "rojo"
 
 
+def test_la_llave_SIN_VENCIMIENTO_de_hoy_anda_en_VERDE_y_no_avisa_nada():
+    """La que cargó el dueño el 09/10 no vence: GitHub no manda el encabezado.
+    El rival: la que no anda, que sin vencimiento igual es roja."""
+    ahora = _ar(9, 12)
+    llave = bg.leer_la_llave(_Cliente(200), TOKEN)
+    assert llave == {"estado": "ok", "vence": None}
+    assert bg.aviso_de_la_llave(llave, ahora) == {
+        "nivel": "ok", "texto": "La llave de GitHub anda y no tiene vencimiento."}
+    assert bg.aviso_de_la_llave({"estado": "no_anda", "vence": None}, ahora)["nivel"] == "rojo"
+
+
 # --- el reloj de fondo ----------------------------------------------------------
 
 def test_el_RELOJ_lanza_una_vez_y_sin_llave_no_hace_nada(monkeypatch):

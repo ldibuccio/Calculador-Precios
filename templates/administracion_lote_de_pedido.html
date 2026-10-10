@@ -49,7 +49,7 @@
      su pantalla, donde se corrige con la contraseña especial. #}
   <div class="tarjeta">
     <h2>¿De qué día es el pedido?</h2>
-    <p class="ayuda">Ej.: el pedido de Día del 05/10 salió de la guía R711 y no de la R683. {% call info("Cuándo no deja") %}Lo armado hoy lo corrige el que lo armó, desde Depósito → Armar pedido → Elegir el lote. Lo de días anteriores se corrige acá, con la contraseña especial, y queda anotado quién lo cambió. Si esa mercadería ya la tomó otro armado o una guía R, la pantalla dice cuál y no deja.{% endcall %}</p>
+    <p class="ayuda">Ej.: el pedido de Día del 05/10 salió de la guía R711 y no de la R683. {% call info("Cuándo no deja") %}Lo armado hoy lo corrige el que lo armó, desde Depósito → Armar pedido → Elegir el lote. Lo de días anteriores se corrige acá, con la contraseña especial, y queda anotado quién lo cambió. Si con eso otro armado o una guía R queda sin mercadería, o pierde una guía que eligieron a mano, la pantalla dice cuál y no deja.{% endcall %}</p>
     <form class="filtros" method="get" action="{{ base }}">
       <label>Día del pedido
         <input type="date" name="fecha" required value="{{ fecha.isoformat() }}">

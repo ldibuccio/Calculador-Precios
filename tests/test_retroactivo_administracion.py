@@ -151,9 +151,60 @@ def test_la_merma_que_le_SACA_al_armado_NO_entra_y_dice_CUAL(galpon):
     respuesta = _merma(_cliente(m, "administracion"), "2026-09-08", 3)
 
     assert respuesta.status_code == 400
-    assert "La tomó el armado del pedido de EJEMPLO Verduleria del 10/09." in respuesta.text
+    assert "El armado del pedido de EJEMPLO Verduleria del 10/09 se queda sin mercadería." in respuesta.text
     assert "Hasta que eso se elimine" in respuesta.text
     assert _mermas(sql) == [] and sql("SELECT count(*) FROM retroactivos")[0][0] == 0
+
+
+# EL CONTROL FLOJO (dueño, 10/10): con una compra 12 del 06/09, la merma de 3
+# del 08/09 le cambia la guía al armado (7 de la 11 y 1 de la 12) pero no lo
+# deja sin mercadería: entra. Con el control estricto, esto frenaba.
+COMPRA_12 = """insert into compras (id, proveedor_id, articulo_id, fecha_operacion, cantidad_cajones,
+                     contenido_por_cajon, cantidad_kilos, importe, estado, procesada_el,
+                     cantidad_cajones_real, contenido_por_cajon_real) overriding system value
+  values (12, 1, 1, '2026-09-06', 10, 18, 180, 90, 'recepcionado', '2026-09-06 18:00-03', 10, 18)"""
+
+
+def test_la_merma_que_solo_le_CAMBIA_la_guia_al_armado_ENTRA(galpon):
+    d, m, sql = galpon
+    _con_clave(d)
+    sql(COMPRA_12)
+    respuesta = _merma(_cliente(m, "administracion"), "2026-09-08", 3)
+    assert respuesta.status_code == 303, respuesta.text[-600:]
+    assert _mermas(sql) == [(date(2026, 9, 8), 3)]
+    from core.costo_real import atribuir_costos_fifo
+    entradas, salidas = d.entradas_y_salidas_stock_articulo(1)
+    armado = next(s for s in atribuir_costos_fifo(entradas, salidas) if s["tipo"] == "armado")
+    assert sorted((c["origen_id"], c["bultos"]) for c in armado["consumos_lotes"]) == [(11, 7), (12, 1)]
+
+
+def test_el_PASE_que_solo_le_CAMBIA_la_guia_al_armado_ENTRA(galpon):
+    d, m, sql = galpon
+    _con_clave(d)
+    sql(COMPRA_12)
+    pase = _cliente(m, "administracion").post("/administracion/retroactivo/pase-a-segunda", data={
+        "articulo_id": "1", "que_pasa": "sueltos", "cantidad": "3", "motivo": "podrido",
+        "fecha": "2026-09-08", "clave_especial": CLAVE, "quien": "Juan"}, follow_redirects=False)
+    assert pase.status_code == 303, pase.text[-600:]
+    assert sql("SELECT tipo, quien FROM retroactivos") == [("pase_a_segunda", "Juan")]
+
+
+def test_la_DEVOLUCION_no_pasa_de_lo_que_QUEDA_de_su_compra_y_lo_que_queda_ENTRA(galpon):
+    """En la devolución el control casi no tiene qué frenar: la pantalla ya no
+    deja devolver más de lo que queda de esa compra contando todo lo que salió
+    después. Con la compra 12, lo que queda de la 11 (2) entra y el armado
+    sigue entero de la 11."""
+    d, m, sql = galpon
+    _con_clave(d)
+    sql(COMPRA_12)
+    adm = _cliente(m, "administracion")
+    datos = {"proveedor_id": "1", "compra_id": "11", "motivo": "fea", "fecha": "2026-09-08",
+             "clave_especial": CLAVE, "quien": "Marta"}
+    assert "quedan 2 bultos" in adm.post("/administracion/retroactivo/devolver",
+                                         data={**datos, "cantidad": "3"}).text
+    assert adm.post("/administracion/retroactivo/devolver", data={**datos, "cantidad": "2"},
+                    follow_redirects=False).status_code == 303
+    assert sql("SELECT tipo FROM retroactivos") == [("devolucion",)]
 
 
 def test_DESPUES_del_armado_solo_hay_lo_que_quedo(galpon):
@@ -172,7 +223,7 @@ def test_la_GUIA_R_que_la_tomo_tambien_frena_y_se_nombra(galpon):
            values (7, 1, '2026-09-11', 2, 2, 0, 0, 100)""")
     sql("insert into reprocesos_consumos (reproceso_id, origen, compra_id, bultos) values (7, 'compra', 11, 2)")
     texto = _merma(_cliente(m, "administracion"), "2026-09-08", 1).text
-    assert "La tomó la guía R7 del 11/09." in texto
+    assert "La guía R7 del 11/09 se queda sin mercadería." in texto
 
 
 def test_FECHA_de_hoy_futura_o_sin_quien_no_es_retroactivo(galpon):
@@ -210,7 +261,7 @@ def test_DEVOLUCION_y_PASE_con_fecha_anterior_tambien_frenan_y_registran(galpon)
         "articulo_id": "1", "que_pasa": "sueltos", "cantidad": "1", "motivo": "podrido",
         "fecha": "2026-09-08", "clave_especial": CLAVE, "quien": "Juan"}, follow_redirects=False)
     assert pase.status_code == 400
-    assert "La tomó el armado del pedido de EJEMPLO Verduleria del 10/09." in pase.text
+    assert "El armado del pedido de EJEMPLO Verduleria del 10/09 se queda sin mercadería." in pase.text
     assert sql("SELECT tipo, quien FROM retroactivos ORDER BY id") == [("devolucion", "Marta")]
 
 

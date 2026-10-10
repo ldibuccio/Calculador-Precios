@@ -114,11 +114,14 @@ mano salen en el momento. Así que:
   corrida lanzada a mano desde GitHub siempre corre.
 - **La llave** es la variable `BACKUP_GITHUB_TOKEN` de Railway: un token
   fine-grained de GitHub, solo el repo Calculador-Precios, solo permiso de
-  Actions (lectura y escritura), con vencimiento de un año. Sin la llave el
+  Actions (lectura y escritura). **No vence**: el dueño la regeneró sin
+  vencimiento (09/10), cargada en Frutamax y Palmala. Sin la llave el
   sistema no lanza nada y quedan los schedule.
 - **Gerencia → Backups avisa** arriba si la llave falta, si no anda, o si
   vence en menos de 30 días (`DIAS_DE_AVISO`): la fecha la manda GitHub en
-  cada respuesta (`github-authentication-token-expiration`). Se le pregunta
+  cada respuesta (`github-authentication-token-expiration`). Sin vencimiento
+  (la de hoy) dice en verde "La llave de GitHub anda y no tiene
+  vencimiento." Se le pregunta
   una vez por hora como mucho.
 - Si la llave está en las dos aplicaciones, las dos lanzan: el workflow corre
   de a uno y el segundo se saltea.
