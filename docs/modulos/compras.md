@@ -86,10 +86,41 @@ recibió, o se recibió y no salió nada, lo dice.
   `atribuir_costos_fifo`), no de una cuenta propia. Dos caminos: el armado que
   tomó del lote de la compra, y el que tomó de una guía R que consumió de la
   compra; ahí le toca la PARTE de la guía que vino de esta compra
-  (`reprocesos_consumos`).
+  (`reprocesos_consumos`), **en proporción a los KILOS que puso** cada compra
+  (dueño, 12/10; hasta entonces, a los bultos). Es la misma cuenta de "Cómo
+  rindió" (`_kilos_que_entraron_a_las_guias`).
 - Un renglón que salió de dos compras se muestra con lo de ESTA y dice "de un
   renglón de N"; los kilos (enviados y recibidos) van en la misma proporción.
 - Tests: `tests/test_a_donde_fue.py`, contra Postgres, con la compra rival.
+
+## Detalle de la compra: "Cómo rindió" (12/10, dueño)
+
+Para controlar cómo se compra y cómo se arma, con números TEÓRICOS: nada de
+lo cobrado, lo recibido por el súper, la venta ni el resultado. Solo en las
+compras que fueron a alguna guía R, en Compras → Buscar compras y en
+Administración → Guías mercadería (la misma pantalla).
+
+- **Pagado**: importe por cajón × cajones aceptados. **Comprado** (declarado) y
+  **recibido** (pesado: `contenido_por_cajon_real`), en kilos.
+- **Por guía R** (de `reprocesos_consumos`, el documento de la guía): los
+  cajones de esta compra, los kilos que entraron (cajones × kg pesados por
+  cajón), la primera (cajas × kg de la ficha: **las cajas armadas no se
+  pesan**, lo dice la "i"), y segunda y merma, que son **CAJONES DE ORIGEN**
+  con el peso promedio del cajón que entró a esa guía (dueño, 12/10).
+- **Una guía que mezcla compras se reparte por los KILOS que puso cada una**
+  (R788: 28 cajones de 10 kg de la 1019 y 2 de 12 de la 1050 → a la 1019 le
+  toca 280 de 304 kg, 92,1%).
+- **Total**: kg que entraron, kg de primera y % de primera. Y **los dos números
+  clave**, grandes: kg de primera por cajón pagado (que fue a proceso) y costo
+  por kg de primera (importe de esos cajones / kg de primera).
+- **Si la cuenta de una guía no cierra** (lo que entró contra primera +
+  segunda + merma) no es un error: una nota chica, sin rojo (dueño, 12/10).
+- La primera solo tiene kilos si la ficha vende por kilo; si no, la guía
+  muestra las cajas y queda afuera de los kilos, y se dice.
+
+`como_rindio_la_compra` (app/db.py). Tests: `tests/test_como_rindio.py`,
+contra Postgres, con el caso del Morrón con nombres inventados y la compra
+rival.
 
 ## Reingreso por rechazo: el motivo viene escrito (02/10, dueño)
 
