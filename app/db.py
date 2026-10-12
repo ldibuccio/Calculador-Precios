@@ -4183,6 +4183,170 @@ def dependencias_del_lote_de_compra(
 
 
 
+def _kilos_que_entraron_a_las_guias(cursor, compra_id: int) -> dict:
+    """LOS KILOS QUE ENTRARON a cada guía R (no anulada) que tomó de esta compra
+    (dueño, 12/10): {guia: {"kg", "bultos", "por_compra": {compra: {"bultos", "kg"}}}}.
+
+    Cada bulto tomado de una compra pesa lo que pesó un cajón de esa compra al
+    recibirla (`contenido_por_cajon_real`, o el declarado si no se pesó), y
+    solo si la compra está en KILOS (`articulos.unidad_compra` kilo o vacío).
+    Lo que la guía tomó de otro lado (un rechazo, un ajuste) o de una compra
+    que no está en kilos pesa el promedio de lo que sí se sabe de esa guía. Si
+    no se sabe nada, cuenta bultos: todos pesan igual.
+
+    Sale de `reprocesos_consumos`, el documento congelado de la guía, igual
+    que "A dónde fue": es lo que el depósito dijo que tomó."""
+    cursor.execute(
+        """
+        SELECT rc.reproceso_id, rc.compra_id, rc.bultos,
+               CASE WHEN coalesce(a.unidad_compra, 'kilo') = 'kilo'
+                    THEN coalesce(c.contenido_por_cajon_real, c.contenido_por_cajon) END
+        FROM reprocesos_consumos rc
+        JOIN reprocesos rp ON rp.id = rc.reproceso_id
+        LEFT JOIN compras c ON c.id = rc.compra_id
+        LEFT JOIN articulos a ON a.id = c.articulo_id
+        WHERE rp.anulado_el IS NULL AND rc.reproceso_id IN
+              (SELECT reproceso_id FROM reprocesos_consumos WHERE compra_id = %s)
+        ORDER BY rc.reproceso_id, rc.id
+        """,
+        (compra_id,),
+    )
+    por_guia: dict = {}
+    for guia, compra, bultos, kg_por_bulto in cursor.fetchall():
+        por_guia.setdefault(guia, []).append(
+            (compra, float(bultos), None if kg_por_bulto is None else float(kg_por_bulto)))
+    resultado = {}
+    for guia, consumos in por_guia.items():
+        sabidos = [(b, k) for _, b, k in consumos if k is not None and k > 0]
+        promedio = (sum(b * k for b, k in sabidos) / sum(b for b, _ in sabidos)) if sabidos else 1.0
+        por_compra: dict = {}
+        for compra, bultos, kg_por_bulto in consumos:
+            kg = bultos * (kg_por_bulto if kg_por_bulto else promedio)
+            parte = por_compra.setdefault(compra, {"bultos": 0.0, "kg": 0.0})
+            parte["bultos"] += bultos
+            parte["kg"] += kg
+        resultado[guia] = {"kg": sum(p["kg"] for p in por_compra.values()),
+                           "bultos": sum(p["bultos"] for p in por_compra.values()),
+                           "por_compra": por_compra}
+    return resultado
+
+
+def como_rindio_la_compra(compra_id: int) -> dict | None:
+    """CÓMO RINDIÓ (dueño, 12/10): de lo que esta compra mandó a guías R, cuántos
+    kilos de primera salieron. Para controlar cómo se compra y cómo se arma,
+    con números TEÓRICOS: nada de lo cobrado, lo recibido por el súper ni la
+    venta. None si la compra no fue a ninguna guía R.
+
+    - Pagado: importe por cajón × cajones aceptados (`cantidad_cajones_real`).
+    - Comprado (declarado) y recibido (pesado), en kilos.
+    - Por guía R: los bultos de esta compra, los kilos que entraron (bultos ×
+      kg pesados por cajón), la primera (cajas × kg de la ficha: las cajas
+      armadas NO se pesan), y segunda y merma, que son CAJONES DE ORIGEN con
+      el peso promedio del cajón que entró a esa guía. Si la guía mezcla
+      compras, a esta le toca la parte de los KILOS que puso.
+    - Los dos números clave: kg de primera por cajón pagado, y costo por kg de
+      primera (importe de los cajones que fueron a proceso / kg de primera).
+
+    La primera solo tiene kilos si la ficha vende por kilo: si no (o la guía no
+    tiene ficha), esa guía muestra las cajas y no entra en los kilos de
+    primera; se dice. Si la cuenta de una guía no cierra (primera + segunda +
+    merma distinto de lo que entró) no es un error: es una nota.
+    """
+    conexion = obtener_conexion()
+    try:
+        with conexion.cursor() as cursor:
+            cursor.execute(
+                """
+                SELECT c.cantidad_cajones, c.contenido_por_cajon, c.cantidad_cajones_real,
+                       c.contenido_por_cajon_real, c.importe, coalesce(a.unidad_compra, 'kilo') = 'kilo'
+                FROM compras c JOIN articulos a ON a.id = c.articulo_id
+                WHERE c.id = %s
+                """,
+                (compra_id,),
+            )
+            fila = cursor.fetchone()
+            if fila is None:
+                return None
+            cajones, kg_declarado, cajones_real, kg_pesado, importe, en_kilos = fila
+            kilos = _kilos_que_entraron_a_las_guias(cursor, compra_id)
+            if not kilos:
+                return None
+            cursor.execute(
+                """
+                SELECT rp.id, rp.fecha_operacion, rp.bultos_tomados, rp.bultos_primera, rp.bultos_segunda,
+                       rp.bultos_merma, CASE WHEN f.unidad_venta = 'kilo' THEN f.contenido_caja END
+                FROM reprocesos rp LEFT JOIN fichas_logistica f ON f.id = rp.ficha_id
+                WHERE rp.id = ANY(%s) AND rp.anulado_el IS NULL
+                ORDER BY rp.fecha_operacion, rp.id
+                """,
+                (sorted(kilos),),
+            )
+            guias_crudas = cursor.fetchall()
+    finally:
+        conexion.close()
+
+    def _n(valor):
+        return None if valor is None else float(valor)
+
+    cajones, cajones_real, importe = _n(cajones), _n(cajones_real), _n(importe)
+    kg_declarado, kg_pesado = _n(kg_declarado), _n(kg_pesado)
+    aceptados = cajones_real if cajones_real is not None else cajones
+    guias = []
+    for guia, fecha, tomados, primera, segunda, merma, kg_caja in guias_crudas:
+        de_la_guia = kilos[guia]
+        mia = de_la_guia["por_compra"][compra_id]
+        parte = mia["kg"] / de_la_guia["kg"] if de_la_guia["kg"] > 0 else 0.0
+        kg_por_cajon = de_la_guia["kg"] / de_la_guia["bultos"] if de_la_guia["bultos"] else 0.0
+        kg_primera_guia = None if kg_caja is None else float(primera) * float(kg_caja)
+        kg_segunda_guia = float(segunda) * kg_por_cajon
+        kg_merma_guia = float(merma) * kg_por_cajon
+        declarado_guia = (kg_primera_guia or 0.0) + kg_segunda_guia + kg_merma_guia
+        guias.append({
+            "numero": guia, "fecha": fecha, "bultos": round(mia["bultos"], 2),
+            "bultos_de_la_guia": round(de_la_guia["bultos"], 2),
+            "kg_entraron": round(mia["kg"], 2) if en_kilos else None,
+            "cajas_primera": round(float(primera) * parte, 2),
+            "kg_caja": None if kg_caja is None else float(kg_caja),
+            "kg_primera": None if kg_primera_guia is None or not en_kilos else round(kg_primera_guia * parte, 2),
+            "kg_segunda": round(kg_segunda_guia * parte, 2) if en_kilos else None,
+            "kg_merma": round(kg_merma_guia * parte, 2) if en_kilos else None,
+            "mezcla": len(de_la_guia["por_compra"]) > 1,
+            "parte": round(parte * 100, 1),
+            # La nota chica (dueño, 12/10): no es un error.
+            "no_cierra_por": (round((de_la_guia["kg"] - declarado_guia) * parte, 2)
+                              if en_kilos and kg_primera_guia is not None
+                              and abs(de_la_guia["kg"] - declarado_guia) > 0.05 else None),
+        })
+
+    con_kilos = [g for g in guias if g["kg_primera"] is not None]
+    bultos_a_proceso = round(sum(g["bultos"] for g in guias), 2)
+    bultos_con_kilos = sum(g["bultos"] for g in con_kilos)
+    kg_entraron = round(sum(g["kg_entraron"] for g in con_kilos), 2) if en_kilos else None
+    kg_primera = round(sum(g["kg_primera"] for g in con_kilos), 2) if con_kilos else None
+    return {
+        "importe_por_cajon": importe,
+        "pagado": None if importe is None or aceptados is None else round(importe * aceptados, 2),
+        "cajones": cajones, "cajones_real": cajones_real,
+        "kg_declarados": None if not en_kilos or cajones is None or kg_declarado is None
+                         else round(cajones * kg_declarado, 2),
+        "kg_pesados": None if not en_kilos or kg_pesado is None or aceptados is None
+                      else round(aceptados * kg_pesado, 2),
+        "kg_declarado_por_cajon": kg_declarado if en_kilos else None,
+        "kg_pesado_por_cajon": kg_pesado if en_kilos else None,
+        "guias": guias,
+        "bultos_a_proceso": bultos_a_proceso,
+        "kg_entraron": kg_entraron,
+        "kg_primera": kg_primera,
+        "pct_primera": (round(kg_primera / kg_entraron * 100, 1)
+                        if kg_primera is not None and kg_entraron else None),
+        "kg_primera_por_cajon": (round(kg_primera / bultos_con_kilos, 2)
+                                 if kg_primera is not None and bultos_con_kilos else None),
+        "costo_por_kg_primera": (round(importe * bultos_con_kilos / kg_primera, 2)
+                                 if importe is not None and kg_primera else None),
+        "guias_sin_kilos": len(guias) - len(con_kilos),
+    }
+
+
 def a_donde_fue_la_compra(compra_id: int) -> dict:
     """A DÓNDE FUE (dueño, 05/10): la mercadería de esta compra que salió al
     cliente, renglón armado por renglón armado, para el cuadro del detalle.
@@ -4193,6 +4357,10 @@ def a_donde_fue_la_compra(compra_id: int) -> dict:
         un documento congelado) y después un armado tomó del lote de la guía.
         A esa guía le corresponde la PARTE de lo que consumió que vino de esta
         compra (todo, si es la guía de una compra que vino armada).
+
+    La parte de la guía va EN PROPORCIÓN A LOS KILOS que puso cada compra
+    (dueño, 12/10), no a los bultos: un cajón de 10 kg y uno de 12 no ponen
+    lo mismo. Es la misma cuenta de "Cómo rindió".
 
     El reparto es el FIFO del sistema (`atribuir_costos_fifo`, el mismo de
     Corregir Recepción y de la Rentabilidad Real), no uno escrito acá. Los
@@ -4212,15 +4380,11 @@ def a_donde_fue_la_compra(compra_id: int) -> dict:
             if fila is None or fila[1] != "recepcionado":
                 return {"recepcionada": False, "renglones": [], "bultos": 0.0}
             articulo_id = fila[0]
-            # LA PARTE DE CADA GUÍA R que vino de esta compra.
-            cursor.execute(
-                "SELECT rc.reproceso_id, sum(rc.bultos) FILTER (WHERE rc.compra_id = %s), sum(rc.bultos) "
-                "FROM reprocesos_consumos rc JOIN reprocesos rp ON rp.id = rc.reproceso_id "
-                "WHERE rp.anulado_el IS NULL AND rc.reproceso_id IN "
-                "(SELECT reproceso_id FROM reprocesos_consumos WHERE compra_id = %s) "
-                "GROUP BY rc.reproceso_id", (compra_id, compra_id))
-            parte_de_guia = {g: float(de_aca) / float(total) for g, de_aca, total in cursor.fetchall()
-                             if de_aca and total}
+            # LA PARTE DE CADA GUÍA R que vino de esta compra, EN KILOS (dueño,
+            # 12/10): la misma que usa "Cómo rindió", para que digan lo mismo.
+            parte_de_guia = {g: kilos["por_compra"][compra_id]["kg"] / kilos["kg"]
+                             for g, kilos in _kilos_que_entraron_a_las_guias(cursor, compra_id).items()
+                             if kilos["kg"] > 0 and compra_id in kilos["por_compra"]}
             entradas, salidas = _entradas_y_salidas_stock(cursor, articulo_id)
             por_renglon: dict = {}
             for salida in atribuir_costos_fifo(entradas, salidas):

@@ -91,6 +91,7 @@ import psycopg2
 
 from app.db import (
     a_donde_fue_la_compra,
+    como_rindio_la_compra,
     FleteNoSePuede,
     actualizar_camion,
     actualizar_fletero,
@@ -8794,6 +8795,14 @@ def ver_detalle_compra(request: Request, compra_id: int, aviso: str | None = Non
         logger.exception("No se pudo armar A dónde fue de la compra %s", compra_id)
         a_donde = None
 
+    # CÓMO RINDIÓ (dueño, 12/10): de lo que fue a guías R, cuánto salió en
+    # primera. Igual que A dónde fue: si falla, el detalle se abre igual.
+    try:
+        como_rindio = como_rindio_la_compra(compra_id)
+    except (psycopg2.Error, RuntimeError):
+        logger.exception("No se pudo armar Cómo rindió de la compra %s", compra_id)
+        como_rindio = None
+
     diferencia_cajones_recepcion = None
     diferencia_contenido_recepcion = None
     if compra["cantidad_cajones_real"] is not None:
@@ -8817,6 +8826,7 @@ def ver_detalle_compra(request: Request, compra_id: int, aviso: str | None = Non
             "devoluciones": devoluciones,
             "bultos_devueltos": round(sum(d["bultos"] for d in devoluciones), 2),
             "a_donde": a_donde,
+            "como_rindio": como_rindio,
             "aviso": aviso,
             "error": error,
             "camino": _camino_de_guias(request),

@@ -139,6 +139,17 @@
   .a-donde .dev-cabeza, .a-donde .dev-detalle { display: block; }
   .a-donde .dev-cabeza { font-weight: 700; }
   .a-donde .dev-detalle { color: #555; font-size: 0.9rem; }
+  .claves { display: flex; flex-wrap: wrap; gap: 0.6rem; margin: 0.2rem 0 0.8rem; }
+  .clave { flex: 1 1 9rem; min-width: 0; background: #eff6ff; border-radius: 10px; padding: 0.7rem 0.8rem; }
+  .clave-numero { display: block; font-size: 1.6rem; font-weight: 800; color: #1e3a8a; line-height: 1.15;
+                  overflow-wrap: anywhere; }
+  .clave-que { display: block; font-size: 0.85rem; color: #1e3a8a; }
+  .rindio-guia { padding: 0.55rem 0; border-top: 1px solid #eee; }
+  .rindio-guia .dev-cabeza, .rindio-guia .dev-detalle { display: block; }
+  .rindio-guia .dev-cabeza { font-weight: 700; }
+  .rindio-guia .dev-detalle { color: #555; font-size: 0.9rem; }
+  .nota-chica { color: #777; font-size: 0.8rem; display: block; }
+  .rindio-total { margin-top: 0.4rem; padding-top: 0.5rem; border-top: 2px solid #ddd; font-weight: 700; }
   .devoluciones li {
     padding: 0.55rem 0;
     border-top: 1px solid #eee;
@@ -398,6 +409,50 @@
       <p class="fotos-guia-nota">Cuelga de este artículo, no de la guía. No cambia ningún número de la compra.</p>
     </div>
   </div>
+
+  {# CÓMO RINDIÓ (dueño, 12/10): de lo que esta compra mandó a guías R, cuántos
+     kilos de primera salieron. Números teóricos, para controlar cómo se
+     compra y cómo se arma: nada de lo cobrado ni de la venta. Solo si la
+     compra fue a alguna guía R. #}
+  {% if como_rindio %}
+  {% set cr = como_rindio %}
+  <div class="tarjeta" id="como-rindio">
+    <h3>Cómo rindió {% call info("Las cajas no se pesan") %}Las cajas armadas no se pesan: los kilos de primera son cajas × kilos de la ficha. Si las cajas salen más cargadas, esa diferencia aparece como pérdida aunque no lo sea. La segunda y la merma de una guía R son cajones de origen, con el peso del cajón que entró a esa guía. Si una guía mezcla compras, a esta le toca la parte de los kilos que puso.{% endcall %}</h3>
+    {% if cr.kg_primera is not none %}
+    <div class="claves">
+      <div class="clave" data-clave="kg-por-cajon"><span class="clave-numero">{{ cr.kg_primera_por_cajon|numero }} kg</span><span class="clave-que">de primera por cajón pagado</span></div>
+      {% if cr.costo_por_kg_primera is not none %}
+      <div class="clave" data-clave="costo-por-kg"><span class="clave-numero">{{ cr.costo_por_kg_primera|moneda }}</span><span class="clave-que">cuesta cada kg de primera</span></div>
+      {% endif %}
+    </div>
+    {% endif %}
+    {% if cr.pagado is not none %}
+    <div class="dato"><span class="etiqueta">Pagado</span><span class="valor">{{ cr.pagado|moneda }} ({{ cr.importe_por_cajon|moneda }} por cajón)</span></div>
+    {% endif %}
+    {% if cr.kg_declarados is not none %}
+    <div class="dato"><span class="etiqueta">Comprado</span><span class="valor">{{ cr.cajones|numero }} × {{ cr.kg_declarado_por_cajon|numero }} kg = {{ cr.kg_declarados|numero }} kg</span></div>
+    {% endif %}
+    {% if cr.kg_pesados is not none %}
+    <div class="dato"><span class="etiqueta">Recibido (pesado)</span><span class="valor">{{ (cr.cajones_real if cr.cajones_real is not none else cr.cajones)|numero }} × {{ cr.kg_pesado_por_cajon|numero }} kg = {{ cr.kg_pesados|numero }} kg</span></div>
+    {% endif %}
+    {% for g in cr.guias %}
+    <div class="rindio-guia" data-guia="{{ g.numero }}">
+      <span class="dev-cabeza">Guía R{{ g.numero }} del {{ g.fecha|fecha_corta }}</span>
+      <span class="dev-detalle">{{ g.bultos|numero }} cajones de esta compra{% if g.mezcla %} (de {{ g.bultos_de_la_guia|numero }}){% endif %}{% if g.kg_entraron is not none %} · entraron {{ g.kg_entraron|numero }} kg{% endif %}</span>
+      <span class="dev-detalle">Primera: {{ g.cajas_primera|numero }} cajas{% if g.kg_primera is not none %} × {{ g.kg_caja|numero }} kg = {{ g.kg_primera|numero }} kg{% else %} (la ficha no vende por kilo){% endif %}</span>
+      {% if g.kg_segunda is not none %}
+      <span class="dev-detalle">Segunda: {{ g.kg_segunda|numero }} kg · Merma: {{ g.kg_merma|numero }} kg</span>
+      {% endif %}
+      {% if g.mezcla %}<span class="nota-chica">Mezcla compras: a esta le toca el {{ g.parte|numero }}%, por los kilos que puso.</span>{% endif %}
+      {% if g.no_cierra_por is not none %}<span class="nota-chica">La cuenta no cierra por {{ g.no_cierra_por|numero }} kg (lo que entró menos primera, segunda y merma).</span>{% endif %}
+    </div>
+    {% endfor %}
+    {% if cr.kg_primera is not none %}
+    <div class="dato rindio-total" data-rindio-total><span class="etiqueta">Entraron {{ cr.kg_entraron|numero }} kg · salieron {{ cr.kg_primera|numero }} kg de primera</span><span class="valor">{{ cr.pct_primera|numero }}% de primera</span></div>
+    {% endif %}
+    {% if cr.guias_sin_kilos %}<span class="nota-chica">{{ cr.guias_sin_kilos }} {% if cr.guias_sin_kilos == 1 %}guía no entra{% else %}guías no entran{% endif %} en los kilos de primera: su ficha no vende por kilo.</span>{% endif %}
+  </div>
+  {% endif %}
 
   {# A DÓNDE FUE (dueño, 05/10): la mercadería de esta compra que salió al
      cliente, renglón por renglón, directo o pasando por una guía R. Los
