@@ -4234,8 +4234,9 @@ def _kilos_que_entraron_a_las_guias(cursor, compra_id: int) -> dict:
 def como_rindio_la_compra(compra_id: int) -> dict | None:
     """CÓMO RINDIÓ (dueño, 12/10): de lo que esta compra mandó a guías R, cuántos
     kilos de primera salieron. Para controlar cómo se compra y cómo se arma,
-    con números TEÓRICOS: nada de lo cobrado, lo recibido por el súper ni la
-    venta. None si la compra no fue a ninguna guía R.
+    con números TEÓRICOS: nada de lo cobrado ni de lo recibido por el súper (la
+    rentabilidad del lote la arma `rentabilidad_del_lote` con lo de acá). None
+    si la compra no fue a ninguna guía R.
 
     - Pagado: importe por cajón × cajones aceptados (`cantidad_cajones_real`).
     - Comprado (declarado) y recibido (pesado), en kilos.
@@ -4274,7 +4275,8 @@ def como_rindio_la_compra(compra_id: int) -> dict | None:
             cursor.execute(
                 """
                 SELECT rp.id, rp.fecha_operacion, rp.bultos_tomados, rp.bultos_primera, rp.bultos_segunda,
-                       rp.bultos_merma, CASE WHEN f.unidad_venta = 'kilo' THEN f.contenido_caja END
+                       rp.bultos_merma, CASE WHEN f.unidad_venta = 'kilo' THEN f.contenido_caja END,
+                       rp.cliente_id, rp.ficha_id
                 FROM reprocesos rp LEFT JOIN fichas_logistica f ON f.id = rp.ficha_id
                 WHERE rp.id = ANY(%s) AND rp.anulado_el IS NULL
                 ORDER BY rp.fecha_operacion, rp.id
@@ -4292,7 +4294,7 @@ def como_rindio_la_compra(compra_id: int) -> dict | None:
     kg_declarado, kg_pesado = _n(kg_declarado), _n(kg_pesado)
     aceptados = cajones_real if cajones_real is not None else cajones
     guias = []
-    for guia, fecha, tomados, primera, segunda, merma, kg_caja in guias_crudas:
+    for guia, fecha, tomados, primera, segunda, merma, kg_caja, cliente_id, ficha_id in guias_crudas:
         de_la_guia = kilos[guia]
         mia = de_la_guia["por_compra"][compra_id]
         parte = mia["kg"] / de_la_guia["kg"] if de_la_guia["kg"] > 0 else 0.0
@@ -4303,6 +4305,9 @@ def como_rindio_la_compra(compra_id: int) -> dict | None:
         declarado_guia = (kg_primera_guia or 0.0) + kg_segunda_guia + kg_merma_guia
         guias.append({
             "numero": guia, "fecha": fecha, "bultos": round(mia["bultos"], 2),
+            "cliente_id": cliente_id, "ficha_id": ficha_id,
+            # Lo que costaron los cajones de ESTA compra que fueron a esta guía.
+            "costo_mercaderia": None if importe is None else round(mia["bultos"] * importe, 2),
             "bultos_de_la_guia": round(de_la_guia["bultos"], 2),
             "kg_entraron": round(mia["kg"], 2) if en_kilos else None,
             "cajas_primera": round(float(primera) * parte, 2),

@@ -201,6 +201,67 @@ def envase_por_unidad_del_renglon(margen: dict, en_su_envase) -> float:
     return _numero(margen.get("costo_envase_unidad_venta")) or 0.0
 
 
+def rentabilidad_del_lote(guias: list[dict], margen_por_guia: dict) -> dict:
+    """RENTABILIDAD REAL DEL LOTE (dueño, 12/10): lo que dejaría la primera que
+    una compra dio en sus guías R, vendida al precio de ese día. Para el
+    bloque "Cómo rindió" del detalle de la compra.
+
+    Por cada guía (su cliente, su ficha, su fecha), con el MISMO listado que
+    Rentabilidad Real (`margen_por_guia`: el de `_margenes_por_fecha`):
+
+        venta    = kg de primera × precio vigente × (1 + Σ tasas del cliente)
+        costo    = cajones de esta compra × su importe   (la mercadería)
+                 + caja de Día por kilo × kg de primera   (`envase_por_unidad_del_renglon`)
+        renta    = venta − costo
+        %        = renta / mercadería × 100   (sobre la mercadería, como el panel
+                   y Rentabilidad Real: comprar a 100 y vender a 125 es 25%)
+
+    Una guía sin kilos de primera, sin precio ese día o sin importe queda
+    afuera de la suma, y se cuenta. Si una compra fue a guías de distintos
+    clientes o fichas, cada una con lo suyo, y se suma.
+    """
+    por_guia, sin_precio = {}, 0
+    venta_lista = venta = mercaderia = cajas = 0.0
+    for guia in guias:
+        margen = margen_por_guia.get(guia["numero"])
+        precio = _numero(margen.get("precio_vigente")) if margen else None
+        kilos = guia.get("kg_primera")
+        if kilos is None or precio is None or guia.get("costo_mercaderia") is None:
+            sin_precio += 1
+            continue
+        denominador = _numero(margen.get("denominador_tasas"))
+        denominador = 1.0 if denominador is None else denominador
+        caja_por_kilo = envase_por_unidad_del_renglon(margen, False)
+        cuenta = {
+            "precio": precio,
+            "venta_lista": kilos * precio,
+            "venta": kilos * precio * denominador,
+            "mercaderia": float(guia["costo_mercaderia"]),
+            "cajas": kilos * caja_por_kilo,
+        }
+        cuenta["renta"] = cuenta["venta"] - cuenta["mercaderia"] - cuenta["cajas"]
+        por_guia[guia["numero"]] = {clave: round(valor, 2) for clave, valor in cuenta.items()}
+        venta_lista += cuenta["venta_lista"]
+        venta += cuenta["venta"]
+        mercaderia += cuenta["mercaderia"]
+        cajas += cuenta["cajas"]
+    if not por_guia:
+        return {"por_guia": {}, "guias_sin_precio": sin_precio, "venta": None}
+    renta = venta - mercaderia - cajas
+    return {
+        "por_guia": por_guia,
+        "guias_sin_precio": sin_precio,
+        "venta_lista": round(venta_lista, 2),
+        "venta": round(venta, 2),
+        "tasas": round(venta - venta_lista, 2),
+        "mercaderia": round(mercaderia, 2),
+        "cajas": round(cajas, 2),
+        "costo": round(mercaderia + cajas, 2),
+        "renta": round(renta, 2),
+        "pct": round(renta / mercaderia * 100, 1) if mercaderia > 0 else None,
+    }
+
+
 def atribuir_costos_fifo(entradas: list[dict], salidas: list[dict]) -> list[dict]:
     """Atribuye CADA salida a los lotes que consumió, con su costo — la extensión del repartir_fifo total.
 

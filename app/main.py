@@ -726,7 +726,7 @@ from core.casilla_pedidos import (
 from core.pedido_estructura import parsear_pedido_estructurado
 from core.extracto_porcion import ETIQUETAS_MOVIMIENTO, SIN_EXPLICAR, armar_extracto
 from core.rentabilidad import ETIQUETAS_GRUPO, calcular_rentabilidad_de_pedidos
-from core.costo_real import atribuir_costos_fifo, calcular_rentabilidad_real
+from core.costo_real import atribuir_costos_fifo, calcular_rentabilidad_real, rentabilidad_del_lote
 from core.costos_fijos import calcular_costos_fijos
 from core.stock import DIAS_DE_MARGEN_DE_LA_GUIA_R, reparto_a_la_fecha, repartir_fifo, salidas_para_reparto
 from core.exportar_rentabilidad import generar_excel_rentabilidad, generar_pdf_rentabilidad
@@ -8802,6 +8802,8 @@ def ver_detalle_compra(request: Request, compra_id: int, aviso: str | None = Non
     except (psycopg2.Error, RuntimeError):
         logger.exception("No se pudo armar Cómo rindió de la compra %s", compra_id)
         como_rindio = None
+    if como_rindio:
+        como_rindio["rentabilidad"] = _rentabilidad_del_lote(como_rindio["guias"])
 
     diferencia_cajones_recepcion = None
     diferencia_contenido_recepcion = None
@@ -8832,6 +8834,29 @@ def ver_detalle_compra(request: Request, compra_id: int, aviso: str | None = Non
             "camino": _camino_de_guias(request),
         },
     )
+
+
+def _rentabilidad_del_lote(guias: list[dict]) -> dict | None:
+    """La rentabilidad real del lote de "Cómo rindió" (dueño, 12/10): cada guía
+    R con el listado de SU cliente a la fecha de la guía, el mismo de
+    Rentabilidad Real (`_margenes_por_fecha`: precio vigente, tasas y caja).
+    Si el listado no se puede leer, el bloque sale sin la rentabilidad."""
+    margen_por_guia = {}
+    fechas_por_cliente: dict = {}
+    for guia in guias:
+        if guia.get("cliente_id") is not None and guia.get("ficha_id") is not None:
+            fechas_por_cliente.setdefault(guia["cliente_id"], set()).add(guia["fecha"])
+    try:
+        listados = {cliente: _margenes_por_fecha(cliente, sorted(fechas))
+                    for cliente, fechas in fechas_por_cliente.items()}
+    except (psycopg2.Error, RuntimeError):
+        logger.exception("No se pudo leer el listado para la rentabilidad del lote")
+        return None
+    for guia in guias:
+        listado = listados.get(guia.get("cliente_id"), {}).get(guia["fecha"], {})
+        if guia.get("ficha_id") in listado:
+            margen_por_guia[guia["numero"]] = listado[guia["ficha_id"]]
+    return rentabilidad_del_lote(guias, margen_por_guia)
 
 
 def _volver_al_detalle(compra_id: int, request: Request, **parametros) -> RedirectResponse:
