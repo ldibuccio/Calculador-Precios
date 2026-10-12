@@ -96,7 +96,8 @@ recibió, o se recibió y no salió nada, lo dice.
 ## Detalle de la compra: "Cómo rindió" (12/10, dueño)
 
 Para controlar cómo se compra y cómo se arma, con números TEÓRICOS: nada de
-lo cobrado, lo recibido por el súper, la venta ni el resultado. Solo en las
+lo cobrado ni de lo recibido por el súper. La venta es la teórica de la
+rentabilidad del lote (abajo). Solo en las
 compras que fueron a alguna guía R, en Compras → Buscar compras y en
 Administración → Guías mercadería (la misma pantalla).
 
@@ -117,6 +118,15 @@ Administración → Guías mercadería (la misma pantalla).
   segunda + merma) no es un error: una nota chica, sin rojo (dueño, 12/10).
 - La primera solo tiene kilos si la ficha vende por kilo; si no, la guía
   muestra las cajas y queda afuera de los kilos, y se dice.
+- **Rentabilidad real del lote** (dueño, 12/10, `rentabilidad_del_lote` en
+  core/costo_real.py): cada guía con el listado de SU cliente a la fecha de
+  la guía, el mismo de Rentabilidad Real (`_margenes_por_fecha`). Venta =
+  kg de primera × precio vigente × (1 + Σ tasas del cliente). Costo = los
+  cajones de esta compra × su importe, más la caja de Día por kilo
+  (`envase_por_unidad_del_renglon`). Rentabilidad en $ y en % sobre la
+  mercadería, como el panel (comprar a 100 y vender a 125 es 25%). Una guía
+  sin precio ese día queda afuera y se cuenta. **No se muestra el margen
+  supuesto ni el sugerido.** Lo cobrado y lo recibido por el súper tampoco.
 
 `como_rindio_la_compra` (app/db.py). Tests: `tests/test_como_rindio.py`,
 contra Postgres, con el caso del Morrón con nombres inventados y la compra

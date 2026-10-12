@@ -150,6 +150,8 @@
   .rindio-guia .dev-detalle { color: #555; font-size: 0.9rem; }
   .nota-chica { color: #777; font-size: 0.8rem; display: block; }
   .rindio-total { margin-top: 0.4rem; padding-top: 0.5rem; border-top: 2px solid #ddd; font-weight: 700; }
+  .rindio-renta { margin-top: 1rem; padding-top: 0.6rem; border-top: 1px solid #ddd; }
+  .rindio-renta .negativo { color: #b91c1c; }
   .devoluciones li {
     padding: 0.55rem 0;
     border-top: 1px solid #eee;
@@ -411,9 +413,9 @@
   </div>
 
   {# CÓMO RINDIÓ (dueño, 12/10): de lo que esta compra mandó a guías R, cuántos
-     kilos de primera salieron. Números teóricos, para controlar cómo se
-     compra y cómo se arma: nada de lo cobrado ni de la venta. Solo si la
-     compra fue a alguna guía R. #}
+     kilos de primera salieron, y la rentabilidad real del lote. Números
+     teóricos, para controlar cómo se compra y cómo se arma: nada de lo
+     cobrado. Solo si la compra fue a alguna guía R. #}
   {% if como_rindio %}
   {% set cr = como_rindio %}
   <div class="tarjeta" id="como-rindio">
@@ -449,6 +451,28 @@
     {% endfor %}
     {% if cr.kg_primera is not none %}
     <div class="dato rindio-total" data-rindio-total><span class="etiqueta">Entraron {{ cr.kg_entraron|numero }} kg · salieron {{ cr.kg_primera|numero }} kg de primera</span><span class="valor">{{ cr.pct_primera|numero }}% de primera</span></div>
+    {% endif %}
+    {# RENTABILIDAD REAL DEL LOTE (dueño, 12/10): la primera vendida al precio
+       de ese día, contra los cajones y las cajas. Solo la rentabilidad: ni el
+       margen supuesto ni el sugerido. #}
+    {% set rl = cr.rentabilidad %}
+    {% if rl and rl.venta is not none %}
+    <div class="rindio-renta" data-rentabilidad>
+      <h3>Rentabilidad real del lote {% call info("Cómo se calcula") %}La venta es los kilos de primera por el precio que regía para ese cliente y esa caja el día de la guía, con las tasas del cliente, como en Rentabilidad Real. El costo son los cajones de esta compra que fueron a las guías, más las cajas de Día. El porcentaje es la ganancia sobre lo que costó la mercadería, igual que en el panel: comprar a 100 y vender a 125 es 25%.{% endcall %}</h3>
+      {% for g in cr.guias %}{% set rg = rl.por_guia.get(g.numero) %}{% if rg %}
+      <div class="dato"><span class="etiqueta">R{{ g.numero }}: {{ g.kg_primera|numero }} kg × {{ rg.precio|moneda }}</span><span class="valor">{{ rg.venta_lista|moneda }}</span></div>
+      {% endif %}{% endfor %}
+      {% if rl.tasas %}
+      <div class="dato"><span class="etiqueta">Tasas del cliente</span><span class="valor">{{ rl.tasas|moneda }}</span></div>
+      {% endif %}
+      <div class="dato"><span class="etiqueta">Venta</span><span class="valor">{{ rl.venta|moneda }}</span></div>
+      <div class="dato"><span class="etiqueta">Costo: cajones de esta compra</span><span class="valor">{{ rl.mercaderia|moneda }}</span></div>
+      <div class="dato"><span class="etiqueta">Costo: cajas de Día</span><span class="valor">{{ rl.cajas|moneda }}</span></div>
+      <div class="dato rindio-total" data-renta><span class="etiqueta">Rentabilidad</span><span class="valor{% if rl.renta < 0 %} negativo{% endif %}">{{ rl.renta|moneda }}{% if rl.pct is not none %} · {{ rl.pct|numero }}%{% endif %}</span></div>
+      {% if rl.guias_sin_precio %}<span class="nota-chica">{{ rl.guias_sin_precio }} {% if rl.guias_sin_precio == 1 %}guía no entra{% else %}guías no entran{% endif %}: sin precio ese día o sin kilos de primera.</span>{% endif %}
+    </div>
+    {% elif rl %}
+    <span class="nota-chica">Rentabilidad real del lote: no hay precio cargado para el día de las guías.</span>
     {% endif %}
     {% if cr.guias_sin_kilos %}<span class="nota-chica">{{ cr.guias_sin_kilos }} {% if cr.guias_sin_kilos == 1 %}guía no entra{% else %}guías no entran{% endif %} en los kilos de primera: su ficha no vende por kilo.</span>{% endif %}
   </div>

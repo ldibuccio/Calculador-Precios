@@ -58,6 +58,14 @@ insert into reprocesos (id, articulo_id, fecha_operacion, bultos_tomados, bultos
 insert into reprocesos_consumos (reproceso_id, origen, compra_id, bultos, costo_por_bulto)
   values (1, 'compra', 11, 28, 75000), (1, 'compra', 12, 2, 85000),
          (2, 'compra', 11, 4, 75000), (3, 'compra', 12, 13, 85000);
+-- LO QUE PIDE LA RENTABILIDAD DEL LOTE: el precio de la ficha (el del 10/10 es
+-- el RIVAL: empieza después de las guías del 09/10), el descuento de Día y el
+-- costo de la caja.
+insert into precios_venta_historial (articulo_id, cliente_id, precio, vigente_desde, ficha_id)
+  values (1, 1, 11000, '2026-10-01', 1), (1, 1, 15000, '2026-10-10', 1);
+insert into clientes_parametros_historial (cliente_id, nombre_parametro, valor, vigente_desde, tipo)
+  values (1, 'descuento', 0.2, '2020-01-01', 'resta');
+insert into envases_costo_historial (envase_id, costo, vigente_desde) values (1, 1000, '2020-01-01');
 insert into pedidos (id, cliente_id, fecha_operacion, origen) overriding system value
   values (1, 1, '2026-10-10', 'texto');
 insert into pedidos_sucursales (pedido_id, sucursal) values (1, 'VL');
@@ -172,10 +180,49 @@ def test_la_PANTALLA_en_COMPRAS_y_en_GUIAS_MERCADERIA_dice_como_rindio(base, mon
         assert "Entraron 320 kg · salieron 305.26 kg de primera 95.4% de primera" in texto
         assert tarjeta.count('class="nota-chica"') == 3              # la mezcla de la R1 y dos que no cierran
         assert "Las cajas armadas no se pesan" in tarjeta
-        # Ni lo cobrado ni la venta (dueño, 12/10), ni la jerga del sistema.
-        for ajeno in ("cobr", "venta", "recibido por", "FIFO", "lote", "consumo"):
+        # Ni lo cobrado ni lo recibido por el súper (dueño, 12/10): la venta
+        # es la teórica de la rentabilidad del lote. Ni la jerga del sistema.
+        for ajeno in ("cobr", "recibido por", "FIFO", "consumo"):
             assert ajeno not in texto.replace("Recibido (pesado)", ""), (url, ajeno)
     assert 'id="como-rindio"' not in _pagina(base, monkeypatch, "/compras/13/detalle", "compras")
+
+
+def test_la_RENTABILIDAD_DEL_LOTE_cuenta_como_RENTABILIDAD_REAL():
+    """La cuenta pura: venta con las tasas del cliente, costo de los cajones y
+    de la caja (la de Rentabilidad Real), % sobre la mercadería. La guía sin
+    precio queda afuera y se cuenta; la de envase variable cobra la caja
+    entera de reprocesado."""
+    from core.costo_real import rentabilidad_del_lote
+    guias = [{"numero": 1, "kg_primera": 100.0, "costo_mercaderia": 50000.0},
+             {"numero": 2, "kg_primera": 40.0, "costo_mercaderia": 30000.0},
+             {"numero": 3, "kg_primera": 10.0, "costo_mercaderia": 9000.0}]
+    margenes = {1: {"precio_vigente": 1000, "denominador_tasas": 0.8, "costo_envase_unidad_venta": 125},
+                2: {"precio_vigente": 1000, "denominador_tasas": 0.8, "envase_variable": True,
+                    "costo_envase_unidad_venta": 0, "costo_envase_reprocesado_unidad_venta": 200}}
+    rl = rentabilidad_del_lote(guias, margenes)
+    assert rl["por_guia"][1] == {"precio": 1000.0, "venta_lista": 100000.0, "venta": 80000.0,
+                                 "mercaderia": 50000.0, "cajas": 12500.0, "renta": 17500.0}
+    assert rl["por_guia"][2]["cajas"] == 8000.0                     # la caja entera de reprocesado
+    assert (rl["venta"], rl["mercaderia"], rl["cajas"], rl["renta"], rl["pct"]) \
+        == (112000.0, 80000.0, 20500.0, 11500.0, 14.4)               # 11.500 / 80.000
+    assert rl["guias_sin_precio"] == 1 and rl["tasas"] == -28000.0
+    assert rentabilidad_del_lote(guias, {})["venta"] is None
+
+
+def test_la_PANTALLA_trae_la_RENTABILIDAD_DEL_LOTE_con_el_precio_del_DIA_de_la_guia(base, monkeypatch):
+    """Precio del 09/10: $11.000 (el de $15.000 empieza el 10/10). Venta
+    305,26 kg × $11.000 × 0,8; costo 32 × $75.000 más la caja ($1.000 / 8 kg
+    por kilo)."""
+    tarjeta, texto = _tarjeta(_pagina(base, monkeypatch, "/compras/11/detalle", "compras"))
+    renta = tarjeta.split("data-rentabilidad>")[1]
+    assert "R1: 265.26 kg × $11.000 $2.917.860" in texto and "R2: 40 kg × $11.000 $440.000" in texto
+    assert "Tasas del cliente $-671.572" in texto and "Venta $2.686.288" in texto
+    assert "Costo: cajones de esta compra $2.400.000" in texto and "Costo: cajas de Día $38.158" in texto
+    assert re.findall(r'<div class="dato rindio-total" data-renta>.*?</div>', renta, re.S)[0].count("$248.130") == 1
+    assert "Rentabilidad $248.130 · 10.3%" in texto
+    # Solo la rentabilidad real: ni el margen supuesto ni el sugerido.
+    for ajeno in ("sugerid", "supuest", "objetivo"):
+        assert ajeno not in texto.lower(), ajeno
 
 
 def test_a_313px_el_bloque_no_DESBORDA(base, monkeypatch):
