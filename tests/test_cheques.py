@@ -243,5 +243,8 @@ def test_JUNTAR_proveedores_mueve_los_cheques_entregados_al_que_se_va(d):
     cheque, rival = _cargar(d, "1"), _cargar(d, "2")
     d.aplicar_cheque(cheque, fecha=hoy, concepto_id=1, proveedor_id=2, foto_ruta=None)
     d.aplicar_cheque(rival, fecha=hoy, concepto_id=1, proveedor_id=1, foto_ruta=None)
+    # Un cheque entregado y DESPUÉS rechazado también se mueve (cheques_2): el
+    # freno del rechazo es para que no salga, no para reescribir su proveedor.
+    d.rechazar_cheque(cheque, fecha=hoy, motivo="Sin fondos")
     d.juntar_proveedores(1, 2)
     assert {c["id"]: c["proveedor_id"] for c in d.buscar_cheques({})} == {cheque: 1, rival: 1}

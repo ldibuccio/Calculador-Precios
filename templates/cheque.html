@@ -42,7 +42,7 @@
       <dt>Se cobra el</dt><dd>{{ cheque.fecha_pago.strftime('%d/%m/%Y') }}</dd>
       <dt>Vence el</dt><dd>{{ cheque.vence_el.strftime('%d/%m/%Y') }}</dd>
       {% if cheque.fecha_salida %}
-      <dt>Salió el</dt><dd>{{ cheque.fecha_salida.strftime('%d/%m/%Y') }} · {{ cheque.concepto }}{% if cheque.proveedor %} a {{ cheque.proveedor }}{% endif %}</dd>
+      <dt>Salió el</dt><dd>{{ cheque.fecha_salida.strftime('%d/%m/%Y') }} · {{ cheque.concepto }}{% if cheque.proveedor %} a {{ cheque.proveedor }}{% endif %}{% if cheque.cuenta_deposito %} · cuenta <span data-cuenta-deposito>{{ cheque.cuenta_deposito }}</span>{% endif %}</dd>
       {% endif %}
       {% if cheque.acreditado_el %}<dt>Se acredita el</dt><dd>{{ cheque.acreditado_el.strftime('%d/%m/%Y') }}</dd>{% endif %}
       {% if cheque.fecha_rechazo %}<dt>Rechazado el</dt><dd class="rojo">{{ cheque.fecha_rechazo.strftime('%d/%m/%Y') }} · {{ cheque.motivo_rechazo }}</dd>{% endif %}

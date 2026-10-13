@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Confirmar endosos</title>
+<title>Confirmar endosos y depósitos</title>
 <style>
 {% include "_cheques_estilos.html" %}
   .renglon { border: 1px solid #e5e7eb; border-radius: 10px; padding: 0.8rem; margin-top: 0.8rem; }
@@ -17,12 +17,14 @@
   .fotos figure { flex: 1 1 8rem; margin: 0; }
   .fotos img { width: 100%; border-radius: 8px; border: 1px solid #ddd; }
   .fotos figcaption { font-size: 0.85rem; font-weight: 700; }
+  .etiqueta { display: inline-block; padding: 0.1rem 0.5rem; border-radius: 999px; background: #e0e7ff; color: #3730a3; font-weight: 700; font-size: 0.8rem; margin-right: 0.3rem; }
+  [data-tipo="deposito"] .etiqueta { background: #dcfce7; color: #166534; }
   a.de-la-foto { display: inline-flex; align-items: center; min-height: 44px; color: #2563eb; font-weight: 600; }
 </style>
 </head>
 <body>
   {% set barra_sector = "gerencia" %}
-  {% set barra_titulo = "Confirmar endosos" %}
+  {% set barra_titulo = "Confirmar endosos y depósitos" %}
   {% set barra_atras = "/gerencia/cheques/aplicar" %}
   {% include "_barra_navegacion.html" %}
 
@@ -35,7 +37,7 @@
     <div class="tarjeta" data-resumen>
       <p class="total" data-total>{{ total|moneda }}</p>
       <p class="total-dato">{{ cuantos }} cheque{{ '' if cuantos == 1 else 's' }}{% if con_problema %} · <span class="rojo" data-con-problema>{{ con_problema }} con problema</span>{% endif %}</p>
-      <p class="nota">"Confirmar todos" aplica los que están bien, cada uno con su foto. Los marcados en rojo no se guardan hasta corregirlos o sacarlos.</p>
+      <p class="nota">"Confirmar todos" aplica los que están bien, cada uno con su foto: los de una foto de depósito salen como "Depósito en cuenta", sin proveedor. Los marcados en rojo no se guardan hasta corregirlos o sacarlos.</p>
       <div class="acciones">
         <button type="submit" name="accion" value="revisar" class="secundario">Revisar</button>
         <button type="submit" name="accion" value="confirmar">Confirmar todos</button>
@@ -49,9 +51,13 @@
         <input type="hidden" name="foto_{{ i }}" value="{{ r.foto }}">
         <input type="hidden" name="proveedor_cuit_{{ i }}" value="{{ r.proveedor_cuit }}">
         <input type="hidden" name="proveedor_nombre_{{ i }}" value="{{ r.proveedor_nombre }}">
+        <input type="hidden" name="deposito_{{ i }}" value="{{ '1' if r.deposito else '' }}">
+        {% set destino = destinos.get(r.concepto_id) %}
         {% if problemas and not r.sacar %}<p class="problemas" data-problemas>{{ problemas|join(" · ") }}</p>{% endif %}
         {% if r.foto >= 0 %}<a class="de-la-foto" href="#foto-{{ r.foto }}">De la foto {{ r.foto + 1 }}</a>{% endif %}
-        <p class="leido">Se endosa a: <strong>{{ r.proveedor_nombre or "sin nombre" }}</strong>{% if r.proveedor_cuit %} · CUIT {{ r.proveedor_cuit }}{% endif %}</p>
+        {# Cómo se leyó la foto (dueño, 13/10): de depósito o de endoso. #}
+        {% if r.deposito %}<p class="leido" data-tipo="deposito"><span class="etiqueta">Depósito</span> en la cuenta <strong>{{ r.cuenta_deposito or "sin número" }}</strong></p>
+        {% else %}<p class="leido" data-tipo="endoso"><span class="etiqueta">Pago a proveedor</span> se endosa a <strong>{{ r.proveedor_nombre or "sin nombre" }}</strong>{% if r.proveedor_cuit %} · CUIT {{ r.proveedor_cuit }}{% endif %}</p>{% endif %}
         <div class="campos">
           <label>Número<input type="text" name="numero_{{ i }}" value="{{ r.numero }}"></label>
           <label>¿Qué día se cobra?<input type="date" name="fecha_pago_{{ i }}" value="{{ r.fecha_pago }}"></label>
@@ -61,10 +67,17 @@
             <select name="cheque_id_{{ i }}"><option value="">Ninguno</option>
               {% for c in en_cartera %}<option value="{{ c.id }}" {% if r.cheque_id == c.id %}selected{% endif %}>Nº {{ c.numero }} · {{ c.importe|moneda }} · {{ c.de_quien }}</option>{% endfor %}
             </select></label>
+          {# El proveedor lo pide el pago a proveedor; la cuenta, el depósito. Lo
+             del otro tipo viaja escondido por si se vuelve a cambiar el concepto. #}
+          {% if destino == "entregado" %}
           <label>¿A qué proveedor?
             <select name="proveedor_id_{{ i }}"><option value="">Elegí</option>
               {% for p in proveedores %}<option value="{{ p.id }}" {% if r.proveedor_id == p.id %}selected{% endif %}>{{ p.nombre }}</option>{% endfor %}
             </select></label>
+          {% else %}<input type="hidden" name="proveedor_id_{{ i }}" value="{{ r.proveedor_id or '' }}">{% endif %}
+          {% if destino == "depositado" %}
+          <label>¿En qué cuenta se depositó?<input type="text" name="cuenta_deposito_{{ i }}" value="{{ r.cuenta_deposito }}" placeholder="Ej.: CC$ 191-220-000247/7"></label>
+          {% else %}<input type="hidden" name="cuenta_deposito_{{ i }}" value="{{ r.cuenta_deposito }}">{% endif %}
           <label>¿Por qué sale?
             <select name="concepto_id_{{ i }}"><option value="">Elegí</option>
               {% for c in conceptos %}<option value="{{ c.id }}" {% if r.concepto_id == c.id %}selected{% endif %}>{{ c.nombre }}</option>{% endfor %}
