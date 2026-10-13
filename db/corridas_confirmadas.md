@@ -471,3 +471,26 @@ PALMALA   lote_dia_anterior_2_como_salio · columnas 5 · checks 3 · politica_c
 Con esto `lectura_claudia` ya puede leer `pedidos_renglones_lotes_correcciones`
 en Frutamax (lo que quedó pendiente de `lote_dia_anterior_1`). En Palmala ese
 usuario no existe.
+
+## 13/10 — `guia_r_kilos_y_tope_1`: cartel de kilos y tope por compra de la guía R (PR #145)
+
+Corrido por Lionel en Frutamax y Palmala ANTES del merge. Verificado por mí
+por el conector "Supabase Lectura" el 13/10 a las 10:05 UTC:
+
+```
+FRUTAMAX  guia_r_kilos_y_tope_1 · columnas 3 · checks 1 · triggers 1 · guardadas_igual 0 · testigo_guias_r 808 · testigo_compras 990
+PALMALA   guia_r_kilos_y_tope_1 · columnas 3 · checks 1 · triggers 1 · guardadas_igual 0 · testigo_guias_r 0 · testigo_compras 904
+```
+
+## 13/10 — `perdida_ficha_1_tabla`: % de pérdida por ficha (PR #145)
+
+Corrido por Lionel en Frutamax y Palmala ANTES del merge. Verificado por mí
+por el conector "Supabase Lectura" el 13/10 a las 10:05 UTC:
+
+```
+FRUTAMAX  perdida_ficha_1_tabla · tablas 1 · con_candado 1 · columna_bitacora 1 · unicos 1 · politica_claudia 1 · existe_claudia 1 · testigo_fichas 67
+PALMALA   perdida_ficha_1_tabla · tablas 1 · con_candado 1 · columna_bitacora 1 · unicos 1 · politica_claudia 0 · existe_claudia 0 · testigo_fichas 51
+```
+
+La tabla nació con candado y con la política de `lectura_claudia` en
+Frutamax; en Palmala ese usuario no existe.
