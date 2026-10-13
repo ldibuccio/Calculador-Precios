@@ -420,7 +420,7 @@
   {% if como_rindio %}
   {% set cr = como_rindio %}
   <div class="tarjeta" id="como-rindio">
-    <h3>Cómo rindió {% call info("Las cajas no se pesan") %}Las cajas armadas no se pesan: los kilos de primera son cajas × kilos de la ficha. Si las cajas salen más cargadas, esa diferencia aparece como pérdida aunque no lo sea. La segunda y la merma de una guía R son cajones de origen, con el peso del cajón que entró a esa guía. Si una guía mezcla compras, a esta le toca la parte de los kilos que puso.{% endcall %}</h3>
+    <h3>Cómo rindió {% call info("Cómo se cuentan los kilos") %}Las cajas armadas no se pesan: los kilos de primera son los que se mandaron en los pedidos que salieron de esas cajas (los que se cargan al armar), y las cajas que todavía no salieron cuentan con los kilos de la ficha. La segunda y la merma de una guía R son cajones de origen, con el peso del cajón que entró a esa guía. Si una guía mezcla compras, a esta le toca la parte de los kilos que puso.{% endcall %}</h3>
     {% if cr.kg_primera is not none %}
     <div class="claves">
       <div class="clave" data-clave="kg-por-cajon"><span class="clave-numero">{{ cr.kg_primera_por_cajon|numero }} kg</span><span class="clave-que">de primera por cajón pagado</span></div>

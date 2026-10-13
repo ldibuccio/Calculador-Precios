@@ -105,8 +105,9 @@ Administración → Guías mercadería (la misma pantalla).
   **recibido** (pesado: `contenido_por_cajon_real`), en kilos.
 - **Por guía R** (de `reprocesos_consumos`, el documento de la guía): los
   cajones de esta compra, los kilos que entraron (cajones × kg pesados por
-  cajón), la primera (cajas × kg de la ficha: **las cajas armadas no se
-  pesan**, lo dice la "i"), y segunda y merma, que son **CAJONES DE ORIGEN**
+  cajón), la primera (**las cajas armadas no se pesan**: desde el 13/10 las
+  que ya salieron pesan los kilos que se mandaron al armar, y las demás la
+  ficha, `kg_de_la_primera`; lo dice la "i"), y segunda y merma, que son **CAJONES DE ORIGEN**
   con el peso promedio del cajón que entró a esa guía (dueño, 12/10).
 - **Una guía que mezcla compras se reparte por los KILOS que puso cada una**
   (R788: 28 cajones de 10 kg de la 1019 y 2 de 12 de la 1050 → a la 1019 le

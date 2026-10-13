@@ -4344,8 +4344,9 @@ def como_rindio_la_compra(compra_id: int) -> dict | None:
     - Pagado: importe por cajón × cajones aceptados (`cantidad_cajones_real`).
     - Comprado (declarado) y recibido (pesado), en kilos.
     - Por guía R: los bultos de esta compra, los kilos que entraron (bultos ×
-      kg pesados por cajón), la primera (cajas × kg de la ficha: las cajas
-      armadas NO se pesan), y segunda y merma, que son CAJONES DE ORIGEN con
+      kg pesados por cajón), la primera (las cajas armadas NO se pesan: las
+      que ya salieron pesan los kilos que se mandaron, `kg_de_la_primera`;
+      las demás, la ficha), y segunda y merma, que son CAJONES DE ORIGEN con
       el peso promedio del cajón que entró a esa guía. Si la guía mezcla
       compras, a esta le toca la parte de los KILOS que puso.
     - Los dos números clave: kg de primera por cajón pagado, y costo por kg de
@@ -4362,7 +4363,8 @@ def como_rindio_la_compra(compra_id: int) -> dict | None:
             cursor.execute(
                 """
                 SELECT c.cantidad_cajones, c.contenido_por_cajon, c.cantidad_cajones_real,
-                       c.contenido_por_cajon_real, c.importe, coalesce(a.unidad_compra, 'kilo') = 'kilo'
+                       c.contenido_por_cajon_real, c.importe, coalesce(a.unidad_compra, 'kilo') = 'kilo',
+                       c.articulo_id
                 FROM compras c JOIN articulos a ON a.id = c.articulo_id
                 WHERE c.id = %s
                 """,
@@ -4371,7 +4373,7 @@ def como_rindio_la_compra(compra_id: int) -> dict | None:
             fila = cursor.fetchone()
             if fila is None:
                 return None
-            cajones, kg_declarado, cajones_real, kg_pesado, importe, en_kilos = fila
+            cajones, kg_declarado, cajones_real, kg_pesado, importe, en_kilos, articulo_id = fila
             kilos = _kilos_que_entraron_a_las_guias(cursor, compra_id)
             if not kilos:
                 return None
@@ -4390,6 +4392,10 @@ def como_rindio_la_compra(compra_id: int) -> dict | None:
     finally:
         conexion.close()
 
+    # Las cajas que ya salieron pesan lo que se mandó (dueño, 13/10).
+    from core.kilos_guia_r import kg_de_la_primera
+    reales = kilos_reales_de_la_primera([articulo_id])
+
     def _n(valor):
         return None if valor is None else float(valor)
 
@@ -4403,7 +4409,7 @@ def como_rindio_la_compra(compra_id: int) -> dict | None:
         mia = de_la_guia["por_compra"][compra_id]
         parte = mia["kg"] / de_la_guia["kg"] if de_la_guia["kg"] > 0 else 0.0
         kg_por_cajon = de_la_guia["kg"] / de_la_guia["bultos"] if de_la_guia["bultos"] else 0.0
-        kg_primera_guia = None if kg_caja is None else float(primera) * float(kg_caja)
+        kg_primera_guia = None if kg_caja is None else kg_de_la_primera(primera, kg_caja, reales.get(guia))
         kg_segunda_guia = float(segunda) * kg_por_cajon
         kg_merma_guia = float(merma) * kg_por_cajon
         declarado_guia = (kg_primera_guia or 0.0) + kg_segunda_guia + kg_merma_guia
@@ -14939,6 +14945,108 @@ def _lo_tomado_hoy(cursor, articulo_id: int, fecha_operacion, excepto: int | Non
     ]
 
 
+def kilos_reales_de_la_primera(articulo_ids) -> dict:
+    """LOS KILOS QUE SE MANDARON de las cajas de cada guía R (dueño, 13/10):
+    {guia_id: {"bultos", "kg"}}.
+
+    La guía R se carga ANTES de que salga el pedido, así que al cargarla solo
+    se sabe la ficha. Después, cada armado que salió de sus cajas grabó sus
+    kilos (`kilos_enviados`, lo que se factura). De qué guía salió cada armado
+    lo dice el MISMO reparto del stock (`atribuir_costos_fifo`, el de "A dónde
+    fue" y la Rentabilidad Real): los bultos que un renglón tomó del lote de
+    la guía pesan lo que pesó un bulto de ese renglón (kilos enviados /
+    bultos armados). Solo renglones de fichas por kilo y con kilos cargados.
+    """
+    from core.costo_real import atribuir_costos_fifo
+
+    ids = sorted({a for a in articulo_ids if a is not None})
+    if not ids:
+        return {}
+    conexion = obtener_conexion()
+    try:
+        with conexion.cursor() as cursor:
+            por_articulo = _entradas_y_salidas_stock_varios(cursor, ids)
+            tomas: list[tuple] = []
+            for entradas, salidas in por_articulo.values():
+                for salida in atribuir_costos_fifo(entradas, salidas):
+                    if salida.get("tipo") != "armado" or salida.get("renglon_id") is None:
+                        continue
+                    for c in salida["consumos_lotes"]:
+                        if c["tipo_lote"] == "reproceso" and c["bultos"] > 0:
+                            tomas.append((c["origen_id"], salida["renglon_id"], float(c["bultos"])))
+            if not tomas:
+                return {}
+            cursor.execute(
+                """
+                SELECT r.id, r.kilos_enviados, COALESCE(r.cantidad_armada, r.cantidad) AS bultos_armados
+                FROM pedidos_renglones r JOIN fichas_logistica f ON f.id = r.ficha_id
+                WHERE r.id = ANY(%s) AND f.unidad_venta = 'kilo' AND r.kilos_enviados > 0
+                """,
+                (sorted({renglon for _, renglon, _ in tomas}),),
+            )
+            por_bulto = {renglon: float(kg) / float(bultos)
+                         for renglon, kg, bultos in cursor.fetchall() if bultos and bultos > 0}
+    finally:
+        conexion.close()
+    reales: dict = {}
+    for guia, renglon, bultos in tomas:
+        if renglon not in por_bulto:
+            continue
+        fila = reales.setdefault(guia, {"bultos": 0.0, "kg": 0.0})
+        fila["bultos"] += bultos
+        fila["kg"] += bultos * por_bulto[renglon]
+    return reales
+
+
+def kilos_distintos_de_la_ficha(desde, hasta) -> list[dict]:
+    """LOS ARMADOS CON KILOS DISTINTOS DE LA FICHA (dueño, 13/10), por
+    artículo: [{"articulo_id", "articulo", "renglones", "kg_diferencia"}].
+
+    Renglones de pedidos vigentes, no anulados, armados entre `desde` y `hasta`
+    (fecha de Argentina, los dos extremos adentro), de fichas por KILO con
+    contenido. La diferencia es lo que se mandó (`kilos_enviados`, del renglón
+    entero) menos los bultos armados por los kilos de la ficha: positiva, de
+    más. EN SU ENVASE no entra: ahí los kilos los dice el que arma, porque
+    el descartable no es el cajón de la ficha.
+    """
+    conexion = obtener_conexion()
+    try:
+        with conexion.cursor() as cursor:
+            cursor.execute(
+                """
+                WITH vigentes AS (
+                    SELECT DISTINCT ON (cliente_id, fecha_operacion) id
+                    FROM pedidos WHERE anulado_el IS NULL
+                    ORDER BY cliente_id, fecha_operacion, creado_en DESC
+                )
+                SELECT r.articulo_id, a.nombre, r.kilos_enviados, f.contenido_caja,
+                       COALESCE(r.cantidad_armada, r.cantidad) AS bultos_armados
+                FROM pedidos_renglones r
+                JOIN vigentes v ON v.id = r.pedido_id
+                JOIN fichas_logistica f ON f.id = r.ficha_id
+                JOIN articulos a ON a.id = r.articulo_id
+                WHERE r.armado_el IS NOT NULL AND r.anulado_el IS NULL
+                  AND r.en_su_envase IS NOT TRUE
+                  AND f.unidad_venta = 'kilo' AND f.contenido_caja > 0 AND r.kilos_enviados IS NOT NULL
+                  AND (r.armado_el AT TIME ZONE 'America/Argentina/Buenos_Aires')::date BETWEEN %s AND %s
+                """,
+                (desde, hasta),
+            )
+            filas = cursor.fetchall()
+    finally:
+        conexion.close()
+    por_articulo: dict = {}
+    for articulo_id, nombre, kilos, contenido, bultos in filas:
+        diferencia = round(float(kilos) - float(bultos) * float(contenido), 2)
+        if diferencia == 0:
+            continue
+        fila = por_articulo.setdefault(articulo_id, {
+            "articulo_id": articulo_id, "articulo": nombre, "renglones": 0, "kg_diferencia": 0.0})
+        fila["renglones"] += 1
+        fila["kg_diferencia"] = round(fila["kg_diferencia"] + diferencia, 2)
+    return sorted(por_articulo.values(), key=lambda f: (-f["renglones"], f["articulo"]))
+
+
 def guias_r_con_sus_kilos(desde, hasta, articulo_id: int | None = None) -> list[dict]:
     """Las guías R normales no anuladas del período (por `fecha_operacion`, los
     dos extremos adentro), con lo que hace falta para la cuenta de kilos
@@ -14979,6 +15087,10 @@ def guias_r_con_sus_kilos(desde, hasta, articulo_id: int | None = None) -> list[
             "kg_caja": None if kg_caja is None else float(kg_caja),
             "guardada_igual": bool(guardada), "consumos": []})
         g["consumos"].append((float(bultos), None if kg_cajon is None else float(kg_cajon)))
+    # Las cajas que ya salieron pesan lo que se mandó (dueño, 13/10).
+    reales = kilos_reales_de_la_primera({g["articulo_id"] for g in guias.values()})
+    for g in guias.values():
+        g["primera_real"] = reales.get(g["numero"])
     return list(guias.values())
 
 

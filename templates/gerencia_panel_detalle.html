@@ -207,7 +207,7 @@
   <div data-ajustar-contenedor class="tarjeta">
     <h2>Del {{ dato.desde.strftime("%d/%m") }} al {{ dato.hasta.strftime("%d/%m") }}</h2>
     <p data-ajustar class="grande {{ 'rojo' if dato.con_falta else 'verde' }}">{{ dato.con_falta }} con más de {{ dato.umbral|sin_decimales }}% de falta</p>
-    <p class="nota">Por guía R: lo que entró (cajones × lo que pesó el cajón de su compra) contra la primera (cajas × kilos de la ficha), la segunda y la merma (cajones × el cajón promedio de la guía). Lo que falta es lo que no quedó registrado.</p>
+    <p class="nota">Por guía R: lo que entró (cajones × lo que pesó el cajón de su compra) contra la primera (los kilos que se mandaron en los pedidos que salieron de esas cajas; las que no salieron, con los de la ficha), la segunda y la merma (cajones × el cajón promedio de la guía). Lo que falta es lo que no quedó registrado.</p>
   </div>
   {% for f in dato.filas %}
   <div data-ajustar-contenedor class="tarjeta" data-articulo="{{ f.articulo_id }}">
@@ -220,6 +220,21 @@
   </div>
   {% else %}
   <div data-ajustar-contenedor class="tarjeta"><p class="vacio">No hubo guías R con kilos en esos días.</p></div>
+  {% endfor %}
+
+  {% elif cuadro == "kilos" %}
+  <div data-ajustar-contenedor class="tarjeta">
+    <h2>Del {{ dato.desde.strftime("%d/%m") }} al {{ dato.hasta.strftime("%d/%m") }}</h2>
+    <p data-ajustar class="grande">{{ dato.renglones }} {{ "renglón" if dato.renglones == 1 else "renglones" }}</p>
+    <p class="nota">Renglones armados de artículos por kilo en los que se cargaron por bulto kilos distintos de los de la ficha. La diferencia es lo que se mandó (y se factura) menos los bultos por los kilos de la ficha. Lo que salió en su envase no cuenta: ahí los kilos los pone el que arma.</p>
+  </div>
+  {% for f in dato.filas %}
+  <div data-ajustar-contenedor class="tarjeta" data-articulo="{{ f.articulo_id }}">
+    <h2>{{ f.articulo }}</h2>
+    <p class="dato"><span class="par"><strong data-ajustar>{{ f.renglones }}</strong> {{ "renglón" if f.renglones == 1 else "renglones" }}</span> · <span class="par"><strong data-ajustar>{{ f.kg_diferencia|abs|numero }} kg</strong> {{ "de más" if f.kg_diferencia > 0 else "de menos" }}</span></p>
+  </div>
+  {% else %}
+  <div data-ajustar-contenedor class="tarjeta"><p class="vacio">En esos días todo se armó con los kilos de la ficha.</p></div>
   {% endfor %}
   {% endif %}
 {% include "_ajustar_numeros.html" %}

@@ -247,7 +247,10 @@
     background: #7c3aed; color: #fff; border: none; border-radius: 8px;
     font-size: 0.95rem; font-weight: 700; cursor: pointer;
   }
-  .campo-kilos { display: flex; align-items: center; gap: 0.4rem; margin-top: 0.35rem; }
+  /* flex-wrap: a 313px el rótulo, el casillero y la unidad no entran al lado
+     del tilde, y se salían de la columna ("Unidades por cajón" del Mango
+     dejaba la "u" cortada en el borde, 13/10). */
+  .campo-kilos { display: flex; flex-wrap: wrap; align-items: center; gap: 0.4rem; margin-top: 0.35rem; }
   .campo-kilos label { font-size: 0.85rem; color: #444; white-space: nowrap; }
   .campo-kilos input {
     width: 6.5rem;

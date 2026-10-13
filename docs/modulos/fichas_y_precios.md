@@ -282,7 +282,8 @@ un encabezado que los dice (`core/exportar_rendimientos.py`).
 
 - **Pasan por guía R**: la cuenta del cuadro "Rinde de guías R" del panel
   (`core.kilos_guia_r.rinde_por_articulo`, por guía: cajones tomados × kg
-  pesados; cajas × kg de la ficha): kg que entraron, % aprovechado
+  pesados; la primera con los kilos que se mandaron al armar, o la ficha si
+  esas cajas no salieron): kg que entraron, % aprovechado
   (primera), % segunda, % merma, % que falta sin registrar y % de pérdida
   total (todo lo que no salió como primera).
 - **No pasan por guía R** (ninguna guía R normal no anulada del artículo en
