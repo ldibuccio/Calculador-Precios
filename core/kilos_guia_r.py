@@ -6,7 +6,7 @@ Salieron: las cajas de primera por los kilos de la ficha, más los cajones de
 segunda y de merma por el peso promedio del cajón que entró a la guía (son
 cajones de origen, la misma cuenta de "Cómo rindió").
 
-Si la diferencia pasa medio kilo por cajón tomado, para arriba o para abajo,
+Si la diferencia pasa 0,8 kg por cajón tomado, para arriba o para abajo,
 la pantalla muestra el cartel rojo. No frena: el operario puede revisar o
 guardar igual, y si guarda igual la guía anota la diferencia.
 
@@ -17,8 +17,9 @@ cajón tomado no salió de una compra pesada en kilos.
 
 import math
 
-# Medio kilo por cajón tomado (dueño, 13/10).
-TOLERANCIA_KG_POR_CAJON = 0.5
+# 0,8 kg por cajón tomado (dueño, 13/10: primero dijo medio kilo y lo
+# subió a 0,8 el mismo día, con la R788 que no tenía que saltar).
+TOLERANCIA_KG_POR_CAJON = 0.8
 
 
 def kg_entero(kilos: float) -> int:

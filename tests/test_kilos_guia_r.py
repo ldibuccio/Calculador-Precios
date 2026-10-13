@@ -2,7 +2,8 @@
 
 Entraron = cajones tomados × lo que pesó un cajón de SU compra. Salieron =
 cajas de primera × kilos de la ficha + cajones de segunda y merma × el cajón
-promedio. Tolerancia: medio kilo por cajón tomado. Si no dan, cartel rojo con
+promedio. Tolerancia: 0,8 kg por cajón tomado (era medio kilo; el dueño la
+subió el mismo 13/10). Si no dan, cartel rojo con
 "Revisar" y "Guardar igual"; si guardan igual, la guía anota la diferencia y
 quién. Por unidad (Mango) o con un cajón sin pesada, no hay cartel.
 
@@ -16,7 +17,7 @@ EL GALPÓN, con nombres inventados y los RIVALES plantados:
 
 El caso de la R751 (09/10): 2 cajones de 10 kg y 21 de 12,7 = 286,7 kg; 20
 cajas de 8 kg y 3 de segunda (a 12,47 kg el cajón promedio) = 197,4 kg. Faltan
-89,3 kg contra una tolerancia de 11,5: salta. El cartel dice 287 − 197 = 90.
+89,3 kg contra una tolerancia de 18,4: salta. El cartel dice 287 − 197 = 90.
 """
 import os
 import re
@@ -63,29 +64,28 @@ insert into compras (id, proveedor_id, articulo_id, fecha_operacion, cantidad_ca
 def test_la_cuenta_de_la_R751_SALTA():
     cuenta = cuenta_de_kilos([(2, 10), (21, 12.7)], 20, 3, 0, 8)
     assert (cuenta["entraron"], cuenta["salieron"], cuenta["diferencia"], cuenta["tolerancia"]) \
-        == (286.7, 197.4, 89.3, 11.5)
+        == (286.7, 197.4, 89.3, 18.4)
     assert cuenta["no_dan"] is True
     # El cartel: 287 − 197 = 90, y es lo que queda anotado.
     assert (cuenta["kg_entraron"], cuenta["kg_salieron"], cuenta["kg_diferencia"]) == (287, 197, 90)
 
 
-def test_la_cuenta_de_la_R788_con_medio_kilo_por_cajon():
+def test_la_cuenta_de_la_R788_NO_salta():
     """28 cajones de 10 y 2 de 12 = 304 kg; 36 cajas de 8 = 288 kg. Faltan 16 kg
-    contra 15 de tolerancia: con la regla del 13/10 SALTA por 1 kg. El dueño
-    dijo que no tenía que saltar: está preguntado (la tolerancia vive en
-    TOLERANCIA_KG_POR_CAJON)."""
+    contra 24 de tolerancia (30 × 0,8): no salta, que es lo que el dueño
+    pidió. Con medio kilo por cajón saltaba por 1 kg, y por eso la subió."""
     cuenta = cuenta_de_kilos([(28, 10), (2, 12)], 36, 0, 0, 8)
     assert (cuenta["entraron"], cuenta["salieron"], cuenta["diferencia"], cuenta["tolerancia"]) \
-        == (304.0, 288.0, 16.0, 15.0)
-    assert TOLERANCIA_KG_POR_CAJON == 0.5
-    assert cuenta["no_dan"] is True
+        == (304.0, 288.0, 16.0, 24.0)
+    assert TOLERANCIA_KG_POR_CAJON == 0.8
+    assert cuenta["no_dan"] is False
 
 
 def test_dentro_de_la_tolerancia_NO_salta_y_justo_en_el_borde_tampoco():
-    assert cuenta_de_kilos([(10, 10)], 12, 0, 0, 8)["no_dan"] is False      # 100 vs 96: 4 ≤ 5
-    assert cuenta_de_kilos([(10, 10)], 13, 0, 0, 8)["no_dan"] is False      # sobran 4 ≤ 5
-    assert cuenta_de_kilos([(10, 10)], 10, 0, 0, 9.5)["no_dan"] is False    # 5 = 5: el borde no salta
-    assert cuenta_de_kilos([(10, 10)], 10, 0, 0, 9.4)["no_dan"] is True     # 6 > 5
+    assert cuenta_de_kilos([(10, 10)], 12, 0, 0, 8)["no_dan"] is False      # 100 vs 96: 4 ≤ 8
+    assert cuenta_de_kilos([(10, 10)], 13, 0, 0, 8)["no_dan"] is False      # sobran 4 ≤ 8
+    assert cuenta_de_kilos([(10, 10)], 10, 0, 0, 9.2)["no_dan"] is False    # 8 = 8: el borde no salta
+    assert cuenta_de_kilos([(10, 10)], 10, 0, 0, 9.1)["no_dan"] is True     # 9 > 8
 
 
 def test_SOBRAN_tambien_salta():
@@ -183,7 +183,7 @@ def test_un_nombre_en_BLANCO_no_alcanza_para_guardar_igual(galpon):
 
 def test_si_los_kilos_DAN_no_se_anota_nada_aunque_venga_un_nombre(galpon):
     """El RIVAL de la anotación: 10 cajones de 12,7 (127 kg) en 16 cajas de 8
-    (128 kg): sobra 1 kg contra 5 de tolerancia."""
+    (128 kg): sobra 1 kg contra 8 de tolerancia."""
     d, m, sql = galpon
     guia = d.crear_reproceso(1, 10, 16, 0, 0, FECHA, cliente_id=1, ficha_id=1,
                              reparto=[{"tipo_lote": "guia", "origen_id": 22, "bultos": 10}],
