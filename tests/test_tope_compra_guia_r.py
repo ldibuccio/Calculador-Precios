@@ -146,8 +146,10 @@ def test_LA_BASE_rechaza_por_su_cuenta_una_guia_nueva_que_se_pasa(galpon):
     # El borde entra: le quedan 5 y pide 5.
     sql("insert into reprocesos_consumos (reproceso_id, origen, compra_id, origen_id, bultos) "
         "values (%s, 'compra', 11, 11, 5)", (guia,))
-    # Una guía ANULADA no retiene nada.
+    # Una guía ANULADA no retiene nada: ni se cuenta ni se frena lo que se le anote.
     sql("update reprocesos set anulado_el = now() where id = %s", (guia,))
+    sql("insert into reprocesos_consumos (reproceso_id, origen, compra_id, origen_id, bultos) "
+        "values (%s, 'compra', 11, 11, 50)", (guia,))
     _guia(d, 30, date(2026, 10, 6), reparto=[{"tipo_lote": "guia", "origen_id": 11, "bultos": 30}])
 
 

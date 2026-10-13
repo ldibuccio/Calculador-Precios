@@ -858,7 +858,8 @@ El arreglo (aprobado por el dueño el 13/10):
 2. **La base lo decide** para las guías nuevas: el trigger
    `guia_r_no_pasa_la_compra` (db/guia_r_kilos_y_tope_1.sql) rechaza el
    INSERT de un consumo que se pasa; `_crear_reproceso` lo traduce a
-   `RepartoDesactualizado`. Solo al insertar: lo viejo no se toca.
+   `RepartoDesactualizado`. Solo al insertar: lo viejo no se toca. Una guía
+   ANULADA no retiene nada: ni cuenta en la suma ni se le frena un consumo.
 3. Las 114 viejas **no se corrigen**: "Cómo rindió" dice "Las guías anotaron
    32 cajones de una compra de 30". Los lotes de Palta de la 724 no se tocan.
 

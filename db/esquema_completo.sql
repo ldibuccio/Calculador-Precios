@@ -353,7 +353,11 @@ create table fichas_logistica_historial (
     nombre_cliente  text,
     codigo_cliente  text,
     evento          text not null check (evento in ('foto_inicial', 'alta', 'edicion', 'borrado')),
-    registrado_en   timestamptz not null default now()
+    registrado_en   timestamptz not null default now(),
+    -- El % de pérdida vigente al registrar la foto (dueño, 13/10,
+    -- db/perdida_ficha_1_tabla.sql). NULL en lo viejo y en los eventos que no
+    -- lo tocan.
+    perdida         numeric
 );
 
 comment on table fichas_logistica_historial is
@@ -1769,7 +1773,11 @@ create or replace function guia_r_no_pasa_la_compra() returns trigger
 language plpgsql as $f$
 declare libres numeric;
 begin
-  if new.compra_id is null then return new; end if;
+  -- Una guía ANULADA no retiene nada (28/09): su consumo no se cuenta ni se frena.
+  if new.compra_id is null or exists (select 1 from reprocesos
+      where id = new.reproceso_id and anulado_el is not null) then
+    return new;
+  end if;
   perform 1 from compras where id = new.compra_id for update;
   select coalesce(c.cantidad_cajones_real, 0) - coalesce((
            select sum(rc.bultos) from reprocesos_consumos rc
@@ -2492,7 +2500,6 @@ create table fichas_perdida_historial (
   constraint fichas_perdida_una_por_dia unique (ficha_id, vigente_desde)
 );
 alter table fichas_perdida_historial enable row level security;
-alter table fichas_logistica_historial add column perdida numeric;
 comment on column fichas_logistica_historial.perdida is
   'El % de pérdida vigente de la ficha al registrar la foto (fracción). NULL en las fotos de antes del 13/10 y en las que no lo tocan.';
 -- CANDADOS (RLS) EN TODAS LAS TABLAS DE public (dueño, 09/10). db/rls_1_*.sql.

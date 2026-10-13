@@ -19,7 +19,10 @@ begin
   language plpgsql as $f$
   declare libres numeric;
   begin
-    if new.compra_id is null then return new; end if;
+    if new.compra_id is null or exists (select 1 from reprocesos
+        where id = new.reproceso_id and anulado_el is not null) then
+      return new;
+    end if;
     perform 1 from compras where id = new.compra_id for update;
     select coalesce(c.cantidad_cajones_real, 0) - coalesce((
              select sum(rc.bultos) from reprocesos_consumos rc
