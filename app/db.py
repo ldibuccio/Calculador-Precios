@@ -22479,12 +22479,18 @@ def cargar_cheques(cheques: list[dict], *, fecha_carga: date, origen: str, clien
                    nombre_a_mano: str | None) -> list[int]:
     """Carga uno o varios cheques EN CARTERA en UNA transacción: o entran todos
     o ninguno. Cada uno es {"numero", "banco" (nombre), "tipo", "fecha_pago",
-    "importe", "cuit_librador", "fotos": [(lado, ruta)]}; de quién son y la
-    fecha de carga van para todos. Un repetido dice cuál."""
+    "importe", "cuit_librador", "fotos": [(lado, ruta)]}; la fecha de carga va
+    para todos, y de quién son también, salvo que el renglón traiga su
+    "origen", "cliente_id" y "nombre_a_mano" (el listado). Un repetido dice
+    cuál."""
     ids = []
     with _escribir_cheques() as cursor:
         for cheque in cheques:
             banco_id = _banco_por_nombre(cursor, cheque["banco"])
+            # De quién es: el de todos, o el del renglón si lo trae (listado).
+            su_origen = cheque.get("origen", origen)
+            su_cliente = cheque.get("cliente_id", cliente_id) if su_origen == "cliente" else None
+            su_nombre = cheque.get("nombre_a_mano", nombre_a_mano) if su_origen == "a_mano" else None
             cursor.execute("SAVEPOINT un_cheque")
             try:
                 cursor.execute(
@@ -22492,7 +22498,7 @@ def cargar_cheques(cheques: list[dict], *, fecha_carga: date, origen: str, clien
                     "cliente_id, nombre_a_mano, cuit_librador, sector) "
                     "VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, 'gerencia') RETURNING id",
                     (cheque["numero"].strip(), banco_id, cheque["tipo"], fecha_carga, cheque["fecha_pago"],
-                     cheque["importe"], origen, cliente_id, (nombre_a_mano or "").strip() or None,
+                     cheque["importe"], su_origen, su_cliente, (su_nombre or "").strip() or None,
                      cheque["cuit_librador"]),
                 )
             except (psycopg2.errors.UniqueViolation, psycopg2.errors.CheckViolation) as error:
@@ -22527,3 +22533,20 @@ def aplicar_cheques(cheque_ids: list[int], *, fecha: date, concepto_id: int | No
                 (cheque_id, fecha, concepto_id, proveedor_id, foto_ruta),
             )
         return concepto_id
+
+
+def claves_de_los_cheques_cargados() -> set:
+    """(banco en mayúsculas, número sin ceros adelante, CUIT) de todos los
+    cheques: lo que compara el índice de repetidos, para marcar en el listado
+    los que ya están antes de intentar guardarlos."""
+    conexion = obtener_conexion()
+    try:
+        with conexion.cursor() as cursor:
+            cursor.execute(
+                "SELECT upper(btrim(regexp_replace(b.nombre, '\\s+', ' ', 'g'))), "
+                "ltrim(upper(btrim(c.numero)), '0'), c.cuit_librador "
+                "FROM cheques c JOIN bancos b ON b.id = c.banco_id"
+            )
+            return {tuple(fila) for fila in cursor.fetchall()}
+    finally:
+        conexion.close()

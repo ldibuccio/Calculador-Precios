@@ -30,7 +30,7 @@ insert into bancos (id, nombre) overriding system value values (1, 'EJEMPLO Banc
 -- Como producción: el próximo banco que se agregue no choca con los sembrados.
 select setval(pg_get_serial_sequence('bancos', 'id'), 2);
 """
-CUIT_A, CUIT_B = "20111111111", "27222222222"
+CUIT_A, CUIT_B = "20111111112", "27222222228"   # con el dígito verificador bien
 
 
 @pytest.fixture
@@ -213,19 +213,19 @@ def test_el_RESUMEN_de_arriba_y_del_panel(d):
 
 # --- LO LEÍDO DE UNA FOTO (sin base) ------------------------------------------
 
-def test_LO_LEIDO_el_banco_exacto_le_gana_al_parecido_y_el_CUIT_solo_si_son_11():
+def test_LO_LEIDO_el_banco_es_el_de_la_lista_solo_si_es_IGUAL_y_el_CUIT_solo_si_son_11():
     bancos = [{"nombre": "EJEMPLO Banco"}, {"nombre": "EJEMPLO Otro Banco"}, {"nombre": "Galicia Más"},
               {"nombre": "Galicia"}]
     leidos = cheques_leidos({"cheques": [
         {"numero": " 0042 ", "banco": "Banco EJEMPLO Otro Banco", "cuit_librador": "20-11111111-1", "importe": 10.5},
         {"numero": "43", "banco": "BANCO DE GALICIA Y BS AS", "cuit_librador": "2011", "tipo": "echeq"},
         {"numero": "44", "banco": "Banco Inventado", "importe": None},
-        # El rival del exacto: "Galicia Más" es más largo y contiene "galicia".
+        # Igual sin "Banco": "Galicia", y no "Galicia Más", que lo contiene.
         {"numero": "45", "banco": "Banco Galicia"},
     ]}, bancos)
     assert [(c["numero"], c["banco"], c["cuit_librador"], c["importe"], c["tipo"]) for c in leidos] == [
         ("0042", "EJEMPLO Otro Banco", "20111111111", "10.5", "fisico"),
-        ("43", "Galicia", "", "", "echeq"),
+        ("43", "BANCO DE GALICIA Y BS AS", "", "", "echeq"),           # no es igual: queda como se leyó
         ("44", "Banco Inventado", "", "", "fisico"),
         ("45", "Galicia", "", "", "fisico")]
 

@@ -1,0 +1,80 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Revisar cheques</title>
+<style>
+{% include "_cheques_estilos.html" %}
+  .renglon { border: 1px solid #e5e7eb; border-radius: 10px; padding: 0.8rem; margin-top: 0.8rem; }
+  .renglon.con-problema { border: 2px solid #dc2626; background: #fef2f2; }
+  .renglon.sacado { opacity: 0.55; }
+  .problemas { color: #dc2626; font-weight: 700; font-size: 0.9rem; margin: 0 0 0.4rem; }
+  .tilde { display: flex; align-items: center; gap: 0.5rem; min-height: 44px; font-size: 0.92rem; }
+  .tilde input { width: 1.3rem; height: 1.3rem; flex: none; }
+</style>
+</head>
+<body>
+  {% set barra_sector = "gerencia" %}
+  {% set barra_titulo = "Revisar cheques" %}
+  {% set barra_atras = "/gerencia/cheques/cargar" %}
+  {% include "_barra_navegacion.html" %}
+
+  {% if aviso %}<div class="aviso">{{ aviso }}</div>{% endif %}
+  {% if error %}<div class="error" data-error>{{ error }}</div>{% endif %}
+
+  <form method="post" action="/gerencia/cheques/cargar/listado">
+    <input type="hidden" name="cantidad" value="{{ renglones|length }}">
+    <div class="tarjeta" data-resumen>
+      <p class="total" data-total>{{ total|moneda }}</p>
+      <p class="total-dato">{{ cuantos }} cheque{{ '' if cuantos == 1 else 's' }}{% if con_problema %} · <span class="rojo" data-con-problema>{{ con_problema }} con problema</span>{% endif %}</p>
+      <div class="campos"><label>¿Qué día los recibiste?<input type="date" name="fecha_carga" value="{{ fecha_carga }}" required></label></div>
+      <p class="nota">"Guardar todos" guarda los que están bien. Los marcados en rojo no entran hasta corregirlos o sacarlos.</p>
+      <div class="acciones">
+        <button type="submit" name="accion" value="revisar" class="secundario">Revisar</button>
+        <button type="submit" name="accion" value="guardar">Guardar todos</button>
+      </div>
+    </div>
+
+    <details class="tarjeta">
+      <summary>¿De quién son? Ponerlo a todos</summary>
+      <div class="campos">
+        <label>¿De quién?<select name="origen_todos">{% for valor, texto in origenes %}<option value="{{ valor }}">{{ texto }}</option>{% endfor %}</select></label>
+        <label>Cliente<select name="cliente_todos"><option value="">—</option>{% for c in clientes %}<option value="{{ c.id }}">{{ c.nombre }}</option>{% endfor %}</select></label>
+        <label>Nombre (si es otro)<input type="text" name="nombre_todos" placeholder="Ej. Juan Pérez"></label>
+      </div>
+      <div class="acciones"><button type="submit" name="accion" value="a_todos" class="secundario">Poner a todos</button></div>
+    </details>
+
+    <datalist id="bancos">{% for b in bancos %}<option value="{{ b.nombre }}">{% endfor %}</datalist>
+    <div class="tarjeta">
+      <h2>Los cheques leídos</h2>
+      {% for r, problemas in renglones %}{% set i = loop.index0 %}
+      <div class="renglon{% if problemas and not r.sacar %} con-problema{% endif %}{% if r.sacar %} sacado{% endif %}" data-renglon="{{ i }}">
+        {% if problemas and not r.sacar %}<p class="problemas" data-problemas>{{ problemas|join(" · ") }}</p>{% endif %}
+        <div class="campos">
+          <label>Número<input type="text" name="numero_{{ i }}" inputmode="numeric" value="{{ r.numero }}"></label>
+          <label>Banco<input type="text" name="banco_{{ i }}" list="bancos" value="{{ r.banco }}"></label>
+          <label>¿Qué día se cobra?<input type="date" name="fecha_pago_{{ i }}" value="{{ r.fecha_pago }}"></label>
+          <label>Importe<input type="number" name="importe_{{ i }}" step="0.01" min="0.01" inputmode="decimal" value="{{ r.importe }}"></label>
+          <label>CUIT de quien lo firma<input type="text" name="cuit_librador_{{ i }}" inputmode="numeric" value="{{ r.cuit_librador }}"></label>
+          <label>¿Físico o ECHEQ?<select name="tipo_{{ i }}"><option value="fisico" {% if r.tipo != 'echeq' %}selected{% endif %}>Físico</option><option value="echeq" {% if r.tipo == 'echeq' %}selected{% endif %}>ECHEQ</option></select></label>
+          <label>¿De quién es?<select name="origen_{{ i }}"><option value="">Elegí</option>{% for valor, texto in origenes %}<option value="{{ valor }}" {% if r.origen == valor %}selected{% endif %}>{{ texto }}</option>{% endfor %}</select></label>
+          <label>Cliente<select name="cliente_id_{{ i }}"><option value="">—</option>{% for c in clientes %}<option value="{{ c.id }}" {% if r.cliente_id == c.id %}selected{% endif %}>{{ c.nombre }}</option>{% endfor %}</select></label>
+          <label>Nombre (si es otro)<input type="text" name="nombre_a_mano_{{ i }}" value="{{ r.nombre_a_mano }}"></label>
+        </div>
+        {% if r.banco_nuevo or "el banco no está en la lista" in problemas %}
+        <label class="tilde"><input type="checkbox" name="banco_nuevo_{{ i }}" value="1" {% if r.banco_nuevo %}checked{% endif %}>Es un banco nuevo: agregarlo a la lista</label>
+        {% endif %}
+        <label class="tilde"><input type="checkbox" name="sacar_{{ i }}" value="1" {% if r.sacar %}checked{% endif %}>Sacar este cheque del listado</label>
+      </div>
+      {% endfor %}
+    </div>
+    <div class="acciones">
+      <button type="submit" name="accion" value="revisar" class="secundario">Revisar</button>
+      <button type="submit" name="accion" value="guardar">Guardar todos</button>
+    </div>
+  </form>
+{% include "_pie_version.html" %}
+</body>
+</html>

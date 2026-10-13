@@ -62,23 +62,17 @@ def _solo_digitos(texto) -> str:
 
 
 def _banco_de_la_lista(leido: str, bancos: list[dict]) -> str:
-    """El nombre del banco de la lista que corresponde a lo leído (sin
-    mayúsculas ni la palabra "Banco"), o lo leído tal cual si no hay."""
+    """El nombre del banco de la lista que es IGUAL a lo leído (sin mayúsculas
+    ni las palabras "Banco", "de", "la", "del"), o lo leído tal cual si no hay.
+    Nada de "se parece": "EJEMPLO Banco Inventado" no es "EJEMPLO Banco" (13/10),
+    y un banco que no está se tiene que ver para elegirlo o agregarlo."""
     def limpio(texto):
         return " ".join(w for w in str(texto or "").lower().split() if w not in ("banco", "de", "la", "del"))
     buscado = limpio(leido)
     if not buscado:
         return ""
     exactos = [b["nombre"] for b in bancos if limpio(b["nombre"]) == buscado]
-    if exactos:
-        return exactos[0]
-    # Si no hay uno igual, el que más se parece: el nombre más largo que está
-    # adentro de lo leído (o lo contiene). "Galicia" no le gana a "Galicia Más".
-    parecidos = [b["nombre"] for b in bancos
-                 if limpio(b["nombre"]) and (limpio(b["nombre"]) in buscado or buscado in limpio(b["nombre"]))]
-    if parecidos:
-        return max(parecidos, key=lambda nombre: len(limpio(nombre)))
-    return str(leido).strip()
+    return exactos[0] if exactos else " ".join(str(leido).split())
 
 
 def cheques_leidos(datos: dict, bancos: list[dict]) -> list[dict]:
