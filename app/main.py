@@ -28554,15 +28554,31 @@ def _concepto_pago_a_proveedor(conceptos: list[dict]) -> int | None:
     return next((c["id"] for c in conceptos if c["destino"] == "entregado"), None)
 
 
+def _concepto_deposito_en_cuenta(conceptos: list[dict]) -> int | None:
+    """El concepto con que sale un cheque de una captura de DEPÓSITO:
+    "Depósito en cuenta" (el primero que lo deja depositado, si lo
+    renombraron)."""
+    for concepto in conceptos:
+        if concepto["nombre"] == "Depósito en cuenta":
+            return concepto["id"]
+    return next((c["id"] for c in conceptos if c["destino"] == "depositado"), None)
+
+
+def _destinos_de_los_conceptos(conceptos: list[dict]) -> dict:
+    return {c["id"]: c["destino"] for c in conceptos}
+
+
 def _renderizar_endosos(request: Request, renglones: list[dict], fotos: list[str], *, avisos: list[str] = (),
                         error: str | None = None, status_code: int = 200):
     cheques = buscar_cheques({})
-    problemas = problemas_de_los_endosos(renglones, cheques)
+    conceptos = listar_conceptos_de_cheques()
+    destinos = _destinos_de_los_conceptos(conceptos)
+    problemas = problemas_de_los_endosos(renglones, cheques, destinos=destinos)
     vivos = [(r, p) for r, p in zip(renglones, problemas) if not r.get("sacar")]
     return templates.TemplateResponse(request, "cheques_endosos.html", {
         "renglones": list(zip(renglones, problemas)), "fotos": fotos, "avisos": list(avisos), "error": error,
         "en_cartera": [c for c in cheques if c["estado"] in ("en_cartera", "vencido")],
-        "proveedores": proveedores_con_cuit(), "conceptos": listar_conceptos_de_cheques(),
+        "proveedores": proveedores_con_cuit(), "conceptos": conceptos, "destinos": destinos,
         "total": round(sum(_importe_de_cheque(r["importe"]) or 0 for r, _ in vivos), 2),
         "cuantos": len(vivos), "con_problema": sum(1 for _, p in vivos if p),
     }, status_code=status_code)
@@ -28589,9 +28605,11 @@ async def leer_endosos_de_cheques(request: Request):
         except Exception:
             logger.exception("No se pudo leer la captura del endoso %s", archivo.filename)
             leidas.append({"error": f"«{archivo.filename}» no se entiende como una captura del banco"})
+    conceptos = listar_conceptos_de_cheques()
     renglones, avisos = renglones_de_los_endosos(
         leidas, cheques=buscar_cheques({}), proveedores=proveedores_con_cuit(),
-        concepto_id=_concepto_pago_a_proveedor(listar_conceptos_de_cheques()), hoy=_hoy_argentina())
+        concepto_id=_concepto_pago_a_proveedor(conceptos),
+        concepto_deposito_id=_concepto_deposito_en_cuenta(conceptos), hoy=_hoy_argentina())
     return _renderizar_endosos(request, renglones, fotos, avisos=avisos)
 
 
@@ -28612,6 +28630,7 @@ def _renglones_de_los_endosos_del_formulario(formulario) -> list[dict]:
             "emisor": dato("emisor"), "cheque_id": _id_opcional_desde_query(dato("cheque_id")),
             "proveedor_cuit": dato("proveedor_cuit"), "proveedor_nombre": dato("proveedor_nombre"),
             "proveedor_id": _id_opcional_desde_query(dato("proveedor_id")),
+            "cuenta_deposito": dato("cuenta_deposito"), "deposito": dato("deposito") == "1",
             "concepto_id": _id_opcional_desde_query(dato("concepto_id")), "fecha": dato("fecha"),
             "sacar": dato("sacar") == "1",
         })
@@ -28631,7 +28650,8 @@ async def confirmar_endosos_de_cheques(request: Request):
     fotos = [str(f) for f in formulario.getlist("foto_leida")]
     if str(formulario.get("accion") or "") != "confirmar":
         return _renderizar_endosos(request, renglones, fotos)
-    problemas = problemas_de_los_endosos(renglones, buscar_cheques({}))
+    destinos = _destinos_de_los_conceptos(listar_conceptos_de_cheques())
+    problemas = problemas_de_los_endosos(renglones, buscar_cheques({}), destinos=destinos)
     buenos = [r for r, p in zip(renglones, problemas) if not p and not r["sacar"]]
     quedan = [r for r, p in zip(renglones, problemas) if p and not r["sacar"]]
     subidas: dict = {}
@@ -28642,9 +28662,14 @@ async def confirmar_endosos_de_cheques(request: Request):
                 subidas[r["foto"]] = (subir_foto_comanda(contenido, "endoso", prefijo=PREFIJO_CHEQUE)
                                       if contenido else None)
         if buenos:
+            # El proveedor va solo en un pago a proveedor y la cuenta solo en un
+            # depósito: lo que quedó del otro tipo si se cambió el concepto no se guarda.
             aplicar_salidas_de_cheques([{
                 "cheque_id": r["cheque_id"], "fecha": date.fromisoformat(r["fecha"]), "concepto_id": r["concepto_id"],
-                "proveedor_id": r["proveedor_id"], "foto_ruta": subidas.get(r["foto"]),
+                "proveedor_id": r["proveedor_id"] if destinos.get(r["concepto_id"]) == "entregado" else None,
+                "cuenta_deposito": (r["cuenta_deposito"] or None
+                                    if destinos.get(r["concepto_id"]) == "depositado" else None),
+                "foto_ruta": subidas.get(r["foto"]),
                 "cuit_leido": "".join(ch for ch in r["proveedor_cuit"] if ch.isdigit())} for r in buenos])
     except ChequeNoSePuede as motivo:
         for ruta in subidas.values():

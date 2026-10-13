@@ -13,6 +13,13 @@ cheque para confirmar antes de guardar, y se dice qué tiene mal cada uno.
   CUIT, se elige de la lista, y al guardar el proveedor elegido se queda con
   el CUIT leído si no tenía (la próxima vez se encuentra solo).
 - El mismo cheque (número y monto) en dos fotos se toma una vez, y se avisa.
+
+DEPÓSITOS (dueño, 13/10): la captura también puede ser de un DEPÓSITO
+("Cuenta de Depósito: CC$ 191-220-000247/7" en vez del CUIT del proveedor).
+Cada cheque se clasifica por SU foto: los de una foto de depósito salen con
+"Depósito en cuenta", sin proveedor y con la cuenta, aunque en la misma tanda
+haya fotos de endosos. Lo que decide si hace falta proveedor es el concepto
+elegido en el renglón (su destino), no la foto: si se cambia, se pide.
 """
 from datetime import date
 
@@ -44,8 +51,15 @@ def _el_de_la_cartera(numero: str, importe: float | None, en_cartera: list[dict]
     return candidatos[0] if len(candidatos) == 1 else None
 
 
+def es_un_deposito(leida: dict) -> bool:
+    """La foto es de un depósito si la IA leyó una cuenta de depósito (o dijo
+    que es un depósito)."""
+    return bool(str(leida.get("cuenta_deposito") or "").strip()) or leida.get("tipo") == "deposito"
+
+
 def renglones_de_los_endosos(leidas: list[dict], *, cheques: list[dict], proveedores: list[dict],
-                             concepto_id: int | None, hoy: date) -> tuple[list[dict], list[str]]:
+                             concepto_id: int | None, concepto_deposito_id: int | None,
+                             hoy: date) -> tuple[list[dict], list[str]]:
     """Un renglón por cheque de las fotos, y los avisos.
 
     `leidas` es una por foto, en orden: lo que devolvió la IA (o {"error"}).
@@ -57,8 +71,10 @@ def renglones_de_los_endosos(leidas: list[dict], *, cheques: list[dict], proveed
         if leida.get("error"):
             avisos.append(f"La foto {foto + 1} no se pudo leer: {leida['error']}")
             continue
-        cuit = cuit_de_la_celda(leida.get("proveedor_cuit"))
-        nombre = str(leida.get("proveedor_nombre") or "").strip()
+        deposito = es_un_deposito(leida)
+        cuenta = str(leida.get("cuenta_deposito") or "").strip()
+        cuit = "" if deposito else cuit_de_la_celda(leida.get("proveedor_cuit"))
+        nombre = "" if deposito else str(leida.get("proveedor_nombre") or "").strip()
         for cheque in leida.get("cheques") or []:
             numero = str(cheque.get("numero") or "").strip()
             importe = importe_de_la_celda(cheque.get("importe"))
@@ -77,7 +93,9 @@ def renglones_de_los_endosos(leidas: list[dict], *, cheques: list[dict], proveed
                 "cheque_id": _el_de_la_cartera(numero, _monto(importe), en_cartera),
                 "proveedor_cuit": cuit, "proveedor_nombre": nombre,
                 "proveedor_id": _proveedor_por_cuit(cuit, proveedores),
-                "concepto_id": concepto_id, "fecha": hoy.isoformat(), "sacar": False,
+                "cuenta_deposito": cuenta, "deposito": deposito,
+                "concepto_id": concepto_deposito_id if deposito else concepto_id,
+                "fecha": hoy.isoformat(), "sacar": False,
             })
     if not renglones and not avisos:
         avisos.append("No se encontró ningún cheque en las fotos.")
@@ -89,8 +107,11 @@ def _moneda(valor) -> str:
     return "$" + (texto[:-3] if texto.endswith(",00") else texto)
 
 
-def problemas_de_los_endosos(renglones: list[dict], cheques: list[dict]) -> list[list[str]]:
-    """Por renglón, lo que tiene mal (vacío si se puede guardar)."""
+def problemas_de_los_endosos(renglones: list[dict], cheques: list[dict], *,
+                             destinos: dict) -> list[list[str]]:
+    """Por renglón, lo que tiene mal (vacío si se puede guardar). `destinos`:
+    el destino de cada concepto por id (el proveedor lo pide solo el que deja
+    el cheque "entregado")."""
     por_id = {c["id"]: c for c in cheques}
     elegidos: dict = {}
     for r in renglones:
@@ -120,7 +141,7 @@ def problemas_de_los_endosos(renglones: list[dict], cheques: list[dict]) -> list
             mal.append(f"el monto no coincide: en la cartera es {_moneda(cheque['importe'])}")
         if cheque is not None and elegidos.get(cheque["id"], 0) > 1:
             mal.append("ese cheque está en otro renglón")
-        if not r.get("proveedor_id"):
+        if destinos.get(r.get("concepto_id")) == "entregado" and not r.get("proveedor_id"):
             mal.append("elegí el proveedor")
         if not r.get("concepto_id"):
             mal.append("elegí el concepto")

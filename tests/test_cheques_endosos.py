@@ -14,6 +14,10 @@ LAS 4 CAPTURAS, 5 cheques:
   foto 2: a PROV_A, 1003
   foto 3: a PROV_A, 1004            -> no está en la cartera
   foto 4: a PROV_B, 0001002 y 1005  -> 1002 repetido de la foto 1; PROV_B no es de nadie
+
+DEPÓSITOS (13/10): la captura REAL que mandó el dueño (cuenta CC$ 191-220-000247/7,
+cheques 00932970 y 00020758) se escribe como lo que la IA leería de ella; acá
+no hay imagen.
 """
 import os
 import re
@@ -46,6 +50,17 @@ CAPTURAS = [
 ]
 
 
+CUENTA = "CC$ 191-220-000247/7"
+# La captura real del dueño. La IA también podría leer el CUIT de quien firma la
+# operación: es el RIVAL, un depósito no va a ningún proveedor aunque venga uno.
+DEPOSITO_REAL = {"tipo": "deposito", "cuenta_deposito": CUENTA, "proveedor_cuit": PROV_A,
+                 "proveedor_nombre": "EJEMPLO PUESTO SRL",
+                 "cheques": [{"numero": "00932970", "fecha_pago": "2026-09-22", "importe": 97240,
+                              "emisor": "Día Argentina"},
+                             {"numero": "00020758", "fecha_pago": "2026-10-05", "importe": 4519691.57,
+                              "emisor": "Lartirigoyen & Oromi"}]}
+
+
 def _galpon(d):
     conexion = d.obtener_conexion()
     with conexion.cursor() as cursor:
@@ -64,6 +79,11 @@ def _leer(m, capturas):
         pagina = _cliente(m, "gerencia").post("/gerencia/cheques/aplicar/endosos", files=archivos)
     assert lector.call_count == len(capturas)
     return pagina
+
+
+def _los_reales(d) -> dict:
+    return {n: _cargar(d, n, importe=i, pago=date.fromisoformat(p))
+            for n, i, p in (("00932970", 97240.0, "2026-09-22"), ("00020758", 4519691.57, "2026-10-05"))}
 
 
 def _formulario(html: str) -> dict:
@@ -145,8 +165,66 @@ def test_SACAR_un_renglon_y_confirmar_termina(m, d):
     assert final.status_code == 303 and "0+cheques+aplicados" in final.headers["location"]
 
 
+def test_la_CAPTURA_REAL_de_deposito_deja_los_dos_DEPOSITADOS_con_la_cuenta(m, d):
+    _galpon(d)
+    reales = _los_reales(d)
+    pagina = _leer(m, [DEPOSITO_REAL])
+    marcado = _sin_estilo(pagina.text)
+    assert re.findall(r'data-tipo="([a-z]+)"', marcado) == ["deposito", "deposito"]
+    assert re.findall(r'data-problemas>([^<]*)</p>', marcado) == []
+    datos = _formulario(pagina.text)
+    assert [(datos[f"cheque_id_{i}"], datos[f"concepto_id_{i}"], datos[f"proveedor_id_{i}"],
+             datos[f"cuenta_deposito_{i}"]) for i in range(2)] == [
+        (str(reales["00932970"]), "3", "", CUENTA), (str(reales["00020758"]), "3", "", CUENTA)]
+    with patch("app.main.subir_foto_comanda", return_value="cheques/deposito.jpg"):
+        final = _cliente(m, "gerencia").post("/gerencia/cheques/aplicar/endosos/confirmar",
+                                             data=dict(datos, accion="confirmar"), follow_redirects=False)
+    assert final.status_code == 303 and "2+cheques+aplicados" in final.headers["location"]
+    assert {c["numero"]: (c["estado"], c["concepto"], c["proveedor_id"], c["cuenta_deposito"])
+            for c in d.buscar_cheques({}) if c["id"] in reales.values()} == {
+        "00932970": ("depositado", "Depósito en cuenta", None, CUENTA),
+        "00020758": ("depositado", "Depósito en cuenta", None, CUENTA)}
+    # El CUIT que venía en la captura de depósito no se le pegó a nadie.
+    assert {p["id"]: p["cuit"] for p in d.proveedores_con_cuit()} == {1: PROV_A, 2: None}
+    ficha = _sin_estilo(_cliente(m, "gerencia").get(f"/gerencia/cheques/{reales['00020758']}").text)
+    assert re.findall(r'<span data-cuenta-deposito>([^<]*)</span>', ficha) == [CUENTA]
+
+
+def test_una_TANDA_MEZCLADA_cada_cheque_sale_como_dice_SU_foto(m, d):
+    ids = _galpon(d)
+    reales = _los_reales(d)
+    pagina = _leer(m, [_captura(PROV_A, "EJEMPLO PUESTO SRL", ("1001", 10000)), DEPOSITO_REAL,
+                       _captura(PROV_A, "EJEMPLO PUESTO SRL", ("1003", 30000))])
+    marcado = _sin_estilo(pagina.text)
+    assert re.findall(r'data-tipo="([a-z]+)"', marcado) == ["endoso", "deposito", "deposito", "endoso"]
+    datos = _formulario(pagina.text)
+    assert {datos[f"numero_{i}"]: (datos[f"concepto_id_{i}"], datos[f"proveedor_id_{i}"],
+                                   datos[f"cuenta_deposito_{i}"]) for i in range(4)} == {
+        "1001": ("1", "1", ""), "00932970": ("3", "", CUENTA), "00020758": ("3", "", CUENTA),
+        "1003": ("1", "1", "")}
+    # El de la foto 3 se pasa a depósito a mano: no se guarda proveedor, y como no
+    # tiene cuenta queda sin cuenta. Uno de la foto de depósito pasado a pago a
+    # proveedor pide el proveedor.
+    datos[f"concepto_id_{_fila(datos, '1003')}"] = "3"
+    datos[f"concepto_id_{_fila(datos, '00020758')}"] = "1"
+    revisada = _cliente(m, "gerencia").post("/gerencia/cheques/aplicar/endosos/confirmar",
+                                            data=dict(datos, accion="revisar"))
+    assert re.findall(r'data-problemas>([^<]*)</p>', _sin_estilo(revisada.text)) == ["elegí el proveedor"]
+    rutas = iter(f"cheques/foto-{n}.jpg" for n in range(10))
+    with patch("app.main.subir_foto_comanda", side_effect=lambda *a, **k: next(rutas)):
+        confirmada = _cliente(m, "gerencia").post("/gerencia/cheques/aplicar/endosos/confirmar",
+                                                  data=dict(_formulario(revisada.text), accion="confirmar"))
+    assert "Se aplicaron 3. Quedan 1 con problemas" in confirmada.text
+    assert {c["numero"]: (c["estado"], c["proveedor_id"], c["cuenta_deposito"], c["foto_salida"])
+            for c in d.buscar_cheques({}) if c["estado"] != "en_cartera"} == {
+        "1001": ("entregado", 1, None, "cheques/foto-0.jpg"),
+        "00932970": ("depositado", None, CUENTA, "cheques/foto-1.jpg"),
+        "1003": ("depositado", None, None, "cheques/foto-2.jpg")}
+
+
 # --- SIN BASE ----------------------------------------------------------------
 
+DESTINOS = {1: "entregado", 2: "canjeado", 3: "depositado"}
 CARTERA = [{"id": 1, "numero": "0042", "importe": 1000, "estado": "en_cartera"},     # con ceros adelante
            {"id": 2, "numero": "42", "importe": 2000, "estado": "en_cartera"},     # mismo número, otro monto
            {"id": 3, "numero": "77", "importe": 500, "estado": "depositado"}]
@@ -158,14 +236,31 @@ def test_la_COINCIDENCIA_es_por_numero_y_monto_y_dos_iguales_no_se_adivinan():
         [{"proveedor_cuit": PROV_A, "cheques": [{"numero": "42", "importe": 2000}, {"numero": "77", "importe": 500}]},
          {"proveedor_cuit": PROV_A, "cheques": [{"numero": "00042", "importe": 1000}]},
          {"proveedor_cuit": PROV_B, "cheques": [{"numero": "9", "importe": 1}]}, {"error": "borrosa"}],
-        cheques=CARTERA, proveedores=proveedores, concepto_id=1, hoy=date(2026, 10, 13))
+        cheques=CARTERA, proveedores=proveedores, concepto_id=1, concepto_deposito_id=3, hoy=date(2026, 10, 13))
     # "00042" de $1.000 es el "0042" de $1.000 (sin ceros adelante y por monto); "42" de $2.000, el
     # otro. Y no son el mismo cheque: no se toman como repetidos.
     assert avisos == ["La foto 4 no se pudo leer: borrosa"]
     assert [(r["numero"], r["cheque_id"], r["proveedor_id"]) for r in renglones] == [
         ("42", 2, 1), ("77", None, 1), ("00042", 1, 1), ("9", None, None)]   # PROV_B lo tienen dos: se elige
-    assert problemas_de_los_endosos(renglones, CARTERA) == [
+    assert problemas_de_los_endosos(renglones, CARTERA, destinos=DESTINOS) == [
         [], ["ya salió: está depositado"], [], ["no está en la cartera", "elegí el proveedor"]]
     # El mismo cheque elegido a mano en dos renglones.
     dos = [dict(renglones[0]), dict(renglones[0], numero="0042", importe="2000")]
-    assert problemas_de_los_endosos(dos, CARTERA) == [["ese cheque está en otro renglón"]] * 2
+    assert problemas_de_los_endosos(dos, CARTERA, destinos=DESTINOS) == [["ese cheque está en otro renglón"]] * 2
+    # Sin proveedor: lo pide el pago a proveedor, no el depósito ni el canje.
+    sin = [dict(renglones[0], proveedor_id=None, concepto_id=c) for c in (1, 2, 3)]
+    assert problemas_de_los_endosos(sin, CARTERA, destinos=DESTINOS) == [
+        ["ese cheque está en otro renglón", "elegí el proveedor"], ["ese cheque está en otro renglón"],
+        ["ese cheque está en otro renglón"]]
+
+
+def test_la_FOTO_de_deposito_se_reconoce_por_la_cuenta_aunque_no_diga_el_tipo():
+    renglones, _ = renglones_de_los_endosos(
+        [{"cuenta_deposito": " CC$ 191-220-000247/7 ", "proveedor_cuit": PROV_A,
+          "cheques": [{"numero": "42", "importe": 2000}]},
+         {"tipo": "endoso", "cuenta_deposito": None, "proveedor_cuit": PROV_A,
+          "cheques": [{"numero": "0042", "importe": 1000}]}],
+        cheques=CARTERA, proveedores=[{"id": 1, "cuit": PROV_A}], concepto_id=1, concepto_deposito_id=3,
+        hoy=date(2026, 10, 13))
+    assert [(r["deposito"], r["concepto_id"], r["proveedor_id"], r["cuenta_deposito"], r["proveedor_cuit"])
+            for r in renglones] == [(True, 3, None, "CC$ 191-220-000247/7", ""), (False, 1, 1, "", PROV_A)]

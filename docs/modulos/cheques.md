@@ -25,7 +25,10 @@ las plantillas `cheques*.html` y `cheque.html`. Tests:
 - **Salida**: una por cheque (`cheques_salidas`), con un concepto que dice si
   queda Entregado, Canjeado o Depositado. Pago a proveedor exige proveedor;
   el canje va contra nada. Un rechazado no sale, y nada sale antes de su
-  fecha de carga (trigger `cheque_salida_valida`). Se pueden agregar
+  fecha de carga (trigger `cheque_salida_valida`; desde `cheques_2` esos dos
+  frenos miran solo cuando la salida nace o cambia de cheque o de fecha, para
+  que juntar proveedores pueda mover la salida de un cheque ya rechazado). Un
+  depósito puede guardar la cuenta en `cuenta_deposito` (vacía no). Se pueden agregar
   conceptos nuevos al aplicar, eligiendo cómo deja el cheque.
 - **Correcciones**: solo mientras está en cartera
   (`cheque_que_salio_no_se_corrige`), con historial campo por campo.
@@ -95,6 +98,17 @@ las plantillas `cheques*.html` y `cheque.html`. Tests:
   están bien en una transacción, cada salida con su foto (una subida por
   foto). Sin migración: `proveedores.cuit` ya existía (0 cargados el 13/10).
   Tests: `tests/test_cheques_endosos.py`.
+- **Capturas de DEPÓSITO en la misma tanda** (dueño, 13/10): la captura que
+  dice "Cuenta de Depósito: CC$ 191-220-000247/7" en vez del proveedor es un
+  depósito (`es_un_deposito`: la IA leyó una cuenta o dijo "deposito"). Cada
+  cheque se clasifica por SU foto y se ve en el renglón (etiqueta "Depósito"
+  o "Pago a proveedor"): los de depósito arrancan con "Depósito en cuenta",
+  sin proveedor (un CUIT que venga en esa foto se ignora) y con la cuenta, que
+  se guarda en `cheques_salidas.cuenta_deposito` y se ve en la ficha. Lo que
+  pide proveedor o cuenta es el CONCEPTO elegido en el renglón: si se cambia,
+  se pide lo del nuevo, y lo del otro tipo no se guarda. Migración
+  `cheques_2` (`db/cheques_7_cuenta_deposito.sql`, verificación en
+  `db/cheques_8_verificacion_cuenta.sql`).
 - **Ficha**: datos, fotos, historial, y aplicar, rechazar, resolver el
   reclamo, corregir y agregar fotos.
 - **Panel**: cuadro 13 "Cheques" (`docs/modulos/panel_control.md`).

@@ -22243,7 +22243,8 @@ _SQL_CHEQUES = """
            e.nombre_a_mano, e.cuit_librador, e.creado_en, e.de_quien, e.vence_el, e.fecha_salida,
            e.proveedor_id, e.concepto, e.acreditado_el, e.fecha_rechazo, e.motivo_rechazo,
            e.resuelto_el, e.resolucion, e.estado, e.en_rojo_por_vencer, e.banco_id,
-           b.nombre AS banco, p.nombre AS proveedor, s.concepto_id, s.foto_ruta AS foto_salida
+           b.nombre AS banco, p.nombre AS proveedor, s.concepto_id, s.foto_ruta AS foto_salida,
+           s.cuenta_deposito
     FROM cheques_con_estado e
     JOIN bancos b ON b.id = e.banco_id
     LEFT JOIN cheques_salidas s ON s.cheque_id = e.id
@@ -22566,8 +22567,8 @@ def proveedores_con_cuit() -> list[dict]:
 
 def aplicar_salidas_de_cheques(salidas: list[dict]) -> None:
     """Varias salidas, cada una con lo suyo ({"cheque_id", "fecha",
-    "concepto_id", "proveedor_id", "foto_ruta", "cuit_leido"}), en UNA
-    transacción: o entran todas o ninguna.
+    "concepto_id", "proveedor_id", "cuenta_deposito", "foto_ruta",
+    "cuit_leido"}), en UNA transacción: o entran todas o ninguna.
 
     EL PROVEEDOR RECUERDA SU CUIT (dueño, 13/10): si se eligió a mano para un
     endoso cuyo CUIT se leyó, y el proveedor no tenía, se le guarda. Uno que ya
@@ -22575,10 +22576,10 @@ def aplicar_salidas_de_cheques(salidas: list[dict]) -> None:
     with _escribir_cheques() as cursor:
         for salida in salidas:
             cursor.execute(
-                "INSERT INTO cheques_salidas (cheque_id, fecha, concepto_id, proveedor_id, foto_ruta, sector) "
-                "VALUES (%s, %s, %s, %s, %s, 'gerencia')",
+                "INSERT INTO cheques_salidas (cheque_id, fecha, concepto_id, proveedor_id, cuenta_deposito, "
+                "foto_ruta, sector) VALUES (%s, %s, %s, %s, %s, %s, 'gerencia')",
                 (salida["cheque_id"], salida["fecha"], salida["concepto_id"], salida["proveedor_id"],
-                 salida.get("foto_ruta")),
+                 salida.get("cuenta_deposito"), salida.get("foto_ruta")),
             )
             cuit = salida.get("cuit_leido")
             if salida["proveedor_id"] and cuit and len(cuit) == 11 and cuit.isdigit():

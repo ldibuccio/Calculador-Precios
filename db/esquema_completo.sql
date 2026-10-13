@@ -2560,6 +2560,9 @@ create table cheques_salidas (
   concepto_id  bigint not null references cheques_conceptos (id),
   proveedor_id bigint references proveedores (id),
   foto_ruta    text check (foto_ruta is null or btrim(foto_ruta) <> ''),
+  -- La cuenta propia en que se depositó (captura de depósito, 13/10).
+  cuenta_deposito text constraint cheques_salidas_cuenta_no_vacia
+    check (cuenta_deposito is null or btrim(cuenta_deposito) <> ''),
   sector       text not null check (sector = 'gerencia'),
   creado_en    timestamptz not null default now()
 );
@@ -2621,13 +2624,19 @@ begin
     raise exception 'un pago a proveedor tiene que decir a qué proveedor'
       using errcode = 'check_violation', constraint = 'cheque_entregado_con_proveedor';
   end if;
-  if exists (select 1 from cheques_rechazos where cheque_id = new.cheque_id) then
-    raise exception 'el cheque % está rechazado: no sale', new.cheque_id
-      using errcode = 'check_violation', constraint = 'cheque_rechazado_no_sale';
-  end if;
-  if new.fecha < ch.fecha_carga then
-    raise exception 'el cheque % no puede salir antes de entrar', new.cheque_id
-      using errcode = 'check_violation', constraint = 'cheque_salida_fechas';
+  -- Rechazo y fechas, solo cuando la salida NACE o cambia de cheque o de
+  -- fecha (cheques_2): juntar proveedores reescribe proveedor_id de salidas
+  -- de cheques que después se rechazaron, y eso no puede frenarse.
+  if tg_op = 'INSERT' or new.cheque_id is distinct from old.cheque_id
+     or new.fecha is distinct from old.fecha then
+    if exists (select 1 from cheques_rechazos where cheque_id = new.cheque_id) then
+      raise exception 'el cheque % está rechazado: no sale', new.cheque_id
+        using errcode = 'check_violation', constraint = 'cheque_rechazado_no_sale';
+    end if;
+    if new.fecha < ch.fecha_carga then
+      raise exception 'el cheque % no puede salir antes de entrar', new.cheque_id
+        using errcode = 'check_violation', constraint = 'cheque_salida_fechas';
+    end if;
   end if;
   return new;
 end $f$;
