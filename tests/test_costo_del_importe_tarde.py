@@ -59,9 +59,13 @@ def galpon(base_real, monkeypatch):
 
     def compra(importe):
         (cid,), = sql(
+            # Recepcionada CON sus cajones aceptados, como en producción (920
+            # de 920 en Frutamax el 13/10): sin ellos el tope por compra de las
+            # guías R (13/10) la ve vacía.
             """INSERT INTO compras (fecha_operacion, articulo_id, proveedor_id, importe,
-                   cantidad_cajones, contenido_por_cajon, cantidad_kilos, estado)
-               VALUES (%s, %s, %s, %s, 10, 16, 160, 'recepcionado') RETURNING id""",
+                   cantidad_cajones, contenido_por_cajon, cantidad_kilos, estado,
+                   cantidad_cajones_real, contenido_por_cajon_real)
+               VALUES (%s, %s, %s, %s, 10, 16, 160, 'recepcionado', 10, 16) RETURNING id""",
             (date(2026, 3, 5), articulo, proveedor, importe))
         return cid
 

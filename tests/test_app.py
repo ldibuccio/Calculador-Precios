@@ -9,7 +9,7 @@ import re
 import urllib.parse
 from contextlib import ExitStack
 from datetime import date, datetime, time, timedelta, timezone
-from unittest.mock import MagicMock, patch
+from unittest.mock import ANY, MagicMock, patch
 
 import openpyxl
 import pypdfium2 as pdfium
@@ -1457,11 +1457,17 @@ def test_ver_editar_ficha_muestra_datos_precargados():
         patch("app.main.obtener_ficha", return_value=FICHA_DE_PRUEBA),
         patch("app.main.listar_envases", return_value=ENVASES_DEL_CLIENTE),
         patch("app.main._articulos_para_ficha", return_value=ARTICULOS_PARA_FICHA),
+        # El % de pérdida (13/10): 18% desde el 10/10, antes 0.
+        patch("app.main.perdida_de_la_ficha", return_value=0.18),
+        patch("app.main.historial_de_la_perdida",
+              return_value=[{"perdida": 0.18, "vigente_desde": date(2026, 10, 10)}]),
     ):
         respuesta = cliente.get("/fichas/10/editar")
 
     assert respuesta.status_code == 200
     assert "Mango" in respuesta.text
+    assert re.findall(r'<input type="number" id="perdida" name="perdida"[^>]*value="([^"]*)"', respuesta.text) == ["18"]
+    assert "Desde el 10/10/2026: 18%" in respuesta.text
     assert 'action="/fichas/10/editar"' in respuesta.text
     assert "checked" in respuesta.text  # envase_variable=True precargado
     # Alias fusionados desde la vieja /conversion: editables en el mismo form.
@@ -1513,7 +1519,9 @@ def test_editar_ficha_exitosa_redirige_a_fichas_del_cliente():
 
     assert respuesta.status_code == 303
     assert respuesta.headers["location"] == "/fichas?cliente_id=1"
-    mock_actualizar.assert_called_once_with(10, 100, 12.0, "unidad", True, "MANGO", "225863")
+    # Sin el campo de pérdida, vale 0 y rige desde hoy (13/10).
+    mock_actualizar.assert_called_once_with(10, 100, 12.0, "unidad", True, "MANGO", "225863",
+                                            perdida=0.0, hoy=ANY)
 
 
 def test_editar_ficha_sin_tildar_envase_variable_guarda_false():
@@ -1532,7 +1540,8 @@ def test_editar_ficha_sin_tildar_envase_variable_guarda_false():
 
     assert respuesta.status_code == 303
     # Sin nombre_cliente/codigo_cliente en el form: quedan en None (son opcionales).
-    mock_actualizar.assert_called_once_with(10, 100, 12.0, "unidad", False, None, None)
+    mock_actualizar.assert_called_once_with(10, 100, 12.0, "unidad", False, None, None,
+                                            perdida=0.0, hoy=ANY)
 
 
 def test_editar_ficha_sin_contenido_caja_muestra_error():
@@ -8516,7 +8525,7 @@ ARTICULOS_NEGOCIAR_DE_PRUEBA = [
         "fresco": True,
         "variacion": "bajo",
         "costo_anterior": 600.0,
-        "costo_actual": 500.0,
+        "costo_actual": 500.0, "perdida": 0.0, "costo_util": 500.0,
         "precio_sugerido": 900.0,
         "precio_vigente": 950.0,  # vigente >= sugerido -> ✓
         "utilidad_aproximada": 0.30,  # por encima del objetivo, no entra al resumen
@@ -8528,7 +8537,7 @@ ARTICULOS_NEGOCIAR_DE_PRUEBA = [
         "fresco": True,
         "variacion": "subio",
         "costo_anterior": 300.0,
-        "costo_actual": 400.0,
+        "costo_actual": 400.0, "perdida": 0.0, "costo_util": 400.0,
         "precio_sugerido": 800.0,
         "precio_vigente": 700.0,  # vigente < sugerido -> 🔴
         "utilidad_aproximada": 0.10,  # bajo el objetivo (0.20) -> resumen
@@ -8540,7 +8549,7 @@ ARTICULOS_NEGOCIAR_DE_PRUEBA = [
         "fresco": False,  # no fresco: no entra en Bajas ni Subas
         "variacion": None,
         "costo_anterior": None,
-        "costo_actual": 900.0,
+        "costo_actual": 900.0, "perdida": 0.0, "costo_util": 900.0,
         "precio_sugerido": 1300.0,
         "precio_vigente": 800.0,
         "utilidad_aproximada": -0.05,  # peor utilidad -> primero en el resumen
@@ -10022,13 +10031,15 @@ def test_ver_cargar_precios_cliente_sin_fichas_muestra_mensaje():
 
 ARTICULOS_NEGOCIACION_DE_PRUEBA = [
     {
-        "ficha_id": 1,
+        # La ficha del Tomate Cherry de FICHAS_PRECIOS_DE_PRUEBA, como en
+        # producción: la simulación se busca por ficha desde el 13/10.
+        "ficha_id": 901,
         "articulo_id": 1,
         "articulo_nombre": "Tomate Cherry",
         "fresco": True,
         "variacion": "bajo",
         "costo_anterior": 300.0,
-        "costo_actual": 280.0,
+        "costo_actual": 280.0, "perdida": 0.0, "costo_util": 280.0,
         "precio_sugerido": 420.0,
         "precio_vigente": 500.0,  # vigente >= sugerido -> ✓
         "utilidad_aproximada": 0.30,
@@ -12943,7 +12954,7 @@ FICHA_VARIABLE_REPROCESO = dict(FICHA_ANALISIS, id=904, envase_variable=True,
 FILA_ANALISIS = {
     "ficha_id": 901, "articulo_id": 1, "articulo_nombre": "EJEMPLO Uno",
     "ficha_nombre": "EJEMPLO UNO BOLIVIA", "unidad_venta": "kilo", "fresco": True,
-    "costo_actual": 1000.0, "costo_anterior": None, "variacion": None,
+    "costo_actual": 1000.0, "perdida": 0.0, "costo_util": 1000.0, "costo_anterior": None, "variacion": None,
     "fecha_ultima_compra": date(2026, 9, 11), "precio_vigente": 1500.0,
     "precio_sugerido": None, "utilidad_aproximada": None,
     "compras_sin_precio_excluidas": 0, "costo_envase_unidad_venta": 50.0,
@@ -20996,7 +21007,7 @@ def _patches_rentabilidad():
     # envase por kilo.
     fila_margenes = {
         "ficha_id": 901, "articulo_id": 1, "articulo_nombre": "Banana", "unidad_venta": "kilo",
-        "precio_vigente": 100.0, "costo_actual": 60.0,
+        "precio_vigente": 100.0, "costo_actual": 60.0, "perdida": 0.0, "costo_util": 60.0,
         "costo_envase_unidad_venta": 4.0, "denominador_tasas": 0.8,
         "utilidad_aproximada": 0.2666, "precio_sugerido": None, "fresco": True,
     }
@@ -22834,7 +22845,7 @@ def test_reingreso_paso_3_precarga_el_tope_y_hoy_con_cliente_y_articulo_del_pedi
 
 def test_reingreso_guarda_vinculado_con_costo_congelado_y_fecha_editable():
     # El costo congelado sale de la fila de la FICHA con la que se vendió.
-    listado = [{"ficha_id": 902, "articulo_id": 2, "costo_actual": 100.0, "precio_vigente": 150.0}]
+    listado = [{"ficha_id": 902, "articulo_id": 2, "costo_actual": 100.0, "perdida": 0.0, "costo_util": 100.0, "precio_vigente": 150.0}]
     with (
         patch("app.main.obtener_renglon_para_reingreso", return_value=dict(RENGLON_REINGRESO_DE_PRUEBA)),
         patch("app.main.calcular_listado_para_negociar_precios", return_value=listado) as mock_listado,
@@ -24131,9 +24142,10 @@ def test_el_aviso_de_la_PANTALLA_tambien_descuenta_lo_que_el_dia_ya_tomo():
     al apretar Guardar — que es peor que la pared, porque llega después de
     que ya cargó todo.
 
-    Y la PROPUESTA sigue saliendo del lote entero: el desglose que ve el
-    operario no cambia. Las dos mitades en el mismo test porque son la misma
-    decisión leída de los dos lados.
+    Y DESDE EL 13/10 (dueño) la lista y la PROPUESTA también salen de lo que
+    queda: hasta ese día salían del lote entero y por ahí una compra de 10
+    terminaba con 18 anotados. Las dos mitades en el mismo test porque son la
+    misma decisión leída de los dos lados.
     """
     lotes = [{"tipo_lote": "guia", "origen_id": 101, "fecha_lote": date(2026, 9, 1),
               "detalle": "Norte 15", "restante": 40.0}]
@@ -24152,9 +24164,10 @@ def test_el_aviso_de_la_PANTALLA_tambien_descuenta_lo_que_el_dia_ya_tomo():
     assert datos["alcanza"] is False
     assert datos["disponible"] == 10.0
     assert datos["guias_de_hoy"] == [{"numero": 300, "bultos": "30"}]
-    # La lista y la propuesta, con el lote ENTERO: es "lo que había ese día".
-    assert datos["lotes"][0]["restante"] == 40.0
-    assert datos["propuesta"] == {"guia:101": 26.0}
+    # La lista y la propuesta, con lo que QUEDA (13/10): la propuesta no
+    # puede ofrecer lo que la guía R300 ya se llevó.
+    assert datos["lotes"][0]["restante"] == 10.0
+    assert datos["propuesta"] == {"guia:101": 10.0}
 
 
 def test_EL_CONTROL_del_aviso_sin_nada_tomado_hoy_los_MISMOS_26_alcanzan():
@@ -25056,7 +25069,7 @@ def test_rentabilidad_real_junta_historia_completa_y_ancla_precios_por_fecha():
         patch("app.main.calcular_listados_para_negociar_precios",
               side_effect=lambda cliente_id, momentos: {
                   momento: [{"ficha_id": 901, "articulo_id": 1, "precio_vigente": 100.0,
-                             "costo_actual": 60.0, "costo_envase_unidad_venta": 2.0,
+                             "costo_actual": 60.0, "perdida": 0.0, "costo_util": 60.0, "costo_envase_unidad_venta": 2.0,
                              "denominador_tasas": 0.9}] for momento in momentos
               }) as mock_listado,
     ):
@@ -30353,7 +30366,7 @@ def _fila_negociacion(**extra):
         # siempre, así que una ficha por kilo SÍ costearía.
         "ficha_nombre": "EJEMPLO Mango", "unidad_venta": "cubeta", "unidad_conteo": "unidad",
         "fresco": True, "sin_conversion_de_unidad": True,
-        "costo_actual": None, "costo_anterior": None, "variacion": None,
+        "costo_actual": None, "perdida": 0.0, "costo_util": None, "costo_anterior": None, "variacion": None,
         "fecha_ultima_compra": date(2026, 9, 15), "precio_vigente": 900.0,
         "precio_sugerido": None, "utilidad_aproximada": None,
         "compras_sin_precio_excluidas": 0, "costo_envase_unidad_venta": None,

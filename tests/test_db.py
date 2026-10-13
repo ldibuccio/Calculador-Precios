@@ -3489,7 +3489,7 @@ def test_crear_ficha_deja_la_foto_de_alta_en_la_bitacora():
     assert "RETURNING id" in consulta_insert
     consulta_foto, parametros_foto = cursor.execute.call_args_list[1].args
     assert "INSERT INTO fichas_logistica_historial" in consulta_foto
-    assert parametros_foto == (33, 1, 5, 100, 6, "kilo", False, "BERENJENA", "B01", "alta")
+    assert parametros_foto == (33, 1, 5, 100, 6, "kilo", False, "BERENJENA", "B01", "alta", None)
     conexion.commit.assert_called_once()
 
 
@@ -3501,7 +3501,7 @@ def test_actualizar_ficha_deja_la_foto_de_edicion_en_la_bitacora():
 
     consulta_foto, parametros_foto = cursor.execute.call_args_list[1].args
     assert "INSERT INTO fichas_logistica_historial" in consulta_foto
-    assert parametros_foto == (10, 1, 5, 100, 8, "kilo", True, "BERENJENA", None, "edicion")
+    assert parametros_foto == (10, 1, 5, 100, 8, "kilo", True, "BERENJENA", None, "edicion", None)
     conexion.commit.assert_called_once()
 
 
@@ -3533,7 +3533,7 @@ def test_eliminar_ficha_deja_el_estado_final_en_la_bitacora():
     consulta_foto, parametros_foto = _sql_y_parametros_que_contienen(
         cursor, "INSERT INTO fichas_logistica_historial"
     )
-    assert parametros_foto == (10, 1, 5, 100, 6, "kilo", False, "BERENJENA", None, "borrado")
+    assert parametros_foto == (10, 1, 5, 100, 6, "kilo", False, "BERENJENA", None, "borrado", None)
     conexion.commit.assert_called_once()
 
 
@@ -3561,14 +3561,14 @@ def test_cambiar_articulo_de_ficha_es_borrado_mas_alta_con_el_alias_de_la_pantal
     assert cursor.execute.call_count == 6
     # La foto del borrado conserva el alias VIEJO (es el estado que se cerró).
     _, parametros_borrado = cursor.execute.call_args_list[-3].args
-    assert parametros_borrado == (10, 1, 4, 100, 6, "kilo", False, "ANANA", "90137", "borrado")
+    assert parametros_borrado == (10, 1, 4, 100, 6, "kilo", False, "ANANA", "90137", "borrado", None)
     consulta_insert, parametros_insert = cursor.execute.call_args_list[-2].args
     assert "INSERT INTO fichas_logistica" in consulta_insert
     # La ficha nueva apunta al artículo nuevo, conserva envase/contenido/
     # unidad, y lleva el alias que vino de la pantalla.
     assert parametros_insert == (5, 1, 100, 6, "kilo", False, "ANCO", "90200")
     _, parametros_alta = cursor.execute.call_args_list[-1].args
-    assert parametros_alta == (33, 1, 5, 100, 6, "kilo", False, "ANCO", "90200", "alta")
+    assert parametros_alta == (33, 1, 5, 100, 6, "kilo", False, "ANCO", "90200", "alta", None)
     conexion.commit.assert_called_once()
 
 
@@ -3753,7 +3753,7 @@ def test_guardar_alias_en_ficha_solo_completa_vacios_y_deja_bitacora():
     assert parametros_update == ("90102", "BATATA", 903, "90102", "BATATA")
     consulta_foto, parametros_foto = cursor.execute.call_args_list[1].args
     assert "INSERT INTO fichas_logistica_historial" in consulta_foto
-    assert parametros_foto == (903, 1, 2, None, None, "kilo", False, "BATATA", "90102", "edicion")
+    assert parametros_foto == (903, 1, 2, None, None, "kilo", False, "BATATA", "90102", "edicion", None)
     conexion.commit.assert_called_once()
 
 
@@ -6089,6 +6089,7 @@ from app.db import (  # noqa: E402
 COLUMNAS_LOTES = [("fecha_orden",), ("momento_orden",), ("tipo_lote",), ("origen_id",),
                   ("fecha_lote",), ("detalle",), ("motivo",), ("cantidad",), ("costo_bulto",),
                   ("cliente_lote_id",), ("articulo_id",), ("renglon_id",)]
+_COLUMNA = {nombre: indice for indice, (nombre,) in enumerate(COLUMNAS_LOTES)}
 
 
 # La fecha de corte que devuelve corte_modelo. Es la PRIMERA consulta de
@@ -6251,6 +6252,9 @@ def test_el_dia_DEL_corte_si_se_puede_cargar():
         [],
         # Lo que YA se llevaron hoy otras guías R: ninguna.
         [],
+        # Lo que le queda a cada compra según las guías R anotadas (13/10):
+        # sus cajones menos lo que ya anotaron.
+        [(101, 20.0)],
     ]
 
     with patch("app.db.obtener_conexion", return_value=conexion):
@@ -6372,6 +6376,9 @@ def test_el_freno_traba_lo_que_los_lotes_no_cubren_y_NO_escribe_nada():
         [],  # sin salidas
         # Lo que YA se llevaron hoy otras guías R: ninguna.
         [],
+        # Lo que le queda a cada compra según las guías R anotadas (13/10):
+        # sus cajones menos lo que ya anotaron.
+        [(101, 3.0)],
     ]
 
     with patch("app.db.obtener_conexion", return_value=conexion):
@@ -6402,6 +6409,9 @@ def test_el_freno_compara_contra_los_RESTANTES_no_contra_el_neto():
         [_salida_fifo(date(2026, 8, 22), 25.0)],
         # Lo que YA se llevaron hoy otras guías R: ninguna.
         [],
+        # Lo que le queda a cada compra según las guías R anotadas (13/10):
+        # sus cajones menos lo que ya anotaron.
+        [(101, 10.0)],
     ]
 
     with patch("app.db.obtener_conexion", return_value=conexion):
@@ -6426,6 +6436,9 @@ def test_el_freno_NO_cuenta_las_salidas_DEL_MISMO_DIA():
         [_salida_fifo(date(2026, 8, 31), 44.0)],
         # Lo que YA se llevaron hoy otras guías R: ninguna.
         [],
+        # Lo que le queda a cada compra según las guías R anotadas (13/10):
+        # sus cajones menos lo que ya anotaron.
+        [(101, 44.0)],
     ]
 
     with patch("app.db.obtener_conexion", return_value=conexion):
@@ -6460,6 +6473,8 @@ def test_EL_CASO_DE_LOS_56_DE_UN_LOTE_DE_40_lo_que_el_dia_ya_tomo_se_descuenta()
         [_lote_compra(101, date(2026, 9, 13), 40.0, 1000.0)],
         [],
         [_consumo_de_hoy(300, 101, 30.0)],
+        # Lo que le queda a la compra según las guías R anotadas (13/10).
+        [(101, 10.0)],
     ]
 
     with patch("app.db.obtener_conexion", return_value=conexion):
@@ -6490,6 +6505,8 @@ def test_EL_CONTROL_del_caso_de_los_56_sin_nada_tomado_hoy_la_MISMA_carga_entra(
         [_lote_compra(101, date(2026, 9, 13), 40.0, 1000.0)],
         [],
         [],
+        # Lo que le queda a la compra según las guías R anotadas (13/10).
+        [(101, 40.0)],
     ]
 
     with patch("app.db.obtener_conexion", return_value=conexion):
@@ -6510,6 +6527,9 @@ def test_lo_que_TODAVIA_ENTRA_despues_de_lo_de_hoy_no_rebota():
         [_lote_compra(101, date(2026, 9, 13), 40.0, 1000.0)],
         [],
         [_consumo_de_hoy(300, 101, 30.0)],
+        # Lo que le queda a cada compra según las guías R anotadas (13/10):
+        # sus cajones menos lo que ya anotaron.
+        [(101, 10.0)],
     ]
 
     with patch("app.db.obtener_conexion", return_value=conexion):
@@ -6518,14 +6538,17 @@ def test_lo_que_TODAVIA_ENTRA_despues_de_lo_de_hoy_no_rebota():
     assert numero == 308
 
 
-def test_EL_REPARTO_NO_CAMBIA_la_propuesta_sale_de_los_lotes_ENTEROS():
-    """El freno cuenta el mismo día; el desglose que ve el operario, no.
+def test_LA_PROPUESTA_sale_de_lo_que_QUEDA_y_no_de_los_lotes_ENTEROS():
+    """DESDE EL 13/10 (dueño) la propuesta también descuenta lo del mismo día.
+
+    Hasta ese día este test afirmaba lo contrario —"el freno cuenta el mismo
+    día; el desglose, no"— y por ese agujero una compra de 10 terminaba con
+    18 anotados (53 compras de 421 por guías del mismo día).
 
     Dos lotes: el 101 (viejo, 40) con 35 ya tomados hoy, y el 102 (100). La
-    guía pide 10. Con el reparto descontado, la propuesta sería 5 del 101 y
-    5 del 102; con el reparto entero —que es lo que se decidió— son 10 del
-    101. El fixture tiene el RIVAL puesto a propósito: con un solo lote las
-    dos versiones dan lo mismo y el test no distingue nada.
+    guía pide 10: salen 5 del 101 y 5 del 102. Con los lotes enteros eran 10
+    del 101, que ya tenía solo 5. El RIVAL (el 102) está puesto a propósito:
+    con un solo lote las dos versiones dan lo mismo.
     """
     conexion, cursor = _conexion_falsa(filas_fetchone=[_CORTE, (309,)])
     cursor.description = COLUMNAS_LOTES
@@ -6536,6 +6559,9 @@ def test_EL_REPARTO_NO_CAMBIA_la_propuesta_sale_de_los_lotes_ENTEROS():
         ],
         [],
         [_consumo_de_hoy(300, 101, 35.0)],
+        # Lo que le queda a cada compra según las guías R anotadas (13/10):
+        # sus cajones menos lo que ya anotaron.
+        [(101, 5.0), (102, 100.0)],
     ]
 
     with patch("app.db.obtener_conexion", return_value=conexion):
@@ -6543,7 +6569,7 @@ def test_EL_REPARTO_NO_CAMBIA_la_propuesta_sale_de_los_lotes_ENTEROS():
 
     consumos = [c.args[1] for c in cursor.execute.call_args_list
                 if "INSERT INTO reprocesos_consumos" in c.args[0]]
-    assert consumos == [(309, "compra", 101, 101, 10.0, 1000.0)]
+    assert consumos == [(309, "compra", 101, 101, 5.0, 1000.0), (309, "compra", 102, 102, 5.0, 1200.0)]
 
 
 def test_un_lote_YA_SOBRE_ATRIBUIDO_aporta_CERO_y_no_se_come_a_los_otros():
@@ -6567,6 +6593,9 @@ def test_un_lote_YA_SOBRE_ATRIBUIDO_aporta_CERO_y_no_se_come_a_los_otros():
         ],
         [],
         [_consumo_de_hoy(300, 101, 56.0)],
+        # Lo que le queda a cada compra según las guías R anotadas (13/10):
+        # sus cajones menos lo que ya anotaron.
+        [(101, -16.0), (102, 20.0)],
     ]
 
     with patch("app.db.obtener_conexion", return_value=conexion):
@@ -6649,6 +6678,9 @@ def test_el_reparto_editado_por_el_operario_se_escribe_y_queda_MARCADO():
         [],
         # Lo que YA se llevaron hoy otras guías R: ninguna.
         [],
+        # Lo que le queda a cada compra según las guías R anotadas (13/10):
+        # sus cajones menos lo que ya anotaron.
+        [(101, 8.0), (102, 10.0)],
     ]
     reparto = [
         {"tipo_lote": "guia", "origen_id": 101, "bultos": 3.0},
@@ -6709,6 +6741,9 @@ def test_un_reparto_que_pide_mas_de_lo_que_hay_en_un_lote_no_se_guarda():
         [],
         # Lo que YA se llevaron hoy otras guías R: ninguna.
         [],
+        # Lo que le queda a cada compra según las guías R anotadas (13/10):
+        # sus cajones menos lo que ya anotaron.
+        [(101, 8.0), (102, 10.0)],
     ]
     reparto = [
         {"tipo_lote": "guia", "origen_id": 101, "bultos": 9.0},  # quedaban 8
@@ -6733,6 +6768,9 @@ def test_un_reparto_que_no_suma_lo_declarado_no_se_guarda():
         [],
         # Lo que YA se llevaron hoy otras guías R: ninguna.
         [],
+        # Lo que le queda a cada compra según las guías R anotadas (13/10):
+        # sus cajones menos lo que ya anotaron.
+        [(101, 8.0)],
     ]
 
     with patch("app.db.obtener_conexion", return_value=conexion):
@@ -8511,8 +8549,10 @@ def _conexion_recepcion(ficha_id=3, ficha_articulo=1, numero_guia=99):
         filas += [_CORTE, _ENVASE_DE_LA_FICHA, (numero_guia,)]
     conexion, cursor = _conexion_falsa(filas_fetchone=filas)
     cursor.description = COLUMNAS_LOTES
-    # Lotes, salidas, y lo que ya se llevaron hoy otras guías R: ninguna.
-    cursor.fetchall.side_effect = [_lotes_con_rival(), [], []]
+    # Lotes, salidas, lo que ya se llevaron hoy otras guías R (ninguna) y lo
+    # que le queda a cada compra según las guías anotadas (13/10): todo.
+    cursor.fetchall.side_effect = [_lotes_con_rival(), [], [],
+                                   [(_CAJON_VIEJO, 40.0), (_COMPRA_EN_ORIGEN, 10.0)]]
     return conexion, cursor
 
 
@@ -8637,7 +8677,8 @@ def test_el_RECHAZO_PARCIAL_de_una_compra_marcada_arma_la_guia_por_los_ACEPTADOS
     conexion, cursor = _conexion_falsa(filas_fetchone=filas)
     cursor.description = COLUMNAS_LOTES
     # Lotes, salidas, y lo que ya se llevaron hoy otras guías R: ninguna.
-    cursor.fetchall.side_effect = [_lotes_con_rival(), [], []]
+    cursor.fetchall.side_effect = [_lotes_con_rival(), [], [],
+                                   [(_CAJON_VIEJO, 40.0), (_COMPRA_EN_ORIGEN, 10.0)]]
 
     with patch("app.db.obtener_conexion", return_value=conexion):
         recepcionar_compra(_COMPRA_EN_ORIGEN, 8, 16, cantidad_cajones_rechazada=2, motivo_rechazo="golpeado")
@@ -9610,6 +9651,10 @@ def test_el_ON_DELETE_de_las_FK_a_fichas_esta_DECIDIDO_una_por_una():
         # que había. Nulearla convertiría esas cajas en ninguna ficha, y
         # borrar una ficha no puede cambiar la historia de lo que se compró.
         "listados_compra_foto_cajas",
+        # EL % DE PÉRDIDA (13/10): ON DELETE CASCADE, a propósito. Es un
+        # parámetro de la ficha y no un hecho como un precio facturado: se va
+        # con ella, y nulearlo dejaría una pérdida de ninguna ficha.
+        "fichas_perdida_historial",
     }
     # Ésta SÍ va en SET NULL, y es a propósito: un renglón viejo describe una
     # entrega que ya pasó y nadie la consulta hacia atrás POR FICHA.
@@ -10265,8 +10310,9 @@ _GUIA_NORMAL = (1, date(2026, 9, 18), 10.0, "normal", None)
 
 
 def _mover_fecha(reproceso_id, fecha_nueva, *, guia=_GUIA_NORMAL, corte=date(2026, 8, 15),
-                 entradas=None, salidas=None, tomado_hoy=None, consumos=None):
-    """Las CUATRO lecturas en orden: entradas, salidas, lo tomado ese día y los consumos.
+                 entradas=None, salidas=None, tomado_hoy=None, consumos=None, libres=None):
+    """Las CINCO lecturas en orden: entradas, salidas, lo tomado ese día, lo que
+    le queda a cada compra (13/10) y los consumos.
 
     Medido corriendo la función, no leído: el orden de los `fetchall` es el
     de las consultas que emite, y un fixture que los ponga al revés prueba
@@ -10278,6 +10324,12 @@ def _mover_fecha(reproceso_id, fecha_nueva, *, guia=_GUIA_NORMAL, corte=date(202
         entradas if entradas is not None else [],
         salidas if salidas is not None else [],
         tomado_hoy if tomado_hoy is not None else [],
+        # Lo que le queda a cada compra según las guías R anotadas, sin la
+        # que se mueve (13/10). Sin decirlo: cada compra con todos sus
+        # cajones, que es lo que da una base sin otras guías.
+        libres if libres is not None else [
+            (e[_COLUMNA["origen_id"]], e[_COLUMNA["cantidad"]])
+            for e in (entradas or []) if e[_COLUMNA["tipo_lote"]] == "guia"],
         consumos if consumos is not None else [],
     ]
     with patch("app.db.obtener_conexion", return_value=conexion):

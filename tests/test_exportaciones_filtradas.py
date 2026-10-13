@@ -107,6 +107,10 @@ EXPORTACIONES = {
     # mismo formulario que los precios; lo cuida tests/test_precios_cotizaciones.py.
     "/precios/cotizaciones/exportar-pdf": "tests/test_precios_cotizaciones.py",
     "/precios/cotizaciones/exportar-excel": "tests/test_precios_cotizaciones.py",
+    # Rendimientos (13/10): período y artículo viajan en el link que dibuja la
+    # pantalla y el encabezado los dice; lo cuida tests/test_rendimientos.py.
+    "/comercial/rendimientos/pdf": "tests/test_rendimientos.py",
+    "/comercial/rendimientos/excel": "tests/test_rendimientos.py",
 }
 
 # Rutas que devuelven una imagen o un archivo subido, no una exportación.
