@@ -6164,7 +6164,9 @@ def test_con_ficha_VARIABLE_la_guia_R_ENTRA_y_escribe_EL_ENVASE_DE_LA_FICHA():
     """
     # La ficha existe, tiene envase 9, y es VARIABLE. El SELECT pide UNA
     # columna: la regla ya no mira el flag.
-    conexion, cursor = _conexion_falsa(filas_fetchone=[_CORTE, (9,), (32,)])
+    # El (None,) es la segunda lectura de la ficha, la de LOS KILOS NO DAN
+    # (13/10): la ficha no vende por kilo, así que no hay cuenta.
+    conexion, cursor = _conexion_falsa(filas_fetchone=[_CORTE, (9,), (None,), (32,)])
     cursor.description = COLUMNAS_LOTES
     cursor.fetchall.side_effect = [
         [_lote_compra(101, date(2026, 8, 15), 20.0, 1000.0)],
@@ -6178,8 +6180,9 @@ def test_con_ficha_VARIABLE_la_guia_R_ENTRA_y_escribe_EL_ENVASE_DE_LA_FICHA():
     assert numero == 32
     insert = next(c for c in cursor.execute.call_args_list
                   if "INSERT INTO reprocesos" in c.args[0])
-    assert insert.args[1][-2:] == (True, 9), (
-        f"tenía que escribir la caja de la ficha; escribió {insert.args[1][-2:]}"
+    # Las columnas 14 y 15 son las de la caja (después vienen las de los kilos).
+    assert insert.args[1][13:15] == (True, 9), (
+        f"tenía que escribir la caja de la ficha; escribió {insert.args[1][13:15]}"
     )
 
 
@@ -6207,7 +6210,9 @@ def test_una_ficha_de_envase_FIJO_no_pregunta_NADA_y_lo_deriva_sola():
     pantalla para todos los demás artículos.
     """
     # Ficha con envase 7. El SELECT pide una sola columna.
-    conexion, cursor = _conexion_falsa(filas_fetchone=[_CORTE, (7,), (32,)])
+    # El (None,) es la segunda lectura de la ficha, la de LOS KILOS NO DAN
+    # (13/10): la ficha no vende por kilo, así que no hay cuenta.
+    conexion, cursor = _conexion_falsa(filas_fetchone=[_CORTE, (7,), (None,), (32,)])
     cursor.description = COLUMNAS_LOTES
     cursor.fetchall.side_effect = [
         [_lote_compra(101, date(2026, 8, 15), 20.0, 1000.0)],
@@ -6302,6 +6307,9 @@ def test_crear_reproceso_congela_consumos_fifo_y_todo_el_costo_a_la_primera():
     assert inserts[0].args[1] == (
         1, date(2026, 8, 25), 6, 4, 1, 1, 6600.0, 1650.0, 7, None, False, "normal", None,
         None, None,
+        # LOS KILOS NO DAN (13/10): sin ficha no hay cuenta de kilos, así que
+        # la diferencia, quién la guardó igual y la marca de cuándo van vacías.
+        None, None, None,
     )
     # Consumos congelados, del lote más viejo primero, con su costo.
     assert inserts[1].args[1] == (12, "compra", 101, 101, 3.0, 1000.0)
@@ -8560,6 +8568,8 @@ def test_la_guia_en_origen_es_UNO_A_UNO_y_se_marca_como_tal():
         # tiene envase fijo, así que el server lo deriva sin preguntar nada.
         # Esta guía SUMA al stock de cajas — es una prestada que vuelve.
         True, 42,
+        # LOS KILOS NO DAN no aplica a la de origen: no se pesa, es uno a uno.
+        None, None, None,
     )
 
 

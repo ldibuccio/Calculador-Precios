@@ -396,6 +396,7 @@ from app.db import (
     guardar_lotes_elegidos,
     StockInsuficienteParaReproceso,
     RepartoDesactualizado,
+    KilosNoDan,
     ReprocesoAnteriorAlCorte,
     cambiar_fecha_de_reproceso,
     SenaYaCobrada,
@@ -17311,7 +17312,8 @@ def _desglose_para_pantalla(lotes: list[dict], contenidos: dict[str, dict]) -> l
 
 
 def _renderizar_pantalla_reproceso(request: Request, *, precarga=None, aviso=None, error=None,
-                                   freno=None, advertencia=None, status_code: int = 200):
+                                   freno=None, advertencia=None, kilos_no_dan=None,
+                                   status_code: int = 200):
     try:
         # El selector lista los artículos que se pueden reprocesar, POR
         # NOMBRE y SIN cantidades: saber que "hay tomate" no es un número
@@ -17343,8 +17345,22 @@ def _renderizar_pantalla_reproceso(request: Request, *, precarga=None, aviso=Non
         "error": error,
         "freno": freno,
         "advertencia": advertencia,
+        "kilos_no_dan": kilos_no_dan,
     }
     return templates.TemplateResponse(request, "deposito_stock_reproceso.html", contexto, status_code=status_code)
+
+
+def texto_kilos_no_dan(cuenta: dict) -> str:
+    """El cartel rojo de LOS KILOS NO DAN (dueño, 13/10), con sus palabras.
+    Kilos redondeados: el cartel se lee parado en el galpón."""
+    entraron, salieron = cuenta["kg_entraron"], cuenta["kg_salieron"]
+    tomados = _formatear_numero(cuenta["tomados"])
+    if cuenta["kg_diferencia"] >= 0:
+        return (f"LOS KILOS NO DAN. Entraron {entraron} kg ({tomados} cajones). "
+                f"Salieron {salieron} kg. Faltan {cuenta['kg_diferencia']} kg. "
+                "Revisá antes de seguir: ¿falta cargar segunda o merma?")
+    return (f"LOS KILOS NO DAN. Entraron {entraron} kg y salieron {salieron} kg. "
+            f"Sobran {-cuenta['kg_diferencia']} kg. Revisá los cajones tomados.")
 
 
 @app.get("/deposito/stock/reproceso")
@@ -17491,6 +17507,8 @@ def cargar_reproceso_ruta(
     ficha_id: str = Form(""),
     reparto: str = Form(""),
     confirmado: str = Form(""),
+    guardar_igual: str = Form(""),
+    kilos_guardo_igual: str = Form(""),
 ):
     """El operario declara la transformación; el server frena, reparte y congela consumos y costo.
 
@@ -17624,6 +17642,21 @@ def cargar_reproceso_ruta(
         numero_guia = crear_reproceso(
             articulo["id"], tomados_valor, primera_valor, segunda_valor, merma_valor, fecha_valor,
             cliente_id=cliente["id"], ficha_id=ficha_valor, reparto=reparto_valor,
+            kilos_guardo_igual=kilos_guardo_igual if guardar_igual == "1" else None,
+        )
+    except KilosNoDan as no_dan:
+        # LOS KILOS NO DAN (dueño, 13/10). No frena: el cartel ofrece Revisar
+        # (vuelve a la carga) y Guardar igual, que reenvía EXACTAMENTE lo que
+        # se mandó —el reparto incluido— más quién la guarda.
+        return _renderizar_pantalla_reproceso(
+            request,
+            precarga=precarga,
+            kilos_no_dan={
+                "texto": texto_kilos_no_dan(no_dan.cuenta),
+                "falta_quien": guardar_igual == "1",
+                "reparto": reparto,
+            },
+            status_code=200,
         )
     except StockInsuficienteParaReproceso as freno:
         # EL FRENO. No hay "la cargo igual": la pantalla vuelve con todo

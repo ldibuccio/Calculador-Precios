@@ -1,0 +1,7 @@
+{# LOS KILOS NO DAN y la guardaron igual (dueño, 13/10): la línea roja que se
+   ve en el detalle de la guía R y en "Cómo rindió". La diferencia es lo que
+   entró menos lo que salió, en kilos enteros, la misma del cartel: positiva,
+   faltan; negativa, sobran. #}
+{% macro guardada_igual(diferencia, quien) -%}
+<span class="kilos-guardada-igual" data-kilos-guardada-igual style="display:block;color:#b91c1c;font-weight:700;">Los kilos no daban: {% if diferencia >= 0 %}faltaban {{ diferencia|int }} kg{% else %}sobraban {{ (-diferencia)|int }} kg{% endif %}. La guardó igual {{ quien }}.</span>
+{%- endmacro %}

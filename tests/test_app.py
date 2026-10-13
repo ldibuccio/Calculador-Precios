@@ -23627,7 +23627,7 @@ def test_reproceso_guarda_con_cliente_y_el_aviso_repite_solo_lo_cargado():
     assert respuesta.status_code == 303
     # El cliente queda en la guía R como DATO (el stock sigue sin dueño).
     mock_crear.assert_called_once_with(1, 30.0, 20.0, 5.0, 5.0, date(2026, 8, 25), cliente_id=1, ficha_id=None,
-                                       reparto=None)
+                                       reparto=None, kilos_guardo_igual=None)
     destino = respuesta.headers["location"]
     # "Guía R12: tomé 30... para Día..." — lo cargado, jamás costos ni stock.
     assert "Gu%C3%ADa+R12" in destino
@@ -23663,6 +23663,7 @@ def test_el_reproceso_guarda_A_QUE_FICHA_fueron_las_cajas():
     assert respuesta.status_code == 303
     mock_crear.assert_called_once_with(
         1, 30.0, 20.0, 5.0, 5.0, date(2026, 8, 25), cliente_id=1, ficha_id=901, reparto=None,
+        kilos_guardo_igual=None,
     )
     # Asignada, el aviso no dice nada de "sin asignar".
     assert "sin+asignar" not in respuesta.headers["location"]
@@ -23690,6 +23691,7 @@ def test_SIN_ASIGNAR_es_una_eleccion_y_el_aviso_lo_dice():
     assert respuesta.status_code == 303
     mock_crear.assert_called_once_with(
         1, 30.0, 20.0, 0.0, 0.0, date(2026, 8, 25), cliente_id=1, ficha_id=None, reparto=None,
+        kilos_guardo_igual=None,
     )
     assert "sin+asignar" in respuesta.headers["location"]
 
@@ -24397,6 +24399,7 @@ GUIAS_R_DE_PRUEBA = [
      "costo_total": 33000.0, "costo_por_bulto_primera": 1650.0,
      "creado_en": datetime(2026, 8, 25, 15, 0), "anulado_el": None,
      "tipo": "normal", "compra_origen_id": None,
+     "kilos_diferencia": None, "kilos_guardo_igual": None, "kilos_guardo_igual_el": None,
      "articulo_nombre": "Tomate Perita",
      "consumos": [
          {"origen": "compra", "origen_id": 101, "bultos": 20.0, "costo_por_bulto": 1000.0,
@@ -24409,6 +24412,7 @@ GUIAS_R_DE_PRUEBA = [
      "costo_total": None, "costo_por_bulto_primera": None,
      "creado_en": datetime(2026, 8, 25, 16, 0), "anulado_el": datetime(2026, 8, 25, 17, 0),
      "tipo": "normal", "compra_origen_id": None,
+     "kilos_diferencia": None, "kilos_guardo_igual": None, "kilos_guardo_igual_el": None,
      "articulo_nombre": "Anco",
      "consumos": [
          {"origen": "ajuste", "origen_id": 1, "bultos": 4.0, "costo_por_bulto": None,
@@ -24426,6 +24430,7 @@ GUIA_R_ESPERANDO_PRECIO = {
     "costo_total": None, "costo_por_bulto_primera": None,
     "creado_en": datetime(2026, 8, 25, 18, 0), "anulado_el": None,
     "tipo": "normal", "compra_origen_id": None,
+    "kilos_diferencia": None, "kilos_guardo_igual": None, "kilos_guardo_igual_el": None,
      "articulo_nombre": "Tomate Perita",
     "consumos": [
         {"origen": "compra", "origen_id": 103, "bultos": 10.0, "costo_por_bulto": None,
@@ -26001,6 +26006,7 @@ GUIA_CON_FICHA = {
     "articulo_nombre": "Morron Rojo", "cliente_id": 1, "cliente_nombre": "Día",
     "ficha_nombre": "M.ROJO GRA", "consumos": [],
     "tipo": "normal", "compra_origen_id": None,
+    "kilos_diferencia": None, "kilos_guardo_igual": None, "kilos_guardo_igual_el": None,
 }
 
 
@@ -26065,6 +26071,7 @@ def test_guias_r_muestran_para_quien_y_el_cruce_con_datos():
         "bultos_merma": 1.0, "costo_total": 12000.0, "costo_por_bulto_primera": 1200.0,
         "creado_en": datetime(2026, 8, 24, 10, 0), "anulado_el": None,
         "tipo": "normal", "compra_origen_id": None,
+        "kilos_diferencia": None, "kilos_guardo_igual": None, "kilos_guardo_igual_el": None,
         "articulo_nombre": "Tomate Perita", "cliente_id": 1, "cliente_nombre": "Día",
         "ficha_id": None, "consumos": [],
     }

@@ -1700,7 +1700,19 @@ create table reprocesos (
     -- En las DOS direcciones: un CHECK que cubre un solo lado deja pasar el
     -- espejo en silencio.
     constraint reprocesos_compra_origen_coherente
-        check ((tipo = 'en_origen') = (compra_origen_id is not null))
+        check ((tipo = 'en_origen') = (compra_origen_id is not null)),
+    -- LOS KILOS NO DAN (dueño, 13/10, db/kilos_guia_r_1_diferencia.sql): si
+    -- al cargar la guía los kilos que entraron y los que salieron se separan
+    -- más de medio kilo por cajón y el operario la guarda igual, queda la
+    -- diferencia (positiva = faltan, negativa = sobran), quién y cuándo.
+    kilos_diferencia numeric,
+    kilos_guardo_igual text,
+    kilos_guardo_igual_el timestamptz,
+    constraint reprocesos_kilos_guardo_igual_entero check (
+        (kilos_diferencia is null and kilos_guardo_igual is null
+         and kilos_guardo_igual_el is null)
+        or (kilos_diferencia is not null and kilos_guardo_igual_el is not null
+            and btrim(coalesce(kilos_guardo_igual, '')) <> ''))
 );
 
 -- Una compra, UNA guia en origen. PARCIAL a proposito: anular la guia libera

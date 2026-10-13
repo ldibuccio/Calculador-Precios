@@ -118,6 +118,9 @@ Administración → Guías mercadería (la misma pantalla).
   segunda + merma) no es un error: una nota chica, sin rojo (dueño, 12/10).
 - La primera solo tiene kilos si la ficha vende por kilo; si no, la guía
   muestra las cajas y queda afuera de los kilos, y se dice.
+- **Si la guía se guardó con "LOS KILOS NO DAN"** (13/10, ver
+  `docs/modulos/stock_y_guias_r.md`), abajo de esa guía va en rojo la
+  diferencia anotada y quién la guardó igual (`templates/_kilos_no_dan.html`).
 - **Rentabilidad real del lote** (dueño, 12/10, `rentabilidad_del_lote` en
   core/costo_real.py): cada guía con el listado de SU cliente a la fecha de
   la guía, el mismo de Rentabilidad Real (`_margenes_por_fecha`). Venta =

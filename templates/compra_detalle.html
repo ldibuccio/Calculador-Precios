@@ -1,4 +1,5 @@
 {% from "_magnitudes_del_cajon.html" import magnitudes_del_cajon %}
+{% from "_kilos_no_dan.html" import guardada_igual %}
 <!DOCTYPE html>
 <html lang="es">
 <head>
@@ -446,6 +447,7 @@
       <span class="dev-detalle">Segunda: {{ g.kg_segunda|numero }} kg · Merma: {{ g.kg_merma|numero }} kg</span>
       {% endif %}
       {% if g.mezcla %}<span class="nota-chica">Mezcla compras: a esta le toca el {{ g.parte|numero }}%, por los kilos que puso.</span>{% endif %}
+      {% if g.kilos_diferencia is not none %}{{ guardada_igual(g.kilos_diferencia, g.kilos_guardo_igual) }}{% endif %}
       {% if g.no_cierra_por is not none %}<span class="nota-chica">La cuenta no cierra por {{ g.no_cierra_por|numero }} kg (lo que entró menos primera, segunda y merma).</span>{% endif %}
     </div>
     {% endfor %}

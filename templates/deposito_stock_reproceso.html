@@ -116,6 +116,32 @@
      es el input de al lado. */
   .pared-lotes li { margin-bottom: 0.15rem; overflow-wrap: anywhere; }
   .pared p { margin: 0.6rem 0 0; font-size: 0.95rem; line-height: 1.35; }
+  /* LOS KILOS NO DAN: rojo como la pared, pero con salida. */
+  .kilos-no-dan {
+    background: #fee2e2;
+    border: 2px solid #dc2626;
+    border-radius: 10px;
+    padding: 1rem;
+    margin-bottom: 1rem;
+    color: #7f1d1d;
+  }
+  .kilos-no-dan-texto { margin: 0 0 0.75rem; font-size: 1.05rem; font-weight: 800; line-height: 1.35; }
+  .kilos-no-dan-falta { margin: 0.4rem 0 0; font-weight: 700; }
+  .kilos-no-dan-botones { display: flex; flex-wrap: wrap; gap: 0.5rem; margin-top: 0.75rem; }
+  .boton-revisar, .boton-guardar-igual {
+    flex: 1 1 8rem;
+    min-height: 44px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    border-radius: 10px;
+    font-size: 1rem;
+    font-weight: 700;
+    text-decoration: none;
+    box-sizing: border-box;
+  }
+  .boton-revisar { background: #fff; color: #7f1d1d; border: 2px solid #dc2626; }
+  .boton-guardar-igual { background: #dc2626; color: #fff; border: none; }
   /* EL AVISO DE LA FECHA HACIA ATRÁS. Amarillo y no rojo, a propósito:
      la pared roja dice "no se puede", esto dice "mirá esto y confirmá".
      Mismo criterio que la carga retroactiva de Vacíos. */
@@ -276,10 +302,37 @@
   </div>
   {% endif %}
 
+  {# LOS KILOS NO DAN (dueño, 13/10). Rojo, pero NO es la pared: no frena.
+     "Revisar" vuelve a la carga de abajo, con todo puesto; "Guardar igual"
+     reenvía exactamente lo que se mandó —el reparto incluido— y pide quién la
+     guarda, que queda anotado en la guía junto con la diferencia. #}
+  {% if kilos_no_dan %}
+  <div class="kilos-no-dan" id="kilos-no-dan">
+    <p class="kilos-no-dan-texto">{{ kilos_no_dan.texto }}</p>
+    <form method="post" action="/deposito/stock/reproceso" class="kilos-no-dan-form">
+      {% for campo in ["cliente_id", "articulo_id", "ficha_id", "bultos_tomados", "bultos_primera", "bultos_segunda", "bultos_merma", "fecha"] %}
+      <input type="hidden" name="{{ campo }}" value="{{ precarga[campo] or "" }}">
+      {% endfor %}
+      <input type="hidden" name="reparto" value="{{ kilos_no_dan.reparto }}">
+      <input type="hidden" name="confirmado" value="1">
+      <input type="hidden" name="guardar_igual" value="1">
+      <label for="kilos_guardo_igual">¿Quién la guarda igual?</label>
+      <input type="text" id="kilos_guardo_igual" name="kilos_guardo_igual" required
+             placeholder="Ej: Juan" autocomplete="off">
+      {% if kilos_no_dan.falta_quien %}<p class="kilos-no-dan-falta">Poné quién la guarda.</p>{% endif %}
+      <div class="kilos-no-dan-botones">
+        <a class="boton-revisar" href="#bultos_tomados"
+           onclick="document.getElementById('kilos-no-dan').hidden = true;">Revisar</a>
+        <button type="submit" class="boton-guardar-igual">Guardar igual</button>
+      </div>
+    </form>
+  </div>
+  {% endif %}
+
   {# Pantalla de OPERARIO: sin costos ni números del sistema. El selector
      lista solo artículos con stock, por nombre — sin cantidades. #}
   <div class="tarjeta">
-    <form method="post" action="/deposito/stock/reproceso">
+    <form method="post" action="/deposito/stock/reproceso" id="form-reproceso">
       {# El cliente PRIMERO: la primera se arma para alguien, y la ayuda
          de kilaje muestra SOLO la ficha de ese cliente. Queda en la guía
          R como dato — el stock sigue sin dueño. #}
@@ -645,7 +698,7 @@
     // vacío y el server usa su propia propuesta: la edición es opcional de
     // punta a punta, y el default no se manda de vuelta para que no pueda
     // llegar desactualizado.
-    document.querySelector("form").addEventListener("submit", function (evento) {
+    document.getElementById("form-reproceso").addEventListener("submit", function (evento) {
       const campo = document.getElementById("reparto");
       if (!TOCADO || !LOTES.length) { campo.value = ""; return; }
       const pedido = parseFloat(document.getElementById("bultos_tomados").value) || 0;
