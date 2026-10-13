@@ -15053,7 +15053,9 @@ def guias_r_con_sus_kilos(desde, hasta, articulo_id: int | None = None) -> list[
     (`core.kilos_guia_r.rinde_por_articulo`): sus consumos congelados con el
     peso del cajón de cada compra (None si no se pesó, no es de una compra o
     no está en kilos) y los kilos de la caja de la ficha (None si no vende por
-    kilo o no tiene ficha). Para el cuadro "Rinde de guías R" y Rendimientos."""
+    kilo o no tiene ficha), y el precio por cajón de la compra de cada consumo
+    (`importes`, None sin precio o sin compra). Para el cuadro "Rinde de guías
+    R", Rendimientos y el faltante de "Pérdida total"."""
     conexion = obtener_conexion()
     try:
         with conexion.cursor() as cursor:
@@ -15061,7 +15063,7 @@ def guias_r_con_sus_kilos(desde, hasta, articulo_id: int | None = None) -> list[
                 f"""
                 SELECT rp.id, rp.articulo_id, ar.nombre, rp.bultos_primera, rp.bultos_segunda,
                        rp.bultos_merma, {_KG_DE_LA_CAJA_DE_LA_FICHA}, rp.kilos_diferencia IS NOT NULL,
-                       rc.bultos, {_KG_PESADO_DEL_CAJON}
+                       rc.bultos, {_KG_PESADO_DEL_CAJON}, c.importe
                 FROM reprocesos rp
                 JOIN articulos ar ON ar.id = rp.articulo_id
                 LEFT JOIN fichas_logistica f ON f.id = rp.ficha_id
@@ -15080,13 +15082,15 @@ def guias_r_con_sus_kilos(desde, hasta, articulo_id: int | None = None) -> list[
         conexion.close()
     guias: dict = {}
     for (guia, articulo_id_, articulo, primera, segunda, merma, kg_caja, guardada,
-         bultos, kg_cajon) in filas:
+         bultos, kg_cajon, importe) in filas:
         g = guias.setdefault(guia, {
             "numero": guia, "articulo_id": articulo_id_, "articulo": articulo,
             "primera": float(primera), "segunda": float(segunda), "merma": float(merma),
             "kg_caja": None if kg_caja is None else float(kg_caja),
-            "guardada_igual": bool(guardada), "consumos": []})
+            "guardada_igual": bool(guardada), "consumos": [], "importes": []})
         g["consumos"].append((float(bultos), None if kg_cajon is None else float(kg_cajon)))
+        # El precio por cajón de SU compra, para el faltante en plata.
+        g["importes"].append(None if importe is None else float(importe))
     # Las cajas que ya salieron pesan lo que se mandó (dueño, 13/10).
     reales = kilos_reales_de_la_primera({g["articulo_id"] for g in guias.values()})
     for g in guias.values():

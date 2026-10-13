@@ -154,3 +154,44 @@ def resumen_del_rinde(guias: list[dict]) -> dict:
         "con_falta": sum(1 for f in filas if (f["falta_pct"] or 0) > UMBRAL_FALTA_PCT),
         "umbral": UMBRAL_FALTA_PCT,
     }
+
+
+def faltante_en_plata(guias: list[dict]) -> dict:
+    """EL FALTANTE DE LAS GUÍAS R, EN PLATA (dueño, 13/10: cuadro "Pérdida
+    total"): por guía, los kg que entraron menos primera, segunda y merma —la
+    misma cuenta de `rinde_por_articulo`, con la primera real—, valuados al
+    costo del kilo que entró: lo que costaron los cajones tomados (el precio de
+    SU compra, `importes`, uno por consumo) sobre los kilos que pesaron.
+
+    Una guía que sobra resta, como en el rinde. La guía sin cuenta de kilos no
+    entra (`guias_sin_cuenta`), y la que tiene algún cajón de una compra sin
+    precio tampoco (`guias_sin_precio`): no suman cero en silencio.
+
+    Devuelve {"pesos", "por_articulo": {articulo_id: {"articulo", "pesos"}},
+    "guias", "guias_sin_cuenta", "guias_sin_precio"}.
+    """
+    pesos, guias_con_plata, sin_cuenta, sin_precio = 0.0, 0, 0, 0
+    por_articulo: dict = {}
+    for guia in guias:
+        cuenta = cuenta_de_kilos(guia["consumos"], guia["primera"], guia["segunda"],
+                                 guia["merma"], guia["kg_caja"])
+        if cuenta is None:
+            sin_cuenta += 1
+            continue
+        importes = guia.get("importes") or []
+        if len(importes) != len(guia["consumos"]) or any(i is None or float(i) <= 0 for i in importes):
+            sin_precio += 1
+            continue
+        entraron = sum(float(b) * float(kg) for b, kg in guia["consumos"])
+        kg_por_cajon = entraron / cuenta["tomados"]
+        falta = (entraron - kg_de_la_primera(guia["primera"], guia["kg_caja"], guia.get("primera_real"))
+                 - (float(guia["segunda"]) + float(guia["merma"])) * kg_por_cajon)
+        costo_del_kilo = sum(float(b) * float(i) for (b, _), i in zip(guia["consumos"], importes)) / entraron
+        plata = falta * costo_del_kilo
+        pesos += plata
+        guias_con_plata += 1
+        fila = por_articulo.setdefault(guia["articulo_id"], {"articulo": guia["articulo"], "pesos": 0.0})
+        fila["pesos"] += plata
+    return {"pesos": round(pesos, 2), "guias": guias_con_plata,
+            "por_articulo": {a: {**f, "pesos": round(f["pesos"], 2)} for a, f in por_articulo.items()},
+            "guias_sin_cuenta": sin_cuenta, "guias_sin_precio": sin_precio}
