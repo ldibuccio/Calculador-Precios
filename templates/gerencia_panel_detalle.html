@@ -23,6 +23,7 @@
   .gris { color: #6b7280; font-weight: 600; }
   .marca { color: #b45309; font-weight: 600; font-size: 0.85rem; }
   .vacio { color: #666; font-style: italic; }
+  .par { white-space: nowrap; }
   a.ir { color: #2563eb; display: inline-block; min-height: 44px; line-height: 44px; }
 </style>
 </head>
@@ -211,7 +212,9 @@
   {% for f in dato.filas %}
   <div data-ajustar-contenedor class="tarjeta" data-articulo="{{ f.articulo_id }}">
     <h2>{{ f.articulo }} · <span data-ajustar class="{{ 'rojo' if (f.falta_pct or 0) > dato.umbral }}">{{ f.falta_pct|pct if f.falta_pct is not none else "—" }} falta</span></h2>
-    <p class="dato">Entraron <strong data-ajustar>{{ f.entraron|sin_decimales }} kg</strong> · primera <strong data-ajustar>{{ f.primera|sin_decimales }} kg</strong> · segunda y merma <strong data-ajustar>{{ f.segunda_y_merma|sin_decimales }} kg</strong></p>
+    {# Cada rótulo pegado a su número: a 313px "primera" quedaba al final de
+       un renglón y sus kilos en el otro. #}
+    <p class="dato"><span class="par">Entraron <strong data-ajustar>{{ f.entraron|sin_decimales }} kg</strong></span> · <span class="par">primera <strong data-ajustar>{{ f.primera|sin_decimales }} kg</strong></span> · <span class="par">segunda y merma <strong data-ajustar>{{ f.segunda_y_merma|sin_decimales }} kg</strong></span></p>
     <p class="dato">Faltan <strong data-ajustar class="{{ 'rojo' if f.falta > 0 }}">{{ f.falta|sin_decimales }} kg</strong></p>
     <p class="fila-dato">{{ f.guias }} {{ "guía" if f.guias == 1 else "guías" }}{% if f.guardadas_igual %} · {{ f.guardadas_igual }} {{ "guardada" if f.guardadas_igual == 1 else "guardadas" }} con "Guardar igual"{% endif %}{% if f.guias_sin_cuenta %} · {{ f.guias_sin_cuenta }} sin pesada (no entran){% endif %}</p>
   </div>

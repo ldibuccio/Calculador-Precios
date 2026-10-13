@@ -400,6 +400,8 @@ from app.db import (
     RepartoDesactualizado,
     KilosNoDan,
     guias_r_con_sus_kilos,
+    kilos_comprados_y_enviados,
+    perdidas_cargadas_por_articulo,
     ReprocesoAnteriorAlCorte,
     cambiar_fecha_de_reproceso,
     SenaYaCobrada,
@@ -12227,6 +12229,75 @@ def ver_comercial(request: Request):
     foto, en vez de dos consultas distintas que decían cosas distintas.
     """
     return templates.TemplateResponse(request, "comercial.html", {"banner": _banner_alertas("comercial")})
+
+
+def _datos_de_rendimientos(fecha_desde, fecha_hasta, articulo_id) -> dict:
+    """RENDIMIENTOS (dueño, 13/10): lo mismo para la pantalla, el PDF y el Excel."""
+    from core.rendimientos import armar_rendimientos
+    desde, hasta, error = _leer_rango_de_fechas(fecha_desde, fecha_hasta)
+    articulo = _id_opcional_desde_query(articulo_id)
+    if articulo is not None and articulo <= 0:
+        articulo = None
+    try:
+        articulos = listar_articulos()
+        datos = None
+        if error is None:
+            datos = armar_rendimientos(guias_r_con_sus_kilos(desde, hasta, articulo),
+                                       kilos_comprados_y_enviados(desde, hasta, articulo),
+                                       perdidas_cargadas_por_articulo(hasta))
+    except Exception as error_db:
+        raise HTTPException(status_code=500, detail=f"Error al conectar con la base de datos: {error_db}") from error_db
+    nombre = next((a["nombre"] for a in articulos if a["id"] == articulo), None)
+    filtros = {"fecha_desde": desde.isoformat(), "fecha_hasta": hasta.isoformat()}
+    if articulo is not None:
+        filtros["articulo_id"] = articulo
+    return {"desde": desde, "hasta": hasta, "error": error, "articulos": articulos,
+            "articulo_id": articulo, "articulo_nombre": nombre, "datos": datos,
+            "consulta": urlencode(filtros)}
+
+
+@app.get("/comercial/rendimientos")
+def ver_rendimientos(request: Request, fecha_desde: str | None = None, fecha_hasta: str | None = None,
+                     articulo_id: str | None = None):
+    """Cuánto rinde lo que se compra, por artículo (dueño, 13/10): los que pasan
+    por guía R con la cuenta del cuadro del panel, y los que no, con los kilos
+    por cajón comprado contra los kilos por bulto enviado. Al lado, el % de
+    pérdida que tienen cargado las fichas."""
+    from core.rendimientos import texto_de_la_perdida
+    contexto = _datos_de_rendimientos(fecha_desde, fecha_hasta, articulo_id)
+    return templates.TemplateResponse(request, "comercial_rendimientos.html",
+                                      {**contexto, "texto_de_la_perdida": texto_de_la_perdida},
+                                      status_code=400 if contexto["error"] else 200)
+
+
+@app.get("/comercial/rendimientos/excel")
+def exportar_rendimientos_excel(fecha_desde: str | None = None, fecha_hasta: str | None = None,
+                                articulo_id: str | None = None):
+    from core.exportar_rendimientos import generar_excel_rendimientos
+    c = _datos_de_rendimientos(fecha_desde, fecha_hasta, articulo_id)
+    if c["error"]:
+        raise HTTPException(status_code=400, detail=c["error"])
+    return Response(
+        content=generar_excel_rendimientos(c["datos"], c["desde"], c["hasta"], c["articulo_nombre"]),
+        media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        headers={"Content-Disposition":
+                 f'attachment; filename="Rendimientos_{c["desde"].isoformat()}_{c["hasta"].isoformat()}.xlsx"'},
+    )
+
+
+@app.get("/comercial/rendimientos/pdf")
+def exportar_rendimientos_pdf(fecha_desde: str | None = None, fecha_hasta: str | None = None,
+                              articulo_id: str | None = None):
+    from core.exportar_rendimientos import generar_pdf_rendimientos
+    c = _datos_de_rendimientos(fecha_desde, fecha_hasta, articulo_id)
+    if c["error"]:
+        raise HTTPException(status_code=400, detail=c["error"])
+    return Response(
+        content=generar_pdf_rendimientos(c["datos"], c["desde"], c["hasta"], c["articulo_nombre"]),
+        media_type="application/pdf",
+        headers={"Content-Disposition":
+                 f'attachment; filename="Rendimientos_{c["desde"].isoformat()}_{c["hasta"].isoformat()}.pdf"'},
+    )
 
 
 def _validar_costo_envase(texto: str) -> tuple[str | None, float | None]:

@@ -1,0 +1,108 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Rendimientos</title>
+<style>
+  :root { font-family: -apple-system, system-ui, sans-serif; }
+  body { margin: 0; padding: 1rem; background: #f5f5f5; color: #222; }
+  .tarjeta { background: #fff; border-radius: 10px; padding: 1rem; margin-bottom: 1rem;
+    box-shadow: 0 1px 3px rgba(0, 0, 0, 0.1); overflow-wrap: anywhere; }
+  h2 { font-size: 1.1rem; margin: 0 0 0.5rem; }
+  h3 { font-size: 1rem; margin: 0 0 0.35rem; }
+  label { display: block; font-size: 0.9rem; color: #444; margin-top: 0.6rem; }
+  input, select { width: 100%; min-height: 44px; padding: 0.5rem; border: 1px solid #ccc; border-radius: 8px;
+    font-size: 1rem; box-sizing: border-box; background: #fff; }
+  .fechas { display: flex; flex-wrap: wrap; gap: 0.5rem; }
+  .fechas > div { flex: 1 1 9rem; }
+  .botones { display: flex; flex-wrap: wrap; gap: 0.5rem; margin-top: 0.8rem; }
+  .boton { flex: 1 1 8rem; min-height: 44px; display: flex; align-items: center; justify-content: center;
+    border-radius: 8px; font-weight: 700; font-size: 0.95rem; text-decoration: none; box-sizing: border-box;
+    border: 1px solid #2563eb; color: #2563eb; background: #fff; cursor: pointer; }
+  .boton.principal { background: #2563eb; color: #fff; }
+  .filtrado { font-size: 0.9rem; color: #444; margin: 0 0 0.6rem; }
+  .articulo { padding: 0.6rem 0; border-top: 1px solid #eee; }
+  .articulo:first-of-type { border-top: none; }
+  .numeros { display: flex; flex-wrap: wrap; gap: 0.3rem 0.9rem; font-size: 0.9rem; color: #444; }
+  .numeros strong { color: #222; }
+  .numeros span { white-space: nowrap; }
+  .rojo { color: #dc2626; }
+  .ficha { font-size: 0.82rem; color: #92400e; font-weight: 600; margin-top: 0.2rem; }
+  .vacio { color: #666; font-style: italic; }
+  .error { background: #fee2e2; color: #991b1b; padding: 0.6rem 0.9rem; border-radius: 8px; margin-bottom: 1rem; }
+</style>
+</head>
+<body>
+  {% set barra_sector = "comercial" %}
+  {% set barra_titulo = "Rendimientos" %}
+  {% set barra_atras = "/comercial" %}
+  {% include "_barra_navegacion.html" %}
+  {% from "_info.html" import info %}
+
+  <div class="tarjeta">
+    <form method="get" action="/comercial/rendimientos">
+      <div class="fechas">
+        <div><label for="fecha_desde">Desde</label>
+          <input type="date" id="fecha_desde" name="fecha_desde" value="{{ desde.isoformat() }}"></div>
+        <div><label for="fecha_hasta">Hasta</label>
+          <input type="date" id="fecha_hasta" name="fecha_hasta" value="{{ hasta.isoformat() }}"></div>
+      </div>
+      <label for="articulo_id">¿De qué artículo?</label>
+      <select id="articulo_id" name="articulo_id">
+        <option value="">Todos los artículos</option>
+        {% for a in articulos %}
+        <option value="{{ a.id }}" {% if articulo_id == a.id %}selected{% endif %}>{{ a.nombre }}</option>
+        {% endfor %}
+      </select>
+      <div class="botones">
+        <button type="submit" class="boton principal">Ver</button>
+        <a class="boton" href="/comercial/rendimientos/pdf?{{ consulta }}">PDF</a>
+        <a class="boton" href="/comercial/rendimientos/excel?{{ consulta }}">Excel</a>
+      </div>
+    </form>
+  </div>
+
+  {% if error %}<div class="error">{{ error }}</div>{% endif %}
+
+  {% if datos %}
+  <p class="filtrado" data-filtrado>Del {{ desde.strftime("%d/%m/%Y") }} al {{ hasta.strftime("%d/%m/%Y") }} · {{ articulo_nombre or "todos los artículos" }}</p>
+
+  <div class="tarjeta" data-seccion="con-guia">
+    <h2>Pasan por guía R {% call info("Cómo se cuenta") %}Por cada guía R: lo que entró son los cajones tomados por lo que pesó el cajón de su compra; la primera, las cajas por los kilos de la ficha; la segunda y la merma, cajones por el cajón promedio de la guía. Lo que falta es lo que no quedó registrado; la pérdida total es todo lo que no salió como primera. Es la misma cuenta del cuadro "Rinde de guías R" del panel.{% endcall %}</h2>
+    {% for f in datos.con_guia %}
+    <div class="articulo" data-articulo="{{ f.articulo_id }}">
+      <h3>{{ f.articulo }} · <span class="{{ 'rojo' if (f.perdida_total_pct or 0) > 0 }}">{{ f.perdida_total_pct|pct if f.perdida_total_pct is not none else "—" }} de pérdida total</span></h3>
+      <div class="numeros">
+        <span>Entraron <strong>{{ f.entraron|sin_decimales }} kg</strong></span>
+        <span>Primera <strong>{{ f.primera_pct|pct }}</strong></span>
+        <span>Segunda <strong>{{ f.segunda_pct|pct }}</strong></span>
+        <span>Merma <strong>{{ f.merma_pct|pct }}</strong></span>
+        <span>Falta sin registrar <strong class="{{ 'rojo' if (f.falta_pct or 0) > 0 }}">{{ f.falta_pct|pct }}</strong></span>
+      </div>
+      <div class="ficha" data-perdida-ficha>En la ficha: {{ texto_de_la_perdida(f.perdida_ficha) }}</div>
+    </div>
+    {% else %}
+    <p class="vacio">No hubo guías R con kilos en el período.</p>
+    {% endfor %}
+  </div>
+
+  <div class="tarjeta" data-seccion="sin-guia">
+    <h2>No pasan por guía R {% call info("Cómo se cuenta") %}Los kilos por cajón comprado son lo que pesó el cajón al recibirlo. Los kilos por bulto enviado son los kilos que salieron al cliente dividido los bultos armados. Si se envía más de lo que trae el cajón, se factura de más; si se envía menos, se regala.{% endcall %}</h2>
+    {% for f in datos.sin_guia %}
+    <div class="articulo" data-articulo="{{ f.articulo_id }}">
+      <h3>{{ f.articulo }}{% if f.diferencia_pct is not none %} · <span class="{{ 'rojo' if f.diferencia_pct < 0 }}">{{ f.diferencia_pct|pct }} {{ f.que_pasa or "" }}</span>{% endif %}</h3>
+      <div class="numeros">
+        <span>Cajón comprado <strong>{{ f.kg_por_cajon|numero if f.kg_por_cajon is not none else "—" }} kg</strong></span>
+        <span>Bulto enviado <strong>{{ f.kg_por_bulto|numero if f.kg_por_bulto is not none else "—" }} kg</strong></span>
+      </div>
+      <div class="ficha" data-perdida-ficha>En la ficha: {{ texto_de_la_perdida(f.perdida_ficha) }}</div>
+    </div>
+    {% else %}
+    <p class="vacio">No hubo compras pesadas ni envíos de estos artículos en el período.</p>
+    {% endfor %}
+  </div>
+  {% endif %}
+{% include "_pie_version.html" %}
+</body>
+</html>

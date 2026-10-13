@@ -269,3 +269,27 @@ lo que se compra?", en Editar ficha), 0 por defecto:
 
 Tests: `tests/test_perdida_ficha.py` (con 0 todo da igual en todos los
 clientes; con 18% el ejemplo; desde cuándo rige; solo la mercadería).
+
+## Rendimientos, en Comercial (13/10, dueño)
+
+Comercial → **Rendimientos** (`/comercial/rendimientos`): cuánto rinde lo que
+se compra, por artículo, con filtro de período (desde-hasta, 7 días por
+defecto como Rentabilidad) y artículo. PDF y Excel con los mismos filtros y
+un encabezado que los dice (`core/exportar_rendimientos.py`).
+
+- **Pasan por guía R**: la cuenta del cuadro "Rinde de guías R" del panel
+  (`core.kilos_guia_r.rinde_por_articulo`, por guía: cajones tomados × kg
+  pesados; cajas × kg de la ficha): kg que entraron, % aprovechado
+  (primera), % segunda, % merma, % que falta sin registrar y % de pérdida
+  total (todo lo que no salió como primera).
+- **No pasan por guía R** (ninguna guía R normal no anulada del artículo en
+  el período, `kilos_comprados_y_enviados`): kg por cajón comprado (lo que
+  pesó al recibirlo, ponderado por cajones aceptados) contra kg por bulto
+  enviado (kilos enviados / bultos armados de los pedidos vigentes, sin
+  renglones dados de baja) y la diferencia en %: positiva "se factura de
+  más", negativa "se regala" (Uva 7,6 contra 8,5; Pera 18,6 contra 18).
+- Al lado, **el % de pérdida cargado en las fichas** del artículo a la fecha
+  "hasta" (`perdidas_cargadas_por_articulo`): uno, o "0% a 18%" si sus fichas
+  tienen distintos.
+
+`core/rendimientos.py`. Tests: `tests/test_rendimientos.py`.
