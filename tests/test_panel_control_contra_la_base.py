@@ -186,8 +186,9 @@ def test_el_TABLERO_dice_un_numero_por_cuadro_en_el_orden_del_dueno(base):
     assert pagina.status_code == 200, pagina.text[:300]
     marcado = pagina.text.split("</style>")[-1]
     assert re.findall(r'data-cuadro="([a-z]+)"', marcado) == list(m.CUADROS_DEL_PANEL)
+    # "rinde" es el décimo (dueño, 13/10): Rinde de guías R.
     assert m.CUADROS_DEL_PANEL == ("rentabilidad", "cajas", "pedidos", "peso", "vales", "vacios", "rechazos",
-                                   "mermas", "segunda")
+                                   "mermas", "segunda", "rinde")
     for cuadro in m.CUADROS_DEL_PANEL:
         assert marcado.count(f'href="/gerencia/panel/{cuadro}"') == 1, cuadro
 
@@ -341,7 +342,7 @@ def test_MERMAS_y_SEGUNDA_son_la_cuenta_de_PERDIDAS_y_lo_cobrado_al_puesto(galpo
         tablero = cliente.get("/gerencia/panel").text.split("</style>")[-1]
         detalle_segunda = cliente.get("/gerencia/panel/segunda").text.split("</style>")[-1]
         detalle_mermas = cliente.get("/gerencia/panel/mermas").text.split("</style>")[-1]
-    assert re.findall(r'data-cuadro="([a-z]+)"', tablero)[-3:] == ["rechazos", "mermas", "segunda"]
+    assert re.findall(r'data-cuadro="([a-z]+)"', tablero)[-4:] == ["rechazos", "mermas", "segunda", "rinde"]
     moneda = m._formatear_moneda
     cuadro_mermas = tablero.split('data-cuadro="mermas"')[1].split("</a>")[0]
     assert f'cuadro-numero rojo">{moneda(merma)}<' in cuadro_mermas

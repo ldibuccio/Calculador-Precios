@@ -2,7 +2,7 @@
 
 ## El tablero y la regla de oro (dueño, 08/10)
 
-Gerencia → **Panel de control** (primero en "Mirar"): un tablero de cuadros
+Gerencia → **Panel de control** (primero en "Mirar"): un tablero de diez cuadros
 grandes, cada uno con UN número que se lee de un pantallazo (390px), y al
 tocarlo su detalle (`/gerencia/panel/<cuadro>`, una dirección escrita por
 cuadro para que el humo las abra todas). Rutas en `app/main.py`
@@ -84,6 +84,27 @@ el panel solo la resume. En orden:
    Abajo, en chico, el costo por origen y lo cobrado; los lotes sin cobrar se
    cuentan aparte. La Rentabilidad Real no cambia.
 
+10. **Rinde de guías R** (dueño, 13/10): los **últimos 7 días completos**
+   (de hoy − 7 a ayer; hoy no). Por artículo que pasó por guías R y se vende
+   por kilo, **Falta % = (kg que entraron − primera − segunda − merma) / kg
+   que entraron**, con la cuenta del cartel "LOS KILOS NO DAN"
+   (`core/kilos_guia_r.py`: cajones × kg pesados del cajón de SU compra;
+   cajas × kg de la ficha; segunda y merma en cajones × el cajón promedio de
+   la guía), **POR GUÍA**, para que no la ensucie el reparto de compras
+   (`guias_r_con_sus_kilos`, `rinde_por_articulo`). El número grande: cuántos
+   artículos pasan el 5% (`UMBRAL_FALTA_PCT`), rojo si hay alguno. El
+   detalle, de mayor a menor falta: kg que entraron, de primera, de segunda y
+   merma, kg que faltan y %, guías y cuántas se guardaron con "Guardar
+   igual". Las guías sin pesada no entran y se cuentan. Una foto de antes de
+   este cuadro dice "Aparece en la próxima actualización". La pantalla
+   Rendimientos de Comercial usa la misma cuenta. Tests:
+   `tests/test_rinde_guias_r.py`.
+
+   Corrido con la cuenta del sistema sobre Frutamax (conector de lectura,
+   13/10, del 05/09 al 12/10: 615 guías, 507 con cuenta): Morrón Rojo 19,9%,
+   Tomate Perita 7,7%, Zapallito 6,3%, Morrón Verde 2,3%. El dueño esperaba
+   18, 6, 4 y 2: preguntado de dónde salen.
+
 La cuenta de Pérdidas rejuega el FIFO: el tablero la pide una sola vez por mes
 y la comparten Mermas y Segunda (`_perdidas_de_los_dos_meses`). Lo mismo la
 Rentabilidad Real de cada cliente y rango (`_real_sin_perdidas`), que la
@@ -106,7 +127,7 @@ ninguna PALABRA se parta, en `tests/test_panel_numeros_enteros.py`.
 
 ## La foto: 06:00 y 14:00 (dueño, 09/10)
 
-El tablero tardaba en abrir porque calculaba los nueve cuadros en cada
+El tablero tardaba en abrir porque calculaba todos los cuadros en cada
 entrada. Ahora se calcula a las **06:00 y a las 14:00** (hora Argentina) y
 al entrar se muestra **lo último calculado**, de `panel_fotos`
 (db/panel_foto_1_tabla.sql). Arriba dice "Actualizado hoy a las 14:00", y el

@@ -62,3 +62,78 @@ def cuenta_de_kilos(consumos: list[tuple], primera, segunda, merma, kg_caja_fich
         "kg_salieron": kg_entero(salieron),
         "kg_diferencia": kg_entero(entraron) - kg_entero(salieron),
     }
+
+
+# RINDE DE GUÍAS R (dueño, 13/10): el cuadro del panel y la pantalla de
+# Rendimientos. Un artículo con más de este % de falta se cuenta en rojo.
+UMBRAL_FALTA_PCT = 5.0
+
+
+def _pct(parte: float, total: float) -> float | None:
+    return round(parte / total * 100, 1) if total else None
+
+
+def rinde_por_articulo(guias: list[dict]) -> list[dict]:
+    """Por artículo, lo que entró a sus guías R y a dónde fue, en kilos.
+
+    Cada guía es {"articulo_id", "articulo", "consumos": [(bultos, kg pesados
+    por cajón o None)], "primera", "segunda", "merma", "kg_caja",
+    "guardada_igual"}. La cuenta es la del cartel (`cuenta_de_kilos`), POR
+    GUÍA y con los cajones que tomó cada guía, así no la ensucia cómo se
+    repartieron las compras; la guía sin cuenta posible (sin pesada, ficha
+    por unidad) no entra y se cuenta en `guias_sin_cuenta`.
+
+    Falta % = (entraron − primera − segunda − merma) / entraron: lo que no
+    quedó registrado. Pérdida total % = (entraron − primera) / entraron: todo
+    lo que no salió de primera. De mayor a menor falta.
+    """
+    por_articulo: dict = {}
+    for guia in guias:
+        fila = por_articulo.setdefault(guia["articulo_id"], {
+            "articulo_id": guia["articulo_id"], "articulo": guia["articulo"],
+            "entraron": 0.0, "primera": 0.0, "segunda": 0.0, "merma": 0.0,
+            "guias": 0, "guardadas_igual": 0, "guias_sin_cuenta": 0})
+        cuenta = cuenta_de_kilos(guia["consumos"], guia["primera"], guia["segunda"],
+                                 guia["merma"], guia["kg_caja"])
+        if cuenta is None:
+            fila["guias_sin_cuenta"] += 1
+            continue
+        kg_por_cajon = cuenta["entraron"] / cuenta["tomados"]
+        fila["entraron"] += cuenta["entraron"]
+        fila["primera"] += float(guia["primera"]) * float(guia["kg_caja"])
+        fila["segunda"] += float(guia["segunda"]) * kg_por_cajon
+        fila["merma"] += float(guia["merma"]) * kg_por_cajon
+        fila["guias"] += 1
+        fila["guardadas_igual"] += 1 if guia.get("guardada_igual") else 0
+    filas = []
+    for fila in por_articulo.values():
+        if not fila["guias"]:
+            continue
+        entraron = fila["entraron"]
+        falta = entraron - fila["primera"] - fila["segunda"] - fila["merma"]
+        filas.append({
+            **{clave: fila[clave] for clave in ("articulo_id", "articulo", "guias",
+                                                  "guardadas_igual", "guias_sin_cuenta")},
+            "entraron": round(entraron, 1),
+            "primera": round(fila["primera"], 1),
+            "segunda": round(fila["segunda"], 1),
+            "merma": round(fila["merma"], 1),
+            "segunda_y_merma": round(fila["segunda"] + fila["merma"], 1),
+            "falta": round(falta, 1),
+            "falta_pct": _pct(falta, entraron),
+            "primera_pct": _pct(fila["primera"], entraron),
+            "segunda_pct": _pct(fila["segunda"], entraron),
+            "merma_pct": _pct(fila["merma"], entraron),
+            "perdida_total_pct": _pct(entraron - fila["primera"], entraron),
+        })
+    return sorted(filas, key=lambda f: (-(f["falta_pct"] or 0), f["articulo"].lower()))
+
+
+def resumen_del_rinde(guias: list[dict]) -> dict:
+    """El cuadro del panel: cuántos artículos pasan el 5% de falta, y el detalle."""
+    filas = rinde_por_articulo(guias)
+    return {
+        "filas": filas,
+        "con_falta": sum(1 for f in filas if (f["falta_pct"] or 0) > UMBRAL_FALTA_PCT),
+        "umbral": UMBRAL_FALTA_PCT,
+    }
