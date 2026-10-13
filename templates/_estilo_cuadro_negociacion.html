@@ -5,7 +5,9 @@
 
    1. El cuadro se incluye desde DOS pantallas —Márgenes por Artículo y
       Cargar Precios— y las reglas tienen que ser las mismas en las dos. En el
-      <style> de cada una serían una copia, y las copias se separan.
+      <style>
+  /* El % de pérdida de la ficha, en chico abajo del costo (dueño, 13/10). */
+  .perdida-chica { display: block; font-size: 0.72rem; color: #92400e; font-weight: 600; } de cada una serían una copia, y las copias se separan.
    2. El fragmento del cuadro va en el <body>, así que un <style> ahí adentro
       movería el ÚLTIMO `</style>` de la página. Noventa y siete tests de la
       suite parten el HTML por ahí para quedarse con el marcado: uno en el

@@ -238,3 +238,34 @@ Tests: `tests/test_precios_cotizaciones.py`, contra Postgres (la cuenta es la
 de Márgenes, el "sin costo", la pantalla, costo a mano sin compra, kilos
 editados, el precio a mano que no se pisa —en Chromium—, 0/vacío fuera del
 PDF, el Excel y el guardado, y el PDF sin datos internos).
+
+## % de pérdida por ficha (13/10, dueño)
+
+El sugerido sale del **costo de COMPRA** (confirmado por el dueño el 13/10),
+no del costo de la caja armada de la guía R, así que la pérdida no estaba en
+el precio. Cada ficha tiene ahora su **% de pérdida** ("¿Cuánto se pierde de
+lo que se compra?", en Editar ficha), 0 por defecto:
+
+- **Costo del kilo útil = costo del kilo comprado / (1 − pérdida)**
+  (`core.motor_costeo.costo_del_kilo_util`). Va SOLO sobre la mercadería y
+  antes de la utilidad; el envase y las tasas siguen igual. Ejemplo del
+  dueño: $5.000 comprado, 18% → $6.098 útil; con 20% de utilidad, $7.317 de
+  mercadería.
+- Lo usan el **precio sugerido** y la **utilidad** de
+  `_listado_para_negociar_precios` (Márgenes por Artículo, Cargar precios
+  manuales con su Simulación —ahora por ficha—, Precios Cotizaciones y el
+  "ahora" del panel) y el sugerido del cajón tipeado de Cotizaciones
+  (`precio_de_la_cotizacion`). `costo_actual` sigue siendo el del kilo
+  COMPRADO: lo leen las rentabilidades y el costo congelado del reingreso,
+  que miden lo que pasó. **No se tocaron** el Análisis de Artículo ni los
+  objetivos de compra: no estaban en el pedido (preguntado).
+- **Rige desde el día en que se carga** (`fichas_perdida_historial`, una fila
+  por ficha y día, el mismo día la última pisa; db/perdida_ficha_1_tabla.sql).
+  El sugerido de un día pasado usa el valor de ese día
+  (`listar_perdidas_vigentes_en_fechas`). Sin fila, 0.
+- En Márgenes (abajo del costo y del sugerido) y en Cotizaciones (al lado del
+  costo), en chico: "pérdida 18%". La bitácora de fichas
+  (`fichas_logistica_historial.perdida`) guarda el valor en cada edición.
+
+Tests: `tests/test_perdida_ficha.py` (con 0 todo da igual en todos los
+clientes; con 18% el ejemplo; desde cuándo rige; solo la mercadería).

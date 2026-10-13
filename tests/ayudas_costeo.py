@@ -1,7 +1,7 @@
 """Ayudas compartidas para parchar el costeo en los tests.
 
 Las consultas de "vigente a una fecha" (precio, costo de envase, conceptos
-del cliente) se piden ahora para VARIAS fechas de una: devuelven
+del cliente, % de pérdida de la ficha) se piden ahora para VARIAS fechas de una: devuelven
 {fecha: valor} en vez del valor suelto. Los tests que fijan una foto sola
 siguen queriendo decir "esto es lo que hay", sin importar la fecha, así que
 acá se parchan con un diccionario que devuelve esa foto para cualquier
@@ -21,9 +21,13 @@ def parche_por_fechas(nombre: str, valor):
     return patch(nombre, side_effect=lambda *argumentos: defaultdict(lambda: valor))
 
 
-def parches_del_listado(precios=(), envases=(), conceptos=None):
-    """Los tres parches de "vigente a la fecha" que necesita el listado de negociación."""
+def parches_del_listado(precios=(), envases=(), conceptos=None, perdidas=None):
+    """Los cuatro parches de "vigente a la fecha" que necesita el listado de negociación.
+
+    `perdidas` es {ficha_id: fracción} (dueño, 13/10); sin nada, ninguna ficha
+    tiene pérdida y el sugerido es el de antes."""
     return [
+        parche_por_fechas("app.costeo.listar_perdidas_vigentes_en_fechas", dict(perdidas or {})),
         parche_por_fechas("app.costeo.listar_precios_vigentes_por_cliente_en_fechas", list(precios)),
         parche_por_fechas("app.costeo.listar_costos_envases_vigentes_en_fechas", list(envases)),
         parche_por_fechas(

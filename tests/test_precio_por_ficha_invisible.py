@@ -68,6 +68,7 @@ def _listado():
         parche_por_fechas("app.costeo.listar_precios_vigentes_por_cliente_en_fechas", PRECIOS),
         parche_por_fechas("app.costeo.listar_costos_envases_vigentes_en_fechas", ENVASES),
         parche_por_fechas("app.costeo.listar_conceptos_vigentes_por_cliente_en_fechas", CONCEPTOS),
+        parche_por_fechas("app.costeo.listar_perdidas_vigentes_en_fechas", {}),
     ):
         return calcular_listado_para_negociar_precios(CLIENTE_ID, MOMENTO)
 

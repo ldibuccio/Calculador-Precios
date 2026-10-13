@@ -367,6 +367,7 @@ def _calcular_negociacion(
         patch("app.costeo.listar_fichas_por_cliente", return_value=fichas),
         parche_por_fechas("app.costeo.listar_precios_vigentes_por_cliente_en_fechas", precios_vigentes) as mock_vigentes,
         parche_por_fechas("app.costeo.listar_conceptos_vigentes_por_cliente_en_fechas", conceptos),
+        parche_por_fechas("app.costeo.listar_perdidas_vigentes_en_fechas", {}),
         parche_por_fechas("app.costeo.listar_costos_envases_vigentes_en_fechas", list(costos_envases)),
     ):
         resultado = calcular_listado_para_negociar_precios(CLIENTE_ID_DE_PRUEBA, momento)
@@ -985,6 +986,8 @@ def _calcular_desglose(
         patch("app.costeo.listar_conceptos_vigentes_por_cliente", return_value=conceptos),
         patch("app.costeo.listar_costos_envases_vigentes", return_value=list(costos_envases)),
         patch("app.costeo.listar_precios_vigentes_por_cliente", return_value=list(precios_vigentes)),
+        # Sin % de pérdida cargado (dueño, 13/10): el desglose es el de antes.
+        patch("app.costeo.perdida_de_la_ficha", return_value=0.0),
     ):
         return calcular_precio_sugerido_desglosado(CLIENTE_ID_DE_PRUEBA, articulo_nombre, momento)
 

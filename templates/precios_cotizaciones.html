@@ -5,6 +5,8 @@
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Precios Cotizaciones</title>
 <style>
+  /* El % de pérdida de la ficha, en chico al lado del costo (dueño, 13/10). */
+  .perdida-chica { font-size: 0.75rem; color: #92400e; font-weight: 600; white-space: nowrap; }
   :root { font-family: -apple-system, system-ui, sans-serif; }
   body { margin: 0; padding: 1rem; background: #f5f5f5; color: #222; }
   .tarjeta {
@@ -93,7 +95,7 @@
           </label>
         </div>
         <p class="a-mano" data-costo-a-mano hidden>Costo a mano: no es el de la compra.</p>
-        <p class="dato">Costo: <strong data-costo-unidad>{{ f.costo_actual|moneda if f.costo_actual is not none else "—" }}</strong> por {{ f.unidad_venta }}
+        <p class="dato">Costo: <strong data-costo-unidad>{{ f.costo_actual|moneda if f.costo_actual is not none else "—" }}</strong> por {{ f.unidad_venta }}{% if f.perdida %} <span class="perdida-chica" data-perdida>pérdida {{ f.perdida|perdida }}</span>{% endif %}
           · Envase: <span data-envase-unidad>{{ f.costo_envase_unidad_venta|moneda if f.costo_envase_unidad_venta is not none else "—" }}</span> por {{ f.unidad_venta }}</p>
         {% if f.sin_sugerido %}
           <p class="dato sin-costo">Sin precio sugerido: {{ f.sin_sugerido }}</p>

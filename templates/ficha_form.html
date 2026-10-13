@@ -168,6 +168,19 @@
         <label for="envase_variable">Envase variable</label> {% call info("Envase variable") %}Tildado: el envase de arriba es solo referencia, se decide al cargar cada compra. Sin tildar: el envase de arriba se usa siempre.{% endcall %}
       </div>
 
+      {# % DE PÉRDIDA (dueño, 13/10): rige desde hoy; el sugerido de un día
+         pasado usa el valor de ese día. Solo al editar: una ficha nueva
+         arranca en 0. #}
+      {% if modo == "editar" %}
+      <label for="perdida">¿Cuánto se pierde de lo que se compra? (%) {% call info("Cómo cambia el precio") %}El precio sugerido se calcula sobre lo que se vende y no sobre lo que se compra: con 18%, un kilo comprado a $5.000 cuesta $6.098 por kilo vendido, y la utilidad se aplica sobre eso. El envase y las tasas no cambian. Rige desde hoy: los días anteriores siguen con el valor que tenían.{% endcall %}</label>
+      <input type="number" id="perdida" name="perdida" min="0" max="90" step="0.1" inputmode="decimal"
+             placeholder="Ej: 18 si de 100 kg comprados se venden 82"
+             value="{{ ficha.perdida_pct if ficha.perdida_pct is defined and ficha.perdida_pct is not none else 0 }}">
+      {% if historial_perdida %}
+      <p class="ayuda" data-historial-perdida>{% for h in historial_perdida %}Desde el {{ h.vigente_desde.strftime("%d/%m/%Y") }}: {{ h.perdida|perdida }}{% if not loop.last %} · {% endif %}{% endfor %}</p>
+      {% endif %}
+      {% endif %}
+
       <button type="submit">Guardar</button>
     </form>
     <a class="volver" href="/fichas?cliente_id={{ cliente_id }}">Volver a fichas</a>

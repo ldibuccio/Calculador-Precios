@@ -152,6 +152,8 @@ from app.db import (
     actualizar_cantidad_compra,
     actualizar_cliente,
     actualizar_ficha,
+    historial_de_la_perdida,
+    perdida_de_la_ficha,
     actualizar_importe_compra,
     actualizar_precio_compra,
     anular_ajuste_vacios,
@@ -1468,6 +1470,10 @@ templates.env.filters["fecha_corta"] = _formatear_fecha_corta
 templates.env.filters["moneda"] = _formatear_moneda
 templates.env.filters["porcentaje"] = _formatear_porcentaje
 templates.env.filters["pct"] = lambda valor: "" if valor is None else f"{float(valor):.1f}%".replace(".", ",")
+# El % de pérdida de una ficha, que se guarda como fracción: 0,18 -> "18%",
+# 0,125 -> "12,5%" (dueño, 13/10).
+templates.env.filters["perdida"] = lambda fraccion: (
+    "" if fraccion is None else f"{round(float(fraccion) * 100, 1):g}".replace(".", ",") + "%")
 templates.env.filters["sin_decimales"] = _formatear_sin_decimales
 templates.env.filters["sufijo_unidad"] = _sufijo_unidad
 templates.env.filters["tamano"] = _formatear_bytes
@@ -3059,6 +3065,11 @@ def ver_editar_ficha(request: Request, ficha_id: int, error: str | None = None):
 
     try:
         envases = listar_envases()
+        # EL % DE PÉRDIDA vigente hoy, en porcentaje para el campo, y lo que
+        # tuvo antes (dueño, 13/10).
+        ficha = dict(ficha, perdida_pct=_perdida_para_el_campo(
+            perdida_de_la_ficha(ficha_id, _hoy_argentina())))
+        historial_perdida = historial_de_la_perdida(ficha_id)
         # Para "Cambiar artículo": TODOS los artículos activos. Antes se
         # escondían los que ya tenían ficha "para no pisar una existente",
         # pero desde que un cliente puede tener varias fichas del mismo
@@ -3078,9 +3089,30 @@ def ver_editar_ficha(request: Request, ficha_id: int, error: str | None = None):
             "envases": envases,
             "modo": "editar",
             "ficha": ficha,
+            "historial_perdida": historial_perdida,
             "error": error,
         },
     )
+
+
+def _perdida_para_el_campo(fraccion: float) -> float | int:
+    """0,18 -> 18 y 0,125 -> 12.5: el campo muestra el porcentaje sin ceros de más."""
+    valor = round(fraccion * 100, 1)
+    return int(valor) if valor == int(valor) else valor
+
+
+def _validar_perdida(texto: str) -> tuple[str | None, float | None]:
+    """El % de pérdida tipeado, como fracción. Vacío vale 0 (dueño, 13/10)."""
+    texto = (texto or "").strip().replace(",", ".")
+    if not texto:
+        return None, 0.0
+    try:
+        valor = float(texto)
+    except ValueError:
+        return "La pérdida tiene que ser un número, por ejemplo 18.", None
+    if valor < 0 or valor > 90:
+        return "La pérdida va de 0 a 90 %.", None
+    return None, round(valor / 100, 4)
 
 
 @app.post("/fichas/{ficha_id}/editar")
@@ -3095,12 +3127,17 @@ def editar_ficha(
     envase_variable: str = Form(""),
     nombre_cliente: str = Form(""),
     codigo_cliente: str = Form(""),
+    perdida: str = Form(""),
 ):
     error = _validar_unidad_venta(unidad_venta)
 
     envase_id_valor = None
     if not error:
         error, envase_id_valor = _validar_envase(envase_id)
+
+    perdida_valor = None
+    if not error:
+        error, perdida_valor = _validar_perdida(perdida)
 
     contenido_caja_valor = None
     if not error:
@@ -3122,6 +3159,7 @@ def editar_ficha(
             "envase_variable": envase_variable_valor,
             "nombre_cliente": nombre_cliente,
             "codigo_cliente": codigo_cliente,
+            "perdida_pct": perdida,
         }
         return templates.TemplateResponse(
             request,
@@ -3139,6 +3177,8 @@ def editar_ficha(
             envase_variable_valor,
             nombre_cliente_valor,
             codigo_cliente_valor,
+            perdida=perdida_valor,
+            hoy=_hoy_argentina(),
         )
     except Exception as error_db:
         envases = listar_envases()
@@ -3152,6 +3192,7 @@ def editar_ficha(
             "envase_variable": envase_variable_valor,
             "nombre_cliente": nombre_cliente_valor,
             "codigo_cliente": codigo_cliente_valor,
+            "perdida_pct": perdida,
         }
         return templates.TemplateResponse(
             request,
@@ -11349,9 +11390,12 @@ def ver_cargar_precios(request: Request, cliente_id: str | None = None):
     # para calcular la rentabilidad de un precio cualquiera sin volver a
     # pedirle nada al servidor — solo existen para los artículos con costo
     # reciente (los mismos que ya trae contexto_negociacion["todos"]).
-    simulacion_por_articulo = {
-        articulo["articulo_id"]: {
-            "costo_producto_unidad_venta": articulo["costo_actual"],
+    simulacion_por_ficha = {
+        articulo["ficha_id"]: {
+            # El costo del kilo ÚTIL (dueño, 13/10): la simulación tiene que
+            # decir la misma utilidad que Márgenes, que ya descuenta la pérdida
+            # de la ficha. Con pérdida 0 es el costo_actual.
+            "costo_producto_unidad_venta": articulo["costo_util"],
             "costo_envase_unidad_venta": articulo["costo_envase_unidad_venta"],
             "denominador_tasas": articulo["denominador_tasas"],
         }
@@ -11359,18 +11403,18 @@ def ver_cargar_precios(request: Request, cliente_id: str | None = None):
         if articulo["costo_actual"] is not None
     }
     # La lista de la pantalla es de FICHAS, no de artículos: se carga el
-    # precio de "Banana Ecuador", no el de "Banana". El costo, en cambio,
-    # sigue siendo del artículo (se compró una sola banana), así que la
-    # simulación se busca por articulo_id — las dos fichas comparten costo
-    # y cada una tiene su precio.
+    # precio de "Banana Ecuador", no el de "Banana". Y la simulación también
+    # se busca POR FICHA desde el 13/10 (dueño): el costo comprado es del
+    # artículo, pero el % de pérdida y el envase son de cada ficha, así que
+    # dos fichas del mismo artículo pueden tener distinto costo útil.
     fichas_cliente = [
         {
             "ficha_id": ficha["id"],
             "articulo_id": ficha["articulo_id"],
             "nombre": _nombre_de_ficha(ficha),
             "precio_vigente": precio_por_ficha.get(ficha["id"]),
-            **simulacion_por_articulo.get(
-                ficha["articulo_id"],
+            **simulacion_por_ficha.get(
+                ficha["id"],
                 {"costo_producto_unidad_venta": None, "costo_envase_unidad_venta": None, "denominador_tasas": None},
             ),
         }
