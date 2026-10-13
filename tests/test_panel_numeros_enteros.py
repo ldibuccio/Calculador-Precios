@@ -83,11 +83,18 @@ def _datos(cuadro, hoy, memo):
         # pagó el doble del costo, se recuperaron $5.378.446.000.
         return {"anterior": dict(_segunda(1.0), **MESES["anterior"]),
                 "actual": dict(_segunda(OTRAS_DIEZ * 2), **MESES["actual"])}
+    if cuadro == "rinde":
+        # Rinde de guías R (13/10): kilos de diez cifras y un artículo de nombre largo.
+        from core.kilos_guia_r import resumen_del_rinde
+        guias = [{"articulo_id": i, "articulo": f"EJEMPLO Morrón Rojo con un nombre largo {i}",
+                  "consumos": [(1234567, 6789.0)], "primera": 900000, "segunda": 12345, "merma": 6789,
+                  "kg_caja": 8000.0, "guardada_igual": i == 1} for i in (1, 2)]
+        return {**resumen_del_rinde(guias), "desde": HOY, "hasta": HOY}
     raise AssertionError(cuadro)
 
 
 def _foto():
-    """El tablero se lee de la FOTO (dueño, 09/10): la de los nueve cuadros con
+    """El tablero se lee de la FOTO (dueño, 09/10): la de todos los cuadros con
     diez cifras, pasada por el JSON como en la base, y un turno de las 14:00
     que falló después, para que el aviso de arriba también se mida."""
     from core.panel_foto import a_texto
@@ -108,7 +115,7 @@ def _paginas():
             patch.object(m, "_datos_del_cuadro", side_effect=_datos):
         cliente = _cliente(m, "gerencia")
         paginas = {"/gerencia/panel": cliente.get("/gerencia/panel")}
-        for cuadro in ("vales", "segunda", "mermas", "rechazos"):
+        for cuadro in ("vales", "segunda", "mermas", "rechazos", "rinde"):
             paginas[f"/gerencia/panel/{cuadro}"] = cliente.get(f"/gerencia/panel/{cuadro}")
     assert {r: p.status_code for r, p in paginas.items()} == {r: 200 for r in paginas}
     return {r: p.text for r, p in paginas.items()}

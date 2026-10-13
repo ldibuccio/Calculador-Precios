@@ -14836,6 +14836,49 @@ def _lo_tomado_hoy(cursor, articulo_id: int, fecha_operacion, excepto: int | Non
     ]
 
 
+def guias_r_con_sus_kilos(desde, hasta, articulo_id: int | None = None) -> list[dict]:
+    """Las guías R normales no anuladas del período (por `fecha_operacion`, los
+    dos extremos adentro), con lo que hace falta para la cuenta de kilos
+    (`core.kilos_guia_r.rinde_por_articulo`): sus consumos congelados con el
+    peso del cajón de cada compra (None si no se pesó, no es de una compra o
+    no está en kilos) y los kilos de la caja de la ficha (None si no vende por
+    kilo o no tiene ficha). Para el cuadro "Rinde de guías R" y Rendimientos."""
+    conexion = obtener_conexion()
+    try:
+        with conexion.cursor() as cursor:
+            cursor.execute(
+                f"""
+                SELECT rp.id, rp.articulo_id, ar.nombre, rp.bultos_primera, rp.bultos_segunda,
+                       rp.bultos_merma, {_KG_DE_LA_CAJA_DE_LA_FICHA}, rp.kilos_diferencia IS NOT NULL,
+                       rc.bultos, {_KG_PESADO_DEL_CAJON}
+                FROM reprocesos rp
+                JOIN articulos ar ON ar.id = rp.articulo_id
+                LEFT JOIN fichas_logistica f ON f.id = rp.ficha_id
+                JOIN reprocesos_consumos rc ON rc.reproceso_id = rp.id
+                LEFT JOIN compras c ON c.id = rc.compra_id
+                LEFT JOIN articulos a ON a.id = c.articulo_id
+                WHERE rp.tipo = 'normal' AND rp.anulado_el IS NULL
+                  AND rp.fecha_operacion BETWEEN %s AND %s
+                  AND (%s::bigint IS NULL OR rp.articulo_id = %s)
+                ORDER BY rp.id, rc.id
+                """,
+                (desde, hasta, articulo_id, articulo_id),
+            )
+            filas = cursor.fetchall()
+    finally:
+        conexion.close()
+    guias: dict = {}
+    for (guia, articulo_id_, articulo, primera, segunda, merma, kg_caja, guardada,
+         bultos, kg_cajon) in filas:
+        g = guias.setdefault(guia, {
+            "numero": guia, "articulo_id": articulo_id_, "articulo": articulo,
+            "primera": float(primera), "segunda": float(segunda), "merma": float(merma),
+            "kg_caja": None if kg_caja is None else float(kg_caja),
+            "guardada_igual": bool(guardada), "consumos": []})
+        g["consumos"].append((float(bultos), None if kg_cajon is None else float(kg_cajon)))
+    return list(guias.values())
+
+
 def _cajones_libres_por_compra(cursor, lotes: list[dict], excepto: int | None = None) -> dict:
     """{compra_id: cajones de la compra − lo que ya anotaron las guías R}, para
     las compras de estos lotes (dueño, 13/10). Cuenta TODAS las guías R no
@@ -14879,6 +14922,17 @@ class KilosNoDan(Exception):
             f"Los kilos no dan: entraron {cuenta['entraron']} y salieron {cuenta['salieron']}.")
 
 
+# LOS KILOS DE LA GUÍA R, escritos UNA vez (dueño, 13/10): el cartel de la
+# carga, el cuadro "Rinde de guías R" del panel y la pantalla de Rendimientos
+# leen el peso igual. Un cajón pesa lo que pesó un cajón de SU compra al
+# recibirla, solo si la compra está en kilos; una caja de primera pesa lo que
+# dice la ficha, solo si vende por kilo. Alias: `c` compras, `a` el artículo
+# de la compra, `f` la ficha.
+_KG_PESADO_DEL_CAJON = ("CASE WHEN coalesce(a.unidad_compra, 'kilo') = 'kilo' "
+                        "THEN c.contenido_por_cajon_real END")
+_KG_DE_LA_CAJA_DE_LA_FICHA = "CASE WHEN f.unidad_venta = 'kilo' THEN f.contenido_caja END"
+
+
 def _cuenta_de_kilos_de_la_guia(cursor, consumos: list[dict], ficha_id, primera, segunda,
                                 merma) -> dict | None:
     """La cuenta de kilos de una guía R que se está por escribir, o None si no
@@ -14891,8 +14945,7 @@ def _cuenta_de_kilos_de_la_guia(cursor, consumos: list[dict], ficha_id, primera,
     if ficha_id is None:
         return None
     cursor.execute(
-        "SELECT CASE WHEN unidad_venta = 'kilo' THEN contenido_caja END "
-        "FROM fichas_logistica WHERE id = %s",
+        f"SELECT {_KG_DE_LA_CAJA_DE_LA_FICHA} FROM fichas_logistica f WHERE f.id = %s",
         (ficha_id,),
     )
     fila = cursor.fetchone()
@@ -14903,9 +14956,8 @@ def _cuenta_de_kilos_de_la_guia(cursor, consumos: list[dict], ficha_id, primera,
     pesado = {}
     if compras:
         cursor.execute(
-            """
-            SELECT c.id, CASE WHEN coalesce(a.unidad_compra, 'kilo') = 'kilo'
-                              THEN c.contenido_por_cajon_real END
+            f"""
+            SELECT c.id, {_KG_PESADO_DEL_CAJON}
             FROM compras c JOIN articulos a ON a.id = c.articulo_id
             WHERE c.id = ANY(%s)
             """,

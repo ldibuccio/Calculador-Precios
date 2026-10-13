@@ -201,6 +201,23 @@
   </div>
   {% endfor %}
   <p class="nota">El puesto paga la segunda junta, así que el costo es de toda la que fue a segunda: los pases (como en Pérdidas), los rechazos que no volvieron al stock (como en Rentabilidad Real: al costo del armado más la caja) y los reprocesos. La segunda de una guía R va a $0: su costo ya está en las cajas armadas, y lo que paga el puesto por ella es recupero. Cada cosa cae en el mes en que pasó; lo cobrado, en el mes en que el lote salió al puesto.</p>
+
+  {% elif cuadro == "rinde" %}
+  <div data-ajustar-contenedor class="tarjeta">
+    <h2>Del {{ dato.desde.strftime("%d/%m") }} al {{ dato.hasta.strftime("%d/%m") }}</h2>
+    <p data-ajustar class="grande {{ 'rojo' if dato.con_falta else 'verde' }}">{{ dato.con_falta }} con más de {{ dato.umbral|sin_decimales }}% de falta</p>
+    <p class="nota">Por guía R: lo que entró (cajones × lo que pesó el cajón de su compra) contra la primera (cajas × kilos de la ficha), la segunda y la merma (cajones × el cajón promedio de la guía). Lo que falta es lo que no quedó registrado.</p>
+  </div>
+  {% for f in dato.filas %}
+  <div data-ajustar-contenedor class="tarjeta" data-articulo="{{ f.articulo_id }}">
+    <h2>{{ f.articulo }} · <span data-ajustar class="{{ 'rojo' if (f.falta_pct or 0) > dato.umbral }}">{{ f.falta_pct|pct if f.falta_pct is not none else "—" }} falta</span></h2>
+    <p class="dato">Entraron <strong data-ajustar>{{ f.entraron|sin_decimales }} kg</strong> · primera <strong data-ajustar>{{ f.primera|sin_decimales }} kg</strong> · segunda y merma <strong data-ajustar>{{ f.segunda_y_merma|sin_decimales }} kg</strong></p>
+    <p class="dato">Faltan <strong data-ajustar class="{{ 'rojo' if f.falta > 0 }}">{{ f.falta|sin_decimales }} kg</strong></p>
+    <p class="fila-dato">{{ f.guias }} {{ "guía" if f.guias == 1 else "guías" }}{% if f.guardadas_igual %} · {{ f.guardadas_igual }} {{ "guardada" if f.guardadas_igual == 1 else "guardadas" }} con "Guardar igual"{% endif %}{% if f.guias_sin_cuenta %} · {{ f.guias_sin_cuenta }} sin pesada (no entran){% endif %}</p>
+  </div>
+  {% else %}
+  <div data-ajustar-contenedor class="tarjeta"><p class="vacio">No hubo guías R con kilos en esos días.</p></div>
+  {% endfor %}
   {% endif %}
 {% include "_ajustar_numeros.html" %}
 {% include "_pie_version.html" %}

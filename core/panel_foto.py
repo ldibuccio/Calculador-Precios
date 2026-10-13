@@ -1,6 +1,6 @@
 """LA FOTO DEL PANEL DE CONTROL (dueño, 09/10) — puro, sin base.
 
-El tablero tardaba en abrir porque calculaba los nueve cuadros en cada
+El tablero tardaba en abrir porque calculaba todos los cuadros en cada
 entrada. Ahora se calcula DOS VECES POR DÍA, a las 06:00 y a las 14:00 de
 Argentina, y al entrar se muestra lo último calculado (`panel_fotos`). El
 botón "Actualizar ahora" recalcula en el momento y deja la foto nueva para

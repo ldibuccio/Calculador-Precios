@@ -183,6 +183,19 @@
       <div class="nota">El costo de toda la mercadería que fue a segunda menos lo que pagó el puesto.</div>
       <div class="nota" data-nota="reproceso">reprocesos a $0: su costo ya está en las cajas armadas</div>
     </a>
+
+    {# 10. RINDE DE GUÍAS R (dueño, 13/10). Una foto de antes de este cuadro no
+       lo trae: se ve en la próxima (06:00, 14:00 o "Actualizar ahora"). #}
+    <a data-ajustar-contenedor class="cuadro ancho" href="/gerencia/panel/rinde" data-cuadro="rinde">
+      <div class="cuadro-titulo">{{ titulos.rinde }}</div>
+      {% if datos.rinde is defined %}{% set r = datos.rinde %}
+      <div data-ajustar class="cuadro-numero {{ 'rojo' if r.con_falta else 'verde' }}">{{ r.con_falta }}</div>
+      <div class="cuadro-pie">{{ "artículo" if r.con_falta == 1 else "artículos" }} con más de {{ r.umbral|sin_decimales }}% de falta, de {{ r.filas|length }}</div>
+      <div class="nota">Del {{ r.desde.strftime("%d/%m") }} al {{ r.hasta.strftime("%d/%m") }}: los kilos que entraron a las guías R y no salieron como primera, segunda ni merma.</div>
+      {% else %}
+      <div class="cuadro-pie" data-sin-foto>Aparece en la próxima actualización.</div>
+      {% endif %}
+    </a>
   </div>
 {% include "_ajustar_numeros.html" %}
 {% include "_pie_version.html" %}
