@@ -257,8 +257,11 @@ lo que se compra?", en Editar ficha), 0 por defecto:
   "ahora" del panel) y el sugerido del cajón tipeado de Cotizaciones
   (`precio_de_la_cotizacion`). `costo_actual` sigue siendo el del kilo
   COMPRADO: lo leen las rentabilidades y el costo congelado del reingreso,
-  que miden lo que pasó. **No se tocaron** el Análisis de Artículo ni los
-  objetivos de compra: no estaban en el pedido (preguntado).
+  que miden lo que pasó. **Desde el 13/10 también** el Objetivo de compra
+  ("a cuánto comprar como máximo", `calcular_objetivos_de_compra`, también
+  en vivo en la pantalla) y el Análisis de Artículo (`_analizar_ficha`): la
+  utilidad sale del kilo útil, y lo que se puede pagar es el kilo útil máximo
+  × (1 − pérdida), por kilo comprado.
 - **Rige desde el día en que se carga** (`fichas_perdida_historial`, una fila
   por ficha y día, el mismo día la última pisa; db/perdida_ficha_1_tabla.sql).
   El sugerido de un día pasado usa el valor de ese día

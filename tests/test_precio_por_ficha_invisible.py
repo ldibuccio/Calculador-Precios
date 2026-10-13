@@ -112,6 +112,8 @@ def test_objetivo_de_compra_no_se_movio():
         patch("app.costeo.listar_fichas_por_cliente", return_value=FICHAS),
         patch("app.costeo.listar_precios_vigentes_por_cliente", return_value=PRECIOS),
         patch("app.costeo.listar_costos_envases_vigentes", return_value=ENVASES),
+        # Sin % de pérdida cargado (13/10): el objetivo es el de antes.
+        parche_por_fechas("app.costeo.listar_perdidas_vigentes_en_fechas", {}),
         patch("app.costeo.listar_conceptos_vigentes_por_cliente", return_value=CONCEPTOS),
     ):
         objetivos = calcular_objetivos_de_compra(CLIENTE_ID, MOMENTO)

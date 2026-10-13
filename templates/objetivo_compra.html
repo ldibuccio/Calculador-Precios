@@ -6,6 +6,8 @@
 <title>Objetivo de Compra</title>
 {% import "_pestanas_compras.html" as pestanas_compras %}
 <style>
+  /* El % de pérdida de la ficha (dueño, 13/10). */
+  .perdida-chica { font-size: 0.78rem; color: #92400e; font-weight: 600; white-space: nowrap; }
   :root { font-family: -apple-system, system-ui, sans-serif; }
   body {
     margin: 0;
@@ -183,6 +185,7 @@
        data-utilidad="{{ utilidad_objetivo }}"
        data-envase-unidad="{{ fila.envase_por_unidad }}"
        data-umbral="{{ fila.umbral_envase if fila.umbral_envase is not none else '' }}"
+       data-perdida="{{ fila.perdida }}"
        data-sufijo="{{ sufijo }}">
     <div class="encabezado-articulo">
       <p class="nombre-articulo">{{ fila.articulo_nombre }}</p>
@@ -195,6 +198,7 @@
       × {{ fila.contenido_ultima|sin_decimales }} {{ sufijo }}
       ({{ fila.fecha_ultima_compra.strftime("%d/%m") }})
       — Venta vigente: {{ fila.precio_vigente|moneda }}/{{ sufijo }}
+      {% if fila.perdida %}<span class="perdida-chica" data-perdida-texto>· pérdida {{ fila.perdida|perdida }}</span>{% endif %}
     </p>
     <div class="fila-kilos">
       <label>{% if fila.unidad_venta == "kilo" %}Kilos por cajón{% elif fila.unidad_venta == "unidad" %}Unidades por cajón{% else %}Cubetas por cajón{% endif %}</label>
@@ -233,7 +237,8 @@
   <script>
     // Recalcula el objetivo del bulto al editar el kilaje, 100% en el
     // navegador — la MISMA cuenta que el servidor (ver core/motor_costeo.py
-    // costo_objetivo_multi_concepto): objetivo_unidad = (entra - envase) /
+    // costo_objetivo_multi_concepto, por (1 − pérdida) de la ficha desde el
+    // 13/10): objetivo_unidad = (entra - envase) /
     // (1 + utilidad). La utilidad se gana solo sobre la mercadería: el
     // envase se recupera del precio sin margen, y recién después se divide.
     // objetivo_bulto = objetivo_unidad * kilos. Para envase variable, el
@@ -248,6 +253,9 @@
     document.querySelectorAll(".tarjeta-articulo").forEach(function (tarjeta) {
       var entra = parseFloat(tarjeta.dataset.entra);
       var utilidad = parseFloat(tarjeta.dataset.utilidad);
+      // El % de pérdida de la ficha (13/10): se paga el kilo COMPRADO, y de
+      // cada kilo comprado se vende (1 − pérdida).
+      var perdida = parseFloat(tarjeta.dataset.perdida) || 0;
       var envaseUnidad = parseFloat(tarjeta.dataset.envaseUnidad);
       var umbral = tarjeta.dataset.umbral === "" ? null : parseFloat(tarjeta.dataset.umbral);
       var sufijo = tarjeta.dataset.sufijo;
@@ -263,7 +271,7 @@
           return;
         }
         var envase = (umbral !== null && kilos <= umbral) ? 0 : envaseUnidad;
-        var objetivoUnidad = (entra - envase) / (1 + utilidad);
+        var objetivoUnidad = (entra - envase) / (1 + utilidad) * (1 - perdida);
         bulto.textContent = formatearMoneda(objetivoUnidad * kilos);
         unidad.textContent = "= " + formatearMoneda(objetivoUnidad) + "/" + sufijo;
       });
