@@ -48,3 +48,30 @@ def extraer_cheques_de_texto(texto: str) -> dict:
     """Mismo contrato, desde el texto de un Excel."""
     respuesta = _llamar_api_claude_texto(texto, prompt=PROMPT_CHEQUES, max_tokens=MAX_TOKENS_CHEQUES)
     return _parsear_json_de_la_respuesta(respuesta)
+
+
+# ENDOSOS DE ECHEQ (dueño, 13/10): la captura de "Operación pendiente de
+# firma" del home banking, con el proveedor a quien se endosa y sus cheques.
+PROMPT_ENDOSO = """
+Estás leyendo la captura de pantalla de un HOME BANKING argentino con una
+operación de ENDOSO de ECHEQ ("Operación pendiente de firma" o parecida): a
+quién se le endosan los cheques y cuáles.
+
+Devolvé ÚNICAMENTE un JSON con este formato exacto:
+{"proveedor_cuit": "11 dígitos o null", "proveedor_nombre": "texto o null",
+ "cheques": [{"numero": "texto", "fecha_pago": "AAAA-MM-DD o null",
+              "importe": número o null, "emisor": "texto o null"}]}
+
+- "proveedor_cuit" y "proveedor_nombre" son los del BENEFICIARIO del endoso
+  (a quien se le entregan los cheques), no los del que firma la operación.
+- Un objeto por cheque endosado. "numero" tal como aparece (el número o el ID
+  del ECHEQ), sin espacios. "emisor" es quien libró el cheque (razón social).
+- "importe" en pesos, con punto decimal y sin separador de miles.
+- Si un dato no se lee, va null. No inventes.
+"""
+
+
+def extraer_endoso(imagen: bytes) -> dict:
+    """{"proveedor_cuit", "proveedor_nombre", "cheques": [...]} de UNA captura."""
+    respuesta = _llamar_api_claude_multi_imagen([imagen], prompt=PROMPT_ENDOSO, max_tokens=MAX_TOKENS_CHEQUES)
+    return _parsear_json_de_la_respuesta(respuesta)

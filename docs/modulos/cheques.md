@@ -80,6 +80,21 @@ las plantillas `cheques*.html` y `cheque.html`. Tests:
 - **Aplicar**: se tildan uno o varios cheques en cartera; leyendo una
   boleta o una foto quedan tildados los que se encuentran por número (y CUIT
   si se leyó). Comprobante opcional.
+- **Endosos de ECHEQ con varias capturas** (dueño, 13/10): en Aplicar se
+  suben muchas capturas de "Operación pendiente de firma" del home banking
+  juntas; la IA lee cada una (`extraer_endoso`: proveedor por CUIT y razón
+  social, y cada cheque con número, fecha de pago, monto y emisor). Página de
+  confirmación con un renglón por cheque (`core/endosos_cheques.py`), todo
+  editable: el cheque de la cartera se busca por número (sin ceros adelante)
+  Y monto entre los que están en cartera; si no está, si ya salió o si el
+  monto no coincide, el renglón va en rojo y no se guarda, aunque se elija a
+  mano. El proveedor se busca por `proveedores.cuit` (si lo tiene UNO solo);
+  si no, se elige, y al guardar el elegido se queda con el CUIT leído si no
+  tenía uno (no se pisa uno distinto). El mismo cheque (número y monto) en
+  dos fotos se toma una vez y se avisa. "Confirmar todos" guarda los que
+  están bien en una transacción, cada salida con su foto (una subida por
+  foto). Sin migración: `proveedores.cuit` ya existía (0 cargados el 13/10).
+  Tests: `tests/test_cheques_endosos.py`.
 - **Ficha**: datos, fotos, historial, y aplicar, rechazar, resolver el
   reclamo, corregir y agregar fotos.
 - **Panel**: cuadro 13 "Cheques" (`docs/modulos/panel_control.md`).

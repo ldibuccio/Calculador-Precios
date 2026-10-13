@@ -22,6 +22,14 @@
   {% if error %}<div class="error" data-error>{{ error }}</div>{% endif %}
   {% if no_encontrados %}<div class="error" data-no-encontrados>No están en cartera: {{ no_encontrados|join(", ") }}.</div>{% endif %}
 
+  {# ENDOSOS DE ECHEQ (dueño, 13/10): muchas capturas del banco de una vez. #}
+  <form class="tarjeta" method="post" action="/gerencia/cheques/aplicar/endosos" enctype="multipart/form-data">
+    <h2>¿Endosaste ECHEQ desde el banco?</h2>
+    <div class="campos"><label class="ancho">Las capturas de "Operación pendiente de firma" (podés elegir muchas)<input type="file" name="fotos" accept="image/*" multiple required></label></div>
+    <div class="acciones"><button type="submit" class="secundario">Leer las capturas</button></div>
+    <p class="nota">Se arma un renglón por cheque con su proveedor, para confirmar antes de guardar.</p>
+  </form>
+
   <form class="tarjeta" method="post" action="/gerencia/cheques/aplicar/leer{{ q_volver(volver) }}" enctype="multipart/form-data">
     <h2>¿Lo leo de una foto o un archivo?</h2>
     <div class="campos"><label class="ancho">Boleta del depósito o foto de lo que entregaste<input type="file" name="archivo" accept="image/*,.pdf,.xlsx" required></label></div>

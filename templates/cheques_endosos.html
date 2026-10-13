@@ -1,0 +1,96 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Confirmar endosos</title>
+<style>
+{% include "_cheques_estilos.html" %}
+  .renglon { border: 1px solid #e5e7eb; border-radius: 10px; padding: 0.8rem; margin-top: 0.8rem; }
+  .renglon.con-problema { border: 2px solid #dc2626; background: #fef2f2; }
+  .renglon.sacado { opacity: 0.55; }
+  .problemas { color: #dc2626; font-weight: 700; font-size: 0.9rem; margin: 0 0 0.4rem; }
+  .leido { font-size: 0.85rem; color: #555; margin: 0 0 0.4rem; }
+  .tilde { display: flex; align-items: center; gap: 0.5rem; min-height: 44px; font-size: 0.92rem; }
+  .tilde input { width: 1.3rem; height: 1.3rem; flex: none; }
+  .fotos { display: flex; flex-wrap: wrap; gap: 0.6rem; }
+  .fotos figure { flex: 1 1 8rem; margin: 0; }
+  .fotos img { width: 100%; border-radius: 8px; border: 1px solid #ddd; }
+  .fotos figcaption { font-size: 0.85rem; font-weight: 700; }
+  a.de-la-foto { display: inline-flex; align-items: center; min-height: 44px; color: #2563eb; font-weight: 600; }
+</style>
+</head>
+<body>
+  {% set barra_sector = "gerencia" %}
+  {% set barra_titulo = "Confirmar endosos" %}
+  {% set barra_atras = "/gerencia/cheques/aplicar" %}
+  {% include "_barra_navegacion.html" %}
+
+  {% for aviso in avisos %}<div class="aviso" data-aviso>{{ aviso }}</div>{% endfor %}
+  {% if error %}<div class="error" data-error>{{ error }}</div>{% endif %}
+
+  <form method="post" action="/gerencia/cheques/aplicar/endosos/confirmar">
+    <input type="hidden" name="cantidad" value="{{ renglones|length }}">
+    {% for foto in fotos %}<input type="hidden" name="foto_leida" value="{{ foto }}">{% endfor %}
+    <div class="tarjeta" data-resumen>
+      <p class="total" data-total>{{ total|moneda }}</p>
+      <p class="total-dato">{{ cuantos }} cheque{{ '' if cuantos == 1 else 's' }}{% if con_problema %} · <span class="rojo" data-con-problema>{{ con_problema }} con problema</span>{% endif %}</p>
+      <p class="nota">"Confirmar todos" aplica los que están bien, cada uno con su foto. Los marcados en rojo no se guardan hasta corregirlos o sacarlos.</p>
+      <div class="acciones">
+        <button type="submit" name="accion" value="revisar" class="secundario">Revisar</button>
+        <button type="submit" name="accion" value="confirmar">Confirmar todos</button>
+      </div>
+    </div>
+
+    <div class="tarjeta">
+      <h2>Los cheques de las fotos</h2>
+      {% for r, problemas in renglones %}{% set i = loop.index0 %}
+      <div class="renglon{% if problemas and not r.sacar %} con-problema{% endif %}{% if r.sacar %} sacado{% endif %}" data-renglon="{{ i }}">
+        <input type="hidden" name="foto_{{ i }}" value="{{ r.foto }}">
+        <input type="hidden" name="proveedor_cuit_{{ i }}" value="{{ r.proveedor_cuit }}">
+        <input type="hidden" name="proveedor_nombre_{{ i }}" value="{{ r.proveedor_nombre }}">
+        {% if problemas and not r.sacar %}<p class="problemas" data-problemas>{{ problemas|join(" · ") }}</p>{% endif %}
+        {% if r.foto >= 0 %}<a class="de-la-foto" href="#foto-{{ r.foto }}">De la foto {{ r.foto + 1 }}</a>{% endif %}
+        <p class="leido">Se endosa a: <strong>{{ r.proveedor_nombre or "sin nombre" }}</strong>{% if r.proveedor_cuit %} · CUIT {{ r.proveedor_cuit }}{% endif %}</p>
+        <div class="campos">
+          <label>Número<input type="text" name="numero_{{ i }}" value="{{ r.numero }}"></label>
+          <label>¿Qué día se cobra?<input type="date" name="fecha_pago_{{ i }}" value="{{ r.fecha_pago }}"></label>
+          <label>Monto<input type="number" name="importe_{{ i }}" step="0.01" min="0.01" inputmode="decimal" value="{{ r.importe }}"></label>
+          <label>Emisor<input type="text" name="emisor_{{ i }}" value="{{ r.emisor }}"></label>
+          <label class="ancho">El cheque de la cartera
+            <select name="cheque_id_{{ i }}"><option value="">Ninguno</option>
+              {% for c in en_cartera %}<option value="{{ c.id }}" {% if r.cheque_id == c.id %}selected{% endif %}>Nº {{ c.numero }} · {{ c.importe|moneda }} · {{ c.de_quien }}</option>{% endfor %}
+            </select></label>
+          <label>¿A qué proveedor?
+            <select name="proveedor_id_{{ i }}"><option value="">Elegí</option>
+              {% for p in proveedores %}<option value="{{ p.id }}" {% if r.proveedor_id == p.id %}selected{% endif %}>{{ p.nombre }}</option>{% endfor %}
+            </select></label>
+          <label>¿Por qué sale?
+            <select name="concepto_id_{{ i }}"><option value="">Elegí</option>
+              {% for c in conceptos %}<option value="{{ c.id }}" {% if r.concepto_id == c.id %}selected{% endif %}>{{ c.nombre }}</option>{% endfor %}
+            </select></label>
+          <label>¿Qué día salió?<input type="date" name="fecha_{{ i }}" value="{{ r.fecha }}"></label>
+        </div>
+        <label class="tilde"><input type="checkbox" name="sacar_{{ i }}" value="1" {% if r.sacar %}checked{% endif %}>Sacar este cheque</label>
+      </div>
+      {% else %}
+      <p class="vacio">No quedó ningún cheque para aplicar.</p>
+      {% endfor %}
+    </div>
+
+    {% if fotos %}
+    <div class="tarjeta">
+      <h2>Las fotos</h2>
+      <div class="fotos">
+        {% for foto in fotos %}<figure id="foto-{{ loop.index0 }}"><figcaption>Foto {{ loop.index }}</figcaption>{% if foto %}<img src="{{ foto }}" alt="Captura {{ loop.index }}">{% endif %}</figure>{% endfor %}
+      </div>
+    </div>
+    {% endif %}
+    <div class="acciones">
+      <button type="submit" name="accion" value="revisar" class="secundario">Revisar</button>
+      <button type="submit" name="accion" value="confirmar">Confirmar todos</button>
+    </div>
+  </form>
+{% include "_pie_version.html" %}
+</body>
+</html>
