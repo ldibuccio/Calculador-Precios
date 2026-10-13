@@ -27944,12 +27944,26 @@ from core.cheques import (  # noqa: E402
 )
 from core.exportar_cheques import generar_excel_cheques, generar_pdf_cheques, texto_del_filtro as texto_del_filtro_de_cheques  # noqa: E402
 from core.lector_cheques import extraer_cheques_de_imagenes, extraer_cheques_de_texto  # noqa: E402
+from core.listado_cheques import (  # noqa: E402
+    cuit_de_la_celda,
+    cuit_valido,
+    fecha_de_la_celda,
+    filas_de_la_planilla,
+    importe_de_la_celda,
+    numero_de_la_celda,
+    planilla_modelo,
+    problemas_de_los_renglones,
+    renglones_de_la_planilla,
+    renglones_para_revisar,
+    texto_de_la_planilla,
+)
 from app.db import (  # noqa: E402
     ChequeNoSePuede,
     agregar_foto_de_cheque,
     aplicar_cheques,
     buscar_cheques,
     cargar_cheques,
+    claves_de_los_cheques_cargados,
     corregir_cheque,
     listar_bancos,
     listar_conceptos_de_cheques,
@@ -28143,48 +28157,171 @@ def ver_carga_de_cheques(request: Request):
     return _renderizar_carga_de_cheques(request, filas=[_cheque_vacio()], comunes=_comunes_vacios())
 
 
-def _leer_archivo_de_cheques(bytes_archivo: bytes, tipo_archivo: str) -> dict:
-    if tipo_archivo == "foto":
-        return extraer_cheques_de_imagenes([bytes_archivo])
-    if tipo_archivo == "pdf":
-        return extraer_cheques_de_imagenes(imagenes_desde_pdf(bytes_archivo))
-    if tipo_archivo == "excel":
-        return extraer_cheques_de_texto(texto_desde_excel(bytes_archivo))
-    raise ValueError(f"Tipo de archivo no soportado: {tipo_archivo}")
+def _tipo_del_archivo_de_cheques(nombre: str) -> str | None:
+    """foto, pdf, xlsx, xls o csv, por la extensión; None si no es ninguno."""
+    nombre = (nombre or "").lower()
+    for extensiones, tipo in (((".jpg", ".jpeg", ".png", ".webp"), "foto"), ((".pdf",), "pdf"),
+                              ((".xlsx",), "xlsx"), ((".xls",), "xls"), ((".csv", ".txt"), "csv")):
+        if nombre.endswith(extensiones):
+            return tipo
+    return None
 
 
-async def _lo_leido_del_archivo(archivo: UploadFile) -> tuple[dict | None, str, str | None]:
-    """(datos leídos, la foto para guardar como data URI si es una foto, error)."""
-    tipo_archivo = _detectar_tipo_archivo_precios(archivo.filename or "")
-    if tipo_archivo is None:
-        return None, "", "No se reconoció el archivo: subí una foto, un PDF o un Excel."
+def _leer_archivo_de_cheques(contenido: bytes, tipo: str) -> dict:
+    """{"fecha", "cheques": [...]} con cada cheque en TEXTO (número, banco,
+    fecha AAAA-MM-DD, importe "1234.5", CUIT, librador, tipo).
+
+    Una planilla con títulos que se reconocen se lee sin la IA, celda por
+    celda (`core.listado_cheques`); si no, la lee la IA, como una foto o un
+    PDF (el listado de ECHEQ del banco)."""
+    if tipo in ("xlsx", "xls", "csv"):
+        filas = filas_de_la_planilla(contenido, tipo)
+        crudos = renglones_de_la_planilla(filas)
+        if crudos is None:
+            return extraer_cheques_de_texto(texto_de_la_planilla(filas))
+        return {"fecha": None, "cheques": [
+            {"numero": numero_de_la_celda(c.get("numero")), "banco": str(c.get("banco") or "").strip(),
+             "fecha_pago": fecha_de_la_celda(c.get("fecha_pago")), "importe": importe_de_la_celda(c.get("importe")),
+             "cuit_librador": cuit_de_la_celda(c.get("cuit_librador")), "librador": str(c.get("librador") or "").strip(),
+             "tipo": c.get("tipo")} for c in crudos]}
+    if tipo == "foto":
+        return extraer_cheques_de_imagenes([contenido])
+    if tipo == "pdf":
+        return extraer_cheques_de_imagenes(imagenes_desde_pdf(contenido))
+    raise ValueError(f"Tipo de archivo no soportado: {tipo}")
+
+
+async def _lo_leido_del_archivo(archivo: UploadFile) -> tuple[dict | None, str, str | None, str | None]:
+    """(datos leídos, la foto como data URI si es una foto, el tipo, error)."""
+    tipo = _tipo_del_archivo_de_cheques(archivo.filename or "")
+    if tipo is None:
+        return None, "", None, "No se reconoció el archivo: subí una foto, un PDF, un Excel o un CSV."
     contenido = await archivo.read()
     try:
-        datos = _leer_archivo_de_cheques(contenido, tipo_archivo)
+        datos = _leer_archivo_de_cheques(contenido, tipo)
     except Exception:
         logger.exception("No se pudo leer el archivo de cheques")
-        return None, "", "No se pudo leer el archivo. Probá con otra foto o cargalo a mano."
-    return datos, _generar_preview_foto(contenido) if tipo_archivo == "foto" else "", None
+        return None, "", tipo, "No se pudo leer el archivo. Probá con otro o cargalo a mano."
+    return datos, _generar_preview_foto(contenido) if tipo == "foto" else "", tipo, None
 
 
 @app.post("/gerencia/cheques/cargar/leer")
 async def leer_cheques_para_cargar(request: Request, archivo: UploadFile = File(...)):
-    """Lee el archivo con la IA y abre el formulario con lo leído, para
-    corregir antes de guardar. TODAVÍA NO GUARDA NADA."""
+    """Lee el archivo y abre lo leído para corregir antes de guardar. La foto
+    de UN cheque va al formulario de siempre (y queda como su frente); un
+    listado (planilla, PDF o varios cheques) va a la tabla para revisar.
+    TODAVÍA NO GUARDA NADA."""
     puerta = _puerta_de_gerencia_para_escribir(request)
     if puerta is not None:
         return puerta
-    datos, foto, error = await _lo_leido_del_archivo(archivo)
+    datos, foto, tipo, error = await _lo_leido_del_archivo(archivo)
     if error:
         return _renderizar_carga_de_cheques(request, filas=[_cheque_vacio()], comunes=_comunes_vacios(),
                                             error=error, status_code=400)
-    filas = cheques_leidos(datos, listar_bancos()) or [_cheque_vacio()]
-    comunes = _comunes_vacios()
-    aviso = (f"Se leyeron {len(filas)} cheques. Revisá cada dato antes de guardar." if len(filas) > 1
-             else "Se leyó el cheque. Revisá cada dato antes de guardar.")
-    # La foto queda como el FRENTE del cheque solo si el archivo trae uno.
-    return _renderizar_carga_de_cheques(request, filas=filas, comunes=comunes,
-                                        foto_leida=foto if len(filas) == 1 else "", aviso=aviso)
+    if tipo == "foto" and len(datos.get("cheques") or []) <= 1:
+        filas = cheques_leidos(datos, listar_bancos()) or [_cheque_vacio()]
+        return _renderizar_carga_de_cheques(request, filas=filas, comunes=_comunes_vacios(), foto_leida=foto,
+                                            aviso="Se leyó el cheque. Revisá cada dato antes de guardar.")
+    listas = _listas_de_cheques()
+    renglones = renglones_para_revisar(datos.get("cheques") or [], listas["clientes"], listas["bancos"],
+                                       de_un_listado_de_echeq=(tipo == "pdf"))
+    if not renglones:
+        return _renderizar_carga_de_cheques(request, filas=[_cheque_vacio()], comunes=_comunes_vacios(),
+                                            error="No se encontró ningún cheque en el archivo.", status_code=400)
+    return _renderizar_listado_de_cheques(request, renglones, fecha_carga=_hoy_argentina().isoformat(),
+                                          aviso=f"Se leyeron {len(renglones)} cheques. Revisalos antes de guardar.")
+
+
+# --- UN LISTADO CON MUCHOS CHEQUES (dueño, 13/10) ---------------------------
+
+def _renderizar_listado_de_cheques(request: Request, renglones: list[dict], *, fecha_carga: str,
+                                   aviso: str | None = None, error: str | None = None, status_code: int = 200):
+    listas = _listas_de_cheques()
+    problemas = problemas_de_los_renglones(renglones, listas["bancos"], claves_de_los_cheques_cargados())
+    vivos = [(r, p) for r, p in zip(renglones, problemas) if not r.get("sacar")]
+    return templates.TemplateResponse(request, "cheques_listado.html", {
+        "renglones": list(zip(renglones, problemas)), "fecha_carga": fecha_carga,
+        "total": round(sum(_importe_de_cheque(r["importe"]) or 0 for r, _ in vivos), 2),
+        "cuantos": len(vivos), "con_problema": sum(1 for _, p in vivos if p),
+        "clientes": listas["clientes"], "bancos": listas["bancos"], "origenes": ORIGENES_DE_CHEQUE,
+        "aviso": aviso, "error": error,
+    }, status_code=status_code)
+
+
+def _renglones_del_listado_de_cheques(formulario) -> list[dict]:
+    try:
+        cantidad = max(0, min(500, int(formulario.get("cantidad") or 0)))
+    except ValueError:
+        cantidad = 0
+    renglones = []
+    for i in range(cantidad):
+        dato = lambda campo: str(formulario.get(f"{campo}_{i}") or "").strip()  # noqa: E731
+        renglones.append({
+            "numero": dato("numero"), "banco": " ".join(dato("banco").split()), "fecha_pago": dato("fecha_pago"),
+            "importe": dato("importe"), "cuit_librador": "".join(ch for ch in dato("cuit_librador") if ch.isdigit()),
+            "tipo": "echeq" if dato("tipo") == "echeq" else "fisico", "origen": dato("origen"),
+            "cliente_id": _id_opcional_desde_query(dato("cliente_id")), "nombre_a_mano": dato("nombre_a_mano"),
+            "banco_nuevo": dato("banco_nuevo") == "1", "sacar": dato("sacar") == "1",
+        })
+    return renglones
+
+
+@app.post("/gerencia/cheques/cargar/listado")
+async def guardar_listado_de_cheques(request: Request):
+    """La tabla del listado: "Revisar" vuelve a marcar los problemas, "Para
+    todos" pone el mismo origen en cada renglón, y "Guardar todos" guarda los
+    que están bien (todos juntos, en una transacción) y deja en la tabla los
+    que tienen problema hasta corregirlos. Los sacados no entran nunca."""
+    puerta = _puerta_de_gerencia_para_escribir(request)
+    if puerta is not None:
+        return puerta
+    formulario = await request.form()
+    renglones = _renglones_del_listado_de_cheques(formulario)
+    fecha_carga = str(formulario.get("fecha_carga") or "")
+    accion = str(formulario.get("accion") or "revisar")
+    if accion == "a_todos":
+        origen = str(formulario.get("origen_todos") or "")
+        for r in renglones:
+            r["origen"] = origen
+            r["cliente_id"] = _id_opcional_desde_query(str(formulario.get("cliente_todos") or ""))
+            r["nombre_a_mano"] = str(formulario.get("nombre_todos") or "").strip()
+        return _renderizar_listado_de_cheques(request, renglones, fecha_carga=fecha_carga)
+    if accion != "guardar":
+        return _renderizar_listado_de_cheques(request, renglones, fecha_carga=fecha_carga)
+    dia = _fecha_de_cheque(fecha_carga)
+    if dia is None:
+        return _renderizar_listado_de_cheques(request, renglones, fecha_carga=fecha_carga,
+                                              error="Falta la fecha en que los recibiste.", status_code=400)
+    problemas = problemas_de_los_renglones(renglones, listar_bancos(), claves_de_los_cheques_cargados())
+    buenos = [r for r, p in zip(renglones, problemas) if not p and not r["sacar"]]
+    quedan = [r for r, p in zip(renglones, problemas) if p and not r["sacar"]]
+    if buenos:
+        try:
+            cargar_cheques([{"numero": r["numero"], "banco": r["banco"], "tipo": r["tipo"],
+                             "fecha_pago": date.fromisoformat(r["fecha_pago"]),
+                             "importe": _importe_de_cheque(r["importe"]), "cuit_librador": r["cuit_librador"],
+                             "origen": r["origen"], "cliente_id": r["cliente_id"],
+                             "nombre_a_mano": r["nombre_a_mano"], "fotos": []} for r in buenos],
+                           fecha_carga=dia, origen="canje", cliente_id=None, nombre_a_mano=None)
+        except ChequeNoSePuede as motivo:
+            return _renderizar_listado_de_cheques(request, renglones, fecha_carga=fecha_carga, error=str(motivo),
+                                                  status_code=400)
+    if not quedan:
+        return RedirectResponse(f"/gerencia/cheques?en_cartera=1&{urlencode({'aviso': f'{len(buenos)} cheques cargados'})}",
+                                status_code=303)
+    return _renderizar_listado_de_cheques(
+        request, quedan, fecha_carga=fecha_carga,
+        aviso=(f"Se guardaron {len(buenos)}. " if buenos else "") + f"Quedan {len(quedan)} con problemas: corregilos o sacalos.")
+
+
+@app.get("/gerencia/cheques/planilla-modelo")
+def bajar_planilla_modelo_de_cheques(request: Request):
+    sin_clave = _sin_clave_de_cheques(request)
+    if sin_clave is not None:
+        return sin_clave
+    return Response(content=planilla_modelo(),
+                    media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                    headers={"Content-Disposition": 'attachment; filename="cheques_planilla_modelo.xlsx"'})
 
 
 def _subir_foto_de_cheque(contenido: bytes, nombre: str) -> str | None:
@@ -28237,6 +28374,8 @@ async def cargar_cheques_ruta(request: Request):
             errores.append(f"{cual}el importe tiene que ser un número mayor que cero.")
         if len(cuit) != 11:
             errores.append(f"{cual}el CUIT del librador son 11 números.")
+        elif not cuit_valido(cuit):
+            errores.append(f"{cual}el CUIT del librador no es válido: revisá los números.")
         clave = (fila["banco"].lower(), numero_de_cheque_normalizado(fila["numero"]), cuit)
         if fila["numero"] and clave in vistos:
             errores.append(f"{cual}está dos veces en esta carga.")
@@ -28326,7 +28465,7 @@ async def leer_cheques_para_aplicar(request: Request, archivo: UploadFile = File
     puerta = _puerta_de_gerencia_para_escribir(request)
     if puerta is not None:
         return puerta
-    datos_leidos, foto, error = await _lo_leido_del_archivo(archivo)
+    datos_leidos, foto, _tipo, error = await _lo_leido_del_archivo(archivo)
     datos = _datos_de_aplicar_vacios()
     if error:
         return _renderizar_aplicar_cheques(request, elegidos=set(), datos=datos, error=error, status_code=400)

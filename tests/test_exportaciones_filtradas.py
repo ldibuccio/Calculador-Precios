@@ -59,6 +59,9 @@ EXPORTACIONES = {
     # siguiendo el link que dibuja la pantalla con los filtros puestos.
     "/gerencia/cheques/exportar-pdf": "tests/test_cheques_pantallas.py",
     "/gerencia/cheques/exportar-excel": "tests/test_cheques_pantallas.py",
+    # La planilla modelo para cargar un listado (13/10): baja vacía, no
+    # exporta nada de la pantalla. La cuida tests/test_cheques_listado.py.
+    "/gerencia/cheques/planilla-modelo": "sin filtros en la pantalla: es la planilla vacía para cargar",
     # Cobranzas de segunda (02/10): lo cuida tests/test_cobranzas_segunda.py,
     # siguiendo el link que dibuja la pantalla. La de Administración es la
     # misma función con otra puerta.

@@ -52,10 +52,31 @@ las plantillas `cheques*.html` y `cheque.html`. Tests:
   pago y acreditación; cliente, nombre, proveedor, número, banco, concepto,
   estado) y el atajo "En cartera". Total del listado; PDF y Excel con los
   mismos filtros y su encabezado.
-- **Cargar**: a mano (uno o varios) o leyendo una foto, un PDF o un Excel
+- **Cargar**: a mano (uno o varios) o leyendo la foto de UN cheque
   (`core/lector_cheques.py`): lo leído aparece para corregir y no se guarda
-  solo. La foto leída de un cheque queda como su frente. Fotos de frente y
-  dorso. Un banco que no está en la lista se agrega al guardar. Todo o nada.
+  solo, y la foto queda como su frente. Fotos de frente y dorso. En la carga
+  a mano, un banco que no está en la lista se agrega al guardar. Todo o nada.
+- **Cargar un listado** (dueño, 13/10): Excel (.xlsx o .xls), CSV o PDF (el
+  listado de ECHEQ del banco), con MUCHOS cheques. Las columnas pueden venir
+  con cualquier nombre y orden: en una planilla se busca la fila de títulos y
+  cada columna se reconoce por su nombre (`core/listado_cheques.py`,
+  `SINONIMOS`); si no se reconocen el número y el importe, o es un PDF, lee
+  la IA. El renglón de "Total" del pie no entra. Todo va a una tabla
+  editable con el total, y en rojo lo que tiene problema
+  (`problemas_de_los_renglones`): repetido (contra la base o dentro del
+  listado), CUIT inválido (11 números y el dígito verificador de la AFIP),
+  falta un dato, banco que no está en la lista (se elige de la lista o se
+  tilda "Es un banco nuevo"). De quién es se elige por renglón o "Ponerlo a
+  todos". El librador que coincide con un cliente del sistema queda como ese
+  cliente. "Guardar todos" guarda los que están bien, en una transacción, y
+  deja en la tabla los que tienen problema hasta corregirlos o sacarlos.
+  "Bajar planilla modelo" baja una planilla vacía con los títulos que se
+  reconocen solos. Tests: `tests/test_cheques_listado.py`.
+- **Banco leído**: es el de la lista solo si es IGUAL (sin mayúsculas ni
+  "Banco", "de", "la", "del"); nada de "se parece", que escondía un banco que
+  no estaba ("EJEMPLO Banco Inventado" no es "EJEMPLO Banco").
+- **El CUIT** se controla con el dígito verificador también en la carga a
+  mano.
 - **Aplicar**: se tildan uno o varios cheques en cartera; leyendo una
   boleta o una foto quedan tildados los que se encuentran por número (y CUIT
   si se leyó). Comprobante opcional.

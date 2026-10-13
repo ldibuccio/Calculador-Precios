@@ -138,6 +138,9 @@ def test_CARGAR_valida_antes_de_tocar_la_base(m, d):
     assert "Escribí de quién es el cheque." in respuesta.text
     assert "el CUIT del librador son 11 números." in respuesta.text
     assert d.buscar_cheques({}) == []
+    # 11 números con el dígito verificador mal (13/10): también rebota.
+    mal = _cargar_por_pantalla(m, [_fila("1", "20111111111")], origen="canje")
+    assert mal.status_code == 400 and "el CUIT del librador no es válido" in mal.text
 
 
 def test_CARGAR_por_FOTO_muestra_lo_leido_para_corregir_y_no_guarda(m, d):

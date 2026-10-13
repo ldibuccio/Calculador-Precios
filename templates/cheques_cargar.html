@@ -22,9 +22,9 @@
 
   <form class="tarjeta" method="post" action="/gerencia/cheques/cargar/leer" enctype="multipart/form-data">
     <h2>¿Lo leo de una foto o un archivo?</h2>
-    <div class="campos"><label class="ancho">Foto del cheque, PDF del ECHEQ o un listado<input type="file" name="archivo" accept="image/*,.pdf,.xlsx" required></label></div>
-    <div class="acciones"><button type="submit" class="secundario">Leer</button></div>
-    <p class="nota">Lo que se lea aparece abajo para corregir antes de guardar.</p>
+    <div class="campos"><label class="ancho">Foto del cheque, o un listado con muchos (Excel, CSV o el PDF de ECHEQ del banco)<input type="file" name="archivo" accept="image/*,.pdf,.xlsx,.xls,.csv" required></label></div>
+    <div class="acciones"><button type="submit" class="secundario">Leer</button><a href="/gerencia/cheques/planilla-modelo">Bajar planilla modelo</a></div>
+    <p class="nota">Lo que se lea aparece para revisar antes de guardar: un cheque abajo, un listado en una tabla.</p>
   </form>
 
   <form class="tarjeta" method="post" action="/gerencia/cheques/cargar" enctype="multipart/form-data" id="carga">
