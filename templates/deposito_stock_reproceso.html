@@ -241,7 +241,7 @@
        único que lee es "no alcanza" contra lo que tiene delante. #}
     <p class="pared-hoy" id="pared-hoy" {% if not freno or not freno.guias_de_hoy %}hidden{% endif %}>
       {%- if freno and freno.guias_de_hoy -%}
-      Hoy ya se cargaron guías R de este artículo y se llevaron parte:
+      Hoy ya se cargaron guías R de este artículo (ya está descontado de cada lote):
       {% for g in freno.guias_de_hoy %}R{{ g.numero }} tomó {{ g.bultos }}{% if not loop.last %} · {% endif %}{% endfor %}.
       {%- endif -%}
     </p>
@@ -580,7 +580,7 @@
       const guias = datos.guias_de_hoy || [];
       hoy.hidden = !guias.length;
       if (guias.length) {
-        hoy.textContent = "Hoy ya se cargaron guías R de este artículo y se llevaron parte: "
+        hoy.textContent = "Hoy ya se cargaron guías R de este artículo (ya está descontado de cada lote): "
           + guias.map(function (g) { return "R" + g.numero + " tomó " + g.bultos; }).join(" · ") + ".";
       }
       const lista = document.getElementById("pared-lotes");

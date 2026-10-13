@@ -1701,7 +1701,7 @@ create table reprocesos (
     -- espejo en silencio.
     constraint reprocesos_compra_origen_coherente
         check ((tipo = 'en_origen') = (compra_origen_id is not null)),
-    -- LOS KILOS NO DAN (dueño, 13/10, db/kilos_guia_r_1_diferencia.sql): si
+    -- LOS KILOS NO DAN (dueño, 13/10, db/guia_r_kilos_y_tope_1.sql): si
     -- al cargar la guía los kilos que entraron y los que salieron se separan
     -- más de 0,8 kg por cajón y el operario la guarda igual, queda la
     -- diferencia (positiva = faltan, negativa = sobran), quién y cuándo.
@@ -1760,6 +1760,32 @@ comment on table reprocesos_consumos is
     'De qué lote salió cada bulto tomado, escrito por el server al cargar: propone el FIFO y el operario puede corregirlo dentro de lo que hay de cada lote (reprocesos.consumos_editados dice si lo corrigió). Documento congelado: si después se corrige una recepción, el stock vivo se reacomoda pero esta trazabilidad y su costo no se mueven.';
 comment on column reprocesos_consumos.origen is
     'compra (lote de guía de compra), ajuste (ej. stock inicial), reingreso_rechazo, reproceso (primera de otra guía R), cierre_modelo_viejo (el lote que el compensatorio positivo del corte le crea a un artículo que estaba en negativo: mercadería que no existe y sin costo posible), o sin_lote. sin_lote YA NO SE ESCRIBE: desde el 02/09 el freno no deja cargar una guía R que los lotes no cubran, porque ese consumo congelaba un costo incompleto para siempre. El valor queda en el check por las guías viejas que lo tienen.';
+
+-- TOPE POR COMPRA (dueño, 13/10, db/guia_r_kilos_y_tope_1.sql): una guía R
+-- nueva no puede anotar de una compra más cajones de los que le quedan (los
+-- recibidos menos lo que ya anotaron todas las guías R no anuladas). Solo al
+-- insertar: las 114 compras viejas que quedaron pasadas no se corrigen.
+create or replace function guia_r_no_pasa_la_compra() returns trigger
+language plpgsql as $f$
+declare libres numeric;
+begin
+  if new.compra_id is null then return new; end if;
+  perform 1 from compras where id = new.compra_id for update;
+  select coalesce(c.cantidad_cajones_real, 0) - coalesce((
+           select sum(rc.bultos) from reprocesos_consumos rc
+           join reprocesos rp on rp.id = rc.reproceso_id
+           where rc.compra_id = c.id and rp.anulado_el is null), 0)
+    into libres from compras c where c.id = new.compra_id;
+  if new.bultos > libres then
+    raise exception 'TOPE_COMPRA: a la compra % le quedan % cajones y la guia R pide %',
+      new.compra_id, libres, new.bultos
+      using errcode = 'check_violation', constraint = 'guia_r_no_pasa_la_compra';
+  end if;
+  return new;
+end $f$;
+create trigger guia_r_no_pasa_la_compra
+  before insert on reprocesos_consumos
+  for each row execute function guia_r_no_pasa_la_compra();
 
 -- El respaldo de las fichas que el corte del modelo pone en NULL.
 -- Al cortar, las guías R pre-corte con ficha asignada dejan de contar POR

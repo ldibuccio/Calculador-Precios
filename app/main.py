@@ -17387,6 +17387,7 @@ def desglose_reproceso(articulo_id: int, fecha: str = "", bultos: float = 0):
         descontar_lo_tomado_hoy,
         lotes_permitidos,
         propuesta_fifo,
+        topar_por_lo_anotado,
     )
 
     hoy = _hoy_argentina()
@@ -17401,27 +17402,25 @@ def desglose_reproceso(articulo_id: int, fecha: str = "", bultos: float = 0):
 
     # La MISMA lista que va a ver el freno: si la pantalla ofreciera un lote
     # que crear_reproceso rechaza, el operario armaría un reparto que no se
-    # puede guardar y el cartel llegaría recién al apretar Guardar.
-    lotes = lotes_permitidos(reparto["lotes"], SALIDA_REPROCESO)
-    # `disponible` sale de los lotes NETOS —descontando lo que otra guía R
-    # de ese mismo día ya se llevó— y la propuesta sigue saliendo de los
-    # enteros, exactamente como en crear_reproceso. Que el aviso y el freno
-    # midan contra lo mismo es lo único que evita una pantalla que aprueba y
-    # un server que rebota.
-    lotes_netos = descontar_lo_tomado_hoy(lotes, reparto.get("tomado_hoy", []))
-    disponible = bultos_en_los_lotes(lotes_netos)
+    # puede guardar y el cartel llegaría recién al apretar Guardar. NETA de lo
+    # que el día ya se llevó y TOPADA por compra en lo que le queda según las
+    # guías anotadas (dueño, 13/10), igual que `_lotes_de_reproceso_a_su_fecha`:
+    # hasta el 13/10 se proponía sobre los lotes enteros y de una compra de 10
+    # salían 18.
+    lotes = topar_por_lo_anotado(
+        descontar_lo_tomado_hoy(lotes_permitidos(reparto["lotes"], SALIDA_REPROCESO),
+                                reparto.get("tomado_hoy", [])),
+        reparto.get("libres", {}),
+    )
+    disponible = bultos_en_los_lotes(lotes)
     propuesta = {
         f"{c['tipo_lote']}:{c['origen_id']}": c["bultos"]
         for c in propuesta_fifo(lotes, bultos)
     }
     return JSONResponse(
         {
-            # La lista sigue siendo la ENTERA, no la neta: significa "lo que
-            # había ese día", que es lo que el desglose viene diciendo desde
-            # siempre, y el reparto que se propone sale de ella. Lo que el
-            # día ya se llevó se dice aparte, en `guias_de_hoy`: un lote que
-            # dijera 10 con una propuesta de 20 encima sería peor que el
-            # hueco que vino a explicar.
+            # Lo que el día ya se llevó está descontado de cada lote, y
+            # `guias_de_hoy` dice quién se lo llevó.
             "lotes": _desglose_para_pantalla(lotes, _contenidos_de(lotes)),
             "disponible": disponible,
             "alcanza": round(float(bultos) - disponible, 2) <= 0,

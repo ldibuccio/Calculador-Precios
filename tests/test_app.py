@@ -28527,14 +28527,15 @@ def test_los_CUATRO_que_miran_los_lotes_de_una_guia_R_aplican_la_pared():
     # exactamente la misma pregunta: "¿habría entrado ese día?".
     pared = cuerpo_de(db_py, "def _lotes_de_reproceso_a_su_fecha(")
     assert "lotes_permitidos(a_la_fecha[\"lotes\"], SALIDA_REPROCESO)" in pared
-    # EL FRENO MIDE CONTRA LOS NETOS y todo lo demás contra los enteros, que
-    # es la separación del 16/09: el freno cuenta lo que otra guía R del
-    # mismo día ya se llevó, el reparto no. Las dos mitades se afirman: si
-    # el freno volviera a medir contra `lotes` el agujero vuelve, y si la
-    # propuesta pasara a medir contra los netos cambiaría el desglose que ve
-    # el operario, que es justo lo que se decidió no tocar.
-    assert "bultos_en_los_lotes(descontar_lo_tomado_hoy(lotes, tomado_hoy))" in pared
-    assert "return lotes" in pared, "lo que devuelve son los ENTEROS"
+    # NETOS Y TOPADOS PARA TODOS desde el 13/10 (dueño): el freno, la
+    # propuesta y la validación miden contra la MISMA lista, con lo que el día
+    # ya se llevó descontado y cada compra topada en lo que le queda según las
+    # guías anotadas. Hasta ese día el reparto miraba los enteros y de una
+    # compra de 10 salían 18 (la separación del 16/09 cubría solo el total).
+    assert ("topar_por_lo_anotado(\n        descontar_lo_tomado_hoy(lotes, tomado_hoy),\n"
+            "        _cajones_libres_por_compra(cursor, lotes, excepto=excepto),") in pared
+    assert "disponible = bultos_en_los_lotes(lotes)" in pared
+    assert "return lotes" in pared, "lo que devuelve es la lista neta y topada"
 
     # 2 y 3) la escritura, que la LLAMA en vez de repetirla — incluido el
     # camino de la compra que llega ya armada, que entra por la misma puerta.
@@ -28556,11 +28557,12 @@ def test_los_CUATRO_que_miran_los_lotes_de_una_guia_R_aplican_la_pared():
     desglose = main_py[main_py.index("def desglose_reproceso("):]
     desglose = desglose[: desglose.index("\ndef ")]
     assert "lotes_permitidos(reparto[\"lotes\"], SALIDA_REPROCESO)" in desglose
-    # La MISMA separación acá: el aviso que la pantalla da antes de Guardar
-    # es el freno adelantado, así que mide contra los netos. Si midiera
-    # contra los enteros diría que alcanza y el server rebotaría al apretar.
-    assert "bultos_en_los_lotes(lotes_netos)" in desglose
-    assert "descontar_lo_tomado_hoy(lotes, reparto.get(\"tomado_hoy\", []))" in desglose
+    # La MISMA lista neta y topada acá (13/10): el aviso que la pantalla da
+    # antes de Guardar es el freno adelantado, y la propuesta es la que se
+    # escribe. Si una midiera otra cosa, la pantalla aprobaría y el server
+    # rebotaría al apretar.
+    assert "reparto.get(\"tomado_hoy\", [])),\n        reparto.get(\"libres\", {})," in desglose
+    assert "disponible = bultos_en_los_lotes(lotes)" in desglose
     assert "propuesta_fifo(lotes, bultos)" in desglose
     assert "_desglose_para_pantalla(lotes, _contenidos_de(lotes))" in desglose
     # Y que no quede ninguna lectura de la lista sin filtrar.

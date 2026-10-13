@@ -814,7 +814,7 @@ tomados." **No frena**: "Revisar" vuelve a la carga con todo puesto, y
 "Guardar igual" reenvía exactamente lo mismo (el reparto incluido) y pide
 quién la guarda. Entonces la guía anota `kilos_diferencia` (la del cartel:
 la resta de los dos enteros; positiva = faltan), `kilos_guardo_igual` y
-`kilos_guardo_igual_el` (db/kilos_guia_r_1_diferencia.sql; las tres juntas o
+`kilos_guardo_igual_el` (db/guia_r_kilos_y_tope_1.sql; las tres juntas o
 ninguna, lo exige un CHECK). Se ve en rojo en la tarjeta de Guías R y en
 "Cómo rindió" del detalle de la compra.
 
@@ -831,3 +831,35 @@ no (16 kg contra 24).
 
 Tests: `tests/test_kilos_guia_r.py` (la R751 y la R788 en la cuenta pura; la
 base real con los rivales Mango y Zapallo sin pesada; la pantalla).
+
+
+## Una guía R no puede anotar de una compra más de lo que le queda (13/10, dueño)
+
+Medido en Frutamax el 12/10: 114 compras de 421 con guía R desde el corte
+terminaron con más cajones anotados por las guías que los que tenían (1.013
+cajones de más). Dos agujeros:
+
+- **El mismo día**: el freno descontaba lo que otra guía del día ya se había
+  llevado (16/09), pero la propuesta y la validación del reparto usaban los
+  lotes ENTEROS. 53 compras.
+- **Entre días**: el FIFO se rejuega en cada lectura y no dirige la toma de
+  una guía a los consumos que ella anotó, así que el lote que el stock da por
+  consumido no es el que la guía anotó. 61 compras.
+
+El arreglo (aprobado por el dueño el 13/10):
+
+1. `_lotes_de_reproceso_a_su_fecha` devuelve la lista **neta y topada**: lo
+   que el día ya se llevó, descontado, y cada compra topada en
+   `cantidad_cajones_real` − lo que ya anotaron TODAS las guías R no anuladas,
+   de cualquier día (`_cajones_libres_por_compra`,
+   `core.stock.topar_por_lo_anotado`). El freno, la propuesta, la validación
+   y el desglose de la pantalla (`desglose_reproceso`) miran esa lista. Al
+   refechar, la propia guía queda afuera (`excepto`).
+2. **La base lo decide** para las guías nuevas: el trigger
+   `guia_r_no_pasa_la_compra` (db/guia_r_kilos_y_tope_1.sql) rechaza el
+   INSERT de un consumo que se pasa; `_crear_reproceso` lo traduce a
+   `RepartoDesactualizado`. Solo al insertar: lo viejo no se toca.
+3. Las 114 viejas **no se corrigen**: "Cómo rindió" dice "Las guías anotaron
+   32 cajones de una compra de 30". Los lotes de Palta de la 724 no se tocan.
+
+Tests: `tests/test_tope_compra_guia_r.py`.

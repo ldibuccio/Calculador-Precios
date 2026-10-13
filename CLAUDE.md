@@ -255,7 +255,7 @@ Corolarios, por familia (se buscan por número con `grep "Corolario N"`):
 
 Módulos (se lee el que se va a tocar):
 - `docs/modulos/stock_y_guias_r.md`: envase de la ficha, en su envase o a caja (Mango, Cherry), margen de la guía R,
-  el cartel "LOS KILOS NO DAN",
+  el cartel "LOS KILOS NO DAN", el tope por compra del reparto,
   guía anulada, negativos, filtro por tipo, `primera = 0`, mismo lote el
   mismo día, Cotejo y ajuste en una pantalla y Stock inicial solo en Gerencia.
 - `docs/modulos/cajas.md`: el modelo de la caja, y Cajas con sus tipos y costo en Administración.

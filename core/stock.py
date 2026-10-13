@@ -744,9 +744,12 @@ def descontar_lo_tomado_hoy(lotes: list[dict], consumos: list[dict]) -> list[dic
     que 30 y 26 no entran en 40. Sin esto, cada guia R del dia ve el lote
     ENTERO, y de un lote de 40 salieron 56.
 
-    SOLO PARA EL FRENO. El desglose que se le muestra al operario y lo que
-    se escribe siguen saliendo de la lista SIN descontar: lo que cambia es
-    cuanto se puede tomar en total, no de donde se propone tomarlo.
+    DESDE EL 13/10 TAMBIÉN PARA EL REPARTO (dueño): hasta ese día solo lo
+    usaba el freno, y el desglose y lo que se escribía salían de la lista sin
+    descontar, así que la segunda guía del día podía proponer de una compra
+    lo que la primera ya se había llevado. Ahora la propuesta, la validación
+    y el desglose salen de esta lista, además topada por
+    `topar_por_lo_anotado`.
 
     EL PISO EN CERO NO ES COSMETICO. `bultos_en_los_lotes` promete que su
     numero nunca es negativo, porque "trabar a un operario por un agujero
@@ -772,6 +775,30 @@ def descontar_lo_tomado_hoy(lotes: list[dict], consumos: list[dict]) -> list[dic
         copia["restante"] = round(max(float(lote["restante"]) - ya.get(clave, 0.0), 0.0), 2)
         netos.append(copia)
     return netos
+
+
+def topar_por_lo_anotado(lotes: list[dict], libres: dict) -> list[dict]:
+    """Los mismos lotes, con cada COMPRA topada en lo que le queda según las guías R.
+
+    El agujero del 13/10 (dueño): el FIFO se rejuega en cada lectura y no
+    dirige la toma de una guía a los consumos que ella misma anotó, así que
+    una compra de 30 cajones podía terminar con 32 anotados por las guías
+    (114 compras de 421 desde el corte). `libres` es {compra_id: cajones de
+    la compra − lo que ya anotaron TODAS las guías R no anuladas, de
+    cualquier día}; un lote de compra no puede ofrecer más que eso, ni menos
+    que cero. Los otros tipos de lote no se tocan: no tienen un documento
+    contra el que contar.
+
+    Devuelve copias, como `descontar_lo_tomado_hoy`.
+    """
+    topados = []
+    for lote in lotes:
+        copia = dict(lote)
+        if lote["tipo_lote"] == "guia" and lote["origen_id"] in libres:
+            copia["restante"] = round(
+                max(min(float(lote["restante"]), float(libres[lote["origen_id"]])), 0.0), 2)
+        topados.append(copia)
+    return topados
 
 
 def propuesta_fifo(lotes: list[dict], total: float, salida: dict | None = None) -> list[dict]:

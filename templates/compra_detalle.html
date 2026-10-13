@@ -476,6 +476,7 @@
     {% elif rl %}
     <span class="nota-chica">Rentabilidad real del lote: no hay precio cargado para el día de las guías.</span>
     {% endif %}
+    {% if cr.anotadas_de_mas %}<span class="nota-chica" data-anotadas-de-mas>Las guías anotaron {{ cr.bultos_a_proceso|numero }} cajones de una compra de {{ cr.cajones_aceptados|numero }}.</span>{% endif %}
     {% if cr.guias_sin_kilos %}<span class="nota-chica">{{ cr.guias_sin_kilos }} {% if cr.guias_sin_kilos == 1 %}guía no entra{% else %}guías no entran{% endif %} en los kilos de primera: su ficha no vende por kilo.</span>{% endif %}
   </div>
   {% endif %}

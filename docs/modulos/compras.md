@@ -121,6 +121,9 @@ Administración → Guías mercadería (la misma pantalla).
 - **Si la guía se guardó con "LOS KILOS NO DAN"** (13/10, ver
   `docs/modulos/stock_y_guias_r.md`), abajo de esa guía va en rojo la
   diferencia anotada y quién la guardó igual (`templates/_kilos_no_dan.html`).
+- **Si las guías anotaron más cajones de los que tenía la compra** (las 114
+  viejas, de antes del tope del 13/10), una nota: "Las guías anotaron 32
+  cajones de una compra de 30" (`anotadas_de_mas`).
 - **Rentabilidad real del lote** (dueño, 12/10, `rentabilidad_del_lote` en
   core/costo_real.py): cada guía con el listado de SU cliente a la fecha de
   la guía, el mismo de Rentabilidad Real (`_margenes_por_fecha`). Venta =
