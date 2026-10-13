@@ -4276,7 +4276,7 @@ def como_rindio_la_compra(compra_id: int) -> dict | None:
                 """
                 SELECT rp.id, rp.fecha_operacion, rp.bultos_tomados, rp.bultos_primera, rp.bultos_segunda,
                        rp.bultos_merma, CASE WHEN f.unidad_venta = 'kilo' THEN f.contenido_caja END,
-                       rp.cliente_id, rp.ficha_id
+                       rp.cliente_id, rp.ficha_id, rp.kilos_diferencia, rp.kilos_guardo_igual
                 FROM reprocesos rp LEFT JOIN fichas_logistica f ON f.id = rp.ficha_id
                 WHERE rp.id = ANY(%s) AND rp.anulado_el IS NULL
                 ORDER BY rp.fecha_operacion, rp.id
@@ -4294,7 +4294,8 @@ def como_rindio_la_compra(compra_id: int) -> dict | None:
     kg_declarado, kg_pesado = _n(kg_declarado), _n(kg_pesado)
     aceptados = cajones_real if cajones_real is not None else cajones
     guias = []
-    for guia, fecha, tomados, primera, segunda, merma, kg_caja, cliente_id, ficha_id in guias_crudas:
+    for (guia, fecha, tomados, primera, segunda, merma, kg_caja, cliente_id, ficha_id,
+         kilos_diferencia, kilos_guardo_igual) in guias_crudas:
         de_la_guia = kilos[guia]
         mia = de_la_guia["por_compra"][compra_id]
         parte = mia["kg"] / de_la_guia["kg"] if de_la_guia["kg"] > 0 else 0.0
@@ -4316,6 +4317,10 @@ def como_rindio_la_compra(compra_id: int) -> dict | None:
             "kg_segunda": round(kg_segunda_guia * parte, 2) if en_kilos else None,
             "kg_merma": round(kg_merma_guia * parte, 2) if en_kilos else None,
             "mezcla": len(de_la_guia["por_compra"]) > 1,
+            # LOS KILOS NO DAN y la guardaron igual (dueño, 13/10): la
+            # diferencia de la GUÍA entera, como quedó anotada al cargarla.
+            "kilos_diferencia": None if kilos_diferencia is None else float(kilos_diferencia),
+            "kilos_guardo_igual": kilos_guardo_igual,
             "parte": round(parte * 100, 1),
             # La nota chica (dueño, 12/10): no es un error.
             "no_cierra_por": (round((de_la_guia["kg"] - declarado_guia) * parte, 2)
@@ -14830,6 +14835,57 @@ class RepartoDesactualizado(Exception):
     """El reparto que llegó de la pantalla ya no se puede cumplir contra los lotes de ahora."""
 
 
+class KilosNoDan(Exception):
+    """LOS KILOS NO DAN (dueño, 13/10): lo que entró y lo que salió de la guía R
+    se separan más de la tolerancia. NO es un freno: la pantalla muestra el
+    cartel rojo y el operario puede guardar igual diciendo quién. Lleva la
+    cuenta entera (`core.kilos_guia_r.cuenta_de_kilos`) para el cartel."""
+
+    def __init__(self, cuenta: dict):
+        self.cuenta = cuenta
+        super().__init__(
+            f"Los kilos no dan: entraron {cuenta['entraron']} y salieron {cuenta['salieron']}.")
+
+
+def _cuenta_de_kilos_de_la_guia(cursor, consumos: list[dict], ficha_id, primera, segunda,
+                                merma) -> dict | None:
+    """La cuenta de kilos de una guía R que se está por escribir, o None si no
+    hay cuenta posible (ver `core.kilos_guia_r`). Cada cajón pesa lo que pesó
+    un cajón de SU compra al recibirla, y solo si la compra está en kilos; lo
+    que vino de otro lado (un rechazo, otra guía R) no tiene pesada y apaga
+    la cuenta. Los kilos de la primera salen de la ficha, si vende por kilo."""
+    from core.kilos_guia_r import cuenta_de_kilos
+
+    if ficha_id is None:
+        return None
+    cursor.execute(
+        "SELECT CASE WHEN unidad_venta = 'kilo' THEN contenido_caja END "
+        "FROM fichas_logistica WHERE id = %s",
+        (ficha_id,),
+    )
+    fila = cursor.fetchone()
+    if fila is None or fila[0] is None:
+        return None
+    kg_caja = float(fila[0])
+    compras = sorted({c["compra_id"] for c in consumos if c["compra_id"] is not None})
+    pesado = {}
+    if compras:
+        cursor.execute(
+            """
+            SELECT c.id, CASE WHEN coalesce(a.unidad_compra, 'kilo') = 'kilo'
+                              THEN c.contenido_por_cajon_real END
+            FROM compras c JOIN articulos a ON a.id = c.articulo_id
+            WHERE c.id = ANY(%s)
+            """,
+            (compras,),
+        )
+        pesado = {compra: kg for compra, kg in cursor.fetchall()}
+    return cuenta_de_kilos(
+        [(c["bultos"], pesado.get(c["compra_id"])) for c in consumos],
+        primera, segunda, merma, kg_caja,
+    )
+
+
 class ReprocesoAnteriorAlCorte(Exception):
     """La fecha del reproceso cae antes del corte del modelo nuevo, donde el FIFO nuevo no rige."""
 
@@ -14952,7 +15008,7 @@ def crear_reproceso(
     cliente_id: int | None = None,
     ficha_id: int | None = None,
     reparto: list[dict] | None = None,
-
+    kilos_guardo_igual: str | None = None,
 ) -> int:
     """Carga una guía R: el SERVER frena, reparte y congela consumos y costo. Devuelve el número de guía.
 
@@ -15004,6 +15060,7 @@ def crear_reproceso(
                 cliente_id=cliente_id,
                 ficha_id=ficha_id,
                 reparto=reparto,
+                kilos_guardo_igual=kilos_guardo_igual,
             )
         conexion.commit()
         return reproceso_id
@@ -15137,6 +15194,7 @@ def _crear_reproceso(
     reparto: list[dict] | None = None,
     tipo: str = "normal",
     compra_origen_id: int | None = None,
+    kilos_guardo_igual: str | None = None,
 ) -> int:
     """El NUCLEO de la guia R, con el cursor abierto. Los dos frenos viven aca.
 
@@ -15150,6 +15208,12 @@ def _crear_reproceso(
     `tipo` y `compra_origen_id` los usa SOLO el camino en origen. El CHECK
     de la base (db/compra_en_caja_nuestra_2c_uno_a_uno.sql) es el que exige
     que esa guia sea uno a uno; aca no se repite.
+
+    LOS KILOS NO DAN (dueño, 13/10): solo en la guía 'normal', con los
+    consumos ya decididos y ANTES de escribir. Si no dan y no vino
+    `kilos_guardo_igual` (quién la guarda igual), levanta `KilosNoDan` sin
+    escribir nada; si vino, la guía anota la diferencia, quién y cuándo. La
+    de origen no se pesa: es uno a uno con su recepción.
     """
     from core.stock import (
         SALIDA_REPROCESO,
@@ -15207,6 +15271,17 @@ def _crear_reproceso(
             }
         )
 
+    kilos_diferencia = None
+    quien_guardo_igual = None
+    if tipo == "normal":
+        cuenta = _cuenta_de_kilos_de_la_guia(
+            cursor, consumos, ficha_id, bultos_primera, bultos_segunda, bultos_merma)
+        if cuenta is not None and cuenta["no_dan"]:
+            quien_guardo_igual = " ".join((kilos_guardo_igual or "").split()) or None
+            if quien_guardo_igual is None:
+                raise KilosNoDan(cuenta)
+            kilos_diferencia = cuenta["kg_diferencia"]
+
     costo_total = None
     costo_por_bulto_primera = None
     if all(c["costo_por_bulto"] is not None for c in consumos):
@@ -15221,14 +15296,18 @@ def _crear_reproceso(
             (articulo_id, fecha_operacion, bultos_tomados, bultos_primera,
              bultos_segunda, bultos_merma, costo_total, costo_por_bulto_primera,
              cliente_id, ficha_id, consumos_editados, tipo, compra_origen_id,
-             lleva_caja_nuestra, envase_id)
-        VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+             lleva_caja_nuestra, envase_id,
+             kilos_diferencia, kilos_guardo_igual, kilos_guardo_igual_el)
+        VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s,
+                %s, %s, CASE WHEN %s::numeric IS NULL THEN NULL ELSE now() END)
         RETURNING id
         """,
         (articulo_id, fecha_operacion, bultos_tomados, bultos_primera,
          bultos_segunda, bultos_merma, costo_total, costo_por_bulto_primera,
          cliente_id, ficha_id, editados, tipo, compra_origen_id,
-         lleva_caja, envase_de_la_caja),
+         lleva_caja, envase_de_la_caja,
+         kilos_diferencia, quien_guardo_igual if kilos_diferencia is not None else None,
+         kilos_diferencia),
     )
     reproceso_id = cursor.fetchone()[0]
     for c in consumos:
@@ -15599,7 +15678,9 @@ def listar_reprocesos_por_rango(fecha_desde, fecha_hasta, articulo_id=None,
                        -- cliente PUEDE terminar en la ficha de otro, y la
                        -- pantalla lo necesita para poder mostrarlo: el
                        -- título sale de la FICHA y taparía la diferencia.
-                       f.cliente_id AS ficha_cliente_id
+                       f.cliente_id AS ficha_cliente_id,
+                       -- LOS KILOS NO DAN y la guardaron igual (dueño, 13/10).
+                       rp.kilos_diferencia, rp.kilos_guardo_igual, rp.kilos_guardo_igual_el
                 FROM reprocesos rp
                 JOIN articulos a ON a.id = rp.articulo_id
                 LEFT JOIN clientes cl ON cl.id = rp.cliente_id

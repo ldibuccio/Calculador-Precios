@@ -788,3 +788,44 @@ botón.
 el dueño el 04/10): arriba de las tres pantallas va Hoy · Evolución ·
 Movimientos (`templates/_pestanas_stock.html`), y el hub tiene un solo botón.
 Cada pestaña sigue siendo su propia pantalla, con su propia dirección.
+
+
+## LOS KILOS NO DAN: el cartel rojo de la guía R (13/10, dueño)
+
+Al cargar una guía R normal (Depósito → Reproceso), con los consumos ya
+decididos y ANTES de escribir, se hace la cuenta de kilos
+(`core/kilos_guia_r.py`, `cuenta_de_kilos`):
+
+- **Entraron** = cada cajón tomado × lo que pesó un cajón de SU compra
+  (`compras.contenido_por_cajon_real`, siempre peso NETO).
+- **Salieron** = cajas de primera × kg de la ficha + cajones de segunda y de
+  merma × el peso promedio del cajón que entró (cajones de origen, igual que
+  "Cómo rindió").
+- **Tolerancia**: `TOLERANCIA_KG_POR_CAJON` (0,5 kg) por cajón tomado, para
+  arriba o para abajo. El borde no salta.
+
+Si no dan, `_crear_reproceso` levanta `KilosNoDan` sin escribir nada y la
+pantalla muestra el cartel rojo, con las palabras del dueño en kilos enteros
+(`texto_kilos_no_dan` en app/main.py): "LOS KILOS NO DAN. Entraron 287 kg (23
+cajones). Salieron 197 kg. Faltan 90 kg. Revisá antes de seguir: ¿falta
+cargar segunda o merma?" o, si sobran, "… Sobran 24 kg. Revisá los cajones
+tomados." **No frena**: "Revisar" vuelve a la carga con todo puesto, y
+"Guardar igual" reenvía exactamente lo mismo (el reparto incluido) y pide
+quién la guarda. Entonces la guía anota `kilos_diferencia` (la del cartel:
+la resta de los dos enteros; positiva = faltan), `kilos_guardo_igual` y
+`kilos_guardo_igual_el` (db/kilos_guia_r_1_diferencia.sql; las tres juntas o
+ninguna, lo exige un CHECK). Se ve en rojo en la tarjeta de Guías R y en
+"Cómo rindió" del detalle de la compra.
+
+**No hay cuenta** (ni cartel) si la ficha no vende por kilo (Mango, por
+unidad), si la guía no tiene ficha, o si algún cajón tomado no salió de una
+compra pesada en kilos (sin pesada, de un rechazo, de otra guía R). La guía
+en origen no se pesa: es uno a uno con su recepción.
+
+Medido en Frutamax por el conector de lectura el 13/10 (corte 05/09, guías
+normales no anuladas): 615 guías, 507 con cuenta posible; con 0,5 kg por
+cajón saltaría en 401 (298 faltan, 103 sobran); la mediana pierde 0,9 kg por
+cajón. La R788 (304 kg contra 288) salta por 1 kg. Preguntado al dueño.
+
+Tests: `tests/test_kilos_guia_r.py` (la R751 y la R788 en la cuenta pura; la
+base real con los rivales Mango y Zapallo sin pesada; la pantalla).

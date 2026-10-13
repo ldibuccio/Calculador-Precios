@@ -271,6 +271,7 @@
   {% set barra_titulo = "Guías R" %}
   {% set barra_atras = "/administracion" %}
   {% from "_info.html" import info %}
+  {% from "_kilos_no_dan.html" import guardada_igual %}
   {% include "_barra_navegacion.html" %}
 
   {% if error %}
@@ -394,6 +395,7 @@
     {% else %}
     <p class="transformacion">Tomó {{ g.bultos_tomados|numero }} bultos → {{ g.bultos_primera|numero }} cajas de primera · {{ g.bultos_segunda|numero }} de segunda · {{ g.bultos_merma|numero }} de merma</p>
     {% endif %}
+    {% if g.kilos_diferencia is not none %}<p class="transformacion">{{ guardada_igual(g.kilos_diferencia|float, g.kilos_guardo_igual) }}</p>{% endif %}
     {# EL CLIENTE SOLO CUANDO EL TÍTULO NO LO DICE. Con ficha, el título ya
        es "<artículo> Caja <cliente>" y repetirlo abajo eran dos renglones
        diciendo lo mismo con otras palabras.
