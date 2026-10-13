@@ -966,6 +966,10 @@ def calcular_objetivos_de_compra(cliente_id: int, momento_referencia: datetime |
     - Sin ninguna compra con precio en los últimos LIMITE_APARICION_DIAS
       (15) días, el artículo no aparece — mismo criterio de obsolescencia
       que calcular_listado_para_negociar_precios.
+    - EL % DE PÉRDIDA DE LA FICHA (dueño, 13/10): la utilidad actual sale del
+      costo del kilo útil (`costo_del_kilo_util`) y el objetivo es lo que se
+      puede pagar por kilo COMPRADO = kilo útil máximo × (1 − pérdida). La
+      misma fórmula que Márgenes; con 0 no cambia nada.
     - El envase por unidad de venta usa SIEMPRE el contenido de la ficha
       (1 envase cada contenido_ficha unidades) — la misma convención que la
       Rutina A (_envases_por_unidad_ponderado con envase fijo), y es lo que
@@ -1012,6 +1016,9 @@ def calcular_objetivos_de_compra(cliente_id: int, momento_referencia: datetime |
 
     costos_envases = listar_costos_envases_vigentes(hoy)
     costo_por_envase_id = {c["envase_id"]: float(c["costo"]) for c in costos_envases}
+    # EL % DE PÉRDIDA DE CADA FICHA hoy (dueño, 13/10): la misma lectura que
+    # el listado de Márgenes.
+    perdidas = listar_perdidas_vigentes_en_fechas(cliente_id, [hoy])[hoy]
 
     compras_con_precio_por_articulo: dict[int, list[dict]] = {}
     nombres_por_articulo: dict[int, str] = {}
@@ -1072,9 +1079,12 @@ def calcular_objetivos_de_compra(cliente_id: int, momento_referencia: datetime |
                 contenido_ficha, ficha["envase_variable"], kilaje
             )
 
+        # Con la pérdida de la ficha (dueño, 13/10): la utilidad sale del kilo
+        # ÚTIL, y el máximo a pagar es el kilo útil máximo por (1 − pérdida).
+        perdida = perdidas.get(ficha["id"], 0.0)
         utilidad_actual = calcular_utilidad_real(
             precio_vigente=precio_vigente,
-            costo_producto=costo_ultima_por_unidad,
+            costo_producto=costo_del_kilo_util(costo_ultima_por_unidad, perdida),
             costo_envase=_envase_para_kilaje(contenido_ultima),
             tasas_suman=conceptos_cliente["tasas_suman"],
             tasas_restan=conceptos_cliente["tasas_restan"],
@@ -1088,7 +1098,7 @@ def calcular_objetivos_de_compra(cliente_id: int, momento_referencia: datetime |
             tasas_suman=conceptos_cliente["tasas_suman"],
             tasas_restan=conceptos_cliente["tasas_restan"],
             utilidad=utilidad_objetivo,
-        )
+        ) * (1 - perdida)
 
         articulos.append(
             {
@@ -1106,6 +1116,8 @@ def calcular_objetivos_de_compra(cliente_id: int, momento_referencia: datetime |
                 "envase_variable": ficha["envase_variable"],
                 "objetivo_por_unidad": objetivo_por_unidad,
                 "objetivo_bulto_ultima": objetivo_por_unidad * contenido_ultima,
+                # Para la pantalla, que recalcula en vivo con la misma cuenta.
+                "perdida": perdida,
             }
         )
 

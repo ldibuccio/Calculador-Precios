@@ -83,6 +83,7 @@ from core.envases import (
 from core.vino_armada import etiqueta_del_boton, se_muestra_el_boton
 from core.motor_costeo import (
     calcular_costo_por_unidad_medida,
+    costo_del_kilo_util,
     costo_objetivo_multi_concepto as calcular_costo_objetivo,
     precio_sugerido_multi_concepto as calcular_precio_sugerido,
     utilidad_real_multi_concepto as calcular_utilidad_real,
@@ -19769,6 +19770,10 @@ def _analizar_ficha(fila: dict, tasas: dict, editado: str, valores: dict) -> dic
 
     envase = float(fila["costo_envase_unidad_venta"] or 0.0)
     suman, restan = tasas["tasas_suman"], tasas["tasas_restan"]
+    # EL % DE PÉRDIDA DE LA FICHA (dueño, 13/10): precio y rentabilidad salen
+    # del costo del kilo ÚTIL, y lo que se puede pagar es el kilo útil máximo
+    # por (1 − pérdida). La misma fórmula que Márgenes. Con 0 no cambia nada.
+    perdida = float(fila["perdida"])
 
     costo_unidad = None
     try:
@@ -19782,7 +19787,7 @@ def _analizar_ficha(fila: dict, tasas: dict, editado: str, valores: dict) -> dic
     try:
         if editado == "utilidad" and resultado["utilidad"] is not None and costo_unidad is not None:
             resultado["precio"] = calcular_precio_sugerido(
-                costo_producto=costo_unidad,
+                costo_producto=costo_del_kilo_util(costo_unidad, perdida),
                 costo_envase=envase,
                 tasas_suman=suman,
                 tasas_restan=restan,
@@ -19792,7 +19797,7 @@ def _analizar_ficha(fila: dict, tasas: dict, editado: str, valores: dict) -> dic
         elif costo_unidad is not None and resultado["precio"] is not None:
             resultado["utilidad"] = calcular_utilidad_real(
                 precio_vigente=resultado["precio"],
-                costo_producto=costo_unidad,
+                costo_producto=costo_del_kilo_util(costo_unidad, perdida),
                 costo_envase=envase,
                 tasas_suman=suman,
                 tasas_restan=restan,
@@ -19828,10 +19833,11 @@ def _analizar_ficha(fila: dict, tasas: dict, editado: str, valores: dict) -> dic
                 tasas_suman=suman,
                 tasas_restan=restan,
                 utilidad=objetivo_utilidad,
-            ) * resultado["kilos_bulto"]
+            ) * (1 - perdida) * resultado["kilos_bulto"]
     except ValueError:
         objetivo_cajon = None
     resultado["objetivo_utilidad"] = objetivo_utilidad
+    resultado["perdida"] = perdida
 
     resultado["costo_unidad"] = costo_unidad
     resultado["objetivo_cajon"] = objetivo_cajon
@@ -19847,7 +19853,8 @@ IMPORTE_CAJON_POR_DEFECTO = 1000.0
 
 
 def _fila_de_partida_sin_costo(ficha: dict, fila: dict | None, precio_vigente: float | None,
-                               costo_envase: float | None, kilos_bulto: float | None) -> dict:
+                               costo_envase: float | None, kilos_bulto: float | None,
+                               perdida: float) -> dict:
     """La fila que `_analizar_ficha` necesita cuando el listado no trae costo.
 
     LO QUE SÍ SE SABE SE USA: el contenido del bulto de la última compra si
@@ -19868,6 +19875,8 @@ def _fila_de_partida_sin_costo(ficha: dict, fila: dict | None, precio_vigente: f
         "precio_vigente": precio_vigente,
         "costo_envase_unidad_venta": (costo_envase or 0.0) * cajas,
         "fecha_ultima_compra": (fila or {}).get("fecha_ultima_compra"),
+        # El % de pérdida de la ficha hoy (dueño, 13/10), como en el listado.
+        "perdida": perdida,
     }
 
 
@@ -20001,6 +20010,7 @@ def ver_analizar_articulo(
         fila = _fila_de_partida_sin_costo(
             ficha, fila, precio_vigente, costo_envase,
             _numero_del_formulario(kilos_bulto) if kilos_bulto is not None else None,
+            fila["perdida"] if fila is not None else perdida_de_la_ficha(ficha_valor, hoy),
         )
     contexto["costo_por_defecto"] = costo_por_defecto
 

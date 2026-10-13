@@ -12991,6 +12991,8 @@ def _analizar(url, fichas=None, fila=None, tasas=None, entero=False, listado=Non
         _patch("app.main.listar_conceptos_vigentes_por_cliente",
                return_value=tasas if tasas is not None else TASAS_ANALISIS),
         _patch("app.main._hoy_argentina", return_value=date(2026, 9, 12)),
+        # Sin compra reciente la pérdida se lee de la ficha (13/10): sin cargar.
+        _patch("app.main.perdida_de_la_ficha", return_value=0.0),
     ):
         respuesta = cliente.get(url)
     assert respuesta.status_code == 200, respuesta.status_code

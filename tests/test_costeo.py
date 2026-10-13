@@ -1272,6 +1272,8 @@ def _calcular_objetivos_con_mocks(compras=None, fichas=None, conceptos=None, pre
         patch("app.costeo.listar_conceptos_vigentes_por_cliente", return_value=conceptos or CONCEPTOS_OBJETIVO),
         patch("app.costeo.listar_precios_vigentes_por_cliente", return_value=precios or PRECIOS_OBJETIVO),
         patch("app.costeo.listar_costos_envases_vigentes", return_value=envases or ENVASES_OBJETIVO),
+        # Sin % de pérdida cargado (13/10): el objetivo es el de siempre.
+        parche_por_fechas("app.costeo.listar_perdidas_vigentes_en_fechas", {}),
     ):
         resultado = calcular_objetivos_de_compra(CLIENTE_ID_DE_PRUEBA, MOMENTO_DE_PRUEBA)
     return resultado, mock_compras

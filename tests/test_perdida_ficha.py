@@ -195,3 +195,57 @@ def test_la_FICHA_se_edita_rige_desde_HOY_y_queda_en_la_bitacora(base):
     bitacora = [float(p) if p is not None else None
                 for (p,) in sql("select perdida from fichas_logistica_historial order by id")]
     assert bitacora == [0.18, 0.125, 0.125]
+
+
+# ── "Objetivo de compra" y "Análisis de artículo" (dueño, 13/10) ────────────
+
+
+def test_el_OBJETIVO_DE_COMPRA_paga_el_kilo_comprado_con_la_perdida(base):
+    """Morrón (18%) y Zapallo (rival, sin pérdida), los dos vendidos a $7.000 el
+    kilo con 20% de utilidad objetivo. El kilo útil máximo es 7.000 / 1,2 =
+    $5.833; comprado, con 18% de pérdida, se puede pagar 5.833 × 0,82 = $4.783."""
+    d, m, sql = base
+    sql(PERDIDAS)
+    sql("insert into precios_venta_historial (articulo_id, cliente_id, ficha_id, precio, vigente_desde) "
+        "values (1, 1, 1, 7000, '2026-10-01'), (2, 1, 2, 2200, '2026-10-01')")
+    from app.costeo import calcular_objetivos_de_compra
+    filas = {f["articulo_id"]: f for f in calcular_objetivos_de_compra(1, DESPUES)["articulos"]}
+    morron = filas[1]
+    assert round(morron["objetivo_por_unidad"], 2) == round(7000 / 1.2 * 0.82, 2)
+    assert round(morron["objetivo_bulto_ultima"]) == round(7000 / 1.2 * 0.82 * 10)
+    assert round(morron["utilidad_actual"], 4) == round(7000 / (5000 / 0.82) - 1, 4)
+    assert morron["perdida"] == 0.18
+    # El rival sin pérdida: 2.200 / 1,2 = $1.833 por kilo, sin descontar nada.
+    assert round(filas[2]["objetivo_por_unidad"], 2) == round(2200 / 1.2, 2)
+    # Antes de que rigiera, el Morrón con 20% de utilidad... 7.000 contra 5.000
+    # da 40%: no está bajo el objetivo y no aparece.
+    assert 1 not in {f["articulo_id"] for f in calcular_objetivos_de_compra(1, ANTES)["articulos"]}
+
+
+def test_la_PANTALLA_del_objetivo_recalcula_con_la_perdida(base):
+    d, m, sql = base
+    sql(PERDIDAS)
+    sql("insert into precios_venta_historial (articulo_id, cliente_id, ficha_id, precio, vigente_desde) "
+        "values (1, 1, 1, 7000, '2026-10-01')")
+    from app.costeo import calcular_objetivos_de_compra
+    from tests.test_administracion_reordenada import _cliente
+    with patch.object(m, "calcular_objetivos_de_compra", side_effect=lambda c: calcular_objetivos_de_compra(c, DESPUES)):
+        pagina = _cliente(m, "compras").get("/compras/objetivo", params={"cliente_id": 1})
+    assert pagina.status_code == 200, pagina.text[:200]
+    assert pagina.text.count('data-perdida="0.18"') == 1
+    assert "· pérdida 18%" in pagina.text
+    assert "var objetivoUnidad = (entra - envase) / (1 + utilidad) * (1 - perdida);" in pagina.text
+
+
+def test_el_ANALISIS_DE_ARTICULO_usa_la_perdida_de_la_ficha():
+    """El ejemplo del dueño: cajón de $50.000 con 10 kg, 18% de pérdida y 20%
+    de utilidad → $7.317. Y al revés: a $7.317,07 se puede pagar el cajón
+    hasta $50.000. Con pérdida 0, lo de siempre: $6.000."""
+    import app.main as m
+    tasas = {"tasas_suman": [], "tasas_restan": [], "utilidad": 0.20}
+    valores = {"importe_cajon": 50000.0, "kilos_bulto": 10.0, "precio": None, "utilidad": 20.0}
+    con = m._analizar_ficha({"costo_envase_unidad_venta": 0.0, "perdida": 0.18}, tasas, "utilidad", dict(valores))
+    assert round(con["precio"]) == 7317 and round(con["objetivo_cajon"]) == 50000
+    assert con["costo_unidad"] == 5000                             # el kilo comprado no cambia
+    sin = m._analizar_ficha({"costo_envase_unidad_venta": 0.0, "perdida": 0.0}, tasas, "utilidad", dict(valores))
+    assert round(sin["precio"]) == 6000 and round(sin["objetivo_cajon"]) == 50000
