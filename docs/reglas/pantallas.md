@@ -275,8 +275,9 @@ El dueño eligió "un color por recuadro" y no "un color por lo que hace".
   Panel de control primero en Mirar, `docs/modulos/panel_control.md`): Rentabilidad,
   Pérdidas y Facturación y cobranzas, cuyas pestañas salen solo entrando por
   Gerencia. Sistema desapareció (`docs/modulos/pedidos.md`).
-- **Comercial** tiene cuatro botones (Alertas, Precios, Clientes, Fichas
-  logísticas): Envases se fue a Cajas de Administración. **Precios** tiene
+- **Comercial** tiene cinco botones (Alertas, Precios, Clientes, Fichas
+  logísticas y Rendimientos, sumado el 13/10, ver
+  `docs/modulos/fichas_y_precios.md`): Envases se fue a Cajas de Administración. **Precios** tiene
   cinco (Cargar precios —primero desde el 07/10—, Consultar, Precios por
   Período, Márgenes por Artículo y Precios Cotizaciones, sumado el 07/10, ver
   `docs/modulos/fichas_y_precios.md`); los dos "Próximamente" salieron y sus

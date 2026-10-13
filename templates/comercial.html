@@ -23,7 +23,8 @@
 
   {% import "_boton_alertas.html" as boton_alertas %}
 
-  {# CUATRO BOTONES (dueño, 04/10; eran cinco): Envases se fue a
+  {# CINCO BOTONES: Rendimientos se sumó el 13/10 (dueño). Eran cuatro desde
+     el 04/10 (eran cinco): Envases se fue a
      Administración → Cajas → Tipos de caja y su costo, porque el precio de
      las cajas lo carga Administración. Un recuadro, un color, y un dibujo en
      cada botón, como Depósito. #}
@@ -33,6 +34,7 @@
     <a class="boton color-1" href="/precios">{{ ICONOS_HUBS['precios']|safe }}<span>Precios</span></a>
     <a class="boton color-1" href="/clientes">{{ ICONOS_HUBS['clientes']|safe }}<span>Clientes</span></a>
     <a class="boton color-1" href="/fichas">{{ ICONOS_HUBS['fichas']|safe }}<span>Fichas logísticas</span></a>
+    <a class="boton color-1" href="/comercial/rendimientos">{{ ICONOS_HUBS['analizar']|safe }}<span>Rendimientos</span></a>
   </div>
 {% include "_pie_version.html" %}
 </body>

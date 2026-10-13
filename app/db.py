@@ -14982,6 +14982,115 @@ def guias_r_con_sus_kilos(desde, hasta, articulo_id: int | None = None) -> list[
     return list(guias.values())
 
 
+def kilos_comprados_y_enviados(desde, hasta, articulo_id: int | None = None) -> list[dict]:
+    """RENDIMIENTOS, los artículos que NO pasan por guía R (dueño, 13/10): por
+    artículo, los kilos por cajón COMPRADO (lo que pesó el cajón al recibirlo,
+    `contenido_por_cajon_real`, ponderado por cajones aceptados; solo compras
+    en kilos y pesadas) contra los kilos por bulto ENVIADO (kilos_enviados /
+    bultos armados de los renglones armados, de fichas que venden por kilo).
+
+    "No pasa por guía R" = ninguna guía R normal no anulada de ese artículo en
+    el período: esos van en la otra mitad de la pantalla, con la cuenta de la
+    guía. Los pedidos son los vigentes de cada cliente y día (el DISTINCT ON
+    de `facturacion_por_ficha`), sin renglones dados de baja.
+
+    Devuelve [{articulo_id, articulo, cajones, kg_por_cajon, bultos,
+    kg_por_bulto}] con lo que haya de cada lado (None si no hay).
+    """
+    conexion = obtener_conexion()
+    try:
+        with conexion.cursor() as cursor:
+            cursor.execute(
+                """
+                SELECT c.articulo_id, ar.nombre,
+                       SUM(c.cantidad_cajones_real),
+                       SUM(c.cantidad_cajones_real * c.contenido_por_cajon_real)
+                FROM compras c
+                JOIN articulos ar ON ar.id = c.articulo_id
+                WHERE c.estado = 'recepcionado'
+                  AND c.fecha_operacion BETWEEN %s AND %s
+                  AND coalesce(ar.unidad_compra, 'kilo') = 'kilo'
+                  AND c.contenido_por_cajon_real > 0 AND c.cantidad_cajones_real > 0
+                  AND (%s::bigint IS NULL OR c.articulo_id = %s)
+                  AND NOT EXISTS (SELECT 1 FROM reprocesos rp
+                                  WHERE rp.articulo_id = c.articulo_id AND rp.tipo = 'normal'
+                                    AND rp.anulado_el IS NULL
+                                    AND rp.fecha_operacion BETWEEN %s AND %s)
+                GROUP BY c.articulo_id, ar.nombre
+                """,
+                (desde, hasta, articulo_id, articulo_id, desde, hasta),
+            )
+            comprado = {a: (n, float(caj), float(kg)) for a, n, caj, kg in cursor.fetchall()}
+            cursor.execute(
+                """
+                WITH vigentes AS (
+                    SELECT DISTINCT ON (cliente_id, fecha_operacion) id
+                    FROM pedidos
+                    WHERE anulado_el IS NULL AND fecha_operacion BETWEEN %s AND %s
+                    ORDER BY cliente_id, fecha_operacion, creado_en DESC
+                ), enviados AS (
+                    -- kilos_enviados es del renglón ENTERO, así que se divide
+                    -- por el armado entero (lo que el cliente recibió).
+                    SELECT r.articulo_id, r.kilos_enviados,
+                           COALESCE(r.cantidad_armada, r.cantidad) AS bultos_armados
+                    FROM vigentes v
+                    JOIN pedidos_renglones r ON r.pedido_id = v.id
+                    JOIN fichas_logistica f ON f.id = r.ficha_id
+                    WHERE r.anulado_el IS NULL AND r.armado_el IS NOT NULL
+                      AND r.kilos_enviados > 0 AND f.unidad_venta = 'kilo'
+                      AND (%s::bigint IS NULL OR r.articulo_id = %s)
+                )
+                SELECT e.articulo_id, ar.nombre, SUM(e.bultos_armados), SUM(e.kilos_enviados)
+                FROM enviados e JOIN articulos ar ON ar.id = e.articulo_id
+                WHERE e.bultos_armados > 0
+                  AND NOT EXISTS (SELECT 1 FROM reprocesos rp
+                                  WHERE rp.articulo_id = e.articulo_id AND rp.tipo = 'normal'
+                                    AND rp.anulado_el IS NULL
+                                    AND rp.fecha_operacion BETWEEN %s AND %s)
+                GROUP BY e.articulo_id, ar.nombre
+                """,
+                (desde, hasta, articulo_id, articulo_id, desde, hasta),
+            )
+            enviado = {a: (n, float(b), float(kg)) for a, n, b, kg in cursor.fetchall()}
+    finally:
+        conexion.close()
+    filas = []
+    for articulo in sorted(set(comprado) | set(enviado)):
+        nombre = (comprado.get(articulo) or enviado.get(articulo))[0]
+        _, cajones, kg_c = comprado.get(articulo, (None, None, None))
+        _, bultos, kg_e = enviado.get(articulo, (None, None, None))
+        filas.append({
+            "articulo_id": articulo, "articulo": nombre,
+            "cajones": cajones, "kg_por_cajon": round(kg_c / cajones, 2) if cajones else None,
+            "bultos": bultos, "kg_por_bulto": round(kg_e / bultos, 2) if bultos else None,
+        })
+    return filas
+
+
+def perdidas_cargadas_por_articulo(fecha) -> dict:
+    """{articulo_id: [% de pérdida de cada una de sus fichas, sin repetir]} a esa
+    fecha (dueño, 13/10). La ficha sin pérdida cargada vale 0."""
+    conexion = obtener_conexion()
+    try:
+        with conexion.cursor() as cursor:
+            cursor.execute(
+                """
+                SELECT f.articulo_id, COALESCE((
+                    SELECT h.perdida FROM fichas_perdida_historial h
+                    WHERE h.ficha_id = f.id AND h.vigente_desde <= %s
+                    ORDER BY h.vigente_desde DESC LIMIT 1), 0)
+                FROM fichas_logistica f
+                """,
+                (fecha,),
+            )
+            por_articulo: dict = {}
+            for articulo, perdida in cursor.fetchall():
+                por_articulo.setdefault(articulo, set()).add(round(float(perdida), 4))
+    finally:
+        conexion.close()
+    return {articulo: sorted(valores) for articulo, valores in por_articulo.items()}
+
+
 def _cajones_libres_por_compra(cursor, lotes: list[dict], excepto: int | None = None) -> dict:
     """{compra_id: cajones de la compra − lo que ya anotaron las guías R}, para
     las compras de estos lotes (dueño, 13/10). Cuenta TODAS las guías R no

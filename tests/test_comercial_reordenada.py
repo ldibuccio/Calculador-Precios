@@ -1,6 +1,7 @@
 """El reorden de Comercial (dueño, 04/10).
 
-- Comercial: cuatro botones (Alertas, Precios, Clientes, Fichas logísticas).
+- Comercial: cuatro botones (Alertas, Precios, Clientes, Fichas logísticas),
+  cinco desde el 13/10 con Rendimientos.
   Envases se fue a Administración → Cajas → Tipos de caja y su costo: el
   precio de las cajas lo carga Administración. Su dirección vieja lleva allá
   y sus formularios viejos ya no escriben.
@@ -25,7 +26,9 @@ _BOTON = re.compile(r'<a class="boton color-(\d)" href="([^"]*)"><svg [^>]*>.*?<
 
 # El de Alertas va aparte: su color es el del estado (rojo o verde), y lo
 # cuida tests/test_boton_alertas.py.
-COMERCIAL = [("1", "/precios", "Precios"), ("1", "/clientes", "Clientes"), ("1", "/fichas", "Fichas logísticas")]
+# Rendimientos se sumó el 13/10 (dueño).
+COMERCIAL = [("1", "/precios", "Precios"), ("1", "/clientes", "Clientes"), ("1", "/fichas", "Fichas logísticas"),
+             ("1", "/comercial/rendimientos", "Rendimientos")]
 PRECIOS = [("1", "/precios/cargar-precios", "Cargar precios"), ("1", "/precios/consultar", "Consultar Precios"),
            ("1", "/precios/vigencias", "Precios por Período"), ("1", "/negociar", "Márgenes por Artículo"),
            # Dueño, 07/10: el precio de cada ficha de un cliente nuevo.
@@ -51,13 +54,13 @@ def _botones(html):
     return [tuple(b) for b in _BOTON.findall(html.split("</style>")[-1])]
 
 
-def test_COMERCIAL_tiene_cuatro_botones_y_ya_no_Envases():
+def test_COMERCIAL_tiene_cinco_botones_y_ya_no_Envases():
     from fastapi.testclient import TestClient
     import app.main as m
     marcado = TestClient(m.app).get("/comercial").text
     assert _botones(marcado) == COMERCIAL
     assert re.search(r'<a class="boton (con|sin)-alertas" href="/comercial/alertas">', marcado)
-    assert marcado.split("</style>")[-1].count('<a class="boton ') == 4
+    assert marcado.split("</style>")[-1].count('<a class="boton ') == 5
     assert 'href="/envases"' not in marcado
 
 

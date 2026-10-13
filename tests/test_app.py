@@ -33259,6 +33259,9 @@ def test_toda_salida_de_PRIMERA_lee_la_constante_y_solo_los_TOTALES_leen_el_arma
         # Los kilos por bulto de "Cómo salió" (dueño, 09/10): kilos_enviados
         # es del renglón entero, igual que al tildar.
         "renglon_para_corregir_lote",
+        # Rendimientos (dueño, 13/10): los kilos por bulto ENVIADO; kilos_enviados
+        # es del renglón entero, así que se divide por lo que recibió el cliente.
+        "kilos_comprados_y_enviados",
     }
     assert encontradas == decididas
     # Y la constante está donde se resta del stock.

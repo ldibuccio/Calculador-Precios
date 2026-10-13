@@ -225,6 +225,8 @@ PANTALLAS_CON_I = {
     "deposito_stock_reproceso.html", "deposito_vacios_devolucion.html", "envases.html",
     "ficha_form.html",
     "fichas_historial.html", "gerencia_costos_fijos_cargar.html",
+    # Rendimientos (13/10): cómo se cuenta cada mitad.
+    "comercial_rendimientos.html",
     "gerencia_costos_fijos_indices.html", "gerencia_costos_fijos_plan.html",
     "gerencia_ingreso_retroactivo.html", "gerencia_juntar_proveedores.html", "gerencia_perdidas.html",
     # Con fecha anterior (dueño, 05/10): cuándo frena y para qué es la contraseña.
