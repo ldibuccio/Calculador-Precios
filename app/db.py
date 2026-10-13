@@ -4354,6 +4354,11 @@ def como_rindio_la_compra(compra_id: int) -> dict | None:
         "costo_por_kg_primera": (round(importe * bultos_con_kilos / kg_primera, 2)
                                  if importe is not None and kg_primera else None),
         "guias_sin_kilos": len(guias) - len(con_kilos),
+        # LAS GUÍAS ANOTARON MÁS DE LO QUE TENÍA (dueño, 13/10): las 114
+        # compras viejas no se corrigen, se dice. Desde el 13/10 la base no
+        # deja que pase en una guía nueva (guia_r_no_pasa_la_compra).
+        "anotadas_de_mas": (aceptados is not None and round(bultos_a_proceso - aceptados, 2) > 0),
+        "cajones_aceptados": aceptados,
     }
 
 
@@ -14831,6 +14836,33 @@ def _lo_tomado_hoy(cursor, articulo_id: int, fecha_operacion, excepto: int | Non
     ]
 
 
+def _cajones_libres_por_compra(cursor, lotes: list[dict], excepto: int | None = None) -> dict:
+    """{compra_id: cajones de la compra − lo que ya anotaron las guías R}, para
+    las compras de estos lotes (dueño, 13/10). Cuenta TODAS las guías R no
+    anuladas, de cualquier día, porque lo que anotó cada una es su documento
+    congelado. `excepto` deja una guía afuera (la que se está refechando).
+
+    Los cajones son los mismos que entran al stock (`cantidad_cajones_real`,
+    ver `_entradas_y_salidas_stock`). La base tiene la misma regla en un
+    trigger para las guías nuevas (db/guia_r_kilos_y_tope_1.sql): esto es lo que
+    hace que la pantalla no ofrezca lo que la base va a rechazar."""
+    compras = sorted({l["origen_id"] for l in lotes if l["tipo_lote"] == "guia"})
+    if not compras:
+        return {}
+    cursor.execute(
+        """
+        SELECT c.id, COALESCE(c.cantidad_cajones_real, 0) - COALESCE((
+                   SELECT SUM(rc.bultos) FROM reprocesos_consumos rc
+                   JOIN reprocesos rp ON rp.id = rc.reproceso_id
+                   WHERE rc.compra_id = c.id AND rp.anulado_el IS NULL
+                     AND (%s::bigint IS NULL OR rp.id <> %s)), 0)
+        FROM compras c WHERE c.id = ANY(%s)
+        """,
+        (excepto, excepto, compras),
+    )
+    return {compra: float(libres) for compra, libres in cursor.fetchall()}
+
+
 class RepartoDesactualizado(Exception):
     """El reparto que llegó de la pantalla ya no se puede cumplir contra los lotes de ahora."""
 
@@ -14973,14 +15005,17 @@ def lotes_para_reproceso(articulo_id: int, fecha) -> dict:
         with conexion.cursor() as cursor:
             entradas, salidas = _entradas_y_salidas_stock(cursor, articulo_id)
             tomado_hoy = _lo_tomado_hoy(cursor, articulo_id, fecha)
+            from core.stock import (
+                DIAS_DE_MARGEN_DE_LA_GUIA_R, reparto_a_la_fecha, reparto_para_reproceso,
+                salidas_para_reparto,
+            )
+            salidas_fifo = salidas_para_reparto(salidas)
+            reparto = reparto_para_reproceso(entradas, salidas_fifo, fecha)
+            # Lo que le queda a cada compra según las guías anotadas: la
+            # pantalla topa con lo MISMO que `_lotes_de_reproceso_a_su_fecha`.
+            reparto["libres"] = _cajones_libres_por_compra(cursor, reparto["lotes"])
     finally:
         conexion.close()
-    from core.stock import (
-        DIAS_DE_MARGEN_DE_LA_GUIA_R, reparto_a_la_fecha, reparto_para_reproceso, salidas_para_reparto,
-    )
-
-    salidas_fifo = salidas_para_reparto(salidas)
-    reparto = reparto_para_reproceso(entradas, salidas_fifo, fecha)
     reparto["tomado_hoy"] = tomado_hoy
     # La foto al CERRAR el día anterior, con las SALIDAS recortadas además
     # por el margen de la guía R (30/09): una guía de este día cubre los
@@ -15108,8 +15143,8 @@ def _lotes_de_reproceso_a_su_fecha(
 ) -> list[dict]:
     """Los lotes contra los que se mide una guía R de ESA fecha, con los dos frenos aplicados.
 
-    Devuelve la lista ENTERA de lotes permitidos a esa fecha —la misma que
-    ve el operario en el desglose— y levanta:
+    Devuelve los lotes permitidos a esa fecha, NETOS y TOPADOS (abajo) —la
+    misma lista que ve el operario en el desglose— y levanta:
 
     - `ReprocesoAnteriorAlCorte` si la fecha cae antes del corte. Antes del
       corte los datos están declarados no confiables y fuera del alcance del
@@ -15128,19 +15163,14 @@ def _lotes_de_reproceso_a_su_fecha(
     `excepto` deja una guía afuera del descuento del día, y lo usa el que
     mueve la fecha: una guía que se descuenta a sí misma se rebota siempre.
 
-    EL FRENO CUENTA EL MISMO DÍA; EL REPARTO NO. Son dos preguntas distintas
-    y hasta el 16/09 las contestaba la misma lista. El recorte asimétrico de
-    `reparto_para_reproceso` contesta "¿qué lotes había ese día?", y para eso
-    está bien que no descuente las salidas del día: adentro de un día no hay
-    orden que afirmar. El freno pregunta otra cosa —"¿cuánto se llevó ya el
-    día?"— y ESA no necesita orden: 30 y 26 no entran en 40 se haya cargado
-    primero cualquiera de las dos. Sin esto, cada guía R del día veía el lote
-    entero y de uno de 40 salieron 56 (56 lotes, 472 bultos medidos).
-
-    Se descuenta SOLO para el freno: lo que se devuelve son los lotes
-    ENTEROS, que es lo que usan la propuesta y la validación del reparto, así
-    que el desglose que vio el operario no cambia y el rebote queda donde la
-    suma ya no entra.
+    LA LISTA QUE DEVUELVE ES NETA Y TOPADA (dueño, 13/10): cada lote con lo
+    que las guías R del MISMO día ya se llevaron descontado
+    (`descontar_lo_tomado_hoy`, desde el 16/09 solo para el freno) y cada
+    compra topada en sus cajones menos lo que ya anotaron todas las guías R
+    no anuladas (`topar_por_lo_anotado`). Hasta el 13/10 la propuesta y la
+    validación del reparto usaban los lotes ENTEROS, y por ahí una compra de
+    10 terminaba con 18 anotados: 114 compras de 421 desde el corte, 53 por
+    guías del mismo día y 61 por guías de días distintos.
     """
     from core.stock import (
         SALIDA_REPROCESO,
@@ -15149,6 +15179,7 @@ def _lotes_de_reproceso_a_su_fecha(
         lotes_permitidos,
         reparto_para_reproceso,
         salidas_para_reparto,
+        topar_por_lo_anotado,
     )
 
     corte = _fecha_corte(cursor)
@@ -15169,12 +15200,16 @@ def _lotes_de_reproceso_a_su_fecha(
     lotes = lotes_permitidos(a_la_fecha["lotes"], SALIDA_REPROCESO)
 
     tomado_hoy = _lo_tomado_hoy(cursor, articulo_id, fecha_operacion, excepto=excepto)
-    disponible = bultos_en_los_lotes(descontar_lo_tomado_hoy(lotes, tomado_hoy))
+    # NETOS Y TOPADOS (dueño, 13/10): lo que el día ya se llevó, descontado, y
+    # cada compra topada en lo que le queda según TODAS las guías anotadas.
+    # El freno, la propuesta y la validación miran ESTA lista: hasta el 13/10
+    # la propuesta veía los lotes enteros y de una compra de 10 salían 18.
+    lotes = topar_por_lo_anotado(
+        descontar_lo_tomado_hoy(lotes, tomado_hoy),
+        _cajones_libres_por_compra(cursor, lotes, excepto=excepto),
+    )
+    disponible = bultos_en_los_lotes(lotes)
     if round(float(bultos_tomados) - disponible, 2) > 0:
-        # Los lotes que viajan son los ENTEROS y no los netos: la pared dice
-        # "lo que había ese día", igual que el desglose, y lo que el día ya se
-        # llevó va aparte. Netos, el operario leería un lote en 10 sin nada
-        # que explique de dónde salió ese 10.
         raise StockInsuficienteParaReproceso(
             float(bultos_tomados), disponible, lotes, tomado_hoy
         )
@@ -15311,15 +15346,26 @@ def _crear_reproceso(
     )
     reproceso_id = cursor.fetchone()[0]
     for c in consumos:
-        cursor.execute(
-            """
-            INSERT INTO reprocesos_consumos
-                (reproceso_id, origen, compra_id, origen_id, bultos, costo_por_bulto)
-            VALUES (%s, %s, %s, %s, %s, %s)
-            """,
-            (reproceso_id, c["origen"], c["compra_id"], c["origen_id"],
-             c["bultos"], c["costo_por_bulto"]),
-        )
+        try:
+            cursor.execute(
+                """
+                INSERT INTO reprocesos_consumos
+                    (reproceso_id, origen, compra_id, origen_id, bultos, costo_por_bulto)
+                VALUES (%s, %s, %s, %s, %s, %s)
+                """,
+                (reproceso_id, c["origen"], c["compra_id"], c["origen_id"],
+                 c["bultos"], c["costo_por_bulto"]),
+            )
+        except psycopg2.errors.CheckViolation as error:
+            # EL TOPE POR COMPRA lo decide la base (trigger
+            # guia_r_no_pasa_la_compra, dueño 13/10); acá solo se traduce. La
+            # lista topada de arriba lo evita, así que llegar acá es que otra
+            # guía anotó de la misma compra mientras tanto. El que llama no
+            # commitea: no queda nada escrito.
+            if error.diag.constraint_name == "guia_r_no_pasa_la_compra":
+                raise RepartoDesactualizado(
+                    "De una de las compras pediste más cajones de los que le quedan.") from error
+            raise
     return reproceso_id
 
 

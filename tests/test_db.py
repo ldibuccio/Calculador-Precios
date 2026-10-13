@@ -5599,6 +5599,9 @@ def test_crear_reproceso_lee_el_corte_UNA_sola_vez():
         [],
         # Lo que YA se llevaron hoy otras guías R: ninguna.
         [],
+        # Lo que le queda a cada compra según las guías R anotadas (13/10):
+        # ninguna anotó nada todavía, así que le quedan todos sus cajones.
+        [(101, 20.0)],
     ]
 
     with patch("app.db.obtener_conexion", return_value=conexion):
@@ -6172,6 +6175,9 @@ def test_con_ficha_VARIABLE_la_guia_R_ENTRA_y_escribe_EL_ENVASE_DE_LA_FICHA():
         [_lote_compra(101, date(2026, 8, 15), 20.0, 1000.0)],
         [],
         [],
+        # Lo que le queda a cada compra según las guías R anotadas (13/10):
+        # ninguna anotó nada todavía, así que le quedan todos sus cajones.
+        [(101, 20.0)],
     ]
 
     with patch("app.db.obtener_conexion", return_value=conexion):
@@ -6218,6 +6224,9 @@ def test_una_ficha_de_envase_FIJO_no_pregunta_NADA_y_lo_deriva_sola():
         [_lote_compra(101, date(2026, 8, 15), 20.0, 1000.0)],
         [],
         [],
+        # Lo que le queda a cada compra según las guías R anotadas (13/10):
+        # ninguna anotó nada todavía, así que le quedan todos sus cajones.
+        [(101, 20.0)],
     ]
 
     with patch("app.db.obtener_conexion", return_value=conexion):
@@ -6281,6 +6290,9 @@ def test_crear_reproceso_congela_consumos_fifo_y_todo_el_costo_a_la_primera():
         [_salida_fifo(date(2026, 8, 24), 5.0)],
         # Lo que YA se llevaron hoy otras guías R: ninguna.
         [],
+        # Lo que le queda a cada compra según las guías R anotadas (13/10):
+        # ninguna anotó nada todavía, así que le quedan todos sus cajones.
+        [(101, 8.0), (102, 10.0)],
     ]
 
     with patch("app.db.obtener_conexion", return_value=conexion):
@@ -6332,6 +6344,9 @@ def test_crear_reproceso_con_lote_sin_precio_deja_el_costo_incompleto():
         [],  # sin salidas
         # Lo que YA se llevaron hoy otras guías R: ninguna.
         [],
+        # Lo que le queda a cada compra según las guías R anotadas (13/10):
+        # ninguna anotó nada todavía, así que le quedan todos sus cajones.
+        [(101, 8.0), (102, 10.0)],
     ]
 
     with patch("app.db.obtener_conexion", return_value=conexion):
@@ -6666,6 +6681,9 @@ def test_confirmar_el_desglose_sin_tocarlo_NO_lo_marca_como_editado():
         [],
         # Lo que YA se llevaron hoy otras guías R: ninguna.
         [],
+        # Lo que le queda a cada compra según las guías R anotadas (13/10):
+        # ninguna anotó nada todavía, así que le quedan todos sus cajones.
+        [(101, 8.0), (102, 10.0)],
     ]
     igual_al_fifo = [
         {"tipo_lote": "guia", "origen_id": 101, "bultos": 8.0},
@@ -8810,6 +8828,9 @@ def test_el_ingreso_directo_MARCADO_carga_su_guia_R_en_el_MISMO_insert():
         [],
         # Lo que ya se llevaron hoy otras guías R: ninguna.
         [],
+        # Lo que le queda a cada compra según las guías R anotadas (13/10):
+        # ninguna anotó nada todavía, así que le quedan todos sus cajones.
+        [(900, 10.0)],
     ]
 
     with patch("app.db.obtener_conexion", return_value=conexion):
@@ -10417,7 +10438,9 @@ def test_la_guia_se_lee_FOR_UPDATE_antes_de_moverla():
 def _desglose_a_la_fecha(fecha, entradas, salidas):
     conexion, cursor = _conexion_falsa(filas_fetchone=[(date(2026, 8, 15),)])
     cursor.description = COLUMNAS_LOTES
-    cursor.fetchall.side_effect = [entradas, salidas, []]
+    # El último es lo que le queda a cada compra según las guías R anotadas
+    # (13/10): ninguna anotó nada, le quedan sus 20 cajones.
+    cursor.fetchall.side_effect = [entradas, salidas, [], [(101, 20.0)]]
     with patch("app.db.obtener_conexion", return_value=conexion):
         from app.db import lotes_para_reproceso
         return lotes_para_reproceso(1, fecha)
