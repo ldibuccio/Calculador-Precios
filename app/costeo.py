@@ -19,10 +19,13 @@ from app.db import (
     listar_costos_envases_vigentes,
     listar_costos_envases_vigentes_en_fechas,
     listar_fichas_por_cliente,
+    listar_perdidas_vigentes_en_fechas,
     listar_precios_vigentes_por_cliente,
     listar_precios_vigentes_por_cliente_en_fechas,
+    perdida_de_la_ficha,
 )
 from core.motor_costeo import (
+    costo_del_kilo_util,
     SIN_ENVASE,
     calcular_promedio_ponderado,
     costo_objetivo_multi_concepto as calcular_costo_objetivo,
@@ -516,6 +519,9 @@ def calcular_listados_para_negociar_precios(cliente_id: int, momentos) -> dict:
     precios_por_fecha = listar_precios_vigentes_por_cliente_en_fechas(cliente_id, fechas)
     envases_por_fecha = listar_costos_envases_vigentes_en_fechas(fechas)
     conceptos_por_fecha = listar_conceptos_vigentes_por_cliente_en_fechas(cliente_id, fechas)
+    # EL % DE PÉRDIDA DE CADA FICHA a cada fecha (dueño, 13/10): el sugerido
+    # de un día pasado usa el valor que regía ese día.
+    perdidas_por_fecha = listar_perdidas_vigentes_en_fechas(cliente_id, fechas)
 
     listados = {}
     for momento in momentos_unicos:
@@ -527,6 +533,7 @@ def calcular_listados_para_negociar_precios(cliente_id: int, momentos) -> dict:
         listados[momento] = _listado_para_negociar_precios(
             momento, fichas, compras, precios_por_fecha[hoy],
             envases_por_fecha[hoy], conceptos_por_fecha[hoy],
+            perdidas_por_fecha[hoy],
         )
     return listados
 
@@ -551,6 +558,7 @@ def _listado_para_negociar_precios(
     precios_vigentes: list[dict],
     costos_envases: list[dict],
     conceptos_cliente: dict,
+    perdidas: dict | None = None,
 ) -> list[dict]:
     """Listado completo de los artículos que el cliente comercializa, para negociar precios.
 
@@ -609,6 +617,14 @@ def _listado_para_negociar_precios(
     listar_compras_para_costeo), así que ahí deja de ser una aproximación.
     Solo se calcula si hay precio_vigente (sin eso, None) — no depende de
     la utilidad objetivo del cliente.
+
+    EL % DE PÉRDIDA DE LA FICHA (dueño, 13/10, `perdidas` = {ficha_id:
+    fracción}, sin la ficha vale 0): precio_sugerido y utilidad_aproximada se
+    calculan sobre `costo_util` = costo_actual / (1 − pérdida)
+    (`costo_del_kilo_util`). `costo_actual` sigue siendo el del kilo
+    COMPRADO: lo leen las rentabilidades y el costo congelado del reingreso,
+    que miden lo que pasó y no el precio. Con pérdida 0 todo da igual que
+    antes.
 
     Devuelve una lista de dicts (frescos primero, después por nombre) con:
     ficha_id (la clave de VENTA: el precio cuelga de la ficha, no del
@@ -746,10 +762,13 @@ def _listado_para_negociar_precios(
             costo_envase_reprocesado = costo_envase * envases_por_unidad_de_venta(
                 ficha["contenido_caja"], False, None)
 
+        perdida = (perdidas or {}).get(ficha["id"], 0.0)
+        costo_util = costo_del_kilo_util(costo_actual, perdida) if costo_actual is not None else None
+
         precio_sugerido_valor = None
         if costo_actual is not None and utilidad is not None:
             precio_sugerido_valor = calcular_precio_sugerido(
-                costo_producto=costo_actual,
+                costo_producto=costo_util,
                 costo_envase=costo_envase_por_unidad,
                 tasas_suman=tasas_suman,
                 tasas_restan=tasas_restan,
@@ -772,7 +791,7 @@ def _listado_para_negociar_precios(
             contenido_caja = float(ficha["contenido_caja"]) if ficha["contenido_caja"] else 1.0
             utilidad_aproximada = calcular_utilidad_real(
                 precio_vigente=precio_vigente * contenido_caja,
-                costo_producto=costo_actual * contenido_caja,
+                costo_producto=costo_util * contenido_caja,
                 costo_envase=costo_envase_por_unidad * contenido_caja,
                 tasas_suman=tasas_suman,
                 tasas_restan=tasas_restan,
@@ -819,6 +838,10 @@ def _listado_para_negociar_precios(
                 # arregla solo.
                 "compras_sin_la_magnitud": sin_la_magnitud,
                 "costo_actual": costo_actual,
+                # El % de pérdida de la ficha a esa fecha y el costo del kilo
+                # útil, que es sobre el que se sugiere (dueño, 13/10).
+                "perdida": perdida,
+                "costo_util": costo_util,
                 "costo_anterior": costo_anterior,
                 "variacion": variacion,
                 "fecha_ultima_compra": f1,
@@ -1172,8 +1195,11 @@ def calcular_precio_sugerido_desglosado(
     costo_envase = costo_por_envase_id.get(ficha["envase_id"], SIN_ENVASE) if ficha["envase_id"] else SIN_ENVASE
     costo_envase_por_unidad = costo_envase * envases_ponderado
 
+    # El % de pérdida de la ficha, como en el listado (dueño, 13/10).
+    perdida = perdida_de_la_ficha(ficha["id"], hoy)
+    costo_util = costo_del_kilo_util(costo_actual, perdida)
     precio = calcular_precio_sugerido(
-        costo_producto=costo_actual,
+        costo_producto=costo_util,
         costo_envase=costo_envase_por_unidad,
         tasas_suman=tasas_suman,
         tasas_restan=tasas_restan,
@@ -1199,7 +1225,7 @@ def calcular_precio_sugerido_desglosado(
     costo_total_bulto = None
     entra_bulto = None
     if precio_vigente is not None:
-        costo_producto_bulto = costo_actual * contenido_caja_para_bulto
+        costo_producto_bulto = costo_util * contenido_caja_para_bulto
         costo_envase_bulto = costo_envase_por_unidad * contenido_caja_para_bulto
         precio_vigente_bulto = precio_vigente * contenido_caja_para_bulto
         costo_total_bulto = costo_producto_bulto + costo_envase_bulto
@@ -1220,6 +1246,8 @@ def calcular_precio_sugerido_desglosado(
         "cantidad_total": cantidad_total,
         "compras_sin_precio_excluidas": sin_precio,
         "costo_actual": costo_actual,
+        "perdida": perdida,
+        "costo_util": costo_util,
         "utilidad": utilidad,
         "tasas_suman": tasas_suman,
         "tasas_restan": tasas_restan,
@@ -1272,7 +1300,7 @@ def calcular_precios_sugeridos(cliente_id: int, momento_referencia: datetime | N
             filas.append({
                 "ficha_id": ficha["id"], "ficha_nombre": nombre, "articulo_nombre": ficha["articulo_nombre"],
                 "unidad_venta": ficha["unidad_venta"], "costo_actual": None, "costo_envase_unidad_venta": None,
-                "precio_sugerido": None, "fecha_ultima_compra": None, "compras_del_costo": [],
+                "perdida": None, "precio_sugerido": None, "fecha_ultima_compra": None, "compras_del_costo": [],
                 "costo_bulto": None, "cantidad_bulto": None,
                 "sin_costo": DIAS_SIN_COMPRAS_TEXTO, "sin_sugerido": None,
             })
@@ -1288,6 +1316,9 @@ def calcular_precios_sugeridos(cliente_id: int, momento_referencia: datetime | N
         filas.append({
             "ficha_id": ficha["id"], "ficha_nombre": nombre, "articulo_nombre": ficha["articulo_nombre"],
             "unidad_venta": ficha["unidad_venta"], "costo_actual": fila["costo_actual"],
+            # El % de pérdida de la ficha, para decirlo al lado del costo y
+            # para el sugerido del cajón tipeado (dueño, 13/10).
+            "perdida": fila["perdida"],
             "costo_envase_unidad_venta": fila["costo_envase_unidad_venta"],
             "precio_sugerido": fila["precio_sugerido"], "fecha_ultima_compra": fila["fecha_ultima_compra"],
             "compras_del_costo": fila["compras_del_costo"], "sin_costo": sin_costo, "sin_sugerido": sin_sugerido,
@@ -1303,7 +1334,8 @@ def calcular_precios_sugeridos(cliente_id: int, momento_referencia: datetime | N
 
 
 def precio_de_la_cotizacion(ficha: dict, costo_bulto: float, cantidad_bulto: float,
-                            costo_envase: float, conceptos_cliente: dict) -> dict | None:
+                            costo_envase: float, conceptos_cliente: dict,
+                            perdida: float = 0.0) -> dict | None:
     """El sugerido de UN renglón de Precios Cotizaciones con el cajón tipeado (dueño, 07/10).
 
     Para cuando el costo o los kilos del cajón se cargan o se corrigen a mano.
@@ -1317,6 +1349,10 @@ def precio_de_la_cotizacion(ficha: dict, costo_bulto: float, cantidad_bulto: flo
 
     None si el cajón no se puede dividir (falta un número o no es positivo).
     `precio_sugerido` en None si el cliente no tiene utilidad cargada.
+
+    `perdida` es el % de pérdida de la ficha (fracción, dueño 13/10): el
+    sugerido sale del costo del kilo útil, igual que en el listado.
+    `costo_unidad` sigue siendo el del kilo comprado.
     """
     if not costo_bulto or not cantidad_bulto or costo_bulto <= 0 or cantidad_bulto <= 0:
         return None
@@ -1328,7 +1364,7 @@ def precio_de_la_cotizacion(ficha: dict, costo_bulto: float, cantidad_bulto: flo
     precio = None
     if conceptos_cliente["utilidad"] is not None:
         precio = calcular_precio_sugerido(
-            costo_producto=costo_unidad,
+            costo_producto=costo_del_kilo_util(costo_unidad, perdida),
             costo_envase=envase_unidad,
             tasas_suman=conceptos_cliente["tasas_suman"],
             tasas_restan=conceptos_cliente["tasas_restan"],
@@ -1350,6 +1386,7 @@ def precio_de_la_cotizacion_del_cliente(cliente_id: int, ficha_id: int, costo_bu
     costos = {c["envase_id"]: float(c["costo"]) for c in listar_costos_envases_vigentes(hoy)}
     costo_envase = costos.get(ficha["envase_id"], SIN_ENVASE) if ficha["envase_id"] else SIN_ENVASE
     resultado = precio_de_la_cotizacion(ficha, costo_bulto, cantidad_bulto, costo_envase,
-                                        listar_conceptos_vigentes_por_cliente(cliente_id, hoy))
+                                        listar_conceptos_vigentes_por_cliente(cliente_id, hoy),
+                                        perdida_de_la_ficha(ficha_id, hoy))
     return resultado if resultado is not None else {"costo_unidad": None, "envase_unidad": None,
                                                     "precio_sugerido": None}

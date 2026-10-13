@@ -931,8 +931,12 @@ def _registrar_foto_ficha(
     envase_variable: bool,
     nombre_cliente,
     codigo_cliente,
+    perdida=None,
 ) -> None:
     """Deja la foto de una ficha en la bitácora (fichas_logistica_historial), en la transacción abierta.
+
+    `perdida` es la vigente después del cambio (dueño, 13/10); None en los
+    eventos que no la tocan.
 
     Todo cambio de ficha pasa por acá para que la bitácora nunca quede
     incompleta: si la escritura de la foto falla, el cambio tampoco se
@@ -942,8 +946,8 @@ def _registrar_foto_ficha(
         """
         INSERT INTO fichas_logistica_historial
             (ficha_id, cliente_id, articulo_id, envase_id, contenido_caja, unidad_venta,
-             envase_variable, nombre_cliente, codigo_cliente, evento)
-        VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+             envase_variable, nombre_cliente, codigo_cliente, evento, perdida)
+        VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
         """,
         (
             ficha_id,
@@ -956,6 +960,7 @@ def _registrar_foto_ficha(
             nombre_cliente,
             codigo_cliente,
             evento,
+            perdida,
         ),
     )
 
@@ -968,8 +973,15 @@ def actualizar_ficha(
     envase_variable: bool,
     nombre_cliente: str | None = None,
     codigo_cliente: str | None = None,
+    perdida: float | None = None,
+    hoy=None,
 ) -> None:
-    """Actualiza envase, contenido solicitado, unidad de venta, envase_variable y el alias del cliente."""
+    """Actualiza envase, contenido solicitado, unidad de venta, envase_variable y el alias del cliente.
+
+    `perdida` (fracción, dueño 13/10): si viene y es distinta de la vigente
+    hoy, rige desde HOY (`hoy`, la fecha de Argentina que pasa la ruta): lo
+    anterior sigue con el valor anterior. None = no se toca. Va en la misma
+    transacción y en la foto de la bitácora."""
     conexion = obtener_conexion()
     try:
         with conexion.cursor() as cursor:
@@ -986,9 +998,24 @@ def actualizar_ficha(
             fila = cursor.fetchone()
             if fila is not None:
                 cliente_id, articulo_id = fila
+                perdida_vigente = None
+                if perdida is not None:
+                    perdida_vigente = _perdida_vigente(cursor, ficha_id, hoy)
+                    if round(perdida - perdida_vigente, 6) != 0:
+                        cursor.execute(
+                            """
+                            INSERT INTO fichas_perdida_historial (ficha_id, perdida, vigente_desde)
+                            VALUES (%s, %s, %s)
+                            ON CONFLICT (ficha_id, vigente_desde)
+                            DO UPDATE SET perdida = EXCLUDED.perdida, registrado_en = now()
+                            """,
+                            (ficha_id, perdida, hoy),
+                        )
+                        perdida_vigente = perdida
                 _registrar_foto_ficha(
                     cursor,
                     "edicion",
+                    perdida=perdida_vigente,
                     ficha_id=ficha_id,
                     cliente_id=cliente_id,
                     articulo_id=articulo_id,
@@ -1292,7 +1319,8 @@ def listar_historial_fichas_por_cliente(cliente_id: int) -> list[dict]:
                 SELECT h.id, h.ficha_id, h.articulo_id, a.nombre AS articulo_nombre,
                        h.envase_id, e.nombre AS envase_nombre,
                        h.contenido_caja, h.unidad_venta, h.envase_variable,
-                       h.nombre_cliente, h.codigo_cliente, h.evento, h.registrado_en
+                       h.nombre_cliente, h.codigo_cliente, h.evento, h.registrado_en,
+                       h.perdida
                 FROM fichas_logistica_historial h
                 JOIN articulos a ON a.id = h.articulo_id
                 LEFT JOIN envases e ON e.id = h.envase_id
@@ -2382,6 +2410,81 @@ def listar_costos_envases_vigentes_en_fechas(fechas) -> dict:
                 costo = dict(zip(columnas, fila))
                 por_fecha[costo.pop("fecha")].append(costo)
         return por_fecha
+    finally:
+        conexion.close()
+
+
+def listar_perdidas_vigentes_en_fechas(cliente_id: int, fechas) -> dict:
+    """% DE PÉRDIDA de cada ficha del cliente a VARIAS fechas: {fecha: {ficha_id: fracción}}.
+
+    Mismo "vigente" que los precios y los envases (la fila con
+    `vigente_desde` más reciente que ya llegó), en un LATERAL por fecha. Una
+    ficha sin fila a esa fecha no aparece: vale 0 (dueño, 13/10).
+    """
+    fechas_unicas = sorted(set(fechas))
+    if not fechas_unicas:
+        return {}
+    por_fecha: dict = {fecha: {} for fecha in fechas_unicas}
+    conexion = obtener_conexion()
+    try:
+        with conexion.cursor() as cursor:
+            cursor.execute(
+                """
+                SELECT f.fecha, p.ficha_id, p.perdida
+                FROM unnest(%s::date[]) AS f(fecha)
+                CROSS JOIN LATERAL (
+                    SELECT DISTINCT ON (h.ficha_id) h.ficha_id, h.perdida
+                    FROM fichas_perdida_historial h
+                    JOIN fichas_logistica fl ON fl.id = h.ficha_id
+                    WHERE fl.cliente_id = %s AND h.vigente_desde <= f.fecha
+                    ORDER BY h.ficha_id, h.vigente_desde DESC
+                ) p
+                """,
+                (fechas_unicas, cliente_id),
+            )
+            for fecha, ficha_id, perdida in cursor.fetchall():
+                por_fecha[fecha][ficha_id] = float(perdida)
+        return por_fecha
+    finally:
+        conexion.close()
+
+
+def perdida_de_la_ficha(ficha_id: int, fecha) -> float:
+    """El % de pérdida (fracción) de UNA ficha a esa fecha; 0 si no tiene."""
+    conexion = obtener_conexion()
+    try:
+        with conexion.cursor() as cursor:
+            return _perdida_vigente(cursor, ficha_id, fecha)
+    finally:
+        conexion.close()
+
+
+def _perdida_vigente(cursor, ficha_id: int, fecha) -> float:
+    cursor.execute(
+        """
+        SELECT perdida FROM fichas_perdida_historial
+        WHERE ficha_id = %s AND vigente_desde <= %s
+        ORDER BY vigente_desde DESC LIMIT 1
+        """,
+        (ficha_id, fecha),
+    )
+    fila = cursor.fetchone()
+    return 0.0 if fila is None else float(fila[0])
+
+
+def historial_de_la_perdida(ficha_id: int) -> list[dict]:
+    """Los valores que tuvo la pérdida de la ficha, del más nuevo al más viejo."""
+    conexion = obtener_conexion()
+    try:
+        with conexion.cursor() as cursor:
+            cursor.execute(
+                """
+                SELECT perdida, vigente_desde FROM fichas_perdida_historial
+                WHERE ficha_id = %s ORDER BY vigente_desde DESC
+                """,
+                (ficha_id,),
+            )
+            return [{"perdida": float(p), "vigente_desde": v} for p, v in cursor.fetchall()]
     finally:
         conexion.close()
 

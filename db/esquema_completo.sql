@@ -2476,6 +2476,25 @@ create table pedidos_renglones_lotes_correcciones (
 create index lotes_correcciones_por_renglon
   on pedidos_renglones_lotes_correcciones (renglon_id);
 alter table pedidos_renglones_lotes_correcciones enable row level security;
+
+-- % DE PÉRDIDA POR FICHA (dueño, 13/10, db/perdida_ficha_1_tabla.sql): de lo
+-- que se compra, cuánto no se vende. El precio sugerido se calcula sobre el
+-- costo del kilo útil = costo del kilo comprado / (1 − pérdida). Rige desde el
+-- día en que se carga (una fila por ficha y día; el mismo día la última pisa)
+-- y sin filas la ficha tiene 0. Fracción: 0,18 = 18%. ON DELETE CASCADE: es un
+-- parámetro de la ficha, no un hecho como un precio facturado.
+create table fichas_perdida_historial (
+  id bigint generated always as identity primary key,
+  ficha_id bigint not null references fichas_logistica (id) on delete cascade,
+  perdida numeric not null check (perdida >= 0 and perdida < 1),
+  vigente_desde date not null,
+  registrado_en timestamptz not null default now(),
+  constraint fichas_perdida_una_por_dia unique (ficha_id, vigente_desde)
+);
+alter table fichas_perdida_historial enable row level security;
+alter table fichas_logistica_historial add column perdida numeric;
+comment on column fichas_logistica_historial.perdida is
+  'El % de pérdida vigente de la ficha al registrar la foto (fracción). NULL en las fotos de antes del 13/10 y en las que no lo tocan.';
 -- CANDADOS (RLS) EN TODAS LAS TABLAS DE public (dueño, 09/10). db/rls_1_*.sql.
 -- Sin políticas para anon: por la API de Supabase con la clave pública no se
 -- lee nada. El sistema entra como postgres (dueño y con bypassrls): no lo

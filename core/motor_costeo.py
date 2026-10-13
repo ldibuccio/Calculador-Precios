@@ -159,6 +159,19 @@ def precio_sugerido(
     return (costo_producto_por_kg * (1 + utilidad) + costo_envase_por_kg) / (1 - descuento)
 
 
+def costo_del_kilo_util(costo_comprado: float, perdida: float) -> float:
+    """El costo de lo que SE VENDE, no de lo que se compra (dueño, 13/10).
+
+    De 100 kg comprados con 18% de pérdida se venden 82, así que cada kilo
+    vendido cuesta costo / (1 − 0,18). Va SOLO sobre la mercadería y antes de
+    la utilidad: la utilidad se aplica sobre este costo, y el envase y las
+    tasas siguen igual. Con pérdida 0 devuelve el mismo costo.
+    """
+    if not 0 <= perdida < 1:
+        raise ValueError(f"la pérdida tiene que estar entre 0 y 1 (vino {perdida})")
+    return costo_comprado / (1 - perdida)
+
+
 def precio_sugerido_multi_concepto(
     costo_producto: float,
     costo_envase: float,
