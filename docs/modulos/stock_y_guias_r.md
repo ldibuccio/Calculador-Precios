@@ -801,8 +801,9 @@ decididos y ANTES de escribir, se hace la cuenta de kilos
 - **Salieron** = cajas de primera × kg de la ficha + cajones de segunda y de
   merma × el peso promedio del cajón que entró (cajones de origen, igual que
   "Cómo rindió").
-- **Tolerancia**: `TOLERANCIA_KG_POR_CAJON` (0,5 kg) por cajón tomado, para
-  arriba o para abajo. El borde no salta.
+- **Tolerancia**: `TOLERANCIA_KG_POR_CAJON` (0,8 kg) por cajón tomado, para
+  arriba o para abajo. El borde no salta. Era medio kilo y el dueño la subió
+  a 0,8 el mismo 13/10.
 
 Si no dan, `_crear_reproceso` levanta `KilosNoDan` sin escribir nada y la
 pantalla muestra el cartel rojo, con las palabras del dueño en kilos enteros
@@ -824,8 +825,9 @@ en origen no se pesa: es uno a uno con su recepción.
 
 Medido en Frutamax por el conector de lectura el 13/10 (corte 05/09, guías
 normales no anuladas): 615 guías, 507 con cuenta posible; con 0,5 kg por
-cajón saltaría en 401 (298 faltan, 103 sobran); la mediana pierde 0,9 kg por
-cajón. La R788 (304 kg contra 288) salta por 1 kg. Preguntado al dueño.
+cajón saltaba en 401 y con 0,8 salta en 343 (264 faltan, 79 sobran). La
+mediana pierde 0,9 kg por cajón. La R751 salta (89 kg contra 18,4) y la R788
+no (16 kg contra 24).
 
 Tests: `tests/test_kilos_guia_r.py` (la R751 y la R788 en la cuenta pura; la
 base real con los rivales Mango y Zapallo sin pesada; la pantalla).

@@ -1703,7 +1703,7 @@ create table reprocesos (
         check ((tipo = 'en_origen') = (compra_origen_id is not null)),
     -- LOS KILOS NO DAN (dueño, 13/10, db/kilos_guia_r_1_diferencia.sql): si
     -- al cargar la guía los kilos que entraron y los que salieron se separan
-    -- más de medio kilo por cajón y el operario la guarda igual, queda la
+    -- más de 0,8 kg por cajón y el operario la guarda igual, queda la
     -- diferencia (positiva = faltan, negativa = sobran), quién y cuándo.
     kilos_diferencia numeric,
     kilos_guardo_igual text,
