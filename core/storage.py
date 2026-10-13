@@ -57,6 +57,8 @@ PREFIJO_VACIOS = "vacios"
 PREFIJO_VALE = "vales"
 # El remito FIRMADO que trae el camionero (dueño, 01/10).
 PREFIJO_REMITO = "remitos"
+# Cartera de cheques (dueño, 13/10): frente, dorso y el comprobante de la salida.
+PREFIJO_CHEQUE = "cheques"
 EXPIRACION_URL_FIRMADA_SEGUNDOS = 3600  # 1 hora
 TIMEOUT_HTTP_SEGUNDOS = 30
 

@@ -210,7 +210,7 @@ PANTALLAS_CON_I = {
     "_cuadro_negociacion.html", "administracion_extracto_porcion.html",
     "administracion_ingresos.html", "administracion_stock_evolucion.html",
     "administracion_stock_remanente.html", "alertas_sector.html",
-    "cliente_formulario.html", "compra_detalle.html", "compra_editar_gerencia.html",
+    "cheques.html", "cliente_formulario.html", "compra_detalle.html", "compra_editar_gerencia.html",
     "compra_form.html", "compra_fotos_multiples.html", "compra_leer_foto.html",
     "compra_listado.html", "compra_manual.html", "compra_proveedor_form.html",
     "gerencia_fotos.html", "gerencia_backups.html",

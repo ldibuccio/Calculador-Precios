@@ -231,6 +231,20 @@
       <div class="cuadro-pie" data-sin-foto>Aparece en la próxima actualización.</div>
       {% endif %}
     </a>
+
+    {# 13. CHEQUES (dueño, 13/10): el total en cartera y lo que entra en 7
+       días; rojo si hay alguno por vencer, vencido o rechazado sin resolver. #}
+    <a data-ajustar-contenedor class="cuadro ancho" href="/gerencia/panel/cheques" data-cuadro="cheques">
+      <div class="cuadro-titulo">{{ titulos.cheques }}</div>
+      {% if datos.cheques is defined %}{% set ch = datos.cheques %}
+      <div data-ajustar class="cuadro-numero {{ 'rojo' if ch.en_rojo else '' }}" data-en-cartera>{{ ch.en_cartera|moneda }}</div>
+      <div class="cuadro-pie">en cartera · {{ ch.cantidad_en_cartera }} cheque{{ '' if ch.cantidad_en_cartera == 1 else 's' }}</div>
+      <div data-ajustar class="cuadro-pie" data-entran>entra en 7 días {{ ch.entran_7_dias|moneda }}</div>
+      {% if ch.en_rojo %}<div class="cuadro-pie rojo" data-en-rojo>{{ ch.en_rojo }} en rojo: {{ ch.por_vencer }} por vencer, {{ ch.vencidos }} vencidos, {{ ch.rechazados }} rechazados</div>{% endif %}
+      {% else %}
+      <div class="cuadro-pie" data-sin-foto>Aparece en la próxima actualización.</div>
+      {% endif %}
+    </a>
   </div>
 {% include "_ajustar_numeros.html" %}
 {% include "_pie_version.html" %}

@@ -2,7 +2,7 @@
 
 ## El tablero y la regla de oro (dueño, 08/10)
 
-Gerencia → **Panel de control** (primero en "Mirar"): un tablero de doce cuadros
+Gerencia → **Panel de control** (primero en "Mirar"): un tablero de trece cuadros
 grandes, cada uno con UN número que se lee de un pantallazo (390px), y al
 tocarlo su detalle (`/gerencia/panel/<cuadro>`, una dirección escrita por
 cuadro para que el humo las abra todas). Rutas en `app/main.py`
@@ -158,6 +158,13 @@ el panel solo la resume. En orden:
 
    En septiembre las guías R sobran 223 kg netos y aun así faltan $2,94 M:
    faltan kilos caros (Morrón Rojo) y sobran kilos baratos.
+
+13. **Cheques** (dueño, 13/10): el total en cartera y lo que **entra en 7
+   días** (los que siguen en cartera con fecha de pago de hoy a 7 días; los
+   entregados, canjeados o depositados no cuentan). Rojo si hay alguno por
+   vencer, vencido o rechazado sin resolver. Es la misma cuenta que lo de
+   arriba de la Cartera de cheques (`resumen_de_cheques`); detalle en
+   `docs/modulos/cheques.md`.
 
 La cuenta de Pérdidas rejuega el FIFO: el tablero la pide una sola vez por mes
 y la comparten Mermas y Segunda (`_perdidas_de_los_dos_meses`). Lo mismo la

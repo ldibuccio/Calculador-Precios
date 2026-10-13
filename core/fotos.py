@@ -41,6 +41,7 @@ TEXTO_DEL_TIPO = {
     "vacios": "Devoluciones de vacíos",
     "vale": "Vales a cobrar",
     "remito": "Remitos firmados",
+    "cheque": "Cheques",
 }
 
 # Los que no se tocan: la regla de v1054 (dueño, 01/10: "no la cambies").

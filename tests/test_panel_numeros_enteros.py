@@ -105,6 +105,11 @@ def _datos(cuadro, hoy, memo):
                     "por_articulo": {2: {"articulo": "EJEMPLO Zapallito", "pesos": -OTRAS_DIEZ}}}
         return {clave: dict(resumen_de_perdida_total(mermas, _segunda(1.0), faltante, DIEZ_CIFRAS * 9), **rango)
                 for clave, rango in MESES.items()}
+    if cuadro == "cheques":
+        # Cheques (13/10): diez cifras en cartera y en lo que entra.
+        return {"en_cartera": DIEZ_CIFRAS, "cantidad_en_cartera": 1234, "entran_7_dias": OTRAS_DIEZ,
+                "cantidad_entran": 567, "por_vencer": 12, "vencidos": 3, "rechazados": 4, "en_rojo": 19,
+                "hasta": HOY}
     raise AssertionError(cuadro)
 
 
@@ -130,7 +135,7 @@ def _paginas():
             patch.object(m, "_datos_del_cuadro", side_effect=_datos):
         cliente = _cliente(m, "gerencia")
         paginas = {"/gerencia/panel": cliente.get("/gerencia/panel")}
-        for cuadro in ("vales", "segunda", "mermas", "rechazos", "rinde", "kilos", "perdida"):
+        for cuadro in ("vales", "segunda", "mermas", "rechazos", "rinde", "kilos", "perdida", "cheques"):
             paginas[f"/gerencia/panel/{cuadro}"] = cliente.get(f"/gerencia/panel/{cuadro}")
     assert {r: p.status_code for r, p in paginas.items()} == {r: 200 for r in paginas}
     return {r: p.text for r, p in paginas.items()}

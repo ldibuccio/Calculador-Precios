@@ -2502,6 +2502,180 @@ create table fichas_perdida_historial (
 alter table fichas_perdida_historial enable row level security;
 comment on column fichas_logistica_historial.perdida is
   'El % de pérdida vigente de la ficha al registrar la foto (fracción). NULL en las fotos de antes del 13/10 y en las que no lo tocan.';
+-- CARTERA DE CHEQUES (dueño, 13/10): db/cheques_1..5. Solo Gerencia. El
+-- cheque entra de un cliente, de un nombre a mano o de un canje; sale UNA vez
+-- (cheques_salidas) por un concepto que dice si queda entregado, canjeado o
+-- depositado; se rechaza desde cualquier estado y el reclamo se cierra a mano.
+-- El estado, el rojo a los 23 días y el vencido a los 30 se calculan en UN
+-- lugar: la vista cheques_con_estado.
+create table bancos (
+  id        bigint generated always as identity primary key,
+  nombre    text not null check (btrim(nombre) <> ''),
+  creado_en timestamptz not null default now()
+);
+create unique index bancos_nombre_unico on bancos (upper(btrim(nombre)));
+alter table bancos enable row level security;
+
+create table cheques (
+  id            bigint generated always as identity primary key,
+  numero        text not null check (btrim(numero) <> ''),
+  banco_id      bigint not null references bancos (id),
+  tipo          text not null check (tipo in ('fisico', 'echeq')),
+  fecha_carga   date not null,
+  fecha_pago    date not null,
+  importe       numeric(14, 2) not null check (importe > 0),
+  origen        text not null check (origen in ('cliente', 'a_mano', 'canje')),
+  cliente_id    bigint references clientes (id),
+  nombre_a_mano text,
+  cuit_librador text not null check (cuit_librador ~ '^[0-9]{11}$'),
+  sector        text not null check (sector = 'gerencia'),
+  creado_en     timestamptz not null default now(),
+  constraint cheques_origen_coherente check (
+    (origen = 'cliente' and cliente_id is not null and nombre_a_mano is null)
+    or (origen = 'a_mano' and cliente_id is null
+        and coalesce(btrim(nombre_a_mano) <> '', false))
+    or (origen = 'canje' and cliente_id is null and nombre_a_mano is null))
+);
+create unique index cheques_banco_numero_librador
+  on cheques (banco_id, ltrim(upper(btrim(numero)), '0'), cuit_librador);
+create index cheques_por_cliente on cheques (cliente_id);
+create index cheques_por_fecha_pago on cheques (fecha_pago);
+alter table cheques enable row level security;
+
+create table cheques_conceptos (
+  id        bigint generated always as identity primary key,
+  nombre    text not null check (btrim(nombre) <> ''),
+  destino   text not null check (destino in ('entregado', 'canjeado', 'depositado')),
+  creado_en timestamptz not null default now()
+);
+create unique index cheques_conceptos_nombre
+  on cheques_conceptos (upper(btrim(nombre)));
+alter table cheques_conceptos enable row level security;
+insert into cheques_conceptos (nombre, destino)
+values ('Pago a proveedor', 'entregado'), ('Canje', 'canjeado'), ('Depósito en cuenta', 'depositado');
+
+create table cheques_salidas (
+  cheque_id    bigint primary key references cheques (id),
+  fecha        date not null,
+  concepto_id  bigint not null references cheques_conceptos (id),
+  proveedor_id bigint references proveedores (id),
+  foto_ruta    text check (foto_ruta is null or btrim(foto_ruta) <> ''),
+  sector       text not null check (sector = 'gerencia'),
+  creado_en    timestamptz not null default now()
+);
+create index cheques_salidas_por_proveedor on cheques_salidas (proveedor_id);
+alter table cheques_salidas enable row level security;
+
+create table cheques_rechazos (
+  cheque_id   bigint primary key references cheques (id),
+  fecha       date not null,
+  motivo      text not null check (btrim(motivo) <> ''),
+  sector      text not null check (sector = 'gerencia'),
+  creado_en   timestamptz not null default now(),
+  resuelto_el date,
+  resolucion  text check (resolucion is null or btrim(resolucion) <> ''),
+  constraint cheques_rechazos_resuelto_coherente
+    check ((resuelto_el is null) = (resolucion is null)),
+  constraint cheques_rechazos_resuelto_despues
+    check (resuelto_el is null or resuelto_el >= fecha)
+);
+alter table cheques_rechazos enable row level security;
+
+create table cheques_fotos (
+  id        bigint generated always as identity primary key,
+  cheque_id bigint not null references cheques (id),
+  lado      text not null check (lado in ('frente', 'dorso')),
+  foto_ruta text not null unique check (btrim(foto_ruta) <> ''),
+  sector    text not null check (sector = 'gerencia'),
+  creado_en timestamptz not null default now()
+);
+create index cheques_fotos_por_cheque on cheques_fotos (cheque_id);
+alter table cheques_fotos enable row level security;
+
+create table cheques_correcciones (
+  id             bigint generated always as identity primary key,
+  cheque_id      bigint not null references cheques (id),
+  campo          text not null check (campo in ('numero', 'banco', 'tipo', 'fecha_carga',
+                   'fecha_pago', 'importe', 'origen', 'cliente', 'nombre_a_mano',
+                   'cuit_librador')),
+  valor_anterior text,
+  valor_nuevo    text,
+  sector         text not null check (sector = 'gerencia'),
+  creado_en      timestamptz not null default now(),
+  constraint cheques_correcciones_distinto
+    check (valor_anterior is distinct from valor_nuevo)
+);
+create index cheques_correcciones_por_cheque
+  on cheques_correcciones (cheque_id);
+alter table cheques_correcciones enable row level security;
+
+create or replace function cheque_salida_valida() returns trigger
+language plpgsql as $f$
+declare
+  ch      cheques%rowtype;
+  destino text;
+begin
+  select * into ch from cheques where id = new.cheque_id;
+  select c.destino into destino from cheques_conceptos c where c.id = new.concepto_id;
+  if destino = 'entregado' and new.proveedor_id is null then
+    raise exception 'un pago a proveedor tiene que decir a qué proveedor'
+      using errcode = 'check_violation', constraint = 'cheque_entregado_con_proveedor';
+  end if;
+  if exists (select 1 from cheques_rechazos where cheque_id = new.cheque_id) then
+    raise exception 'el cheque % está rechazado: no sale', new.cheque_id
+      using errcode = 'check_violation', constraint = 'cheque_rechazado_no_sale';
+  end if;
+  if new.fecha < ch.fecha_carga then
+    raise exception 'el cheque % no puede salir antes de entrar', new.cheque_id
+      using errcode = 'check_violation', constraint = 'cheque_salida_fechas';
+  end if;
+  return new;
+end $f$;
+drop trigger if exists cheque_salida_valida on cheques_salidas;
+create trigger cheque_salida_valida before insert or update on cheques_salidas
+  for each row execute function cheque_salida_valida();
+
+create or replace function cheque_que_salio_no_se_corrige() returns trigger
+language plpgsql as $f$
+begin
+  if exists (select 1 from cheques_salidas where cheque_id = new.id)
+     or exists (select 1 from cheques_rechazos where cheque_id = new.id) then
+    raise exception 'el cheque % ya no está en cartera: no se corrige', new.id
+      using errcode = 'check_violation', constraint = 'cheque_que_salio_no_se_corrige';
+  end if;
+  return new;
+end $f$;
+drop trigger if exists cheque_que_salio_no_se_corrige on cheques;
+create trigger cheque_que_salio_no_se_corrige before update on cheques
+  for each row execute function cheque_que_salio_no_se_corrige();
+
+drop view if exists cheques_con_estado;
+create view cheques_con_estado with (security_invoker = true) as
+with hoy as (select (now() at time zone 'America/Argentina/Buenos_Aires')::date as dia)
+select ch.*, coalesce(cl.nombre, ch.nombre_a_mano, 'Canje') as de_quien,
+       ch.fecha_pago + 30 as vence_el,
+       s.fecha as fecha_salida, s.proveedor_id, co.nombre as concepto,
+       case when co.destino = 'depositado'
+            then greatest(ch.fecha_pago, s.fecha) + 1 end as acreditado_el,
+       r.fecha as fecha_rechazo, r.motivo as motivo_rechazo, r.resuelto_el, r.resolucion,
+       case
+         when r.cheque_id is not null and r.resuelto_el is null then 'rechazado'
+         when r.cheque_id is not null then 'reclamo_resuelto'
+         when s.cheque_id is null and hoy.dia >= ch.fecha_pago + 30 then 'vencido'
+         when s.cheque_id is null then 'en_cartera'
+         when co.destino = 'depositado'
+              and hoy.dia > greatest(ch.fecha_pago, s.fecha) then 'acreditado'
+         else co.destino
+       end as estado,
+       (s.cheque_id is null and r.cheque_id is null
+        and hoy.dia >= ch.fecha_pago + 23) as en_rojo_por_vencer
+from cheques ch
+cross join hoy
+left join clientes cl on cl.id = ch.cliente_id
+left join cheques_salidas s on s.cheque_id = ch.id
+left join cheques_conceptos co on co.id = s.concepto_id
+left join cheques_rechazos r on r.cheque_id = ch.id;
+
 -- CANDADOS (RLS) EN TODAS LAS TABLAS DE public (dueño, 09/10). db/rls_1_*.sql.
 -- Sin políticas para anon: por la API de Supabase con la clave pública no se
 -- lee nada. El sistema entra como postgres (dueño y con bypassrls): no lo

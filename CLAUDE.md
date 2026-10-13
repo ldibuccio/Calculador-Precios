@@ -283,10 +283,13 @@ Módulos (se lee el que se va a tocar):
   fecha anterior" de Administración con la contraseña especial de Gerencia,
   de qué guía y cómo (en su envase o en caja de Día) salió un pedido de un
   día anterior, y el control al anular una guía R.
-- `docs/modulos/panel_control.md`: el Panel de control de Gerencia (doce
+- `docs/modulos/panel_control.md`: el Panel de control de Gerencia (trece
   cuadros que reusan cuentas; rentabilidad sin mermas ni segunda, que tienen
   sus cuadros; la cruz cuenta como pedido incompleto; Rinde de guías R;
-  Pérdida total).
+  Pérdida total; Cheques).
+- `docs/modulos/cheques.md`: Cartera de cheques (solo Gerencia): repetidos por
+  banco + número + CUIT, de quién es, salidas, rechazo y reclamo, el estado en
+  la vista `cheques_con_estado` (rojo a los 23 días, vencido a los 30).
 - `docs/modulos/fletes.md`: Fletes (Administración → Pedidos), el armado más
   barato, el reparto por pallets, corregir y la línea Flete de Rentabilidad
   Real.

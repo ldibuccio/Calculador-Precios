@@ -771,6 +771,7 @@ from core.storage import (
     PREFIJO_VACIOS,
     PREFIJO_VALE,
     PREFIJO_REMITO,
+    PREFIJO_CHEQUE,
 )
 from core.remitos import (
     DIAS_REMITO_SIN_FACTURA,
@@ -20519,7 +20520,7 @@ def _datos_rentabilidad_real(cliente_id: int, fecha_desde, fecha_hasta, articulo
 # UN número, y al tocarlo su detalle. NINGUNA cuenta es nueva: cada cuadro llama
 # a la que ya usa su pantalla (ver core/panel_control.py).
 CUADROS_DEL_PANEL = ("rentabilidad", "cajas", "pedidos", "peso", "vales", "vacios", "rechazos", "mermas", "segunda",
-                     "rinde", "kilos", "perdida")
+                     "rinde", "kilos", "perdida", "cheques")
 TITULOS_DEL_PANEL = {
     "rentabilidad": "Rentabilidad por cliente",
     "cajas": "Cajas",
@@ -20533,6 +20534,7 @@ TITULOS_DEL_PANEL = {
     "rinde": "Rinde de guías R",
     "kilos": "Kilos al armar",
     "perdida": "Pérdida total",
+    "cheques": "Cheques",
 }
 
 
@@ -20721,6 +20723,16 @@ def _panel_kilos(hoy) -> dict:
             "kg_diferencia": round(sum(f["kg_diferencia"] for f in filas), 2), "desde": desde, "hasta": hasta}
 
 
+def _panel_cheques(hoy) -> dict:
+    """CHEQUES (dueño, 13/10): el total en cartera y lo que entra en 7 días
+    (los que siguen en cartera con fecha de pago de hoy a 7 días); rojo si hay
+    alguno por vencer, vencido o rechazado sin resolver. La misma cuenta que
+    lo de arriba de la Cartera de cheques."""
+    from core.cheques import resumen_de_cheques
+    from app.db import todos_los_cheques_para_el_resumen
+    return resumen_de_cheques(todos_los_cheques_para_el_resumen(), hoy)
+
+
 _DATOS_DEL_PANEL = {
     "cajas": lambda hoy: _panel_cajas(),
     "pedidos": lambda hoy: _panel_pedidos(hoy),
@@ -20729,6 +20741,7 @@ _DATOS_DEL_PANEL = {
     "vacios": lambda hoy: _panel_vacios(),
     "rinde": lambda hoy: _panel_rinde(hoy),
     "kilos": lambda hoy: _panel_kilos(hoy),
+    "cheques": lambda hoy: _panel_cheques(hoy),
 }
 _DATOS_DEL_PANEL_CON_MEMO = {
     "rentabilidad": _panel_rentabilidad,
@@ -20746,7 +20759,7 @@ def _datos_del_cuadro(cuadro: str, hoy, memo: dict):
 
 
 def calcular_el_panel(hoy) -> dict:
-    """Los doce cuadros del tablero. Es lo que tarda: se corre a las 06:00 y
+    """Los trece cuadros del tablero. Es lo que tarda: se corre a las 06:00 y
     a las 14:00, y con el botón "Actualizar ahora"."""
     memo: dict = {}
     return {cuadro: _datos_del_cuadro(cuadro, hoy, memo) for cuadro in CUADROS_DEL_PANEL}
@@ -20843,6 +20856,7 @@ def actualizar_panel_ahora(request: Request):
 @app.get("/gerencia/panel/rinde")
 @app.get("/gerencia/panel/kilos")
 @app.get("/gerencia/panel/perdida")
+@app.get("/gerencia/panel/cheques")
 def ver_detalle_del_panel(request: Request):
     """El detalle de UN cuadro: los mismos datos que el número, abiertos."""
     cuadro = request.url.path.rstrip("/").rsplit("/", 1)[1]
@@ -27912,6 +27926,597 @@ def exportar_cuenta_fletero_pdf(fletero_id: str = "", desde: str = "", hasta: st
 def exportar_cuenta_fletero_excel(fletero_id: str = "", desde: str = "", hasta: str = ""):
     return _descarga_de_la_cuenta(fletero_id, desde, hasta, "excel")
 
+
+
+# =============================================================================
+# CARTERA DE CHEQUES (dueño, 13/10): solo Gerencia. db/cheques_1..5 y
+# docs/modulos/cheques.md. El estado de cada cheque lo dice la vista
+# `cheques_con_estado`; los frenos son de la base y acá se traducen.
+# =============================================================================
+from core.cheques import (  # noqa: E402
+    ESTADOS as ESTADOS_DE_CHEQUE,
+    NOMBRES_DE_ESTADO as NOMBRES_DE_ESTADO_DE_CHEQUE,
+    cheques_leidos,
+    esta_en_rojo as cheque_en_rojo,
+    numero_normalizado as numero_de_cheque_normalizado,
+    resumen_de_cheques,
+    total_del_listado as total_de_cheques,
+)
+from core.exportar_cheques import generar_excel_cheques, generar_pdf_cheques, texto_del_filtro as texto_del_filtro_de_cheques  # noqa: E402
+from core.lector_cheques import extraer_cheques_de_imagenes, extraer_cheques_de_texto  # noqa: E402
+from app.db import (  # noqa: E402
+    ChequeNoSePuede,
+    agregar_foto_de_cheque,
+    aplicar_cheques,
+    buscar_cheques,
+    cargar_cheques,
+    corregir_cheque,
+    listar_bancos,
+    listar_conceptos_de_cheques,
+    obtener_cheque,
+    rechazar_cheque,
+    resolver_reclamo_de_cheque,
+    todos_los_cheques_para_el_resumen,
+)
+
+DESTINOS_DE_CONCEPTO = (("entregado", "Entregado"), ("canjeado", "Canjeado"), ("depositado", "Depositado"))
+ORIGENES_DE_CHEQUE = (("cliente", "Un cliente"), ("a_mano", "Otro (escribo el nombre)"), ("canje", "Canje"))
+
+
+def _sin_clave_de_cheques(request: Request):
+    """La cartera es SOLO de Gerencia (dueño, 13/10): sin la clave abierta, la
+    pantalla de la clave."""
+    if not _acceso_gerencia_valido(request):
+        return _pantalla_clave_gerencia(request)
+    return None
+
+
+def _fecha_de_cheque(texto) -> date | None:
+    try:
+        return date.fromisoformat(str(texto or "").strip())
+    except ValueError:
+        return None
+
+
+def _importe_de_cheque(texto) -> float | None:
+    """"1234.56" (el casillero numérico y lo leído) o "1.234,56" (tipeado)."""
+    texto = str(texto or "").strip().replace("$", "").replace(" ", "")
+    if not texto:
+        return None
+    if "," in texto:
+        texto = texto.replace(".", "").replace(",", ".")
+    try:
+        valor = float(texto)
+    except ValueError:
+        return None
+    return valor if valor > 0 else None
+
+
+# Los filtros del buscador: (nombre en la URL, clase, cómo se nombra en el
+# encabezado de las exportaciones).
+_FILTROS_DE_FECHA_DE_CHEQUES = (("carga", "cargados"), ("pago", "pago"), ("acreditado", "acreditados"))
+_FILTROS_DE_ID_DE_CHEQUES = ("cliente_id", "proveedor_id", "banco_id", "concepto_id")
+
+
+def _filtros_de_cheques(request: Request) -> dict:
+    q = request.query_params
+    filtros: dict = {}
+    for prefijo, _ in _FILTROS_DE_FECHA_DE_CHEQUES:
+        for borde in ("desde", "hasta"):
+            filtros[f"{prefijo}_{borde}"] = _fecha_de_cheque(q.get(f"{prefijo}_{borde}"))
+    for clave in _FILTROS_DE_ID_DE_CHEQUES:
+        filtros[clave] = _id_opcional_desde_query(q.get(clave))
+    filtros["numero"] = (q.get("numero") or "").strip() or None
+    filtros["de_quien"] = (q.get("de_quien") or "").strip() or None
+    estado = (q.get("estado") or "").strip()
+    filtros["estado"] = estado if estado in ESTADOS_DE_CHEQUE else None
+    filtros["en_cartera"] = q.get("en_cartera") == "1"
+    return filtros
+
+
+def _query_de_cheques(filtros: dict) -> str:
+    """Los filtros como query string: van tal cual a las exportaciones."""
+    pares = []
+    for clave, valor in filtros.items():
+        if valor in (None, "", False):
+            continue
+        pares.append((clave, "1" if valor is True else (valor.isoformat() if isinstance(valor, date) else valor)))
+    return urlencode(pares)
+
+
+def _partes_del_filtro_de_cheques(filtros: dict, nombres: dict) -> list[str]:
+    """Lo que dice el encabezado de las exportaciones: TODOS los filtros."""
+    partes = []
+    if filtros["en_cartera"]:
+        partes.append("en cartera")
+    for prefijo, texto in _FILTROS_DE_FECHA_DE_CHEQUES:
+        desde, hasta = filtros[f"{prefijo}_desde"], filtros[f"{prefijo}_hasta"]
+        if desde or hasta:
+            partes.append(f"{texto} " + (f"desde el {desde.strftime('%d/%m/%Y')}" if desde else "")
+                          + (" " if desde and hasta else "") + (f"hasta el {hasta.strftime('%d/%m/%Y')}" if hasta else ""))
+    for clave, texto in (("cliente_id", "cliente"), ("proveedor_id", "proveedor"), ("banco_id", "banco"),
+                         ("concepto_id", "concepto")):
+        if filtros[clave] is not None:
+            partes.append(f"{texto} {nombres[clave].get(filtros[clave], '#' + str(filtros[clave]))}")
+    if filtros["de_quien"]:
+        partes.append(f"de quién: {filtros['de_quien']}")
+    if filtros["numero"]:
+        partes.append(f"número {filtros['numero']}")
+    if filtros["estado"]:
+        partes.append(NOMBRES_DE_ESTADO_DE_CHEQUE[filtros["estado"]].lower())
+    return partes
+
+
+def _listas_de_cheques() -> dict:
+    return {"clientes": listar_clientes(), "proveedores": listar_todos_los_proveedores(),
+            "bancos": listar_bancos(), "conceptos": listar_conceptos_de_cheques()}
+
+
+def _nombres_de_las_listas(listas: dict) -> dict:
+    return {"cliente_id": {c["id"]: c["nombre"] for c in listas["clientes"]},
+            "proveedor_id": {p["id"]: p["nombre"] for p in listas["proveedores"]},
+            "banco_id": {b["id"]: b["nombre"] for b in listas["bancos"]},
+            "concepto_id": {c["id"]: c["nombre"] for c in listas["conceptos"]}}
+
+
+def _cheques_filtrados(filtros: dict) -> list[dict]:
+    para_la_base = {k: v for k, v in filtros.items() if k != "en_cartera"}
+    return buscar_cheques(para_la_base, solo_en_cartera=filtros["en_cartera"])
+
+
+@app.get("/gerencia/cheques")
+def ver_cartera_de_cheques(request: Request, aviso: str | None = None, error: str | None = None):
+    sin_clave = _sin_clave_de_cheques(request)
+    if sin_clave is not None:
+        return sin_clave
+    filtros = _filtros_de_cheques(request)
+    hoy = _hoy_argentina()
+    try:
+        listas = _listas_de_cheques()
+        cheques = _cheques_filtrados(filtros)
+        resumen = resumen_de_cheques(todos_los_cheques_para_el_resumen(), hoy)
+    except Exception as error_db:
+        raise HTTPException(status_code=500, detail=f"Error al conectar con la base de datos: {error_db}") from error_db
+    return templates.TemplateResponse(request, "cheques.html", {
+        **listas, "cheques": cheques, "total": total_de_cheques(cheques), "resumen": resumen, "hoy": hoy,
+        "filtros": filtros, "query_exportar": _query_de_cheques(filtros), "consulta_de_cheques": _query_de_cheques(filtros),
+        "estados": [(e, NOMBRES_DE_ESTADO_DE_CHEQUE[e]) for e in ESTADOS_DE_CHEQUE],
+        "nombre_del_estado": NOMBRES_DE_ESTADO_DE_CHEQUE, "en_rojo": cheque_en_rojo,
+        "aviso": aviso, "error": error,
+    })
+
+
+def _exportacion_de_cheques(request: Request):
+    filtros = _filtros_de_cheques(request)
+    listas = _listas_de_cheques()
+    filtro = texto_del_filtro_de_cheques(_partes_del_filtro_de_cheques(filtros, _nombres_de_las_listas(listas)))
+    return filtro, _cheques_filtrados(filtros), _hoy_argentina()
+
+
+@app.get("/gerencia/cheques/exportar-pdf")
+def exportar_cheques_pdf(request: Request):
+    sin_clave = _sin_clave_de_cheques(request)
+    if sin_clave is not None:
+        return sin_clave
+    filtro, cheques, hoy = _exportacion_de_cheques(request)
+    return Response(content=generar_pdf_cheques(filtro, cheques, hoy), media_type="application/pdf",
+                    headers={"Content-Disposition": f'attachment; filename="cheques_{hoy.isoformat()}.pdf"'})
+
+
+@app.get("/gerencia/cheques/exportar-excel")
+def exportar_cheques_excel(request: Request):
+    sin_clave = _sin_clave_de_cheques(request)
+    if sin_clave is not None:
+        return sin_clave
+    filtro, cheques, hoy = _exportacion_de_cheques(request)
+    return Response(content=generar_excel_cheques(filtro, cheques, hoy),
+                    media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                    headers={"Content-Disposition": f'attachment; filename="cheques_{hoy.isoformat()}.xlsx"'})
+
+
+# --- CARGAR ----------------------------------------------------------------
+
+def _cheque_vacio() -> dict:
+    return {"numero": "", "banco": "", "fecha_pago": "", "importe": "", "cuit_librador": "", "tipo": "fisico",
+            "librador": ""}
+
+
+def _renderizar_carga_de_cheques(request: Request, *, filas: list[dict], comunes: dict, foto_leida: str = "",
+                                 error: str | None = None, aviso: str | None = None, status_code: int = 200):
+    listas = _listas_de_cheques()
+    return templates.TemplateResponse(request, "cheques_cargar.html", {
+        "filas": filas, "comunes": comunes, "foto_leida": foto_leida, "clientes": listas["clientes"],
+        "bancos": listas["bancos"], "origenes": ORIGENES_DE_CHEQUE, "error": error, "aviso": aviso,
+        "hoy": _hoy_argentina(),
+    }, status_code=status_code)
+
+
+def _comunes_vacios() -> dict:
+    return {"fecha_carga": _hoy_argentina().isoformat(), "origen": "cliente", "cliente_id": None, "nombre_a_mano": ""}
+
+
+@app.get("/gerencia/cheques/cargar")
+def ver_carga_de_cheques(request: Request):
+    sin_clave = _sin_clave_de_cheques(request)
+    if sin_clave is not None:
+        return sin_clave
+    return _renderizar_carga_de_cheques(request, filas=[_cheque_vacio()], comunes=_comunes_vacios())
+
+
+def _leer_archivo_de_cheques(bytes_archivo: bytes, tipo_archivo: str) -> dict:
+    if tipo_archivo == "foto":
+        return extraer_cheques_de_imagenes([bytes_archivo])
+    if tipo_archivo == "pdf":
+        return extraer_cheques_de_imagenes(imagenes_desde_pdf(bytes_archivo))
+    if tipo_archivo == "excel":
+        return extraer_cheques_de_texto(texto_desde_excel(bytes_archivo))
+    raise ValueError(f"Tipo de archivo no soportado: {tipo_archivo}")
+
+
+async def _lo_leido_del_archivo(archivo: UploadFile) -> tuple[dict | None, str, str | None]:
+    """(datos leídos, la foto para guardar como data URI si es una foto, error)."""
+    tipo_archivo = _detectar_tipo_archivo_precios(archivo.filename or "")
+    if tipo_archivo is None:
+        return None, "", "No se reconoció el archivo: subí una foto, un PDF o un Excel."
+    contenido = await archivo.read()
+    try:
+        datos = _leer_archivo_de_cheques(contenido, tipo_archivo)
+    except Exception:
+        logger.exception("No se pudo leer el archivo de cheques")
+        return None, "", "No se pudo leer el archivo. Probá con otra foto o cargalo a mano."
+    return datos, _generar_preview_foto(contenido) if tipo_archivo == "foto" else "", None
+
+
+@app.post("/gerencia/cheques/cargar/leer")
+async def leer_cheques_para_cargar(request: Request, archivo: UploadFile = File(...)):
+    """Lee el archivo con la IA y abre el formulario con lo leído, para
+    corregir antes de guardar. TODAVÍA NO GUARDA NADA."""
+    puerta = _puerta_de_gerencia_para_escribir(request)
+    if puerta is not None:
+        return puerta
+    datos, foto, error = await _lo_leido_del_archivo(archivo)
+    if error:
+        return _renderizar_carga_de_cheques(request, filas=[_cheque_vacio()], comunes=_comunes_vacios(),
+                                            error=error, status_code=400)
+    filas = cheques_leidos(datos, listar_bancos()) or [_cheque_vacio()]
+    comunes = _comunes_vacios()
+    aviso = (f"Se leyeron {len(filas)} cheques. Revisá cada dato antes de guardar." if len(filas) > 1
+             else "Se leyó el cheque. Revisá cada dato antes de guardar.")
+    # La foto queda como el FRENTE del cheque solo si el archivo trae uno.
+    return _renderizar_carga_de_cheques(request, filas=filas, comunes=comunes,
+                                        foto_leida=foto if len(filas) == 1 else "", aviso=aviso)
+
+
+def _subir_foto_de_cheque(contenido: bytes, nombre: str) -> str | None:
+    comprimida = _comprimir_foto_jpeg(contenido)
+    if comprimida is None:
+        return None
+    return subir_foto_comanda(comprimida, nombre, prefijo=PREFIJO_CHEQUE)
+
+
+@app.post("/gerencia/cheques/cargar")
+async def cargar_cheques_ruta(request: Request):
+    puerta = _puerta_de_gerencia_para_escribir(request)
+    if puerta is not None:
+        return puerta
+    formulario = await request.form()
+    try:
+        cantidad = max(1, min(50, int(formulario.get("cantidad") or 1)))
+    except ValueError:
+        cantidad = 1
+    comunes = {"fecha_carga": str(formulario.get("fecha_carga") or ""), "origen": str(formulario.get("origen") or ""),
+               "cliente_id": _id_opcional_desde_query(str(formulario.get("cliente_id") or "")),
+               "nombre_a_mano": str(formulario.get("nombre_a_mano") or "").strip()}
+    foto_leida = str(formulario.get("foto_leida") or "")
+    filas, errores = [], []
+    for i in range(cantidad):
+        fila = {campo: str(formulario.get(f"{campo}_{i}") or "").strip()
+                for campo in ("numero", "banco", "fecha_pago", "importe", "cuit_librador", "tipo", "librador")}
+        filas.append(fila)
+    fecha_carga = _fecha_de_cheque(comunes["fecha_carga"])
+    if fecha_carga is None:
+        errores.append("Falta la fecha de carga.")
+    if comunes["origen"] not in dict(ORIGENES_DE_CHEQUE):
+        errores.append("Decí de quién es el cheque: un cliente, otro o Canje.")
+    elif comunes["origen"] == "cliente" and comunes["cliente_id"] is None:
+        errores.append("Elegí el cliente.")
+    elif comunes["origen"] == "a_mano" and not comunes["nombre_a_mano"]:
+        errores.append("Escribí de quién es el cheque.")
+    vistos = set()
+    for i, fila in enumerate(filas, start=1):
+        cual = f"Cheque {i}: " if cantidad > 1 else ""
+        cuit = "".join(ch for ch in fila["cuit_librador"] if ch.isdigit())
+        fila["cuit_librador"] = cuit
+        if not fila["numero"]:
+            errores.append(f"{cual}falta el número.")
+        if not fila["banco"]:
+            errores.append(f"{cual}falta el banco.")
+        if _fecha_de_cheque(fila["fecha_pago"]) is None:
+            errores.append(f"{cual}falta la fecha de pago.")
+        if _importe_de_cheque(fila["importe"]) is None:
+            errores.append(f"{cual}el importe tiene que ser un número mayor que cero.")
+        if len(cuit) != 11:
+            errores.append(f"{cual}el CUIT del librador son 11 números.")
+        clave = (fila["banco"].lower(), numero_de_cheque_normalizado(fila["numero"]), cuit)
+        if fila["numero"] and clave in vistos:
+            errores.append(f"{cual}está dos veces en esta carga.")
+        vistos.add(clave)
+    if errores:
+        return _renderizar_carga_de_cheques(request, filas=filas, comunes=comunes, foto_leida=foto_leida,
+                                            error=" ".join(errores), status_code=400)
+    subidas: list[str] = []
+    try:
+        cheques = []
+        for i, fila in enumerate(filas):
+            fotos = []
+            if i == 0 and len(filas) == 1 and foto_leida:
+                contenido = _bytes_desde_data_uri(foto_leida)
+                if contenido:
+                    ruta = subir_foto_comanda(contenido, "cheque-frente", prefijo=PREFIJO_CHEQUE)
+                    subidas.append(ruta)
+                    fotos.append(("frente", ruta))
+            for lado in ("frente", "dorso"):
+                archivo = formulario.get(f"foto_{lado}_{i}")
+                if archivo is None or not getattr(archivo, "filename", ""):
+                    continue
+                if lado == "frente" and fotos and fotos[0][0] == "frente":
+                    continue
+                ruta = _subir_foto_de_cheque(await archivo.read(), f"cheque-{lado}")
+                if ruta is None:
+                    raise ChequeNoSePuede(f"«{archivo.filename}» no es una foto.")
+                subidas.append(ruta)
+                fotos.append((lado, ruta))
+            cheques.append({"numero": fila["numero"], "banco": fila["banco"],
+                            "tipo": "echeq" if fila["tipo"] == "echeq" else "fisico",
+                            "fecha_pago": _fecha_de_cheque(fila["fecha_pago"]),
+                            "importe": _importe_de_cheque(fila["importe"]),
+                            "cuit_librador": fila["cuit_librador"], "fotos": fotos})
+        ids = cargar_cheques(cheques, fecha_carga=fecha_carga, origen=comunes["origen"],
+                             cliente_id=comunes["cliente_id"] if comunes["origen"] == "cliente" else None,
+                             nombre_a_mano=comunes["nombre_a_mano"] if comunes["origen"] == "a_mano" else None)
+    except ChequeNoSePuede as motivo:
+        for ruta in subidas:
+            borrar_foto_comanda(ruta)
+        return _renderizar_carga_de_cheques(request, filas=filas, comunes=comunes, foto_leida=foto_leida,
+                                            error=str(motivo), status_code=400)
+    except Exception:
+        for ruta in subidas:
+            borrar_foto_comanda(ruta)
+        raise
+    if len(ids) == 1:
+        return RedirectResponse(f"/gerencia/cheques/{ids[0]}?aviso=Cheque+cargado", status_code=303)
+    return RedirectResponse(f"/gerencia/cheques?en_cartera=1&aviso={len(ids)}+cheques+cargados", status_code=303)
+
+
+# --- APLICAR ---------------------------------------------------------------
+
+def _renderizar_aplicar_cheques(request: Request, *, elegidos: set[int], datos: dict, no_encontrados: list[str] = (),
+                                foto_leida: str = "", error: str | None = None, aviso: str | None = None,
+                                status_code: int = 200):
+    listas = _listas_de_cheques()
+    en_cartera = buscar_cheques({}, solo_en_cartera=True)
+    return templates.TemplateResponse(request, "cheques_aplicar.html", {
+        "en_cartera": en_cartera, "elegidos": elegidos, "datos": datos, "no_encontrados": list(no_encontrados),
+        "foto_leida": foto_leida, "conceptos": listas["conceptos"], "proveedores": listas["proveedores"],
+        "destinos": DESTINOS_DE_CONCEPTO, "en_rojo": cheque_en_rojo, "error": error, "aviso": aviso,
+        "volver": vuelta(request, "/gerencia/cheques"),
+    }, status_code=status_code)
+
+
+def _datos_de_aplicar_vacios() -> dict:
+    return {"fecha": _hoy_argentina().isoformat(), "concepto_id": None, "concepto_nuevo": "", "destino_nuevo": "",
+            "proveedor_id": None}
+
+
+@app.get("/gerencia/cheques/aplicar")
+def ver_aplicar_cheques(request: Request, cheque_id: str = ""):
+    sin_clave = _sin_clave_de_cheques(request)
+    if sin_clave is not None:
+        return sin_clave
+    elegido = _id_opcional_desde_query(cheque_id)
+    return _renderizar_aplicar_cheques(request, elegidos={elegido} if elegido else set(),
+                                       datos=_datos_de_aplicar_vacios())
+
+
+@app.post("/gerencia/cheques/aplicar/leer")
+async def leer_cheques_para_aplicar(request: Request, archivo: UploadFile = File(...)):
+    """Lee el comprobante (la boleta del depósito, la foto de lo que se
+    entregó) y deja tildados los cheques en cartera que encontró, por número.
+    TODAVÍA NO GUARDA NADA."""
+    puerta = _puerta_de_gerencia_para_escribir(request)
+    if puerta is not None:
+        return puerta
+    datos_leidos, foto, error = await _lo_leido_del_archivo(archivo)
+    datos = _datos_de_aplicar_vacios()
+    if error:
+        return _renderizar_aplicar_cheques(request, elegidos=set(), datos=datos, error=error, status_code=400)
+    if _fecha_de_cheque(datos_leidos.get("fecha")):
+        datos["fecha"] = str(datos_leidos.get("fecha"))
+    en_cartera = buscar_cheques({}, solo_en_cartera=True)
+    elegidos, no_encontrados = set(), []
+    for leido in cheques_leidos(datos_leidos, listar_bancos()):
+        numero = numero_de_cheque_normalizado(leido["numero"])
+        coinciden = [c for c in en_cartera if numero and numero_de_cheque_normalizado(c["numero"]) == numero
+                     and (not leido["cuit_librador"] or c["cuit_librador"] == leido["cuit_librador"])]
+        if coinciden:
+            elegidos.update(c["id"] for c in coinciden)
+        else:
+            no_encontrados.append(leido["numero"] or "sin número")
+    return _renderizar_aplicar_cheques(request, elegidos=elegidos, datos=datos, no_encontrados=no_encontrados,
+                                       foto_leida=foto, aviso="Revisá los cheques tildados antes de guardar.")
+
+
+@app.post("/gerencia/cheques/aplicar")
+async def aplicar_cheques_ruta(request: Request):
+    puerta = _puerta_de_gerencia_para_escribir(request)
+    if puerta is not None:
+        return puerta
+    formulario = await request.form()
+    elegidos = {int(v) for v in formulario.getlist("cheque_id") if str(v).isdigit()}
+    datos = {"fecha": str(formulario.get("fecha") or ""),
+             "concepto_id": _id_opcional_desde_query(str(formulario.get("concepto_id") or "")),
+             "concepto_nuevo": str(formulario.get("concepto_nuevo") or "").strip(),
+             "destino_nuevo": str(formulario.get("destino_nuevo") or ""),
+             "proveedor_id": _id_opcional_desde_query(str(formulario.get("proveedor_id") or ""))}
+    foto_leida = str(formulario.get("foto_leida") or "")
+    fecha = _fecha_de_cheque(datos["fecha"])
+    errores = []
+    if not elegidos:
+        errores.append("Tildá al menos un cheque.")
+    if fecha is None:
+        errores.append("Falta la fecha.")
+    if datos["concepto_nuevo"] and datos["destino_nuevo"] not in dict(DESTINOS_DE_CONCEPTO):
+        errores.append("Decí cómo queda el cheque con el concepto nuevo.")
+    if not datos["concepto_nuevo"] and datos["concepto_id"] is None:
+        errores.append("Elegí el concepto.")
+    if errores:
+        return _renderizar_aplicar_cheques(request, elegidos=elegidos, datos=datos, foto_leida=foto_leida,
+                                           error=" ".join(errores), status_code=400)
+    ruta = None
+    try:
+        archivo = formulario.get("foto")
+        if archivo is not None and getattr(archivo, "filename", ""):
+            ruta = _subir_foto_de_cheque(await archivo.read(), "cheque-salida")
+            if ruta is None:
+                raise ChequeNoSePuede(f"«{archivo.filename}» no es una foto.")
+        elif foto_leida:
+            contenido = _bytes_desde_data_uri(foto_leida)
+            if contenido:
+                ruta = subir_foto_comanda(contenido, "cheque-salida", prefijo=PREFIJO_CHEQUE)
+        aplicar_cheques(sorted(elegidos), fecha=fecha, concepto_id=datos["concepto_id"],
+                        concepto_nuevo=datos["concepto_nuevo"] or None,
+                        destino_nuevo=datos["destino_nuevo"] or None,
+                        proveedor_id=datos["proveedor_id"], foto_ruta=ruta)
+    except ChequeNoSePuede as motivo:
+        if ruta:
+            borrar_foto_comanda(ruta)
+        return _renderizar_aplicar_cheques(request, elegidos=elegidos, datos=datos, foto_leida=foto_leida,
+                                           error=str(motivo), status_code=400)
+    except Exception:
+        if ruta:
+            borrar_foto_comanda(ruta)
+        raise
+    if len(elegidos) == 1:
+        return RedirectResponse(f"/gerencia/cheques/{next(iter(elegidos))}?aviso=Cheque+aplicado", status_code=303)
+    return RedirectResponse(f"/gerencia/cheques?aviso={len(elegidos)}+cheques+aplicados", status_code=303)
+
+
+# --- LA FICHA --------------------------------------------------------------
+
+def _renderizar_ficha_de_cheque(request: Request, cheque_id: int, *, aviso: str | None = None,
+                                error: str | None = None, status_code: int = 200):
+    try:
+        cheque = obtener_cheque(cheque_id)
+        listas = _listas_de_cheques()
+    except Exception as error_db:
+        raise HTTPException(status_code=500, detail=f"Error al conectar con la base de datos: {error_db}") from error_db
+    if cheque is None:
+        raise HTTPException(status_code=404, detail="Ese cheque no existe.")
+    return templates.TemplateResponse(request, "cheque.html", {
+        "cheque": cheque, "en_rojo": cheque_en_rojo(cheque), "nombre_del_estado": NOMBRES_DE_ESTADO_DE_CHEQUE,
+        "clientes": listas["clientes"], "bancos": listas["bancos"], "origenes": ORIGENES_DE_CHEQUE,
+        "hoy": _hoy_argentina(), "aviso": aviso, "error": error,
+    }, status_code=status_code)
+
+
+@app.get("/gerencia/cheques/{cheque_id}")
+def ver_cheque(request: Request, cheque_id: int, aviso: str | None = None, error: str | None = None):
+    sin_clave = _sin_clave_de_cheques(request)
+    if sin_clave is not None:
+        return sin_clave
+    return _renderizar_ficha_de_cheque(request, cheque_id, aviso=aviso, error=error)
+
+
+@app.get("/gerencia/cheques/{cheque_id}/fotos/{foto_id}/ver")
+def ver_foto_de_cheque(request: Request, cheque_id: int, foto_id: int):
+    sin_clave = _sin_clave_de_cheques(request)
+    if sin_clave is not None:
+        return sin_clave
+    cheque = obtener_cheque(cheque_id)
+    foto = next((f for f in (cheque or {}).get("fotos", []) if f["id"] == foto_id), None)
+    if foto is None:
+        raise HTTPException(status_code=404, detail="Esa foto no existe.")
+    return _ir_a_la_foto(foto["foto_ruta"], status_code=303)
+
+
+@app.get("/gerencia/cheques/{cheque_id}/salida/foto")
+def ver_foto_de_la_salida_del_cheque(request: Request, cheque_id: int):
+    sin_clave = _sin_clave_de_cheques(request)
+    if sin_clave is not None:
+        return sin_clave
+    cheque = obtener_cheque(cheque_id)
+    if cheque is None or not cheque.get("foto_salida"):
+        raise HTTPException(status_code=404, detail="Esa salida no tiene foto.")
+    return _ir_a_la_foto(cheque["foto_salida"], status_code=303)
+
+
+def _accion_sobre_cheque(request: Request, cheque_id: int, hacer, aviso: str):
+    puerta = _puerta_de_gerencia_para_escribir(request)
+    if puerta is not None:
+        return puerta
+    try:
+        hacer()
+    except ChequeNoSePuede as motivo:
+        return _renderizar_ficha_de_cheque(request, cheque_id, error=str(motivo), status_code=400)
+    return RedirectResponse(f"/gerencia/cheques/{cheque_id}?{urlencode({'aviso': aviso})}", status_code=303)
+
+
+@app.post("/gerencia/cheques/{cheque_id}/rechazar")
+def rechazar_cheque_ruta(request: Request, cheque_id: int, fecha: str = Form(""), motivo: str = Form("")):
+    def hacer():
+        dia = _fecha_de_cheque(fecha)
+        if dia is None or not motivo.strip():
+            raise ChequeNoSePuede("Poné la fecha y el motivo del rechazo.")
+        rechazar_cheque(cheque_id, fecha=dia, motivo=motivo)
+    return _accion_sobre_cheque(request, cheque_id, hacer, "Cheque marcado como rechazado")
+
+
+@app.post("/gerencia/cheques/{cheque_id}/resolver")
+def resolver_reclamo_ruta(request: Request, cheque_id: int, fecha: str = Form(""), resolucion: str = Form("")):
+    def hacer():
+        dia = _fecha_de_cheque(fecha)
+        if dia is None or not resolucion.strip():
+            raise ChequeNoSePuede("Poné la fecha y cómo se resolvió el reclamo.")
+        resolver_reclamo_de_cheque(cheque_id, fecha=dia, resolucion=resolucion)
+    return _accion_sobre_cheque(request, cheque_id, hacer, "Reclamo resuelto")
+
+
+@app.post("/gerencia/cheques/{cheque_id}/corregir")
+def corregir_cheque_ruta(request: Request, cheque_id: int, numero: str = Form(""), banco_id: str = Form(""),
+                         tipo: str = Form(""), fecha_carga: str = Form(""), fecha_pago: str = Form(""),
+                         importe: str = Form(""), origen: str = Form(""), cliente_id: str = Form(""),
+                         nombre_a_mano: str = Form(""), cuit_librador: str = Form("")):
+    def hacer():
+        nuevos = {"numero": numero.strip(), "banco": _id_opcional_desde_query(banco_id),
+                  "tipo": "echeq" if tipo == "echeq" else "fisico",
+                  "fecha_carga": _fecha_de_cheque(fecha_carga), "fecha_pago": _fecha_de_cheque(fecha_pago),
+                  "importe": _importe_de_cheque(importe), "origen": origen,
+                  "cliente": _id_opcional_desde_query(cliente_id) if origen == "cliente" else None,
+                  "nombre_a_mano": nombre_a_mano.strip() if origen == "a_mano" else None,
+                  "cuit_librador": "".join(ch for ch in cuit_librador if ch.isdigit())}
+        if (not nuevos["numero"] or nuevos["banco"] is None or nuevos["fecha_carga"] is None
+                or nuevos["fecha_pago"] is None or nuevos["importe"] is None):
+            raise ChequeNoSePuede("Faltan datos: número, banco, fechas e importe mayor que cero.")
+        corregir_cheque(cheque_id, nuevos)
+    return _accion_sobre_cheque(request, cheque_id, hacer, "Cheque corregido")
+
+
+@app.post("/gerencia/cheques/{cheque_id}/fotos")
+async def agregar_foto_de_cheque_ruta(request: Request, cheque_id: int, lado: str = Form("frente"),
+                                      foto: UploadFile = File(...)):
+    puerta = _puerta_de_gerencia_para_escribir(request)
+    if puerta is not None:
+        return puerta
+    ruta = _subir_foto_de_cheque(await foto.read(), f"cheque-{cheque_id}-{lado}")
+    if ruta is None:
+        return _renderizar_ficha_de_cheque(request, cheque_id, error=f"«{foto.filename}» no es una foto.",
+                                           status_code=400)
+    try:
+        agregar_foto_de_cheque(cheque_id, "dorso" if lado == "dorso" else "frente", ruta)
+    except ChequeNoSePuede as motivo:
+        borrar_foto_comanda(ruta)
+        return _renderizar_ficha_de_cheque(request, cheque_id, error=str(motivo), status_code=400)
+    return RedirectResponse(f"/gerencia/cheques/{cheque_id}?aviso=Foto+agregada", status_code=303)
 
 
 if __name__ == "__main__":
