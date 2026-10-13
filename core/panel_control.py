@@ -200,15 +200,18 @@ def resumen_de_segunda(perdidas: dict, lotes: list[dict], rechazos: list[dict], 
     por_articulo: dict = {}
     for fila in perdidas["detalle"]:
         if fila["destino"] == "segunda":
-            articulo = por_articulo.setdefault(fila["articulo_id"], dict(vacia, articulo=fila["articulo"]))
+            articulo = por_articulo.setdefault(
+            fila["articulo_id"], dict(vacia, articulo_id=fila["articulo_id"], articulo=fila["articulo"]))
             articulo["pase"] += fila["total"]
             articulo["bultos"] += fila["bultos"]
     for fila in rechazos:
-        articulo = por_articulo.setdefault(fila["articulo_id"], dict(vacia, articulo=fila["articulo"]))
+        articulo = por_articulo.setdefault(
+            fila["articulo_id"], dict(vacia, articulo_id=fila["articulo_id"], articulo=fila["articulo"]))
         articulo["rechazo"] += fila["pesos"]
         articulo["bultos"] += fila["bultos"]
     for lote in cobrados:
-        articulo = por_articulo.setdefault(lote["articulo_id"], dict(vacia, articulo=lote["articulo"]))
+        articulo = por_articulo.setdefault(
+            lote["articulo_id"], dict(vacia, articulo_id=lote["articulo_id"], articulo=lote["articulo"]))
         articulo["cobrado"] += lote["importe"]
     filas = sorted(({**f, "costo": f["pase"] + f["rechazo"], "perdida": f["pase"] + f["rechazo"] - f["cobrado"]}
                     for f in por_articulo.values()), key=lambda f: (-f["perdida"], f["articulo"]))
@@ -217,3 +220,42 @@ def resumen_de_segunda(perdidas: dict, lotes: list[dict], rechazos: list[dict], 
             "bultos": renglon["bultos"] + sum(r["bultos"] for r in rechazos),
             "rechazos_sin_costo": rechazos_sin_costo,
             "lotes_sin_cobrar": len(lotes) - len(cobrados), "filas": filas}
+
+
+# PÉRDIDA TOTAL (dueño, 13/10): de cada artículo, los cinco que más plata pierden.
+TOP_DE_LA_PERDIDA = 5
+
+
+def resumen_de_perdida_total(mermas: dict, segunda: dict, faltante: dict, facturacion: float) -> dict:
+    """Lo que se perdió en el período, en plata al COSTO, sobre lo facturado a
+    precio de lista (el mismo criterio del cuadro Rechazos).
+
+    Tres partes, cada una la de su cuadro: `mermas` (`resumen_de_mermas`),
+    `segunda` (`resumen_de_segunda`: el costo de lo que fue a segunda menos lo
+    cobrado) y `faltante` (`core.kilos_guia_r.faltante_en_plata`: lo que no
+    quedó registrado en las guías R). Por artículo suma las tres y se queda
+    con los `TOP_DE_LA_PERDIDA` que más pierden.
+    """
+    partes = {"merma": float(mermas["total"]), "segunda": float(segunda["perdida"]),
+              "faltante": float(faltante["pesos"])}
+    total = sum(partes.values())
+    vacia = {"merma": 0.0, "segunda": 0.0, "faltante": 0.0}
+    por_articulo: dict = {}
+    for fila in mermas["filas"]:
+        articulo = por_articulo.setdefault(fila["articulo_id"], dict(vacia, articulo=fila["articulo"]))
+        articulo["merma"] += float(fila["total"])
+    for fila in segunda["filas"]:
+        articulo = por_articulo.setdefault(fila["articulo_id"], dict(vacia, articulo=fila["articulo"]))
+        articulo["segunda"] += float(fila["perdida"])
+    for articulo_id, fila in faltante["por_articulo"].items():
+        articulo = por_articulo.setdefault(articulo_id, dict(vacia, articulo=fila["articulo"]))
+        articulo["faltante"] += float(fila["pesos"])
+    filas = sorted(({**f, "articulo_id": a, "total": f["merma"] + f["segunda"] + f["faltante"]}
+                    for a, f in por_articulo.items()), key=lambda f: (-f["total"], f["articulo"]))
+    return {
+        "total": total, "partes": partes, "facturacion": facturacion,
+        "pct": total / facturacion * 100 if facturacion else None,
+        "pct_partes": {clave: (monto / facturacion * 100 if facturacion else None) for clave, monto in partes.items()},
+        "top": filas[:TOP_DE_LA_PERDIDA],
+        "guias_sin_cuenta": faltante["guias_sin_cuenta"], "guias_sin_precio": faltante["guias_sin_precio"],
+    }

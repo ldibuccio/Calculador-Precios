@@ -10,6 +10,7 @@
   .tarjeta { background: #fff; border-radius: 10px; padding: 1rem; margin-bottom: 1rem;
     box-shadow: 0 1px 3px rgba(0, 0, 0, 0.1); overflow-wrap: anywhere; }
   h2 { font-size: 1.05rem; margin: 0 0 0.4rem; }
+  h3 { font-size: 0.95rem; margin: 0.7rem 0 0.2rem; }
   .grande { font-size: 2rem; font-weight: 800; margin: 0.1rem 0; }
   [data-ajustar] { white-space: nowrap; overflow-wrap: normal; }
   .dato { margin: 0.2rem 0; font-size: 0.92rem; }
@@ -236,6 +237,28 @@
   {% else %}
   <div data-ajustar-contenedor class="tarjeta"><p class="vacio">En esos días todo se armó con los kilos de la ficha.</p></div>
   {% endfor %}
+
+  {% elif cuadro == "perdida" %}
+  {% set NOMBRES = {"merma": "Merma", "segunda": "Segunda (menos lo cobrado)", "faltante": "Falta en las guías R"} %}
+  {% for clave in ("anterior", "actual") %}{% set p = dato[clave] %}
+  <div data-ajustar-contenedor class="tarjeta" data-mes="{{ clave }}">
+    <h2>{{ MESES[p.desde.month] }}{% if clave == "actual" %} (del 1 a hoy){% endif %}</h2>
+    <p data-ajustar class="grande">{{ p.pct|pct if p.pct is not none else "—" }}</p>
+    <p class="dato">Perdido <strong data-ajustar>{{ p.total|moneda }}</strong> al costo, de <span class="par">{{ p.facturacion|moneda }}</span> facturados a precio de lista</p>
+    {% for parte in ("merma", "segunda", "faltante") %}
+    <p class="dato" data-parte="{{ parte }}">{{ NOMBRES[parte] }}: <strong data-ajustar>{{ p.partes[parte]|moneda }}</strong> <span class="par">({{ p.pct_partes[parte]|pct if p.pct_partes[parte] is not none else "—" }})</span></p>
+    {% endfor %}
+    {% if p.guias_sin_cuenta or p.guias_sin_precio %}<p class="nota">No entran en la falta: {% if p.guias_sin_cuenta %}{{ p.guias_sin_cuenta }} {{ "guía" if p.guias_sin_cuenta == 1 else "guías" }} sin pesada o por unidad{% endif %}{% if p.guias_sin_cuenta and p.guias_sin_precio %} y {% endif %}{% if p.guias_sin_precio %}{{ p.guias_sin_precio }} con una compra sin precio{% endif %}.</p>{% endif %}
+    <h3>Los que más pierden</h3>
+    {% for f in p.top %}
+    <p class="fila-dato" data-top="{{ f.articulo_id }}"><strong>{{ f.articulo }}</strong> · <strong data-ajustar>{{ f.total|moneda }}</strong><br>
+      <span class="par">merma {{ f.merma|moneda }}</span> · <span class="par">segunda {{ f.segunda|moneda }}</span> · <span class="par">falta {{ f.faltante|moneda }}</span></p>
+    {% else %}
+    <p class="vacio">No se perdió nada.</p>
+    {% endfor %}
+  </div>
+  {% endfor %}
+  <p class="nota">Merma: la del cuadro Mermas (mercadería más la caja). Segunda: la del cuadro Segunda, el costo de los pases y de los rechazos que fueron a segunda, menos lo que pagó el puesto. Falta en las guías R: los kilos que entraron menos los de primera, segunda y merma (la cuenta de "Rinde de guías R"), al costo por kilo de la compra de cada guía; una guía que sobra resta. Todo contra la facturación a precio de lista del mes, como Rechazos.</p>
   {% endif %}
 {% include "_ajustar_numeros.html" %}
 {% include "_pie_version.html" %}

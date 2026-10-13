@@ -210,6 +210,27 @@
       <div class="cuadro-pie" data-sin-foto>Aparece en la próxima actualización.</div>
       {% endif %}
     </a>
+
+    {# 12. PÉRDIDA TOTAL (dueño, 13/10): merma + segunda + faltante de las guías
+       R, al costo, sobre lo facturado a precio de lista. El mes en curso va
+       rojo si está peor que el anterior y verde si está mejor. #}
+    <a data-ajustar-contenedor class="cuadro ancho" href="/gerencia/panel/perdida" data-cuadro="perdida">
+      <div class="cuadro-titulo">{{ titulos.perdida }}</div>
+      {% if datos.perdida is defined %}{% set ant = datos.perdida.anterior.pct %}{% set act = datos.perdida.actual.pct %}
+      <div class="dos">
+        {% for clave in ("anterior", "actual") %}{% set p = datos.perdida[clave] %}
+        <div>
+          <div class="mes">{{ MESES[p.desde.month] }}{% if clave == "actual" %} (a hoy){% endif %}</div>
+          <div data-ajustar class="cuadro-numero {% if clave == 'actual' and ant is not none and act is not none %}{{ 'rojo' if act > ant else ('verde' if act < ant) }}{% endif %}" data-pct="{{ clave }}">{{ p.pct|pct if p.pct is not none else "—" }}</div>
+          <div data-ajustar class="cuadro-pie" data-monto="{{ clave }}">{{ p.total|moneda }}</div>
+        </div>
+        {% endfor %}
+      </div>
+      <div class="nota">Merma, segunda y lo que falta en las guías R, al costo, contra la facturación a precio de lista.</div>
+      {% else %}
+      <div class="cuadro-pie" data-sin-foto>Aparece en la próxima actualización.</div>
+      {% endif %}
+    </a>
   </div>
 {% include "_ajustar_numeros.html" %}
 {% include "_pie_version.html" %}

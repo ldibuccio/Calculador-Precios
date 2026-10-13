@@ -2,7 +2,7 @@
 
 ## El tablero y la regla de oro (dueño, 08/10)
 
-Gerencia → **Panel de control** (primero en "Mirar"): un tablero de once cuadros
+Gerencia → **Panel de control** (primero en "Mirar"): un tablero de doce cuadros
 grandes, cada uno con UN número que se lee de un pantallazo (390px), y al
 tocarlo su detalle (`/gerencia/panel/<cuadro>`, una dirección escrita por
 cuadro para que el humo las abra todas). Rutas en `app/main.py`
@@ -123,6 +123,41 @@ el panel solo la resume. En orden:
    todos de más, 395 kg en total. Sin los que salieron en su envase, 18
    renglones y 355 kg. En la ventana del cuadro (del 06/10 al 12/10), 9
    renglones y 170 kg.
+
+12. **Pérdida total** (dueño, 13/10): mes anterior cerrado y mes en curso a
+   hoy. Es (merma + segunda + faltante), en plata al COSTO, sobre la
+   facturación del mes a precio de lista, con el mismo criterio que Rechazos
+   (`_facturacion_de_los_dos_meses`, que comparten). Las partes:
+   - **Merma**: la del cuadro Mermas.
+   - **Segunda**: la del cuadro Segunda (pases y rechazos a segunda, menos
+     lo cobrado).
+   - **Faltante**: por guía R, los kg que entraron menos primera (real),
+     segunda y merma, la cuenta de "Rinde de guías R". Se valúa al costo del
+     kilo que entró: el precio por cajón de SU compra (`compras.importe`)
+     sobre lo que pesó el cajón (`faltante_en_plata`). Una guía que sobra
+     resta, como en el rinde. Las guías sin pesada y las de una compra sin
+     precio no entran, y se cuentan.
+
+   `resumen_de_perdida_total`. El número grande de cada mes es el %, y abajo,
+   en chico, el monto. El mes en curso va rojo si su % es mayor que el del
+   anterior y verde si es menor. El detalle abre las tres partes en $ y %, y
+   el top 5 de artículos que más plata pierden (`TOP_DE_LA_PERDIDA`). Una
+   foto de antes de este cuadro dice "Aparece en la próxima actualización".
+   Tests: `tests/test_perdida_total.py`.
+
+   Medido el 13/10 en Frutamax (conector de lectura). Merma, segunda y
+   facturación salen de la foto del sistema de las 09:43. El faltante sale
+   de la cuenta por SQL, que da lo mismo que el rinde de esa foto (14
+   artículos, 0 distintos, 1.479,8 kg). Usa la primera con la ficha, porque
+   la primera real todavía no estaba en producción: con la real baja unos
+   $0,32 millones por mes. Resultado:
+   - Septiembre: $12,0 millones, 1,69% de $711,4 millones. Merma $0,32 M,
+     segunda $8,75 M, faltante $2,94 M.
+   - Octubre al 13: $14,8 millones, 4,80% de $308,9 millones. Merma $0,17 M,
+     segunda $7,99 M, faltante $6,66 M.
+
+   En septiembre las guías R sobran 223 kg netos y aun así faltan $2,94 M:
+   faltan kilos caros (Morrón Rojo) y sobran kilos baratos.
 
 La cuenta de Pérdidas rejuega el FIFO: el tablero la pide una sola vez por mes
 y la comparten Mermas y Segunda (`_perdidas_de_los_dos_meses`). Lo mismo la

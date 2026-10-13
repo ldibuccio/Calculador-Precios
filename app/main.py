@@ -61,6 +61,7 @@ from core.panel_control import (
     meses_para_comparar,
     resumen_de_mermas,
     resumen_de_pedidos_incompletos,
+    resumen_de_perdida_total,
     resumen_de_rechazos,
     resumen_de_segunda,
     utilidad_de_ahora,
@@ -20518,7 +20519,7 @@ def _datos_rentabilidad_real(cliente_id: int, fecha_desde, fecha_hasta, articulo
 # UN número, y al tocarlo su detalle. NINGUNA cuenta es nueva: cada cuadro llama
 # a la que ya usa su pantalla (ver core/panel_control.py).
 CUADROS_DEL_PANEL = ("rentabilidad", "cajas", "pedidos", "peso", "vales", "vacios", "rechazos", "mermas", "segunda",
-                     "rinde", "kilos")
+                     "rinde", "kilos", "perdida")
 TITULOS_DEL_PANEL = {
     "rentabilidad": "Rentabilidad por cliente",
     "cajas": "Cajas",
@@ -20531,6 +20532,7 @@ TITULOS_DEL_PANEL = {
     "segunda": "Segunda",
     "rinde": "Rinde de guías R",
     "kilos": "Kilos al armar",
+    "perdida": "Pérdida total",
 }
 
 
@@ -20603,19 +20605,35 @@ def _panel_vacios() -> dict:
     return {"total": total_de_vacios_en_galpon(proveedores), "proveedores": proveedores}
 
 
-def _panel_rechazos(hoy) -> dict:
+def _facturacion_de_los_dos_meses(hoy, memo: dict) -> dict:
+    """La facturación a precio de lista (y los bultos) de TODOS los clientes con
+    ficha, mes anterior y corriente, UNA vez por pedido: la usan Rechazos y
+    Pérdida total."""
+    if "facturacion" not in memo:
+        clientes = _clientes_con_ficha()
+        memo["facturacion"] = {}
+        for clave, rango in meses_para_comparar(hoy).items():
+            facturacion, bultos = 0.0, 0.0
+            for cliente in clientes:
+                facturado = facturacion_por_ficha(cliente["id"], rango["desde"], rango["hasta"])
+                facturacion += sum(facturado["por_ficha"].values())
+                bultos += sum(facturado["bultos_por_ficha"].values())
+            memo["facturacion"][clave] = {"pesos": facturacion, "bultos": bultos}
+    return memo["facturacion"]
+
+
+def _panel_rechazos(hoy, memo) -> dict:
     """Septiembre entero contra octubre a hoy: los reingresos de TODOS los
     clientes con ficha, contra su facturación a precio de lista."""
     clientes = _clientes_con_ficha()
+    facturado = _facturacion_de_los_dos_meses(hoy, memo)
     resultado = {}
     for clave, rango in meses_para_comparar(hoy).items():
-        devoluciones, facturacion, bultos = [], 0.0, 0.0
+        devoluciones = []
         for cliente in clientes:
             devoluciones += devoluciones_vinculadas_por_rango(cliente["id"], rango["desde"], rango["hasta"])
-            facturado = facturacion_por_ficha(cliente["id"], rango["desde"], rango["hasta"])
-            facturacion += sum(facturado["por_ficha"].values())
-            bultos += sum(facturado["bultos_por_ficha"].values())
-        resultado[clave] = dict(resumen_de_rechazos(devoluciones, facturacion, bultos), **rango)
+        resultado[clave] = dict(resumen_de_rechazos(devoluciones, facturado[clave]["pesos"],
+                                                    facturado[clave]["bultos"]), **rango)
     return resultado
 
 
@@ -20655,12 +20673,31 @@ def _rechazos_a_segunda(desde, hasta, memo) -> tuple[list[dict], float]:
 
 
 def _panel_segunda(hoy, memo) -> dict:
+    if "segunda" in memo:
+        return memo["segunda"]
     resultado = {}
     for clave, p in _perdidas_de_los_dos_meses(hoy, memo).items():
         rechazos, sin_costo = _rechazos_a_segunda(p["desde"], p["hasta"], memo)
         resultado[clave] = dict(
             resumen_de_segunda(p, lotes_de_segunda(desde=p["desde"], hasta=p["hasta"]), rechazos, sin_costo),
             desde=p["desde"], hasta=p["hasta"])
+    memo["segunda"] = resultado
+    return resultado
+
+
+def _panel_perdida(hoy, memo) -> dict:
+    """PÉRDIDA TOTAL (dueño, 13/10): mes anterior cerrado y mes corriente a hoy.
+    Merma (el cuadro Mermas) + segunda (el cuadro Segunda, menos lo cobrado) +
+    faltante de las guías R (lo de "Rinde de guías R", al costo de su compra),
+    sobre la facturación a precio de lista, como Rechazos."""
+    from core.kilos_guia_r import faltante_en_plata
+    mermas, segunda = _panel_mermas(hoy, memo), _panel_segunda(hoy, memo)
+    facturado = _facturacion_de_los_dos_meses(hoy, memo)
+    resultado = {}
+    for clave, rango in meses_para_comparar(hoy).items():
+        faltante = faltante_en_plata(guias_r_con_sus_kilos(rango["desde"], rango["hasta"]))
+        resultado[clave] = dict(resumen_de_perdida_total(mermas[clave], segunda[clave], faltante,
+                                                         facturado[clave]["pesos"]), **rango)
     return resultado
 
 
@@ -20690,7 +20727,6 @@ _DATOS_DEL_PANEL = {
     "peso": lambda hoy: _panel_peso(hoy),
     "vales": lambda hoy: _panel_vales(hoy),
     "vacios": lambda hoy: _panel_vacios(),
-    "rechazos": lambda hoy: _panel_rechazos(hoy),
     "rinde": lambda hoy: _panel_rinde(hoy),
     "kilos": lambda hoy: _panel_kilos(hoy),
 }
@@ -20698,6 +20734,8 @@ _DATOS_DEL_PANEL_CON_MEMO = {
     "rentabilidad": _panel_rentabilidad,
     "mermas": _panel_mermas,
     "segunda": _panel_segunda,
+    "rechazos": _panel_rechazos,
+    "perdida": _panel_perdida,
 }
 
 
@@ -20708,7 +20746,7 @@ def _datos_del_cuadro(cuadro: str, hoy, memo: dict):
 
 
 def calcular_el_panel(hoy) -> dict:
-    """Los once cuadros del tablero. Es lo que tarda: se corre a las 06:00 y
+    """Los doce cuadros del tablero. Es lo que tarda: se corre a las 06:00 y
     a las 14:00, y con el botón "Actualizar ahora"."""
     memo: dict = {}
     return {cuadro: _datos_del_cuadro(cuadro, hoy, memo) for cuadro in CUADROS_DEL_PANEL}
@@ -20804,6 +20842,7 @@ def actualizar_panel_ahora(request: Request):
 @app.get("/gerencia/panel/segunda")
 @app.get("/gerencia/panel/rinde")
 @app.get("/gerencia/panel/kilos")
+@app.get("/gerencia/panel/perdida")
 def ver_detalle_del_panel(request: Request):
     """El detalle de UN cuadro: los mismos datos que el número, abiertos."""
     cuadro = request.url.path.rstrip("/").rsplit("/", 1)[1]
