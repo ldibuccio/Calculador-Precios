@@ -22550,3 +22550,37 @@ def claves_de_los_cheques_cargados() -> set:
             return {tuple(fila) for fila in cursor.fetchall()}
     finally:
         conexion.close()
+
+
+def proveedores_con_cuit() -> list[dict]:
+    """Todos los proveedores con su CUIT (None si no lo tiene): para encontrar
+    a quién se endosó un ECHEQ por el CUIT de la captura del banco."""
+    conexion = obtener_conexion()
+    try:
+        with conexion.cursor() as cursor:
+            cursor.execute("SELECT id, codigo_puesto, nombre, cuit FROM proveedores ORDER BY lower(nombre)")
+            return _filas_como_dict(cursor)
+    finally:
+        conexion.close()
+
+
+def aplicar_salidas_de_cheques(salidas: list[dict]) -> None:
+    """Varias salidas, cada una con lo suyo ({"cheque_id", "fecha",
+    "concepto_id", "proveedor_id", "foto_ruta", "cuit_leido"}), en UNA
+    transacción: o entran todas o ninguna.
+
+    EL PROVEEDOR RECUERDA SU CUIT (dueño, 13/10): si se eligió a mano para un
+    endoso cuyo CUIT se leyó, y el proveedor no tenía, se le guarda. Uno que ya
+    tiene otro no se pisa."""
+    with _escribir_cheques() as cursor:
+        for salida in salidas:
+            cursor.execute(
+                "INSERT INTO cheques_salidas (cheque_id, fecha, concepto_id, proveedor_id, foto_ruta, sector) "
+                "VALUES (%s, %s, %s, %s, %s, 'gerencia')",
+                (salida["cheque_id"], salida["fecha"], salida["concepto_id"], salida["proveedor_id"],
+                 salida.get("foto_ruta")),
+            )
+            cuit = salida.get("cuit_leido")
+            if salida["proveedor_id"] and cuit and len(cuit) == 11 and cuit.isdigit():
+                cursor.execute("UPDATE proveedores SET cuit = %s WHERE id = %s AND cuit IS NULL",
+                               (cuit, salida["proveedor_id"]))

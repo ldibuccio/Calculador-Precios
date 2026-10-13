@@ -27943,7 +27943,8 @@ from core.cheques import (  # noqa: E402
     total_del_listado as total_de_cheques,
 )
 from core.exportar_cheques import generar_excel_cheques, generar_pdf_cheques, texto_del_filtro as texto_del_filtro_de_cheques  # noqa: E402
-from core.lector_cheques import extraer_cheques_de_imagenes, extraer_cheques_de_texto  # noqa: E402
+from core.lector_cheques import extraer_cheques_de_imagenes, extraer_cheques_de_texto, extraer_endoso  # noqa: E402
+from core.endosos_cheques import problemas_de_los_endosos, renglones_de_los_endosos  # noqa: E402
 from core.listado_cheques import (  # noqa: E402
     cuit_de_la_celda,
     cuit_valido,
@@ -27961,6 +27962,7 @@ from app.db import (  # noqa: E402
     ChequeNoSePuede,
     agregar_foto_de_cheque,
     aplicar_cheques,
+    aplicar_salidas_de_cheques,
     buscar_cheques,
     cargar_cheques,
     claves_de_los_cheques_cargados,
@@ -27968,6 +27970,7 @@ from app.db import (  # noqa: E402
     listar_bancos,
     listar_conceptos_de_cheques,
     obtener_cheque,
+    proveedores_con_cuit,
     rechazar_cheque,
     resolver_reclamo_de_cheque,
     todos_los_cheques_para_el_resumen,
@@ -28538,6 +28541,128 @@ async def aplicar_cheques_ruta(request: Request):
     if len(elegidos) == 1:
         return RedirectResponse(f"/gerencia/cheques/{next(iter(elegidos))}?aviso=Cheque+aplicado", status_code=303)
     return RedirectResponse(f"/gerencia/cheques?aviso={len(elegidos)}+cheques+aplicados", status_code=303)
+
+
+# --- ENDOSOS DE ECHEQ: VARIAS CAPTURAS DE UNA VEZ (dueño, 13/10) -------------
+
+def _concepto_pago_a_proveedor(conceptos: list[dict]) -> int | None:
+    """El concepto con que sale un endoso: "Pago a proveedor" (el primero que
+    deja el cheque entregado, si lo renombraron)."""
+    for concepto in conceptos:
+        if concepto["nombre"] == "Pago a proveedor":
+            return concepto["id"]
+    return next((c["id"] for c in conceptos if c["destino"] == "entregado"), None)
+
+
+def _renderizar_endosos(request: Request, renglones: list[dict], fotos: list[str], *, avisos: list[str] = (),
+                        error: str | None = None, status_code: int = 200):
+    cheques = buscar_cheques({})
+    problemas = problemas_de_los_endosos(renglones, cheques)
+    vivos = [(r, p) for r, p in zip(renglones, problemas) if not r.get("sacar")]
+    return templates.TemplateResponse(request, "cheques_endosos.html", {
+        "renglones": list(zip(renglones, problemas)), "fotos": fotos, "avisos": list(avisos), "error": error,
+        "en_cartera": [c for c in cheques if c["estado"] in ("en_cartera", "vencido")],
+        "proveedores": proveedores_con_cuit(), "conceptos": listar_conceptos_de_cheques(),
+        "total": round(sum(_importe_de_cheque(r["importe"]) or 0 for r, _ in vivos), 2),
+        "cuantos": len(vivos), "con_problema": sum(1 for _, p in vivos if p),
+    }, status_code=status_code)
+
+
+@app.post("/gerencia/cheques/aplicar/endosos")
+async def leer_endosos_de_cheques(request: Request):
+    """Lee con la IA todas las capturas de endosos juntas y abre la página de
+    confirmación, un renglón por cheque. TODAVÍA NO GUARDA NADA."""
+    puerta = _puerta_de_gerencia_para_escribir(request)
+    if puerta is not None:
+        return puerta
+    formulario = await request.form()
+    archivos = [a for a in formulario.getlist("fotos") if getattr(a, "filename", "")]
+    if not archivos:
+        return _renderizar_aplicar_cheques(request, elegidos=set(), datos=_datos_de_aplicar_vacios(),
+                                           error="Elegí las capturas de los endosos.", status_code=400)
+    leidas, fotos = [], []
+    for archivo in archivos:
+        contenido = await archivo.read()
+        fotos.append(_generar_preview_foto(contenido))
+        try:
+            leidas.append(extraer_endoso(contenido))
+        except Exception:
+            logger.exception("No se pudo leer la captura del endoso %s", archivo.filename)
+            leidas.append({"error": f"«{archivo.filename}» no se entiende como una captura del banco"})
+    renglones, avisos = renglones_de_los_endosos(
+        leidas, cheques=buscar_cheques({}), proveedores=proveedores_con_cuit(),
+        concepto_id=_concepto_pago_a_proveedor(listar_conceptos_de_cheques()), hoy=_hoy_argentina())
+    return _renderizar_endosos(request, renglones, fotos, avisos=avisos)
+
+
+def _renglones_de_los_endosos_del_formulario(formulario) -> list[dict]:
+    try:
+        cantidad = max(0, min(500, int(formulario.get("cantidad") or 0)))
+    except ValueError:
+        cantidad = 0
+    renglones = []
+    for i in range(cantidad):
+        dato = lambda campo: str(formulario.get(f"{campo}_{i}") or "").strip()  # noqa: E731
+        try:
+            foto = int(dato("foto"))
+        except ValueError:
+            foto = -1
+        renglones.append({
+            "foto": foto, "numero": dato("numero"), "fecha_pago": dato("fecha_pago"), "importe": dato("importe"),
+            "emisor": dato("emisor"), "cheque_id": _id_opcional_desde_query(dato("cheque_id")),
+            "proveedor_cuit": dato("proveedor_cuit"), "proveedor_nombre": dato("proveedor_nombre"),
+            "proveedor_id": _id_opcional_desde_query(dato("proveedor_id")),
+            "concepto_id": _id_opcional_desde_query(dato("concepto_id")), "fecha": dato("fecha"),
+            "sacar": dato("sacar") == "1",
+        })
+    return renglones
+
+
+@app.post("/gerencia/cheques/aplicar/endosos/confirmar")
+async def confirmar_endosos_de_cheques(request: Request):
+    """"Revisar" vuelve a marcar los problemas; "Confirmar todos" guarda los
+    que están bien (juntos, en una transacción), cada salida con su foto, y
+    deja en la página los que tienen problema."""
+    puerta = _puerta_de_gerencia_para_escribir(request)
+    if puerta is not None:
+        return puerta
+    formulario = await request.form()
+    renglones = _renglones_de_los_endosos_del_formulario(formulario)
+    fotos = [str(f) for f in formulario.getlist("foto_leida")]
+    if str(formulario.get("accion") or "") != "confirmar":
+        return _renderizar_endosos(request, renglones, fotos)
+    problemas = problemas_de_los_endosos(renglones, buscar_cheques({}))
+    buenos = [r for r, p in zip(renglones, problemas) if not p and not r["sacar"]]
+    quedan = [r for r, p in zip(renglones, problemas) if p and not r["sacar"]]
+    subidas: dict = {}
+    try:
+        for r in buenos:
+            if r["foto"] not in subidas and 0 <= r["foto"] < len(fotos):
+                contenido = _bytes_desde_data_uri(fotos[r["foto"]])
+                subidas[r["foto"]] = (subir_foto_comanda(contenido, "endoso", prefijo=PREFIJO_CHEQUE)
+                                      if contenido else None)
+        if buenos:
+            aplicar_salidas_de_cheques([{
+                "cheque_id": r["cheque_id"], "fecha": date.fromisoformat(r["fecha"]), "concepto_id": r["concepto_id"],
+                "proveedor_id": r["proveedor_id"], "foto_ruta": subidas.get(r["foto"]),
+                "cuit_leido": "".join(ch for ch in r["proveedor_cuit"] if ch.isdigit())} for r in buenos])
+    except ChequeNoSePuede as motivo:
+        for ruta in subidas.values():
+            if ruta:
+                borrar_foto_comanda(ruta)
+        return _renderizar_endosos(request, renglones, fotos, error=str(motivo), status_code=400)
+    except Exception:
+        for ruta in subidas.values():
+            if ruta:
+                borrar_foto_comanda(ruta)
+        raise
+    if not quedan:
+        return RedirectResponse("/gerencia/cheques?" + urlencode({"aviso": f"{len(buenos)} cheques aplicados"}),
+                                status_code=303)
+    return _renderizar_endosos(
+        request, quedan, fotos,
+        avisos=[(f"Se aplicaron {len(buenos)}. " if buenos else "") + f"Quedan {len(quedan)} con problemas: "
+                "corregilos o sacalos."])
 
 
 # --- LA FICHA --------------------------------------------------------------
