@@ -259,6 +259,18 @@
   </div>
   {% endfor %}
   <p class="nota">Merma: la del cuadro Mermas (mercadería más la caja). Segunda: la del cuadro Segunda, el costo de los pases y de los rechazos que fueron a segunda, menos lo que pagó el puesto. Falta en las guías R: los kilos que entraron menos los de primera, segunda y merma (la cuenta de "Rinde de guías R"), al costo por kilo de la compra de cada guía; una guía que sobra resta. Todo contra la facturación a precio de lista del mes, como Rechazos.</p>
+
+  {% elif cuadro == "cheques" %}
+  <div data-ajustar-contenedor class="tarjeta">
+    <p data-ajustar class="grande {{ 'rojo' if dato.en_rojo else '' }}">{{ dato.en_cartera|moneda }}</p>
+    <p class="dato">en cartera · {{ dato.cantidad_en_cartera }} cheque{{ '' if dato.cantidad_en_cartera == 1 else 's' }}</p>
+    <p class="dato">Entra hasta el {{ dato.hasta.strftime("%d/%m") }}: <strong data-ajustar>{{ dato.entran_7_dias|moneda }}</strong> ({{ dato.cantidad_entran }})</p>
+    <p class="dato {{ 'rojo' if dato.por_vencer else '' }}" data-por-vencer>Por vencer: {{ dato.por_vencer }}</p>
+    <p class="dato {{ 'rojo' if dato.vencidos else '' }}" data-vencidos>Vencidos: {{ dato.vencidos }}</p>
+    <p class="dato {{ 'rojo' if dato.rechazados else '' }}" data-rechazados>Rechazados sin resolver: {{ dato.rechazados }}</p>
+    <a class="ir" href="/gerencia/cheques?en_cartera=1">Ver la cartera</a>
+    <p class="nota">Entra en 7 días: los cheques que siguen en cartera y se cobran de hoy a 7 días. Rojo: en cartera a 23 días o más de su fecha de pago (vencen a los 30), o rechazados con el reclamo sin resolver.</p>
+  </div>
   {% endif %}
 {% include "_ajustar_numeros.html" %}
 {% include "_pie_version.html" %}

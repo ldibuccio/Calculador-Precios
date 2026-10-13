@@ -1,0 +1,39 @@
+{# Estilos comunes de la Cartera de cheques (dueño, 13/10): mobile-first,
+   botones de 44px, todo con flex-wrap. #}
+  :root { font-family: -apple-system, system-ui, sans-serif; }
+  body { margin: 0; padding: 1rem; background: #f5f5f5; color: #222; }
+  .tarjeta { background: #fff; border-radius: 10px; padding: 1rem; margin-bottom: 1rem;
+    box-shadow: 0 1px 3px rgba(0, 0, 0, 0.1); overflow-wrap: anywhere; }
+  .error { background: #fee2e2; color: #991b1b; padding: 0.75rem 1rem; border-radius: 8px; margin-bottom: 1rem; }
+  .aviso { background: #dcfce7; color: #166534; padding: 0.75rem 1rem; border-radius: 8px; margin-bottom: 1rem; }
+  .campos { display: flex; flex-wrap: wrap; gap: 0.6rem; }
+  .campos label { flex: 1 1 9rem; font-size: 0.85rem; color: #444; }
+  .campos label.ancho { flex-basis: 100%; }
+  .campos select, .campos input, .campos textarea {
+    display: block; width: 100%; box-sizing: border-box; margin-top: 0.2rem; padding: 0.6rem;
+    border: 1px solid #ccc; border-radius: 8px; font-size: 1rem; background: #fff; min-height: 44px; }
+  .acciones { display: flex; flex-wrap: wrap; gap: 0.6rem; margin-top: 0.8rem; }
+  .acciones button, .acciones a {
+    flex: 1 1 9rem; min-height: 48px; padding: 0.7rem; border-radius: 8px; font-size: 1rem;
+    font-weight: 600; text-align: center; text-decoration: none; box-sizing: border-box; cursor: pointer; }
+  .acciones button { background: #2563eb; color: #fff; border: none; }
+  .acciones a, .acciones button.secundario { background: #fff; color: #2563eb; border: 1px solid #2563eb; }
+  .acciones button.peligro { background: #fff; color: #dc2626; border: 1px solid #dc2626; }
+  h2 { font-size: 1.05rem; margin: 0 0 0.4rem; }
+  h3 { font-size: 0.95rem; margin: 0.8rem 0 0.3rem; }
+  .total { font-size: 1.5rem; font-weight: 700; margin: 0; white-space: nowrap; }
+  .total-dato { color: #444; margin: 0.25rem 0 0; }
+  .rojo { color: #dc2626; font-weight: 700; }
+  .verde { color: #15803d; font-weight: 700; }
+  .fila { padding: 0.55rem 0; border-top: 1px solid #eee; }
+  .fila:first-of-type { border-top: none; }
+  .fila a.abrir { display: block; color: inherit; text-decoration: none; min-height: 44px; }
+  .fila-cabeza { display: flex; justify-content: space-between; gap: 0.6rem; }
+  .fila-que { font-weight: 600; }
+  .importe { white-space: nowrap; font-weight: 700; }
+  .fila-dato { color: #555; font-size: 0.88rem; }
+  .vacio { color: #666; font-style: italic; }
+  .nota { font-size: 0.82rem; color: #666; margin: 0.4rem 0 0; }
+  details > summary { min-height: 44px; display: flex; align-items: center; font-weight: 600; color: #2563eb; cursor: pointer; }
+  {# El atributo es la intención; esto asegura el efecto aunque la clase diga flex. #}
+  [hidden] { display: none !important; }

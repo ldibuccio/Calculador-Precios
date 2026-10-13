@@ -347,6 +347,8 @@ TABLAS_CON_FOTO = {
     "fotos_pedido": "pedido", "precios_venta_historial": "precios", "fotos_merma": "merma",
     "vacios_deposito_devoluciones": "vacios", "vales_a_cobrar": "vale", "vales_a_cobrar_fotos": "vale",
     "remitos_fotos": "remito",
+    # Cartera de cheques (13/10): frente y dorso, y el comprobante de la salida.
+    "cheques_fotos": "cheque", "cheques_salidas": "cheque",
     # no es una foto: es el registro de las borradas
     "fotos_borradas_por_antiguedad": None,
 }
@@ -391,6 +393,12 @@ def test_los_DIEZ_tipos_salen_de_la_consulta_y_tienen_su_nombre(base):
       insert into remitos (id, pedido_sucursal_id, cliente_id, numero) overriding system value
         values (1, 1, 1, 'EJ-1');
       insert into remitos_fotos (remito_id, foto_ruta) values (1, 'remitos/EJ.jpg');
+      insert into bancos (id, nombre) overriding system value values (1, 'EJ Banco');
+      insert into cheques (id, numero, banco_id, tipo, fecha_carga, fecha_pago, importe, origen, cliente_id,
+                           cuit_librador, sector)
+        overriding system value values (1, '1', 1, 'fisico', '2026-09-05', '2026-09-10', 1, 'cliente', 1,
+                                        '20123456789', 'gerencia');
+      insert into cheques_fotos (cheque_id, lado, foto_ruta, sector) values (1, 'frente', 'cheques/EJ.jpg', 'gerencia');
     """)
     tipos = {f["tipo"] for f in d.fotos_de_respaldo()}
     assert tipos == set(TEXTO_DEL_TIPO), tipos ^ set(TEXTO_DEL_TIPO)

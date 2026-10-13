@@ -1523,6 +1523,8 @@ TABLAS_QUE_APUNTAN_A_PROVEEDORES = frozenset({
     ("movimientos_stock", "proveedor_devolucion_id"),
     ("proveedores_codigos", "proveedor_id"),
     ("vales_a_cobrar", "proveedor_id"),
+    # Cartera de cheques (13/10): a quién se le entregó un cheque.
+    ("cheques_salidas", "proveedor_id"),
 })
 
 # Las dos del diseño original que NO están en db/esquema_completo.sql: solo
@@ -1742,6 +1744,12 @@ def juntar_proveedores(queda_id: int, va_id: int) -> dict:
             # borró al que se va. Sin marca ni excepción: es la misma regla.
             cursor.execute(
                 "UPDATE vales_a_cobrar SET proveedor_id = %(queda)s WHERE proveedor_id = %(va)s",
+                parametros,
+            )
+            # Los cheques entregados al que se va (13/10): mismo proveedor con
+            # dos fichas, igual que los vales.
+            cursor.execute(
+                "UPDATE cheques_salidas SET proveedor_id = %(queda)s WHERE proveedor_id = %(va)s",
                 parametros,
             )
             cursor.execute(
@@ -6711,7 +6719,7 @@ _SQL_VALE_PROTEGE = f"""
 # TODAS las fotos del sistema, una fila por ARCHIVO: tipo, ruta, cuándo se
 # subió y si está PROTEGIDA (dueño, 01/10: 'vale' si es de un vale en
 # cartera, 'remito' si es de un remito sin facturar; esas no se borran nunca).
-# Son DIEZ lugares y está escrito UNA vez: la pantalla, el borrado y "sin
+# Son DOCE lugares y está escrito UNA vez: la pantalla, el borrado y "sin
 # registro" leen de acá. Un archivo que dos filas nombran (una comanda del
 # Listado consolidado, compartida entre guías) cuenta desde su PRIMERA subida,
 # y queda protegido si CUALQUIERA de sus filas lo protege. Una tabla nueva que
@@ -6752,6 +6760,13 @@ _SQL_FOTOS_DE_RESPALDO = f"""
                (SELECT CASE WHEN re.factura_numero IS NULL THEN 'remito' END
                   FROM remitos re WHERE re.id = rf.remito_id)
           FROM remitos_fotos rf
+        UNION ALL
+        -- Cartera de cheques (13/10): el frente y el dorso, y el comprobante de
+        -- la salida (la boleta del depósito). Sin protección: vencen a su plazo.
+        SELECT 'cheque', cf.foto_ruta, cf.creado_en, NULL FROM cheques_fotos cf
+        UNION ALL
+        SELECT 'cheque', cs.foto_ruta, cs.creado_en, NULL FROM cheques_salidas cs
+         WHERE cs.foto_ruta IS NOT NULL
       ) x
       LEFT JOIN fotos_borradas_por_antiguedad b ON b.foto_ruta = x.foto_ruta
      ORDER BY x.foto_ruta, x.subida_el
@@ -22129,3 +22144,386 @@ def corregir_como_salio_de_dia_anterior(renglon_id: int, en_su_envase: bool, kil
         return []
     finally:
         conexion.close()
+
+
+# =============================================================================
+# CARTERA DE CHEQUES (dueño, 13/10): db/cheques_1..5. Solo Gerencia.
+# =============================================================================
+# Lo que frena es la BASE (índice de repetidos, CHECKs y triggers); acá se
+# traduce el nombre del freno a lo que la pantalla le dice a Lionel.
+class ChequeNoSePuede(ValueError):
+    """Un freno de la base sobre la cartera de cheques, ya traducido."""
+
+
+FRENOS_DE_CHEQUES = {
+    "cheques_banco_numero_librador": "Ese cheque ya está cargado: mismo banco, número y CUIT del librador.",
+    "bancos_nombre_unico": "Ese banco ya está en la lista.",
+    "cheques_conceptos_nombre": "Ese concepto ya existe.",
+    "cheques_origen_coherente": "Decí de quién es el cheque: un cliente, un nombre o Canje.",
+    "cheques_cuit_librador_check": "El CUIT del librador son 11 números, sin guiones.",
+    "cheques_importe_check": "El importe tiene que ser mayor que cero.",
+    "cheque_entregado_con_proveedor": "Un pago a proveedor tiene que decir a qué proveedor.",
+    "cheque_rechazado_no_sale": "Ese cheque está rechazado: no se puede aplicar.",
+    "cheque_salida_fechas": "La salida no puede ser anterior a la fecha de carga del cheque.",
+    "cheque_que_salio_no_se_corrige": "Ese cheque ya no está en cartera: no se corrige.",
+    "cheques_salidas_pkey": "Ese cheque ya se aplicó.",
+    "cheques_rechazos_pkey": "Ese cheque ya está rechazado.",
+    "cheques_rechazos_resuelto_despues": "El reclamo no se puede resolver antes de la fecha del rechazo.",
+    "cheques_rechazos_resuelto_coherente": "Escribí cómo se resolvió el reclamo.",
+}
+
+
+def _traducir_freno_de_cheques(error) -> ChequeNoSePuede:
+    nombre = getattr(getattr(error, "diag", None), "constraint_name", None)
+    if nombre in FRENOS_DE_CHEQUES:
+        return ChequeNoSePuede(FRENOS_DE_CHEQUES[nombre])
+    return ChequeNoSePuede(f"La base no dejó guardar: {nombre or error}")
+
+
+@contextmanager
+def _escribir_cheques():
+    """Una transacción de cartera de cheques: commit si todo salió, y los
+    frenos de la base traducidos."""
+    conexion = obtener_conexion()
+    try:
+        with conexion.cursor() as cursor:
+            try:
+                yield cursor
+            except (psycopg2.errors.UniqueViolation, psycopg2.errors.CheckViolation,
+                    psycopg2.errors.ForeignKeyViolation) as error:
+                conexion.rollback()
+                raise _traducir_freno_de_cheques(error) from error
+        conexion.commit()
+    finally:
+        conexion.close()
+
+
+def _filas_como_dict(cursor) -> list[dict]:
+    columnas = [d[0] for d in cursor.description]
+    return [dict(zip(columnas, fila)) for fila in cursor.fetchall()]
+
+
+def listar_bancos() -> list[dict]:
+    conexion = obtener_conexion()
+    try:
+        with conexion.cursor() as cursor:
+            cursor.execute("SELECT id, nombre FROM bancos ORDER BY lower(nombre)")
+            return _filas_como_dict(cursor)
+    finally:
+        conexion.close()
+
+
+def crear_banco(nombre: str) -> int:
+    with _escribir_cheques() as cursor:
+        cursor.execute("INSERT INTO bancos (nombre) VALUES (%s) RETURNING id", (nombre.strip(),))
+        return cursor.fetchone()[0]
+
+
+def listar_conceptos_de_cheques() -> list[dict]:
+    conexion = obtener_conexion()
+    try:
+        with conexion.cursor() as cursor:
+            cursor.execute("SELECT id, nombre, destino FROM cheques_conceptos ORDER BY id")
+            return _filas_como_dict(cursor)
+    finally:
+        conexion.close()
+
+
+def crear_concepto_de_cheques(nombre: str, destino: str) -> int:
+    with _escribir_cheques() as cursor:
+        cursor.execute("INSERT INTO cheques_conceptos (nombre, destino) VALUES (%s, %s) RETURNING id",
+                       (nombre.strip(), destino))
+        return cursor.fetchone()[0]
+
+
+# Lo que el listado y la ficha leen de cada cheque: la vista (estado, rojo,
+# acreditación) más los nombres de banco y proveedor.
+_SQL_CHEQUES = """
+    SELECT e.id, e.numero, e.tipo, e.fecha_carga, e.fecha_pago, e.importe, e.origen, e.cliente_id,
+           e.nombre_a_mano, e.cuit_librador, e.creado_en, e.de_quien, e.vence_el, e.fecha_salida,
+           e.proveedor_id, e.concepto, e.acreditado_el, e.fecha_rechazo, e.motivo_rechazo,
+           e.resuelto_el, e.resolucion, e.estado, e.en_rojo_por_vencer, e.banco_id,
+           b.nombre AS banco, p.nombre AS proveedor, s.concepto_id, s.foto_ruta AS foto_salida
+    FROM cheques_con_estado e
+    JOIN bancos b ON b.id = e.banco_id
+    LEFT JOIN cheques_salidas s ON s.cheque_id = e.id
+    LEFT JOIN proveedores p ON p.id = e.proveedor_id
+"""
+
+# Los filtros del buscador (dueño, 13/10), todos combinables: el nombre del
+# filtro y su condición. Los rangos son "desde"/"hasta" inclusive.
+_FILTROS_DE_CHEQUES = {
+    "carga_desde": "e.fecha_carga >= %s", "carga_hasta": "e.fecha_carga <= %s",
+    "pago_desde": "e.fecha_pago >= %s", "pago_hasta": "e.fecha_pago <= %s",
+    "acreditado_desde": "e.acreditado_el >= %s", "acreditado_hasta": "e.acreditado_el <= %s",
+    "cliente_id": "e.cliente_id = %s",
+    "de_quien": "e.de_quien ILIKE '%%' || %s || '%%'",
+    "proveedor_id": "e.proveedor_id = %s",
+    "numero": "ltrim(upper(btrim(e.numero)), '0') = ltrim(upper(btrim(%s)), '0')",
+    "banco_id": "e.banco_id = %s",
+    "concepto_id": "s.concepto_id = %s",
+    "estado": "e.estado = %s",
+}
+
+
+def buscar_cheques(filtros: dict, *, solo_en_cartera: bool = False) -> list[dict]:
+    """El listado de la Cartera de cheques con los filtros que vinieron (los
+    vacíos no filtran). `solo_en_cartera`: el atajo "En cartera", los que no
+    se aplicaron (en cartera y vencidos). De la fecha de pago más próxima a la
+    más lejana."""
+    condiciones, parametros = [], []
+    for clave, condicion in _FILTROS_DE_CHEQUES.items():
+        valor = filtros.get(clave)
+        if valor is None or valor == "":
+            continue
+        condiciones.append(condicion)
+        parametros.append(valor)
+    if solo_en_cartera:
+        condiciones.append("e.estado IN ('en_cartera', 'vencido')")
+    donde = (" WHERE " + " AND ".join(condiciones)) if condiciones else ""
+    conexion = obtener_conexion()
+    try:
+        with conexion.cursor() as cursor:
+            cursor.execute(_SQL_CHEQUES + donde + " ORDER BY e.fecha_pago, e.id", parametros)
+            return _filas_como_dict(cursor)
+    finally:
+        conexion.close()
+
+
+def obtener_cheque(cheque_id: int) -> dict | None:
+    """La ficha de un cheque: sus datos, sus fotos y su historial (la carga,
+    las correcciones, la salida, el rechazo y su resolución), del más viejo
+    al más nuevo. "Quién" es el sector: el sistema no tiene usuarios."""
+    conexion = obtener_conexion()
+    try:
+        with conexion.cursor() as cursor:
+            cursor.execute(_SQL_CHEQUES + " WHERE e.id = %s", (cheque_id,))
+            filas = _filas_como_dict(cursor)
+            if not filas:
+                return None
+            cheque = filas[0]
+            cursor.execute("SELECT id, lado, foto_ruta, creado_en FROM cheques_fotos "
+                           "WHERE cheque_id = %s ORDER BY id", (cheque_id,))
+            cheque["fotos"] = _filas_como_dict(cursor)
+            cursor.execute(
+                """
+                SELECT creado_en AS cuando, 'carga' AS que, NULL AS campo, NULL AS antes,
+                       NULL AS despues, sector FROM cheques WHERE id = %(id)s
+                UNION ALL
+                SELECT creado_en, 'correccion', campo, valor_anterior, valor_nuevo, sector
+                FROM cheques_correcciones WHERE cheque_id = %(id)s
+                UNION ALL
+                SELECT s.creado_en, 'salida', NULL, NULL, c.nombre, s.sector
+                FROM cheques_salidas s JOIN cheques_conceptos c ON c.id = s.concepto_id
+                WHERE s.cheque_id = %(id)s
+                UNION ALL
+                SELECT creado_en, 'rechazo', NULL, NULL, motivo, sector
+                FROM cheques_rechazos WHERE cheque_id = %(id)s
+                UNION ALL
+                SELECT creado_en, 'foto', lado, NULL, NULL, sector
+                FROM cheques_fotos WHERE cheque_id = %(id)s
+                ORDER BY 1
+                """,
+                {"id": cheque_id},
+            )
+            cheque["historial"] = _filas_como_dict(cursor)
+            return cheque
+    finally:
+        conexion.close()
+
+
+def todos_los_cheques_para_el_resumen() -> list[dict]:
+    """Lo mínimo de TODOS los cheques para lo de arriba de la pantalla y el
+    cuadro del panel (`core.cheques.resumen_de_la_cartera`)."""
+    conexion = obtener_conexion()
+    try:
+        with conexion.cursor() as cursor:
+            cursor.execute("SELECT id, importe, fecha_pago, estado, en_rojo_por_vencer FROM cheques_con_estado")
+            return _filas_como_dict(cursor)
+    finally:
+        conexion.close()
+
+
+def cargar_cheque(*, numero: str, banco_id: int, tipo: str, fecha_carga: date, fecha_pago: date,
+                  importe: float, origen: str, cliente_id: int | None, nombre_a_mano: str | None,
+                  cuit_librador: str, fotos: list[tuple[str, str]]) -> int:
+    """Da de alta un cheque EN CARTERA, con sus fotos [(lado, ruta)], en una
+    sola transacción. Los repetidos (banco + número + CUIT del librador) y la
+    coherencia de "de quién es" los frena la base."""
+    with _escribir_cheques() as cursor:
+        cursor.execute(
+            "INSERT INTO cheques (numero, banco_id, tipo, fecha_carga, fecha_pago, importe, origen, "
+            "cliente_id, nombre_a_mano, cuit_librador, sector) "
+            "VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, 'gerencia') RETURNING id",
+            (numero.strip(), banco_id, tipo, fecha_carga, fecha_pago, importe, origen, cliente_id,
+             (nombre_a_mano or "").strip() or None, cuit_librador),
+        )
+        cheque_id = cursor.fetchone()[0]
+        for lado, ruta in fotos:
+            cursor.execute("INSERT INTO cheques_fotos (cheque_id, lado, foto_ruta, sector) "
+                           "VALUES (%s, %s, %s, 'gerencia')", (cheque_id, lado, ruta))
+        return cheque_id
+
+
+def agregar_foto_de_cheque(cheque_id: int, lado: str, ruta: str) -> None:
+    with _escribir_cheques() as cursor:
+        cursor.execute("INSERT INTO cheques_fotos (cheque_id, lado, foto_ruta, sector) "
+                       "VALUES (%s, %s, %s, 'gerencia')", (cheque_id, lado, ruta))
+
+
+def aplicar_cheque(cheque_id: int, *, fecha: date, concepto_id: int, proveedor_id: int | None,
+                   foto_ruta: str | None) -> None:
+    """La salida del cheque. Que no esté rechazado, que tenga proveedor si es un
+    pago, que no salga antes de entrar y que salga una sola vez: la base."""
+    with _escribir_cheques() as cursor:
+        cursor.execute(
+            "INSERT INTO cheques_salidas (cheque_id, fecha, concepto_id, proveedor_id, foto_ruta, sector) "
+            "VALUES (%s, %s, %s, %s, %s, 'gerencia')",
+            (cheque_id, fecha, concepto_id, proveedor_id, foto_ruta),
+        )
+
+
+def rechazar_cheque(cheque_id: int, *, fecha: date, motivo: str) -> None:
+    with _escribir_cheques() as cursor:
+        cursor.execute("INSERT INTO cheques_rechazos (cheque_id, fecha, motivo, sector) "
+                       "VALUES (%s, %s, %s, 'gerencia')", (cheque_id, fecha, motivo.strip()))
+
+
+def resolver_reclamo_de_cheque(cheque_id: int, *, fecha: date, resolucion: str) -> None:
+    """Cierra a mano el reclamo de un rechazado: fecha y nota juntas (la base
+    lo exige) y una sola vez."""
+    with _escribir_cheques() as cursor:
+        cursor.execute(
+            "UPDATE cheques_rechazos SET resuelto_el = %s, resolucion = %s "
+            "WHERE cheque_id = %s AND resuelto_el IS NULL",
+            (fecha, resolucion.strip() or None, cheque_id),
+        )
+        if cursor.rowcount != 1:
+            raise ChequeNoSePuede("Ese cheque no tiene un reclamo pendiente.")
+
+
+# Lo que se corrige de un cheque en cartera, con su texto para el historial.
+CAMPOS_CORREGIBLES_DE_CHEQUES = ("numero", "banco", "tipo", "fecha_carga", "fecha_pago", "importe",
+                                 "origen", "cliente", "nombre_a_mano", "cuit_librador")
+_COLUMNA_DEL_CAMPO = {"banco": "banco_id", "cliente": "cliente_id"}
+
+
+def _texto_de_cheque(campo: str, valor, cursor) -> str | None:
+    if valor is None:
+        return None
+    if campo == "banco":
+        cursor.execute("SELECT nombre FROM bancos WHERE id = %s", (valor,))
+        fila = cursor.fetchone()
+        return fila[0] if fila else f"#{valor}"
+    if campo == "cliente":
+        cursor.execute("SELECT nombre FROM clientes WHERE id = %s", (valor,))
+        fila = cursor.fetchone()
+        return fila[0] if fila else f"#{valor}"
+    if campo == "importe":
+        return f"{float(valor):.2f}"
+    if isinstance(valor, date):
+        return valor.isoformat()
+    return str(valor)
+
+
+def corregir_cheque(cheque_id: int, nuevos: dict) -> int:
+    """Gerencia corrige un cheque cargado mal: `nuevos` trae los valores como
+    tienen que quedar (con las claves de CAMPOS_CORREGIBLES_DE_CHEQUES). Se
+    escribe lo que cambió, una fila de historial por campo, en la misma
+    transacción. Que siga en cartera lo decide la base. Devuelve cuántos."""
+    with _escribir_cheques() as cursor:
+        columnas = [_COLUMNA_DEL_CAMPO.get(c, c) for c in CAMPOS_CORREGIBLES_DE_CHEQUES]
+        cursor.execute(f"SELECT {', '.join(columnas)} FROM cheques WHERE id = %s FOR UPDATE", (cheque_id,))
+        fila = cursor.fetchone()
+        if fila is None:
+            raise ChequeNoSePuede("Ese cheque no existe.")
+        antes = dict(zip(CAMPOS_CORREGIBLES_DE_CHEQUES, fila))
+        cambios = []
+        for campo in CAMPOS_CORREGIBLES_DE_CHEQUES:
+            viejo, nuevo = antes[campo], nuevos.get(campo)
+            if campo == "importe":
+                igual = round(float(viejo), 2) == round(float(nuevo), 2)
+            else:
+                igual = viejo == nuevo
+            if not igual:
+                cambios.append((campo, viejo, nuevo))
+        if not cambios:
+            raise ChequeNoSePuede("No cambió nada.")
+        asignaciones = ", ".join(f"{_COLUMNA_DEL_CAMPO.get(c, c)} = %s" for c, _, _ in cambios)
+        cursor.execute(f"UPDATE cheques SET {asignaciones} WHERE id = %s",
+                       [n for _, _, n in cambios] + [cheque_id])
+        for campo, viejo, nuevo in cambios:
+            cursor.execute(
+                "INSERT INTO cheques_correcciones (cheque_id, campo, valor_anterior, valor_nuevo, sector) "
+                "VALUES (%s, %s, %s, %s, 'gerencia')",
+                (cheque_id, campo, _texto_de_cheque(campo, viejo, cursor), _texto_de_cheque(campo, nuevo, cursor)),
+            )
+        return len(cambios)
+
+
+def _banco_por_nombre(cursor, nombre: str) -> int:
+    """El id del banco con ese nombre (sin mayúsculas ni espacios de más), y
+    si no está, se agrega: el banco se elige de la lista o se escribe."""
+    nombre = " ".join(str(nombre or "").split())
+    if not nombre:
+        raise ChequeNoSePuede("Falta el banco.")
+    cursor.execute("SELECT id FROM bancos WHERE upper(btrim(nombre)) = upper(%s)", (nombre,))
+    fila = cursor.fetchone()
+    if fila:
+        return fila[0]
+    cursor.execute("INSERT INTO bancos (nombre) VALUES (%s) RETURNING id", (nombre,))
+    return cursor.fetchone()[0]
+
+
+def cargar_cheques(cheques: list[dict], *, fecha_carga: date, origen: str, cliente_id: int | None,
+                   nombre_a_mano: str | None) -> list[int]:
+    """Carga uno o varios cheques EN CARTERA en UNA transacción: o entran todos
+    o ninguno. Cada uno es {"numero", "banco" (nombre), "tipo", "fecha_pago",
+    "importe", "cuit_librador", "fotos": [(lado, ruta)]}; de quién son y la
+    fecha de carga van para todos. Un repetido dice cuál."""
+    ids = []
+    with _escribir_cheques() as cursor:
+        for cheque in cheques:
+            banco_id = _banco_por_nombre(cursor, cheque["banco"])
+            cursor.execute("SAVEPOINT un_cheque")
+            try:
+                cursor.execute(
+                    "INSERT INTO cheques (numero, banco_id, tipo, fecha_carga, fecha_pago, importe, origen, "
+                    "cliente_id, nombre_a_mano, cuit_librador, sector) "
+                    "VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, 'gerencia') RETURNING id",
+                    (cheque["numero"].strip(), banco_id, cheque["tipo"], fecha_carga, cheque["fecha_pago"],
+                     cheque["importe"], origen, cliente_id, (nombre_a_mano or "").strip() or None,
+                     cheque["cuit_librador"]),
+                )
+            except (psycopg2.errors.UniqueViolation, psycopg2.errors.CheckViolation) as error:
+                cursor.execute("ROLLBACK TO SAVEPOINT un_cheque")
+                raise ChequeNoSePuede(f"Cheque {cheque['numero']}: {_traducir_freno_de_cheques(error)}") from error
+            cheque_id = cursor.fetchone()[0]
+            for lado, ruta in cheque.get("fotos") or []:
+                cursor.execute("INSERT INTO cheques_fotos (cheque_id, lado, foto_ruta, sector) "
+                               "VALUES (%s, %s, %s, 'gerencia')", (cheque_id, lado, ruta))
+            ids.append(cheque_id)
+    return ids
+
+
+def aplicar_cheques(cheque_ids: list[int], *, fecha: date, concepto_id: int | None, concepto_nuevo: str | None,
+                    destino_nuevo: str | None, proveedor_id: int | None, foto_ruta: str | None) -> int:
+    """Aplica uno o varios cheques con la misma salida, en UNA transacción. Un
+    concepto nuevo se agrega en la misma (con el estado que deja). Devuelve el
+    concepto usado."""
+    if not cheque_ids:
+        raise ChequeNoSePuede("Elegí al menos un cheque.")
+    with _escribir_cheques() as cursor:
+        if (concepto_nuevo or "").strip():
+            cursor.execute("INSERT INTO cheques_conceptos (nombre, destino) VALUES (%s, %s) RETURNING id",
+                           (concepto_nuevo.strip(), destino_nuevo))
+            concepto_id = cursor.fetchone()[0]
+        if concepto_id is None:
+            raise ChequeNoSePuede("Elegí el concepto.")
+        for cheque_id in cheque_ids:
+            cursor.execute(
+                "INSERT INTO cheques_salidas (cheque_id, fecha, concepto_id, proveedor_id, foto_ruta, sector) "
+                "VALUES (%s, %s, %s, %s, %s, 'gerencia')",
+                (cheque_id, fecha, concepto_id, proveedor_id, foto_ruta),
+            )
+        return concepto_id

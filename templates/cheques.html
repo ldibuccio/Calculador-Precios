@@ -1,0 +1,104 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Cartera de cheques</title>
+<style>
+{% include "_cheques_estilos.html" %}
+</style>
+</head>
+<body>
+  {% set barra_sector = "gerencia" %}
+  {% set barra_titulo = "Cartera de cheques" %}
+  {% set barra_atras = vuelta(request, "/gerencia") %}
+  {% include "_barra_navegacion.html" %}
+  {% from "_info.html" import info %}
+
+  {% if aviso %}<div class="aviso">{{ aviso }}</div>{% endif %}
+  {% if error %}<div class="error">{{ error }}</div>{% endif %}
+
+  {# ARRIBA, SIEMPRE (dueño, 13/10): de TODOS los cheques, no del filtro. #}
+  <div class="tarjeta" data-resumen>
+    <p class="total" data-en-cartera>{{ resumen.en_cartera|moneda }}</p>
+    <p class="total-dato">en cartera · {{ resumen.cantidad_en_cartera }} cheque{{ '' if resumen.cantidad_en_cartera == 1 else 's' }}
+      {% call info("Cuándo se pone rojo") %}Un cheque en cartera se pone rojo a los 23 días de su fecha de pago: le quedan 7 de los 30 para depositarlo. A los 30 queda Vencido. Un rechazado sigue en rojo hasta que se marca "Reclamo resuelto". Un depositado pasa a Acreditado al día siguiente de su fecha de pago (o del depósito, si se depositó después).{% endcall %}</p>
+    <p class="total-dato" data-entran>Entra en 7 días: <strong>{{ resumen.entran_7_dias|moneda }}</strong> ({{ resumen.cantidad_entran }})</p>
+    {% if resumen.en_rojo %}
+    <p class="total-dato rojo" data-en-rojo>{% set partes = [] %}
+      {%- if resumen.por_vencer %}{% set _ = partes.append(resumen.por_vencer ~ " por vencer") %}{% endif %}
+      {%- if resumen.vencidos %}{% set _ = partes.append(resumen.vencidos ~ (" vencido" if resumen.vencidos == 1 else " vencidos")) %}{% endif %}
+      {%- if resumen.rechazados %}{% set _ = partes.append(resumen.rechazados ~ (" rechazado" if resumen.rechazados == 1 else " rechazados") ~ " sin resolver") %}{% endif %}
+      {{- partes|join(" · ") }}</p>
+    {% endif %}
+    <div class="acciones">
+      <a href="/gerencia/cheques/cargar">Cargar cheques</a>
+      <a href="/gerencia/cheques/aplicar{{ q_volver(aqui(request)) }}">Aplicar cheques</a>
+      <a href="/gerencia/cheques?en_cartera=1">En cartera</a>
+    </div>
+  </div>
+
+  <form class="tarjeta" method="get" action="/gerencia/cheques">
+    <details {% if consulta_de_cheques %}open{% endif %}>
+      <summary>Buscar</summary>
+      <div class="campos">
+        <label>Cargado desde<input type="date" name="carga_desde" value="{{ filtros.carga_desde.isoformat() if filtros.carga_desde else '' }}"></label>
+        <label>Cargado hasta<input type="date" name="carga_hasta" value="{{ filtros.carga_hasta.isoformat() if filtros.carga_hasta else '' }}"></label>
+        <label>Se cobra desde<input type="date" name="pago_desde" value="{{ filtros.pago_desde.isoformat() if filtros.pago_desde else '' }}"></label>
+        <label>Se cobra hasta<input type="date" name="pago_hasta" value="{{ filtros.pago_hasta.isoformat() if filtros.pago_hasta else '' }}"></label>
+        <label>Acreditado desde<input type="date" name="acreditado_desde" value="{{ filtros.acreditado_desde.isoformat() if filtros.acreditado_desde else '' }}"></label>
+        <label>Acreditado hasta<input type="date" name="acreditado_hasta" value="{{ filtros.acreditado_hasta.isoformat() if filtros.acreditado_hasta else '' }}"></label>
+        <label>¿De qué cliente?
+          <select name="cliente_id"><option value="">Todos</option>
+            {% for c in clientes %}<option value="{{ c.id }}" {% if filtros.cliente_id == c.id %}selected{% endif %}>{{ c.nombre }}</option>{% endfor %}
+          </select></label>
+        <label>¿De quién? (nombre)<input type="text" name="de_quien" placeholder="Ej. Canje, Juan" value="{{ filtros.de_quien or '' }}"></label>
+        <label>¿A qué proveedor se entregó?
+          <select name="proveedor_id"><option value="">Todos</option>
+            {% for p in proveedores %}<option value="{{ p.id }}" {% if filtros.proveedor_id == p.id %}selected{% endif %}>{{ p.nombre }}</option>{% endfor %}
+          </select></label>
+        <label>Número<input type="text" inputmode="numeric" name="numero" value="{{ filtros.numero or '' }}"></label>
+        <label>Banco
+          <select name="banco_id"><option value="">Todos</option>
+            {% for b in bancos %}<option value="{{ b.id }}" {% if filtros.banco_id == b.id %}selected{% endif %}>{{ b.nombre }}</option>{% endfor %}
+          </select></label>
+        <label>Concepto
+          <select name="concepto_id"><option value="">Todos</option>
+            {% for c in conceptos %}<option value="{{ c.id }}" {% if filtros.concepto_id == c.id %}selected{% endif %}>{{ c.nombre }}</option>{% endfor %}
+          </select></label>
+        <label>Estado
+          <select name="estado"><option value="">Todos</option>
+            {% for valor, texto in estados %}<option value="{{ valor }}" {% if filtros.estado == valor %}selected{% endif %}>{{ texto }}</option>{% endfor %}
+          </select></label>
+        <label class="ancho"><input type="checkbox" name="en_cartera" value="1" {% if filtros.en_cartera %}checked{% endif %} style="display:inline;width:auto;min-height:0;margin-right:0.4rem">Solo los que están en cartera</label>
+      </div>
+      <div class="acciones"><button type="submit">Buscar</button><a href="/gerencia/cheques">Limpiar</a></div>
+    </details>
+  </form>
+
+  <div class="tarjeta" data-listado>
+    <h2>{{ cheques|length }} cheque{{ '' if cheques|length == 1 else 's' }} · <span class="importe">{{ total|moneda }}</span></h2>
+    <div class="acciones">
+      <a href="/gerencia/cheques/exportar-pdf?{{ query_exportar }}">PDF</a>
+      <a href="/gerencia/cheques/exportar-excel?{{ query_exportar }}">Excel</a>
+    </div>
+    {% for c in cheques %}
+    <div class="fila" data-cheque="{{ c.id }}">
+      <a class="abrir" href="/gerencia/cheques/{{ c.id }}{{ q_volver(aqui(request)) }}">
+        <div class="fila-cabeza">
+          <span class="fila-que">{{ c.de_quien }}</span>
+          <span class="importe">{{ c.importe|moneda }}</span>
+        </div>
+        <div class="fila-dato">{{ c.banco }} · Nº {{ c.numero }}{% if c.tipo == 'echeq' %} · ECHEQ{% endif %} · se cobra el {{ c.fecha_pago.strftime('%d/%m/%Y') }}</div>
+        <div class="fila-dato"><span class="{{ 'rojo' if en_rojo(c) else '' }}" data-estado="{{ c.estado }}">{{ nombre_del_estado[c.estado] }}{% if c.estado == 'en_cartera' and c.en_rojo_por_vencer %} · vence el {{ c.vence_el.strftime('%d/%m') }}{% endif %}</span>
+          {%- if c.proveedor %} · a {{ c.proveedor }}{% elif c.concepto %} · {{ c.concepto }}{% endif %}
+          {%- if c.acreditado_el and c.estado == 'depositado' %} · se acredita el {{ c.acreditado_el.strftime('%d/%m') }}{% endif %}</div>
+      </a>
+    </div>
+    {% else %}
+    <p class="vacio">No hay cheques con esos filtros.</p>
+    {% endfor %}
+  </div>
+{% include "_pie_version.html" %}
+</body>
+</html>

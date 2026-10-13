@@ -64,6 +64,8 @@ NO_SE_ABREN = {
     "/gerencia/fotos/compras-borradas/{foto_id}/ver": "idem",
     "/administracion/facturacion/remito/{remito_id}/fotos/{foto_id}": "idem",
     "/gerencia/facturacion/remito/{remito_id}/fotos/{foto_id}": "idem",
+    "/gerencia/cheques/{cheque_id}/fotos/{foto_id}/ver": "idem",
+    "/gerencia/cheques/{cheque_id}/salida/foto": "idem",
     # El mail necesita una casilla configurada con su credencial, que por
     # regla del proyecto no vive en la base.
     "/deposito/pedido/mails/{mail_id}/revisar": "necesita una casilla con credencial",
@@ -267,6 +269,25 @@ def siembra():
     insert into fotos_borradas_por_antiguedad (foto_ruta, tipo, subida_el, como, borrado_id)
       select 'vales/EJEMPLO.jpg', 'vale', now() - interval '4 years', 'plazo', id from fotos_borrados;
     insert into fotos_plazos (tipo, anios) values ('comanda', 2);
+    -- CARTERA DE CHEQUES (13/10): uno en cartera con su foto y uno aplicado y
+    -- rechazado, así la lista, la ficha y el panel pasan por todos sus joins.
+    insert into bancos (nombre) values ('EJEMPLO Banco');
+    insert into cheques (numero, banco_id, tipo, fecha_carga, fecha_pago, importe, origen, cliente_id,
+                         cuit_librador, sector)
+      select '00012345', b.id, 'fisico', current_date - 3, current_date + 5, 150000, 'cliente', c.id,
+             '20123456789', 'gerencia' from bancos b, clientes c limit 1;
+    insert into cheques (numero, banco_id, tipo, fecha_carga, fecha_pago, importe, origen, nombre_a_mano,
+                         cuit_librador, sector)
+      select '777', b.id, 'echeq', current_date - 30, current_date - 25, 90000, 'a_mano', 'EJEMPLO Persona',
+             '27123456789', 'gerencia' from bancos b limit 1;
+    insert into cheques_fotos (cheque_id, lado, foto_ruta, sector)
+      select min(id), 'frente', 'cheques/EJEMPLO.jpg', 'gerencia' from cheques;
+    insert into cheques_salidas (cheque_id, fecha, concepto_id, proveedor_id, foto_ruta, sector)
+      select ch.id, current_date - 2, co.id, pr.id, 'cheques/EJEMPLO-boleta.jpg', 'gerencia'
+        from cheques ch, cheques_conceptos co, proveedores pr
+       where ch.numero = '777' and co.destino = 'entregado' limit 1;
+    insert into cheques_rechazos (cheque_id, fecha, motivo, sector)
+      select id, current_date - 1, 'Sin fondos', 'gerencia' from cheques where numero = '777';
     -- UN REMITO RECIBIDO (dueño, 01/10), con su renglón, su foto y un rechazo
     -- distinto del de Depósito: así Facturación, el detalle, el cotejo y la
     -- lista de fotos pasan por sus joins.

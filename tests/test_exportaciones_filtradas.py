@@ -55,6 +55,10 @@ EXPORTACIONES = {
     "/gerencia/rentabilidad-real/exportar-excel": "contenido",
     "/administracion/pedidos/buscar/exportar-pdf": "contenido",
     "/administracion/pedidos/buscar/exportar-excel": "contenido",
+    # Cartera de cheques (13/10): lo cuida tests/test_cheques_pantallas.py,
+    # siguiendo el link que dibuja la pantalla con los filtros puestos.
+    "/gerencia/cheques/exportar-pdf": "tests/test_cheques_pantallas.py",
+    "/gerencia/cheques/exportar-excel": "tests/test_cheques_pantallas.py",
     # Cobranzas de segunda (02/10): lo cuida tests/test_cobranzas_segunda.py,
     # siguiendo el link que dibuja la pantalla. La de Administración es la
     # misma función con otra puerta.

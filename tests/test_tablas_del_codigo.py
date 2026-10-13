@@ -20,7 +20,8 @@ RAIZ = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 # En POSICIÓN DE TABLA y no la palabra suelta (corolario 59): la prosa nombra
 # tablas viejas todo el tiempo para explicar por qué no se usan.
 EN_POSICION = re.compile(r"\b(?:FROM|JOIN|INTO|UPDATE)\s+([a-z_][a-z0-9_]*)\b")
-CREA = re.compile(r"^create table (?:if not exists )?([a-z_][a-z0-9_]*)", re.M | re.I)
+# Las VISTAS también: el código lee `cheques_con_estado` como una tabla (13/10).
+CREA = re.compile(r"^create (?:table|view) (?:if not exists )?([a-z_][a-z0-9_]*)", re.M | re.I)
 
 # Palabras que el regex toma por tabla y no lo son, cada una con su razón.
 NO_SON_TABLAS = {

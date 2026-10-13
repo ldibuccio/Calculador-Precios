@@ -1,0 +1,97 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Cargar cheques</title>
+<style>
+{% include "_cheques_estilos.html" %}
+  .cheque-fila { border-top: 2px solid #e5e7eb; padding-top: 0.8rem; margin-top: 0.8rem; }
+  .cheque-fila:first-of-type { border-top: none; padding-top: 0; margin-top: 0; }
+  .leido { max-width: 100%; border-radius: 8px; margin-top: 0.5rem; }
+</style>
+</head>
+<body>
+  {% set barra_sector = "gerencia" %}
+  {% set barra_titulo = "Cargar cheques" %}
+  {% set barra_atras = "/gerencia/cheques" %}
+  {% include "_barra_navegacion.html" %}
+
+  {% if aviso %}<div class="aviso">{{ aviso }}</div>{% endif %}
+  {% if error %}<div class="error" data-error>{{ error }}</div>{% endif %}
+
+  <form class="tarjeta" method="post" action="/gerencia/cheques/cargar/leer" enctype="multipart/form-data">
+    <h2>¿Lo leo de una foto o un archivo?</h2>
+    <div class="campos"><label class="ancho">Foto del cheque, PDF del ECHEQ o un listado<input type="file" name="archivo" accept="image/*,.pdf,.xlsx" required></label></div>
+    <div class="acciones"><button type="submit" class="secundario">Leer</button></div>
+    <p class="nota">Lo que se lea aparece abajo para corregir antes de guardar.</p>
+  </form>
+
+  <form class="tarjeta" method="post" action="/gerencia/cheques/cargar" enctype="multipart/form-data" id="carga">
+    <input type="hidden" name="cantidad" id="cantidad" value="{{ filas|length }}">
+    <input type="hidden" name="foto_leida" value="{{ foto_leida }}">
+    <div class="campos">
+      <label>¿Qué día lo recibiste?<input type="date" name="fecha_carga" value="{{ comunes.fecha_carga }}" required></label>
+      <label>¿De quién es?
+        <select name="origen" id="origen">
+          {% for valor, texto in origenes %}<option value="{{ valor }}" {% if comunes.origen == valor %}selected{% endif %}>{{ texto }}</option>{% endfor %}
+        </select></label>
+      <label data-origen-de="cliente">Cliente
+        <select name="cliente_id"><option value="">Elegí</option>
+          {% for c in clientes %}<option value="{{ c.id }}" {% if comunes.cliente_id == c.id %}selected{% endif %}>{{ c.nombre }}</option>{% endfor %}
+        </select></label>
+      <label data-origen-de="a_mano">Nombre<input type="text" name="nombre_a_mano" placeholder="Ej. Juan Pérez" value="{{ comunes.nombre_a_mano }}"></label>
+    </div>
+    {% if foto_leida %}<img class="leido" src="{{ foto_leida }}" alt="La foto leída: queda como el frente del cheque">{% endif %}
+
+    <datalist id="bancos">{% for b in bancos %}<option value="{{ b.nombre }}">{% endfor %}</datalist>
+    <div id="filas">
+    {% for f in filas %}{% set i = loop.index0 %}
+      <div class="cheque-fila" data-fila="{{ i }}">
+        <h3>Cheque {{ i + 1 }}{% if f.librador %} · {{ f.librador }}{% endif %}</h3>
+        <div class="campos">
+          <label>Número<input type="text" name="numero_{{ i }}" inputmode="numeric" value="{{ f.numero }}" required></label>
+          <label>Banco<input type="text" name="banco_{{ i }}" list="bancos" placeholder="Ej. Galicia" value="{{ f.banco }}" required></label>
+          <label>¿Físico o ECHEQ?<select name="tipo_{{ i }}"><option value="fisico" {% if f.tipo != 'echeq' %}selected{% endif %}>Físico</option><option value="echeq" {% if f.tipo == 'echeq' %}selected{% endif %}>ECHEQ</option></select></label>
+          <label>¿Qué día se cobra?<input type="date" name="fecha_pago_{{ i }}" value="{{ f.fecha_pago }}" required></label>
+          <label>Importe<input type="number" name="importe_{{ i }}" step="0.01" min="0.01" inputmode="decimal" value="{{ f.importe }}" required></label>
+          <label>CUIT de quien lo firma<input type="text" name="cuit_librador_{{ i }}" inputmode="numeric" placeholder="Ej. 20123456789" value="{{ f.cuit_librador }}" required></label>
+          <label>Foto del frente<input type="file" name="foto_frente_{{ i }}" accept="image/*"></label>
+          <label>Foto del dorso<input type="file" name="foto_dorso_{{ i }}" accept="image/*"></label>
+        </div>
+      </div>
+    {% endfor %}
+    </div>
+    <div class="acciones">
+      <button type="button" class="secundario" id="otro">Agregar otro cheque</button>
+      <button type="submit">Guardar</button>
+    </div>
+  </form>
+<script>
+  // De quién es: el cliente o el nombre, según lo elegido.
+  function verOrigen() {
+    var origen = document.getElementById("origen").value;
+    document.querySelectorAll("[data-origen-de]").forEach(function (campo) {
+      campo.hidden = campo.dataset.origenDe !== origen;
+    });
+  }
+  document.getElementById("origen").addEventListener("change", verOrigen);
+  verOrigen();
+  // Otro cheque: copia el primero, vacío, con su número de fila.
+  document.getElementById("otro").addEventListener("click", function () {
+    var filas = document.getElementById("filas");
+    var i = filas.children.length;
+    var nueva = filas.children[0].cloneNode(true);
+    nueva.dataset.fila = i;
+    nueva.querySelector("h3").textContent = "Cheque " + (i + 1);
+    nueva.querySelectorAll("[name]").forEach(function (campo) {
+      campo.name = campo.name.replace(/_\d+$/, "_" + i);
+      if (campo.tagName === "SELECT") { campo.selectedIndex = 0; } else { campo.value = ""; }
+    });
+    filas.appendChild(nueva);
+    document.getElementById("cantidad").value = i + 1;
+  });
+</script>
+{% include "_pie_version.html" %}
+</body>
+</html>

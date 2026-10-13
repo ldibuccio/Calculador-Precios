@@ -1,0 +1,131 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Cheque</title>
+<style>
+{% include "_cheques_estilos.html" %}
+  .datos { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1.4fr); gap: 0.35rem 0.8rem; font-size: 0.92rem; margin: 0; }
+  .datos dt { color: #555; }
+  .datos dd { margin: 0; font-weight: 600; }
+  .fotos { display: flex; flex-wrap: wrap; gap: 0.6rem; }
+  .fotos a { flex: 1 1 8rem; min-height: 44px; display: flex; align-items: center; justify-content: center;
+    border: 1px solid #2563eb; border-radius: 8px; color: #2563eb; text-decoration: none; font-weight: 600; }
+  .historial { list-style: none; padding: 0; margin: 0; font-size: 0.88rem; }
+  .historial li { padding: 0.35rem 0; border-top: 1px solid #eee; }
+  .historial li:first-child { border-top: none; }
+</style>
+</head>
+<body>
+  {% set volver = vuelta(request, "") %}
+  {% set barra_sector = "gerencia" %}
+  {% set barra_titulo = "Cheque Nº " ~ cheque.numero %}
+  {% set barra_atras = volver or "/gerencia/cheques" %}
+  {% include "_barra_navegacion.html" %}
+
+  {% if aviso %}<div class="aviso">{{ aviso }}</div>{% endif %}
+  {% if error %}<div class="error">{{ error }}</div>{% endif %}
+
+  {% set en_cartera = cheque.estado in ('en_cartera', 'vencido') %}
+  <div class="tarjeta">
+    <p class="total">{{ cheque.importe|moneda }}</p>
+    <p class="total-dato"><span class="{{ 'rojo' if en_rojo else '' }}" data-estado="{{ cheque.estado }}">{{ nombre_del_estado[cheque.estado] }}</span>
+      {%- if cheque.estado == 'en_cartera' and cheque.en_rojo_por_vencer %} · <span class="rojo">vence el {{ cheque.vence_el.strftime('%d/%m/%Y') }}</span>{% endif %}
+      {%- if cheque.estado == 'rechazado' %} · <span class="rojo">reclamarlo a {{ cheque.de_quien }}</span>{% endif %}</p>
+    <dl class="datos">
+      <dt>De quién</dt><dd>{{ cheque.de_quien }}</dd>
+      <dt>Banco</dt><dd>{{ cheque.banco }}</dd>
+      <dt>Número</dt><dd>{{ cheque.numero }}{% if cheque.tipo == 'echeq' %} · ECHEQ{% else %} · físico{% endif %}</dd>
+      <dt>CUIT del librador</dt><dd>{{ cheque.cuit_librador }}</dd>
+      <dt>Cargado el</dt><dd>{{ cheque.fecha_carga.strftime('%d/%m/%Y') }}</dd>
+      <dt>Se cobra el</dt><dd>{{ cheque.fecha_pago.strftime('%d/%m/%Y') }}</dd>
+      <dt>Vence el</dt><dd>{{ cheque.vence_el.strftime('%d/%m/%Y') }}</dd>
+      {% if cheque.fecha_salida %}
+      <dt>Salió el</dt><dd>{{ cheque.fecha_salida.strftime('%d/%m/%Y') }} · {{ cheque.concepto }}{% if cheque.proveedor %} a {{ cheque.proveedor }}{% endif %}</dd>
+      {% endif %}
+      {% if cheque.acreditado_el %}<dt>Se acredita el</dt><dd>{{ cheque.acreditado_el.strftime('%d/%m/%Y') }}</dd>{% endif %}
+      {% if cheque.fecha_rechazo %}<dt>Rechazado el</dt><dd class="rojo">{{ cheque.fecha_rechazo.strftime('%d/%m/%Y') }} · {{ cheque.motivo_rechazo }}</dd>{% endif %}
+      {% if cheque.resuelto_el %}<dt>Reclamo resuelto</dt><dd>{{ cheque.resuelto_el.strftime('%d/%m/%Y') }} · {{ cheque.resolucion }}</dd>{% endif %}
+    </dl>
+    {% if en_cartera %}
+    <div class="acciones"><a href="/gerencia/cheques/aplicar?cheque_id={{ cheque.id }}{{ y_volver(aqui(request)) }}">Aplicar este cheque</a></div>
+    {% endif %}
+  </div>
+
+  <div class="tarjeta">
+    <h2>Fotos</h2>
+    <div class="fotos">
+      {% for f in cheque.fotos %}<a href="/gerencia/cheques/{{ cheque.id }}/fotos/{{ f.id }}/ver" target="_blank" rel="noopener">{{ f.lado|capitalize }}</a>{% endfor %}
+      {% if cheque.foto_salida %}<a href="/gerencia/cheques/{{ cheque.id }}/salida/foto" target="_blank" rel="noopener">Comprobante de la salida</a>{% endif %}
+    </div>
+    {% if not cheque.fotos and not cheque.foto_salida %}<p class="vacio">Sin fotos.</p>{% endif %}
+    <form method="post" action="/gerencia/cheques/{{ cheque.id }}/fotos{{ q_volver(volver) }}" enctype="multipart/form-data">
+      <div class="campos">
+        <label>¿Qué lado?<select name="lado"><option value="frente">Frente</option><option value="dorso">Dorso</option></select></label>
+        <label>Foto<input type="file" name="foto" accept="image/*" required></label>
+      </div>
+      <div class="acciones"><button type="submit" class="secundario">Agregar foto</button></div>
+    </form>
+  </div>
+
+  {% if cheque.estado == 'rechazado' %}
+  <form class="tarjeta" method="post" action="/gerencia/cheques/{{ cheque.id }}/resolver{{ q_volver(volver) }}">
+    <h2>¿Cómo se resolvió el reclamo?</h2>
+    <div class="campos">
+      <label>Fecha<input type="date" name="fecha" value="{{ hoy.isoformat() }}" required></label>
+      <label class="ancho">¿Cómo se resolvió?<input type="text" name="resolucion" placeholder="Ej. Pagó en efectivo el 20/10" required></label>
+    </div>
+    <div class="acciones"><button type="submit">Reclamo resuelto</button></div>
+  </form>
+  {% elif cheque.estado != 'reclamo_resuelto' %}
+  <details class="tarjeta">
+    <summary>Marcar como rechazado</summary>
+    <form method="post" action="/gerencia/cheques/{{ cheque.id }}/rechazar{{ q_volver(volver) }}">
+      <div class="campos">
+        <label>Fecha del rechazo<input type="date" name="fecha" value="{{ hoy.isoformat() }}" required></label>
+        <label class="ancho">¿Por qué lo rechazaron?<input type="text" name="motivo" placeholder="Ej. Sin fondos" required></label>
+      </div>
+      <div class="acciones"><button type="submit" class="peligro">Rechazado</button></div>
+    </form>
+  </details>
+  {% endif %}
+
+  {% if en_cartera %}
+  <details class="tarjeta">
+    <summary>Corregir datos</summary>
+    <form method="post" action="/gerencia/cheques/{{ cheque.id }}/corregir{{ q_volver(volver) }}">
+      <div class="campos">
+        <label>Número<input type="text" name="numero" value="{{ cheque.numero }}" required></label>
+        <label>Banco<select name="banco_id">{% for b in bancos %}<option value="{{ b.id }}" {% if b.id == cheque.banco_id %}selected{% endif %}>{{ b.nombre }}</option>{% endfor %}</select></label>
+        <label>¿Físico o ECHEQ?<select name="tipo"><option value="fisico" {% if cheque.tipo == 'fisico' %}selected{% endif %}>Físico</option><option value="echeq" {% if cheque.tipo == 'echeq' %}selected{% endif %}>ECHEQ</option></select></label>
+        <label>Cargado el<input type="date" name="fecha_carga" value="{{ cheque.fecha_carga.isoformat() }}" required></label>
+        <label>Se cobra el<input type="date" name="fecha_pago" value="{{ cheque.fecha_pago.isoformat() }}" required></label>
+        <label>Importe<input type="number" name="importe" step="0.01" min="0.01" inputmode="decimal" value="{{ '%.2f'|format(cheque.importe) }}" required></label>
+        <label>CUIT del librador<input type="text" name="cuit_librador" inputmode="numeric" value="{{ cheque.cuit_librador }}" required></label>
+        <label>¿De quién es?<select name="origen">{% for valor, texto in origenes %}<option value="{{ valor }}" {% if cheque.origen == valor %}selected{% endif %}>{{ texto }}</option>{% endfor %}</select></label>
+        <label>Cliente<select name="cliente_id"><option value="">—</option>{% for c in clientes %}<option value="{{ c.id }}" {% if c.id == cheque.cliente_id %}selected{% endif %}>{{ c.nombre }}</option>{% endfor %}</select></label>
+        <label>Nombre (si es otro)<input type="text" name="nombre_a_mano" value="{{ cheque.nombre_a_mano or '' }}"></label>
+      </div>
+      <div class="acciones"><button type="submit">Guardar corrección</button></div>
+    </form>
+  </details>
+  {% endif %}
+
+  <div class="tarjeta">
+    <h2>Historial</h2>
+    <ul class="historial" data-historial>
+      {% for h in cheque.historial %}
+      <li>{{ h.cuando|fecha_hora }} · {{ 'Gerencia' if h.sector == 'gerencia' else h.sector }} ·
+        {% if h.que == 'carga' %}cargó el cheque
+        {% elif h.que == 'correccion' %}corrigió {{ h.campo|replace('_', ' ') }}: {{ h.antes or '—' }} → {{ h.despues or '—' }}
+        {% elif h.que == 'salida' %}lo aplicó: {{ h.despues }}
+        {% elif h.que == 'rechazo' %}lo marcó rechazado: {{ h.despues }}
+        {% elif h.que == 'foto' %}agregó la foto del {{ h.campo }}{% endif %}</li>
+      {% endfor %}
+      {% if cheque.resuelto_el %}<li>{{ cheque.resuelto_el.strftime('%d/%m/%Y') }} · Gerencia · reclamo resuelto: {{ cheque.resolucion }}</li>{% endif %}
+    </ul>
+  </div>
+{% include "_pie_version.html" %}
+</body>
+</html>

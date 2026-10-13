@@ -494,3 +494,18 @@ PALMALA   perdida_ficha_1_tabla · tablas 1 · con_candado 1 · columna_bitacora
 
 La tabla nació con candado y con la política de `lectura_claudia` en
 Frutamax; en Palmala ese usuario no existe.
+
+## 13/10 — `cheques_1`: Cartera de cheques (bloques `db/cheques_1..5`)
+
+Corrido por Lionel en Frutamax y Palmala ANTES de programar el módulo.
+Verificado por mí por el conector "Supabase Lectura" el 13/10 a las 15:06 UTC
+(`db/cheques_6_verificacion.sql`):
+
+```
+FRUTAMAX  cheques_1 · tablas 7 · con_candado 7 · politicas 0 · conceptos 3 · triggers 2 · vista 1 · indice_repetidos 1 · cheques 0 · testigo_clientes 5
+PALMALA   cheques_1 · tablas 7 · con_candado 7 · politicas 0 · conceptos 3 · triggers 2 · vista 1 · indice_repetidos 1 · cheques 0 · testigo_clientes 5
+```
+
+Los tres conceptos de arranque, en las dos: Pago a proveedor (entregado),
+Canje (canjeado) y Depósito en cuenta (depositado). Sin política para
+`lectura_claudia`: como en las demás tablas con candado, ahí lee cero filas.
