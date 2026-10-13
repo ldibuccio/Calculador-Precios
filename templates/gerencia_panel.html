@@ -196,6 +196,20 @@
       <div class="cuadro-pie" data-sin-foto>Aparece en la próxima actualización.</div>
       {% endif %}
     </a>
+
+    {# 11. KILOS AL ARMAR (dueño, 13/10). Igual que el rinde: una foto de antes
+       no lo trae. #}
+    <a data-ajustar-contenedor class="cuadro ancho" href="/gerencia/panel/kilos" data-cuadro="kilos">
+      <div class="cuadro-titulo">{{ titulos.kilos }}</div>
+      {% if datos.kilos is defined %}{% set k = datos.kilos %}
+      <div data-ajustar class="cuadro-numero {{ '' if k.renglones else 'verde' }}">{{ k.renglones }}</div>
+      <div class="cuadro-pie">{{ "renglón armado" if k.renglones == 1 else "renglones armados" }} con kilos distintos de la ficha</div>
+      {% if k.renglones %}<div class="cuadro-pie" data-kg-diferencia>{{ k.kg_diferencia|abs|numero }} kg {{ "de más" if k.kg_diferencia > 0 else "de menos" }} en total</div>{% endif %}
+      <div class="nota">Del {{ k.desde.strftime("%d/%m") }} al {{ k.hasta.strftime("%d/%m") }}. No cuenta lo que salió en su envase.</div>
+      {% else %}
+      <div class="cuadro-pie" data-sin-foto>Aparece en la próxima actualización.</div>
+      {% endif %}
+    </a>
   </div>
 {% include "_ajustar_numeros.html" %}
 {% include "_pie_version.html" %}

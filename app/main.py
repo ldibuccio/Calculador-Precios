@@ -401,6 +401,7 @@ from app.db import (
     RepartoDesactualizado,
     KilosNoDan,
     guias_r_con_sus_kilos,
+    kilos_distintos_de_la_ficha,
     kilos_comprados_y_enviados,
     perdidas_cargadas_por_articulo,
     ReprocesoAnteriorAlCorte,
@@ -20517,7 +20518,7 @@ def _datos_rentabilidad_real(cliente_id: int, fecha_desde, fecha_hasta, articulo
 # UN número, y al tocarlo su detalle. NINGUNA cuenta es nueva: cada cuadro llama
 # a la que ya usa su pantalla (ver core/panel_control.py).
 CUADROS_DEL_PANEL = ("rentabilidad", "cajas", "pedidos", "peso", "vales", "vacios", "rechazos", "mermas", "segunda",
-                     "rinde")
+                     "rinde", "kilos")
 TITULOS_DEL_PANEL = {
     "rentabilidad": "Rentabilidad por cliente",
     "cajas": "Cajas",
@@ -20529,6 +20530,7 @@ TITULOS_DEL_PANEL = {
     "mermas": "Mermas",
     "segunda": "Segunda",
     "rinde": "Rinde de guías R",
+    "kilos": "Kilos al armar",
 }
 
 
@@ -20672,6 +20674,16 @@ def _panel_rinde(hoy) -> dict:
     return {**resumen_del_rinde(guias_r_con_sus_kilos(desde, hasta)), "desde": desde, "hasta": hasta}
 
 
+def _panel_kilos(hoy) -> dict:
+    """KILOS AL ARMAR (dueño, 13/10): los últimos 7 días COMPLETOS, como el
+    rinde. Los renglones armados con kilos por bulto distintos de la ficha,
+    por artículo, con cuántos y cuántos kilos de diferencia."""
+    desde, hasta = hoy - timedelta(days=7), hoy - timedelta(days=1)
+    filas = kilos_distintos_de_la_ficha(desde, hasta)
+    return {"filas": filas, "renglones": sum(f["renglones"] for f in filas),
+            "kg_diferencia": round(sum(f["kg_diferencia"] for f in filas), 2), "desde": desde, "hasta": hasta}
+
+
 _DATOS_DEL_PANEL = {
     "cajas": lambda hoy: _panel_cajas(),
     "pedidos": lambda hoy: _panel_pedidos(hoy),
@@ -20680,6 +20692,7 @@ _DATOS_DEL_PANEL = {
     "vacios": lambda hoy: _panel_vacios(),
     "rechazos": lambda hoy: _panel_rechazos(hoy),
     "rinde": lambda hoy: _panel_rinde(hoy),
+    "kilos": lambda hoy: _panel_kilos(hoy),
 }
 _DATOS_DEL_PANEL_CON_MEMO = {
     "rentabilidad": _panel_rentabilidad,
@@ -20695,7 +20708,7 @@ def _datos_del_cuadro(cuadro: str, hoy, memo: dict):
 
 
 def calcular_el_panel(hoy) -> dict:
-    """Los diez cuadros del tablero. Es lo que tarda: se corre a las 06:00 y
+    """Los once cuadros del tablero. Es lo que tarda: se corre a las 06:00 y
     a las 14:00, y con el botón "Actualizar ahora"."""
     memo: dict = {}
     return {cuadro: _datos_del_cuadro(cuadro, hoy, memo) for cuadro in CUADROS_DEL_PANEL}
@@ -20790,6 +20803,7 @@ def actualizar_panel_ahora(request: Request):
 @app.get("/gerencia/panel/mermas")
 @app.get("/gerencia/panel/segunda")
 @app.get("/gerencia/panel/rinde")
+@app.get("/gerencia/panel/kilos")
 def ver_detalle_del_panel(request: Request):
     """El detalle de UN cuadro: los mismos datos que el número, abiertos."""
     cuadro = request.url.path.rstrip("/").rsplit("/", 1)[1]

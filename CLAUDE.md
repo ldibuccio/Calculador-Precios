@@ -283,7 +283,7 @@ Módulos (se lee el que se va a tocar):
   fecha anterior" de Administración con la contraseña especial de Gerencia,
   de qué guía y cómo (en su envase o en caja de Día) salió un pedido de un
   día anterior, y el control al anular una guía R.
-- `docs/modulos/panel_control.md`: el Panel de control de Gerencia (diez
+- `docs/modulos/panel_control.md`: el Panel de control de Gerencia (once
   cuadros que reusan cuentas; rentabilidad sin mermas ni segunda, que tienen
   sus cuadros; la cruz cuenta como pedido incompleto; Rinde de guías R).
 - `docs/modulos/fletes.md`: Fletes (Administración → Pedidos), el armado más

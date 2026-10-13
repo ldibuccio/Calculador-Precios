@@ -2,7 +2,7 @@
 
 ## El tablero y la regla de oro (dueño, 08/10)
 
-Gerencia → **Panel de control** (primero en "Mirar"): un tablero de diez cuadros
+Gerencia → **Panel de control** (primero en "Mirar"): un tablero de once cuadros
 grandes, cada uno con UN número que se lee de un pantallazo (390px), y al
 tocarlo su detalle (`/gerencia/panel/<cuadro>`, una dirección escrita por
 cuadro para que el humo las abra todas). Rutas en `app/main.py`
@@ -89,7 +89,8 @@ el panel solo la resume. En orden:
    por kilo, **Falta % = (kg que entraron − primera − segunda − merma) / kg
    que entraron**, con la cuenta del cartel "LOS KILOS NO DAN"
    (`core/kilos_guia_r.py`: cajones × kg pesados del cajón de SU compra;
-   cajas × kg de la ficha; segunda y merma en cajones × el cajón promedio de
+   la primera con los kilos que se mandaron en los pedidos que salieron de
+   esas cajas, o la ficha si no salieron —`kg_de_la_primera`—; segunda y merma en cajones × el cajón promedio de
    la guía), **POR GUÍA**, para que no la ensucie el reparto de compras
    (`guias_r_con_sus_kilos`, `rinde_por_articulo`). El número grande: cuántos
    artículos pasan el 5% (`UMBRAL_FALTA_PCT`), rojo si hay alguno. El
@@ -104,6 +105,24 @@ el panel solo la resume. En orden:
    13/10, del 05/09 al 12/10: 615 guías, 507 con cuenta): Morrón Rojo 19,9%,
    Tomate Perita 7,7%, Zapallito 6,3%, Morrón Verde 2,3%. El dueño esperaba
    18, 6, 4 y 2: preguntado de dónde salen.
+
+11. **Kilos al armar** (dueño, 13/10): los mismos **últimos 7 días
+   completos**. Los renglones armados de fichas por kilo cuyos kilos por
+   bulto no son los de la ficha (`kilos_distintos_de_la_ficha`: pedidos
+   vigentes, renglones no anulados, por `armado_el` de Argentina). La
+   diferencia es `kilos_enviados` menos bultos armados × `contenido_caja`.
+   **En su envase no entra**: ahí los kilos los pone el que arma. El número
+   grande es cuántos renglones, y abajo los kg de más (o de menos) en total.
+   El detalle va por artículo, con renglones y kg. Al armar NO hay aviso
+   (dueño, 13/10: confunde, y no hay errores de tipeo): el casillero de
+   kilos por bulto sigue editable, sin cartel. Tests:
+   `tests/test_kilos_al_armar.py`.
+
+   Medido en Frutamax (conector de lectura, 13/10, del 05/09 al 12/10): de
+   1.508 renglones por kilo armados, 20 con kilos distintos de la ficha,
+   todos de más, 395 kg en total. Sin los que salieron en su envase, 18
+   renglones y 355 kg. En la ventana del cuadro (del 06/10 al 12/10), 9
+   renglones y 170 kg.
 
 La cuenta de Pérdidas rejuega el FIFO: el tablero la pide una sola vez por mes
 y la comparten Mermas y Segunda (`_perdidas_de_los_dos_meses`). Lo mismo la

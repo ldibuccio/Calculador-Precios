@@ -33277,6 +33277,11 @@ def test_toda_salida_de_PRIMERA_lee_la_constante_y_solo_los_TOTALES_leen_el_arma
         # Rendimientos (dueño, 13/10): los kilos por bulto ENVIADO; kilos_enviados
         # es del renglón entero, así que se divide por lo que recibió el cliente.
         "kilos_comprados_y_enviados",
+        # Los kilos que se mandaron de las cajas de una guía R y los armados con
+        # kilos distintos de la ficha (dueño, 13/10): kilos_enviados es del
+        # renglón entero, y la ficha se multiplica por los mismos bultos.
+        "kilos_reales_de_la_primera",
+        "kilos_distintos_de_la_ficha",
     }
     assert encontradas == decididas
     # Y la constante está donde se resta del stock.

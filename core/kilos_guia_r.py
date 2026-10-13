@@ -28,6 +28,22 @@ def kg_entero(kilos: float) -> int:
     return math.floor(kilos + 0.5)
 
 
+def kg_de_la_primera(primera, kg_caja_ficha, reales: dict | None = None) -> float:
+    """Los kilos de las cajas de primera de una guía R (dueño, 13/10).
+
+    Las cajas que ya salieron en un pedido con sus kilos cargados al armar
+    (`reales` = {"bultos", "kg"}, de `kilos_reales_de_la_primera`) pesan lo
+    que se mandó; las demás —en el piso, o armadas sin kilos— pesan lo de la
+    ficha. Sin reales, es cajas × ficha, la cuenta de siempre.
+    """
+    primera = float(primera)
+    if not reales or not reales.get("bultos"):
+        return primera * float(kg_caja_ficha)
+    con_reales = min(float(reales["bultos"]), primera)
+    kg_reales = float(reales["kg"]) * con_reales / float(reales["bultos"])
+    return kg_reales + (primera - con_reales) * float(kg_caja_ficha)
+
+
 def cuenta_de_kilos(consumos: list[tuple], primera, segunda, merma, kg_caja_ficha) -> dict | None:
     """La cuenta de una guía R. `consumos` = [(bultos, kg pesados por cajón o None)].
 
@@ -78,7 +94,8 @@ def rinde_por_articulo(guias: list[dict]) -> list[dict]:
 
     Cada guía es {"articulo_id", "articulo", "consumos": [(bultos, kg pesados
     por cajón o None)], "primera", "segunda", "merma", "kg_caja",
-    "guardada_igual"}. La cuenta es la del cartel (`cuenta_de_kilos`), POR
+    "guardada_igual", "primera_real"}; la primera pesa lo que se mandó en los
+    pedidos que ya salieron de esa guía (`kg_de_la_primera`). La cuenta es la del cartel (`cuenta_de_kilos`), POR
     GUÍA y con los cajones que tomó cada guía, así no la ensucia cómo se
     repartieron las compras; la guía sin cuenta posible (sin pesada, ficha
     por unidad) no entra y se cuenta en `guias_sin_cuenta`.
@@ -100,7 +117,7 @@ def rinde_por_articulo(guias: list[dict]) -> list[dict]:
             continue
         kg_por_cajon = cuenta["entraron"] / cuenta["tomados"]
         fila["entraron"] += cuenta["entraron"]
-        fila["primera"] += float(guia["primera"]) * float(guia["kg_caja"])
+        fila["primera"] += kg_de_la_primera(guia["primera"], guia["kg_caja"], guia.get("primera_real"))
         fila["segunda"] += float(guia["segunda"]) * kg_por_cajon
         fila["merma"] += float(guia["merma"]) * kg_por_cajon
         fila["guias"] += 1

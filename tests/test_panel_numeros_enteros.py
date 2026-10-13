@@ -90,6 +90,11 @@ def _datos(cuadro, hoy, memo):
                   "consumos": [(1234567, 6789.0)], "primera": 900000, "segunda": 12345, "merma": 6789,
                   "kg_caja": 8000.0, "guardada_igual": i == 1} for i in (1, 2)]
         return {**resumen_del_rinde(guias), "desde": HOY, "hasta": HOY}
+    if cuadro == "kilos":
+        # Kilos al armar (13/10): diez cifras de renglones y de kilos.
+        filas = [{"articulo_id": i, "articulo": f"EJEMPLO Morrón Rojo con un nombre largo {i}",
+                  "renglones": 1234567890, "kg_diferencia": -DIEZ_CIFRAS if i == 2 else DIEZ_CIFRAS} for i in (1, 2)]
+        return {"filas": filas, "renglones": 2469135780, "kg_diferencia": 0.5, "desde": HOY, "hasta": HOY}
     raise AssertionError(cuadro)
 
 
@@ -115,7 +120,7 @@ def _paginas():
             patch.object(m, "_datos_del_cuadro", side_effect=_datos):
         cliente = _cliente(m, "gerencia")
         paginas = {"/gerencia/panel": cliente.get("/gerencia/panel")}
-        for cuadro in ("vales", "segunda", "mermas", "rechazos", "rinde"):
+        for cuadro in ("vales", "segunda", "mermas", "rechazos", "rinde", "kilos"):
             paginas[f"/gerencia/panel/{cuadro}"] = cliente.get(f"/gerencia/panel/{cuadro}")
     assert {r: p.status_code for r, p in paginas.items()} == {r: 200 for r in paginas}
     return {r: p.text for r, p in paginas.items()}
