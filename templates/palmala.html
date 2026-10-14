@@ -1,0 +1,99 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Palmala Cruces</title>
+<style>
+{% include "_cheques_estilos.html" %}
+  .saldos { display: flex; flex-wrap: wrap; gap: 0.6rem; }
+  .saldo { flex: 1 1 12rem; border: 1px solid #e5e7eb; border-radius: 10px; padding: 0.7rem; }
+  .saldo .cuenta { font-size: 0.85rem; color: #555; margin: 0; }
+  .saldo .texto { font-size: 1.15rem; font-weight: 700; margin: 0.2rem 0 0; }
+  .saldo.debes .texto { color: #dc2626; }
+  .saldo.te-debe .texto { color: #15803d; }
+  .anulado .importe { text-decoration: line-through; color: #888; }
+  .fila-dato .saldo-al { white-space: nowrap; }
+  .fila-cabeza .dia { white-space: nowrap; }
+  .fila-concepto { font-weight: 600; }
+  .anulado .fila-concepto { text-decoration: line-through; color: #888; }
+</style>
+</head>
+<body>
+  {% set barra_sector = "gerencia" %}
+  {% set barra_titulo = "Palmala Cruces" %}
+  {% set barra_atras = vuelta(request, "/gerencia") %}
+  {% include "_barra_navegacion.html" %}
+  {% from "_info.html" import info %}
+
+  {% if aviso %}<div class="aviso" data-aviso>{{ aviso }}</div>{% endif %}
+  {% if error %}<div class="error" data-error>{{ error }}</div>{% endif %}
+
+  {# ARRIBA, SIEMPRE (dueño, 14/10): los tres saldos, de TODO, no del filtro. #}
+  <div class="tarjeta" data-saldos>
+    <div class="saldos">
+      {% for s in saldos %}
+      <div class="saldo {{ 'debes' if s.saldo < 0 else ('te-debe' if s.saldo > 0 else '') }}" data-saldo="{{ s.cuenta }}">
+        <p class="cuenta">{{ s.nombre }}</p>
+        <p class="texto">{{ s.texto }}</p>
+      </div>
+      {% endfor %}
+    </div>
+    <p class="nota">Palmala debe suma, Palmala pagó resta. {% call info("Cómo se cuenta") %}Cada cuenta tiene su saldo y no se mezclan: si Palmala paga en pesos algo que debía en dólares, son dos movimientos, uno en cada cuenta. Un movimiento anulado sigue a la vista, tachado, y no suma.{% endcall %}</p>
+    <div class="acciones">
+      <a href="/gerencia/palmala-cruces/cargar">Cargar movimientos</a>
+    </div>
+  </div>
+
+  <form class="tarjeta" method="get" action="/gerencia/palmala-cruces">
+    <details {% if hay_filtro %}open{% endif %}>
+      <summary>Buscar</summary>
+      <div class="campos">
+        <label>Desde<input type="date" name="desde" value="{{ filtros.desde.isoformat() if filtros.desde else '' }}"></label>
+        <label>Hasta<input type="date" name="hasta" value="{{ filtros.hasta.isoformat() if filtros.hasta else '' }}"></label>
+        <label>Cuenta
+          <select name="cuenta"><option value="">Todas</option>
+            {% for valor, texto, _ in cuentas %}<option value="{{ valor }}" {% if filtros.cuenta == valor %}selected{% endif %}>{{ texto }}</option>{% endfor %}
+          </select></label>
+        <label>¿Debe o pagó?
+          <select name="sentido"><option value="">Los dos</option>
+            {% for valor, texto in sentidos %}<option value="{{ valor }}" {% if filtros.sentido == valor %}selected{% endif %}>{{ texto }}</option>{% endfor %}
+          </select></label>
+        <label>Concepto
+          <select name="concepto_id"><option value="">Todos</option>
+            {% for c in conceptos %}<option value="{{ c.id }}" {% if filtros.concepto_id == c.id %}selected{% endif %}>{{ c.nombre }}</option>{% endfor %}
+          </select></label>
+      </div>
+      <div class="acciones"><button type="submit">Buscar</button><a href="/gerencia/palmala-cruces">Limpiar</a></div>
+    </details>
+  </form>
+
+  <div class="tarjeta" data-listado>
+    <h2>{{ movimientos|length }} movimiento{{ '' if movimientos|length == 1 else 's' }}</h2>
+    {% if hay_filtro and filtrado %}
+    <p class="total-dato" data-filtrado>Lo filtrado: {% for f in filtrado %}{{ nombre_de_cuenta[f.cuenta] }}: {{ f.texto|replace("Palmala te debe", "Palmala debe")|replace("Le debés a Palmala", "Palmala pagó") }}{{ " · " if not loop.last }}{% endfor %}</p>
+    {% endif %}
+    <div class="acciones">
+      <a href="/gerencia/palmala-cruces/exportar-pdf?{{ query_exportar }}">PDF</a>
+      <a href="/gerencia/palmala-cruces/exportar-excel?{{ query_exportar }}">Excel</a>
+    </div>
+    {% for m in movimientos %}
+    <div class="fila{% if m.anulado %} anulado{% endif %}" data-movimiento="{{ m.id }}">
+      <a class="abrir" href="/gerencia/palmala-cruces/{{ m.id }}{{ q_volver(aqui(request)) }}">
+        <div class="fila-cabeza">
+          <span class="fila-que dia">{{ m.fecha.strftime('%d/%m/%Y') }}</span>
+          <span class="importe {{ '' if m.anulado else ('verde' if m.sentido == 'debe' else '') }}">{{ '+' if m.sentido == 'debe' else '−' }}{{ importe_con_signo(m.importe, m.cuenta) }}</span>
+        </div>
+        <div class="fila-concepto" data-concepto>{{ m.concepto }}</div>
+        <div class="fila-dato">{{ nombre_de_sentido[m.sentido] }} · {{ nombre_de_cuenta[m.cuenta] }}{% if m.anulado %} · <strong>anulado</strong>{% endif %}
+          · <span class="saldo-al {{ 'rojo' if m.saldo < 0 else '' }}" data-saldo-al>saldo {{ '−' if m.saldo < 0 else '' }}{{ importe_con_signo(m.saldo, m.cuenta) }}</span></div>
+        {% if m.detalle or m.cheque_numero %}<div class="fila-dato">{{ m.detalle or '' }}{% if m.cheque_numero %}{{ ' · ' if m.detalle }}Cheque Nº {{ m.cheque_numero }}{% if m.cheque_banco %} · {{ m.cheque_banco }}{% endif %}{% endif %}</div>{% endif %}
+      </a>
+    </div>
+    {% else %}
+    <p class="vacio">No hay movimientos con esos filtros.</p>
+    {% endfor %}
+  </div>
+{% include "_pie_version.html" %}
+</body>
+</html>

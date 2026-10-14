@@ -6768,10 +6768,30 @@ _SQL_FOTOS_DE_RESPALDO = f"""
         UNION ALL
         SELECT 'cheque', cs.foto_ruta, cs.creado_en, NULL FROM cheques_salidas cs
          WHERE cs.foto_ruta IS NOT NULL
+        -- SOLO_EN_FRUTAMAX
       ) x
       LEFT JOIN fotos_borradas_por_antiguedad b ON b.foto_ruta = x.foto_ruta
      ORDER BY x.foto_ruta, x.subida_el
 """
+
+
+# Las fotos de las tablas que existen SOLO en la base de Frutamax (Palmala
+# Cruces, 14/10): entran a la lista donde dice "SOLO_EN_FRUTAMAX" si la tabla
+# está. En la base de Palmala no existe y la consulta no la nombra.
+_SQL_FOTOS_SOLO_EN_FRUTAMAX = {
+    "palmala_movimientos": """
+        UNION ALL
+        SELECT 'palmala', pm.foto_ruta, pm.creado_en, NULL FROM palmala_movimientos pm
+         WHERE pm.foto_ruta IS NOT NULL""",
+}
+
+
+def _sql_de_las_fotos_de_respaldo(cursor) -> str:
+    cursor.execute("SELECT t FROM unnest(%s::text[]) t WHERE to_regclass('public.' || t) IS NOT NULL",
+                   (list(_SQL_FOTOS_SOLO_EN_FRUTAMAX),))
+    estan = [fila[0] for fila in cursor.fetchall()]
+    return _SQL_FOTOS_DE_RESPALDO.replace(
+        "-- SOLO_EN_FRUTAMAX", "".join(_SQL_FOTOS_SOLO_EN_FRUTAMAX[t] for t in estan))
 
 
 def fotos_de_respaldo() -> list[dict]:
@@ -6779,7 +6799,7 @@ def fotos_de_respaldo() -> list[dict]:
     conexion = obtener_conexion()
     try:
         with conexion.cursor() as cursor:
-            cursor.execute(_SQL_FOTOS_DE_RESPALDO)
+            cursor.execute(_sql_de_las_fotos_de_respaldo(cursor))
             filas = cursor.fetchall()
     finally:
         conexion.close()
@@ -22673,3 +22693,206 @@ def aplicar_salidas_de_cheques(salidas: list[dict]) -> None:
             if salida["proveedor_id"] and cuit and len(cuit) == 11 and cuit.isdigit():
                 cursor.execute("UPDATE proveedores SET cuit = %s WHERE id = %s AND cuit IS NULL",
                                (cuit, salida["proveedor_id"]))
+
+
+# =============================================================================
+# PALMALA CRUCES (dueño, 14/10): la cuenta corriente interna con Palmala.
+# SOLO en la base de Frutamax (db/palmala_cruces_1..3, migración palmala_1,
+# corrida solo ahí): en la base de Palmala estas tablas no existen y la app de
+# Palmala no llama a nada de acá
+# (`ES_FRUTAMAX` en app/main.py). El saldo lo dice la vista
+# `palmala_movimientos_con_saldo`; los frenos son de la base y acá se traducen.
+# =============================================================================
+
+class PalmalaNoSePuede(Exception):
+    """El motivo, para el usuario, por el que un movimiento no se guarda."""
+
+
+FRENOS_DE_PALMALA = {
+    "palmala_concepto_activo": "Ese concepto ya no se usa: elegí otro.",
+    "palmala_cheque_sin_concepto": "Ese concepto no lleva cheque: sacá el número, el banco y la fecha de pago.",
+    "palmala_cheque_completo": "Un pago con cheque lleva número, banco y fecha de pago.",
+    "palmala_movimientos_importe_check": "El importe tiene que ser mayor a cero.",
+    "palmala_movimientos_sentido_check": "Decí si Palmala debe o pagó.",
+    "palmala_movimientos_cuenta_check": "Elegí la cuenta.",
+    "palmala_conceptos_nombre": "Ya hay un concepto con ese nombre.",
+}
+
+
+@contextmanager
+def _escribir_palmala():
+    conexion = obtener_conexion()
+    try:
+        with conexion.cursor() as cursor:
+            try:
+                yield cursor
+            except (psycopg2.errors.UniqueViolation, psycopg2.errors.CheckViolation,
+                    psycopg2.errors.NotNullViolation, psycopg2.errors.ForeignKeyViolation) as error:
+                conexion.rollback()
+                nombre = getattr(getattr(error, "diag", None), "constraint_name", None)
+                raise PalmalaNoSePuede(FRENOS_DE_PALMALA.get(nombre, f"La base no dejó guardar: {nombre or error}")) \
+                    from error
+        conexion.commit()
+    finally:
+        conexion.close()
+
+
+def _leer_palmala(sql: str, parametros=()) -> list[dict]:
+    conexion = obtener_conexion()
+    try:
+        with conexion.cursor() as cursor:
+            cursor.execute(sql, parametros)
+            return _filas_como_dict(cursor)
+    finally:
+        conexion.close()
+
+
+def conceptos_de_palmala() -> list[dict]:
+    return _leer_palmala("SELECT id, nombre, pide_cheque, activo FROM palmala_conceptos ORDER BY activo DESC, id")
+
+
+def crear_concepto_de_palmala(nombre: str, pide_cheque: bool) -> int:
+    with _escribir_palmala() as cursor:
+        cursor.execute("INSERT INTO palmala_conceptos (nombre, pide_cheque) VALUES (%s, %s) RETURNING id",
+                       (" ".join(nombre.split()), pide_cheque))
+        return cursor.fetchone()[0]
+
+
+def activar_concepto_de_palmala(concepto_id: int, activo: bool) -> None:
+    """Dar de baja un concepto: no se usa más, y los movimientos viejos lo conservan."""
+    with _escribir_palmala() as cursor:
+        cursor.execute("UPDATE palmala_conceptos SET activo = %s WHERE id = %s", (activo, concepto_id))
+
+
+_SQL_PALMALA = """
+    SELECT v.id, v.fecha, v.cuenta, v.sentido, v.importe, v.concepto_id, v.concepto, v.detalle,
+           v.cheque_numero, v.cheque_banco_id, b.nombre AS cheque_banco, v.cheque_fecha_pago, v.foto_ruta,
+           v.como_se_cargo, v.anulado, v.creado_en, v.con_signo, v.saldo
+    FROM palmala_movimientos_con_saldo v
+    LEFT JOIN bancos b ON b.id = v.cheque_banco_id
+"""
+
+_FILTROS_DE_PALMALA = {
+    "desde": "v.fecha >= %s", "hasta": "v.fecha <= %s", "concepto_id": "v.concepto_id = %s",
+    "sentido": "v.sentido = %s", "cuenta": "v.cuenta = %s",
+}
+
+
+def buscar_movimientos_de_palmala(filtros: dict) -> list[dict]:
+    """El listado con los filtros (los vacíos no filtran), lo más nuevo arriba.
+    El saldo de cada renglón es el REAL de su cuenta a ese momento (lo
+    calcula la vista sobre todos), no el de lo filtrado."""
+    condiciones, parametros = [], []
+    for campo, condicion in _FILTROS_DE_PALMALA.items():
+        if filtros.get(campo) not in (None, ""):
+            condiciones.append(condicion)
+            parametros.append(filtros[campo])
+    donde = (" WHERE " + " AND ".join(condiciones)) if condiciones else ""
+    return _leer_palmala(_SQL_PALMALA + donde + " ORDER BY v.fecha DESC, v.id DESC", parametros)
+
+
+def saldos_de_palmala() -> dict:
+    """{cuenta: saldo} de las que tienen movimientos (sin anulados)."""
+    filas = _leer_palmala("SELECT cuenta, sum(con_signo) AS saldo FROM palmala_movimientos_con_saldo "
+                          "GROUP BY cuenta")
+    return {f["cuenta"]: f["saldo"] for f in filas}
+
+
+def obtener_movimiento_de_palmala(movimiento_id: int) -> dict | None:
+    filas = _leer_palmala(_SQL_PALMALA + " WHERE v.id = %s", (movimiento_id,))
+    if not filas:
+        return None
+    movimiento = filas[0]
+    movimiento["historial"] = _leer_palmala(
+        "SELECT campo, valor_anterior, valor_nuevo, motivo, creado_en FROM palmala_correcciones "
+        "WHERE movimiento_id = %s ORDER BY creado_en, id", (movimiento_id,))
+    return movimiento
+
+
+def guardar_movimientos_de_palmala(movimientos: list[dict], *, como_se_cargo: str) -> list[int]:
+    """Uno o varios movimientos en UNA transacción: o entran todos o ninguno.
+    Cada uno {fecha, cuenta, sentido, importe, concepto_id, detalle,
+    cheque_numero, cheque_banco (nombre), cheque_fecha_pago, foto_ruta}. El
+    banco se busca por su clave y, si no está, se agrega (como en la carga
+    de un cheque)."""
+    ids = []
+    with _escribir_palmala() as cursor:
+        for m in movimientos:
+            banco_id = None
+            if (m.get("cheque_banco") or "").strip():
+                try:
+                    banco_id = _banco_por_nombre(cursor, m["cheque_banco"])
+                except ChequeNoSePuede as motivo:
+                    raise PalmalaNoSePuede(str(motivo)) from motivo
+            cursor.execute(
+                "INSERT INTO palmala_movimientos (fecha, cuenta, sentido, importe, concepto_id, detalle, "
+                "cheque_numero, cheque_banco_id, cheque_fecha_pago, foto_ruta, como_se_cargo, sector) "
+                "VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, 'gerencia') RETURNING id",
+                (m["fecha"], m["cuenta"], m["sentido"], m["importe"], m["concepto_id"],
+                 (m.get("detalle") or "").strip() or None, (m.get("cheque_numero") or "").strip() or None,
+                 banco_id, m.get("cheque_fecha_pago") or None, m.get("foto_ruta"), como_se_cargo))
+            ids.append(cursor.fetchone()[0])
+    return ids
+
+
+def _mismo_valor(nuevo, viejo) -> bool:
+    """1000 es 1000.00, y "" es nada: no es una corrección."""
+    if nuevo in (None, "") or viejo in (None, ""):
+        return nuevo in (None, "") and viejo in (None, "")
+    if isinstance(viejo, (Decimal, int, float)) and not isinstance(viejo, bool):
+        try:
+            return round(float(nuevo), 2) == round(float(viejo), 2)
+        except (TypeError, ValueError):
+            return False
+    return str(nuevo) == str(viejo)
+
+
+def _texto_del_valor(valor) -> str | None:
+    """Cómo queda un valor en el historial: los importes con dos decimales."""
+    if valor is None:
+        return None
+    if isinstance(valor, (float, Decimal)):
+        return f"{valor:.2f}"
+    return str(valor)
+
+
+# Lo que se corrige de un movimiento, en el orden de la pantalla.
+CAMPOS_DE_PALMALA = ("fecha", "cuenta", "sentido", "importe", "concepto_id", "detalle", "cheque_numero",
+                     "cheque_banco_id", "cheque_fecha_pago", "anulado")
+
+
+def corregir_movimiento_de_palmala(movimiento_id: int, cambios: dict, motivo: str) -> int:
+    """Corrige los campos que cambiaron, con el motivo, y deja cada uno en el
+    historial (antes y después). Devuelve cuántos cambiaron. Anular es una
+    corrección más ("anulado": True): no suma al saldo y sigue a la vista.
+    `cambios` trae "cheque_banco" (nombre) en vez del id."""
+    motivo = " ".join(str(motivo or "").split())
+    if not motivo:
+        raise PalmalaNoSePuede("Escribí por qué se corrige.")
+    with _escribir_palmala() as cursor:
+        cursor.execute(f"SELECT {', '.join(CAMPOS_DE_PALMALA)} FROM palmala_movimientos WHERE id = %s FOR UPDATE",
+                       (movimiento_id,))
+        fila = cursor.fetchone()
+        if fila is None:
+            raise PalmalaNoSePuede("Ese movimiento no existe.")
+        actual = dict(zip(CAMPOS_DE_PALMALA, fila))
+        nuevos = dict(cambios)
+        if "cheque_banco" in nuevos:
+            nombre = (nuevos.pop("cheque_banco") or "").strip()
+            try:
+                nuevos["cheque_banco_id"] = _banco_por_nombre(cursor, nombre) if nombre else None
+            except ChequeNoSePuede as error:
+                raise PalmalaNoSePuede(str(error)) from error
+        distintos = {campo: valor for campo, valor in nuevos.items()
+                     if campo in CAMPOS_DE_PALMALA and not _mismo_valor(valor, actual[campo])}
+        if not distintos:
+            return 0
+        asignaciones = ", ".join(f"{campo} = %s" for campo in distintos)
+        cursor.execute(f"UPDATE palmala_movimientos SET {asignaciones} WHERE id = %s",
+                       (*distintos.values(), movimiento_id))
+        for campo, valor in distintos.items():
+            cursor.execute(
+                "INSERT INTO palmala_correcciones (movimiento_id, campo, valor_anterior, valor_nuevo, motivo, sector) "
+                "VALUES (%s, %s, %s, %s, %s, 'gerencia')",
+                (movimiento_id, campo, _texto_del_valor(actual[campo]), _texto_del_valor(valor), motivo))
+        return len(distintos)

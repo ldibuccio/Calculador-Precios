@@ -42,6 +42,8 @@ TEXTO_DEL_TIPO = {
     "vale": "Vales a cobrar",
     "remito": "Remitos firmados",
     "cheque": "Cheques",
+    # Solo en Frutamax (14/10): los cheques de Palmala Cruces.
+    "palmala": "Palmala Cruces",
 }
 
 # Los que no se tocan: la regla de v1054 (dueño, 01/10: "no la cambies").

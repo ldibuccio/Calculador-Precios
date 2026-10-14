@@ -28923,6 +28923,461 @@ async def agregar_foto_de_cheque_ruta(request: Request, cheque_id: int, lado: st
     return RedirectResponse(f"/gerencia/cheques/{cheque_id}?aviso=Foto+agregada", status_code=303)
 
 
+# =============================================================================
+# PALMALA CRUCES (dueño, 14/10): la cuenta corriente interna con Palmala. Solo
+# Gerencia y SOLO en Frutamax: las tablas (db/palmala_cruces_1..3) no existen
+# en la base de Palmala, y ahí el botón no aparece y estas rutas contestan 404
+# sin consultar nada. docs/modulos/palmala_cruces.md.
+# =============================================================================
+from core.palmala_cruces import (  # noqa: E402
+    CUENTAS as CUENTAS_DE_PALMALA,
+    NOMBRE_DE_CUENTA as NOMBRE_DE_CUENTA_DE_PALMALA,
+    NOMBRE_DE_SENTIDO as NOMBRE_DE_SENTIDO_DE_PALMALA,
+    SENTIDOS as SENTIDOS_DE_PALMALA,
+    crudos_de_la_planilla as crudos_de_la_planilla_de_palmala,
+    importe_con_signo,
+    partes_del_filtro as partes_del_filtro_de_palmala,
+    poner_a_todos as poner_a_todos_en_palmala,
+    problemas_de_los_renglones as problemas_de_palmala,
+    renglones_de_cheques_leidos as renglones_de_cheques_de_palmala,
+    renglones_para_revisar as renglones_de_palmala,
+    saldos_por_cuenta,
+    suma_de_lo_filtrado,
+    texto_del_filtro as texto_del_filtro_de_palmala,
+    texto_del_saldo,
+)
+from core.exportar_palmala import generar_excel_palmala, generar_pdf_palmala  # noqa: E402
+from core.cheques import clave_de_banco  # noqa: E402
+from app.db import (  # noqa: E402
+    PalmalaNoSePuede,
+    activar_concepto_de_palmala,
+    buscar_movimientos_de_palmala,
+    conceptos_de_palmala,
+    corregir_movimiento_de_palmala,
+    crear_concepto_de_palmala,
+    guardar_movimientos_de_palmala,
+    obtener_movimiento_de_palmala,
+    saldos_de_palmala,
+)
+
+# La cuenta es de Frutamax (dueño, 14/10): la app de Palmala no la muestra.
+ES_FRUTAMAX = unicodedata.normalize("NFKD", NOMBRE_EMPRESA).encode("ascii", "ignore").decode("ascii") \
+    .strip().lower() == "frutamax"
+templates.env.globals["ES_FRUTAMAX"] = ES_FRUTAMAX
+PREFIJO_PALMALA = "palmala"
+
+
+def _puerta_de_palmala(request: Request, *, escribir: bool = False):
+    """404 fuera de Frutamax (antes de tocar la base); si no, la clave de Gerencia."""
+    if not ES_FRUTAMAX:
+        raise HTTPException(status_code=404, detail="Palmala Cruces es una cuenta de Frutamax.")
+    return _puerta_de_gerencia_para_escribir(request) if escribir else _sin_clave_de_cheques(request)
+
+
+def _filtros_de_palmala(request: Request) -> dict:
+    q = request.query_params
+    return {"desde": _fecha_de_cheque(q.get("desde")), "hasta": _fecha_de_cheque(q.get("hasta")),
+            "concepto_id": _id_opcional_desde_query(q.get("concepto_id") or ""),
+            "sentido": q.get("sentido") if q.get("sentido") in NOMBRE_DE_SENTIDO_DE_PALMALA else "",
+            "cuenta": q.get("cuenta") if q.get("cuenta") in NOMBRE_DE_CUENTA_DE_PALMALA else ""}
+
+
+def _query_de_palmala(filtros: dict) -> str:
+    return urlencode({k: (v.isoformat() if hasattr(v, "isoformat") else v)
+                      for k, v in filtros.items() if v not in (None, "")})
+
+
+@app.get("/gerencia/palmala-cruces")
+def ver_palmala_cruces(request: Request, aviso: str | None = None, error: str | None = None):
+    puerta = _puerta_de_palmala(request)
+    if puerta is not None:
+        return puerta
+    filtros = _filtros_de_palmala(request)
+    movimientos = buscar_movimientos_de_palmala(filtros)
+    filtrado = suma_de_lo_filtrado([m for m in movimientos if not m["anulado"]])
+    return templates.TemplateResponse(request, "palmala.html", {
+        "saldos": saldos_por_cuenta(saldos_de_palmala()), "movimientos": movimientos, "filtros": filtros,
+        "filtrado": [{"cuenta": c, "texto": texto_del_saldo(c, filtrado[c])} for c, _, _ in CUENTAS_DE_PALMALA
+                     if c in filtrado],
+        "hay_filtro": bool(_query_de_palmala(filtros)), "query_exportar": _query_de_palmala(filtros),
+        "conceptos": conceptos_de_palmala(), "cuentas": CUENTAS_DE_PALMALA, "sentidos": SENTIDOS_DE_PALMALA,
+        "nombre_de_cuenta": NOMBRE_DE_CUENTA_DE_PALMALA, "nombre_de_sentido": NOMBRE_DE_SENTIDO_DE_PALMALA,
+        "importe_con_signo": importe_con_signo, "aviso": aviso, "error": error,
+    })
+
+
+def _exportacion_de_palmala(request: Request):
+    filtros = _filtros_de_palmala(request)
+    nombres = {c["id"]: c["nombre"] for c in conceptos_de_palmala()}
+    filtro = texto_del_filtro_de_palmala(partes_del_filtro_de_palmala(filtros, nombres))
+    return filtro, buscar_movimientos_de_palmala(filtros), saldos_por_cuenta(saldos_de_palmala()), _hoy_argentina()
+
+
+@app.get("/gerencia/palmala-cruces/exportar-pdf")
+def exportar_palmala_pdf(request: Request):
+    puerta = _puerta_de_palmala(request)
+    if puerta is not None:
+        return puerta
+    filtro, movimientos, saldos, hoy = _exportacion_de_palmala(request)
+    return Response(content=generar_pdf_palmala(filtro, movimientos, saldos, hoy), media_type="application/pdf",
+                    headers={"Content-Disposition": f'attachment; filename="palmala_cruces_{hoy.isoformat()}.pdf"'})
+
+
+@app.get("/gerencia/palmala-cruces/exportar-excel")
+def exportar_palmala_excel(request: Request):
+    puerta = _puerta_de_palmala(request)
+    if puerta is not None:
+        return puerta
+    filtro, movimientos, saldos, hoy = _exportacion_de_palmala(request)
+    return Response(content=generar_excel_palmala(filtro, movimientos, saldos, hoy),
+                    media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                    headers={"Content-Disposition": f'attachment; filename="palmala_cruces_{hoy.isoformat()}.xlsx"'})
+
+
+# --- CARGAR A MANO, Y LOS CONCEPTOS -----------------------------------------
+
+def _movimiento_vacio() -> dict:
+    return {"fecha": _hoy_argentina().isoformat(), "cuenta": "pesos", "sentido": "", "importe": "", "concepto_id": None,
+            "detalle": "", "cheque_numero": "", "cheque_banco": "", "cheque_fecha_pago": ""}
+
+
+def _renderizar_carga_de_palmala(request: Request, *, movimiento: dict | None = None, error: str | None = None,
+                                 aviso: str | None = None, status_code: int = 200):
+    return templates.TemplateResponse(request, "palmala_cargar.html", {
+        "m": movimiento or _movimiento_vacio(), "conceptos": conceptos_de_palmala(), "bancos": listar_bancos(),
+        "cuentas": CUENTAS_DE_PALMALA, "sentidos": SENTIDOS_DE_PALMALA, "error": error, "aviso": aviso,
+    }, status_code=status_code)
+
+
+@app.get("/gerencia/palmala-cruces/cargar")
+def ver_carga_de_palmala(request: Request, aviso: str | None = None):
+    puerta = _puerta_de_palmala(request)
+    if puerta is not None:
+        return puerta
+    return _renderizar_carga_de_palmala(request, aviso=aviso)
+
+
+def _movimiento_del_formulario(formulario, sufijo: str = "") -> dict:
+    dato = lambda campo: str(formulario.get(f"{campo}{sufijo}") or "").strip()  # noqa: E731
+    return {"fecha": dato("fecha"), "cuenta": dato("cuenta"), "sentido": dato("sentido"),
+            "importe": str(_importe_de_cheque(dato("importe")) or "") if dato("importe") else "",
+            "concepto_id": _id_opcional_desde_query(dato("concepto_id")), "detalle": dato("detalle"),
+            "cheque_numero": dato("cheque_numero"), "cheque_banco": " ".join(dato("cheque_banco").split()),
+            "cheque_fecha_pago": dato("cheque_fecha_pago")}
+
+
+def _claves_de_bancos() -> set:
+    return {clave_de_banco(b["nombre"]) for b in listar_bancos()}
+
+
+def _para_guardar(r: dict, foto_ruta: str | None = None) -> dict:
+    return {"fecha": date.fromisoformat(r["fecha"]), "cuenta": r["cuenta"], "sentido": r["sentido"],
+            "importe": _importe_de_cheque(r["importe"]), "concepto_id": r["concepto_id"], "detalle": r["detalle"],
+            "cheque_numero": r["cheque_numero"], "cheque_banco": r["cheque_banco"],
+            "cheque_fecha_pago": date.fromisoformat(r["cheque_fecha_pago"]) if r["cheque_fecha_pago"] else None,
+            "foto_ruta": foto_ruta}
+
+
+@app.post("/gerencia/palmala-cruces/cargar")
+async def cargar_movimiento_de_palmala(request: Request):
+    """Un movimiento a mano, con su foto si la tiene. El banco que no está se
+    agrega (como en la carga de un cheque)."""
+    puerta = _puerta_de_palmala(request, escribir=True)
+    if puerta is not None:
+        return puerta
+    formulario = await request.form()
+    movimiento = _movimiento_del_formulario(formulario)
+    conceptos = conceptos_de_palmala()
+    # El banco a mano se agrega solo: para el control, cuenta como que está.
+    claves = _claves_de_bancos() | ({clave_de_banco(movimiento["cheque_banco"])} if movimiento["cheque_banco"] else set())
+    problemas = problemas_de_palmala([movimiento], conceptos, claves, clave_de_banco)[0]
+    if problemas:
+        return _renderizar_carga_de_palmala(request, movimiento=movimiento, error="Falta: " + "; ".join(problemas),
+                                            status_code=400)
+    archivo = formulario.get("foto")
+    foto_ruta = None
+    if getattr(archivo, "filename", ""):
+        contenido = await archivo.read()
+        if contenido:
+            foto_ruta = subir_foto_comanda(contenido, archivo.filename, prefijo=PREFIJO_PALMALA)
+    try:
+        guardar_movimientos_de_palmala([_para_guardar(movimiento, foto_ruta)], como_se_cargo="a_mano")
+    except PalmalaNoSePuede as motivo:
+        if foto_ruta:
+            borrar_foto_comanda(foto_ruta)
+        return _renderizar_carga_de_palmala(request, movimiento=movimiento, error=str(motivo), status_code=400)
+    return RedirectResponse("/gerencia/palmala-cruces?" + urlencode({"aviso": "Movimiento cargado"}), status_code=303)
+
+
+@app.post("/gerencia/palmala-cruces/conceptos")
+async def crear_concepto_de_palmala_ruta(request: Request):
+    puerta = _puerta_de_palmala(request, escribir=True)
+    if puerta is not None:
+        return puerta
+    formulario = await request.form()
+    nombre = " ".join(str(formulario.get("nombre") or "").split())
+    if not nombre:
+        return _renderizar_carga_de_palmala(request, error="Escribí el nombre del concepto.", status_code=400)
+    try:
+        crear_concepto_de_palmala(nombre, formulario.get("pide_cheque") == "1")
+    except PalmalaNoSePuede as motivo:
+        return _renderizar_carga_de_palmala(request, error=str(motivo), status_code=400)
+    return RedirectResponse("/gerencia/palmala-cruces/cargar?" + urlencode({"aviso": f"Concepto {nombre} agregado"}),
+                            status_code=303)
+
+
+@app.post("/gerencia/palmala-cruces/conceptos/{concepto_id}/activo")
+async def activar_concepto_de_palmala_ruta(request: Request, concepto_id: int):
+    puerta = _puerta_de_palmala(request, escribir=True)
+    if puerta is not None:
+        return puerta
+    formulario = await request.form()
+    activar_concepto_de_palmala(concepto_id, formulario.get("activo") == "1")
+    return RedirectResponse("/gerencia/palmala-cruces/cargar", status_code=303)
+
+
+# --- VARIAS FOTOS DE CHEQUES, O UN EXCEL: la pantalla de revisión ----------
+
+def _renderizar_revision_de_palmala(request: Request, renglones: list[dict], *, origen: str, fotos: list[str],
+                                    aviso: str | None = None, error: str | None = None, status_code: int = 200):
+    conceptos = conceptos_de_palmala()
+    bancos = listar_bancos()
+    for r in renglones:
+        r["cheque_banco"] = _banco_de_la_lista(r["cheque_banco"], bancos) if r.get("cheque_banco") else ""
+    problemas = problemas_de_palmala(renglones, conceptos, {clave_de_banco(b["nombre"]) for b in bancos},
+                                     clave_de_banco)
+    vivos = [(r, p) for r, p in zip(renglones, problemas) if not r.get("sacar")]
+    orden = sorted(range(len(renglones)), key=lambda i: (not problemas[i] or bool(renglones[i].get("sacar")), i))
+    faltan = bancos_que_faltan([{"banco": r["cheque_banco"], "sacar": r.get("sacar")} for r in renglones], bancos)
+    sumas = suma_de_lo_filtrado([{"cuenta": r["cuenta"], "con_signo": (_importe_de_cheque(r["importe"]) or 0)
+                                  * (1 if r["sentido"] == "debe" else -1)} for r, _ in vivos
+                                 if r["cuenta"] in NOMBRE_DE_CUENTA_DE_PALMALA and r["sentido"]])
+    return templates.TemplateResponse(request, "palmala_revisar.html", {
+        "renglones": [(i, renglones[i], problemas[i]) for i in orden], "cantidad": len(renglones),
+        "origen": origen, "fotos": fotos, "cuantos": len(vivos), "bien": sum(1 for _, p in vivos if not p),
+        "con_problema": sum(1 for _, p in vivos if p), "faltan_bancos": faltan,
+        # Lo que mueve la tanda en cada cuenta, en neto.
+        "efecto": [(NOMBRE_DE_CUENTA_DE_PALMALA[c], "Palmala debe" if v > 0 else "Palmala pagó",
+                    importe_con_signo(v, c)) for c, v in sumas.items() if v],
+        "conceptos": conceptos, "nombre_de_concepto": {c["id"]: c["nombre"] for c in conceptos}, "bancos": bancos,
+        "cuentas": CUENTAS_DE_PALMALA, "sentidos": SENTIDOS_DE_PALMALA,
+        "nombre_de_cuenta": NOMBRE_DE_CUENTA_DE_PALMALA, "nombre_de_sentido": NOMBRE_DE_SENTIDO_DE_PALMALA,
+        "importe_con_signo": importe_con_signo, "aviso": aviso, "error": error,
+    }, status_code=status_code)
+
+
+@app.post("/gerencia/palmala-cruces/cargar/fotos")
+async def leer_fotos_de_palmala(request: Request):
+    """Varias fotos (o PDF) de cheques con que Palmala paga: la IA lee cada
+    una y se abre la revisión, un renglón por cheque. TODAVÍA NO GUARDA."""
+    puerta = _puerta_de_palmala(request, escribir=True)
+    if puerta is not None:
+        return puerta
+    formulario = await request.form()
+    archivos = [a for a in formulario.getlist("fotos") if getattr(a, "filename", "")]
+    if not archivos:
+        return _renderizar_carga_de_palmala(request, error="Elegí las fotos de los cheques.", status_code=400)
+    leidas, fotos = [], []
+    for archivo in archivos:
+        contenido = await archivo.read()
+        es_pdf = (archivo.filename or "").lower().endswith(".pdf")
+        fotos.append("" if es_pdf else _generar_preview_foto(contenido))
+        try:
+            leidas.append(extraer_cheques_de_imagenes(imagenes_desde_pdf(contenido) if es_pdf else [contenido]))
+        except Exception:
+            logger.exception("No se pudo leer la foto de Palmala %s", archivo.filename)
+            leidas.append({"error": f"«{archivo.filename}» no se entiende como un cheque"})
+    renglones, avisos = renglones_de_cheques_de_palmala(leidas, conceptos_de_palmala(), hoy=_hoy_argentina())
+    return _renderizar_revision_de_palmala(request, renglones, origen="foto", fotos=fotos,
+                                           aviso=" ".join(avisos) or f"Se leyeron {len(renglones)} cheques. "
+                                                                     "Revisalos antes de guardar.")
+
+
+@app.post("/gerencia/palmala-cruces/cargar/excel")
+async def leer_excel_de_palmala(request: Request, archivo: UploadFile = File(...)):
+    """Un Excel o CSV con muchos movimientos: las columnas se reconocen por su
+    título (Fecha, Importe o Debe y Pagó, Concepto, Cuenta, Detalle...)."""
+    puerta = _puerta_de_palmala(request, escribir=True)
+    if puerta is not None:
+        return puerta
+    nombre = (archivo.filename or "").lower()
+    tipo = "xlsx" if nombre.endswith(".xlsx") else "xls" if nombre.endswith(".xls") else \
+        "csv" if nombre.endswith(".csv") else None
+    if tipo is None:
+        return _renderizar_carga_de_palmala(request, error="Subí un Excel (.xlsx o .xls) o un CSV.", status_code=400)
+    try:
+        crudos = crudos_de_la_planilla_de_palmala(filas_de_la_planilla(await archivo.read(), tipo))
+    except Exception:
+        logger.exception("No se pudo leer el Excel de Palmala")
+        crudos = None
+    if not crudos:
+        return _renderizar_carga_de_palmala(
+            request, error="No se reconocieron los movimientos: la planilla tiene que tener una columna Fecha y "
+                           "otra Importe (o Debe y Pagó).", status_code=400)
+    renglones = renglones_de_palmala(crudos, conceptos_de_palmala(), hoy=_hoy_argentina())
+    return _renderizar_revision_de_palmala(request, renglones, origen="excel", fotos=[],
+                                           aviso=f"Se leyeron {len(renglones)} movimientos. Revisalos antes de guardar.")
+
+
+def _renglones_de_palmala_del_formulario(formulario) -> list[dict]:
+    renglones = []
+    for i in range(_cantidad_de_renglones(formulario)):
+        r = _movimiento_del_formulario(formulario, f"_{i}")
+        try:
+            foto = int(str(formulario.get(f"foto_{i}") or "-1"))
+        except ValueError:
+            foto = -1
+        r.update(concepto_leido=str(formulario.get(f"concepto_leido_{i}") or ""), foto=foto,
+                 sacar=formulario.get(f"sacar_{i}") == "1", tildado=formulario.get(f"tildado_{i}") == "1")
+        renglones.append(r)
+    return renglones
+
+
+@app.post("/gerencia/palmala-cruces/revisar")
+async def revisar_movimientos_de_palmala(request: Request):
+    """La revisión de las fotos o del Excel: "Revisar", "Para todos",
+    "Sacar los tildados", "Agregarlo" (un banco) y "Guardar todos" (los que
+    están bien, juntos, cada uno con su foto)."""
+    puerta = _puerta_de_palmala(request, escribir=True)
+    if puerta is not None:
+        return puerta
+    formulario = await _formulario_de_un_listado(request)
+    renglones = _renglones_de_palmala_del_formulario(formulario)
+    origen = "foto" if formulario.get("origen") == "foto" else "excel"
+    fotos = [str(f) for f in formulario.getlist("foto_leida")]
+    pintar = lambda **kw: _renderizar_revision_de_palmala(request, renglones, origen=origen, fotos=fotos, **kw)  # noqa: E731
+    banco = " ".join(str(formulario.get("agregar_banco") or "").split())
+    if banco:
+        agregar_banco(banco)
+        return pintar(aviso=f"Se agregó {banco} a la lista de bancos.")
+    accion = str(formulario.get("accion") or "revisar")
+    if accion == "a_todos":
+        cuantos = poner_a_todos_en_palmala(renglones, {
+            "cuenta": str(formulario.get("cuenta_todos") or ""), "sentido": str(formulario.get("sentido_todos") or ""),
+            "concepto_id": _id_opcional_desde_query(str(formulario.get("concepto_todos") or "")),
+            "fecha": str(_fecha_de_cheque(formulario.get("fecha_todos")) or "") or None})
+        for r in renglones:
+            r["tildado"] = False
+        return pintar(aviso="Se cambió 1 movimiento." if cuantos == 1 else f"Se cambiaron {cuantos} movimientos.")
+    if accion == "sacar_tildados":
+        for r in renglones:
+            if r["tildado"]:
+                r["sacar"], r["tildado"] = True, False
+        return pintar()
+    if accion != "guardar":
+        return pintar()
+    bancos = listar_bancos()
+    for r in renglones:
+        r["cheque_banco"] = _banco_de_la_lista(r["cheque_banco"], bancos) if r["cheque_banco"] else ""
+    problemas = problemas_de_palmala(renglones, conceptos_de_palmala(),
+                                     {clave_de_banco(b["nombre"]) for b in bancos}, clave_de_banco)
+    buenos = [r for r, p in zip(renglones, problemas) if not p and not r["sacar"]]
+    quedan = [r for r, p in zip(renglones, problemas) if p and not r["sacar"]]
+    subidas: dict = {}
+    try:
+        for r in buenos:
+            if r["foto"] not in subidas and 0 <= r["foto"] < len(fotos):
+                contenido = _bytes_desde_data_uri(fotos[r["foto"]])
+                subidas[r["foto"]] = subir_foto_comanda(contenido, "cheque", prefijo=PREFIJO_PALMALA) if contenido else None
+        if buenos:
+            guardar_movimientos_de_palmala([_para_guardar(r, subidas.get(r["foto"])) for r in buenos],
+                                           como_se_cargo=origen)
+    except PalmalaNoSePuede as motivo:
+        for ruta in subidas.values():
+            if ruta:
+                borrar_foto_comanda(ruta)
+        return pintar(error=str(motivo), status_code=400)
+    except Exception:
+        for ruta in subidas.values():
+            if ruta:
+                borrar_foto_comanda(ruta)
+        raise
+    if not quedan:
+        return RedirectResponse("/gerencia/palmala-cruces?" + urlencode({"aviso": f"{len(buenos)} movimientos cargados"}),
+                                status_code=303)
+    return _renderizar_revision_de_palmala(
+        request, quedan, origen=origen, fotos=fotos,
+        aviso=(f"Se guardaron {len(buenos)}. " if buenos else "") + f"Quedan {len(quedan)} con problemas: "
+              "corregilos o sacalos.")
+
+
+# --- LA FICHA: corregir y anular, con historial -----------------------------
+
+@app.get("/gerencia/palmala-cruces/{movimiento_id}")
+def ver_movimiento_de_palmala(request: Request, movimiento_id: int, aviso: str | None = None,
+                              error: str | None = None):
+    puerta = _puerta_de_palmala(request)
+    if puerta is not None:
+        return puerta
+    movimiento = obtener_movimiento_de_palmala(movimiento_id)
+    if movimiento is None:
+        raise HTTPException(status_code=404, detail="Ese movimiento no existe.")
+    conceptos = conceptos_de_palmala()
+    return templates.TemplateResponse(request, "palmala_movimiento.html", {
+        "m": movimiento, "conceptos": conceptos, "nombre_de_concepto": {c["id"]: c["nombre"] for c in conceptos},
+        "bancos": listar_bancos(), "cuentas": CUENTAS_DE_PALMALA, "sentidos": SENTIDOS_DE_PALMALA,
+        "nombre_de_cuenta": NOMBRE_DE_CUENTA_DE_PALMALA, "nombre_de_sentido": NOMBRE_DE_SENTIDO_DE_PALMALA,
+        "importe_con_signo": importe_con_signo, "aviso": aviso, "error": error,
+    })
+
+
+@app.post("/gerencia/palmala-cruces/{movimiento_id}/corregir")
+async def corregir_movimiento_de_palmala_ruta(request: Request, movimiento_id: int):
+    puerta = _puerta_de_palmala(request, escribir=True)
+    if puerta is not None:
+        return puerta
+    formulario = await request.form()
+    nuevo = _movimiento_del_formulario(formulario)
+    volver = f"/gerencia/palmala-cruces/{movimiento_id}"
+    problemas = problemas_de_palmala([nuevo], conceptos_de_palmala(),
+                                     _claves_de_bancos() | ({clave_de_banco(nuevo["cheque_banco"])}
+                                                            if nuevo["cheque_banco"] else set()), clave_de_banco)[0]
+    if problemas:
+        return RedirectResponse(con_volver(volver + "?" + urlencode({"error": "Falta: " + "; ".join(problemas)}),
+                                           request.query_params.get("volver")), status_code=303)
+    cambios = _para_guardar(nuevo)
+    cambios.pop("foto_ruta")
+    try:
+        cuantos = corregir_movimiento_de_palmala(movimiento_id, cambios, str(formulario.get("motivo") or ""))
+    except PalmalaNoSePuede as motivo:
+        return RedirectResponse(con_volver(volver + "?" + urlencode({"error": str(motivo)}),
+                                           request.query_params.get("volver")), status_code=303)
+    aviso = "No cambió nada." if not cuantos else "Corregido."
+    return RedirectResponse(con_volver(volver + "?" + urlencode({"aviso": aviso}), request.query_params.get("volver")),
+                            status_code=303)
+
+
+@app.post("/gerencia/palmala-cruces/{movimiento_id}/anular")
+async def anular_movimiento_de_palmala(request: Request, movimiento_id: int):
+    """Anular (o volver a contar) un movimiento: queda a la vista, tachado, y no
+    suma al saldo. Es una corrección más, con su motivo en el historial."""
+    puerta = _puerta_de_palmala(request, escribir=True)
+    if puerta is not None:
+        return puerta
+    formulario = await request.form()
+    volver = f"/gerencia/palmala-cruces/{movimiento_id}"
+    try:
+        corregir_movimiento_de_palmala(movimiento_id, {"anulado": formulario.get("anulado") == "1"},
+                                       str(formulario.get("motivo") or ""))
+    except PalmalaNoSePuede as motivo:
+        return RedirectResponse(con_volver(volver + "?" + urlencode({"error": str(motivo)}),
+                                           request.query_params.get("volver")), status_code=303)
+    aviso = "Anulado: ya no suma al saldo." if formulario.get("anulado") == "1" else "Vuelve a sumar al saldo."
+    return RedirectResponse(con_volver(volver + "?" + urlencode({"aviso": aviso}), request.query_params.get("volver")),
+                            status_code=303)
+
+
+@app.get("/gerencia/palmala-cruces/{movimiento_id}/foto")
+def ver_foto_de_palmala(request: Request, movimiento_id: int):
+    puerta = _puerta_de_palmala(request)
+    if puerta is not None:
+        return puerta
+    movimiento = obtener_movimiento_de_palmala(movimiento_id)
+    if movimiento is None or not movimiento.get("foto_ruta"):
+        raise HTTPException(status_code=404, detail="Ese movimiento no tiene foto.")
+    return _ir_a_la_foto(movimiento["foto_ruta"], status_code=303)
+
+
 if __name__ == "__main__":
     import uvicorn
 
