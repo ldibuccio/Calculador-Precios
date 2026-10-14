@@ -533,3 +533,19 @@ Verificado por mí por el conector "Supabase Lectura" el 14/10
 FRUTAMAX  clientes_cuit_1 · columna_cuit 1 · check_cuit 1 · con_cuit 0 · testigo_clientes 5
 PALMALA   clientes_cuit_1 · columna_cuit 1 · check_cuit 1 · con_cuit 0 · testigo_clientes 5
 ```
+
+## 14/10 — `clientes_cuit_2`: varios CUIT propios por cliente (`clientes_cuits`)
+
+Bloque `db/clientes_cuit_2.sql`. Corrido por Lionel en Frutamax y Palmala.
+Verificado por mí por el conector "Supabase Lectura" el 14/10
+(`db/clientes_cuit_2_verificacion.sql`):
+
+```
+FRUTAMAX  clientes_cuit_2 · tabla 1 · candado 1 · politicas 0 · checks 2 · en_la_columna 1 · en_la_tabla 1 · testigo_clientes 5
+PALMALA   clientes_cuit_2 · tabla 1 · candado 1 · politicas 0 · checks 2 · en_la_columna 0 · en_la_tabla 0 · testigo_clientes 5
+```
+
+El CUIT que pasó de la columna en Frutamax es 30685849751 (Día Argentina) de
+"Día %": lo había aprendido solo la v1154 con el primer listado (130 cheques,
+todos con ese CUIT y de ese cliente). Es propio: queda. `clientes.cuit` queda
+deprecada hasta `clientes_cuit_3`.
