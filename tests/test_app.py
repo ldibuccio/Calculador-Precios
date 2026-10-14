@@ -957,6 +957,7 @@ def test_ver_editar_cliente_muestra_datos_precargados():
         patch("app.main.obtener_cliente", return_value=CLIENTE_DE_PRUEBA),
         patch("app.main.listar_conceptos_editables_por_cliente", return_value=CONCEPTOS_EDITABLES_DE_PRUEBA),
         patch("app.main.obtener_condiciones_pedido", return_value=None),
+        patch("app.main.cuits_de_un_cliente", return_value=[{"id": 7, "cuit": "30685849751"}]),
     ):
         respuesta = cliente.get("/clientes/1/editar")
 
@@ -972,6 +973,9 @@ def test_ver_editar_cliente_muestra_datos_precargados():
     # punto de partida contra el que se compara al guardar.
     assert 'name="tasa_suma_0_nombre_original" value="IVA"' in respuesta.text
     assert 'name="tasa_resta_0_nombre_original" value="Flete"' in respuesta.text
+    # Sus CUIT propios (14/10), con su botón para sacarlo.
+    assert '<span data-cuit>30685849751</span>' in respuesta.text
+    assert 'action="/clientes/1/cuits/7/sacar"' in respuesta.text
     assert 'name="utilidad_original" value="20.0"' in respuesta.text
     assert "Dar de baja esta tasa" in respuesta.text
 
@@ -20435,6 +20439,7 @@ def test_editar_cliente_muestra_los_dias_de_pedido_tildados():
         patch("app.main.obtener_cliente", return_value=CLIENTE_DE_PRUEBA),
         patch("app.main.listar_conceptos_editables_por_cliente", return_value=CONCEPTOS_EDITABLES_DE_PRUEBA),
         patch("app.main.obtener_condiciones_pedido", return_value={"cliente_id": 1, "dias_esperados": "1,4"}),
+        patch("app.main.cuits_de_un_cliente", return_value=[]),
     ):
         respuesta = cliente.get("/clientes/1/editar")
 
