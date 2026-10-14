@@ -11,6 +11,8 @@
   .renglon.sacado { opacity: 0.55; }
   .renglon details { flex: 1; min-width: 0; }
   .renglon summary { display: flex; flex-wrap: wrap; align-items: center; gap: 0.1rem 0.6rem; min-height: 44px; cursor: pointer; font-size: 0.92rem; }
+  .sugerencia { flex-basis: 100%; display: flex; flex-wrap: wrap; align-items: center; gap: 0.5rem; color: #6b7280; font-size: 0.88rem; }
+  .sugerencia .usar { min-height: 44px; padding: 0 1rem; border-radius: 8px; border: 1px solid #6b7280; background: #fff; color: #374151; font-weight: 600; }
   [data-conteo] { font-size: 1.1rem; font-weight: 700; }
   .renglon summary .importe { font-weight: 700; margin-left: auto; }
   .problemas { color: #dc2626; font-weight: 700; font-size: 0.9rem; margin: 0 0 0.4rem; flex-basis: 100%; }
@@ -34,6 +36,7 @@
 
   <form method="post" action="/gerencia/cheques/cargar/listado">
     <input type="hidden" name="cantidad" value="{{ cantidad }}">
+    {% for cuit in terceros %}<input type="hidden" name="tercero_{{ cuit }}" value="1">{% endfor %}
     <div class="tarjeta" data-resumen>
       <p class="total-dato" data-conteo>{{ cuantos }} cheque{{ '' if cuantos == 1 else 's' }} · {{ total|moneda }} · <span data-bien>{{ bien }} bien</span>{% if con_problema %} · <span class="rojo" data-con-problema>{{ con_problema }} con problema</span>{% endif %}</p>
       <div class="campos"><label>¿Qué día los recibiste?<input type="date" name="fecha_carga" value="{{ fecha_carga }}" required></label></div>
@@ -50,6 +53,17 @@
       {% for nombre, veces in faltan_bancos %}
       <div class="falta-banco" data-falta-banco><span><strong>{{ nombre }}</strong> no está en la lista ({{ veces }} cheque{{ '' if veces == 1 else 's' }})</span>
         <span class="acciones"><button type="submit" name="agregar_banco" value="{{ nombre }}" class="secundario">Agregarlo</button></span></div>
+      {% endfor %}
+    </div>
+    {% endif %}
+
+    {# ¿CUIT PROPIO? (dueño, 14/10): una vez por CUIT, cuando se eligió el cliente a mano. #}
+    {% if preguntas %}
+    <div class="tarjeta" data-preguntas>
+      {% for cuit, cliente_id in preguntas %}
+      <div class="falta-banco" data-pregunta-cuit="{{ cuit }}"><span><strong>{{ cuit }}</strong> ¿es un CUIT propio de {{ nombre_de_cliente.get(cliente_id, "este cliente") }}?</span>
+        <span class="acciones"><button type="submit" name="cuit_propio" value="{{ cuit }}:{{ cliente_id }}" class="secundario">Sí</button>
+        <button type="submit" name="cuit_tercero" value="{{ cuit }}" class="secundario">No, es de un tercero</button></span></div>
       {% endfor %}
     </div>
     {% endif %}
@@ -76,7 +90,7 @@
     <div class="tarjeta">
       <h2>Los cheques leídos</h2>
       <p class="nota">Tocá un cheque para corregirlo. Los que tienen problema van primero y abiertos.</p>
-      {% for i, r, problemas in renglones %}
+      {% for i, r, problemas, sugerido in renglones %}
       <div class="renglon{% if problemas and not r.sacar %} con-problema{% endif %}{% if r.sacar %} sacado{% endif %}" data-renglon="{{ i }}">
         <label class="tilde tilde-renglon"><input type="checkbox" name="tildado_{{ i }}" value="1" aria-label="Tildar el cheque {{ r.numero }}" {% if r.tildado %}checked{% endif %}></label>
         <details{% if problemas and not r.sacar %} open{% endif %}>
@@ -87,6 +101,8 @@
             <span>{% if r.origen == 'cliente' %}{{ nombre_de_cliente.get(r.cliente_id, "elegí el cliente") }}{% elif r.origen == 'a_mano' %}{{ r.nombre_a_mano or "sin nombre" }}{% elif r.origen == 'canje' %}Canje{% else %}¿de quién?{% endif %}</span>
             <span class="importe">{{ (r.importe|float)|moneda if r.importe else "sin importe" }}</span>
             {% if r.sacar %}<span class="nota">Sacado</span>{% endif %}
+            {% if sugerido %}<span class="sugerencia" data-sugerencia>La última vez vino de {{ nombre_de_cliente.get(sugerido, "otro cliente") }}
+              <button type="submit" name="usar_sugerencia" value="{{ i }}" class="usar">Usar</button></span>{% endif %}
             {% if problemas and not r.sacar %}<span class="problemas" data-problemas>{{ problemas|join(" · ") }}</span>{% endif %}
           </summary>
           <div class="campos">

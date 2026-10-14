@@ -15,9 +15,11 @@ inválido, falta un dato, banco que no está en la lista): esos no entran hasta
 corregirlos. Nada de acá toca la base.
 
 LISTADOS GRANDES (dueño, 14/10): con 130 cheques o más,
-- el cliente sale solo del CUIT del librador si UN cliente tiene ese CUIT
-  (`clientes.cuit`), y si se elige a mano el sistema lo recuerda
-  (`cuits_para_recordar`);
+- el cliente se asigna solo ÚNICAMENTE si el CUIT del librador es PROPIO de un
+  cliente (`clientes_cuits`, varios por cliente). Un cheque de TERCEROS no se
+  asigna: si ese CUIT ya vino antes, se sugiere "La última vez vino de X"
+  (`sugerencias`). Al elegir un cliente a mano, se pregunta una vez por CUIT
+  si es propio (`cuits_para_preguntar`): nunca se aprende solo;
 - un banco que no está se avisa UNA vez arriba (`bancos_que_faltan`), y el
   mismo banco con otro nombre es el mismo (`core.cheques.clave_de_banco`);
 - "Para todos" cambia de una vez todos los renglones o solo los tildados
@@ -234,26 +236,17 @@ def cuit_valido(cuit: str) -> bool:
     return verificador != 10 and verificador == int(cuit[10])
 
 
-def cliente_por_cuit(cuit: str, clientes: list[dict]) -> int | None:
-    """El cliente con ese CUIT, si hay UNO solo (dos con el mismo no se adivinan)."""
-    if not cuit_valido(cuit):
-        return None
-    con_ese = [c["id"] for c in clientes if c.get("cuit") == cuit]
-    return con_ese[0] if len(con_ese) == 1 else None
-
-
-def renglones_para_revisar(crudos: list[dict], clientes: list[dict], bancos: list[dict],
+def renglones_para_revisar(crudos: list[dict], propios: dict, bancos: list[dict],
                            de_un_listado_de_echeq: bool = False) -> list[dict]:
     """Lo leído (de la planilla o de la IA) como renglones del formulario:
-    textos que se corrigen a mano. De quién es: el cliente que tiene el CUIT
-    del librador; si no, el cliente con el nombre del librador; si no, el
-    nombre a mano."""
-    por_nombre = {_normalizar(c["nombre"]): c["id"] for c in clientes}
+    textos que se corrigen a mano. De quién es: el cliente de quien el CUIT
+    del librador es PROPIO (`propios`: {CUIT: cliente_id}); si no, el nombre
+    del librador a mano. El nombre solo no asigna un cliente (dueño, 14/10)."""
     renglones = []
     for crudo in crudos:
         librador = str(crudo.get("librador") or "").strip()
         cuit = cuit_de_la_celda(crudo.get("cuit_librador"))
-        cliente_id = cliente_por_cuit(cuit, clientes) or (por_nombre.get(_normalizar(librador)) if librador else None)
+        cliente_id = propios.get(cuit)
         renglones.append({
             "numero": numero_de_la_celda(crudo.get("numero")),
             "banco": _banco_de_la_lista(crudo.get("banco"), bancos) if crudo.get("banco") else "",
@@ -364,19 +357,47 @@ def poner_a_todos(renglones: list[dict], cambios: dict) -> int:
     return len(destino)
 
 
-def cuits_para_recordar(guardados: list[dict], clientes: list[dict]) -> dict:
-    """{cliente_id: CUIT} que el cliente aprende de los cheques que se
-    guardan: el CUIT del librador de sus cheques si es UNO solo y válido, el
-    cliente no tenía, y ningún otro cliente lo tiene. Con dos CUIT distintos
-    para el mismo cliente no se adivina cuál es el suyo."""
-    del_cliente: dict = {}
-    for r in guardados:
-        if r.get("origen") == "cliente" and r.get("cliente_id") and cuit_valido(r.get("cuit_librador") or ""):
-            del_cliente.setdefault(r["cliente_id"], set()).add(r["cuit_librador"])
-    tienen = {c["cuit"]: c["id"] for c in clientes if c.get("cuit")}
-    sin_cuit = {c["id"] for c in clientes if not c.get("cuit")}
-    return {cliente: next(iter(cuits)) for cliente, cuits in del_cliente.items()
-            if len(cuits) == 1 and cliente in sin_cuit and next(iter(cuits)) not in tienen}
+def asignar_por_cuit_propio(renglones: list[dict], propios: dict) -> int:
+    """Los renglones cuyo CUIT es propio de un cliente pasan a ese cliente
+    (después de decir "sí, es propio"). Devuelve cuántos cambiaron."""
+    cambiados = 0
+    for r in renglones:
+        cliente_id = propios.get(r.get("cuit_librador") or "")
+        if cliente_id and not r.get("sacar") and (r.get("origen"), r.get("cliente_id")) != ("cliente", cliente_id):
+            r.update(origen="cliente", cliente_id=cliente_id, nombre_a_mano="")
+            cambiados += 1
+    return cambiados
+
+
+def sugerencias(renglones: list[dict], propios: dict, ultimos: dict) -> list[int | None]:
+    """Por renglón, el cliente de quien vino la ÚLTIMA vez un cheque con ese
+    CUIT (`ultimos`: {CUIT: cliente_id}), para un cheque de TERCEROS (el CUIT
+    no es propio de nadie) que todavía no tiene ese cliente. Si no, None."""
+    resultado = []
+    for r in renglones:
+        cuit = r.get("cuit_librador") or ""
+        sugerido = ultimos.get(cuit) if cuit_valido(cuit) and cuit not in propios else None
+        if sugerido and (r.get("origen"), r.get("cliente_id")) == ("cliente", sugerido):
+            sugerido = None
+        resultado.append(None if r.get("sacar") else sugerido)
+    return resultado
+
+
+def cuits_para_preguntar(renglones: list[dict], propios: dict, ya_vinieron: set,
+                         terceros: set) -> list[tuple[str, int]]:
+    """(CUIT, cliente) a preguntar UNA vez cada uno: "¿es un CUIT propio de
+    este cliente?". Se pregunta por un cheque con el cliente elegido a mano
+    cuyo CUIT no es propio de nadie, nunca vino antes en un cheque de un
+    cliente (`ya_vinieron`: entonces es de un tercero que ya se vio) y no se
+    contestó "es de un tercero" en este listado (`terceros`)."""
+    preguntas: dict = {}
+    for r in renglones:
+        cuit = r.get("cuit_librador") or ""
+        if (r.get("sacar") or r.get("origen") != "cliente" or not r.get("cliente_id") or not cuit_valido(cuit)
+                or cuit in propios or cuit in ya_vinieron or cuit in terceros):
+            continue
+        preguntas.setdefault(cuit, r["cliente_id"])
+    return list(preguntas.items())
 
 
 def planilla_modelo() -> bytes:
