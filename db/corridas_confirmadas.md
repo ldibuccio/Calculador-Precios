@@ -522,3 +522,14 @@ Frutamax y Palmala: primero la función `cheque_salida_valida` (el 13/10 di
 FRUTAMAX  cheques_2 · columna_cuenta 1 · check_cuenta 1 · funcion_nueva 1 · trigger 1 · salidas 0 · testigo_clientes 5
 PALMALA   cheques_2 · columna_cuenta 1 · check_cuenta 1 · funcion_nueva 1 · trigger 1 · salidas 0 · testigo_clientes 5
 ```
+
+## 14/10 — `clientes_cuit_1`: el CUIT del cliente para el listado de cheques
+
+Bloque `db/clientes_cuit_1.sql`. Corrido por Lionel en Frutamax y Palmala.
+Verificado por mí por el conector "Supabase Lectura" el 14/10
+(`db/clientes_cuit_1_verificacion.sql`):
+
+```
+FRUTAMAX  clientes_cuit_1 · columna_cuit 1 · check_cuit 1 · con_cuit 0 · testigo_clientes 5
+PALMALA   clientes_cuit_1 · columna_cuit 1 · check_cuit 1 · con_cuit 0 · testigo_clientes 5
+```
