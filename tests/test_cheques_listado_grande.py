@@ -4,13 +4,15 @@ Lionel subió un Excel de 130 cheques y al guardar salió "Too many fields.
 Maximum number of fields is 1000": cada cheque manda 12 campos. Acá:
 - un listado de 300 cheques se lee, se revisa y se guarda entero;
 - el mismo banco escrito de tres formas se avisa UNA vez y se agrega una vez;
-- el cliente sale solo por el CUIT del librador, y si se elige a mano el
-  cliente aprende el CUIT;
+- el cliente sale solo por el CUIT del librador si es un CUIT PROPIO (varios
+  por cliente); uno de TERCEROS no se asigna y se sugiere el de la última vez;
+  al elegir a mano se pregunta si el CUIT es propio;
 - "Para todos" cambia los tildados, o todos si no hay ninguno tildado.
 
-EL GALPÓN, con nombres inventados: cliente 1 EJEMPLO Verduleria (sin CUIT),
-cliente 2 EJEMPLO Día % con el CUIT de Día Argentina (30685849751, el ejemplo
-del dueño), bancos EJEMPLO Banco y EJEMPLO Otro Banco; Galicia NO está.
+EL GALPÓN, con nombres inventados: cliente 1 EJEMPLO Verduleria (sin CUIT
+propio), cliente 2 EJEMPLO Día % con DOS CUIT propios (el de Día Argentina,
+30685849751, el ejemplo del dueño, y CUIT_DIA_2), bancos EJEMPLO Banco y
+EJEMPLO Otro Banco; Galicia NO está.
 """
 import os
 import re
@@ -20,13 +22,14 @@ RAIZ = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, RAIZ)
 
 from core.cheques import clave_de_banco  # noqa: E402
-from core.listado_cheques import cuits_para_recordar, poner_a_todos  # noqa: E402
+from core.listado_cheques import cuits_para_preguntar, poner_a_todos, sugerencias  # noqa: E402
 from tests.test_administracion_reordenada import _cliente  # noqa: E402
 from tests.test_cheques import CUIT_A, CUIT_B, d  # noqa: E402,F401
 from tests.test_cheques_listado import _formulario, _leer, _xlsx  # noqa: E402
 from tests.test_cheques_pantallas import _sin_estilo, m  # noqa: E402,F401
 
-CUIT_DIA = "30685849751"
+CUIT_DIA, CUIT_DIA_2 = "30685849751", "30700000008"
+CUIT_TERCERO = "20444444445"
 TITULOS = ["Nro. Cheque", "Entidad", "Vencimiento", "Monto", "CUIT", "Librador"]
 GALICIAS = ("BANCO DE GALICIA", "Galicia", "007 - Banco de Galicia y Buenos Aires S.A.U.")
 
@@ -34,17 +37,18 @@ GALICIAS = ("BANCO DE GALICIA", "Galicia", "007 - Banco de Galicia y Buenos Aire
 def _con_dia(d):
     conexion = d.obtener_conexion()
     with conexion.cursor() as cursor:
-        cursor.execute("INSERT INTO clientes (id, nombre, cuit) OVERRIDING SYSTEM VALUE "
-                       "VALUES (2, 'EJEMPLO Día %%', %s)", (CUIT_DIA,))
+        cursor.execute("INSERT INTO clientes (id, nombre) OVERRIDING SYSTEM VALUE VALUES (2, 'EJEMPLO Día %')")
+        cursor.execute("INSERT INTO clientes_cuits (cliente_id, cuit) VALUES (2, %s), (2, %s)",
+                       (CUIT_DIA, CUIT_DIA_2))
     conexion.commit()
     conexion.close()
 
 
-def _cuits(d) -> dict:
+def _cuits(d) -> list:
     conexion = d.obtener_conexion()
     with conexion.cursor() as cursor:
-        cursor.execute("SELECT id, cuit FROM clientes ORDER BY id")
-        filas = dict(cursor.fetchall())
+        cursor.execute("SELECT cliente_id, cuit FROM clientes_cuits ORDER BY cliente_id, cuit")
+        filas = cursor.fetchall()
     conexion.close()
     return filas
 
@@ -97,35 +101,128 @@ def test_un_LISTADO_de_300_cheques_se_revisa_y_se_guarda_entero(m, d):
     assert sum(1 for c in cheques if c["cliente_id"] == 2) == 100
 
 
-def test_el_CLIENTE_elegido_a_mano_APRENDE_el_CUIT_y_la_proxima_se_elige_solo(m, d):
+def _con_un_cheque_de_tercero_de_la_verduleria(d):
+    """El cheque de un TERCERO (CUIT_TERCERO) que vino de Día y DESPUÉS de la
+    Verdulería: la sugerencia es la última (el RIVAL es el de Día)."""
+    from tests.test_cheques import _cargar
+    _cargar(d, "799", cuit=CUIT_TERCERO, origen="cliente", cliente=2)
+    _cargar(d, "800", cuit=CUIT_TERCERO, origen="cliente", cliente=1)
+
+
+def test_un_cheque_PROPIO_se_asigna_solo_y_el_cliente_puede_tener_DOS_CUIT(m, d):
     _con_dia(d)
-    filas = [TITULOS, ["1", "EJEMPLO Banco", "15/11/2026", 100, CUIT_A, "EJEMPLO SRL"],
-             ["2", "EJEMPLO Banco", "16/11/2026", 200, CUIT_A, "EJEMPLO SRL"]]
-    datos = _formulario(_leer(m, "a.xlsx", _xlsx(filas)).text)
+    filas = [TITULOS, ["1", "EJEMPLO Banco", "15/11/2026", 100, CUIT_DIA, "DIA ARGENTINA"],
+             ["2", "EJEMPLO Banco", "16/11/2026", 200, CUIT_DIA_2, "DIA OTRA RAZON SOCIAL"],
+             ["3", "EJEMPLO Banco", "17/11/2026", 300, CUIT_A, "EJEMPLO Día %"]]       # RIVAL: el nombre igual
+    pagina = _leer(m, "a.xlsx", _xlsx(filas))
+    datos = _formulario(pagina.text)
+    assert [(datos[f"origen_{i}"], datos[f"cliente_id_{i}"]) for i in range(3)] == [
+        ("cliente", "2"), ("cliente", "2"), ("a_mano", "")]
+    assert "data-pregunta-cuit" not in pagina.text and "data-sugerencia" not in pagina.text
+
+
+def test_un_cheque_de_TERCERO_no_se_asigna_y_se_SUGIERE_el_de_la_ultima_vez(m, d):
+    _con_dia(d)
+    _con_un_cheque_de_tercero_de_la_verduleria(d)
+    filas = [TITULOS, ["1", "EJEMPLO Banco", "15/11/2026", 100, CUIT_TERCERO, "EJEMPLO Tercero SA"],
+             ["2", "EJEMPLO Banco", "16/11/2026", 200, CUIT_B, "EJEMPLO Persona"]]       # nunca vino
+    pagina = _leer(m, "t.xlsx", _xlsx(filas))
+    marcado = _sin_estilo(pagina.text)
+    datos = _formulario(pagina.text)
     assert (datos["origen_0"], datos["cliente_id_0"]) == ("a_mano", "")
-    # Se elige el cliente para todos, sin tildar ninguno.
-    cambiado = _postear(m, datos, accion="a_todos", origen_todos="cliente", cliente_todos="1")
-    assert "Se cambiaron 2 cheques." in cambiado.text
-    final = _postear(m, _formulario(cambiado.text), accion="guardar")
+    assert [(t.strip(), i) for t, i in re.findall(
+        r'data-sugerencia>([^<]*)<button type="submit" name="usar_sugerencia" value="(\d+)"', marcado)] == [
+        ("La última vez vino de EJEMPLO Verduleria", "0")]
+    usada = _postear(m, datos, usar_sugerencia="0")
+    nuevos = _formulario(usada.text)
+    assert (nuevos["origen_0"], nuevos["cliente_id_0"], nuevos["origen_1"]) == ("cliente", "1", "a_mano")
+    assert "data-sugerencia>" not in _sin_estilo(usada.text)
+    # Un CUIT que ya vino es de un tercero: no se pregunta si es propio, ni se aprende al guardar.
+    assert "data-pregunta-cuit" not in usada.text
+    final = _postear(m, nuevos, accion="guardar")
     assert final.status_code == 303
-    assert "EJEMPLO+Verduleria+qued%C3%B3+con+el+CUIT+" + CUIT_A in final.headers["location"]
-    assert _cuits(d) == {1: CUIT_A, 2: CUIT_DIA}
-    otra = _formulario(_leer(m, "b.xlsx", _xlsx([TITULOS, ["3", "EJEMPLO Banco", "17/11/2026", 300, CUIT_A,
-                                                            "Otro nombre cualquiera"]])).text)
-    assert (otra["origen_0"], otra["cliente_id_0"]) == ("cliente", "1")
+    assert _cuits(d) == [(2, CUIT_DIA), (2, CUIT_DIA_2)]
 
 
-def test_el_CUIT_no_se_aprende_si_es_de_otro_o_si_el_cliente_trae_DOS():
-    clientes = [{"id": 1, "cuit": None}, {"id": 2, "cuit": CUIT_DIA}, {"id": 3, "cuit": None},
-                {"id": 4, "cuit": CUIT_B}]
-    guardados = [{"origen": "cliente", "cliente_id": 1, "cuit_librador": CUIT_A},
-                 {"origen": "cliente", "cliente_id": 1, "cuit_librador": CUIT_A},
-                 {"origen": "cliente", "cliente_id": 3, "cuit_librador": CUIT_DIA},     # ya es de Día
-                 {"origen": "cliente", "cliente_id": 4, "cuit_librador": CUIT_A},      # ya tiene otro
-                 {"origen": "a_mano", "cliente_id": None, "cuit_librador": CUIT_B}]
-    assert cuits_para_recordar(guardados, clientes) == {1: CUIT_A}
-    dos = guardados[:1] + [{"origen": "cliente", "cliente_id": 1, "cuit_librador": CUIT_B}]
-    assert cuits_para_recordar(dos, [{"id": 1, "cuit": None}]) == {}             # dos CUIT: no se adivina
+def test_al_ELEGIR_A_MANO_pregunta_una_vez_por_CUIT_si_es_PROPIO(m, d):
+    _con_dia(d)
+    filas = [TITULOS] + [[str(i), "EJEMPLO Banco", "15/11/2026", 100 + i, cuit, "EJEMPLO SRL"]
+                         for i, cuit in enumerate((CUIT_A, CUIT_A, CUIT_B))]
+    datos = _formulario(_leer(m, "p.xlsx", _xlsx(filas)).text)
+    # Se elige Día a mano para el 0 y el 2 (tildados); el 1, con el mismo CUIT que el 0, queda.
+    elegido = _postear(m, datos, tildado_0="1", tildado_2="1", accion="a_todos", origen_todos="cliente",
+                       cliente_todos="2")
+    preguntas = re.findall(r'data-pregunta-cuit="(\d+)"><span><strong>\d+</strong> ¿es un CUIT propio de ([^?]*)\?',
+                           _sin_estilo(elegido.text))
+    assert preguntas == [(CUIT_A, "EJEMPLO Día %"), (CUIT_B, "EJEMPLO Día %")]     # una por CUIT, no por cheque
+    # CUIT_B es de un tercero: no se vuelve a preguntar en este listado.
+    tercero = _postear(m, _formulario(elegido.text), cuit_tercero=CUIT_B)
+    assert re.findall(r'data-pregunta-cuit="(\d+)"', tercero.text) == [CUIT_A]
+    revisado = _postear(m, _formulario(tercero.text), accion="revisar")
+    assert re.findall(r'data-pregunta-cuit="(\d+)"', revisado.text) == [CUIT_A]
+    # CUIT_A sí es propio: queda en el cliente, no se pregunta más, y el 1 (mismo CUIT) pasa solo a Día.
+    propio = _postear(m, _formulario(revisado.text), cuit_propio=f"{CUIT_A}:2")
+    assert f"El CUIT {CUIT_A} quedó como propio del cliente" in propio.text
+    assert "Se asignaron 1 más de este listado." in propio.text
+    assert [(_formulario(propio.text)[f"origen_{i}"], _formulario(propio.text)[f"cliente_id_{i}"])
+            for i in range(3)] == [("cliente", "2")] * 3
+    assert "data-pregunta-cuit" not in propio.text
+    final = _postear(m, _formulario(propio.text), accion="guardar")
+    assert final.status_code == 303
+    assert _cuits(d) == [(2, CUIT_A), (2, CUIT_DIA), (2, CUIT_DIA_2)]               # CUIT_B no
+    # La próxima vez el de CUIT_A se asigna solo; el de CUIT_B se sugiere.
+    otra = _leer(m, "q.xlsx", _xlsx([TITULOS, ["9", "EJEMPLO Banco", "15/11/2026", 1, CUIT_A, "X"],
+                                    ["10", "EJEMPLO Banco", "15/11/2026", 1, CUIT_B, "X"]]))
+    nuevos = _formulario(otra.text)
+    assert (nuevos["origen_0"], nuevos["cliente_id_0"], nuevos["origen_1"]) == ("cliente", "2", "a_mano")
+    assert len(re.findall(r'data-sugerencia>', _sin_estilo(otra.text))) == 1
+
+
+def test_SUGERENCIAS_y_PREGUNTAS_sin_base():
+    propios = {CUIT_DIA: 2}
+    ultimos = {CUIT_TERCERO: 1, CUIT_DIA: 2}
+    renglones = [{"cuit_librador": CUIT_TERCERO, "origen": "a_mano", "cliente_id": None},
+                 {"cuit_librador": CUIT_TERCERO, "origen": "cliente", "cliente_id": 1},   # ya lo tiene
+                 {"cuit_librador": CUIT_DIA, "origen": "a_mano", "cliente_id": None},     # propio: no se sugiere
+                 {"cuit_librador": CUIT_TERCERO, "origen": "a_mano", "cliente_id": None, "sacar": True}]
+    assert sugerencias(renglones, propios, ultimos) == [1, None, None, None]
+    elegidos = [{"cuit_librador": CUIT_A, "origen": "cliente", "cliente_id": 1},
+                {"cuit_librador": CUIT_A, "origen": "cliente", "cliente_id": 1},
+                {"cuit_librador": CUIT_DIA, "origen": "cliente", "cliente_id": 1},          # propio de otro
+                {"cuit_librador": CUIT_TERCERO, "origen": "cliente", "cliente_id": 1},      # ya vino
+                {"cuit_librador": CUIT_B, "origen": "cliente", "cliente_id": 1},            # dicho tercero
+                {"cuit_librador": "20111111111", "origen": "cliente", "cliente_id": 1}]     # CUIT mal
+    assert cuits_para_preguntar(elegidos, propios, {CUIT_TERCERO}, {CUIT_B}) == [(CUIT_A, 1)]
+
+
+def test_la_FICHA_del_cliente_carga_y_saca_sus_CUIT(m, d):
+    _con_dia(d)
+    cliente = _cliente(m, "gerencia")
+    agregado = cliente.post("/clientes/1/cuits", data={"cuit": "30-70000000-8"})
+    assert "ya es de EJEMPLO Día %" in agregado.text                       # uno es de un solo cliente
+    cliente.post("/clientes/1/cuits", data={"cuit": "20-44444444-5"})
+    assert "no es válido" in cliente.post("/clientes/1/cuits", data={"cuit": "20111111111"}).text
+    ficha = _sin_estilo(cliente.get("/clientes/1/editar").text)
+    assert re.findall(r'<span data-cuit>(\d+)</span>', ficha) == [CUIT_TERCERO]
+    cuit_id = re.search(r'action="/clientes/1/cuits/(\d+)/sacar"', ficha).group(1)
+    cliente.post(f"/clientes/1/cuits/{cuit_id}/sacar")
+    assert _cuits(d) == [(2, CUIT_DIA), (2, CUIT_DIA_2)]
+
+
+def test_la_MIGRACION_pasa_el_CUIT_de_la_columna_a_la_tabla_y_se_puede_correr_dos_veces(d):
+    conexion = d.obtener_conexion()
+    try:
+        with conexion.cursor() as cursor:
+            cursor.execute("UPDATE clientes SET cuit = %s WHERE id = 1", (CUIT_TERCERO,))
+            sql = open(os.path.join(RAIZ, "db", "clientes_cuit_2.sql")).read()
+            cursor.execute(sql)
+            cursor.execute(sql)
+            cursor.execute("SELECT cliente_id, cuit FROM clientes_cuits")
+            pasados = cursor.fetchall()
+    finally:
+        conexion.rollback()                      # no deja nada: ni el CUIT en la columna ni la fila
+        conexion.close()
+    assert pasados == [(1, CUIT_TERCERO)]
 
 
 def test_PARA_TODOS_cambia_los_TILDADOS_o_todos_si_no_hay_ninguno(m, d):

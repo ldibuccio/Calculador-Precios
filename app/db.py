@@ -22485,30 +22485,93 @@ def agregar_banco(nombre: str) -> int:
         return _banco_por_nombre(cursor, nombre)
 
 
-def clientes_con_cuit() -> list[dict]:
-    """Los clientes activos con su CUIT (None si no lo tiene): para saber de
-    quién es un cheque por el CUIT del librador."""
+# LOS CUIT PROPIOS DE CADA CLIENTE (clientes_cuit_2, dueño 14/10): varios por
+# cliente, uno por CUIT. Un cheque de terceros no deja nada acá.
+
+class CuitNoSePuede(Exception):
+    """El motivo, para el usuario, por el que un CUIT no se agrega."""
+
+
+def cuits_propios() -> dict:
+    """{CUIT: cliente_id} de los clientes activos."""
     conexion = obtener_conexion()
     try:
         with conexion.cursor() as cursor:
-            cursor.execute("SELECT id, nombre, cuit FROM clientes WHERE activo ORDER BY lower(nombre)")
+            cursor.execute("SELECT cc.cuit, cc.cliente_id FROM clientes_cuits cc "
+                           "JOIN clientes c ON c.id = cc.cliente_id WHERE c.activo")
+            return dict(cursor.fetchall())
+    finally:
+        conexion.close()
+
+
+def cuits_de_un_cliente(cliente_id: int) -> list[dict]:
+    conexion = obtener_conexion()
+    try:
+        with conexion.cursor() as cursor:
+            cursor.execute("SELECT id, cuit FROM clientes_cuits WHERE cliente_id = %s ORDER BY id", (cliente_id,))
             return _filas_como_dict(cursor)
     finally:
         conexion.close()
 
 
+def agregar_cuit_propio(cliente_id: int, cuit: str) -> None:
+    """Agrega un CUIT propio al cliente. Si ya es suyo no hace nada; si es de
+    otro cliente, dice de cuál (un CUIT es de uno solo)."""
+    conexion = obtener_conexion()
+    try:
+        with conexion.cursor() as cursor:
+            cursor.execute("SELECT c.id, c.nombre FROM clientes_cuits cc JOIN clientes c ON c.id = cc.cliente_id "
+                           "WHERE cc.cuit = %s", (cuit,))
+            fila = cursor.fetchone()
+            if fila and fila[0] != cliente_id:
+                raise CuitNoSePuede(f"El CUIT {cuit} ya es de {fila[1]}.")
+            if fila is None:
+                try:
+                    cursor.execute("INSERT INTO clientes_cuits (cliente_id, cuit) VALUES (%s, %s)", (cliente_id, cuit))
+                except psycopg2.errors.CheckViolation as error:
+                    raise CuitNoSePuede(f"El CUIT {cuit} no tiene 11 números.") from error
+                except psycopg2.errors.UniqueViolation as error:
+                    raise CuitNoSePuede(f"El CUIT {cuit} ya es de otro cliente.") from error
+        conexion.commit()
+    except Exception:
+        conexion.rollback()
+        raise
+    finally:
+        conexion.close()
+
+
+def sacar_cuit_propio(cliente_id: int, cuit_id: int) -> None:
+    conexion = obtener_conexion()
+    try:
+        with conexion.cursor() as cursor:
+            cursor.execute("DELETE FROM clientes_cuits WHERE id = %s AND cliente_id = %s", (cuit_id, cliente_id))
+        conexion.commit()
+    finally:
+        conexion.close()
+
+
+def ultimo_cliente_por_cuit() -> dict:
+    """{CUIT del librador: cliente} del ÚLTIMO cheque de un cliente con ese
+    CUIT (por fecha de carga): la sugerencia para un cheque de terceros."""
+    conexion = obtener_conexion()
+    try:
+        with conexion.cursor() as cursor:
+            cursor.execute("SELECT DISTINCT ON (ch.cuit_librador) ch.cuit_librador, ch.cliente_id FROM cheques ch "
+                           "JOIN clientes c ON c.id = ch.cliente_id WHERE ch.origen = 'cliente' AND c.activo "
+                           "ORDER BY ch.cuit_librador, ch.fecha_carga DESC, ch.id DESC")
+            return dict(cursor.fetchall())
+    finally:
+        conexion.close()
+
+
 def cargar_cheques(cheques: list[dict], *, fecha_carga: date, origen: str, cliente_id: int | None,
-                   nombre_a_mano: str | None, cuits_de_clientes: dict | None = None) -> list[int]:
+                   nombre_a_mano: str | None) -> list[int]:
     """Carga uno o varios cheques EN CARTERA en UNA transacción: o entran todos
     o ninguno. Cada uno es {"numero", "banco" (nombre), "tipo", "fecha_pago",
     "importe", "cuit_librador", "fotos": [(lado, ruta)]}; la fecha de carga va
     para todos, y de quién son también, salvo que el renglón traiga su
     "origen", "cliente_id" y "nombre_a_mano" (el listado). Un repetido dice
-    cuál.
-
-    `cuits_de_clientes` ({cliente_id: CUIT}, del listado): el CUIT que cada
-    cliente aprende, en la misma transacción. Uno que ya tiene CUIT no se
-    pisa, y un CUIT que ya es de otro cliente no se repite."""
+    cuál."""
     ids = []
     with _escribir_cheques() as cursor:
         for cheque in cheques:
@@ -22535,10 +22598,6 @@ def cargar_cheques(cheques: list[dict], *, fecha_carga: date, origen: str, clien
                 cursor.execute("INSERT INTO cheques_fotos (cheque_id, lado, foto_ruta, sector) "
                                "VALUES (%s, %s, %s, 'gerencia')", (cheque_id, lado, ruta))
             ids.append(cheque_id)
-        for su_cliente, cuit in (cuits_de_clientes or {}).items():
-            cursor.execute("UPDATE clientes SET cuit = %s WHERE id = %s AND cuit IS NULL "
-                           "AND NOT EXISTS (SELECT 1 FROM clientes otro WHERE otro.cuit = %s)",
-                           (cuit, su_cliente, cuit))
     return ids
 
 

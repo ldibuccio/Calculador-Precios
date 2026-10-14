@@ -2774,6 +2774,7 @@ def ver_editar_cliente(request: Request, cliente_id: int, error: str | None = No
             # Los días en que se ESPERA pedido de este cliente (alimenta la
             # alerta de faltantes). Conjunto de números 1..7, vacío = esporádico.
             "dias_pedido": _dias_esperados_como_numeros(dias_esperados),
+            "cuits": cuits_de_un_cliente(cliente_id),
             "error": error,
         },
     )
@@ -2856,6 +2857,29 @@ async def guardar_acepta_segunda_cliente(request: Request, cliente_id: int):
         guardar_acepta_segunda(cliente_id, form.get("acepta_segunda") == "si")
     except Exception as error_db:
         raise HTTPException(status_code=500, detail=f"No se pudo guardar si acepta segunda: {error_db}") from error_db
+    return RedirectResponse(url=f"/clientes/{cliente_id}/editar", status_code=303)
+
+
+@app.post("/clientes/{cliente_id}/cuits")
+async def agregar_cuit_de_cliente(request: Request, cliente_id: int):
+    """Un CUIT PROPIO del cliente (dueño, 14/10): con el que firma sus cheques.
+    El listado de cheques le asigna solos los que traen uno de estos."""
+    form = await request.form()
+    cuit = "".join(ch for ch in str(form.get("cuit") or "") if ch.isdigit())
+    if not cuit_valido(cuit):
+        return RedirectResponse(url=f"/clientes/{cliente_id}/editar?" + urlencode(
+            {"error": "Ese CUIT no es válido: son 11 números y el último tiene que dar."}), status_code=303)
+    try:
+        agregar_cuit_propio(cliente_id, cuit)
+    except CuitNoSePuede as motivo:
+        return RedirectResponse(url=f"/clientes/{cliente_id}/editar?" + urlencode({"error": str(motivo)}),
+                                status_code=303)
+    return RedirectResponse(url=f"/clientes/{cliente_id}/editar", status_code=303)
+
+
+@app.post("/clientes/{cliente_id}/cuits/{cuit_id}/sacar")
+def sacar_cuit_de_cliente(cliente_id: int, cuit_id: int):
+    sacar_cuit_propio(cliente_id, cuit_id)
     return RedirectResponse(url=f"/clientes/{cliente_id}/editar", status_code=303)
 
 
@@ -27949,7 +27973,8 @@ from core.endosos_cheques import problemas_de_los_endosos, renglones_de_los_endo
 from core.listado_cheques import (  # noqa: E402
     bancos_que_faltan,
     cuit_de_la_celda,
-    cuits_para_recordar,
+    asignar_por_cuit_propio,
+    cuits_para_preguntar,
     cuit_valido,
     fecha_de_la_celda,
     filas_de_la_planilla,
@@ -27958,6 +27983,7 @@ from core.listado_cheques import (  # noqa: E402
     planilla_modelo,
     poner_a_todos,
     problemas_de_los_renglones,
+    sugerencias as sugerencias_de_cliente,
     renglones_de_la_planilla,
     renglones_para_revisar,
     texto_de_la_planilla,
@@ -27971,7 +27997,12 @@ from app.db import (  # noqa: E402
     buscar_cheques,
     cargar_cheques,
     claves_de_los_cheques_cargados,
-    clientes_con_cuit,
+    CuitNoSePuede,
+    agregar_cuit_propio,
+    cuits_de_un_cliente,
+    cuits_propios,
+    sacar_cuit_propio,
+    ultimo_cliente_por_cuit,
     corregir_cheque,
     listar_bancos,
     listar_conceptos_de_cheques,
@@ -28231,7 +28262,7 @@ async def leer_cheques_para_cargar(request: Request, archivo: UploadFile = File(
         filas = cheques_leidos(datos, listar_bancos()) or [_cheque_vacio()]
         return _renderizar_carga_de_cheques(request, filas=filas, comunes=_comunes_vacios(), foto_leida=foto,
                                             aviso="Se leyó el cheque. Revisá cada dato antes de guardar.")
-    renglones = renglones_para_revisar(datos.get("cheques") or [], clientes_con_cuit(), listar_bancos(),
+    renglones = renglones_para_revisar(datos.get("cheques") or [], cuits_propios(), listar_bancos(),
                                        de_un_listado_de_echeq=(tipo == "pdf"))
     if not renglones:
         return _renderizar_carga_de_cheques(request, filas=[_cheque_vacio()], comunes=_comunes_vacios(),
@@ -28261,18 +28292,23 @@ def _cantidad_de_renglones(formulario) -> int:
 
 
 def _renderizar_listado_de_cheques(request: Request, renglones: list[dict], *, fecha_carga: str,
-                                   aviso: str | None = None, error: str | None = None, status_code: int = 200):
+                                   terceros: frozenset = frozenset(), aviso: str | None = None,
+                                   error: str | None = None, status_code: int = 200):
     bancos = listar_bancos()
     # El banco de cada renglón, con el nombre de la lista si es el mismo banco.
     for r in renglones:
         r["banco"] = _banco_de_la_lista(r.get("banco"), bancos) if r.get("banco") else ""
     problemas = problemas_de_los_renglones(renglones, bancos, claves_de_los_cheques_cargados())
     vivos = [(r, p) for r, p in zip(renglones, problemas) if not r.get("sacar")]
-    clientes = clientes_con_cuit()
+    clientes = listar_clientes()
+    propios = cuits_propios()
+    ultimos = ultimo_cliente_por_cuit()
+    sugeridos = sugerencias_de_cliente(renglones, propios, ultimos)
     # Los que tienen problema van primero: con 130 cheques, lo que hay que tocar se ve arriba.
     orden = sorted(range(len(renglones)), key=lambda i: (not problemas[i] or bool(renglones[i].get("sacar")), i))
     return templates.TemplateResponse(request, "cheques_listado.html", {
-        "renglones": [(i, renglones[i], problemas[i]) for i in orden], "cantidad": len(renglones),
+        "renglones": [(i, renglones[i], problemas[i], sugeridos[i]) for i in orden], "cantidad": len(renglones),
+        "preguntas": cuits_para_preguntar(renglones, propios, set(ultimos), terceros), "terceros": sorted(terceros),
         "fecha_carga": fecha_carga,
         "total": round(sum(_importe_de_cheque(r["importe"]) or 0 for r, _ in vivos), 2),
         "cuantos": len(vivos), "con_problema": sum(1 for _, p in vivos if p),
@@ -28305,6 +28341,8 @@ async def guardar_listado_de_cheques(request: Request):
     - "Para todos": pone lo elegido en los tildados (o en todos si no hay).
     - "Sacar los tildados": los saca del listado.
     - "Agregarlo": agrega a la lista un banco que no estaba, para todos.
+    - "Usar": acepta la sugerencia "La última vez vino de X" de un renglón.
+    - "Sí" / "No, es de un tercero": si un CUIT es propio del cliente elegido.
     - "Guardar todos": guarda los que están bien (juntos, en una transacción)
       y deja en la tabla los que tienen problema. Los sacados no entran nunca."""
     puerta = _puerta_de_gerencia_para_escribir(request)
@@ -28314,14 +28352,41 @@ async def guardar_listado_de_cheques(request: Request):
     renglones = _renglones_del_listado_de_cheques(formulario)
     fecha_carga = str(formulario.get("fecha_carga") or "")
     accion = str(formulario.get("accion") or "revisar")
+    # Los CUIT que en este listado se dijo que son de un tercero: no se vuelve a preguntar.
+    terceros = frozenset(str(k)[len("tercero_"):] for k in formulario.keys() if str(k).startswith("tercero_"))
+    if formulario.get("cuit_tercero"):
+        terceros = terceros | {str(formulario.get("cuit_tercero"))}
+        return _renderizar_listado_de_cheques(request, renglones, fecha_carga=fecha_carga, terceros=terceros)
+    if formulario.get("cuit_propio"):
+        cuit, _, cliente = str(formulario.get("cuit_propio")).partition(":")
+        try:
+            agregar_cuit_propio(int(cliente), cuit)
+        except (CuitNoSePuede, ValueError) as motivo:
+            return _renderizar_listado_de_cheques(request, renglones, fecha_carga=fecha_carga, terceros=terceros,
+                                                  error=str(motivo) or "No se pudo guardar el CUIT.",
+                                                  status_code=400)
+        cuantos = asignar_por_cuit_propio(renglones, cuits_propios())
+        return _renderizar_listado_de_cheques(
+            request, renglones, fecha_carga=fecha_carga, terceros=terceros,
+            aviso=f"El CUIT {cuit} quedó como propio del cliente: de acá en adelante sus cheques se asignan solos."
+                  + (f" Se asignaron {cuantos} más de este listado." if cuantos else ""))
+    if formulario.get("usar_sugerencia"):
+        try:
+            i = int(str(formulario.get("usar_sugerencia")))
+            sugerido = sugerencias_de_cliente(renglones, cuits_propios(), ultimo_cliente_por_cuit())[i]
+        except (ValueError, IndexError):
+            sugerido = None
+        if sugerido:
+            renglones[i].update(origen="cliente", cliente_id=sugerido, nombre_a_mano="")
+        return _renderizar_listado_de_cheques(request, renglones, fecha_carga=fecha_carga, terceros=terceros)
     banco_a_agregar = " ".join(str(formulario.get("agregar_banco") or "").split())
     if banco_a_agregar:
         try:
             agregar_banco(banco_a_agregar)
         except ChequeNoSePuede as motivo:
-            return _renderizar_listado_de_cheques(request, renglones, fecha_carga=fecha_carga, error=str(motivo),
+            return _renderizar_listado_de_cheques(request, renglones, fecha_carga=fecha_carga, terceros=terceros, error=str(motivo),
                                                   status_code=400)
-        return _renderizar_listado_de_cheques(request, renglones, fecha_carga=fecha_carga,
+        return _renderizar_listado_de_cheques(request, renglones, fecha_carga=fecha_carga, terceros=terceros,
                                               aviso=f"Se agregó {banco_a_agregar} a la lista de bancos.")
     if accion == "a_todos":
         cuantos = poner_a_todos(renglones, {
@@ -28331,18 +28396,19 @@ async def guardar_listado_de_cheques(request: Request):
             "tipo": str(formulario.get("tipo_todos") or ""), "banco": str(formulario.get("banco_todos") or "")})
         for r in renglones:
             r["tildado"] = False
-        return _renderizar_listado_de_cheques(request, renglones, fecha_carga=fecha_carga,
-                                              aviso=f"Se cambiaron {cuantos} cheques.")
+        return _renderizar_listado_de_cheques(request, renglones, fecha_carga=fecha_carga, terceros=terceros,
+                                              aviso="Se cambió 1 cheque." if cuantos == 1 else
+                                              f"Se cambiaron {cuantos} cheques.")
     if accion == "sacar_tildados":
         for r in renglones:
             if r["tildado"]:
                 r["sacar"], r["tildado"] = True, False
-        return _renderizar_listado_de_cheques(request, renglones, fecha_carga=fecha_carga)
+        return _renderizar_listado_de_cheques(request, renglones, fecha_carga=fecha_carga, terceros=terceros)
     if accion != "guardar":
-        return _renderizar_listado_de_cheques(request, renglones, fecha_carga=fecha_carga)
+        return _renderizar_listado_de_cheques(request, renglones, fecha_carga=fecha_carga, terceros=terceros)
     dia = _fecha_de_cheque(fecha_carga)
     if dia is None:
-        return _renderizar_listado_de_cheques(request, renglones, fecha_carga=fecha_carga,
+        return _renderizar_listado_de_cheques(request, renglones, fecha_carga=fecha_carga, terceros=terceros,
                                               error="Falta la fecha en que los recibiste.", status_code=400)
     bancos = listar_bancos()
     for r in renglones:
@@ -28350,8 +28416,6 @@ async def guardar_listado_de_cheques(request: Request):
     problemas = problemas_de_los_renglones(renglones, bancos, claves_de_los_cheques_cargados())
     buenos = [r for r, p in zip(renglones, problemas) if not p and not r["sacar"]]
     quedan = [r for r, p in zip(renglones, problemas) if p and not r["sacar"]]
-    clientes = clientes_con_cuit()
-    aprendidos = cuits_para_recordar(buenos, clientes)
     if buenos:
         try:
             cargar_cheques([{"numero": r["numero"], "banco": r["banco"], "tipo": r["tipo"],
@@ -28359,21 +28423,17 @@ async def guardar_listado_de_cheques(request: Request):
                              "importe": _importe_de_cheque(r["importe"]), "cuit_librador": r["cuit_librador"],
                              "origen": r["origen"], "cliente_id": r["cliente_id"],
                              "nombre_a_mano": r["nombre_a_mano"], "fotos": []} for r in buenos],
-                           fecha_carga=dia, origen="canje", cliente_id=None, nombre_a_mano=None,
-                           cuits_de_clientes=aprendidos)
+                           fecha_carga=dia, origen="canje", cliente_id=None, nombre_a_mano=None)
         except ChequeNoSePuede as motivo:
-            return _renderizar_listado_de_cheques(request, renglones, fecha_carga=fecha_carga, error=str(motivo),
+            return _renderizar_listado_de_cheques(request, renglones, fecha_carga=fecha_carga, terceros=terceros, error=str(motivo),
                                                   status_code=400)
-    nombres = {c["id"]: c["nombre"] for c in clientes}
-    recordados = " ".join(f"{nombres.get(cliente, cliente)} quedó con el CUIT {cuit}: la próxima vez se elige solo."
-                          for cliente, cuit in aprendidos.items())
     if not quedan:
-        aviso = f"{len(buenos)} cheques cargados." + (f" {recordados}" if recordados else "")
-        return RedirectResponse(f"/gerencia/cheques?en_cartera=1&{urlencode({'aviso': aviso})}", status_code=303)
+        return RedirectResponse(f"/gerencia/cheques?en_cartera=1&{urlencode({'aviso': f'{len(buenos)} cheques cargados'})}",
+                                status_code=303)
     return _renderizar_listado_de_cheques(
-        request, quedan, fecha_carga=fecha_carga,
+        request, quedan, fecha_carga=fecha_carga, terceros=terceros,
         aviso=(f"Se guardaron {len(buenos)}. " if buenos else "") + f"Quedan {len(quedan)} con problemas: "
-              "corregilos o sacalos." + (f" {recordados}" if recordados else ""))
+              "corregilos o sacalos.")
 
 
 @app.get("/gerencia/cheques/planilla-modelo")

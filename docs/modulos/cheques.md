@@ -85,13 +85,25 @@ las plantillas `cheques*.html` y `cheque.html`. Tests:
   que queda en "No cambiar" no se toca. "Seleccionar todos" tilda todos, y
   "Sacar los tildados" los saca. Un banco que no está se avisa UNA vez
   arriba con cuántos cheques lo traen (`bancos_que_faltan`) y "Agregarlo"
-  lo agrega a la lista para todos. De quién es: el cliente que tiene el CUIT
-  del librador (`clientes.cuit`, migración `clientes_cuit_1`), si lo tiene
-  UNO solo; si no, el cliente con el nombre del librador; si no, nombre a
-  mano. Al guardar, un cliente elegido a mano aprende el CUIT de sus cheques
-  (`cuits_para_recordar`) si es uno solo, él no tenía y no es de otro
-  cliente, y se avisa. Tests: `tests/test_cheques_listado_grande.py` (300
-  cheques).
+  lo agrega a la lista para todos. Tests:
+  `tests/test_cheques_listado_grande.py` (300 cheques).
+- **De quién es un cheque del listado: CUIT propios y de terceros** (dueño,
+  14/10). Un cliente paga con sus cheques (con uno o VARIOS CUIT propios) y
+  con cheques de TERCEROS. Los CUIT propios están en `clientes_cuits`
+  (migración `clientes_cuit_2`; un CUIT es de un solo cliente) y se cargan
+  desde la ficha del cliente ("CUIT propios") o al guardar un listado. Se
+  asigna solo ÚNICAMENTE el cheque cuyo CUIT es propio de un cliente; el
+  nombre del librador ya no asigna. Uno de terceros no se asigna: si ese
+  CUIT ya vino en un cheque de un cliente, el renglón muestra en gris "La
+  última vez vino de X" con "Usar" (`sugerencias`, del último cheque por
+  fecha de carga, `ultimo_cliente_por_cuit`). Nada se aprende solo: al
+  elegir un cliente a mano, arriba se pregunta una vez por CUIT "¿es un CUIT
+  propio de X? Sí / No, es de un tercero" (`cuits_para_preguntar`); no se
+  pregunta por un CUIT que ya vino antes (ya se vio: es de un tercero) ni
+  por uno que en ese listado se dijo que es de un tercero. "Sí" lo guarda y
+  pasa a ese cliente los demás cheques del listado con ese CUIT. La columna
+  `clientes.cuit` (de `clientes_cuit_1`) quedó deprecada: nadie la usa, y
+  se borra con `clientes_cuit_3` después del deploy.
 - **Banco leído**: es el de la lista si es EL MISMO banco
   (`core.cheques.clave_de_banco`): sin acentos, mayúsculas, signos, el código
   numérico ni las palabras de relleno ("Banco", "de", "S.A.U.",

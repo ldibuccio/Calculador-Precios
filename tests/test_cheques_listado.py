@@ -133,10 +133,11 @@ def test_un_LISTADO_con_un_REPETIDO_y_un_CUIT_MAL_entran_los_demas_y_esos_dos_qu
                                                                                        "ya está cargado"]
     assert re.search(r'data-conteo>4 cheques · \$105\.000 · <span data-bien>2 bien</span>', marcado)
     assert re.search(r'data-con-problema>2 con problema</span>', marcado)
-    # Lo leído: el cliente del sistema por su nombre, el banco de la lista y el monto argentino.
+    # Lo leído: el banco de la lista y el monto argentino. El nombre del librador
+    # NO asigna el cliente aunque sea igual (14/10: solo un CUIT propio lo hace).
     datos = _formulario(pagina.text)
-    assert (datos["origen_0"], datos["cliente_id_0"], datos["banco_0"], datos["importe_0"]) == (
-        "cliente", "1", "EJEMPLO Banco", "15000.5")
+    assert (datos["origen_0"], datos["nombre_a_mano_0"], datos["banco_0"], datos["importe_0"]) == (
+        "a_mano", "EJEMPLO Verduleria", "EJEMPLO Banco", "15000.5")
     assert (datos["origen_1"], datos["nombre_a_mano_1"], datos["importe_1"]) == ("a_mano", "EJEMPLO Persona", "20000")
 
     guardado = _cliente(m, "gerencia").post("/gerencia/cheques/cargar/listado", data=dict(datos, accion="guardar"))

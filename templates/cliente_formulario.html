@@ -121,6 +121,9 @@
     margin-top: 1rem;
   }
   /* Días de pedido: 7 botones grandes que envuelven, cómodos con el pulgar. */
+  .cuit-propio { display: flex; align-items: center; justify-content: space-between; gap: 0.8rem; padding: 0.3rem 0; border-bottom: 1px solid #e5e7eb; }
+  .cuit-propio span { font-weight: 600; letter-spacing: 0.02em; }
+  .cuit-propio .boton-sacar-cuit { width: auto; flex: none; min-height: 44px; padding: 0 1rem; background: #fff; color: #dc2626; border: 1px solid #dc2626; border-radius: 8px; }
   .dias-pedido {
     display: flex;
     flex-wrap: wrap;
@@ -221,6 +224,25 @@
       <button type="submit">Guardar días de pedido</button>
     </div>
   </form>
+
+  {# CUIT PROPIOS (dueño, 14/10): los cheques que firma el cliente se asignan solos. #}
+  <div class="tarjeta" data-cuits-propios>
+    <h2>CUIT propios</h2>
+    <p class="subtexto-grupo">¿Con qué CUIT firma este cliente sus cheques? Puede tener más de uno. {% call info("Para qué sirven") %}Al cargar un listado de cheques, los que vienen firmados con uno de estos CUIT quedan solos como de este cliente. Un cheque de otra empresa que te da el cliente (de terceros) no va acá.{% endcall %}</p>
+    {% for c in cuits | default([]) %}
+    <form class="cuit-propio" method="post" action="/clientes/{{ cliente.id }}/cuits/{{ c.id }}/sacar">
+      <span data-cuit>{{ c.cuit }}</span>
+      <button type="submit" class="boton-sacar-cuit">Sacar</button>
+    </form>
+    {% else %}
+    <p class="subtexto-grupo">Todavía no tiene ninguno.</p>
+    {% endfor %}
+    <form method="post" action="/clientes/{{ cliente.id }}/cuits">
+      <label for="cuit_nuevo">CUIT (11 números)</label>
+      <input type="text" id="cuit_nuevo" name="cuit" inputmode="numeric" placeholder="Ej. 30685849751" required>
+      <button type="submit">Agregar CUIT</button>
+    </form>
+  </div>
 
   <form method="post" action="/clientes/{{ cliente.id }}/acepta-segunda">
     <div class="tarjeta">

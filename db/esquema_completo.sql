@@ -165,8 +165,9 @@ create table clientes (
     actualizado_en  timestamptz not null default now(),
     -- db/segunda_al_cliente_3_tilde_y_renglon.sql
     acepta_segunda  boolean not null default false,
-    -- El CUIT con que firma sus cheques (db/clientes_cuit_1.sql, 14/10): el
-    -- listado de cheques lo encuentra solo. Once dígitos, y NULLABLE.
+    -- DEPRECADA (clientes_cuit_2, 14/10): un cliente tiene VARIOS CUIT
+    -- propios, en clientes_cuits. Nadie la lee ni la escribe; se borra con
+    -- clientes_cuit_3 después del deploy.
     cuit            text,
     constraint clientes_cuit_check check (cuit is null or cuit ~ '^[0-9]{11}$')
 );
@@ -2615,6 +2616,19 @@ create table cheques_correcciones (
 create index cheques_correcciones_por_cheque
   on cheques_correcciones (cheque_id);
 alter table cheques_correcciones enable row level security;
+
+-- Los CUIT PROPIOS de cada cliente (clientes_cuit_2, dueño 14/10): un cliente
+-- puede tener varios; un CUIT es de un solo cliente. El listado de cheques
+-- asigna solo los cheques cuyo librador es un CUIT propio. Los de terceros no.
+create table clientes_cuits (
+  id          bigint generated always as identity primary key,
+  cliente_id  bigint not null references clientes (id),
+  cuit        text not null constraint clientes_cuits_once_digitos check (cuit ~ '^[0-9]{11}$'),
+  creado_en   timestamptz not null default now(),
+  constraint clientes_cuits_cuit_unico unique (cuit)
+);
+create index clientes_cuits_por_cliente on clientes_cuits (cliente_id);
+alter table clientes_cuits enable row level security;
 
 create or replace function cheque_salida_valida() returns trigger
 language plpgsql as $f$
