@@ -6,12 +6,21 @@
 <title>Revisar cheques</title>
 <style>
 {% include "_cheques_estilos.html" %}
-  .renglon { border: 1px solid #e5e7eb; border-radius: 10px; padding: 0.8rem; margin-top: 0.8rem; }
+  .renglon { display: flex; align-items: flex-start; gap: 0.3rem; border: 1px solid #e5e7eb; border-radius: 10px; padding: 0.2rem 0.5rem; margin-top: 0.5rem; }
   .renglon.con-problema { border: 2px solid #dc2626; background: #fef2f2; }
   .renglon.sacado { opacity: 0.55; }
-  .problemas { color: #dc2626; font-weight: 700; font-size: 0.9rem; margin: 0 0 0.4rem; }
+  .renglon details { flex: 1; min-width: 0; }
+  .renglon summary { display: flex; flex-wrap: wrap; align-items: center; gap: 0.1rem 0.6rem; min-height: 44px; cursor: pointer; font-size: 0.92rem; }
+  [data-conteo] { font-size: 1.1rem; font-weight: 700; }
+  .renglon summary .importe { font-weight: 700; margin-left: auto; }
+  .problemas { color: #dc2626; font-weight: 700; font-size: 0.9rem; margin: 0 0 0.4rem; flex-basis: 100%; }
   .tilde { display: flex; align-items: center; gap: 0.5rem; min-height: 44px; font-size: 0.92rem; }
   .tilde input { width: 1.3rem; height: 1.3rem; flex: none; }
+  .tilde-renglon { min-width: 44px; justify-content: center; }
+  .falta-banco { display: flex; flex-wrap: wrap; align-items: center; gap: 0.4rem 0.8rem; padding: 0.5rem 0; border-top: 1px solid #fde68a; }
+  .falta-banco:first-of-type { border-top: 0; }
+  .falta-banco > span:first-child { flex: 1 1 12rem; }
+  .falta-banco .acciones { margin: 0; }
 </style>
 </head>
 <body>
@@ -20,14 +29,13 @@
   {% set barra_atras = "/gerencia/cheques/cargar" %}
   {% include "_barra_navegacion.html" %}
 
-  {% if aviso %}<div class="aviso">{{ aviso }}</div>{% endif %}
+  {% if aviso %}<div class="aviso" data-aviso>{{ aviso }}</div>{% endif %}
   {% if error %}<div class="error" data-error>{{ error }}</div>{% endif %}
 
   <form method="post" action="/gerencia/cheques/cargar/listado">
-    <input type="hidden" name="cantidad" value="{{ renglones|length }}">
+    <input type="hidden" name="cantidad" value="{{ cantidad }}">
     <div class="tarjeta" data-resumen>
-      <p class="total" data-total>{{ total|moneda }}</p>
-      <p class="total-dato">{{ cuantos }} cheque{{ '' if cuantos == 1 else 's' }}{% if con_problema %} · <span class="rojo" data-con-problema>{{ con_problema }} con problema</span>{% endif %}</p>
+      <p class="total-dato" data-conteo>{{ cuantos }} cheque{{ '' if cuantos == 1 else 's' }} · {{ total|moneda }} · <span data-bien>{{ bien }} bien</span>{% if con_problema %} · <span class="rojo" data-con-problema>{{ con_problema }} con problema</span>{% endif %}</p>
       <div class="campos"><label>¿Qué día los recibiste?<input type="date" name="fecha_carga" value="{{ fecha_carga }}" required></label></div>
       <p class="nota">"Guardar todos" guarda los que están bien. Los marcados en rojo no entran hasta corregirlos o sacarlos.</p>
       <div class="acciones">
@@ -36,37 +44,64 @@
       </div>
     </div>
 
-    <details class="tarjeta">
-      <summary>¿De quién son? Ponerlo a todos</summary>
+    {# BANCO QUE NO ESTÁ (dueño, 14/10): una vez cada uno, y se agrega para todos. #}
+    {% if faltan_bancos %}
+    <div class="tarjeta" data-faltan-bancos>
+      {% for nombre, veces in faltan_bancos %}
+      <div class="falta-banco" data-falta-banco><span><strong>{{ nombre }}</strong> no está en la lista ({{ veces }} cheque{{ '' if veces == 1 else 's' }})</span>
+        <span class="acciones"><button type="submit" name="agregar_banco" value="{{ nombre }}" class="secundario">Agregarlo</button></span></div>
+      {% endfor %}
+    </div>
+    {% endif %}
+
+    {# PARA TODOS (dueño, 14/10): a los tildados, o a todos si no hay ninguno tildado. #}
+    <div class="tarjeta" data-para-todos>
+      <h2>Para todos</h2>
+      <p class="nota">Cambia los cheques tildados. Si no tildaste ninguno, cambia todos. Lo que dejás en "No cambiar" queda como está.</p>
       <div class="campos">
-        <label>¿De quién?<select name="origen_todos">{% for valor, texto in origenes %}<option value="{{ valor }}">{{ texto }}</option>{% endfor %}</select></label>
+        <label>¿De quién es?<select name="origen_todos"><option value="">No cambiar</option>{% for valor, texto in origenes %}<option value="{{ valor }}">{{ texto }}</option>{% endfor %}</select></label>
         <label>Cliente<select name="cliente_todos"><option value="">—</option>{% for c in clientes %}<option value="{{ c.id }}">{{ c.nombre }}</option>{% endfor %}</select></label>
         <label>Nombre (si es otro)<input type="text" name="nombre_todos" placeholder="Ej. Juan Pérez"></label>
+        <label>¿Físico o ECHEQ?<select name="tipo_todos"><option value="">No cambiar</option><option value="fisico">Físico</option><option value="echeq">ECHEQ</option></select></label>
+        <label>Banco<input type="text" name="banco_todos" list="bancos" placeholder="No cambiar"></label>
       </div>
-      <div class="acciones"><button type="submit" name="accion" value="a_todos" class="secundario">Poner a todos</button></div>
-    </details>
+      <label class="tilde"><input type="checkbox" data-seleccionar-todos>Seleccionar todos</label>
+      <div class="acciones">
+        <button type="submit" name="accion" value="sacar_tildados" class="secundario">Sacar los tildados</button>
+        <button type="submit" name="accion" value="a_todos" class="secundario">Cambiar</button>
+      </div>
+    </div>
 
     <datalist id="bancos">{% for b in bancos %}<option value="{{ b.nombre }}">{% endfor %}</datalist>
     <div class="tarjeta">
       <h2>Los cheques leídos</h2>
-      {% for r, problemas in renglones %}{% set i = loop.index0 %}
+      <p class="nota">Tocá un cheque para corregirlo. Los que tienen problema van primero y abiertos.</p>
+      {% for i, r, problemas in renglones %}
       <div class="renglon{% if problemas and not r.sacar %} con-problema{% endif %}{% if r.sacar %} sacado{% endif %}" data-renglon="{{ i }}">
-        {% if problemas and not r.sacar %}<p class="problemas" data-problemas>{{ problemas|join(" · ") }}</p>{% endif %}
-        <div class="campos">
-          <label>Número<input type="text" name="numero_{{ i }}" inputmode="numeric" value="{{ r.numero }}"></label>
-          <label>Banco<input type="text" name="banco_{{ i }}" list="bancos" value="{{ r.banco }}"></label>
-          <label>¿Qué día se cobra?<input type="date" name="fecha_pago_{{ i }}" value="{{ r.fecha_pago }}"></label>
-          <label>Importe<input type="number" name="importe_{{ i }}" step="0.01" min="0.01" inputmode="decimal" value="{{ r.importe }}"></label>
-          <label>CUIT de quien lo firma<input type="text" name="cuit_librador_{{ i }}" inputmode="numeric" value="{{ r.cuit_librador }}"></label>
-          <label>¿Físico o ECHEQ?<select name="tipo_{{ i }}"><option value="fisico" {% if r.tipo != 'echeq' %}selected{% endif %}>Físico</option><option value="echeq" {% if r.tipo == 'echeq' %}selected{% endif %}>ECHEQ</option></select></label>
-          <label>¿De quién es?<select name="origen_{{ i }}"><option value="">Elegí</option>{% for valor, texto in origenes %}<option value="{{ valor }}" {% if r.origen == valor %}selected{% endif %}>{{ texto }}</option>{% endfor %}</select></label>
-          <label>Cliente<select name="cliente_id_{{ i }}"><option value="">—</option>{% for c in clientes %}<option value="{{ c.id }}" {% if r.cliente_id == c.id %}selected{% endif %}>{{ c.nombre }}</option>{% endfor %}</select></label>
-          <label>Nombre (si es otro)<input type="text" name="nombre_a_mano_{{ i }}" value="{{ r.nombre_a_mano }}"></label>
-        </div>
-        {% if r.banco_nuevo or "el banco no está en la lista" in problemas %}
-        <label class="tilde"><input type="checkbox" name="banco_nuevo_{{ i }}" value="1" {% if r.banco_nuevo %}checked{% endif %}>Es un banco nuevo: agregarlo a la lista</label>
-        {% endif %}
-        <label class="tilde"><input type="checkbox" name="sacar_{{ i }}" value="1" {% if r.sacar %}checked{% endif %}>Sacar este cheque del listado</label>
+        <label class="tilde tilde-renglon"><input type="checkbox" name="tildado_{{ i }}" value="1" aria-label="Tildar el cheque {{ r.numero }}" {% if r.tildado %}checked{% endif %}></label>
+        <details{% if problemas and not r.sacar %} open{% endif %}>
+          {% set f = (r.fecha_pago or '').split('-') %}
+          <summary data-resumen-renglon>
+            <span>Nº {{ r.numero or "sin número" }}</span>
+            <span>{{ f[2] ~ '/' ~ f[1] ~ '/' ~ f[0] if f|length == 3 else "sin fecha" }}</span>
+            <span>{% if r.origen == 'cliente' %}{{ nombre_de_cliente.get(r.cliente_id, "elegí el cliente") }}{% elif r.origen == 'a_mano' %}{{ r.nombre_a_mano or "sin nombre" }}{% elif r.origen == 'canje' %}Canje{% else %}¿de quién?{% endif %}</span>
+            <span class="importe">{{ (r.importe|float)|moneda if r.importe else "sin importe" }}</span>
+            {% if r.sacar %}<span class="nota">Sacado</span>{% endif %}
+            {% if problemas and not r.sacar %}<span class="problemas" data-problemas>{{ problemas|join(" · ") }}</span>{% endif %}
+          </summary>
+          <div class="campos">
+            <label>Número<input type="text" name="numero_{{ i }}" inputmode="numeric" value="{{ r.numero }}"></label>
+            <label>Banco<input type="text" name="banco_{{ i }}" list="bancos" value="{{ r.banco }}"></label>
+            <label>¿Qué día se cobra?<input type="date" name="fecha_pago_{{ i }}" value="{{ r.fecha_pago }}"></label>
+            <label>Importe<input type="number" name="importe_{{ i }}" step="0.01" min="0.01" inputmode="decimal" value="{{ r.importe }}"></label>
+            <label>CUIT de quien lo firma<input type="text" name="cuit_librador_{{ i }}" inputmode="numeric" value="{{ r.cuit_librador }}"></label>
+            <label>¿Físico o ECHEQ?<select name="tipo_{{ i }}"><option value="fisico" {% if r.tipo != 'echeq' %}selected{% endif %}>Físico</option><option value="echeq" {% if r.tipo == 'echeq' %}selected{% endif %}>ECHEQ</option></select></label>
+            <label>¿De quién es?<select name="origen_{{ i }}"><option value="">Elegí</option>{% for valor, texto in origenes %}<option value="{{ valor }}" {% if r.origen == valor %}selected{% endif %}>{{ texto }}</option>{% endfor %}</select></label>
+            <label>Cliente<select name="cliente_id_{{ i }}"><option value="">—</option>{% for c in clientes %}<option value="{{ c.id }}" {% if r.cliente_id == c.id %}selected{% endif %}>{{ c.nombre }}</option>{% endfor %}</select></label>
+            <label>Nombre (si es otro)<input type="text" name="nombre_a_mano_{{ i }}" value="{{ r.nombre_a_mano }}"></label>
+          </div>
+          <label class="tilde"><input type="checkbox" name="sacar_{{ i }}" value="1" {% if r.sacar %}checked{% endif %}>Sacar este cheque del listado</label>
+        </details>
       </div>
       {% endfor %}
     </div>
@@ -75,6 +110,14 @@
       <button type="submit" name="accion" value="guardar">Guardar todos</button>
     </div>
   </form>
+  <script>
+    // "Seleccionar todos" tilda o destilda todos los cheques que no se sacaron.
+    document.querySelector('[data-seleccionar-todos]').addEventListener('change', function (evento) {
+      document.querySelectorAll('input[name^="tildado_"]').forEach(function (tilde) {
+        if (!tilde.closest('.sacado')) { tilde.checked = evento.target.checked; }
+      });
+    });
+  </script>
 {% include "_pie_version.html" %}
 </body>
 </html>

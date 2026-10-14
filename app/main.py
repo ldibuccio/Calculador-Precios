@@ -27936,6 +27936,7 @@ def exportar_cuenta_fletero_excel(fletero_id: str = "", desde: str = "", hasta: 
 from core.cheques import (  # noqa: E402
     ESTADOS as ESTADOS_DE_CHEQUE,
     NOMBRES_DE_ESTADO as NOMBRES_DE_ESTADO_DE_CHEQUE,
+    _banco_de_la_lista,
     cheques_leidos,
     esta_en_rojo as cheque_en_rojo,
     numero_normalizado as numero_de_cheque_normalizado,
@@ -27946,13 +27947,16 @@ from core.exportar_cheques import generar_excel_cheques, generar_pdf_cheques, te
 from core.lector_cheques import extraer_cheques_de_imagenes, extraer_cheques_de_texto, extraer_endoso  # noqa: E402
 from core.endosos_cheques import problemas_de_los_endosos, renglones_de_los_endosos  # noqa: E402
 from core.listado_cheques import (  # noqa: E402
+    bancos_que_faltan,
     cuit_de_la_celda,
+    cuits_para_recordar,
     cuit_valido,
     fecha_de_la_celda,
     filas_de_la_planilla,
     importe_de_la_celda,
     numero_de_la_celda,
     planilla_modelo,
+    poner_a_todos,
     problemas_de_los_renglones,
     renglones_de_la_planilla,
     renglones_para_revisar,
@@ -27960,12 +27964,14 @@ from core.listado_cheques import (  # noqa: E402
 )
 from app.db import (  # noqa: E402
     ChequeNoSePuede,
+    agregar_banco,
     agregar_foto_de_cheque,
     aplicar_cheques,
     aplicar_salidas_de_cheques,
     buscar_cheques,
     cargar_cheques,
     claves_de_los_cheques_cargados,
+    clientes_con_cuit,
     corregir_cheque,
     listar_bancos,
     listar_conceptos_de_cheques,
@@ -28225,8 +28231,7 @@ async def leer_cheques_para_cargar(request: Request, archivo: UploadFile = File(
         filas = cheques_leidos(datos, listar_bancos()) or [_cheque_vacio()]
         return _renderizar_carga_de_cheques(request, filas=filas, comunes=_comunes_vacios(), foto_leida=foto,
                                             aviso="Se leyó el cheque. Revisá cada dato antes de guardar.")
-    listas = _listas_de_cheques()
-    renglones = renglones_para_revisar(datos.get("cheques") or [], listas["clientes"], listas["bancos"],
+    renglones = renglones_para_revisar(datos.get("cheques") or [], clientes_con_cuit(), listar_bancos(),
                                        de_un_listado_de_echeq=(tipo == "pdf"))
     if not renglones:
         return _renderizar_carga_de_cheques(request, filas=[_cheque_vacio()], comunes=_comunes_vacios(),
@@ -28237,57 +28242,101 @@ async def leer_cheques_para_cargar(request: Request, archivo: UploadFile = File(
 
 # --- UN LISTADO CON MUCHOS CHEQUES (dueño, 13/10) ---------------------------
 
+# LISTADOS GRANDES (dueño, 14/10): Starlette corta un formulario en 1000 campos
+# por defecto, y cada cheque del listado manda 12. Las pantallas de muchos
+# renglones leen el formulario con este tope, que alcanza para MAX_RENGLONES.
+MAX_RENGLONES_DE_UN_LISTADO = 2000
+MAX_CAMPOS_DE_UN_LISTADO = 20 * MAX_RENGLONES_DE_UN_LISTADO
+
+
+async def _formulario_de_un_listado(request: Request):
+    return await request.form(max_fields=MAX_CAMPOS_DE_UN_LISTADO)
+
+
+def _cantidad_de_renglones(formulario) -> int:
+    try:
+        return max(0, min(MAX_RENGLONES_DE_UN_LISTADO, int(formulario.get("cantidad") or 0)))
+    except ValueError:
+        return 0
+
+
 def _renderizar_listado_de_cheques(request: Request, renglones: list[dict], *, fecha_carga: str,
                                    aviso: str | None = None, error: str | None = None, status_code: int = 200):
-    listas = _listas_de_cheques()
-    problemas = problemas_de_los_renglones(renglones, listas["bancos"], claves_de_los_cheques_cargados())
+    bancos = listar_bancos()
+    # El banco de cada renglón, con el nombre de la lista si es el mismo banco.
+    for r in renglones:
+        r["banco"] = _banco_de_la_lista(r.get("banco"), bancos) if r.get("banco") else ""
+    problemas = problemas_de_los_renglones(renglones, bancos, claves_de_los_cheques_cargados())
     vivos = [(r, p) for r, p in zip(renglones, problemas) if not r.get("sacar")]
+    clientes = clientes_con_cuit()
+    # Los que tienen problema van primero: con 130 cheques, lo que hay que tocar se ve arriba.
+    orden = sorted(range(len(renglones)), key=lambda i: (not problemas[i] or bool(renglones[i].get("sacar")), i))
     return templates.TemplateResponse(request, "cheques_listado.html", {
-        "renglones": list(zip(renglones, problemas)), "fecha_carga": fecha_carga,
+        "renglones": [(i, renglones[i], problemas[i]) for i in orden], "cantidad": len(renglones),
+        "fecha_carga": fecha_carga,
         "total": round(sum(_importe_de_cheque(r["importe"]) or 0 for r, _ in vivos), 2),
         "cuantos": len(vivos), "con_problema": sum(1 for _, p in vivos if p),
-        "clientes": listas["clientes"], "bancos": listas["bancos"], "origenes": ORIGENES_DE_CHEQUE,
+        "bien": sum(1 for _, p in vivos if not p),
+        "faltan_bancos": bancos_que_faltan(renglones, bancos),
+        "clientes": clientes, "nombre_de_cliente": {c["id"]: c["nombre"] for c in clientes},
+        "bancos": bancos, "origenes": ORIGENES_DE_CHEQUE,
         "aviso": aviso, "error": error,
     }, status_code=status_code)
 
 
 def _renglones_del_listado_de_cheques(formulario) -> list[dict]:
-    try:
-        cantidad = max(0, min(500, int(formulario.get("cantidad") or 0)))
-    except ValueError:
-        cantidad = 0
     renglones = []
-    for i in range(cantidad):
+    for i in range(_cantidad_de_renglones(formulario)):
         dato = lambda campo: str(formulario.get(f"{campo}_{i}") or "").strip()  # noqa: E731
         renglones.append({
             "numero": dato("numero"), "banco": " ".join(dato("banco").split()), "fecha_pago": dato("fecha_pago"),
             "importe": dato("importe"), "cuit_librador": "".join(ch for ch in dato("cuit_librador") if ch.isdigit()),
             "tipo": "echeq" if dato("tipo") == "echeq" else "fisico", "origen": dato("origen"),
             "cliente_id": _id_opcional_desde_query(dato("cliente_id")), "nombre_a_mano": dato("nombre_a_mano"),
-            "banco_nuevo": dato("banco_nuevo") == "1", "sacar": dato("sacar") == "1",
+            "sacar": dato("sacar") == "1", "tildado": dato("tildado") == "1",
         })
     return renglones
 
 
 @app.post("/gerencia/cheques/cargar/listado")
 async def guardar_listado_de_cheques(request: Request):
-    """La tabla del listado: "Revisar" vuelve a marcar los problemas, "Para
-    todos" pone el mismo origen en cada renglón, y "Guardar todos" guarda los
-    que están bien (todos juntos, en una transacción) y deja en la tabla los
-    que tienen problema hasta corregirlos. Los sacados no entran nunca."""
+    """La tabla del listado. Acciones:
+    - "Revisar": vuelve a marcar los problemas.
+    - "Para todos": pone lo elegido en los tildados (o en todos si no hay).
+    - "Sacar los tildados": los saca del listado.
+    - "Agregarlo": agrega a la lista un banco que no estaba, para todos.
+    - "Guardar todos": guarda los que están bien (juntos, en una transacción)
+      y deja en la tabla los que tienen problema. Los sacados no entran nunca."""
     puerta = _puerta_de_gerencia_para_escribir(request)
     if puerta is not None:
         return puerta
-    formulario = await request.form()
+    formulario = await _formulario_de_un_listado(request)
     renglones = _renglones_del_listado_de_cheques(formulario)
     fecha_carga = str(formulario.get("fecha_carga") or "")
     accion = str(formulario.get("accion") or "revisar")
+    banco_a_agregar = " ".join(str(formulario.get("agregar_banco") or "").split())
+    if banco_a_agregar:
+        try:
+            agregar_banco(banco_a_agregar)
+        except ChequeNoSePuede as motivo:
+            return _renderizar_listado_de_cheques(request, renglones, fecha_carga=fecha_carga, error=str(motivo),
+                                                  status_code=400)
+        return _renderizar_listado_de_cheques(request, renglones, fecha_carga=fecha_carga,
+                                              aviso=f"Se agregó {banco_a_agregar} a la lista de bancos.")
     if accion == "a_todos":
-        origen = str(formulario.get("origen_todos") or "")
+        cuantos = poner_a_todos(renglones, {
+            "origen": str(formulario.get("origen_todos") or ""),
+            "cliente_id": _id_opcional_desde_query(str(formulario.get("cliente_todos") or "")),
+            "nombre_a_mano": str(formulario.get("nombre_todos") or ""),
+            "tipo": str(formulario.get("tipo_todos") or ""), "banco": str(formulario.get("banco_todos") or "")})
         for r in renglones:
-            r["origen"] = origen
-            r["cliente_id"] = _id_opcional_desde_query(str(formulario.get("cliente_todos") or ""))
-            r["nombre_a_mano"] = str(formulario.get("nombre_todos") or "").strip()
+            r["tildado"] = False
+        return _renderizar_listado_de_cheques(request, renglones, fecha_carga=fecha_carga,
+                                              aviso=f"Se cambiaron {cuantos} cheques.")
+    if accion == "sacar_tildados":
+        for r in renglones:
+            if r["tildado"]:
+                r["sacar"], r["tildado"] = True, False
         return _renderizar_listado_de_cheques(request, renglones, fecha_carga=fecha_carga)
     if accion != "guardar":
         return _renderizar_listado_de_cheques(request, renglones, fecha_carga=fecha_carga)
@@ -28295,9 +28344,14 @@ async def guardar_listado_de_cheques(request: Request):
     if dia is None:
         return _renderizar_listado_de_cheques(request, renglones, fecha_carga=fecha_carga,
                                               error="Falta la fecha en que los recibiste.", status_code=400)
-    problemas = problemas_de_los_renglones(renglones, listar_bancos(), claves_de_los_cheques_cargados())
+    bancos = listar_bancos()
+    for r in renglones:
+        r["banco"] = _banco_de_la_lista(r["banco"], bancos) if r["banco"] else ""
+    problemas = problemas_de_los_renglones(renglones, bancos, claves_de_los_cheques_cargados())
     buenos = [r for r, p in zip(renglones, problemas) if not p and not r["sacar"]]
     quedan = [r for r, p in zip(renglones, problemas) if p and not r["sacar"]]
+    clientes = clientes_con_cuit()
+    aprendidos = cuits_para_recordar(buenos, clientes)
     if buenos:
         try:
             cargar_cheques([{"numero": r["numero"], "banco": r["banco"], "tipo": r["tipo"],
@@ -28305,16 +28359,21 @@ async def guardar_listado_de_cheques(request: Request):
                              "importe": _importe_de_cheque(r["importe"]), "cuit_librador": r["cuit_librador"],
                              "origen": r["origen"], "cliente_id": r["cliente_id"],
                              "nombre_a_mano": r["nombre_a_mano"], "fotos": []} for r in buenos],
-                           fecha_carga=dia, origen="canje", cliente_id=None, nombre_a_mano=None)
+                           fecha_carga=dia, origen="canje", cliente_id=None, nombre_a_mano=None,
+                           cuits_de_clientes=aprendidos)
         except ChequeNoSePuede as motivo:
             return _renderizar_listado_de_cheques(request, renglones, fecha_carga=fecha_carga, error=str(motivo),
                                                   status_code=400)
+    nombres = {c["id"]: c["nombre"] for c in clientes}
+    recordados = " ".join(f"{nombres.get(cliente, cliente)} quedó con el CUIT {cuit}: la próxima vez se elige solo."
+                          for cliente, cuit in aprendidos.items())
     if not quedan:
-        return RedirectResponse(f"/gerencia/cheques?en_cartera=1&{urlencode({'aviso': f'{len(buenos)} cheques cargados'})}",
-                                status_code=303)
+        aviso = f"{len(buenos)} cheques cargados." + (f" {recordados}" if recordados else "")
+        return RedirectResponse(f"/gerencia/cheques?en_cartera=1&{urlencode({'aviso': aviso})}", status_code=303)
     return _renderizar_listado_de_cheques(
         request, quedan, fecha_carga=fecha_carga,
-        aviso=(f"Se guardaron {len(buenos)}. " if buenos else "") + f"Quedan {len(quedan)} con problemas: corregilos o sacalos.")
+        aviso=(f"Se guardaron {len(buenos)}. " if buenos else "") + f"Quedan {len(quedan)} con problemas: "
+              "corregilos o sacalos." + (f" {recordados}" if recordados else ""))
 
 
 @app.get("/gerencia/cheques/planilla-modelo")
@@ -28614,12 +28673,8 @@ async def leer_endosos_de_cheques(request: Request):
 
 
 def _renglones_de_los_endosos_del_formulario(formulario) -> list[dict]:
-    try:
-        cantidad = max(0, min(500, int(formulario.get("cantidad") or 0)))
-    except ValueError:
-        cantidad = 0
     renglones = []
-    for i in range(cantidad):
+    for i in range(_cantidad_de_renglones(formulario)):
         dato = lambda campo: str(formulario.get(f"{campo}_{i}") or "").strip()  # noqa: E731
         try:
             foto = int(dato("foto"))
@@ -28645,7 +28700,7 @@ async def confirmar_endosos_de_cheques(request: Request):
     puerta = _puerta_de_gerencia_para_escribir(request)
     if puerta is not None:
         return puerta
-    formulario = await request.form()
+    formulario = await _formulario_de_un_listado(request)
     renglones = _renglones_de_los_endosos_del_formulario(formulario)
     fotos = [str(f) for f in formulario.getlist("foto_leida")]
     if str(formulario.get("accion") or "") != "confirmar":

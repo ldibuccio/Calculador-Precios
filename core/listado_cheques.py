@@ -13,6 +13,15 @@ Lo leído va a una tabla para revisar renglón por renglón ANTES de guardar.
 `problemas_de_los_renglones` dice qué tiene mal cada renglón (repetido, CUIT
 inválido, falta un dato, banco que no está en la lista): esos no entran hasta
 corregirlos. Nada de acá toca la base.
+
+LISTADOS GRANDES (dueño, 14/10): con 130 cheques o más,
+- el cliente sale solo del CUIT del librador si UN cliente tiene ese CUIT
+  (`clientes.cuit`), y si se elige a mano el sistema lo recuerda
+  (`cuits_para_recordar`);
+- un banco que no está se avisa UNA vez arriba (`bancos_que_faltan`), y el
+  mismo banco con otro nombre es el mismo (`core.cheques.clave_de_banco`);
+- "Para todos" cambia de una vez todos los renglones o solo los tildados
+  (`poner_a_todos`).
 """
 import csv
 import io
@@ -20,7 +29,7 @@ import re
 import unicodedata
 from datetime import date, datetime, timedelta
 
-from core.cheques import numero_normalizado
+from core.cheques import _banco_de_la_lista, clave_de_banco, numero_normalizado
 
 # Los nombres con que puede venir cada columna, sin acentos ni mayúsculas.
 SINONIMOS = {
@@ -225,28 +234,36 @@ def cuit_valido(cuit: str) -> bool:
     return verificador != 10 and verificador == int(cuit[10])
 
 
+def cliente_por_cuit(cuit: str, clientes: list[dict]) -> int | None:
+    """El cliente con ese CUIT, si hay UNO solo (dos con el mismo no se adivinan)."""
+    if not cuit_valido(cuit):
+        return None
+    con_ese = [c["id"] for c in clientes if c.get("cuit") == cuit]
+    return con_ese[0] if len(con_ese) == 1 else None
+
+
 def renglones_para_revisar(crudos: list[dict], clientes: list[dict], bancos: list[dict],
                            de_un_listado_de_echeq: bool = False) -> list[dict]:
     """Lo leído (de la planilla o de la IA) como renglones del formulario:
-    textos que se corrigen a mano. El librador, si es un cliente del sistema
-    por su nombre, queda como ese cliente; si no, como nombre a mano."""
-    from core.cheques import _banco_de_la_lista
+    textos que se corrigen a mano. De quién es: el cliente que tiene el CUIT
+    del librador; si no, el cliente con el nombre del librador; si no, el
+    nombre a mano."""
     por_nombre = {_normalizar(c["nombre"]): c["id"] for c in clientes}
     renglones = []
     for crudo in crudos:
         librador = str(crudo.get("librador") or "").strip()
-        cliente_id = por_nombre.get(_normalizar(librador)) if librador else None
+        cuit = cuit_de_la_celda(crudo.get("cuit_librador"))
+        cliente_id = cliente_por_cuit(cuit, clientes) or (por_nombre.get(_normalizar(librador)) if librador else None)
         renglones.append({
             "numero": numero_de_la_celda(crudo.get("numero")),
             "banco": _banco_de_la_lista(crudo.get("banco"), bancos) if crudo.get("banco") else "",
             "fecha_pago": fecha_de_la_celda(crudo.get("fecha_pago")),
             "importe": importe_de_la_celda(crudo.get("importe")),
-            "cuit_librador": cuit_de_la_celda(crudo.get("cuit_librador")),
+            "cuit_librador": cuit,
             "tipo": tipo_de_la_celda(crudo.get("tipo"), de_un_listado_de_echeq),
             "origen": "cliente" if cliente_id else ("a_mano" if librador else ""),
             "cliente_id": cliente_id,
             "nombre_a_mano": "" if cliente_id else librador,
-            "banco_nuevo": False,
         })
     return renglones
 
@@ -262,17 +279,20 @@ def _importe(texto) -> float | None:
 def problemas_de_los_renglones(renglones: list[dict], bancos: list[dict], ya_cargados: set) -> list[list[str]]:
     """Por renglón, la lista de lo que tiene mal (vacía si está bien).
 
-    `ya_cargados` son las claves de los cheques de la base: (banco en
-    mayúsculas, número sin ceros adelante, CUIT). Repetido es contra la base
-    o contra otro renglón del mismo listado (se marcan los dos)."""
-    nombres_de_bancos = {" ".join(b["nombre"].split()).upper() for b in bancos}
+    `ya_cargados` son las claves de los cheques de la base: (banco,
+    número sin ceros adelante, CUIT). Repetido es contra la base o contra
+    otro renglón del mismo listado que no se sacó (se marcan los dos). El
+    banco se compara por su `clave_de_banco`: "BANCO DE GALICIA" es "Galicia"."""
+    claves_de_bancos = {clave_de_banco(b["nombre"]) for b in bancos}
+    en_la_base = {(clave_de_banco(b), n, c) for b, n, c in ya_cargados}
     claves = []
     for r in renglones:
-        claves.append((" ".join(str(r.get("banco") or "").split()).upper(), numero_normalizado(r.get("numero")),
+        claves.append((clave_de_banco(r.get("banco")), numero_normalizado(r.get("numero")),
                        str(r.get("cuit_librador") or "")))
     veces: dict = {}
-    for clave in claves:
-        veces[clave] = veces.get(clave, 0) + 1
+    for r, clave in zip(renglones, claves):
+        if not r.get("sacar"):
+            veces[clave] = veces.get(clave, 0) + 1
     problemas = []
     for r, clave in zip(renglones, claves):
         mal = []
@@ -280,7 +300,7 @@ def problemas_de_los_renglones(renglones: list[dict], bancos: list[dict], ya_car
             mal.append("falta el número")
         if not clave[0]:
             mal.append("falta el banco")
-        elif clave[0] not in nombres_de_bancos and not r.get("banco_nuevo"):
+        elif clave[0] not in claves_de_bancos:
             mal.append("el banco no está en la lista")
         try:
             date.fromisoformat(str(r.get("fecha_pago") or ""))
@@ -297,12 +317,66 @@ def problemas_de_los_renglones(renglones: list[dict], bancos: list[dict], ya_car
             mal.append("falta de quién es")
         elif origen not in ("cliente", "a_mano", "canje"):
             mal.append("decí de quién es")
-        if clave[1] and clave[0] and clave in ya_cargados:
+        if clave[1] and clave[0] and clave in en_la_base:
             mal.append("ya está cargado")
-        elif clave[1] and veces[clave] > 1:
+        elif clave[1] and veces.get(clave, 0) > 1:
             mal.append("repetido en el listado")
         problemas.append(mal)
     return problemas
+
+
+def bancos_que_faltan(renglones: list[dict], bancos: list[dict]) -> list[tuple[str, int]]:
+    """Los bancos de los renglones que no están en la lista, UNA vez cada uno
+    (el mismo banco con otro nombre es uno), con cuántos cheques lo traen. El
+    nombre es el primero con que aparece."""
+    en_la_lista = {clave_de_banco(b["nombre"]) for b in bancos}
+    faltan: dict = {}
+    for r in renglones:
+        clave = clave_de_banco(r.get("banco"))
+        if r.get("sacar") or not clave or clave in en_la_lista:
+            continue
+        nombre, cuantos = faltan.get(clave, (" ".join(str(r["banco"]).split()), 0))
+        faltan[clave] = (nombre, cuantos + 1)
+    return list(faltan.values())
+
+
+# "Para todos": qué campos cambia y qué valores acepta.
+CAMPOS_PARA_TODOS = ("origen", "cliente_id", "nombre_a_mano", "tipo", "banco")
+
+
+def poner_a_todos(renglones: list[dict], cambios: dict) -> int:
+    """Pone los `cambios` (solo los que vienen con valor) en los renglones
+    TILDADOS, o en todos los que no se sacaron si no hay ninguno tildado.
+    Elegir de quién es pone los tres datos juntos: el cliente solo si es un
+    cliente, el nombre solo si es a mano. Devuelve a cuántos se les puso."""
+    tildados = [r for r in renglones if r.get("tildado") and not r.get("sacar")]
+    destino = tildados or [r for r in renglones if not r.get("sacar")]
+    origen = cambios.get("origen")
+    for r in destino:
+        if origen in ("cliente", "a_mano", "canje"):
+            r["origen"] = origen
+            r["cliente_id"] = cambios.get("cliente_id") if origen == "cliente" else None
+            r["nombre_a_mano"] = (cambios.get("nombre_a_mano") or "").strip() if origen == "a_mano" else ""
+        if cambios.get("tipo") in ("fisico", "echeq"):
+            r["tipo"] = cambios["tipo"]
+        if (cambios.get("banco") or "").strip():
+            r["banco"] = " ".join(cambios["banco"].split())
+    return len(destino)
+
+
+def cuits_para_recordar(guardados: list[dict], clientes: list[dict]) -> dict:
+    """{cliente_id: CUIT} que el cliente aprende de los cheques que se
+    guardan: el CUIT del librador de sus cheques si es UNO solo y válido, el
+    cliente no tenía, y ningún otro cliente lo tiene. Con dos CUIT distintos
+    para el mismo cliente no se adivina cuál es el suyo."""
+    del_cliente: dict = {}
+    for r in guardados:
+        if r.get("origen") == "cliente" and r.get("cliente_id") and cuit_valido(r.get("cuit_librador") or ""):
+            del_cliente.setdefault(r["cliente_id"], set()).add(r["cuit_librador"])
+    tienen = {c["cuit"]: c["id"] for c in clientes if c.get("cuit")}
+    sin_cuit = {c["id"] for c in clientes if not c.get("cuit")}
+    return {cliente: next(iter(cuits)) for cliente, cuits in del_cliente.items()
+            if len(cuits) == 1 and cliente in sin_cuit and next(iter(cuits)) not in tienen}
 
 
 def planilla_modelo() -> bytes:

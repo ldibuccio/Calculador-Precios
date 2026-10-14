@@ -70,20 +70,20 @@ def test_el_CUIT_valido_lleva_el_digito_verificador():
 
 def _renglon(numero, cuit=CUIT_A, banco="EJEMPLO Banco", **otros):
     return {"numero": numero, "banco": banco, "fecha_pago": "2026-11-15", "importe": "1000", "cuit_librador": cuit,
-            "tipo": "fisico", "origen": "canje", "cliente_id": None, "nombre_a_mano": "", "banco_nuevo": False,
-            **otros}
+            "tipo": "fisico", "origen": "canje", "cliente_id": None, "nombre_a_mano": "", **otros}
 
 
 def test_los_PROBLEMAS_de_cada_renglon():
     bancos = [{"nombre": "EJEMPLO Banco"}]
     ya = {("EJEMPLO BANCO", "900", CUIT_A)}
     renglones = [_renglon("1"), _renglon("0900"), _renglon("2", CUIT_MAL), _renglon("3", banco="EJEMPLO Nuevo"),
-                 _renglon("4", banco="EJEMPLO Nuevo", banco_nuevo=True), _renglon("5"), _renglon("005"),
-                 _renglon("6", importe="", origen="a_mano"), _renglon("7", origen="cliente")]
+                 _renglon("5"), _renglon("005", banco="BANCO DE EJEMPLO"), _renglon("6", importe="", origen="a_mano"),
+                 _renglon("7", origen="cliente"), _renglon("8"), _renglon("8", sacar=True)]
+    # "BANCO DE EJEMPLO" es "EJEMPLO Banco": el 005 es el 5 repetido. Un sacado no repite.
     assert problemas_de_los_renglones(renglones, bancos, ya) == [
-        [], ["ya está cargado"], ["CUIT inválido"], ["el banco no está en la lista"], [],
+        [], ["ya está cargado"], ["CUIT inválido"], ["el banco no está en la lista"],
         ["repetido en el listado"], ["repetido en el listado"], ["falta el importe", "falta de quién es"],
-        ["elegí el cliente"]]
+        ["elegí el cliente"], [], []]
 
 
 # --- CONTRA LA BASE, POR LA PANTALLA -------------------------------------------
@@ -129,9 +129,9 @@ def test_un_LISTADO_con_un_REPETIDO_y_un_CUIT_MAL_entran_los_demas_y_esos_dos_qu
     assert pagina.status_code == 200, pagina.text[:300]
     marcado = _sin_estilo(pagina.text)
     assert len(re.findall(r'data-renglon="\d+"', marcado)) == 4
-    assert re.findall(r'<p class="problemas" data-problemas>([^<]*)</p>', marcado) == ["CUIT inválido",
+    assert re.findall(r'data-problemas>([^<]*)<', marcado) == ["CUIT inválido",
                                                                                        "ya está cargado"]
-    assert '<p class="total" data-total>$105.000</p>' in marcado
+    assert re.search(r'data-conteo>4 cheques · \$105\.000 · <span data-bien>2 bien</span>', marcado)
     assert re.search(r'data-con-problema>2 con problema</span>', marcado)
     # Lo leído: el cliente del sistema por su nombre, el banco de la lista y el monto argentino.
     datos = _formulario(pagina.text)
@@ -144,7 +144,7 @@ def test_un_LISTADO_con_un_REPETIDO_y_un_CUIT_MAL_entran_los_demas_y_esos_dos_qu
     assert "Se guardaron 2. Quedan 2 con problemas" in guardado.text
     assert sorted(c["numero"] for c in d.buscar_cheques({})) == ["1001", "1002", "900"]
     quedan = _sin_estilo(guardado.text)
-    assert re.findall(r'<p class="problemas" data-problemas>([^<]*)</p>', quedan) == ["CUIT inválido",
+    assert re.findall(r'data-problemas>([^<]*)<', quedan) == ["CUIT inválido",
                                                                                       "ya está cargado"]
     # Se corrige el CUIT y se saca el repetido: entra el corregido y termina.
     datos = _formulario(guardado.text)
@@ -163,17 +163,30 @@ def test_PARA_TODOS_pone_el_mismo_origen_en_cada_renglon(m, d):
     assert d.buscar_cheques({}) == []                                      # revisar no guarda
 
 
-def test_un_BANCO_que_no_esta_se_marca_y_se_agrega_si_se_tilda(m, d):
+def test_un_BANCO_que_no_esta_se_avisa_UNA_vez_y_se_agrega_para_todos(m, d):
     filas = [["Número", "Banco", "Fecha de pago", "Importe", "CUIT del librador"],
-             ["55", "EJEMPLO Banco Inventado", "20/11/2026", "500", CUIT_A]]
+             ["55", "EJEMPLO Banco Inventado", "20/11/2026", "500", CUIT_A],
+             ["56", "BANCO EJEMPLO INVENTADO S.A.", "20/11/2026", "600", CUIT_A],
+             ["57", "EJEMPLO Banco Más Inventado", "20/11/2026", "700", CUIT_A]]       # el RIVAL: otro banco
     datos = _formulario(_leer(m, "listado.xlsx", _xlsx(filas)).text)
-    datos.update({"origen_0": "canje", "accion": "guardar"})
-    pagina = _cliente(m, "gerencia").post("/gerencia/cheques/cargar/listado", data=datos)
-    assert "el banco no está en la lista" in pagina.text and d.buscar_cheques({}) == []
+    datos.update({f"origen_{i}": "canje" for i in range(3)})
+    pagina = _cliente(m, "gerencia").post("/gerencia/cheques/cargar/listado", data=dict(datos, accion="guardar"))
+    avisos = re.findall(r'data-falta-banco><span><strong>([^<]*)</strong> no está en la lista \((\d+) cheques?\)',
+                        _sin_estilo(pagina.text))
+    assert avisos == [("EJEMPLO Banco Inventado", "2"), ("EJEMPLO Banco Más Inventado", "1")]
+    assert d.buscar_cheques({}) == []
+    agregado = _cliente(m, "gerencia").post("/gerencia/cheques/cargar/listado",
+                                            data=dict(_formulario(pagina.text), agregar_banco="EJEMPLO Banco Inventado"))
+    assert "Se agregó EJEMPLO Banco Inventado a la lista de bancos." in agregado.text
+    marcado = _sin_estilo(agregado.text)
+    assert re.findall(r'data-falta-banco><span><strong>([^<]*)</strong>', marcado) == ["EJEMPLO Banco Más Inventado"]
+    assert re.findall(r'data-problemas>([^<]*)<', marcado) == ["el banco no está en la lista"]
     final = _cliente(m, "gerencia").post("/gerencia/cheques/cargar/listado",
-                                        data=dict(datos, banco_nuevo_0="1"), follow_redirects=False)
-    assert final.status_code == 303
-    assert [c["banco"] for c in d.buscar_cheques({})] == ["EJEMPLO Banco Inventado"]
+                                        data=dict(_formulario(agregado.text), accion="guardar"))
+    assert "Se guardaron 2." in final.text
+    assert sorted((c["numero"], c["banco"]) for c in d.buscar_cheques({})) == [
+        ("55", "EJEMPLO Banco Inventado"), ("56", "EJEMPLO Banco Inventado")]
+    assert [b["nombre"] for b in d.listar_bancos()].count("EJEMPLO Banco Inventado") == 1
 
 
 def test_un_CSV_y_un_XLS_se_leen_igual(m, d):

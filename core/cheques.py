@@ -6,6 +6,8 @@ El estado de cada cheque NO se calcula acá: lo dice la vista
 acredita al día siguiente de la fecha de pago o del depósito si fue después).
 Acá solo se suman las filas que la vista ya clasificó.
 """
+import re
+import unicodedata
 from datetime import date, timedelta
 
 # Los estados en que el cheque sigue EN CARTERA: no se aplicó. El vencido
@@ -61,17 +63,41 @@ def _solo_digitos(texto) -> str:
     return "".join(ch for ch in str(texto or "") if ch.isdigit())
 
 
+# EL MISMO BANCO CON OTRO NOMBRE (dueño, 14/10): "BANCO DE GALICIA", "Galicia" y
+# "Banco de Galicia y Buenos Aires S.A.U." son el mismo. Se comparan por su
+# CLAVE: sin acentos, mayúsculas, signos, números (el código del BCRA que traen
+# los listados), ni las palabras de relleno; y los nombres largos conocidos van
+# a su forma corta. Nada de "se parece": "Galicia Más" NO es "Galicia" (13/10).
+_RELLENO_DE_BANCO = {"banco", "bank", "de", "la", "del", "el", "los", "las", "y", "of", "and", "sa", "sau", "s",
+                     "a", "u", "argentina", "argentino", "coop", "cooperativo", "ltdo", "limitado"}
+_NOMBRES_LARGOS_DE_BANCOS = {
+    "galicia buenos aires": "galicia",
+    "provincia buenos aires": "provincia", "bapro": "provincia",
+    "ciudad buenos aires": "ciudad",
+    "santander rio": "santander",
+    "bbva frances": "bbva", "frances": "bbva",
+    "industrial commercial china": "icbc",
+    "provincia cordoba": "bancor", "cordoba": "bancor",
+}
+
+
+def clave_de_banco(nombre) -> str:
+    """La clave con que se comparan dos nombres de banco."""
+    texto = unicodedata.normalize("NFKD", str(nombre or "")).encode("ascii", "ignore").decode("ascii").lower()
+    palabras = [w for w in re.sub(r"[^a-z0-9]+", " ", texto).split()
+                if w not in _RELLENO_DE_BANCO and not w.isdigit()]
+    clave = " ".join(palabras)
+    return _NOMBRES_LARGOS_DE_BANCOS.get(clave, clave)
+
+
 def _banco_de_la_lista(leido: str, bancos: list[dict]) -> str:
-    """El nombre del banco de la lista que es IGUAL a lo leído (sin mayúsculas
-    ni las palabras "Banco", "de", "la", "del"), o lo leído tal cual si no hay.
-    Nada de "se parece": "EJEMPLO Banco Inventado" no es "EJEMPLO Banco" (13/10),
-    y un banco que no está se tiene que ver para elegirlo o agregarlo."""
-    def limpio(texto):
-        return " ".join(w for w in str(texto or "").lower().split() if w not in ("banco", "de", "la", "del"))
-    buscado = limpio(leido)
+    """El nombre del banco de la lista que es EL MISMO que lo leído (misma
+    `clave_de_banco`), o lo leído tal cual si no hay. Un banco que no está se
+    tiene que ver para agregarlo."""
+    buscado = clave_de_banco(leido)
     if not buscado:
         return ""
-    exactos = [b["nombre"] for b in bancos if limpio(b["nombre"]) == buscado]
+    exactos = [b["nombre"] for b in bancos if clave_de_banco(b["nombre"]) == buscado]
     return exactos[0] if exactos else " ".join(str(leido).split())
 
 

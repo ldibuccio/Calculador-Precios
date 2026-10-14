@@ -68,16 +68,38 @@ las plantillas `cheques*.html` y `cheque.html`. Tests:
   editable con el total, y en rojo lo que tiene problema
   (`problemas_de_los_renglones`): repetido (contra la base o dentro del
   listado), CUIT inválido (11 números y el dígito verificador de la AFIP),
-  falta un dato, banco que no está en la lista (se elige de la lista o se
-  tilda "Es un banco nuevo"). De quién es se elige por renglón o "Ponerlo a
-  todos". El librador que coincide con un cliente del sistema queda como ese
-  cliente. "Guardar todos" guarda los que están bien, en una transacción, y
-  deja en la tabla los que tienen problema hasta corregirlos o sacarlos.
-  "Bajar planilla modelo" baja una planilla vacía con los títulos que se
-  reconocen solos. Tests: `tests/test_cheques_listado.py`.
-- **Banco leído**: es el de la lista solo si es IGUAL (sin mayúsculas ni
-  "Banco", "de", "la", "del"); nada de "se parece", que escondía un banco que
-  no estaba ("EJEMPLO Banco Inventado" no es "EJEMPLO Banco").
+  falta un dato, banco que no está en la lista. "Guardar todos" guarda los
+  que están bien, en una transacción, y deja en la tabla los que tienen
+  problema hasta corregirlos o sacarlos. "Bajar planilla modelo" baja una
+  planilla vacía con los títulos que se reconocen solos. Tests:
+  `tests/test_cheques_listado.py`.
+- **Listados grandes** (dueño, 14/10, tras un Excel de 130 cheques que no se
+  pudo guardar: Starlette corta un formulario en 1000 campos y cada cheque
+  manda 9 o más). El listado y la confirmación de endosos leen el formulario
+  con `MAX_CAMPOS_DE_UN_LISTADO` (alcanza para `MAX_RENGLONES_DE_UN_LISTADO`
+  = 2000 cheques). Arriba: "130 cheques · $X · 128 bien · 2 con problema".
+  Cada cheque es un renglón compacto (número, fecha, de quién, importe) que
+  se abre al tocarlo; los que tienen problema van primero y abiertos. "Para
+  todos" (`poner_a_todos`) cambia de quién es (y el cliente o el nombre), el
+  tipo y el banco de los TILDADOS, o de todos si no hay ninguno tildado; lo
+  que queda en "No cambiar" no se toca. "Seleccionar todos" tilda todos, y
+  "Sacar los tildados" los saca. Un banco que no está se avisa UNA vez
+  arriba con cuántos cheques lo traen (`bancos_que_faltan`) y "Agregarlo"
+  lo agrega a la lista para todos. De quién es: el cliente que tiene el CUIT
+  del librador (`clientes.cuit`, migración `clientes_cuit_1`), si lo tiene
+  UNO solo; si no, el cliente con el nombre del librador; si no, nombre a
+  mano. Al guardar, un cliente elegido a mano aprende el CUIT de sus cheques
+  (`cuits_para_recordar`) si es uno solo, él no tenía y no es de otro
+  cliente, y se avisa. Tests: `tests/test_cheques_listado_grande.py` (300
+  cheques).
+- **Banco leído**: es el de la lista si es EL MISMO banco
+  (`core.cheques.clave_de_banco`): sin acentos, mayúsculas, signos, el código
+  numérico ni las palabras de relleno ("Banco", "de", "S.A.U.",
+  "Argentina"...), y los nombres largos conocidos a su forma corta ("Galicia
+  y Buenos Aires" es Galicia, "BBVA Francés" es BBVA). Nada de "se parece",
+  que escondía un banco que no estaba: "EJEMPLO Banco Inventado" no es
+  "EJEMPLO Banco" y "Galicia Más" no es "Galicia". Al guardar tampoco se
+  duplica (`_banco_por_nombre` compara por la misma clave).
 - **El CUIT** se controla con el dígito verificador también en la carga a
   mano.
 - **Aplicar**: se tildan uno o varios cheques en cartera; leyendo una
