@@ -66,6 +66,7 @@ NO_SE_ABREN = {
     "/gerencia/facturacion/remito/{remito_id}/fotos/{foto_id}": "idem",
     "/gerencia/cheques/{cheque_id}/fotos/{foto_id}/ver": "idem",
     "/gerencia/cheques/{cheque_id}/salida/foto": "idem",
+    "/gerencia/palmala-cruces/{movimiento_id}/foto": "idem",
     # El mail necesita una casilla configurada con su credencial, que por
     # regla del proyecto no vive en la base.
     "/deposito/pedido/mails/{mail_id}/revisar": "necesita una casilla con credencial",
@@ -288,6 +289,15 @@ def siembra():
        where ch.numero = '777' and co.destino = 'entregado' limit 1;
     insert into cheques_rechazos (cheque_id, fecha, motivo, sector)
       select id, current_date - 1, 'Sin fondos', 'gerencia' from cheques where numero = '777';
+    -- PALMALA CRUCES (14/10, solo Frutamax): un pago con cheque con su foto y
+    -- una corrección, así la lista, la ficha y el historial pasan por sus joins.
+    insert into palmala_movimientos (fecha, cuenta, sentido, importe, concepto_id, detalle, cheque_numero,
+                                     cheque_banco_id, cheque_fecha_pago, foto_ruta, como_se_cargo, sector)
+      select current_date - 3, 'pesos', 'pago', 50000, c.id, 'EJEMPLO', '555', b.id, current_date + 10,
+             'palmala/EJEMPLO.jpg', 'foto', 'gerencia'
+        from palmala_conceptos c, bancos b where c.nombre = 'Pago con cheque' limit 1;
+    insert into palmala_correcciones (movimiento_id, campo, valor_anterior, valor_nuevo, motivo, sector)
+      select min(id), 'importe', '40000.00', '50000.00', 'EJEMPLO', 'gerencia' from palmala_movimientos;
     -- UN REMITO RECIBIDO (dueño, 01/10), con su renglón, su foto y un rechazo
     -- distinto del de Depósito: así Facturación, el detalle, el cotejo y la
     -- lista de fotos pasan por sus joins.

@@ -137,13 +137,16 @@ def test_los_FILTROS_y_el_PDF_y_el_Excel_con_los_mismos(m, d):
     assert re.search(r'data-filtrado>Lo filtrado: Pesos: Palmala debe \$70</p>', marcado)
     # Los tres saldos de arriba son de TODO, no del filtro.
     assert _saldos(pagina.text)["pesos"] == "Palmala te debe $770"
-    excel = _gerencia(m).get("/gerencia/palmala-cruces/exportar-excel" + consulta)
+    # El PDF y el Excel: los links que dibuja la pantalla, con sus filtros.
+    link_excel = re.search(r'href="(/gerencia/palmala-cruces/exportar-excel\?[^"]*)"', marcado).group(1)
+    link_pdf = re.search(r'href="(/gerencia/palmala-cruces/exportar-pdf\?[^"]*)"', marcado).group(1)
+    excel = _gerencia(m).get(link_excel.replace("&amp;", "&"))
     import openpyxl
     hoja = openpyxl.load_workbook(io.BytesIO(excel.content)).active
     assert "Filtros: del 15/03/2025 al hoy · cuenta Pesos · Palmala debe" in hoja.cell(row=2, column=1).value
     filas = [[c.value for c in fila] for fila in hoja.iter_rows(min_row=8) if fila[0].value]
     assert [(f[0], f[3], f[5]) for f in filas] == [("01/05/2025", "Intereses", 70.0)]
-    pdf = _gerencia(m).get("/gerencia/palmala-cruces/exportar-pdf" + consulta)
+    pdf = _gerencia(m).get(link_pdf.replace("&amp;", "&"))
     assert pdf.headers["content-type"] == "application/pdf" and pdf.content.startswith(b"%PDF")
 
 

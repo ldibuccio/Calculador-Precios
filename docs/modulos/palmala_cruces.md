@@ -61,4 +61,6 @@ Tests: `tests/test_palmala_cruces.py`.
 428 movimientos cargados por SQL por Lionel (`como_se_cargo = 'historico'`,
 `fila_historico` la fila del Excel): las filas 5 a 432 del Excel sin la 220
 (427), más la 9999, un "Ajuste" del 14/10/2026 de $2.147.220,07 ("Palmala
-debe") para cuadrar. No se vuelve a cargar: `fila_historico` es única.
+debe") para cuadrar. Las filas 220, 433 y 434 del Excel están vacías (dueño,
+14/10): el histórico está completo. No se vuelve a cargar: `fila_historico`
+es única.
