@@ -509,3 +509,16 @@ PALMALA   cheques_1 · tablas 7 · con_candado 7 · politicas 0 · conceptos 3 �
 Los tres conceptos de arranque, en las dos: Pago a proveedor (entregado),
 Canje (canjeado) y Depósito en cuenta (depositado). Sin política para
 `lectura_claudia`: como en las demás tablas con candado, ahí lee cero filas.
+
+## 13–14/10 — `cheques_2`: cuenta del depósito y freno del rechazo solo al salir (PR #152)
+
+Bloque `db/cheques_7_cuenta_deposito.sql`. Lionel lo corrió en dos partes en
+Frutamax y Palmala: primero la función `cheque_salida_valida` (el 13/10 di
+`0 · 0 · 1 · 1`: faltaba la columna), después el `alter table` de
+`cuenta_deposito`. Verificado por mí por el conector "Supabase Lectura" el
+14/10 (`db/cheques_8_verificacion_cuenta.sql`, con `clientes` como testigo):
+
+```
+FRUTAMAX  cheques_2 · columna_cuenta 1 · check_cuenta 1 · funcion_nueva 1 · trigger 1 · salidas 0 · testigo_clientes 5
+PALMALA   cheques_2 · columna_cuenta 1 · check_cuenta 1 · funcion_nueva 1 · trigger 1 · salidas 0 · testigo_clientes 5
+```
