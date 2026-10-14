@@ -164,7 +164,11 @@ create table clientes (
     creado_en       timestamptz not null default now(),
     actualizado_en  timestamptz not null default now(),
     -- db/segunda_al_cliente_3_tilde_y_renglon.sql
-    acepta_segunda  boolean not null default false
+    acepta_segunda  boolean not null default false,
+    -- El CUIT con que firma sus cheques (db/clientes_cuit_1.sql, 14/10): el
+    -- listado de cheques lo encuentra solo. Once dígitos, y NULLABLE.
+    cuit            text,
+    constraint clientes_cuit_check check (cuit is null or cuit ~ '^[0-9]{11}$')
 );
 
 comment on column clientes.acepta_segunda is

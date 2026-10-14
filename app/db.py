@@ -24,6 +24,7 @@ from core.remitos import rechazo_no_coincide, sin_factura_hace_mucho, sin_volver
 from core.tareas import fechas_que_tocan, siguiente_despues_de_hecha
 from core.backup import estado_de_las_partes, partes_viejas
 from core.cobranzas_segunda import sin_cobrar_hace_mucho
+from core.cheques import clave_de_banco
 from core.magnitudes import repartir_magnitudes
 from core.matcheo_comanda import normalizar_texto
 from core.vino_armada import motivo_para_no_marcar_armada, motivo_sin_lote_por_el_corte
@@ -22463,27 +22464,51 @@ def corregir_cheque(cheque_id: int, nuevos: dict) -> int:
 
 
 def _banco_por_nombre(cursor, nombre: str) -> int:
-    """El id del banco con ese nombre (sin mayúsculas ni espacios de más), y
-    si no está, se agrega: el banco se elige de la lista o se escribe."""
+    """El id del banco con ese nombre, y si no está, se agrega: el banco se
+    elige de la lista o se escribe. El mismo banco con otro nombre ("BANCO DE
+    GALICIA" y "Galicia", `clave_de_banco`) es el mismo: no se duplica."""
     nombre = " ".join(str(nombre or "").split())
     if not nombre:
         raise ChequeNoSePuede("Falta el banco.")
-    cursor.execute("SELECT id FROM bancos WHERE upper(btrim(nombre)) = upper(%s)", (nombre,))
-    fila = cursor.fetchone()
-    if fila:
-        return fila[0]
+    cursor.execute("SELECT id, nombre FROM bancos ORDER BY id")
+    buscado = clave_de_banco(nombre)
+    for banco_id, su_nombre in cursor.fetchall():
+        if clave_de_banco(su_nombre) == buscado:
+            return banco_id
     cursor.execute("INSERT INTO bancos (nombre) VALUES (%s) RETURNING id", (nombre,))
     return cursor.fetchone()[0]
 
 
+def agregar_banco(nombre: str) -> int:
+    """Agrega un banco a la lista (o devuelve el que ya es el mismo)."""
+    with _escribir_cheques() as cursor:
+        return _banco_por_nombre(cursor, nombre)
+
+
+def clientes_con_cuit() -> list[dict]:
+    """Los clientes activos con su CUIT (None si no lo tiene): para saber de
+    quién es un cheque por el CUIT del librador."""
+    conexion = obtener_conexion()
+    try:
+        with conexion.cursor() as cursor:
+            cursor.execute("SELECT id, nombre, cuit FROM clientes WHERE activo ORDER BY lower(nombre)")
+            return _filas_como_dict(cursor)
+    finally:
+        conexion.close()
+
+
 def cargar_cheques(cheques: list[dict], *, fecha_carga: date, origen: str, cliente_id: int | None,
-                   nombre_a_mano: str | None) -> list[int]:
+                   nombre_a_mano: str | None, cuits_de_clientes: dict | None = None) -> list[int]:
     """Carga uno o varios cheques EN CARTERA en UNA transacción: o entran todos
     o ninguno. Cada uno es {"numero", "banco" (nombre), "tipo", "fecha_pago",
     "importe", "cuit_librador", "fotos": [(lado, ruta)]}; la fecha de carga va
     para todos, y de quién son también, salvo que el renglón traiga su
     "origen", "cliente_id" y "nombre_a_mano" (el listado). Un repetido dice
-    cuál."""
+    cuál.
+
+    `cuits_de_clientes` ({cliente_id: CUIT}, del listado): el CUIT que cada
+    cliente aprende, en la misma transacción. Uno que ya tiene CUIT no se
+    pisa, y un CUIT que ya es de otro cliente no se repite."""
     ids = []
     with _escribir_cheques() as cursor:
         for cheque in cheques:
@@ -22510,6 +22535,10 @@ def cargar_cheques(cheques: list[dict], *, fecha_carga: date, origen: str, clien
                 cursor.execute("INSERT INTO cheques_fotos (cheque_id, lado, foto_ruta, sector) "
                                "VALUES (%s, %s, %s, 'gerencia')", (cheque_id, lado, ruta))
             ids.append(cheque_id)
+        for su_cliente, cuit in (cuits_de_clientes or {}).items():
+            cursor.execute("UPDATE clientes SET cuit = %s WHERE id = %s AND cuit IS NULL "
+                           "AND NOT EXISTS (SELECT 1 FROM clientes otro WHERE otro.cuit = %s)",
+                           (cuit, su_cliente, cuit))
     return ids
 
 
