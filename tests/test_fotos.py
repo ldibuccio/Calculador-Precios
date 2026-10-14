@@ -349,6 +349,8 @@ TABLAS_CON_FOTO = {
     "remitos_fotos": "remito",
     # Cartera de cheques (13/10): frente y dorso, y el comprobante de la salida.
     "cheques_fotos": "cheque", "cheques_salidas": "cheque",
+    # Palmala Cruces (14/10): SOLO en Frutamax, entra si la tabla existe.
+    "palmala_movimientos": "palmala",
     # no es una foto: es el registro de las borradas
     "fotos_borradas_por_antiguedad": None,
 }
@@ -358,7 +360,8 @@ def test_TODA_tabla_con_foto_entra_en_la_regla_de_3_anios():
     """El conjunto ENCONTRADO en el esquema contra el DECIDIDO (corolario 60):
     una tabla nueva que guarde fotos y no entre a _SQL_FOTOS_DE_RESPALDO deja
     archivos que no vencen nunca y aparecen como "sin registro"."""
-    from app.db import _SQL_FOTOS_DE_RESPALDO
+    from app.db import _SQL_FOTOS_DE_RESPALDO, _SQL_FOTOS_SOLO_EN_FRUTAMAX
+    consulta = _SQL_FOTOS_DE_RESPALDO + "".join(_SQL_FOTOS_SOLO_EN_FRUTAMAX.values())
     esquema = io.open(os.path.join(RAIZ, "db/esquema_completo.sql"), encoding="utf-8").read()
     encontradas = set()
     for tabla, cuerpo in re.findall(r"^create table (\w+) \((.*?)^\);", esquema, re.S | re.M):
@@ -367,7 +370,7 @@ def test_TODA_tabla_con_foto_entra_en_la_regla_de_3_anios():
     assert encontradas == set(TABLAS_CON_FOTO), encontradas ^ set(TABLAS_CON_FOTO)
     for tabla, tipo in TABLAS_CON_FOTO.items():
         if tipo is not None:
-            assert re.search(rf"FROM {tabla}\b", _SQL_FOTOS_DE_RESPALDO), tabla
+            assert re.search(rf"FROM {tabla}\b", consulta), tabla
 
 
 def test_los_DIEZ_tipos_salen_de_la_consulta_y_tienen_su_nombre(base):
@@ -399,6 +402,10 @@ def test_los_DIEZ_tipos_salen_de_la_consulta_y_tienen_su_nombre(base):
         overriding system value values (1, '1', 1, 'fisico', '2026-09-05', '2026-09-10', 1, 'cliente', 1,
                                         '20123456789', 'gerencia');
       insert into cheques_fotos (cheque_id, lado, foto_ruta, sector) values (1, 'frente', 'cheques/EJ.jpg', 'gerencia');
+      insert into palmala_movimientos (fecha, cuenta, sentido, importe, concepto_id, cheque_numero, cheque_banco_id,
+                                       cheque_fecha_pago, foto_ruta, como_se_cargo, sector)
+        values ('2026-09-05', 'pesos', 'pago', 1, (select id from palmala_conceptos where nombre = 'Pago con cheque'),
+                '1', 1, '2026-09-10', 'palmala/EJ.jpg', 'foto', 'gerencia');
     """)
     tipos = {f["tipo"] for f in d.fotos_de_respaldo()}
     assert tipos == set(TEXTO_DEL_TIPO), tipos ^ set(TEXTO_DEL_TIPO)

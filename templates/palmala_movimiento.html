@@ -1,0 +1,80 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Movimiento de Palmala Cruces</title>
+<style>
+{% include "_cheques_estilos.html" %}
+  dl { display: grid; grid-template-columns: auto 1fr; gap: 0.3rem 0.8rem; margin: 0; }
+  dt { color: #555; font-size: 0.88rem; }
+  dd { margin: 0; font-weight: 600; }
+  .historial li { margin: 0.3rem 0; font-size: 0.9rem; }
+</style>
+</head>
+<body>
+  {% set volver = vuelta(request, "") %}
+  {% set barra_sector = "gerencia" %}
+  {% set barra_titulo = "Movimiento" %}
+  {% set barra_atras = volver or "/gerencia/palmala-cruces" %}
+  {% include "_barra_navegacion.html" %}
+
+  {% if aviso %}<div class="aviso" data-aviso>{{ aviso }}</div>{% endif %}
+  {% if error %}<div class="error" data-error>{{ error }}</div>{% endif %}
+
+  <div class="tarjeta" data-datos>
+    {% if m.anulado %}<p class="rojo" data-anulado>Anulado: no suma al saldo.</p>{% endif %}
+    <dl>
+      <dt>Fecha</dt><dd>{{ m.fecha.strftime('%d/%m/%Y') }}</dd>
+      <dt>Movimiento</dt><dd>{{ nombre_de_sentido[m.sentido] }} {{ importe_con_signo(m.importe, m.cuenta) }}</dd>
+      <dt>Cuenta</dt><dd>{{ nombre_de_cuenta[m.cuenta] }}</dd>
+      <dt>Concepto</dt><dd>{{ m.concepto }}</dd>
+      {% if m.detalle %}<dt>Detalle</dt><dd>{{ m.detalle }}</dd>{% endif %}
+      {% if m.cheque_numero %}<dt>Cheque</dt><dd>Nº {{ m.cheque_numero }}{% if m.cheque_banco %} · {{ m.cheque_banco }}{% endif %}{% if m.cheque_fecha_pago %} · se cobra el {{ m.cheque_fecha_pago.strftime('%d/%m/%Y') }}{% endif %}</dd>{% endif %}
+      <dt>Saldo de la cuenta</dt><dd class="{{ 'rojo' if m.saldo < 0 else '' }}">{{ '−' if m.saldo < 0 else '' }}{{ importe_con_signo(m.saldo, m.cuenta) }}</dd>
+    </dl>
+    {% if m.foto_ruta %}<div class="acciones"><a href="/gerencia/palmala-cruces/{{ m.id }}/foto" target="_blank" rel="noopener">Ver la foto</a></div>{% endif %}
+  </div>
+
+  <form class="tarjeta" method="post" action="/gerencia/palmala-cruces/{{ m.id }}/corregir{{ q_volver(volver) }}" data-corregir>
+    <details>
+      <summary>Corregir</summary>
+      <div class="campos">
+        <label>¿Qué día?<input type="date" name="fecha" value="{{ m.fecha.isoformat() }}"></label>
+        <label>¿Debe o pagó?<select name="sentido">{% for valor, texto in sentidos %}<option value="{{ valor }}" {% if m.sentido == valor %}selected{% endif %}>{{ texto }}</option>{% endfor %}</select></label>
+        <label>Cuenta<select name="cuenta">{% for valor, texto, _ in cuentas %}<option value="{{ valor }}" {% if m.cuenta == valor %}selected{% endif %}>{{ texto }}</option>{% endfor %}</select></label>
+        <label>Importe<input type="number" name="importe" step="0.01" min="0.01" inputmode="decimal" value="{{ m.importe }}"></label>
+        <label>Concepto<select name="concepto_id">{% for c in conceptos if c.activo or c.id == m.concepto_id %}<option value="{{ c.id }}" {% if m.concepto_id == c.id %}selected{% endif %}>{{ c.nombre }}</option>{% endfor %}</select></label>
+        <label class="ancho">Detalle<input type="text" name="detalle" value="{{ m.detalle or '' }}"></label>
+        <label>Nº de cheque<input type="text" name="cheque_numero" inputmode="numeric" value="{{ m.cheque_numero or '' }}"></label>
+        <label>Banco<input type="text" name="cheque_banco" list="bancos" value="{{ m.cheque_banco or '' }}"></label>
+        <label>¿Qué día se cobra?<input type="date" name="cheque_fecha_pago" value="{{ m.cheque_fecha_pago.isoformat() if m.cheque_fecha_pago else '' }}"></label>
+        <label class="ancho">¿Por qué lo corregís?<input type="text" name="motivo" required placeholder="Ej. el importe estaba mal tipeado"></label>
+      </div>
+      <datalist id="bancos">{% for b in bancos %}<option value="{{ b.nombre }}">{% endfor %}</datalist>
+      <div class="acciones"><button type="submit">Guardar la corrección</button></div>
+    </details>
+  </form>
+
+  <form class="tarjeta" method="post" action="/gerencia/palmala-cruces/{{ m.id }}/anular{{ q_volver(volver) }}" data-anular>
+    <details>
+      <summary>{{ 'Volver a contarlo' if m.anulado else 'Anular' }}</summary>
+      <p class="nota">{{ 'Vuelve a sumar al saldo.' if m.anulado else 'Queda a la vista, tachado, y deja de sumar al saldo. Se puede volver atrás.' }}</p>
+      <input type="hidden" name="anulado" value="{{ '' if m.anulado else '1' }}">
+      <div class="campos"><label class="ancho">¿Por qué?<input type="text" name="motivo" required placeholder="Ej. estaba cargado dos veces"></label></div>
+      <div class="acciones"><button type="submit" class="{{ 'secundario' if m.anulado else 'peligro' }}">{{ 'Volver a contarlo' if m.anulado else 'Anular' }}</button></div>
+    </details>
+  </form>
+
+  <div class="tarjeta" data-historial>
+    <h2>Historial</h2>
+    {% if m.historial %}
+    <ul class="historial">
+      {% for h in m.historial %}<li data-correccion>{{ h.creado_en.strftime('%d/%m/%Y %H:%M') }} · {{ h.campo }}: {{ h.valor_anterior or '—' }} → {{ h.valor_nuevo or '—' }} · {{ h.motivo }}</li>{% endfor %}
+    </ul>
+    {% else %}<p class="vacio">Sin correcciones.</p>{% endif %}
+    <p class="nota">Cargado {{ {'a_mano': 'a mano', 'foto': 'por foto', 'excel': 'por Excel', 'historico': 'con el histórico'}[m.como_se_cargo] }} el {{ m.creado_en.strftime('%d/%m/%Y') }}.</p>
+  </div>
+{% include "_pie_version.html" %}
+</body>
+</html>

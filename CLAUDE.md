@@ -147,7 +147,8 @@ desde la versión larga de este archivo el 03/10.
 - **Migraciones**: Claude le manda el bloque a Lionel, Lionel lo corre en las
   dos bases, Claude verifica por el conector, anota la fila de CADA base en
   `db/corridas_confirmadas.md` en el mismo turno, y mergea. Claude no corre
-  migraciones.
+  migraciones. **Excepción: lo SOLO DE FRUTAMAX (Palmala Cruces, 14/10)** se
+  corre solo ahí; en Palmala esas tablas no existen y el código no las nombra.
 - **`LECTURA_FRUTAMAX_URL` es solo para sesiones locales** (usuario
   `lectura_claudia`, sin `bypassrls`: en las tablas con RLS lee cero filas).
   La clave no pasa nunca por el chat.
@@ -290,6 +291,9 @@ Módulos (se lee el que se va a tocar):
 - `docs/modulos/cheques.md`: Cartera de cheques (solo Gerencia): repetidos por
   banco + número + CUIT, de quién es, salidas, rechazo y reclamo, el estado en
   la vista `cheques_con_estado` (rojo a los 23 días, vencido a los 30).
+- `docs/modulos/palmala_cruces.md`: la cuenta corriente con Palmala (solo
+  Gerencia y SOLO en Frutamax: en Palmala las tablas no existen), sus tres
+  saldos, cargar a mano, por fotos y por Excel, anular y el histórico.
 - `docs/modulos/fletes.md`: Fletes (Administración → Pedidos), el armado más
   barato, el reparto por pallets, corregir y la línea Flete de Rentabilidad
   Real.

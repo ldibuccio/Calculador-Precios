@@ -549,3 +549,26 @@ El CUIT que pasó de la columna en Frutamax es 30685849751 (Día Argentina) de
 "Día %": lo había aprendido solo la v1154 con el primer listado (130 cheques,
 todos con ese CUIT y de ese cliente). Es propio: queda. `clientes.cuit` queda
 deprecada hasta `clientes_cuit_3`.
+
+## 14/10 — `palmala_1`: Palmala Cruces (bloques `db/palmala_cruces_1..3`), SOLO EN FRUTAMAX
+
+OJO con el nombre: `palmala_1..5` (sin "cruces") es OTRA migración, la vieja
+del backfill de fichas de Palmala. Esta es la de Palmala Cruces.
+
+Corrido por Lionel **solo en Frutamax**: es una cuenta de Frutamax, NO va en
+la base ni en la app de Palmala (dueño, 14/10). En Palmala no se corre y no
+es un faltante. Verificado por mí por el conector "Supabase Lectura" el 14/10
+(`db/palmala_cruces_4_verificacion.sql`):
+
+```
+FRUTAMAX  palmala_1 · tablas 3 · con_candado 3 · politicas 0 · conceptos 13 · con_cheque 2 · trigger 1 · vista 1 · movimientos 428 · testigo_bancos 1
+PALMALA   (no se corre) · tablas palmala 0 · vistas 0 · testigo_clientes 5
+```
+
+El histórico lo cargó Lionel por SQL: 428 movimientos, todos `historico`, 0
+anulados. Pesos 418 (desde 01/01/2020; 172 debe, 246 pagó), saldo
+−580.289,77 ("Le debés a Palmala"); Dólares socios 10, saldo 0; Dólares NDT
+sin movimientos. `fila_historico`: 5 a 432 SIN la 220 (427 filas), más la
+9999 (Ajuste del 14/10/2026, "debe" $2.147.220,07). OJO: el dueño dijo "5 a
+434"; en la base no están la 220, la 433 ni la 434. 195 movimientos con
+concepto de cheque, 186 con número.

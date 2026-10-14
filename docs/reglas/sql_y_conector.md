@@ -113,6 +113,14 @@ rebota con `25006: cannot execute INSERT in a read-only transaction`.
   la verificación por el conector, la anota en `db/corridas_confirmadas.md`
   con la fila de cada base y mergea. El dueño sigue verificando aparte.
   Claude no corre migraciones: el conector no puede, y aunque pudiera.
+- **LA EXCEPCIÓN: lo que es SOLO DE FRUTAMAX (dueño, 14/10).** Palmala Cruces
+  (`db/palmala_cruces_1..4`) es una cuenta de Frutamax: se corre SOLO en Frutamax y
+  en Palmala sus tablas NO existen. No se le pide a Palmala ni se anota
+  Palmala como faltante. `db/esquema_completo.sql` las tiene (es la base de
+  prueba) marcadas "SOLO EN LA BASE DE FRUTAMAX". El código no las nombra
+  fuera de Frutamax: las rutas contestan 404 antes de consultar
+  (`ES_FRUTAMAX`), y lo que lee todas las tablas (la lista de fotos,
+  `_SQL_FOTOS_SOLO_EN_FRUTAMAX`) las suma solo si la tabla existe.
 - **`LECTURA_FRUTAMAX_URL` queda solo para sesiones LOCALES.** Desde la nube
   no conecta: apunta al pooler por TCP al 5432 y el proxy del contenedor no
   deja pasar bases de datos por TCP crudo. Su usuario es `lectura_claudia`

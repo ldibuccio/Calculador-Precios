@@ -2630,6 +2630,101 @@ create table clientes_cuits (
 create index clientes_cuits_por_cliente on clientes_cuits (cliente_id);
 alter table clientes_cuits enable row level security;
 
+-- PALMALA CRUCES (palmala_1, dueño 14/10): SOLO EN LA BASE DE FRUTAMAX. Es una
+-- cuenta de Frutamax: en la base de Palmala estas tablas NO existen (no se
+-- corre ahí), y la app de Palmala no las nombra (ES_FRUTAMAX en app/main.py).
+create table palmala_conceptos (
+  id          bigint generated always as identity primary key,
+  nombre      text not null check (btrim(nombre) <> ''),
+  pide_cheque boolean not null default false,
+  activo      boolean not null default true,
+  creado_en   timestamptz not null default now()
+);
+create unique index palmala_conceptos_nombre on palmala_conceptos (upper(btrim(nombre)));
+alter table palmala_conceptos enable row level security;
+
+insert into palmala_conceptos (nombre, pide_cheque)
+select v.nombre, v.pide
+from (values (1, 'Comisiones Día', false), (2, 'Sueldo Lionel', false), (3, 'BP', false),
+             (4, 'Alquiler campo', false), (5, 'Intereses', false), (6, 'Gastos obra/Lionel', false),
+             (7, 'Retiro socios', false), (8, 'Préstamo', false), (9, 'Pago con cheque', true),
+             (10, 'Pago con echeq', true), (11, 'Pago en efectivo', false), (12, 'Ajuste', false),
+             (13, 'Saldo inicial', false)) as v (orden, nombre, pide)
+order by v.orden;
+
+create table palmala_movimientos (
+  id                bigint generated always as identity primary key,
+  fecha             date not null,
+  cuenta            text not null check (cuenta in ('pesos', 'dolares_socios', 'dolares_ndt')),
+  sentido           text not null check (sentido in ('debe', 'pago')),
+  importe           numeric(14,2) not null check (importe > 0),
+  concepto_id       bigint not null references palmala_conceptos (id),
+  detalle           text,
+  cheque_numero     text check (cheque_numero is null or btrim(cheque_numero) <> ''),
+  cheque_banco_id   bigint references bancos (id),
+  cheque_fecha_pago date,
+  foto_ruta         text check (foto_ruta is null or btrim(foto_ruta) <> ''),
+  como_se_cargo     text not null check (como_se_cargo in ('a_mano', 'foto', 'excel', 'historico')),
+  fila_historico    int unique,
+  anulado           boolean not null default false,
+  sector            text not null check (sector = 'gerencia'),
+  creado_en         timestamptz not null default now(),
+  constraint palmala_fila_solo_del_historico
+    check ((fila_historico is null) = (como_se_cargo <> 'historico'))
+);
+create index palmala_movimientos_por_cuenta on palmala_movimientos (cuenta, fecha, id);
+alter table palmala_movimientos enable row level security;
+
+create table palmala_correcciones (
+  id             bigint generated always as identity primary key,
+  movimiento_id  bigint not null references palmala_movimientos (id),
+  campo          text not null,
+  valor_anterior text,
+  valor_nuevo    text,
+  motivo         text not null check (btrim(motivo) <> ''),
+  sector         text not null check (sector = 'gerencia'),
+  creado_en      timestamptz not null default now()
+);
+create index palmala_correcciones_por_movimiento on palmala_correcciones (movimiento_id);
+alter table palmala_correcciones enable row level security;
+
+create or replace function palmala_movimiento_valido() returns trigger
+language plpgsql as $f$
+declare
+  concepto palmala_conceptos%rowtype;
+begin
+  select * into concepto from palmala_conceptos where id = new.concepto_id;
+  if tg_op = 'INSERT' and not concepto.activo then
+    raise exception 'el concepto % ya no se usa', concepto.nombre
+      using errcode = 'check_violation', constraint = 'palmala_concepto_activo';
+  end if;
+  if not concepto.pide_cheque and (new.cheque_numero is not null
+     or new.cheque_banco_id is not null or new.cheque_fecha_pago is not null) then
+    raise exception 'el concepto % no lleva cheque', concepto.nombre
+      using errcode = 'check_violation', constraint = 'palmala_cheque_sin_concepto';
+  end if;
+  if concepto.pide_cheque and new.como_se_cargo <> 'historico' and (new.cheque_numero is null
+     or new.cheque_banco_id is null or new.cheque_fecha_pago is null) then
+    raise exception 'un pago con cheque lleva número, banco y fecha de pago'
+      using errcode = 'check_violation', constraint = 'palmala_cheque_completo';
+  end if;
+  return new;
+end $f$;
+drop trigger if exists palmala_movimiento_valido on palmala_movimientos;
+create trigger palmala_movimiento_valido before insert or update on palmala_movimientos
+  for each row execute function palmala_movimiento_valido();
+
+create view palmala_movimientos_con_saldo with (security_invoker = true) as
+select m.id, m.fecha, m.cuenta, m.sentido, m.importe, m.concepto_id, c.nombre as concepto,
+       m.detalle, m.cheque_numero, m.cheque_banco_id, m.cheque_fecha_pago, m.foto_ruta,
+       m.como_se_cargo, m.anulado, m.creado_en,
+       case when m.anulado then 0 when m.sentido = 'debe' then m.importe else -m.importe end
+         as con_signo,
+       sum(case when m.anulado then 0 when m.sentido = 'debe' then m.importe else -m.importe end)
+         over (partition by m.cuenta order by m.fecha, m.id) as saldo
+from palmala_movimientos m
+join palmala_conceptos c on c.id = m.concepto_id;
+
 create or replace function cheque_salida_valida() returns trigger
 language plpgsql as $f$
 declare

@@ -45,8 +45,9 @@
     <a class="franja-ver" href="/gerencia/alertas">Ver el detalle de las alertas</a>
   {% endcall %}
 
-  {# DOCE BOTONES EN TRES GRUPOS (dueño, 04/10; eran 13, más Stock inicial
-     que vino de Administración; el 08/10 se sumó el Panel de control). Lo que mira lo mismo desde dos o tres
+  {# BOTONES EN TRES GRUPOS (dueño, 04/10; eran 13, más Stock inicial
+     que vino de Administración; el 08/10 se sumó el Panel de control, el
+     13/10 la Cartera de cheques y el 14/10 Palmala Cruces, solo en Frutamax). Lo que mira lo mismo desde dos o tres
      lados quedó en un botón con pestañas (_pestanas_gerencia.html):
      Rentabilidad (De pedidos · Real), Pérdidas (Mercadería · Cajas) y
      Facturación y cobranzas (Remitos y facturas · Vales · Segunda). #}
@@ -64,6 +65,8 @@
     <a class="boton color-1" href="/gerencia/facturacion">{{ ICONOS_HUBS['facturas']|safe }}<span>Facturación y cobranzas</span></a>
     {# Solo Gerencia carga y aplica (dueño, 13/10). #}
     <a class="boton color-1" href="/gerencia/cheques">{{ ICONOS_HUBS['cheques']|safe }}<span>Cartera de cheques</span></a>
+    {# La cuenta corriente con Palmala (dueño, 14/10): SOLO en Frutamax. #}
+    {% if ES_FRUTAMAX %}<a class="boton color-1" href="/gerencia/palmala-cruces">{{ ICONOS_HUBS['palmala']|safe }}<span>Palmala Cruces</span></a>{% endif %}
   </div>
 
   {# APARTE de las de mirar: éstas ESCRIBEN, y escriben en el pasado o no se
