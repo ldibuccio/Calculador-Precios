@@ -22847,7 +22847,7 @@ def _mismo_valor(nuevo, viejo) -> bool:
     return str(nuevo) == str(viejo)
 
 
-def _texto_del_valor(valor) -> str | None:
+def _texto_para_el_historial_de_palmala(valor) -> str | None:
     """Cómo queda un valor en el historial: los importes con dos decimales."""
     if valor is None:
         return None
@@ -22894,5 +22894,6 @@ def corregir_movimiento_de_palmala(movimiento_id: int, cambios: dict, motivo: st
             cursor.execute(
                 "INSERT INTO palmala_correcciones (movimiento_id, campo, valor_anterior, valor_nuevo, motivo, sector) "
                 "VALUES (%s, %s, %s, %s, %s, 'gerencia')",
-                (movimiento_id, campo, _texto_del_valor(actual[campo]), _texto_del_valor(valor), motivo))
+                (movimiento_id, campo, _texto_para_el_historial_de_palmala(actual[campo]),
+                 _texto_para_el_historial_de_palmala(valor), motivo))
         return len(distintos)

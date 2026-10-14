@@ -59,6 +59,10 @@ EXPORTACIONES = {
     # siguiendo el link que dibuja la pantalla con los filtros puestos.
     "/gerencia/cheques/exportar-pdf": "tests/test_cheques_pantallas.py",
     "/gerencia/cheques/exportar-excel": "tests/test_cheques_pantallas.py",
+    # Palmala Cruces (14/10): lo cuida tests/test_palmala_cruces.py, siguiendo
+    # el link que dibuja la pantalla con los filtros puestos.
+    "/gerencia/palmala-cruces/exportar-pdf": "tests/test_palmala_cruces.py",
+    "/gerencia/palmala-cruces/exportar-excel": "tests/test_palmala_cruces.py",
     # La planilla modelo para cargar un listado (13/10): baja vacía, no
     # exporta nada de la pantalla. La cuida tests/test_cheques_listado.py.
     "/gerencia/cheques/planilla-modelo": "sin filtros en la pantalla: es la planilla vacía para cargar",
@@ -122,7 +126,9 @@ EXPORTACIONES = {
 
 # Rutas que devuelven una imagen o un archivo subido, no una exportación.
 NO_SON_EXPORTACIONES = {"/compras/{compra_id}/fotos", "/deposito/pedido/{pedido_id}/fotos",
-                        "/administracion/guias-mercaderia/{compra_id}/fotos"}
+                        "/administracion/guias-mercaderia/{compra_id}/fotos",
+                        # Sube un Excel para cargar (14/10), no exporta.
+                        "/gerencia/palmala-cruces/cargar/excel"}
 
 
 def _rutas_que_exportan():

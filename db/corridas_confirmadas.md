@@ -569,6 +569,7 @@ El histórico lo cargó Lionel por SQL: 428 movimientos, todos `historico`, 0
 anulados. Pesos 418 (desde 01/01/2020; 172 debe, 246 pagó), saldo
 −580.289,77 ("Le debés a Palmala"); Dólares socios 10, saldo 0; Dólares NDT
 sin movimientos. `fila_historico`: 5 a 432 SIN la 220 (427 filas), más la
-9999 (Ajuste del 14/10/2026, "debe" $2.147.220,07). OJO: el dueño dijo "5 a
-434"; en la base no están la 220, la 433 ni la 434. 195 movimientos con
-concepto de cheque, 186 con número.
+9999 (Ajuste del 14/10/2026, "debe" $2.147.220,07). El dueño había dicho "5 a
+434": las filas 220, 433 y 434 del Excel original están VACÍAS (revisado por
+el dueño en el archivo, 14/10): no falta ningún movimiento, el histórico está
+completo. 195 movimientos con concepto de cheque, 186 con número.
