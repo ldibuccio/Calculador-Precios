@@ -6768,6 +6768,14 @@ _SQL_FOTOS_DE_RESPALDO = f"""
         UNION ALL
         SELECT 'cheque', cs.foto_ruta, cs.creado_en, NULL FROM cheques_salidas cs
          WHERE cs.foto_ruta IS NOT NULL
+        UNION ALL
+        -- Cuentas (15/10, las dos bases): los comprobantes de los movimientos y
+        -- de las transferencias. Sin protección: vencen a su plazo.
+        SELECT 'cuentas', cm.foto_ruta, cm.creado_en, NULL FROM cuentas_movimientos cm
+         WHERE cm.foto_ruta IS NOT NULL
+        UNION ALL
+        SELECT 'cuentas', ct.foto_ruta, ct.creado_en, NULL FROM cuentas_transferencias ct
+         WHERE ct.foto_ruta IS NOT NULL
         -- SOLO_EN_FRUTAMAX
       ) x
       LEFT JOIN fotos_borradas_por_antiguedad b ON b.foto_ruta = x.foto_ruta
@@ -22222,6 +22230,8 @@ FRENOS_DE_CHEQUES = {
     "cheques_rechazos_pkey": "Ese cheque ya está rechazado.",
     "cheques_rechazos_resuelto_despues": "El reclamo no se puede resolver antes de la fecha del rechazo.",
     "cheques_rechazos_resuelto_coherente": "Escribí cómo se resolvió el reclamo.",
+    "cuentas_cheque_en_banco": "Un cheque se deposita en una cuenta de banco.",
+    "cuentas_cheque_depositado": "Ese cheque no salió depositado: no va a ninguna cuenta.",
 }
 
 
@@ -22296,11 +22306,13 @@ _SQL_CHEQUES = """
            e.proveedor_id, e.concepto, e.acreditado_el, e.fecha_rechazo, e.motivo_rechazo,
            e.resuelto_el, e.resolucion, e.estado, e.en_rojo_por_vencer, e.banco_id,
            b.nombre AS banco, p.nombre AS proveedor, s.concepto_id, s.foto_ruta AS foto_salida,
-           s.cuenta_deposito
+           s.cuenta_deposito, dp.cuenta_id AS cuenta_id, cu.nombre AS cuenta
     FROM cheques_con_estado e
     JOIN bancos b ON b.id = e.banco_id
     LEFT JOIN cheques_salidas s ON s.cheque_id = e.id
     LEFT JOIN proveedores p ON p.id = e.proveedor_id
+    LEFT JOIN cuentas_cheques_depositados dp ON dp.cheque_id = e.id
+    LEFT JOIN cuentas cu ON cu.id = dp.cuenta_id
 """
 
 # Los filtros del buscador (dueño, 13/10), todos combinables: el nombre del
@@ -22653,10 +22665,13 @@ def cargar_cheques(cheques: list[dict], *, fecha_carga: date, origen: str, clien
 
 
 def aplicar_cheques(cheque_ids: list[int], *, fecha: date, concepto_id: int | None, concepto_nuevo: str | None,
-                    destino_nuevo: str | None, proveedor_id: int | None, foto_ruta: str | None) -> int:
+                    destino_nuevo: str | None, proveedor_id: int | None, foto_ruta: str | None,
+                    cuenta_id: int | None = None) -> int:
     """Aplica uno o varios cheques con la misma salida, en UNA transacción. Un
     concepto nuevo se agrega en la misma (con el estado que deja). Devuelve el
-    concepto usado."""
+    concepto usado. Un DEPÓSITO va a la cuenta de banco `cuenta_id` (dueño,
+    15/10): queda en `cuentas_cheques_depositados`, y la base frena si no es
+    un banco o si el concepto no deja el cheque depositado."""
     if not cheque_ids:
         raise ChequeNoSePuede("Elegí al menos un cheque.")
     with _escribir_cheques() as cursor:
@@ -22672,6 +22687,9 @@ def aplicar_cheques(cheque_ids: list[int], *, fecha: date, concepto_id: int | No
                 "VALUES (%s, %s, %s, %s, %s, 'gerencia')",
                 (cheque_id, fecha, concepto_id, proveedor_id, foto_ruta),
             )
+            if cuenta_id is not None:
+                cursor.execute("INSERT INTO cuentas_cheques_depositados (cheque_id, cuenta_id) VALUES (%s, %s)",
+                               (cheque_id, cuenta_id))
         return concepto_id
 
 
@@ -22706,8 +22724,9 @@ def proveedores_con_cuit() -> list[dict]:
 
 def aplicar_salidas_de_cheques(salidas: list[dict]) -> None:
     """Varias salidas, cada una con lo suyo ({"cheque_id", "fecha",
-    "concepto_id", "proveedor_id", "cuenta_deposito", "foto_ruta",
-    "cuit_leido"}), en UNA transacción: o entran todas o ninguna.
+    "concepto_id", "proveedor_id", "cuenta_deposito", "cuenta_id", "foto_ruta",
+    "cuit_leido"}), en UNA transacción: o entran todas o ninguna. Un depósito
+    con `cuenta_id` queda en esa cuenta de banco (dueño, 15/10).
 
     EL PROVEEDOR RECUERDA SU CUIT (dueño, 13/10): si se eligió a mano para un
     endoso cuyo CUIT se leyó, y el proveedor no tenía, se le guarda. Uno que ya
@@ -22720,6 +22739,9 @@ def aplicar_salidas_de_cheques(salidas: list[dict]) -> None:
                 (salida["cheque_id"], salida["fecha"], salida["concepto_id"], salida["proveedor_id"],
                  salida.get("cuenta_deposito"), salida.get("foto_ruta")),
             )
+            if salida.get("cuenta_id") is not None:
+                cursor.execute("INSERT INTO cuentas_cheques_depositados (cheque_id, cuenta_id) VALUES (%s, %s)",
+                               (salida["cheque_id"], salida["cuenta_id"]))
             cuit = salida.get("cuit_leido")
             if salida["proveedor_id"] and cuit and len(cuit) == 11 and cuit.isdigit():
                 cursor.execute("UPDATE proveedores SET cuit = %s WHERE id = %s AND cuit IS NULL",
@@ -22928,3 +22950,323 @@ def corregir_movimiento_de_palmala(movimiento_id: int, cambios: dict, motivo: st
                 (movimiento_id, campo, _texto_para_el_historial_de_palmala(actual[campo]),
                  _texto_para_el_historial_de_palmala(valor), motivo))
         return len(distintos)
+
+
+# =============================================================================
+# CUENTAS (dueño, 15/10): Caja, Banco e Inversiones con UN SOLO MOTOR, en las
+# DOS bases (db/cuentas_1..11, migración cuentas_1). Una cuenta es un renglón
+# de `cuentas`; lo que entra a cada una lo junta la vista
+# `cuentas_todos_los_movimientos` (movimientos, las dos patas de cada
+# transferencia, los cheques depositados y sus rechazos) y el saldo
+# acumulado lo da `cuentas_con_saldo`. Los frenos son de la base: acá se
+# traducen. Ver core/cuentas.py.
+# =============================================================================
+
+class CuentaNoSePuede(Exception):
+    """El motivo, para el usuario, por el que algo de una cuenta no se guarda."""
+
+
+FRENOS_DE_CUENTAS = {
+    "cuentas_nombre": "Ya hay una cuenta con ese nombre.",
+    "cuentas_numero": "Ya hay una cuenta con ese número.",
+    "cuentas_nombre_check": "Escribí el nombre de la cuenta.",
+    "cuentas_tipo_check": "Elegí si es caja, banco o inversión.",
+    "cuentas_moneda_check": "Elegí la moneda.",
+    "cuentas_conceptos_nombre": "Esa cuenta ya tiene un concepto con ese nombre.",
+    "cuentas_etiquetas_nombre": "Ya hay una etiqueta con ese nombre.",
+    "cuentas_concepto_de_la_cuenta": "Ese concepto es de otra cuenta.",
+    "cuentas_concepto_activo": "Ese concepto ya no se usa: elegí otro.",
+    "cuentas_concepto_del_tipo": "Ese concepto es del otro tipo (ingreso o egreso).",
+    "cuentas_movimientos_importe_check": "El importe tiene que ser mayor a cero.",
+    "cuentas_movimientos_tipo_check": "Decí si es ingreso o egreso.",
+    "cuentas_transferencias_importe_check": "El importe tiene que ser mayor a cero.",
+    "cuentas_transferencia_entre_dos": "Una transferencia es entre dos cuentas distintas.",
+    "cuentas_transferencia_misma_moneda": "Las dos cuentas tienen que ser de la misma moneda.",
+    "cuentas_cheque_depositado": "Ese cheque no salió depositado.",
+    "cuentas_cheque_en_banco": "Un cheque se deposita en una cuenta de banco.",
+}
+
+
+def _traducir_freno_de_cuentas(error) -> CuentaNoSePuede:
+    nombre = getattr(getattr(error, "diag", None), "constraint_name", None)
+    return CuentaNoSePuede(FRENOS_DE_CUENTAS.get(nombre, f"La base no dejó guardar: {nombre or error}"))
+
+
+@contextmanager
+def _escribir_cuentas():
+    conexion = obtener_conexion()
+    try:
+        with conexion.cursor() as cursor:
+            try:
+                yield cursor
+            except (psycopg2.errors.UniqueViolation, psycopg2.errors.CheckViolation,
+                    psycopg2.errors.NotNullViolation, psycopg2.errors.ForeignKeyViolation) as error:
+                conexion.rollback()
+                raise _traducir_freno_de_cuentas(error) from error
+        conexion.commit()
+    finally:
+        conexion.close()
+
+
+def _leer_cuentas(sql: str, parametros=()) -> list[dict]:
+    conexion = obtener_conexion()
+    try:
+        with conexion.cursor() as cursor:
+            cursor.execute(sql, parametros)
+            return _filas_como_dict(cursor)
+    finally:
+        conexion.close()
+
+
+_SQL_DE_LAS_CUENTAS = """
+    SELECT c.id, c.nombre, c.tipo, c.moneda, c.numero, c.madre_id, m.nombre AS madre, c.activa
+    FROM cuentas c LEFT JOIN cuentas m ON m.id = c.madre_id
+"""
+
+
+def listar_cuentas(*, solo_activas: bool = False) -> list[dict]:
+    """Las cuentas, en el orden en que se crearon (el de los botones de Gerencia)."""
+    return _leer_cuentas(_SQL_DE_LAS_CUENTAS + (" WHERE c.activa" if solo_activas else "") + " ORDER BY c.id")
+
+
+def obtener_cuenta(cuenta_id: int) -> dict | None:
+    filas = _leer_cuentas(_SQL_DE_LAS_CUENTAS + " WHERE c.id = %s", (cuenta_id,))
+    return filas[0] if filas else None
+
+
+def crear_cuenta(*, nombre: str, tipo: str, moneda: str, numero: str | None, madre_id: int | None,
+                 conceptos: list[tuple]) -> int:
+    """La cuenta y sus conceptos por defecto (`conceptos` = [(nombre, tipo)]),
+    en UNA transacción."""
+    with _escribir_cuentas() as cursor:
+        cursor.execute("INSERT INTO cuentas (nombre, tipo, moneda, numero, madre_id) VALUES (%s, %s, %s, %s, %s) "
+                       "RETURNING id", (" ".join(nombre.split()), tipo, moneda,
+                                        " ".join((numero or "").split()) or None, madre_id))
+        cuenta_id = cursor.fetchone()[0]
+        for concepto, sentido in conceptos:
+            cursor.execute("INSERT INTO cuentas_conceptos (cuenta_id, nombre, tipo) VALUES (%s, %s, %s)",
+                           (cuenta_id, concepto, sentido))
+        return cuenta_id
+
+
+def activar_cuenta(cuenta_id: int, activa: bool) -> None:
+    """Dar de baja una cuenta: no tiene botón ni recibe cheques; lo cargado queda."""
+    with _escribir_cuentas() as cursor:
+        cursor.execute("UPDATE cuentas SET activa = %s WHERE id = %s", (activa, cuenta_id))
+
+
+def conceptos_de_la_cuenta(cuenta_id: int) -> list[dict]:
+    return _leer_cuentas("SELECT id, nombre, tipo, activo FROM cuentas_conceptos WHERE cuenta_id = %s "
+                         "ORDER BY activo DESC, id", (cuenta_id,))
+
+
+def crear_concepto_de_cuenta(cuenta_id: int, nombre: str, tipo: str | None) -> int:
+    with _escribir_cuentas() as cursor:
+        cursor.execute("INSERT INTO cuentas_conceptos (cuenta_id, nombre, tipo) VALUES (%s, %s, %s) RETURNING id",
+                       (cuenta_id, " ".join(nombre.split()), tipo or None))
+        return cursor.fetchone()[0]
+
+
+def activar_concepto_de_cuenta(cuenta_id: int, concepto_id: int, activo: bool) -> None:
+    """Dar de baja un concepto: no se usa más; los movimientos viejos lo conservan."""
+    with _escribir_cuentas() as cursor:
+        cursor.execute("UPDATE cuentas_conceptos SET activo = %s WHERE id = %s AND cuenta_id = %s",
+                       (activo, concepto_id, cuenta_id))
+
+
+def etiquetas_de_cuentas() -> list[dict]:
+    return _leer_cuentas("SELECT id, nombre FROM cuentas_etiquetas WHERE activo ORDER BY lower(nombre)")
+
+
+def _etiqueta_por_nombre(cursor, nombre: str | None) -> int | None:
+    """La etiqueta con ese nombre (sin mayúsculas ni espacios de más) y, si
+    no está, se agrega: la lista se arma sola al cargar (dueño, 15/10)."""
+    nombre = " ".join(str(nombre or "").split())
+    if not nombre:
+        return None
+    cursor.execute("SELECT id FROM cuentas_etiquetas WHERE upper(btrim(nombre)) = upper(%s)", (nombre,))
+    fila = cursor.fetchone()
+    if fila:
+        return fila[0]
+    cursor.execute("INSERT INTO cuentas_etiquetas (nombre) VALUES (%s) RETURNING id", (nombre,))
+    return cursor.fetchone()[0]
+
+
+_SQL_MOVIMIENTOS_DE_CUENTA = """
+    SELECT v.cuenta_id, v.origen, v.origen_id, v.fecha, v.tipo, v.importe, v.concepto, v.etiqueta, v.detalle,
+           v.foto_ruta, v.anulado, v.creado_en, v.con_signo, v.saldo, v.conciliado, v.a_revisar
+    FROM cuentas_con_saldo v
+"""
+
+_FILTROS_DE_CUENTAS = {
+    "desde": "v.fecha >= %s", "hasta": "v.fecha <= %s", "concepto": "v.concepto = %s",
+    "etiqueta": "v.etiqueta = %s", "tipo": "v.tipo = %s",
+}
+
+
+def movimientos_de_la_cuenta(cuenta_id: int, filtros: dict | None = None) -> list[dict]:
+    """El listado de una cuenta con los filtros (los vacíos no filtran), lo más
+    nuevo arriba. El saldo de cada renglón es el REAL de la cuenta a ese
+    momento (la vista lo calcula sobre todos), no el de lo filtrado."""
+    condiciones, parametros = ["v.cuenta_id = %s"], [cuenta_id]
+    for campo, condicion in _FILTROS_DE_CUENTAS.items():
+        if (filtros or {}).get(campo) not in (None, ""):
+            condiciones.append(condicion)
+            parametros.append(filtros[campo])
+    return _leer_cuentas(_SQL_MOVIMIENTOS_DE_CUENTA + " WHERE " + " AND ".join(condiciones)
+                         + " ORDER BY v.fecha DESC, v.creado_en DESC, v.origen DESC, v.origen_id DESC", parametros)
+
+
+def nombres_usados_en_la_cuenta(cuenta_id: int) -> dict:
+    """Los conceptos y etiquetas que aparecen en el listado de la cuenta (con
+    los de transferencias y cheques), para los filtros."""
+    filas = _leer_cuentas("SELECT DISTINCT concepto, etiqueta FROM cuentas_todos_los_movimientos "
+                          "WHERE cuenta_id = %s", (cuenta_id,))
+    return {"conceptos": sorted({f["concepto"] for f in filas if f["concepto"]}, key=str.lower),
+            "etiquetas": sorted({f["etiqueta"] for f in filas if f["etiqueta"]}, key=str.lower)}
+
+
+def guardar_movimientos_de_cuenta(cuenta_id: int, movimientos: list[dict], *, como_se_cargo: str) -> list[int]:
+    """Uno o varios movimientos en UNA transacción: o entran todos o ninguno.
+    Cada uno {fecha, tipo, importe, concepto_id, etiqueta (nombre), detalle,
+    foto_ruta}. La etiqueta que no está se agrega."""
+    ids = []
+    with _escribir_cuentas() as cursor:
+        for m in movimientos:
+            cursor.execute(
+                "INSERT INTO cuentas_movimientos (cuenta_id, fecha, tipo, importe, concepto_id, etiqueta_id, detalle, "
+                "foto_ruta, como_se_cargo, sector) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, 'gerencia') "
+                "RETURNING id",
+                (cuenta_id, m["fecha"], m["tipo"], m["importe"], m["concepto_id"],
+                 _etiqueta_por_nombre(cursor, m.get("etiqueta")), (m.get("detalle") or "").strip() or None,
+                 m.get("foto_ruta"), como_se_cargo))
+            ids.append(cursor.fetchone()[0])
+    return ids
+
+
+def guardar_transferencia(*, fecha, origen_id: int, destino_id: int, importe, detalle: str | None,
+                          foto_ruta: str | None, como_se_cargo: str = "a_mano") -> int:
+    """Una transferencia: UNA fila, que la vista muestra en las dos cuentas."""
+    with _escribir_cuentas() as cursor:
+        cursor.execute(
+            "INSERT INTO cuentas_transferencias (fecha, cuenta_origen_id, cuenta_destino_id, importe, detalle, "
+            "foto_ruta, como_se_cargo, sector) VALUES (%s, %s, %s, %s, %s, %s, %s, 'gerencia') RETURNING id",
+            (fecha, origen_id, destino_id, importe, (detalle or "").strip() or None, foto_ruta, como_se_cargo))
+        return cursor.fetchone()[0]
+
+
+def _historial_de_cuentas(campo_id: str, valor: int) -> list[dict]:
+    return _leer_cuentas(f"SELECT campo, valor_anterior, valor_nuevo, motivo, creado_en FROM cuentas_correcciones "
+                         f"WHERE {campo_id} = %s ORDER BY creado_en, id", (valor,))
+
+
+def obtener_movimiento_de_cuenta(movimiento_id: int) -> dict | None:
+    filas = _leer_cuentas(
+        "SELECT m.id, m.cuenta_id, m.fecha, m.tipo, m.importe, m.concepto_id, c.nombre AS concepto, "
+        "e.nombre AS etiqueta, m.detalle, m.foto_ruta, m.como_se_cargo, m.anulado, m.creado_en "
+        "FROM cuentas_movimientos m JOIN cuentas_conceptos c ON c.id = m.concepto_id "
+        "LEFT JOIN cuentas_etiquetas e ON e.id = m.etiqueta_id WHERE m.id = %s", (movimiento_id,))
+    if not filas:
+        return None
+    movimiento = filas[0]
+    movimiento["historial"] = _historial_de_cuentas("movimiento_id", movimiento_id)
+    return movimiento
+
+
+def obtener_transferencia(transferencia_id: int) -> dict | None:
+    filas = _leer_cuentas(
+        "SELECT t.id, t.fecha, t.cuenta_origen_id, o.nombre AS origen, o.tipo AS origen_tipo, "
+        "t.cuenta_destino_id, d.nombre AS destino, d.tipo AS destino_tipo, o.moneda, t.importe, t.detalle, "
+        "t.foto_ruta, t.como_se_cargo, t.anulado, t.creado_en "
+        "FROM cuentas_transferencias t JOIN cuentas o ON o.id = t.cuenta_origen_id "
+        "JOIN cuentas d ON d.id = t.cuenta_destino_id WHERE t.id = %s", (transferencia_id,))
+    if not filas:
+        return None
+    transferencia = filas[0]
+    transferencia["historial"] = _historial_de_cuentas("transferencia_id", transferencia_id)
+    return transferencia
+
+
+def _texto_para_el_historial_de_cuentas(valor) -> str | None:
+    if valor is None:
+        return None
+    if isinstance(valor, (float, Decimal)):
+        return f"{valor:.2f}"
+    return str(valor)
+
+
+CAMPOS_DEL_MOVIMIENTO = ("fecha", "tipo", "importe", "concepto_id", "etiqueta_id", "detalle", "anulado")
+CAMPOS_DE_LA_TRANSFERENCIA = ("fecha", "cuenta_origen_id", "cuenta_destino_id", "importe", "detalle", "anulado")
+
+
+def _corregir_en_cuentas(tabla: str, campo_id: str, campos: tuple, fila_id: int, cambios: dict, motivo: str) -> int:
+    """Corrige los campos que cambiaron, con el motivo, y deja cada uno en el
+    historial (antes y después). Anular es una corrección más. `cambios`
+    puede traer "etiqueta" (nombre) en vez del id."""
+    motivo = " ".join(str(motivo or "").split())
+    if not motivo:
+        raise CuentaNoSePuede("Escribí por qué se corrige.")
+    with _escribir_cuentas() as cursor:
+        cursor.execute(f"SELECT {', '.join(campos)} FROM {tabla} WHERE id = %s FOR UPDATE", (fila_id,))
+        fila = cursor.fetchone()
+        if fila is None:
+            raise CuentaNoSePuede("Eso ya no existe.")
+        actual = dict(zip(campos, fila))
+        nuevos = dict(cambios)
+        if "etiqueta" in nuevos:
+            nuevos["etiqueta_id"] = _etiqueta_por_nombre(cursor, nuevos.pop("etiqueta"))
+        distintos = {campo: valor for campo, valor in nuevos.items()
+                     if campo in campos and not _mismo_valor(valor, actual[campo])}
+        if not distintos:
+            return 0
+        asignaciones = ", ".join(f"{campo} = %s" for campo in distintos)
+        cursor.execute(f"UPDATE {tabla} SET {asignaciones} WHERE id = %s", (*distintos.values(), fila_id))
+        for campo, valor in distintos.items():
+            cursor.execute(
+                f"INSERT INTO cuentas_correcciones ({campo_id}, campo, valor_anterior, valor_nuevo, motivo, sector) "
+                "VALUES (%s, %s, %s, %s, %s, 'gerencia')",
+                (fila_id, campo, _nombre_para_el_historial(cursor, campo, actual[campo]),
+                 _nombre_para_el_historial(cursor, campo, valor), motivo))
+        return len(distintos)
+
+
+# Los ids se guardan en el historial con su NOMBRE: "Banco Credicoop", no "2".
+_TABLA_DEL_ID = {"concepto_id": "cuentas_conceptos", "etiqueta_id": "cuentas_etiquetas",
+                 "cuenta_origen_id": "cuentas", "cuenta_destino_id": "cuentas"}
+
+
+def _nombre_para_el_historial(cursor, campo: str, valor) -> str | None:
+    if campo in _TABLA_DEL_ID and valor is not None:
+        cursor.execute(f"SELECT nombre FROM {_TABLA_DEL_ID[campo]} WHERE id = %s", (valor,))
+        fila = cursor.fetchone()
+        return fila[0] if fila else str(valor)
+    if campo == "anulado":
+        return "sí" if valor else "no"
+    return _texto_para_el_historial_de_cuentas(valor)
+
+
+def corregir_movimiento_de_cuenta(movimiento_id: int, cambios: dict, motivo: str) -> int:
+    return _corregir_en_cuentas("cuentas_movimientos", "movimiento_id", CAMPOS_DEL_MOVIMIENTO, movimiento_id,
+                                cambios, motivo)
+
+
+def corregir_transferencia(transferencia_id: int, cambios: dict, motivo: str) -> int:
+    """Corregir o anular la transferencia cambia sus DOS patas: es una sola fila."""
+    return _corregir_en_cuentas("cuentas_transferencias", "transferencia_id", CAMPOS_DE_LA_TRANSFERENCIA,
+                                transferencia_id, cambios, motivo)
+
+
+def cuentas_de_banco_activas() -> list[dict]:
+    """Donde se deposita un cheque: las cuentas de banco activas de ESTA base."""
+    return _leer_cuentas(_SQL_DE_LAS_CUENTAS + " WHERE c.activa AND c.tipo = 'banco' ORDER BY c.id")
+
+
+def cambiar_cuenta_del_deposito(cheque_id: int, cuenta_id: int | None) -> None:
+    """En qué cuenta se depositó un cheque ya aplicado (o ninguna)."""
+    with _escribir_cuentas() as cursor:
+        if cuenta_id is None:
+            cursor.execute("DELETE FROM cuentas_cheques_depositados WHERE cheque_id = %s", (cheque_id,))
+        else:
+            cursor.execute("INSERT INTO cuentas_cheques_depositados (cheque_id, cuenta_id) VALUES (%s, %s) "
+                           "ON CONFLICT (cheque_id) DO UPDATE SET cuenta_id = EXCLUDED.cuenta_id",
+                           (cheque_id, cuenta_id))

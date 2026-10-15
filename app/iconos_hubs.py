@@ -200,3 +200,12 @@ ICONOS_HUBS = {
         '<svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor" aria-hidden="true"><path stroke-linecap="round" stroke-linejoin="round" d="M7.5 21 3 16.5m0 0L7.5 12M3 16.5h13.5m0-13.5L21 7.5m0 0L16.5 12M21 7.5H7.5"/></svg>'
     ),
 }
+
+# CUENTAS (15/10): un botón por cuenta activa, con el dibujo de su tipo, y el
+# de crear cuentas. Los MISMOS dibujos de botones que ya hacen lo parecido: la
+# caja es plata en mano (banknotes), el banco un edificio (building-office),
+# la inversión un gráfico (chart-bar) y "Cuentas" la moneda (currency-dollar).
+ICONOS_HUBS["cuenta_caja"] = ICONOS_HUBS["cobranzas"]
+ICONOS_HUBS["cuenta_banco"] = ICONOS_HUBS["costos_fijos"]
+ICONOS_HUBS["cuenta_inversion"] = ICONOS_HUBS["rentabilidad"]
+ICONOS_HUBS["cuentas"] = ICONOS_HUBS["precios"]

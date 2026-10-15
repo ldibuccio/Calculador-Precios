@@ -1,0 +1,76 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Movimiento de {{ cuenta.nombre }}</title>
+<style>
+{% include "_cheques_estilos.html" %}
+  dl { display: grid; grid-template-columns: auto 1fr; gap: 0.3rem 0.8rem; margin: 0; }
+  dt { color: #555; font-size: 0.88rem; }
+  dd { margin: 0; font-weight: 600; }
+  .historial li { margin: 0.3rem 0; font-size: 0.9rem; }
+</style>
+</head>
+<body>
+  {% set volver = vuelta(request, "") %}
+  {% set barra_sector = "gerencia" %}
+  {% set barra_titulo = "Movimiento" %}
+  {% set barra_atras = volver or "/gerencia/cuentas/" ~ cuenta.id %}
+  {% include "_barra_navegacion.html" %}
+
+  {% if aviso %}<div class="aviso" data-aviso>{{ aviso }}</div>{% endif %}
+  {% if error %}<div class="error" data-error>{{ error }}</div>{% endif %}
+
+  <div class="tarjeta" data-datos>
+    {% if m.anulado %}<p class="rojo" data-anulado>Anulado: no suma al saldo.</p>{% endif %}
+    <dl>
+      <dt>Cuenta</dt><dd>{{ cuenta.nombre }}</dd>
+      <dt>Fecha</dt><dd>{{ m.fecha.strftime('%d/%m/%Y') }}</dd>
+      <dt>Movimiento</dt><dd>{{ nombre_de_sentido[m.tipo] }} {{ importe_en(m.importe, cuenta.moneda) }}</dd>
+      <dt>Concepto</dt><dd>{{ m.concepto }}</dd>
+      {% if m.etiqueta %}<dt>De quién o para quién</dt><dd>{{ m.etiqueta }}</dd>{% endif %}
+      {% if m.detalle %}<dt>Detalle</dt><dd>{{ m.detalle }}</dd>{% endif %}
+    </dl>
+    {% if m.foto_ruta %}<div class="acciones"><a href="/gerencia/cuentas/movimientos/{{ m.id }}/foto" target="_blank" rel="noopener">Ver la foto</a></div>{% endif %}
+  </div>
+
+  <form class="tarjeta" method="post" action="/gerencia/cuentas/movimientos/{{ m.id }}/corregir{{ q_volver(volver) }}" data-corregir>
+    <details>
+      <summary>Corregir</summary>
+      <div class="campos">
+        <label>¿Qué día?<input type="date" name="fecha" value="{{ m.fecha.isoformat() }}"></label>
+        <label>¿Entra o sale plata?<select name="tipo">{% for valor, texto in sentidos %}<option value="{{ valor }}" {% if m.tipo == valor %}selected{% endif %}>{{ texto }}</option>{% endfor %}</select></label>
+        <label>Importe<input type="number" name="importe" step="0.01" min="0.01" inputmode="decimal" value="{{ m.importe }}"></label>
+        <label>Concepto<select name="concepto_id">{% for c in conceptos if c.activo or c.id == m.concepto_id %}<option value="{{ c.id }}" {% if m.concepto_id == c.id %}selected{% endif %}>{{ c.nombre }}</option>{% endfor %}</select></label>
+        <label>¿De quién o para quién?<input type="text" name="etiqueta" list="etiquetas" value="{{ m.etiqueta or '' }}"></label>
+        <label class="ancho">Detalle<input type="text" name="detalle" value="{{ m.detalle or '' }}"></label>
+        <label class="ancho">¿Por qué lo corregís?<input type="text" name="motivo" required placeholder="Ej. el importe estaba mal tipeado"></label>
+      </div>
+      <datalist id="etiquetas">{% for e in etiquetas %}<option value="{{ e.nombre }}">{% endfor %}</datalist>
+      <div class="acciones"><button type="submit">Guardar la corrección</button></div>
+    </details>
+  </form>
+
+  <form class="tarjeta" method="post" action="/gerencia/cuentas/movimientos/{{ m.id }}/anular{{ q_volver(volver) }}" data-anular>
+    <details>
+      <summary>{{ 'Volver a contarlo' if m.anulado else 'Anular' }}</summary>
+      <p class="nota">{{ 'Vuelve a sumar al saldo.' if m.anulado else 'Queda a la vista, tachado, y deja de sumar al saldo. Se puede volver atrás.' }}</p>
+      <input type="hidden" name="anulado" value="{{ '' if m.anulado else '1' }}">
+      <div class="campos"><label class="ancho">¿Por qué?<input type="text" name="motivo" required placeholder="Ej. estaba cargado dos veces"></label></div>
+      <div class="acciones"><button type="submit" class="{{ 'secundario' if m.anulado else 'peligro' }}">{{ 'Volver a contarlo' if m.anulado else 'Anular' }}</button></div>
+    </details>
+  </form>
+
+  <div class="tarjeta" data-historial>
+    <h2>Historial</h2>
+    {% if m.historial %}
+    <ul class="historial">
+      {% for h in m.historial %}<li data-correccion>{{ h.creado_en.strftime('%d/%m/%Y %H:%M') }} · {{ {'fecha': 'Fecha', 'tipo': 'Ingreso o egreso', 'importe': 'Importe', 'concepto_id': 'Concepto', 'etiqueta_id': 'De quién', 'detalle': 'Detalle', 'anulado': 'Anulado', 'cuenta_origen_id': 'Sale de', 'cuenta_destino_id': 'Entra a'}.get(h.campo, h.campo) }}: {{ h.valor_anterior or '—' }} → {{ h.valor_nuevo or '—' }} · {{ h.motivo }}</li>{% endfor %}
+    </ul>
+    {% else %}<p class="vacio">Sin correcciones.</p>{% endif %}
+    <p class="nota">Cargado {{ {'a_mano': 'a mano', 'foto': 'por foto', 'excel': 'por Excel', 'extracto': 'desde un extracto', 'historico': 'con el histórico'}[m.como_se_cargo] }} el {{ m.creado_en.strftime('%d/%m/%Y') }}.</p>
+  </div>
+{% include "_pie_version.html" %}
+</body>
+</html>

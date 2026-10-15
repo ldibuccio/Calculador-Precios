@@ -586,3 +586,45 @@ mí por el conector "Supabase Lectura" el 15/10
 FRUTAMAX  clientes_cuit_3 · columna 0 · check 0 · cuits_propios 1 · testigo_clientes 5
 PALMALA   clientes_cuit_3 · columna 0 · check 0 · cuits_propios 0 · testigo_clientes 5
 ```
+
+## 15/10 — `cuentas_1`: Caja, Banco e Inversiones con un solo motor (bloques `db/cuentas_1..11`), en las DOS bases
+
+Corrido por Lionel en Frutamax y en Palmala. En Palmala, después de correrlo,
+Lionel BORRÓ las cuentas y sus conceptos sembrados (dueño, 15/10): Palmala
+arranca sin cuentas y las crea desde Gerencia → Cuentas. Verificado por mí
+por el conector "Supabase Lectura" el 15/10 (`db/cuentas_12_verificacion.sql`
+y una lectura de las definiciones):
+
+```
+FRUTAMAX  cuentas_1 · tablas 10 · con_candado 10 · politicas 0 · triggers 3 · vistas 2 · testigo_cheques 130
+          cuentas: Caja Lionel (caja) · Banco Credicoop (banco, CC$ 191-220-000247/7) · Inversiones Credicoop (inversión, madre Banco)
+          conceptos 31 (Caja 19, Banco 8, Inversiones 4) · solo histórico 3 (Cruce banco, Cruce banco (ingreso), Movimiento anterior) · datos 0
+PALMALA   cuentas_1 · tablas 10 · con_candado 10 · politicas 0 · triggers 3 · vistas 2 · indices 4 · cuentas 0 · conceptos 0 · datos 0 · testigo_clientes 5
+```
+
+En las dos: el freno de movimientos deja el concepto inactivo solo en el
+histórico, `cuentas_cheques_depositados.cheque_id` → `cheques_salidas` con
+`on delete cascade`, las transferencias aceptan `foto`, y la vista de
+movimientos filtra `acreditado_el is not null` (las definiciones del SQL
+mandado, no un borrador anterior). Frutamax tenía 0 salidas de cheques: no
+hubo depósitos viejos que pasar.
+
+### 15/10 — el histórico de `cuentas_1`, cargado por SQL en Frutamax
+
+Lo cargó Lionel por SQL (no por la app), `como_se_cargo = 'historico'` con
+`fila_historico` por cuenta. Verificado por mí por el conector "Supabase
+Lectura" el 15/10:
+
+```
+FRUTAMAX  Caja Lionel            668 movimientos, 668 histórico, 668 filas distintas, saldo $147.910.250,00, 0 anulados
+          Inversiones Credicoop  255 movimientos, 255 histórico, saldo $87.000.000,11 (Movimiento anterior 243 = los FCI con signo;
+                                 Rendimiento 11; Saldo inicial 1; etiquetas FCI, FCI Ahorro, FCI Renta, FCI Variable)
+          Banco Credicoop        1 movimiento: Saldo inicial $8.035.818,38 del 15/10/2026, sin conciliar
+          transferencias 0 · testigo_cheques 130
+PALMALA   cuentas 0 · conceptos 0 · movimientos 0 · testigo_clientes 5
+```
+
+OJO: 9 movimientos de la Caja tienen el año mal tipeado en el Excel original
+(3 con 2002, filas 201 a 309; 6 con 2005, filas 618 a 623; por las filas
+vecinas son de 2022 y 2025). No cambian el saldo; en el listado, que va por
+fecha, quedan al fondo. Se corrigen desde la pantalla, con motivo.

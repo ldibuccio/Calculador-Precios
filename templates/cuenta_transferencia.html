@@ -1,0 +1,73 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>{{ nombre }}</title>
+<style>
+{% include "_cheques_estilos.html" %}
+  dl { display: grid; grid-template-columns: auto 1fr; gap: 0.3rem 0.8rem; margin: 0; }
+  dt { color: #555; font-size: 0.88rem; }
+  dd { margin: 0; font-weight: 600; }
+  .historial li { margin: 0.3rem 0; font-size: 0.9rem; }
+</style>
+</head>
+<body>
+  {% set volver = vuelta(request, "") %}
+  {% set barra_sector = "gerencia" %}
+  {% set barra_titulo = nombre %}
+  {% set barra_atras = volver or "/gerencia/cuentas/" ~ t.cuenta_origen_id %}
+  {% include "_barra_navegacion.html" %}
+
+  {% if aviso %}<div class="aviso" data-aviso>{{ aviso }}</div>{% endif %}
+  {% if error %}<div class="error" data-error>{{ error }}</div>{% endif %}
+
+  <div class="tarjeta" data-datos>
+    {% if t.anulado %}<p class="rojo" data-anulado>Anulada en las dos cuentas: no suma al saldo.</p>{% endif %}
+    <dl>
+      <dt>Fecha</dt><dd>{{ t.fecha.strftime('%d/%m/%Y') }}</dd>
+      <dt>Sale de</dt><dd><a href="/gerencia/cuentas/{{ t.cuenta_origen_id }}">{{ t.origen }}</a></dd>
+      <dt>Entra a</dt><dd><a href="/gerencia/cuentas/{{ t.cuenta_destino_id }}">{{ t.destino }}</a></dd>
+      <dt>Importe</dt><dd>{{ importe_en(t.importe, t.moneda) }}</dd>
+      {% if t.detalle %}<dt>Detalle</dt><dd>{{ t.detalle }}</dd>{% endif %}
+    </dl>
+    {% if t.foto_ruta %}<div class="acciones"><a href="/gerencia/cuentas/transferencias/{{ t.id }}/foto" target="_blank" rel="noopener">Ver la foto</a></div>{% endif %}
+  </div>
+
+  <form class="tarjeta" method="post" action="/gerencia/cuentas/transferencias/{{ t.id }}/corregir{{ q_volver(volver) }}" data-corregir>
+    <details>
+      <summary>Corregir</summary>
+      <p class="nota">Se corrige en las dos cuentas.</p>
+      <div class="campos">
+        <label>¿Qué día?<input type="date" name="fecha" value="{{ t.fecha.isoformat() }}"></label>
+        <label>Importe<input type="number" name="importe" step="0.01" min="0.01" inputmode="decimal" value="{{ t.importe }}"></label>
+        <label>Sale de<select name="cuenta_origen_id">{% for c in cuentas %}<option value="{{ c.id }}" {% if t.cuenta_origen_id == c.id %}selected{% endif %}>{{ c.nombre }}</option>{% endfor %}</select></label>
+        <label>Entra a<select name="cuenta_destino_id">{% for c in cuentas %}<option value="{{ c.id }}" {% if t.cuenta_destino_id == c.id %}selected{% endif %}>{{ c.nombre }}</option>{% endfor %}</select></label>
+        <label class="ancho">Detalle<input type="text" name="detalle" value="{{ t.detalle or '' }}"></label>
+        <label class="ancho">¿Por qué la corregís?<input type="text" name="motivo" required placeholder="Ej. era del día anterior"></label>
+      </div>
+      <div class="acciones"><button type="submit">Guardar la corrección</button></div>
+    </details>
+  </form>
+
+  <form class="tarjeta" method="post" action="/gerencia/cuentas/transferencias/{{ t.id }}/anular{{ q_volver(volver) }}" data-anular>
+    <details>
+      <summary>{{ 'Volver a contarla' if t.anulado else 'Anular' }}</summary>
+      <p class="nota">{{ 'Vuelve a sumar en las dos cuentas.' if t.anulado else 'Se anula en las dos cuentas: queda a la vista, tachada, y deja de sumar. Se puede volver atrás.' }}</p>
+      <input type="hidden" name="anulado" value="{{ '' if t.anulado else '1' }}">
+      <div class="campos"><label class="ancho">¿Por qué?<input type="text" name="motivo" required placeholder="Ej. estaba cargada dos veces"></label></div>
+      <div class="acciones"><button type="submit" class="{{ 'secundario' if t.anulado else 'peligro' }}">{{ 'Volver a contarla' if t.anulado else 'Anular' }}</button></div>
+    </details>
+  </form>
+
+  <div class="tarjeta" data-historial>
+    <h2>Historial</h2>
+    {% if t.historial %}
+    <ul class="historial">
+      {% for h in t.historial %}<li data-correccion>{{ h.creado_en.strftime('%d/%m/%Y %H:%M') }} · {{ {'fecha': 'Fecha', 'tipo': 'Ingreso o egreso', 'importe': 'Importe', 'concepto_id': 'Concepto', 'etiqueta_id': 'De quién', 'detalle': 'Detalle', 'anulado': 'Anulado', 'cuenta_origen_id': 'Sale de', 'cuenta_destino_id': 'Entra a'}.get(h.campo, h.campo) }}: {{ h.valor_anterior or '—' }} → {{ h.valor_nuevo or '—' }} · {{ h.motivo }}</li>{% endfor %}
+    </ul>
+    {% else %}<p class="vacio">Sin correcciones.</p>{% endif %}
+  </div>
+{% include "_pie_version.html" %}
+</body>
+</html>

@@ -49,6 +49,11 @@
         <select name="proveedor_id"><option value="">Ninguno</option>
           {% for p in proveedores %}<option value="{{ p.id }}" {% if datos.proveedor_id == p.id %}selected{% endif %}>{{ p.nombre }}</option>{% endfor %}
         </select></label>
+      {# Un depósito va a una cuenta de banco de ESTA base (dueño, 15/10). #}
+      <label>¿En qué cuenta? (si es un depósito)
+        <select name="cuenta_id" data-cuenta-deposito><option value="">{{ 'Elegí' if bancos else 'No hay cuentas de banco' }}</option>
+          {% for b in bancos %}<option value="{{ b.id }}" {% if datos.cuenta_id == b.id %}selected{% endif %}>{{ b.nombre }}</option>{% endfor %}
+        </select></label>
       <label>Comprobante (opcional)<input type="file" name="foto" accept="image/*"></label>
     </div>
     <details {% if datos.concepto_nuevo %}open{% endif %}>

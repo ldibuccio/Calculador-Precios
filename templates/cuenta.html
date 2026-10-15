@@ -1,0 +1,103 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>{{ cuenta.nombre }}</title>
+<style>
+{% include "_cheques_estilos.html" %}
+  .saldo-grande { font-size: 1.6rem; font-weight: 700; margin: 0.1rem 0 0; white-space: nowrap; }
+  .anulado .importe, .anulado .fila-concepto { text-decoration: line-through; color: #888; }
+  .fila-cabeza .dia { white-space: nowrap; }
+  .fila-concepto { font-weight: 600; }
+  .fila-dato .saldo-al { white-space: nowrap; }
+  .fila-total { display: flex; flex-wrap: wrap; justify-content: space-between; gap: 0 0.6rem; padding: 0.35rem 0;
+    border-top: 1px solid #eee; font-size: 0.9rem; overflow-wrap: normal; }
+  .fila-total:first-of-type { border-top: 0; }
+  .fila-total .nombre { flex: 1 1 9rem; }
+  .fila-total .num { margin-left: auto; text-align: right; white-space: nowrap; }
+</style>
+</head>
+<body>
+  {% set barra_sector = "gerencia" %}
+  {% set barra_titulo = cuenta.nombre %}
+  {% set barra_atras = vuelta(request, "/gerencia") %}
+  {% include "_barra_navegacion.html" %}
+  {% from "_info.html" import info %}
+
+  {% if aviso %}<div class="aviso" data-aviso>{{ aviso }}</div>{% endif %}
+  {% if error %}<div class="error" data-error>{{ error }}</div>{% endif %}
+  {% if not cuenta.activa %}<div class="error" data-de-baja>Esta cuenta está dada de baja: no tiene botón en Gerencia y no recibe cheques.</div>{% endif %}
+
+  {# ARRIBA, SIEMPRE (dueño, 15/10): el saldo de la cuenta, de TODO, no del filtro. #}
+  <div class="tarjeta" data-saldo>
+    <p class="nota">{{ nombre_de_tipo[cuenta.tipo] }}{% if cuenta.numero %} · {{ cuenta.numero }}{% endif %}{% if cuenta.madre %} · dentro de {{ cuenta.madre }}{% endif %}</p>
+    <p class="saldo-grande {{ 'rojo' if saldo.saldo < 0 }}" data-saldo-hoy>{{ saldo_en(saldo.saldo, cuenta.moneda) }}</p>
+    <p class="total-dato">Saldo de hoy {% call info("Cómo se cuenta") %}Suma los ingresos y resta los egresos hasta hoy. Un cheque depositado entra el día que se acredita; si eso es después de hoy, va en "Por acreditarse". Un movimiento anulado sigue a la vista, tachado, y no suma.{% endcall %}</p>
+    {% if saldo.a_futuro %}<p class="total-dato" data-a-futuro>Por acreditarse: <strong>{{ saldo_en(saldo.a_futuro, cuenta.moneda) }}</strong></p>{% endif %}
+    <div class="acciones">
+      <a href="/gerencia/cuentas/{{ cuenta.id }}/cargar">Cargar movimiento</a>
+      <a href="/gerencia/cuentas/{{ cuenta.id }}/transferir">Transferir a otra cuenta</a>
+    </div>
+  </div>
+
+  <form class="tarjeta" method="get" action="/gerencia/cuentas/{{ cuenta.id }}">
+    <details {% if hay_filtro %}open{% endif %}>
+      <summary>Buscar</summary>
+      <div class="campos">
+        <label>Desde<input type="date" name="desde" value="{{ filtros.desde.isoformat() if filtros.desde else '' }}"></label>
+        <label>Hasta<input type="date" name="hasta" value="{{ filtros.hasta.isoformat() if filtros.hasta else '' }}"></label>
+        <label>¿Ingresos o egresos?
+          <select name="tipo"><option value="">Los dos</option>
+            {% for valor, texto in sentidos %}<option value="{{ valor }}" {% if filtros.tipo == valor %}selected{% endif %}>{{ texto }}s</option>{% endfor %}
+          </select></label>
+        <label>Concepto
+          <select name="concepto"><option value="">Todos</option>
+            {% for c in usados.conceptos %}<option {% if filtros.concepto == c %}selected{% endif %}>{{ c }}</option>{% endfor %}
+          </select></label>
+        <label>Etiqueta
+          <select name="etiqueta"><option value="">Todas</option>
+            {% for e in usados.etiquetas %}<option {% if filtros.etiqueta == e %}selected{% endif %}>{{ e }}</option>{% endfor %}
+          </select></label>
+      </div>
+      <div class="acciones"><button type="submit">Buscar</button><a href="/gerencia/cuentas/{{ cuenta.id }}">Limpiar</a></div>
+    </details>
+  </form>
+
+  <div class="tarjeta" data-listado>
+    <h2>{{ movimientos|length }} movimiento{{ '' if movimientos|length == 1 else 's' }}</h2>
+    <div class="acciones">
+      <a href="/gerencia/cuentas/{{ cuenta.id }}/exportar-pdf?{{ query_exportar }}">PDF</a>
+      <a href="/gerencia/cuentas/{{ cuenta.id }}/exportar-excel?{{ query_exportar }}">Excel</a>
+    </div>
+    {% for m in movimientos %}
+    {% set url = {'movimiento': '/gerencia/cuentas/movimientos/', 'transferencia': '/gerencia/cuentas/transferencias/'}.get(m.origen, '/gerencia/cheques/') ~ m.origen_id %}
+    <div class="fila{% if m.anulado %} anulado{% endif %}" data-movimiento="{{ m.origen }}-{{ m.origen_id }}">
+      <a class="abrir" href="{{ url }}{{ q_volver(aqui(request)) }}">
+        <div class="fila-cabeza">
+          <span class="fila-que dia">{{ m.fecha.strftime('%d/%m/%Y') }}{% if m.fecha > hoy %} · a acreditar{% endif %}</span>
+          <span class="importe {{ '' if m.anulado else ('verde' if m.tipo == 'ingreso' else 'rojo') }}">{{ '+' if m.tipo == 'ingreso' else '−' }}{{ importe_en(m.importe, cuenta.moneda) }}</span>
+        </div>
+        <div class="fila-concepto" data-concepto>{{ m.concepto }}{% if m.etiqueta %} · {{ m.etiqueta }}{% endif %}</div>
+        <div class="fila-dato">{% if m.detalle %}{{ m.detalle }} · {% endif %}{% if m.anulado %}<strong>anulado</strong> · {% endif %}<span class="saldo-al {{ 'rojo' if m.saldo < 0 }}" data-saldo-al>saldo {{ saldo_en(m.saldo, cuenta.moneda) }}</span></div>
+      </a>
+    </div>
+    {% else %}
+    <p class="vacio">No hay movimientos{{ ' con esos filtros' if hay_filtro }}.</p>
+    {% endfor %}
+  </div>
+
+  {% for titulo, totales, clave in (("Por concepto", por_concepto, "concepto"), ("Por etiqueta", por_etiqueta, "etiqueta")) %}
+  <div class="tarjeta" data-totales="{{ clave }}">
+    <h2>{{ titulo }}{{ ' (lo filtrado)' if hay_filtro }}</h2>
+    {% if totales %}
+    {% for t in totales %}
+    <div class="fila-total" data-total><span class="nombre">{{ t.nombre }}</span>
+      <span class="num">{% if t.ingresos %}<span class="verde">+{{ importe_en(t.ingresos, cuenta.moneda) }}</span>{% endif %}{% if t.ingresos and t.egresos %}<br>{% endif %}{% if t.egresos %}<span class="rojo">−{{ importe_en(t.egresos, cuenta.moneda) }}</span>{% endif %}</span></div>
+    {% endfor %}
+    {% else %}<p class="vacio">Nada.</p>{% endif %}
+  </div>
+  {% endfor %}
+{% include "_pie_version.html" %}
+</body>
+</html>

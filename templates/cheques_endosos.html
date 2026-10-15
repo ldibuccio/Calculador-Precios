@@ -78,6 +78,13 @@
           {% if destino == "depositado" %}
           <label>¿En qué cuenta se depositó?<input type="text" name="cuenta_deposito_{{ i }}" value="{{ r.cuenta_deposito }}" placeholder="Ej.: CC$ 191-220-000247/7"></label>
           {% else %}<input type="hidden" name="cuenta_deposito_{{ i }}" value="{{ r.cuenta_deposito }}">{% endif %}
+          {# La cuenta del sistema (dueño, 15/10): se reconoce por el número leído. #}
+          {% if destino == "depositado" and bancos %}
+          <label>¿A qué cuenta del sistema va?
+            <select name="cuenta_id_{{ i }}"><option value="">Elegí</option>
+              {% for b in bancos %}<option value="{{ b.id }}" {% if r.cuenta_id == b.id %}selected{% endif %}>{{ b.nombre }}</option>{% endfor %}
+            </select></label>
+          {% else %}<input type="hidden" name="cuenta_id_{{ i }}" value="{{ r.cuenta_id or '' }}">{% endif %}
           <label>¿Por qué sale?
             <select name="concepto_id_{{ i }}"><option value="">Elegí</option>
               {% for c in conceptos %}<option value="{{ c.id }}" {% if r.concepto_id == c.id %}selected{% endif %}>{{ c.nombre }}</option>{% endfor %}

@@ -44,6 +44,8 @@ TEXTO_DEL_TIPO = {
     "cheque": "Cheques",
     # Solo en Frutamax (14/10): los cheques de Palmala Cruces.
     "palmala": "Palmala Cruces",
+    # Las dos bases (15/10): los comprobantes de Caja, Banco e Inversiones.
+    "cuentas": "Cuentas",
 }
 
 # Los que no se tocan: la regla de v1054 (dueño, 01/10: "no la cambies").
