@@ -102,8 +102,8 @@ las plantillas `cheques*.html` y `cheque.html`. Tests:
   pregunta por un CUIT que ya vino antes (ya se vio: es de un tercero) ni
   por uno que en ese listado se dijo que es de un tercero. "Sí" lo guarda y
   pasa a ese cliente los demás cheques del listado con ese CUIT. La columna
-  `clientes.cuit` (de `clientes_cuit_1`) quedó deprecada: nadie la usa, y
-  se borra con `clientes_cuit_3` después del deploy.
+  `clientes.cuit` (de `clientes_cuit_1`) se pasó a la tabla y se borró con
+  `clientes_cuit_3` (15/10, después del deploy de v1157).
 - **Banco leído**: es el de la lista si es EL MISMO banco
   (`core.cheques.clave_de_banco`): sin acentos, mayúsculas, signos, el código
   numérico ni las palabras de relleno ("Banco", "de", "S.A.U.",

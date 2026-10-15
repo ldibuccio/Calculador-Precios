@@ -164,12 +164,10 @@ create table clientes (
     creado_en       timestamptz not null default now(),
     actualizado_en  timestamptz not null default now(),
     -- db/segunda_al_cliente_3_tilde_y_renglon.sql
-    acepta_segunda  boolean not null default false,
-    -- DEPRECADA (clientes_cuit_2, 14/10): un cliente tiene VARIOS CUIT
-    -- propios, en clientes_cuits. Nadie la lee ni la escribe; se borra con
-    -- clientes_cuit_3 después del deploy.
-    cuit            text,
-    constraint clientes_cuit_check check (cuit is null or cuit ~ '^[0-9]{11}$')
+    acepta_segunda  boolean not null default false
+    -- El CUIT del cliente NO va acá: un cliente tiene VARIOS CUIT propios, en
+    -- clientes_cuits (clientes_cuit_2). La columna vieja se borró con
+    -- clientes_cuit_3 (15/10).
 );
 
 comment on column clientes.acepta_segunda is

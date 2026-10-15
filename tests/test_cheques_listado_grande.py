@@ -209,20 +209,43 @@ def test_la_FICHA_del_cliente_carga_y_saca_sus_CUIT(m, d):
     assert _cuits(d) == [(2, CUIT_DIA), (2, CUIT_DIA_2)]
 
 
-def test_la_MIGRACION_pasa_el_CUIT_de_la_columna_a_la_tabla_y_se_puede_correr_dos_veces(d):
+def _sql(nombre) -> str:
+    return open(os.path.join(RAIZ, "db", nombre)).read()
+
+
+def test_las_MIGRACIONES_2_y_3_pasan_el_CUIT_a_la_tabla_y_borran_la_columna_dos_veces(d):
+    """La base como estaba antes de clientes_cuit_2 (con la columna vieja de
+    clientes_cuit_1 y un CUIT adentro): la 2 lo pasa, la 3 borra la columna, y
+    las dos se pueden correr dos veces. Con un CUIT SIN pasar, la 3 frena."""
     conexion = d.obtener_conexion()
     try:
         with conexion.cursor() as cursor:
+            cursor.execute(_sql("clientes_cuit_1.sql"))
             cursor.execute("UPDATE clientes SET cuit = %s WHERE id = 1", (CUIT_TERCERO,))
-            sql = open(os.path.join(RAIZ, "db", "clientes_cuit_2.sql")).read()
-            cursor.execute(sql)
-            cursor.execute(sql)
+            cursor.execute(_sql("clientes_cuit_3.sql"))
+            frenada = False
+        conexion.rollback()
+    except Exception as error:                   # el RIVAL: la 3 sin haber corrido la 2
+        frenada = "no está en clientes_cuits" in str(error)
+        conexion.rollback()
+    try:
+        with conexion.cursor() as cursor:
+            cursor.execute(_sql("clientes_cuit_1.sql"))
+            cursor.execute("UPDATE clientes SET cuit = %s WHERE id = 1", (CUIT_TERCERO,))
+            for _ in range(2):
+                cursor.execute(_sql("clientes_cuit_2.sql"))
+            for _ in range(2):
+                cursor.execute(_sql("clientes_cuit_3.sql"))
             cursor.execute("SELECT cliente_id, cuit FROM clientes_cuits")
             pasados = cursor.fetchall()
+            cursor.execute(_sql("clientes_cuit_3_verificacion.sql"))
+            verificacion = cursor.fetchone()
     finally:
-        conexion.rollback()                      # no deja nada: ni el CUIT en la columna ni la fila
+        conexion.rollback()                      # no deja nada
         conexion.close()
+    assert frenada
     assert pasados == [(1, CUIT_TERCERO)]
+    assert verificacion == ("clientes_cuit_3", 0, 0, 1, 1)
 
 
 def test_PARA_TODOS_cambia_los_TILDADOS_o_todos_si_no_hay_ninguno(m, d):
