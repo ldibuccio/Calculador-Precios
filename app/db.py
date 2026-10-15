@@ -15147,7 +15147,12 @@ def kilos_comprados_y_enviados(desde, hasta, articulo_id: int | None = None) -> 
     de `facturacion_por_ficha`), sin renglones dados de baja.
 
     Devuelve [{articulo_id, articulo, cajones, kg_por_cajon, bultos,
-    kg_por_bulto}] con lo que haya de cada lado (None si no hay).
+    kg_por_bulto, kg_enviados, costo_por_kg, bultos_merma, bultos_segunda}]
+    con lo que haya de cada lado (None si no hay). Para el RESUMEN de arriba
+    (dueño, 15/10): `costo_por_kg` es lo que costaron sus compras con precio
+    (cajones × precio por cajón) sobre lo que pesaron, y `bultos_merma` y
+    `bultos_segunda` las mermas y pases a segunda del período (movimientos
+    no anulados).
     """
     conexion = obtener_conexion()
     try:
@@ -15156,7 +15161,9 @@ def kilos_comprados_y_enviados(desde, hasta, articulo_id: int | None = None) -> 
                 """
                 SELECT c.articulo_id, ar.nombre,
                        SUM(c.cantidad_cajones_real),
-                       SUM(c.cantidad_cajones_real * c.contenido_por_cajon_real)
+                       SUM(c.cantidad_cajones_real * c.contenido_por_cajon_real),
+                       SUM(c.cantidad_cajones_real * c.importe) FILTER (WHERE c.importe > 0),
+                       SUM(c.cantidad_cajones_real * c.contenido_por_cajon_real) FILTER (WHERE c.importe > 0)
                 FROM compras c
                 JOIN articulos ar ON ar.id = c.articulo_id
                 WHERE c.estado = 'recepcionado'
@@ -15172,7 +15179,10 @@ def kilos_comprados_y_enviados(desde, hasta, articulo_id: int | None = None) -> 
                 """,
                 (desde, hasta, articulo_id, articulo_id, desde, hasta),
             )
-            comprado = {a: (n, float(caj), float(kg)) for a, n, caj, kg in cursor.fetchall()}
+            comprado, costo_por_kg = {}, {}
+            for a, n, caj, kg, plata, kg_con_precio in cursor.fetchall():
+                comprado[a] = (n, float(caj), float(kg))
+                costo_por_kg[a] = float(plata) / float(kg_con_precio) if plata and kg_con_precio else None
             cursor.execute(
                 """
                 WITH vigentes AS (
@@ -15204,6 +15214,24 @@ def kilos_comprados_y_enviados(desde, hasta, articulo_id: int | None = None) -> 
                 (desde, hasta, articulo_id, articulo_id, desde, hasta),
             )
             enviado = {a: (n, float(b), float(kg)) for a, n, b, kg in cursor.fetchall()}
+            cursor.execute(
+                """
+                SELECT m.articulo_id,
+                       SUM(abs(m.cantidad)) FILTER (WHERE m.tipo = 'merma'),
+                       SUM(abs(m.cantidad)) FILTER (WHERE m.tipo = 'pase_a_segunda')
+                FROM movimientos_stock m
+                WHERE m.anulado_el IS NULL AND m.tipo IN ('merma', 'pase_a_segunda')
+                  AND m.fecha_operacion BETWEEN %s AND %s
+                  AND (%s::bigint IS NULL OR m.articulo_id = %s)
+                  AND NOT EXISTS (SELECT 1 FROM reprocesos rp
+                                  WHERE rp.articulo_id = m.articulo_id AND rp.tipo = 'normal'
+                                    AND rp.anulado_el IS NULL
+                                    AND rp.fecha_operacion BETWEEN %s AND %s)
+                GROUP BY m.articulo_id
+                """,
+                (desde, hasta, articulo_id, articulo_id, desde, hasta),
+            )
+            perdido = {a: (float(me or 0), float(se or 0)) for a, me, se in cursor.fetchall()}
     finally:
         conexion.close()
     filas = []
@@ -15215,6 +15243,9 @@ def kilos_comprados_y_enviados(desde, hasta, articulo_id: int | None = None) -> 
             "articulo_id": articulo, "articulo": nombre,
             "cajones": cajones, "kg_por_cajon": round(kg_c / cajones, 2) if cajones else None,
             "bultos": bultos, "kg_por_bulto": round(kg_e / bultos, 2) if bultos else None,
+            "kg_enviados": kg_e, "costo_por_kg": costo_por_kg.get(articulo),
+            "bultos_merma": perdido.get(articulo, (0.0, 0.0))[0],
+            "bultos_segunda": perdido.get(articulo, (0.0, 0.0))[1],
         })
     return filas
 

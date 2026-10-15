@@ -296,4 +296,36 @@ un encabezado que los dice (`core/exportar_rendimientos.py`).
   "hasta" (`perdidas_cargadas_por_articulo`): uno, o "0% a 18%" si sus fichas
   tienen distintos.
 
+### El resumen de arriba (15/10, dueño)
+
+Arriba de todo, antes del detalle por artículo, y primero también en el PDF y
+el Excel: tres renglones destacados con los mismos filtros
+(`resumen_de_rendimientos`). Todo ponderado por KILOS (sumar kilos y dividir
+al final), nunca el promedio simple de los % de cada artículo. Columnas: kg
+que entraron, % aprovechado, % segunda, % merma, % que falta sin registrar
+(lo no explicado) y % de pérdida total, sobre los kg que entraron; y la
+pérdida al costo en $ con su % sobre el costo.
+
+- **Guías R**: la misma cuenta por guía de abajo. Costo: lo que costaron los
+  cajones tomados (precio de SU compra); la pérdida en $ es lo que no salió
+  de primera a ese costo por kilo (`faltante_en_plata`). Una guía sin pesada
+  o con ficha por unidad no entra y se cuenta; una con algún cajón sin
+  precio entra en los kilos y no en la plata.
+- **Sin procesar** (los artículos sin guía R): lo que pesaban al comprarse
+  los bultos que salieron —enviados, tirados (merma) y pasados a segunda,
+  de `movimientos_stock`— (bultos × kg por cajón comprado) contra los kg
+  enviados. Merma y segunda en kg = sus bultos × kg por cajón. Debajo: kg
+  comprados de lo que se envió, kg enviados y la diferencia en %, merma y
+  segunda en kg. Costo: el kilo de sus compras del período. Si sobran kilos,
+  la pérdida resta (en $ puede dar negativa: sobran kilos caros).
+- **TOTAL**: la suma de los dos.
+
+Medido el 15/10 en Frutamax (conector de lectura), del 12/09 al 11/10, sin
+filtro de artículo. Guías R: 476 guías, 410 con cuenta (66 sin pesada o por
+unidad); 126.200 kg, pérdida 8,2% (segunda 1,7, merma 1,0, sin registrar
+5,5); $24,4 M de $224,0 M (10,9%), con la primera de la ficha (la real
+necesita el reparto del stock, que no corre por el conector). Sin procesar:
+4 artículos, 44.927 kg, pérdida 0,8%; en $ −0,6% (sobra Uva, cara). TOTAL:
+171.128 kg, 6,3%.
+
 `core/rendimientos.py`. Tests: `tests/test_rendimientos.py`.
