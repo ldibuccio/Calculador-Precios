@@ -67,6 +67,8 @@ NO_SE_ABREN = {
     "/gerencia/cheques/{cheque_id}/fotos/{foto_id}/ver": "idem",
     "/gerencia/cheques/{cheque_id}/salida/foto": "idem",
     "/gerencia/palmala-cruces/{movimiento_id}/foto": "idem",
+    "/gerencia/cuentas/movimientos/{movimiento_id}/foto": "idem",
+    "/gerencia/cuentas/transferencias/{transferencia_id}/foto": "idem",
     # El mail necesita una casilla configurada con su credencial, que por
     # regla del proyecto no vive en la base.
     "/deposito/pedido/mails/{mail_id}/revisar": "necesita una casilla con credencial",
@@ -298,6 +300,24 @@ def siembra():
         from palmala_conceptos c, bancos b where c.nombre = 'Pago con cheque' limit 1;
     insert into palmala_correcciones (movimiento_id, campo, valor_anterior, valor_nuevo, motivo, sector)
       select min(id), 'importe', '40000.00', '50000.00', 'EJEMPLO', 'gerencia' from palmala_movimientos;
+    -- CUENTAS (15/10, las dos bases): una caja y un banco, un movimiento con
+    -- etiqueta, foto y una corrección, y una transferencia entre los dos, así
+    -- la lista, las fichas, los totales y el historial pasan por sus joins.
+    insert into cuentas (nombre, tipo, numero) values ('EJEMPLO Caja', 'caja', null),
+                                                      ('EJEMPLO Banco', 'banco', 'CC$ 000-111-222/3');
+    insert into cuentas_conceptos (cuenta_id, nombre, tipo)
+      select id, 'EJEMPLO Cobro', 'ingreso' from cuentas where nombre = 'EJEMPLO Caja';
+    insert into cuentas_etiquetas (nombre) values ('EJEMPLO Persona');
+    insert into cuentas_movimientos (cuenta_id, fecha, tipo, importe, concepto_id, etiqueta_id, detalle, foto_ruta,
+                                     como_se_cargo, sector)
+      select c.cuenta_id, current_date - 3, 'ingreso', 1000, c.id, e.id, 'EJEMPLO', 'cuentas/EJEMPLO.jpg', 'a_mano',
+             'gerencia' from cuentas_conceptos c, cuentas_etiquetas e where c.nombre = 'EJEMPLO Cobro';
+    insert into cuentas_correcciones (movimiento_id, campo, valor_anterior, valor_nuevo, motivo, sector)
+      select min(id), 'importe', '900.00', '1000.00', 'EJEMPLO', 'gerencia' from cuentas_movimientos;
+    insert into cuentas_transferencias (fecha, cuenta_origen_id, cuenta_destino_id, importe, foto_ruta,
+                                        como_se_cargo, sector)
+      select current_date - 2, o.id, d.id, 400, 'cuentas/EJEMPLO-t.jpg', 'a_mano', 'gerencia'
+        from cuentas o, cuentas d where o.nombre = 'EJEMPLO Caja' and d.nombre = 'EJEMPLO Banco';
     -- UN REMITO RECIBIDO (dueño, 01/10), con su renglón, su foto y un rechazo
     -- distinto del de Depósito: así Facturación, el detalle, el cotejo y la
     -- lista de fotos pasan por sus joins.

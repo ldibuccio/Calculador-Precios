@@ -45,6 +45,8 @@
       <dt>Salió el</dt><dd>{{ cheque.fecha_salida.strftime('%d/%m/%Y') }} · {{ cheque.concepto }}{% if cheque.proveedor %} a {{ cheque.proveedor }}{% endif %}{% if cheque.cuenta_deposito %} · cuenta <span data-cuenta-deposito>{{ cheque.cuenta_deposito }}</span>{% endif %}</dd>
       {% endif %}
       {% if cheque.acreditado_el %}<dt>Se acredita el</dt><dd>{{ cheque.acreditado_el.strftime('%d/%m/%Y') }}</dd>{% endif %}
+      {# A qué cuenta del sistema fue el depósito (dueño, 15/10). #}
+      {% if cheque.acreditado_el %}<dt>En la cuenta</dt><dd data-cuenta>{% if cheque.cuenta %}<a href="/gerencia/cuentas/{{ cheque.cuenta_id }}">{{ cheque.cuenta }}</a>{% else %}<span class="rojo">sin cuenta</span>{% endif %}</dd>{% endif %}
       {% if cheque.fecha_rechazo %}<dt>Rechazado el</dt><dd class="rojo">{{ cheque.fecha_rechazo.strftime('%d/%m/%Y') }} · {{ cheque.motivo_rechazo }}</dd>{% endif %}
       {% if cheque.resuelto_el %}<dt>Reclamo resuelto</dt><dd>{{ cheque.resuelto_el.strftime('%d/%m/%Y') }} · {{ cheque.resolucion }}</dd>{% endif %}
     </dl>
@@ -52,6 +54,21 @@
     <div class="acciones"><a href="/gerencia/cheques/aplicar?cheque_id={{ cheque.id }}{{ y_volver(aqui(request)) }}">Aplicar este cheque</a></div>
     {% endif %}
   </div>
+
+  {% if cheque.acreditado_el and cuentas_banco %}
+  <form class="tarjeta" method="post" action="/gerencia/cheques/{{ cheque.id }}/cuenta{{ q_volver(volver) }}" data-cambiar-cuenta>
+    <details>
+      <summary>{{ 'Cambiar la cuenta del depósito' if cheque.cuenta else 'Decir en qué cuenta se depositó' }}</summary>
+      <div class="campos">
+        <label class="ancho">¿En qué cuenta se depositó?
+          <select name="cuenta_id" required><option value="">Elegí</option>
+            {% for b in cuentas_banco %}<option value="{{ b.id }}" {% if cheque.cuenta_id == b.id %}selected{% endif %}>{{ b.nombre }}</option>{% endfor %}
+          </select></label>
+      </div>
+      <div class="acciones"><button type="submit" class="secundario">Guardar</button></div>
+    </details>
+  </form>
+  {% endif %}
 
   <div class="tarjeta">
     <h2>Fotos</h2>

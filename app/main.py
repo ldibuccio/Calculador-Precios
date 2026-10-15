@@ -18452,7 +18452,19 @@ def ver_gerencia(request: Request):
     if not _acceso_gerencia_valido(request):
         return _pantalla_clave_gerencia(request)
     return templates.TemplateResponse(request, "gerencia.html", {"banner": _banner_alertas("gerencia"),
-                                                                 "tareas_hub": _recuadro_de_tareas("gerencia")})
+                                                                 "tareas_hub": _recuadro_de_tareas("gerencia"),
+                                                                 "cuentas": _cuentas_del_hub()})
+
+
+def _cuentas_del_hub() -> list[dict] | None:
+    """Un botón por cuenta activa (dueño, 15/10). Si la base no contesta, el
+    hub abre igual (como la franja de tareas) y dice que no se pudieron leer:
+    None, no una lista vacía, que diría que no hay cuentas."""
+    try:
+        return listar_cuentas(solo_activas=True)
+    except (psycopg2.Error, RuntimeError):
+        logger.exception("No se pudieron leer las cuentas para el hub de Gerencia")
+        return None
 
 
 @app.post("/gerencia/clave")
@@ -28560,13 +28572,28 @@ def _renderizar_aplicar_cheques(request: Request, *, elegidos: set[int], datos: 
         "en_cartera": en_cartera, "elegidos": elegidos, "datos": datos, "no_encontrados": list(no_encontrados),
         "foto_leida": foto_leida, "conceptos": listas["conceptos"], "proveedores": listas["proveedores"],
         "destinos": DESTINOS_DE_CONCEPTO, "en_rojo": cheque_en_rojo, "error": error, "aviso": aviso,
-        "volver": vuelta(request, "/gerencia/cheques"),
+        "volver": vuelta(request, "/gerencia/cheques"), "bancos": cuentas_de_banco_activas(),
     }, status_code=status_code)
 
 
 def _datos_de_aplicar_vacios() -> dict:
+    bancos = cuentas_de_banco_activas()
     return {"fecha": _hoy_argentina().isoformat(), "concepto_id": None, "concepto_nuevo": "", "destino_nuevo": "",
-            "proveedor_id": None}
+            "proveedor_id": None, "cuenta_id": bancos[0]["id"] if len(bancos) == 1 else None}
+
+
+def _cuenta_del_deposito(destino: str | None, cuenta_id: int | None) -> tuple[int | None, str | None]:
+    """(cuenta, error) de una salida: un DEPÓSITO va a una cuenta de banco
+    activa de esta base (dueño, 15/10). Si la base no tiene ninguna, sale sin
+    cuenta. Lo que no es un depósito no lleva cuenta aunque se haya elegido."""
+    if destino != "depositado":
+        return None, None
+    bancos = {b["id"] for b in cuentas_de_banco_activas()}
+    if not bancos:
+        return None, None
+    if cuenta_id not in bancos:
+        return None, "Elegí en qué cuenta se depositó."
+    return cuenta_id, None
 
 
 @app.get("/gerencia/cheques/aplicar")
@@ -28618,10 +28645,14 @@ async def aplicar_cheques_ruta(request: Request):
              "concepto_id": _id_opcional_desde_query(str(formulario.get("concepto_id") or "")),
              "concepto_nuevo": str(formulario.get("concepto_nuevo") or "").strip(),
              "destino_nuevo": str(formulario.get("destino_nuevo") or ""),
-             "proveedor_id": _id_opcional_desde_query(str(formulario.get("proveedor_id") or ""))}
+             "proveedor_id": _id_opcional_desde_query(str(formulario.get("proveedor_id") or "")),
+             "cuenta_id": _id_opcional_desde_query(str(formulario.get("cuenta_id") or ""))}
     foto_leida = str(formulario.get("foto_leida") or "")
     fecha = _fecha_de_cheque(datos["fecha"])
-    errores = []
+    destino = datos["destino_nuevo"] if datos["concepto_nuevo"] else \
+        _destinos_de_los_conceptos(listar_conceptos_de_cheques()).get(datos["concepto_id"])
+    cuenta_id, error_de_cuenta = _cuenta_del_deposito(destino, datos["cuenta_id"])
+    errores = [error_de_cuenta] if error_de_cuenta else []
     if not elegidos:
         errores.append("Tildá al menos un cheque.")
     if fecha is None:
@@ -28647,7 +28678,7 @@ async def aplicar_cheques_ruta(request: Request):
         aplicar_cheques(sorted(elegidos), fecha=fecha, concepto_id=datos["concepto_id"],
                         concepto_nuevo=datos["concepto_nuevo"] or None,
                         destino_nuevo=datos["destino_nuevo"] or None,
-                        proveedor_id=datos["proveedor_id"], foto_ruta=ruta)
+                        proveedor_id=datos["proveedor_id"], foto_ruta=ruta, cuenta_id=cuenta_id)
     except ChequeNoSePuede as motivo:
         if ruta:
             borrar_foto_comanda(ruta)
@@ -28692,15 +28723,35 @@ def _renderizar_endosos(request: Request, renglones: list[dict], fotos: list[str
     cheques = buscar_cheques({})
     conceptos = listar_conceptos_de_cheques()
     destinos = _destinos_de_los_conceptos(conceptos)
-    problemas = problemas_de_los_endosos(renglones, cheques, destinos=destinos)
+    bancos = cuentas_de_banco_activas()
+    problemas = _problemas_de_los_endosos_con_cuenta(renglones, cheques, destinos, bancos)
     vivos = [(r, p) for r, p in zip(renglones, problemas) if not r.get("sacar")]
     return templates.TemplateResponse(request, "cheques_endosos.html", {
         "renglones": list(zip(renglones, problemas)), "fotos": fotos, "avisos": list(avisos), "error": error,
-        "en_cartera": [c for c in cheques if c["estado"] in ("en_cartera", "vencido")],
+        "en_cartera": [c for c in cheques if c["estado"] in ("en_cartera", "vencido")], "bancos": bancos,
         "proveedores": proveedores_con_cuit(), "conceptos": conceptos, "destinos": destinos,
         "total": round(sum(_importe_de_cheque(r["importe"]) or 0 for r, _ in vivos), 2),
         "cuantos": len(vivos), "con_problema": sum(1 for _, p in vivos if p),
     }, status_code=status_code)
+
+
+def _problemas_de_los_endosos_con_cuenta(renglones: list[dict], cheques: list[dict], destinos: dict,
+                                         bancos: list[dict]) -> list[list[str]]:
+    """Los problemas de siempre y, en un depósito, la cuenta del sistema: la
+    que tiene el número leído (CC$ 191-220-000247/7 es Banco Credicoop) o la
+    que se elija. Una base sin cuentas de banco deposita sin cuenta."""
+    from core.cuentas import cuenta_por_numero
+    problemas = problemas_de_los_endosos(renglones, cheques, destinos=destinos)
+    ids = {b["id"] for b in bancos}
+    for r, mal in zip(renglones, problemas):
+        if destinos.get(r.get("concepto_id")) != "depositado" or not bancos or r.get("sacar"):
+            continue
+        if r.get("cuenta_id") is None:
+            leida = cuenta_por_numero(r.get("cuenta_deposito"), bancos)
+            r["cuenta_id"] = leida["id"] if leida else (bancos[0]["id"] if len(bancos) == 1 else None)
+        if r.get("cuenta_id") not in ids:
+            mal.append("elegí a qué cuenta del sistema va el depósito")
+    return problemas
 
 
 @app.post("/gerencia/cheques/aplicar/endosos")
@@ -28746,6 +28797,7 @@ def _renglones_de_los_endosos_del_formulario(formulario) -> list[dict]:
             "proveedor_cuit": dato("proveedor_cuit"), "proveedor_nombre": dato("proveedor_nombre"),
             "proveedor_id": _id_opcional_desde_query(dato("proveedor_id")),
             "cuenta_deposito": dato("cuenta_deposito"), "deposito": dato("deposito") == "1",
+            "cuenta_id": _id_opcional_desde_query(dato("cuenta_id")),
             "concepto_id": _id_opcional_desde_query(dato("concepto_id")), "fecha": dato("fecha"),
             "sacar": dato("sacar") == "1",
         })
@@ -28766,7 +28818,8 @@ async def confirmar_endosos_de_cheques(request: Request):
     if str(formulario.get("accion") or "") != "confirmar":
         return _renderizar_endosos(request, renglones, fotos)
     destinos = _destinos_de_los_conceptos(listar_conceptos_de_cheques())
-    problemas = problemas_de_los_endosos(renglones, buscar_cheques({}), destinos=destinos)
+    problemas = _problemas_de_los_endosos_con_cuenta(renglones, buscar_cheques({}), destinos,
+                                                     cuentas_de_banco_activas())
     buenos = [r for r, p in zip(renglones, problemas) if not p and not r["sacar"]]
     quedan = [r for r, p in zip(renglones, problemas) if p and not r["sacar"]]
     subidas: dict = {}
@@ -28784,6 +28837,7 @@ async def confirmar_endosos_de_cheques(request: Request):
                 "proveedor_id": r["proveedor_id"] if destinos.get(r["concepto_id"]) == "entregado" else None,
                 "cuenta_deposito": (r["cuenta_deposito"] or None
                                     if destinos.get(r["concepto_id"]) == "depositado" else None),
+                "cuenta_id": r.get("cuenta_id") if destinos.get(r["concepto_id"]) == "depositado" else None,
                 "foto_ruta": subidas.get(r["foto"]),
                 "cuit_leido": "".join(ch for ch in r["proveedor_cuit"] if ch.isdigit())} for r in buenos])
     except ChequeNoSePuede as motivo:
@@ -28818,6 +28872,7 @@ def _renderizar_ficha_de_cheque(request: Request, cheque_id: int, *, aviso: str 
         raise HTTPException(status_code=404, detail="Ese cheque no existe.")
     return templates.TemplateResponse(request, "cheque.html", {
         "cheque": cheque, "en_rojo": cheque_en_rojo(cheque), "nombre_del_estado": NOMBRES_DE_ESTADO_DE_CHEQUE,
+        "cuentas_banco": cuentas_de_banco_activas(),
         "clientes": listas["clientes"], "bancos": listas["bancos"], "origenes": ORIGENES_DE_CHEQUE,
         "hoy": _hoy_argentina(), "aviso": aviso, "error": error,
     }, status_code=status_code)
@@ -28863,6 +28918,25 @@ def _accion_sobre_cheque(request: Request, cheque_id: int, hacer, aviso: str):
     except ChequeNoSePuede as motivo:
         return _renderizar_ficha_de_cheque(request, cheque_id, error=str(motivo), status_code=400)
     return RedirectResponse(f"/gerencia/cheques/{cheque_id}?{urlencode({'aviso': aviso})}", status_code=303)
+
+
+@app.post("/gerencia/cheques/{cheque_id}/cuenta")
+async def cambiar_cuenta_del_deposito_ruta(request: Request, cheque_id: int):
+    """En qué cuenta de banco se depositó un cheque ya aplicado (dueño, 15/10):
+    el ingreso (y su rechazo, si lo hubo) pasa a esa cuenta."""
+    puerta = _puerta_de_gerencia_para_escribir(request)
+    if puerta is not None:
+        return puerta
+    formulario = await request.form()
+    cuenta_id = _id_opcional_desde_query(str(formulario.get("cuenta_id") or ""))
+    if cuenta_id not in {b["id"] for b in cuentas_de_banco_activas()}:
+        return _renderizar_ficha_de_cheque(request, cheque_id, error="Elegí la cuenta.", status_code=400)
+    try:
+        cambiar_cuenta_del_deposito(cheque_id, cuenta_id)
+    except CuentaNoSePuede as motivo:
+        return _renderizar_ficha_de_cheque(request, cheque_id, error=str(motivo), status_code=400)
+    return RedirectResponse(con_volver(f"/gerencia/cheques/{cheque_id}?aviso=Cuenta+del+dep%C3%B3sito+guardada",
+                                       request.query_params.get("volver")), status_code=303)
 
 
 @app.post("/gerencia/cheques/{cheque_id}/rechazar")
@@ -29376,6 +29450,522 @@ def ver_foto_de_palmala(request: Request, movimiento_id: int):
     if movimiento is None or not movimiento.get("foto_ruta"):
         raise HTTPException(status_code=404, detail="Ese movimiento no tiene foto.")
     return _ir_a_la_foto(movimiento["foto_ruta"], status_code=303)
+
+
+# =============================================================================
+# CUENTAS (dueño, 15/10): Caja, Banco e Inversiones con UN SOLO MOTOR, en las
+# DOS apps. Los botones de Gerencia salen de las cuentas activas de cada base;
+# "Cuentas" crea una nueva con los conceptos por defecto de su tipo. Solo
+# Gerencia. Ver core/cuentas.py y app/db.py (CUENTAS).
+# =============================================================================
+from app.db import (  # noqa: E402
+    CuentaNoSePuede,
+    cambiar_cuenta_del_deposito,
+    cuentas_de_banco_activas,
+    activar_concepto_de_cuenta,
+    activar_cuenta,
+    conceptos_de_la_cuenta,
+    corregir_movimiento_de_cuenta,
+    corregir_transferencia,
+    crear_concepto_de_cuenta,
+    crear_cuenta,
+    etiquetas_de_cuentas,
+    guardar_movimientos_de_cuenta,
+    guardar_transferencia,
+    listar_cuentas,
+    movimientos_de_la_cuenta,
+    nombres_usados_en_la_cuenta,
+    obtener_cuenta,
+    obtener_movimiento_de_cuenta,
+    obtener_transferencia,
+)
+from core.cuentas import (  # noqa: E402
+    CONCEPTOS_POR_TIPO,
+    MONEDAS as MONEDAS_DE_CUENTA,
+    NOMBRE_DE_SENTIDO as NOMBRE_DE_SENTIDO_DE_CUENTA,
+    NOMBRE_DE_TIPO as NOMBRE_DE_TIPO_DE_CUENTA,
+    SENTIDOS as SENTIDOS_DE_CUENTA,
+    TIPOS as TIPOS_DE_CUENTA,
+    importe_en,
+    nombre_de_la_transferencia,
+    partes_del_filtro as partes_del_filtro_de_cuenta,
+    problemas_de_la_transferencia,
+    problemas_del_movimiento,
+    saldo_de_la_cuenta,
+    saldo_en,
+    texto_del_filtro as texto_del_filtro_de_cuenta,
+    totales_por,
+)
+from core.exportar_cuentas import generar_excel_cuenta, generar_pdf_cuenta  # noqa: E402
+
+PREFIJO_CUENTAS = "cuentas"
+
+
+def _cuenta_o_404(cuenta_id: int) -> dict:
+    cuenta = obtener_cuenta(cuenta_id)
+    if cuenta is None:
+        raise HTTPException(status_code=404, detail="Esa cuenta no existe.")
+    return cuenta
+
+
+def _a_la_cuenta(cuenta_id: int, **mensaje) -> RedirectResponse:
+    return RedirectResponse(f"/gerencia/cuentas/{cuenta_id}" + ("?" + urlencode(mensaje) if mensaje else ""),
+                            status_code=303)
+
+
+# --- GERENCIA → CUENTAS: crear una cuenta, darla de baja ---------------------
+
+def _renderizar_cuentas(request: Request, *, error: str | None = None, aviso: str | None = None,
+                        nueva: dict | None = None, status_code: int = 200):
+    return templates.TemplateResponse(request, "cuentas.html", {
+        "cuentas": listar_cuentas(), "tipos": TIPOS_DE_CUENTA, "monedas": MONEDAS_DE_CUENTA,
+        "nombre_de_tipo": NOMBRE_DE_TIPO_DE_CUENTA, "conceptos_por_tipo": CONCEPTOS_POR_TIPO,
+        "nueva": nueva or {"nombre": "", "tipo": "", "moneda": "pesos", "numero": "", "madre_id": None},
+        "error": error, "aviso": aviso,
+    }, status_code=status_code)
+
+
+@app.get("/gerencia/cuentas")
+def ver_cuentas(request: Request, aviso: str | None = None, error: str | None = None):
+    puerta = _sin_clave_de_cheques(request)
+    if puerta is not None:
+        return puerta
+    return _renderizar_cuentas(request, aviso=aviso, error=error)
+
+
+@app.post("/gerencia/cuentas")
+async def crear_cuenta_ruta(request: Request):
+    """Una cuenta nueva (dueño, 15/10): nace con los conceptos por defecto de
+    su tipo, los mismos que la Caja o el Banco de Frutamax."""
+    puerta = _puerta_de_gerencia_para_escribir(request)
+    if puerta is not None:
+        return puerta
+    formulario = await request.form()
+    nueva = {"nombre": " ".join(str(formulario.get("nombre") or "").split()),
+             "tipo": str(formulario.get("tipo") or ""), "moneda": str(formulario.get("moneda") or ""),
+             "numero": " ".join(str(formulario.get("numero") or "").split()),
+             "madre_id": _id_opcional_desde_query(str(formulario.get("madre_id") or ""))}
+    faltan = []
+    if not nueva["nombre"]:
+        faltan.append("el nombre")
+    if nueva["tipo"] not in NOMBRE_DE_TIPO_DE_CUENTA:
+        faltan.append("si es caja, banco o inversión")
+    if nueva["moneda"] not in dict((m, n) for m, n, _ in MONEDAS_DE_CUENTA):
+        faltan.append("la moneda")
+    if faltan:
+        return _renderizar_cuentas(request, nueva=nueva, error="Falta " + ", ".join(faltan) + ".", status_code=400)
+    try:
+        cuenta_id = crear_cuenta(nombre=nueva["nombre"], tipo=nueva["tipo"], moneda=nueva["moneda"],
+                                 numero=nueva["numero"] or None, madre_id=nueva["madre_id"],
+                                 conceptos=list(CONCEPTOS_POR_TIPO[nueva["tipo"]]))
+    except CuentaNoSePuede as motivo:
+        return _renderizar_cuentas(request, nueva=nueva, error=str(motivo), status_code=400)
+    return _a_la_cuenta(cuenta_id, aviso=f"Cuenta {nueva['nombre']} creada")
+
+
+@app.post("/gerencia/cuentas/{cuenta_id}/activa")
+async def activar_cuenta_ruta(request: Request, cuenta_id: int):
+    """Dar de baja una cuenta (o volver a usarla): sin botón en Gerencia y sin
+    cheques nuevos; lo cargado queda."""
+    puerta = _puerta_de_gerencia_para_escribir(request)
+    if puerta is not None:
+        return puerta
+    cuenta = _cuenta_o_404(cuenta_id)
+    formulario = await request.form()
+    activa = formulario.get("activa") == "1"
+    activar_cuenta(cuenta_id, activa)
+    texto = "vuelve a usarse" if activa else "dada de baja"
+    return RedirectResponse("/gerencia/cuentas?" + urlencode({"aviso": f"{cuenta['nombre']}: {texto}"}),
+                            status_code=303)
+
+
+# --- EL LISTADO DE UNA CUENTA ------------------------------------------------
+
+def _filtros_de_cuenta(request: Request) -> dict:
+    q = request.query_params
+    return {"desde": _fecha_de_cheque(q.get("desde")), "hasta": _fecha_de_cheque(q.get("hasta")),
+            "concepto": " ".join(str(q.get("concepto") or "").split()),
+            "etiqueta": " ".join(str(q.get("etiqueta") or "").split()),
+            "tipo": q.get("tipo") if q.get("tipo") in NOMBRE_DE_SENTIDO_DE_CUENTA else ""}
+
+
+def _query_de_cuenta(filtros: dict) -> str:
+    return urlencode({k: (v.isoformat() if hasattr(v, "isoformat") else v)
+                      for k, v in filtros.items() if v not in (None, "")})
+
+
+@app.get("/gerencia/cuentas/{cuenta_id}")
+def ver_cuenta(request: Request, cuenta_id: int, aviso: str | None = None, error: str | None = None):
+    """El saldo arriba (de hoy, con lo que falta acreditarse aparte), los
+    filtros, los totales por concepto y etiqueta de lo filtrado, y el listado
+    con el saldo acumulado de cada renglón."""
+    puerta = _sin_clave_de_cheques(request)
+    if puerta is not None:
+        return puerta
+    cuenta = _cuenta_o_404(cuenta_id)
+    filtros = _filtros_de_cuenta(request)
+    query = _query_de_cuenta(filtros)
+    movimientos = movimientos_de_la_cuenta(cuenta_id, filtros) if query else None
+    todos = movimientos_de_la_cuenta(cuenta_id)
+    movimientos = todos if movimientos is None else movimientos
+    return templates.TemplateResponse(request, "cuenta.html", {
+        "cuenta": cuenta, "saldo": saldo_de_la_cuenta(todos, _hoy_argentina()), "movimientos": movimientos,
+        "filtros": filtros, "hay_filtro": bool(query), "query_exportar": query,
+        "por_concepto": totales_por(movimientos, "concepto"), "por_etiqueta": totales_por(movimientos, "etiqueta"),
+        "usados": nombres_usados_en_la_cuenta(cuenta_id), "sentidos": SENTIDOS_DE_CUENTA,
+        "nombre_de_tipo": NOMBRE_DE_TIPO_DE_CUENTA, "importe_en": importe_en, "saldo_en": saldo_en,
+        "hoy": _hoy_argentina(), "aviso": aviso, "error": error,
+    })
+
+
+def _exportacion_de_cuenta(request: Request, cuenta_id: int):
+    cuenta = _cuenta_o_404(cuenta_id)
+    filtros = _filtros_de_cuenta(request)
+    movimientos = movimientos_de_la_cuenta(cuenta_id, filtros)
+    hoy = _hoy_argentina()
+    return {"cuenta": cuenta, "filtro": texto_del_filtro_de_cuenta(partes_del_filtro_de_cuenta(filtros)),
+            "movimientos": movimientos, "saldo": saldo_de_la_cuenta(movimientos_de_la_cuenta(cuenta_id), hoy),
+            "por_concepto": totales_por(movimientos, "concepto"), "por_etiqueta": totales_por(movimientos, "etiqueta"),
+            "hoy": hoy}
+
+
+def _nombre_de_archivo_de_cuenta(cuenta: dict, hoy: date, extension: str) -> str:
+    nombre = re.sub(r"[^a-z0-9]+", "_", unicodedata.normalize("NFKD", cuenta["nombre"]).encode("ascii", "ignore")
+                    .decode("ascii").lower()).strip("_") or "cuenta"
+    return f'attachment; filename="{nombre}_{hoy.isoformat()}.{extension}"'
+
+
+@app.get("/gerencia/cuentas/{cuenta_id}/exportar-pdf")
+def exportar_cuenta_pdf(request: Request, cuenta_id: int):
+    puerta = _sin_clave_de_cheques(request)
+    if puerta is not None:
+        return puerta
+    datos = _exportacion_de_cuenta(request, cuenta_id)
+    return Response(content=generar_pdf_cuenta(datos), media_type="application/pdf",
+                    headers={"Content-Disposition": _nombre_de_archivo_de_cuenta(datos["cuenta"], datos["hoy"], "pdf")})
+
+
+@app.get("/gerencia/cuentas/{cuenta_id}/exportar-excel")
+def exportar_cuenta_excel(request: Request, cuenta_id: int):
+    puerta = _sin_clave_de_cheques(request)
+    if puerta is not None:
+        return puerta
+    datos = _exportacion_de_cuenta(request, cuenta_id)
+    return Response(content=generar_excel_cuenta(datos),
+                    media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                    headers={"Content-Disposition": _nombre_de_archivo_de_cuenta(datos["cuenta"], datos["hoy"], "xlsx")})
+
+
+# --- CARGAR A MANO, Y LOS CONCEPTOS -----------------------------------------
+
+def _movimiento_de_cuenta_vacio() -> dict:
+    return {"fecha": _hoy_argentina().isoformat(), "tipo": "", "importe": "", "concepto_id": None, "etiqueta": "",
+            "detalle": ""}
+
+
+def _renderizar_carga_de_cuenta(request: Request, cuenta: dict, *, movimiento: dict | None = None,
+                                error: str | None = None, aviso: str | None = None, status_code: int = 200):
+    return templates.TemplateResponse(request, "cuenta_cargar.html", {
+        "cuenta": cuenta, "m": movimiento or _movimiento_de_cuenta_vacio(),
+        "conceptos": conceptos_de_la_cuenta(cuenta["id"]), "etiquetas": etiquetas_de_cuentas(),
+        "sentidos": SENTIDOS_DE_CUENTA, "nombre_de_sentido": NOMBRE_DE_SENTIDO_DE_CUENTA,
+        "error": error, "aviso": aviso,
+    }, status_code=status_code)
+
+
+@app.get("/gerencia/cuentas/{cuenta_id}/cargar")
+def ver_carga_de_cuenta(request: Request, cuenta_id: int, aviso: str | None = None):
+    puerta = _sin_clave_de_cheques(request)
+    if puerta is not None:
+        return puerta
+    return _renderizar_carga_de_cuenta(request, _cuenta_o_404(cuenta_id), aviso=aviso)
+
+
+def _movimiento_de_cuenta_del_formulario(formulario, sufijo: str = "") -> dict:
+    dato = lambda campo: str(formulario.get(f"{campo}{sufijo}") or "").strip()  # noqa: E731
+    return {"fecha": dato("fecha"), "tipo": dato("tipo"),
+            "importe": str(_importe_de_cheque(dato("importe")) or "") if dato("importe") else "",
+            "concepto_id": _id_opcional_desde_query(dato("concepto_id")),
+            "etiqueta": " ".join(dato("etiqueta").split()), "detalle": dato("detalle")}
+
+
+def _movimiento_de_cuenta_para_guardar(r: dict, foto_ruta: str | None = None) -> dict:
+    return {"fecha": date.fromisoformat(r["fecha"]), "tipo": r["tipo"], "importe": _importe_de_cheque(r["importe"]),
+            "concepto_id": r["concepto_id"], "etiqueta": r["etiqueta"], "detalle": r["detalle"],
+            "foto_ruta": foto_ruta}
+
+
+async def _foto_del_formulario(formulario) -> str | None:
+    archivo = formulario.get("foto")
+    if getattr(archivo, "filename", ""):
+        contenido = await archivo.read()
+        if contenido:
+            return subir_foto_comanda(contenido, archivo.filename, prefijo=PREFIJO_CUENTAS)
+    return None
+
+
+@app.post("/gerencia/cuentas/{cuenta_id}/cargar")
+async def cargar_movimiento_de_cuenta(request: Request, cuenta_id: int):
+    """Un movimiento a mano, con su foto si la tiene. La etiqueta que no está
+    se agrega a la lista."""
+    puerta = _puerta_de_gerencia_para_escribir(request)
+    if puerta is not None:
+        return puerta
+    cuenta = _cuenta_o_404(cuenta_id)
+    formulario = await request.form()
+    movimiento = _movimiento_de_cuenta_del_formulario(formulario)
+    problemas = problemas_del_movimiento(movimiento, conceptos_de_la_cuenta(cuenta_id))
+    if problemas:
+        return _renderizar_carga_de_cuenta(request, cuenta, movimiento=movimiento,
+                                           error="Falta: " + "; ".join(problemas), status_code=400)
+    foto_ruta = await _foto_del_formulario(formulario)
+    try:
+        guardar_movimientos_de_cuenta(cuenta_id, [_movimiento_de_cuenta_para_guardar(movimiento, foto_ruta)],
+                                      como_se_cargo="a_mano")
+    except CuentaNoSePuede as motivo:
+        if foto_ruta:
+            borrar_foto_comanda(foto_ruta)
+        return _renderizar_carga_de_cuenta(request, cuenta, movimiento=movimiento, error=str(motivo),
+                                           status_code=400)
+    return _a_la_cuenta(cuenta_id, aviso="Movimiento cargado")
+
+
+@app.post("/gerencia/cuentas/{cuenta_id}/conceptos")
+async def crear_concepto_de_cuenta_ruta(request: Request, cuenta_id: int):
+    puerta = _puerta_de_gerencia_para_escribir(request)
+    if puerta is not None:
+        return puerta
+    cuenta = _cuenta_o_404(cuenta_id)
+    formulario = await request.form()
+    nombre = " ".join(str(formulario.get("nombre") or "").split())
+    tipo = str(formulario.get("tipo") or "")
+    if not nombre:
+        return _renderizar_carga_de_cuenta(request, cuenta, error="Escribí el nombre del concepto.", status_code=400)
+    try:
+        crear_concepto_de_cuenta(cuenta_id, nombre, tipo if tipo in NOMBRE_DE_SENTIDO_DE_CUENTA else None)
+    except CuentaNoSePuede as motivo:
+        return _renderizar_carga_de_cuenta(request, cuenta, error=str(motivo), status_code=400)
+    return RedirectResponse(f"/gerencia/cuentas/{cuenta_id}/cargar?" + urlencode({"aviso": f"Concepto {nombre} agregado"}),
+                            status_code=303)
+
+
+@app.post("/gerencia/cuentas/{cuenta_id}/conceptos/{concepto_id}/activo")
+async def activar_concepto_de_cuenta_ruta(request: Request, cuenta_id: int, concepto_id: int):
+    puerta = _puerta_de_gerencia_para_escribir(request)
+    if puerta is not None:
+        return puerta
+    _cuenta_o_404(cuenta_id)
+    formulario = await request.form()
+    activar_concepto_de_cuenta(cuenta_id, concepto_id, formulario.get("activo") == "1")
+    return RedirectResponse(f"/gerencia/cuentas/{cuenta_id}/cargar", status_code=303)
+
+
+# --- TRANSFERENCIAS: se cargan una vez y aparecen en las dos cuentas --------
+
+def _otras_cuentas(cuenta: dict) -> list[dict]:
+    """A dónde puede ir o de dónde puede venir la plata: las otras cuentas
+    activas de la misma moneda."""
+    return [c for c in listar_cuentas(solo_activas=True) if c["id"] != cuenta["id"] and c["moneda"] == cuenta["moneda"]]
+
+
+def _renderizar_transferencia(request: Request, cuenta: dict, *, t: dict | None = None, error: str | None = None,
+                              status_code: int = 200):
+    otras = _otras_cuentas(cuenta)
+    return templates.TemplateResponse(request, "cuenta_transferir.html", {
+        "cuenta": cuenta, "otras": otras,
+        "t": t or {"fecha": _hoy_argentina().isoformat(), "sentido": "sale", "otra_cuenta_id": None, "importe": "",
+                   "detalle": ""},
+        # Cómo se va a llamar en cada caso, para que se vea antes de guardar.
+        "nombres": {c["id"]: {"sale": nombre_de_la_transferencia(cuenta, c),
+                              "entra": nombre_de_la_transferencia(c, cuenta)} for c in otras},
+        "error": error,
+    }, status_code=status_code)
+
+
+@app.get("/gerencia/cuentas/{cuenta_id}/transferir")
+def ver_transferencia_nueva(request: Request, cuenta_id: int):
+    puerta = _sin_clave_de_cheques(request)
+    if puerta is not None:
+        return puerta
+    return _renderizar_transferencia(request, _cuenta_o_404(cuenta_id))
+
+
+@app.post("/gerencia/cuentas/{cuenta_id}/transferir")
+async def transferir_entre_cuentas(request: Request, cuenta_id: int):
+    """Suscripción, rescate, depósito de efectivo o extracción: UNA fila, que se
+    ve en las dos cuentas."""
+    puerta = _puerta_de_gerencia_para_escribir(request)
+    if puerta is not None:
+        return puerta
+    cuenta = _cuenta_o_404(cuenta_id)
+    formulario = await request.form()
+    t = {"fecha": str(formulario.get("fecha") or "").strip(), "sentido": str(formulario.get("sentido") or ""),
+         "otra_cuenta_id": _id_opcional_desde_query(str(formulario.get("otra_cuenta_id") or "")),
+         "importe": str(_importe_de_cheque(str(formulario.get("importe") or "")) or ""),
+         "detalle": str(formulario.get("detalle") or "").strip()}
+    otras = {c["id"]: c for c in _otras_cuentas(cuenta)}
+    problemas = problemas_de_la_transferencia(t, cuenta, otras)
+    if problemas:
+        return _renderizar_transferencia(request, cuenta, t=t, error="Falta: " + "; ".join(problemas), status_code=400)
+    origen, destino = (cuenta["id"], t["otra_cuenta_id"]) if t["sentido"] == "sale" else (t["otra_cuenta_id"], cuenta["id"])
+    foto_ruta = await _foto_del_formulario(formulario)
+    try:
+        guardar_transferencia(fecha=date.fromisoformat(t["fecha"]), origen_id=origen, destino_id=destino,
+                              importe=_importe_de_cheque(t["importe"]), detalle=t["detalle"], foto_ruta=foto_ruta)
+    except CuentaNoSePuede as motivo:
+        if foto_ruta:
+            borrar_foto_comanda(foto_ruta)
+        return _renderizar_transferencia(request, cuenta, t=t, error=str(motivo), status_code=400)
+    return _a_la_cuenta(cuenta_id, aviso="Transferencia cargada: se ve en las dos cuentas")
+
+
+# --- LA FICHA DE UN MOVIMIENTO Y DE UNA TRANSFERENCIA: corregir y anular ----
+
+def _volver_a(request: Request, url: str, **mensaje) -> RedirectResponse:
+    return RedirectResponse(con_volver(url + "?" + urlencode(mensaje), request.query_params.get("volver")),
+                            status_code=303)
+
+
+@app.get("/gerencia/cuentas/movimientos/{movimiento_id}")
+def ver_movimiento_de_cuenta(request: Request, movimiento_id: int, aviso: str | None = None,
+                             error: str | None = None):
+    puerta = _sin_clave_de_cheques(request)
+    if puerta is not None:
+        return puerta
+    movimiento = obtener_movimiento_de_cuenta(movimiento_id)
+    if movimiento is None:
+        raise HTTPException(status_code=404, detail="Ese movimiento no existe.")
+    cuenta = _cuenta_o_404(movimiento["cuenta_id"])
+    return templates.TemplateResponse(request, "cuenta_movimiento.html", {
+        "m": movimiento, "cuenta": cuenta, "conceptos": conceptos_de_la_cuenta(cuenta["id"]),
+        "etiquetas": etiquetas_de_cuentas(), "sentidos": SENTIDOS_DE_CUENTA,
+        "nombre_de_sentido": NOMBRE_DE_SENTIDO_DE_CUENTA, "importe_en": importe_en, "aviso": aviso, "error": error,
+    })
+
+
+@app.post("/gerencia/cuentas/movimientos/{movimiento_id}/corregir")
+async def corregir_movimiento_de_cuenta_ruta(request: Request, movimiento_id: int):
+    puerta = _puerta_de_gerencia_para_escribir(request)
+    if puerta is not None:
+        return puerta
+    movimiento = obtener_movimiento_de_cuenta(movimiento_id)
+    if movimiento is None:
+        raise HTTPException(status_code=404, detail="Ese movimiento no existe.")
+    formulario = await request.form()
+    nuevo = _movimiento_de_cuenta_del_formulario(formulario)
+    url = f"/gerencia/cuentas/movimientos/{movimiento_id}"
+    conceptos = conceptos_de_la_cuenta(movimiento["cuenta_id"])
+    # El concepto que ya tenía se puede dejar aunque esté de baja.
+    problemas = problemas_del_movimiento(nuevo, [dict(c, activo=c["activo"] or c["id"] == movimiento["concepto_id"])
+                                                 for c in conceptos])
+    if problemas:
+        return _volver_a(request, url, error="Falta: " + "; ".join(problemas))
+    cambios = _movimiento_de_cuenta_para_guardar(nuevo)
+    cambios.pop("foto_ruta")
+    try:
+        cuantos = corregir_movimiento_de_cuenta(movimiento_id, cambios, str(formulario.get("motivo") or ""))
+    except CuentaNoSePuede as motivo:
+        return _volver_a(request, url, error=str(motivo))
+    return _volver_a(request, url, aviso="Corregido." if cuantos else "No cambió nada.")
+
+
+@app.post("/gerencia/cuentas/movimientos/{movimiento_id}/anular")
+async def anular_movimiento_de_cuenta(request: Request, movimiento_id: int):
+    """Anular (o volver a contar): queda a la vista, tachado, y no suma al
+    saldo. Es una corrección más, con su motivo en el historial."""
+    puerta = _puerta_de_gerencia_para_escribir(request)
+    if puerta is not None:
+        return puerta
+    formulario = await request.form()
+    url = f"/gerencia/cuentas/movimientos/{movimiento_id}"
+    anulado = formulario.get("anulado") == "1"
+    try:
+        corregir_movimiento_de_cuenta(movimiento_id, {"anulado": anulado}, str(formulario.get("motivo") or ""))
+    except CuentaNoSePuede as motivo:
+        return _volver_a(request, url, error=str(motivo))
+    return _volver_a(request, url, aviso="Anulado: ya no suma al saldo." if anulado else "Vuelve a sumar al saldo.")
+
+
+@app.get("/gerencia/cuentas/movimientos/{movimiento_id}/foto")
+def ver_foto_de_movimiento_de_cuenta(request: Request, movimiento_id: int):
+    puerta = _sin_clave_de_cheques(request)
+    if puerta is not None:
+        return puerta
+    movimiento = obtener_movimiento_de_cuenta(movimiento_id)
+    if movimiento is None or not movimiento.get("foto_ruta"):
+        raise HTTPException(status_code=404, detail="Ese movimiento no tiene foto.")
+    return _ir_a_la_foto(movimiento["foto_ruta"], status_code=303)
+
+
+@app.get("/gerencia/cuentas/transferencias/{transferencia_id}")
+def ver_transferencia(request: Request, transferencia_id: int, aviso: str | None = None, error: str | None = None):
+    puerta = _sin_clave_de_cheques(request)
+    if puerta is not None:
+        return puerta
+    t = obtener_transferencia(transferencia_id)
+    if t is None:
+        raise HTTPException(status_code=404, detail="Esa transferencia no existe.")
+    origen, destino = _cuenta_o_404(t["cuenta_origen_id"]), _cuenta_o_404(t["cuenta_destino_id"])
+    return templates.TemplateResponse(request, "cuenta_transferencia.html", {
+        "t": t, "nombre": nombre_de_la_transferencia(origen, destino),
+        "cuentas": [c for c in listar_cuentas() if c["moneda"] == origen["moneda"]
+                    and (c["activa"] or c["id"] in (origen["id"], destino["id"]))],
+        "importe_en": importe_en, "aviso": aviso, "error": error,
+    })
+
+
+@app.post("/gerencia/cuentas/transferencias/{transferencia_id}/corregir")
+async def corregir_transferencia_ruta(request: Request, transferencia_id: int):
+    """Corrige la transferencia, y con ella sus DOS patas."""
+    puerta = _puerta_de_gerencia_para_escribir(request)
+    if puerta is not None:
+        return puerta
+    if obtener_transferencia(transferencia_id) is None:
+        raise HTTPException(status_code=404, detail="Esa transferencia no existe.")
+    formulario = await request.form()
+    url = f"/gerencia/cuentas/transferencias/{transferencia_id}"
+    fecha = _fecha_de_cheque(formulario.get("fecha"))
+    importe = _importe_de_cheque(str(formulario.get("importe") or ""))
+    origen = _id_opcional_desde_query(str(formulario.get("cuenta_origen_id") or ""))
+    destino = _id_opcional_desde_query(str(formulario.get("cuenta_destino_id") or ""))
+    faltan = [texto for texto, ok in (("la fecha", fecha), ("el importe", importe and importe > 0),
+                                      ("de qué cuenta sale", origen), ("a qué cuenta entra", destino)) if not ok]
+    if faltan:
+        return _volver_a(request, url, error="Falta " + ", ".join(faltan) + ".")
+    try:
+        cuantos = corregir_transferencia(transferencia_id, {
+            "fecha": fecha, "importe": importe, "cuenta_origen_id": origen, "cuenta_destino_id": destino,
+            "detalle": str(formulario.get("detalle") or "").strip() or None}, str(formulario.get("motivo") or ""))
+    except CuentaNoSePuede as motivo:
+        return _volver_a(request, url, error=str(motivo))
+    return _volver_a(request, url, aviso="Corregida en las dos cuentas." if cuantos else "No cambió nada.")
+
+
+@app.post("/gerencia/cuentas/transferencias/{transferencia_id}/anular")
+async def anular_transferencia(request: Request, transferencia_id: int):
+    """Anular la transferencia la anula en las DOS cuentas."""
+    puerta = _puerta_de_gerencia_para_escribir(request)
+    if puerta is not None:
+        return puerta
+    formulario = await request.form()
+    url = f"/gerencia/cuentas/transferencias/{transferencia_id}"
+    anulado = formulario.get("anulado") == "1"
+    try:
+        corregir_transferencia(transferencia_id, {"anulado": anulado}, str(formulario.get("motivo") or ""))
+    except CuentaNoSePuede as motivo:
+        return _volver_a(request, url, error=str(motivo))
+    return _volver_a(request, url, aviso="Anulada en las dos cuentas." if anulado else "Vuelve a contar en las dos cuentas.")
+
+
+@app.get("/gerencia/cuentas/transferencias/{transferencia_id}/foto")
+def ver_foto_de_transferencia(request: Request, transferencia_id: int):
+    puerta = _sin_clave_de_cheques(request)
+    if puerta is not None:
+        return puerta
+    t = obtener_transferencia(transferencia_id)
+    if t is None or not t.get("foto_ruta"):
+        raise HTTPException(status_code=404, detail="Esa transferencia no tiene foto.")
+    return _ir_a_la_foto(t["foto_ruta"], status_code=303)
 
 
 if __name__ == "__main__":

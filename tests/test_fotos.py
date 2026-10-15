@@ -351,6 +351,8 @@ TABLAS_CON_FOTO = {
     "cheques_fotos": "cheque", "cheques_salidas": "cheque",
     # Palmala Cruces (14/10): SOLO en Frutamax, entra si la tabla existe.
     "palmala_movimientos": "palmala",
+    # Cuentas (15/10, las dos bases): comprobantes de movimientos y transferencias.
+    "cuentas_movimientos": "cuentas", "cuentas_transferencias": "cuentas",
     # no es una foto: es el registro de las borradas
     "fotos_borradas_por_antiguedad": None,
 }
@@ -406,6 +408,10 @@ def test_los_DIEZ_tipos_salen_de_la_consulta_y_tienen_su_nombre(base):
                                        cheque_fecha_pago, foto_ruta, como_se_cargo, sector)
         values ('2026-09-05', 'pesos', 'pago', 1, (select id from palmala_conceptos where nombre = 'Pago con cheque'),
                 '1', 1, '2026-09-10', 'palmala/EJ.jpg', 'foto', 'gerencia');
+      insert into cuentas (id, nombre, tipo) overriding system value values (1, 'EJ Caja', 'caja');
+      insert into cuentas_conceptos (id, cuenta_id, nombre) overriding system value values (1, 1, 'EJ Ajuste');
+      insert into cuentas_movimientos (cuenta_id, fecha, tipo, importe, concepto_id, foto_ruta, como_se_cargo, sector)
+        values (1, '2026-09-05', 'ingreso', 1, 1, 'cuentas/EJ.jpg', 'a_mano', 'gerencia');
     """)
     tipos = {f["tipo"] for f in d.fotos_de_respaldo()}
     assert tipos == set(TEXTO_DEL_TIPO), tipos ^ set(TEXTO_DEL_TIPO)

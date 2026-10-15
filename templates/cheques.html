@@ -92,7 +92,8 @@
         <div class="fila-dato">{{ c.banco }} · Nº {{ c.numero }}{% if c.tipo == 'echeq' %} · ECHEQ{% endif %} · se cobra el {{ c.fecha_pago.strftime('%d/%m/%Y') }}</div>
         <div class="fila-dato"><span class="{{ 'rojo' if en_rojo(c) else '' }}" data-estado="{{ c.estado }}">{{ nombre_del_estado[c.estado] }}{% if c.estado == 'en_cartera' and c.en_rojo_por_vencer %} · vence el {{ c.vence_el.strftime('%d/%m') }}{% endif %}</span>
           {%- if c.proveedor %} · a {{ c.proveedor }}{% elif c.concepto %} · {{ c.concepto }}{% endif %}
-          {%- if c.acreditado_el and c.estado == 'depositado' %} · se acredita el {{ c.acreditado_el.strftime('%d/%m') }}{% endif %}</div>
+          {%- if c.acreditado_el and c.estado == 'depositado' %} · se acredita el {{ c.acreditado_el.strftime('%d/%m') }}{% endif %}
+          {%- if c.cuenta %} · en <span data-cuenta>{{ c.cuenta }}</span>{% endif %}</div>
       </a>
     </div>
     {% else %}

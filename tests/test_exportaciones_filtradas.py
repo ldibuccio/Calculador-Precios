@@ -63,6 +63,10 @@ EXPORTACIONES = {
     # el link que dibuja la pantalla con los filtros puestos.
     "/gerencia/palmala-cruces/exportar-pdf": "tests/test_palmala_cruces.py",
     "/gerencia/palmala-cruces/exportar-excel": "tests/test_palmala_cruces.py",
+    # Cuentas (15/10): lo cuida tests/test_cuentas.py (filtros en el encabezado
+    # y lo filtrado en el PDF y el Excel).
+    "/gerencia/cuentas/{cuenta_id}/exportar-pdf": "tests/test_cuentas.py",
+    "/gerencia/cuentas/{cuenta_id}/exportar-excel": "tests/test_cuentas.py",
     # La planilla modelo para cargar un listado (13/10): baja vacía, no
     # exporta nada de la pantalla. La cuida tests/test_cheques_listado.py.
     "/gerencia/cheques/planilla-modelo": "sin filtros en la pantalla: es la planilla vacía para cargar",

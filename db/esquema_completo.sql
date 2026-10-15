@@ -2796,6 +2796,259 @@ left join cheques_salidas s on s.cheque_id = ch.id
 left join cheques_conceptos co on co.id = s.concepto_id
 left join cheques_rechazos r on r.cheque_id = ch.id;
 
+-- CUENTAS (cuentas_1, dueño 15/10): Caja, Banco e Inversiones con UN SOLO
+-- MOTOR, en las DOS bases. Las tres cuentas de Frutamax (Caja Lionel, Banco
+-- Credicoop, Inversiones Credicoop) y sus conceptos se sembraron en la
+-- migración (db/cuentas_1..3), no acá: Palmala nace sin cuentas y las crea
+-- Gerencia → Cuentas, con los conceptos por defecto de su tipo
+-- (core/cuentas.py). La vista de movimientos usa cheques_con_estado: va
+-- DESPUÉS, y una migración que la tire tiene que tirar ésta también.
+create table cuentas (
+  id          bigint generated always as identity primary key,
+  nombre      text not null check (btrim(nombre) <> ''),
+  tipo        text not null check (tipo in ('caja', 'banco', 'inversion')),
+  moneda      text not null default 'pesos' check (moneda in ('pesos', 'dolares')),
+  madre_id    bigint references cuentas (id),
+  numero      text check (numero is null or btrim(numero) <> ''),
+  activa      boolean not null default true,
+  creado_en   timestamptz not null default now(),
+  constraint cuentas_no_es_su_madre check (madre_id is distinct from id)
+);
+create unique index cuentas_nombre on cuentas (upper(btrim(nombre)));
+create unique index cuentas_numero
+  on cuentas (regexp_replace(numero, '[^0-9]', '', 'g')) where numero is not null;
+alter table cuentas enable row level security;
+
+create table cuentas_conceptos (
+  id         bigint generated always as identity primary key,
+  cuenta_id  bigint not null references cuentas (id),
+  nombre     text not null check (btrim(nombre) <> ''),
+  tipo       text check (tipo in ('ingreso', 'egreso')),
+  activo     boolean not null default true,
+  creado_en  timestamptz not null default now()
+);
+create unique index cuentas_conceptos_nombre
+  on cuentas_conceptos (cuenta_id, upper(btrim(nombre)));
+alter table cuentas_conceptos enable row level security;
+
+create table cuentas_etiquetas (
+  id         bigint generated always as identity primary key,
+  nombre     text not null check (btrim(nombre) <> ''),
+  activo     boolean not null default true,
+  creado_en  timestamptz not null default now()
+);
+create unique index cuentas_etiquetas_nombre on cuentas_etiquetas (upper(btrim(nombre)));
+alter table cuentas_etiquetas enable row level security;
+
+create table cuentas_movimientos (
+  id              bigint generated always as identity primary key,
+  cuenta_id       bigint not null references cuentas (id),
+  fecha           date not null,
+  tipo            text not null check (tipo in ('ingreso', 'egreso')),
+  importe         numeric(14,2) not null check (importe > 0),
+  concepto_id     bigint not null references cuentas_conceptos (id),
+  etiqueta_id     bigint references cuentas_etiquetas (id),
+  detalle         text,
+  foto_ruta       text check (foto_ruta is null or btrim(foto_ruta) <> ''),
+  como_se_cargo   text not null
+    check (como_se_cargo in ('a_mano', 'foto', 'excel', 'extracto', 'historico')),
+  fila_historico  int,
+  anulado         boolean not null default false,
+  sector          text not null check (sector = 'gerencia'),
+  creado_en       timestamptz not null default now(),
+  constraint cuentas_mov_fila_solo_del_historico
+    check ((fila_historico is null) = (como_se_cargo <> 'historico')),
+  constraint cuentas_mov_fila_unica unique (cuenta_id, fila_historico)
+);
+create index cuentas_movimientos_por_cuenta on cuentas_movimientos (cuenta_id, fecha, id);
+alter table cuentas_movimientos enable row level security;
+
+create table cuentas_transferencias (
+  id                bigint generated always as identity primary key,
+  fecha             date not null,
+  cuenta_origen_id  bigint not null references cuentas (id),
+  cuenta_destino_id bigint not null references cuentas (id),
+  importe           numeric(14,2) not null check (importe > 0),
+  detalle           text,
+  foto_ruta         text check (foto_ruta is null or btrim(foto_ruta) <> ''),
+  como_se_cargo     text not null check (como_se_cargo in ('a_mano', 'foto', 'excel', 'extracto', 'historico')),
+  anulado           boolean not null default false,
+  sector            text not null check (sector = 'gerencia'),
+  creado_en         timestamptz not null default now(),
+  constraint cuentas_transferencia_entre_dos check (cuenta_origen_id <> cuenta_destino_id)
+);
+create index cuentas_transferencias_por_fecha on cuentas_transferencias (fecha);
+alter table cuentas_transferencias enable row level security;
+
+create table cuentas_cheques_depositados (
+  cheque_id   bigint primary key references cheques_salidas (cheque_id) on delete cascade,
+  cuenta_id   bigint not null references cuentas (id),
+  creado_en   timestamptz not null default now()
+);
+create index cuentas_cheques_por_cuenta on cuentas_cheques_depositados (cuenta_id);
+alter table cuentas_cheques_depositados enable row level security;
+
+create table cuentas_correcciones (
+  id                bigint generated always as identity primary key,
+  movimiento_id     bigint references cuentas_movimientos (id),
+  transferencia_id  bigint references cuentas_transferencias (id),
+  campo             text not null,
+  valor_anterior    text,
+  valor_nuevo       text,
+  motivo            text not null check (btrim(motivo) <> ''),
+  sector            text not null check (sector = 'gerencia'),
+  creado_en         timestamptz not null default now(),
+  constraint cuentas_correccion_de_uno check ((movimiento_id is null) <> (transferencia_id is null))
+);
+create index cuentas_correcciones_mov on cuentas_correcciones (movimiento_id);
+create index cuentas_correcciones_tra on cuentas_correcciones (transferencia_id);
+alter table cuentas_correcciones enable row level security;
+
+create table cuentas_extractos (
+  id           bigint generated always as identity primary key,
+  cuenta_id    bigint not null references cuentas (id),
+  archivo      text not null check (btrim(archivo) <> ''),
+  archivo_ruta text check (archivo_ruta is null or btrim(archivo_ruta) <> ''),
+  desde        date,
+  hasta        date,
+  saldo_final  numeric(14,2),
+  sector       text not null check (sector = 'gerencia'),
+  creado_en    timestamptz not null default now()
+);
+alter table cuentas_extractos enable row level security;
+
+create table cuentas_extracto_renglones (
+  id           bigint generated always as identity primary key,
+  extracto_id  bigint not null references cuentas_extractos (id),
+  cuenta_id    bigint not null references cuentas (id),
+  fecha        date not null,
+  descripcion  text not null,
+  importe      numeric(14,2) not null check (importe <> 0),
+  saldo        numeric(14,2),
+  constraint cuentas_renglon_una_vez
+    unique nulls not distinct (cuenta_id, fecha, importe, descripcion, saldo)
+);
+create index cuentas_renglones_por_extracto on cuentas_extracto_renglones (extracto_id);
+alter table cuentas_extracto_renglones enable row level security;
+
+create table cuentas_conciliaciones (
+  id           bigint generated always as identity primary key,
+  renglon_id   bigint not null unique references cuentas_extracto_renglones (id),
+  cuenta_id    bigint not null references cuentas (id),
+  origen       text not null check (origen in ('movimiento', 'transferencia', 'deposito', 'rechazo')),
+  origen_id    bigint not null,
+  a_revisar    boolean not null default false,
+  sector       text not null check (sector = 'gerencia'),
+  creado_en    timestamptz not null default now(),
+  constraint cuentas_conciliado_una_vez unique (cuenta_id, origen, origen_id)
+);
+alter table cuentas_conciliaciones enable row level security;
+
+create or replace function cuentas_movimiento_valido() returns trigger
+language plpgsql as $f$
+declare
+  concepto cuentas_conceptos%rowtype;
+begin
+  select * into concepto from cuentas_conceptos where id = new.concepto_id;
+  if concepto.cuenta_id <> new.cuenta_id then
+    raise exception 'el concepto % es de otra cuenta', concepto.nombre
+      using errcode = 'check_violation', constraint = 'cuentas_concepto_de_la_cuenta';
+  end if;
+  if tg_op = 'INSERT' and not concepto.activo and new.como_se_cargo <> 'historico' then
+    raise exception 'el concepto % ya no se usa', concepto.nombre
+      using errcode = 'check_violation', constraint = 'cuentas_concepto_activo';
+  end if;
+  if concepto.tipo is not null and concepto.tipo <> new.tipo and new.como_se_cargo <> 'historico' then
+    raise exception 'el concepto % es un %', concepto.nombre, concepto.tipo
+      using errcode = 'check_violation', constraint = 'cuentas_concepto_del_tipo';
+  end if;
+  return new;
+end $f$;
+drop trigger if exists cuentas_movimiento_valido on cuentas_movimientos;
+create trigger cuentas_movimiento_valido before insert or update on cuentas_movimientos
+  for each row execute function cuentas_movimiento_valido();
+
+create or replace function cuentas_transferencia_valida() returns trigger
+language plpgsql as $f$
+begin
+  if (select moneda from cuentas where id = new.cuenta_origen_id)
+     <> (select moneda from cuentas where id = new.cuenta_destino_id) then
+    raise exception 'una transferencia es entre dos cuentas de la misma moneda'
+      using errcode = 'check_violation', constraint = 'cuentas_transferencia_misma_moneda';
+  end if;
+  return new;
+end $f$;
+drop trigger if exists cuentas_transferencia_valida on cuentas_transferencias;
+create trigger cuentas_transferencia_valida before insert or update on cuentas_transferencias
+  for each row execute function cuentas_transferencia_valida();
+
+create or replace function cuentas_cheque_depositado_valido() returns trigger
+language plpgsql as $f$
+begin
+  if not exists (select 1 from cheques_salidas s join cheques_conceptos c on c.id = s.concepto_id
+                 where s.cheque_id = new.cheque_id and c.destino = 'depositado') then
+    raise exception 'el cheque % no salió depositado', new.cheque_id
+      using errcode = 'check_violation', constraint = 'cuentas_cheque_depositado';
+  end if;
+  if (select tipo from cuentas where id = new.cuenta_id) <> 'banco' then
+    raise exception 'un cheque se deposita en una cuenta de banco'
+      using errcode = 'check_violation', constraint = 'cuentas_cheque_en_banco';
+  end if;
+  return new;
+end $f$;
+drop trigger if exists cuentas_cheque_depositado_valido on cuentas_cheques_depositados;
+create trigger cuentas_cheque_depositado_valido before insert or update on cuentas_cheques_depositados
+  for each row execute function cuentas_cheque_depositado_valido();
+
+create view cuentas_todos_los_movimientos with (security_invoker = true) as
+select m.cuenta_id, 'movimiento'::text as origen, m.id as origen_id, m.fecha, m.tipo, m.importe,
+       c.nombre as concepto, e.nombre as etiqueta, m.detalle, m.foto_ruta, m.anulado, m.creado_en
+from cuentas_movimientos m
+join cuentas_conceptos c on c.id = m.concepto_id
+left join cuentas_etiquetas e on e.id = m.etiqueta_id
+union all
+select t.cuenta_origen_id, 'transferencia', t.id, t.fecha, 'egreso', t.importe,
+       case when o.tipo = 'banco' and d.tipo = 'inversion' then 'Suscripción'
+            when o.tipo = 'inversion' and d.tipo = 'banco' then 'Rescate'
+            when o.tipo = 'caja' and d.tipo = 'banco' then 'Depósito de efectivo'
+            when o.tipo = 'banco' and d.tipo = 'caja' then 'Extracción'
+            else 'Transferencia' end,
+       d.nombre, t.detalle, t.foto_ruta, t.anulado, t.creado_en
+from cuentas_transferencias t join cuentas o on o.id = t.cuenta_origen_id
+join cuentas d on d.id = t.cuenta_destino_id
+union all
+select t.cuenta_destino_id, 'transferencia', t.id, t.fecha, 'ingreso', t.importe,
+       case when o.tipo = 'banco' and d.tipo = 'inversion' then 'Suscripción'
+            when o.tipo = 'inversion' and d.tipo = 'banco' then 'Rescate'
+            when o.tipo = 'caja' and d.tipo = 'banco' then 'Depósito de efectivo'
+            when o.tipo = 'banco' and d.tipo = 'caja' then 'Extracción'
+            else 'Transferencia' end,
+       o.nombre, t.detalle, t.foto_ruta, t.anulado, t.creado_en
+from cuentas_transferencias t join cuentas o on o.id = t.cuenta_origen_id
+join cuentas d on d.id = t.cuenta_destino_id
+union all
+select dp.cuenta_id, 'deposito', ch.id, ch.acreditado_el, 'ingreso', ch.importe,
+       'Depósito de cheque', ch.de_quien, 'Nº ' || ch.numero, null, false, dp.creado_en
+from cuentas_cheques_depositados dp join cheques_con_estado ch on ch.id = dp.cheque_id
+where ch.acreditado_el is not null
+union all
+select dp.cuenta_id, 'rechazo', ch.id, ch.fecha_rechazo, 'egreso', ch.importe,
+       'Cheque rechazado', ch.de_quien, 'Nº ' || ch.numero || ' · ' || ch.motivo_rechazo, null, false,
+       dp.creado_en
+from cuentas_cheques_depositados dp join cheques_con_estado ch on ch.id = dp.cheque_id
+where ch.fecha_rechazo is not null;
+
+create view cuentas_con_saldo with (security_invoker = true) as
+select v.*,
+       case when v.anulado then 0 when v.tipo = 'ingreso' then v.importe else -v.importe end
+         as con_signo,
+       sum(case when v.anulado then 0 when v.tipo = 'ingreso' then v.importe else -v.importe end)
+         over (partition by v.cuenta_id order by v.fecha, v.creado_en, v.origen, v.origen_id) as saldo,
+       cc.renglon_id is not null as conciliado, cc.a_revisar
+from cuentas_todos_los_movimientos v
+left join cuentas_conciliaciones cc
+  on cc.cuenta_id = v.cuenta_id and cc.origen = v.origen and cc.origen_id = v.origen_id;
+
 -- CANDADOS (RLS) EN TODAS LAS TABLAS DE public (dueño, 09/10). db/rls_1_*.sql.
 -- Sin políticas para anon: por la API de Supabase con la clave pública no se
 -- lee nada. El sistema entra como postgres (dueño y con bypassrls): no lo

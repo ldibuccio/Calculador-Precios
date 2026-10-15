@@ -1,0 +1,66 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Cuentas</title>
+<style>
+{% include "_cheques_estilos.html" %}
+  .cuenta { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 0.4rem 0.8rem; padding: 0.5rem 0; border-top: 1px solid #eee; }
+  .cuenta:first-of-type { border-top: 0; }
+  .cuenta.de-baja .nombre { color: #888; text-decoration: line-through; }
+  .cuenta .nombre { font-weight: 600; }
+  .cuenta .dato { color: #555; font-size: 0.88rem; flex-basis: 100%; }
+  .cuenta .acciones { margin: 0; flex: 0 0 auto; }
+  .cuenta .acciones a, .cuenta .acciones button { flex: 0 0 auto; padding: 0 1rem; min-height: 44px; display: inline-flex; align-items: center; }
+</style>
+</head>
+<body>
+  {% set barra_sector = "gerencia" %}
+  {% set barra_titulo = "Cuentas" %}
+  {% set barra_atras = "/gerencia" %}
+  {% include "_barra_navegacion.html" %}
+  {% from "_info.html" import info %}
+
+  {% if aviso %}<div class="aviso" data-aviso>{{ aviso }}</div>{% endif %}
+  {% if error %}<div class="error" data-error>{{ error }}</div>{% endif %}
+
+  <div class="tarjeta" data-cuentas>
+    <h2>Las cuentas {% call info("Cómo funciona") %}Cada cuenta activa tiene su botón en Gerencia. Una cuenta dada de baja no tiene botón y no recibe cheques, pero lo que tiene cargado queda.{% endcall %}</h2>
+    {% for c in cuentas %}
+    <form class="cuenta{% if not c.activa %} de-baja{% endif %}" method="post" action="/gerencia/cuentas/{{ c.id }}/activa" data-cuenta="{{ c.id }}">
+      <span class="nombre">{{ c.nombre }}</span>
+      <span class="acciones">
+        <a href="/gerencia/cuentas/{{ c.id }}">Abrir</a>
+        <input type="hidden" name="activa" value="{{ '' if c.activa else '1' }}">
+        <button type="submit" class="secundario">{{ 'Dar de baja' if c.activa else 'Volver a usar' }}</button>
+      </span>
+      <span class="dato">{{ nombre_de_tipo[c.tipo] }} · {{ 'Dólares' if c.moneda == 'dolares' else 'Pesos' }}{% if c.numero %} · {{ c.numero }}{% endif %}{% if c.madre %} · dentro de {{ c.madre }}{% endif %}</span>
+    </form>
+    {% else %}
+    <p class="vacio">Todavía no hay ninguna cuenta.</p>
+    {% endfor %}
+  </div>
+
+  <form class="tarjeta" method="post" action="/gerencia/cuentas" data-nueva>
+    <h2>Una cuenta nueva</h2>
+    <div class="campos">
+      <label class="ancho">¿Cómo se llama?<input type="text" name="nombre" value="{{ nueva.nombre }}" placeholder="Ej. Banco Galicia" required></label>
+      <label>¿Qué es?
+        <select name="tipo" required><option value="">Elegí</option>
+          {% for valor, texto in tipos %}<option value="{{ valor }}" {% if nueva.tipo == valor %}selected{% endif %}>{{ texto }}</option>{% endfor %}
+        </select></label>
+      <label>Moneda
+        <select name="moneda">{% for valor, texto, _ in monedas %}<option value="{{ valor }}" {% if nueva.moneda == valor %}selected{% endif %}>{{ texto }}</option>{% endfor %}</select></label>
+      <label>Número de cuenta (si es un banco)<input type="text" name="numero" value="{{ nueva.numero }}" placeholder="Ej. CC$ 191-220-000247/7"></label>
+      <label>¿Está dentro de otra cuenta?
+        <select name="madre_id"><option value="">No</option>
+          {% for c in cuentas if c.activa %}<option value="{{ c.id }}" {% if nueva.madre_id == c.id %}selected{% endif %}>{{ c.nombre }}</option>{% endfor %}
+        </select></label>
+    </div>
+    <p class="nota">Arranca con los conceptos de siempre según lo que es (una caja, los de la Caja; un banco, los del Banco). Después se agregan o se dan de baja en "Cargar".</p>
+    <div class="acciones"><button type="submit">Crear la cuenta</button></div>
+  </form>
+{% include "_pie_version.html" %}
+</body>
+</html>

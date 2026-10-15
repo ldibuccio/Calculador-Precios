@@ -1,0 +1,44 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Transferir</title>
+<style>
+{% include "_cheques_estilos.html" %}
+  .tilde { display: flex; align-items: center; gap: 0.5rem; min-height: 44px; font-size: 0.95rem; }
+  .tilde input { width: 1.3rem; height: 1.3rem; flex: none; }
+</style>
+</head>
+<body>
+  {% set barra_sector = "gerencia" %}
+  {% set barra_titulo = "Transferir" %}
+  {% set barra_atras = "/gerencia/cuentas/" ~ cuenta.id %}
+  {% include "_barra_navegacion.html" %}
+  {% from "_info.html" import info %}
+
+  {% if error %}<div class="error" data-error>{{ error }}</div>{% endif %}
+
+  {% if otras %}
+  <form class="tarjeta" method="post" action="/gerencia/cuentas/{{ cuenta.id }}/transferir" enctype="multipart/form-data" data-transferir>
+    <h2>Entre {{ cuenta.nombre }} y otra cuenta {% call info("Cómo funciona") %}Se carga una sola vez y aparece en las dos cuentas: sale de una y entra en la otra. Si después se corrige o se anula, cambia en las dos.{% endcall %}</h2>
+    <label class="tilde"><input type="radio" name="sentido" value="sale" {% if t.sentido == 'sale' %}checked{% endif %}>Sale plata de {{ cuenta.nombre }}</label>
+    <label class="tilde"><input type="radio" name="sentido" value="entra" {% if t.sentido == 'entra' %}checked{% endif %}>Entra plata a {{ cuenta.nombre }}</label>
+    <div class="campos">
+      <label class="ancho">¿Con qué otra cuenta?
+        <select name="otra_cuenta_id" required><option value="">Elegí</option>
+          {% for c in otras %}<option value="{{ c.id }}" {% if t.otra_cuenta_id == c.id %}selected{% endif %}>{{ c.nombre }} (si sale: {{ nombres[c.id].sale }}; si entra: {{ nombres[c.id].entra }})</option>{% endfor %}
+        </select></label>
+      <label>¿Qué día?<input type="date" name="fecha" value="{{ t.fecha }}" required></label>
+      <label>Importe<input type="number" name="importe" step="0.01" min="0.01" inputmode="decimal" value="{{ t.importe }}" required></label>
+      <label class="ancho">Detalle<input type="text" name="detalle" value="{{ t.detalle }}" placeholder="Ej. plazo fijo a 30 días"></label>
+      <label class="ancho">Foto o comprobante<input type="file" name="foto" accept="image/*,.pdf"></label>
+    </div>
+    <div class="acciones"><button type="submit">Guardar</button></div>
+  </form>
+  {% else %}
+  <div class="tarjeta"><p class="vacio">No hay otra cuenta activa en {{ 'dólares' if cuenta.moneda == 'dolares' else 'pesos' }} para transferir.</p></div>
+  {% endif %}
+{% include "_pie_version.html" %}
+</body>
+</html>

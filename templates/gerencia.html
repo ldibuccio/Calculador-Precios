@@ -31,6 +31,7 @@
   }
   {{ franja_hub.estilos() }}
   {{ botones_hub.estilos() }}
+  .nota { font-size: 0.85rem; color: #b91c1c; margin: 0.4rem 0; }
 </style>
 </head>
 <body>
@@ -47,7 +48,8 @@
 
   {# BOTONES EN TRES GRUPOS (dueño, 04/10; eran 13, más Stock inicial
      que vino de Administración; el 08/10 se sumó el Panel de control, el
-     13/10 la Cartera de cheques y el 14/10 Palmala Cruces, solo en Frutamax). Lo que mira lo mismo desde dos o tres
+     13/10 la Cartera de cheques, el 14/10 Palmala Cruces, solo en Frutamax, y el
+     15/10 un botón por cada cuenta activa y "Cuentas" en Mantenimiento). Lo que mira lo mismo desde dos o tres
      lados quedó en un botón con pestañas (_pestanas_gerencia.html):
      Rentabilidad (De pedidos · Real), Pérdidas (Mercadería · Cajas) y
      Facturación y cobranzas (Remitos y facturas · Vales · Segunda). #}
@@ -67,6 +69,10 @@
     <a class="boton color-1" href="/gerencia/cheques">{{ ICONOS_HUBS['cheques']|safe }}<span>Cartera de cheques</span></a>
     {# La cuenta corriente con Palmala (dueño, 14/10): SOLO en Frutamax. #}
     {% if ES_FRUTAMAX %}<a class="boton color-1" href="/gerencia/palmala-cruces">{{ ICONOS_HUBS['palmala']|safe }}<span>Palmala Cruces</span></a>{% endif %}
+    {# CUENTAS (dueño, 15/10): un botón por cada cuenta activa de ESTA base. #}
+    {% if cuentas is none %}<p class="nota" data-cuentas-sin-leer>No se pudieron leer las cuentas: sus botones no están.</p>{% endif %}
+    {% for c in cuentas or [] %}<a class="boton color-1" href="/gerencia/cuentas/{{ c.id }}">{{ ICONOS_HUBS['cuenta_' ~ c.tipo]|safe }}<span>{{ c.nombre }}</span></a>
+    {% endfor %}
   </div>
 
   {# APARTE de las de mirar: éstas ESCRIBEN, y escriben en el pasado o no se
@@ -91,6 +97,8 @@
     <a class="boton color-3" href="/gerencia/backups">{{ ICONOS_HUBS['backups']|safe }}<span>Backups</span></a>
     {# Borra archivos y no se deshace (dueño, 30/09). #}
     <a class="boton color-3" href="/gerencia/fotos">{{ ICONOS_HUBS['fotos']|safe }}<span>Fotos y espacio</span></a>
+    {# Crear una cuenta y darla de baja (dueño, 15/10). #}
+    <a class="boton color-3" href="/gerencia/cuentas">{{ ICONOS_HUBS['cuentas']|safe }}<span>Cuentas</span></a>
   </div>
 
   <a class="volver" href="/inicio">Volver a Inicio</a>
