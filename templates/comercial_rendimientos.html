@@ -29,6 +29,14 @@
   .numeros span { white-space: nowrap; }
   .rojo { color: #dc2626; }
   .ficha { font-size: 0.82rem; color: #92400e; font-weight: 600; margin-top: 0.2rem; }
+  .resumen { border: 2px solid #2563eb; background: #eff6ff; }
+  .resumen .renglon { padding: 0.6rem 0; border-top: 1px solid #bfdbfe; }
+  .resumen .renglon:first-of-type { border-top: none; }
+  .resumen .renglon.total { border-top: 2px solid #2563eb; }
+  .resumen .renglon.total h3 { font-size: 1.1rem; }
+  .resumen .kilos { margin-top: 0.35rem; padding-top: 0.35rem; border-top: 1px dashed #bfdbfe; }
+  .resumen .grande { font-size: 1.05rem; }
+  .nota { font-size: 0.82rem; color: #555; margin: 0.2rem 0 0; }
   .vacio { color: #666; font-style: italic; }
   .error { background: #fee2e2; color: #991b1b; padding: 0.6rem 0.9rem; border-radius: 8px; margin-bottom: 1rem; }
 </style>
@@ -67,6 +75,39 @@
 
   {% if datos %}
   <p class="filtrado" data-filtrado>Del {{ desde.strftime("%d/%m/%Y") }} al {{ hasta.strftime("%d/%m/%Y") }} · {{ articulo_nombre or "todos los artículos" }}</p>
+
+  {# RESUMEN (dueño, 15/10): arriba de todo, lo de abajo en tres renglones, en kilos ponderados. #}
+  {% set r = datos.resumen %}
+  <div class="tarjeta resumen" data-resumen>
+    <h2>Resumen del período {% call info("Cómo se cuenta") %}Cada % es sobre los kilos que entraron, sumando todos los artículos: un artículo con muchos kilos pesa más que uno con pocos. Guías R: la misma cuenta de cada guía de abajo. Sin procesar: lo que pesaban al comprarlos los bultos que salieron (enviados, tirados y pasados a segunda) contra los kilos que se enviaron. La pérdida en plata es lo que costó lo que no salió de primera; si sobran kilos, resta.{% endcall %}</h2>
+    {% for clave in ("guias_r", "sin_procesar", "total") %}
+    {% set f = r[clave] %}
+    <div class="renglon{{ ' total' if clave == 'total' }}" data-renglon-resumen="{{ clave }}">
+      <h3>{{ f.nombre }} · <span class="grande {{ 'rojo' if (f.perdida_pct or 0) != 0 }}" data-perdida-kg>{{ f.perdida_pct|pct if f.perdida_pct is not none else "—" }} de pérdida</span></h3>
+      <div class="numeros">
+        <span>Entraron <strong>{{ f.entraron|miles }} kg</strong></span>
+        <span>Aprovechado <strong>{{ f.aprovechado_pct|pct or "—" }}</strong></span>
+        <span>Segunda <strong>{{ f.segunda_pct|pct or "—" }}</strong></span>
+        <span>Merma <strong>{{ f.merma_pct|pct or "—" }}</strong></span>
+        <span>Falta sin registrar <strong class="{{ 'rojo' if (f.no_explicado_pct or 0) != 0 }}">{{ f.no_explicado_pct|pct or "—" }}</strong></span>
+        <span>Pérdida al costo <strong class="{{ 'rojo' if f.perdida_pesos != 0 }}" data-perdida-pesos>{{ f.perdida_pesos|moneda }}</strong></span>
+        {% if f.perdida_costo_pct is not none %}<span><strong class="{{ 'rojo' if f.perdida_costo_pct != 0 }}">({{ f.perdida_costo_pct|pct }} del costo)</strong></span>{% endif %}
+      </div>
+      {% if clave == "sin_procesar" %}
+      <div class="numeros kilos" data-sin-procesar-kg>
+        <span>Comprado <strong>{{ f.kg_comprados|miles }} kg</strong></span>
+        <span>Enviado <strong>{{ f.kg_enviados|miles }} kg</strong></span>
+        <span>Diferencia <strong{{ ' class="rojo"'|safe if (f.diferencia_pct or 0) < 0 }}>{{ f.diferencia_pct|pct or "—" }}</strong></span>
+        <span>Merma <strong>{{ f.merma|miles }} kg</strong></span>
+        <span>Segunda <strong>{{ f.segunda|miles }} kg</strong></span>
+      </div>
+      {% endif %}
+      {% if clave == "guias_r" and f.guias_sin_cuenta %}<p class="nota" data-sin-cuenta>{{ f.guias_sin_cuenta }} guía{{ '' if f.guias_sin_cuenta == 1 else 's' }} R sin pesada o con ficha por unidad no entra{{ '' if f.guias_sin_cuenta == 1 else 'n' }}.</p>{% endif %}
+      {% if clave == "sin_procesar" and f.articulos_sin_dato %}<p class="nota" data-sin-dato>{{ f.articulos_sin_dato }} artículo{{ '' if f.articulos_sin_dato == 1 else 's' }} sin compra pesada o sin envíos no entra{{ '' if f.articulos_sin_dato == 1 else 'n' }}.</p>{% endif %}
+      {% if f.kg_sin_costo %}<p class="nota" data-sin-costo>{{ f.kg_sin_costo|miles }} kg sin precio de compra no entran en la plata.</p>{% endif %}
+    </div>
+    {% endfor %}
+  </div>
 
   <div class="tarjeta" data-seccion="con-guia">
     <h2>Pasan por guía R {% call info("Cómo se cuenta") %}Por cada guía R: lo que entró son los cajones tomados por lo que pesó el cajón de su compra; la primera, las cajas por los kilos de la ficha; la segunda y la merma, cajones por el cajón promedio de la guía. Lo que falta es lo que no quedó registrado; la pérdida total es todo lo que no salió como primera. Es la misma cuenta del cuadro "Rinde de guías R" del panel.{% endcall %}</h2>

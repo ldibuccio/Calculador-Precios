@@ -114,11 +114,13 @@ def _estilos_pdf():
     }
 
 
-def _tabla_seccion_pdf(titulo: str, encabezados: list[str], filas_tabla: list[list], anchos: list[float], estilos) -> Table:
-    """Una sección del PDF de Movimientos: título + encabezados embebidos (repeatRows=2) + filas ya armadas."""
+def _tabla_seccion_pdf(titulo: str, encabezados: list[str], filas_tabla: list[list], anchos: list[float], estilos,
+                       estilo_encabezado=None) -> Table:
+    """Una sección del PDF de Movimientos: título + encabezados embebidos (repeatRows=2) + filas ya armadas.
+    `estilo_encabezado` cambia la letra de los encabezados (una tabla con muchas columnas)."""
     datos = [
         [Paragraph(titulo, estilos["titulo_tabla"])] + [""] * (len(encabezados) - 1),
-        [Paragraph(encabezado, estilos["encabezado_tabla"]) for encabezado in encabezados],
+        [Paragraph(encabezado, estilo_encabezado or estilos["encabezado_tabla"]) for encabezado in encabezados],
     ]
     datos.extend(filas_tabla)
 
