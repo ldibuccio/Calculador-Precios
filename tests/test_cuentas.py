@@ -430,3 +430,115 @@ def test_si_la_base_NO_CONTESTA_el_hub_abre_y_dice_que_faltan_los_botones(m, d):
     assert "No se pudieron leer las cuentas: sus botones no están." in hub.text
     sana = _gerencia(m).get("/gerencia").text
     assert "data-cuentas-sin-leer" not in sana
+
+
+# --- CARGA POR EXCEL Y POR FOTOS, con la revisión (dueño, 15/10) -----------------
+
+def _xlsx(filas) -> bytes:
+    from openpyxl import Workbook
+    libro = Workbook()
+    for fila in filas:
+        libro.active.append(fila)
+    salida = io.BytesIO()
+    libro.save(salida)
+    return salida.getvalue()
+
+
+def _formulario_de_revision(html: str, cuenta_id: int) -> dict:
+    from tests.test_palmala_cruces import _formulario
+    return _formulario(html, f"/gerencia/cuentas/{cuenta_id}/revisar")
+
+
+def _problemas(html) -> list[str]:
+    return re.findall(r"data-problemas>([^<]*)</span>", _sin_estilo(html))
+
+
+def test_la_PLANILLA_reconoce_ingreso_y_egreso_y_saltea_los_TOTALES():
+    from core.cuentas import crudos_de_la_planilla, renglones_para_revisar
+    filas = [["Movimientos de la caja", None, None, None],
+             ["Fecha", "Ingreso", "Egreso", "Detalle"],
+             ["01/05/2025", "1.000,50", None, "uno"],
+             ["02/05/2025", None, 300, "dos"],
+             [None, None, None, None],
+             ["Total", 1000.5, 300, None]]                     # el RIVAL: no es un movimiento
+    crudos = crudos_de_la_planilla(filas)
+    renglones = renglones_para_revisar(crudos, [], hoy=date(2025, 6, 1))
+    assert [(r["fecha"], r["tipo"], r["importe"], r["detalle"]) for r in renglones] == [
+        ("2025-05-01", "ingreso", "1000.5", "uno"), ("2025-05-02", "egreso", "300", "dos")]
+    negativo = renglones_para_revisar(crudos_de_la_planilla([["Fecha", "Importe"], ["03/05/2025", "-45"]]), [],
+                                      hoy=date(2025, 6, 1))
+    assert [(r["tipo"], r["importe"]) for r in negativo] == [("egreso", "45")]
+    assert crudos_de_la_planilla([["Día", "Concepto"], ["01/05/2025", "x"]]) is None
+
+
+def test_un_EXCEL_se_revisa_PARA_TODOS_y_se_guardan_los_que_estan_BIEN(m, d):
+    caja = _sembrar_frutamax(d)["Caja Lionel"]
+    cliente = _gerencia(m)
+    planilla = _xlsx([["Fecha", "Importe", "Tipo", "Concepto", "Etiqueta", "Detalle"],
+                      ["01/05/2025", 1000, "Ingreso", "Cobro Mecafront", "EJEMPLO Mecafront", "fact 1"],
+                      ["02/05/2025", 300, "Egreso", "BP", "", ""],
+                      ["03/05/2025", 50, "Egreso", "Algo que no existe", "", ""],
+                      ["Total", 1350, None, None, None, None]])
+    pagina = cliente.post(f"/gerencia/cuentas/{caja}/cargar/excel",
+                          files={"archivo": ("caja.xlsx", planilla, "application/octet-stream")})
+    assert pagina.status_code == 200
+    assert re.search(r"data-conteo>3 movimientos · <span data-bien>2 bien</span> · <span class=\"rojo\" "
+                     r"data-con-problema>1 con problema", _sin_estilo(pagina.text))
+    assert _problemas(pagina.text) == ["elegí el concepto («Algo que no existe» no está en la lista)"]
+    datos = _formulario_de_revision(pagina.text, caja)
+    # "Para todos" con el renglón con problema TILDADO: solo ése cambia.
+    malo = next(k.split("_")[-1] for k, v in datos.items() if k.startswith("concepto_leido_") and v == "Algo que no existe")
+    otro = _concepto(d, caja, "Retiro Lionel")
+    pagina = cliente.post(f"/gerencia/cuentas/{caja}/revisar", data=dict(
+        datos, accion="a_todos", concepto_todos=str(otro), etiqueta_todos="EJEMPLO Lionel", **{f"tildado_{malo}": "1"}))
+    assert "Se cambió 1 movimiento." in pagina.text and _problemas(pagina.text) == []
+    final = cliente.post(f"/gerencia/cuentas/{caja}/revisar", data=dict(_formulario_de_revision(pagina.text, caja),
+                                                                          accion="guardar"), follow_redirects=False)
+    assert final.status_code == 303 and "3+movimientos+cargados" in final.headers["location"]
+    filas = [(f, i, c) for _, f, i, c, _ in _filas(cliente.get(f"/gerencia/cuentas/{caja}").text)]
+    assert filas == [("03/05/2025", "−$50", "Retiro Lionel · EJEMPLO Lionel"), ("02/05/2025", "−$300", "BP"),
+                     ("01/05/2025", "+$1.000", "Cobro Mecafront · EJEMPLO Mecafront")]
+    assert {mov["como_se_cargo"] for mov in (d.obtener_movimiento_de_cuenta(x["origen_id"])
+                                             for x in d.movimientos_de_la_cuenta(caja))} == {"excel"}
+
+
+def test_GUARDAR_deja_en_la_pagina_los_que_tienen_PROBLEMA(m, d):
+    caja = _sembrar_frutamax(d)["Caja Lionel"]
+    cliente = _gerencia(m)
+    planilla = _xlsx([["Fecha", "Importe", "Tipo", "Concepto"],
+                      ["01/05/2025", 1000, "Ingreso", "Cobro Mecafront"],
+                      ["02/05/2025", 300, "Ingreso", "BP"]])          # BP es un egreso: no entra
+    pagina = cliente.post(f"/gerencia/cuentas/{caja}/cargar/excel",
+                          files={"archivo": ("caja.xlsx", planilla, "application/octet-stream")})
+    final = cliente.post(f"/gerencia/cuentas/{caja}/revisar",
+                         data=dict(_formulario_de_revision(pagina.text, caja), accion="guardar"))
+    assert "Se guardaron 1. Quedan 1 con problemas" in final.text and _problemas(final.text) == ["BP es un egreso"]
+    assert len(d.movimientos_de_la_cuenta(caja)) == 1
+
+
+def test_las_FOTOS_un_renglon_por_movimiento_con_SU_foto_y_la_que_no_se_lee_avisa(m, d):
+    caja = _sembrar_frutamax(d)["Caja Lionel"]
+    leidas = [{"movimientos": [{"fecha": "2025-05-01", "tipo": "ingreso", "importe": 2500, "quien": "EJEMPLO Mecafront",
+                                "concepto": "Cobro Mecafront", "detalle": "recibo 7"},
+                               {"fecha": "2025-05-01", "tipo": "egreso", "importe": 100, "quien": None,
+                                "concepto": "BP", "detalle": None}]},
+              RuntimeError("no se entiende"),
+              {"movimientos": [{"fecha": "2025-05-02", "tipo": "egreso", "importe": 70, "quien": "EJEMPLO Lionel",
+                                "concepto": "Retiro Lionel", "detalle": None}]}]
+    archivos = [("fotos", (f"f{i}.jpg", _foto(), "image/jpeg")) for i in range(3)]
+    with patch("core.lector_cuentas.extraer_movimientos_de_imagenes", side_effect=leidas) as lector:
+        pagina = _gerencia(m).post(f"/gerencia/cuentas/{caja}/cargar/fotos", files=archivos)
+    assert lector.call_count == 3
+    # A la IA se le pasan los conceptos ACTIVOS de esta cuenta, no los de solo histórico.
+    assert "Cruce banco" not in lector.call_args.kwargs["conceptos"]
+    assert "Cobro Mecafront" in lector.call_args.kwargs["conceptos"]
+    assert "La foto 2 no se pudo leer: «f1.jpg» no se entiende como un comprobante" in pagina.text
+    datos = _formulario_de_revision(pagina.text, caja)
+    assert sorted((datos[f"foto_{i}"], datos[f"importe_{i}"]) for i in range(3)) == [
+        ("0", "100"), ("0", "2500"), ("2", "70")]
+    with patch("app.main.subir_foto_comanda", side_effect=["cuentas/f0.jpg", "cuentas/f2.jpg"]) as subida:
+        final = _gerencia(m).post(f"/gerencia/cuentas/{caja}/revisar", data=dict(datos, accion="guardar"),
+                                  follow_redirects=False)
+    assert final.status_code == 303 and subida.call_count == 2           # una subida por FOTO, no por renglón
+    fotos = {float(x["importe"]): x["foto_ruta"] for x in d.movimientos_de_la_cuenta(caja)}
+    assert fotos == {2500.0: "cuentas/f0.jpg", 100.0: "cuentas/f0.jpg", 70.0: "cuentas/f2.jpg"}

@@ -96,10 +96,28 @@ intereses como "Rendimiento", etiquetas FCI Ahorro/Renta/Variable, sin tocar
 el banco) y Banco Credicoop solo el saldo inicial $8.035.818,38 del
 15/10/2026, que se completa con la conciliación. No se vuelve a cargar.
 
+## Carga por foto y por Excel (15/10)
+
+En "Cargar" de cada cuenta, además de a mano (como Palmala Cruces):
+- **Fotos o PDF de comprobantes** (varios de una vez): la IA lee cada uno
+  (`core/lector_cuentas.py`) y arma un renglón por movimiento, con de qué
+  foto salió. Se le pasan los conceptos ACTIVOS de esa cuenta; el que
+  sugiere tiene que ser uno de ellos, si no queda vacío y se elige. La foto
+  que no se lee se avisa y no frena las demás.
+- **Excel o CSV**: las columnas se reconocen por su título
+  (`reconocer_columnas`): Fecha, e Importe o Ingreso y Egreso (o Crédito y
+  Débito); Tipo, Concepto, Etiqueta (o De quién, Persona, Empresa) y Detalle
+  si están. Un importe negativo es un egreso. Las filas de Total, Subtotal o
+  Saldo no son movimientos.
+- **La revisión**: los que tienen problema van primero, abiertos y en rojo;
+  "Para todos" cambia el tipo, el concepto, la etiqueta o la fecha de los
+  tildados (o de todos si no hay ninguno tildado); "Sacar los tildados";
+  "Guardar todos" guarda los que están bien, juntos, cada uno con su foto
+  (una subida por foto, no por renglón), y deja en la página los que
+  tienen problema. NADA se guarda sin pasar por la revisión.
+
 ## Lo que falta (pedido del 15/10)
 
-- Carga por foto o archivo y por Excel con la pantalla de revisión y "Para
-  todos".
 - Conciliación de extractos dentro de cada banco.
 
 Tests: `tests/test_cuentas.py`.
