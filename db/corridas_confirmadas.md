@@ -624,7 +624,20 @@ FRUTAMAX  Caja Lionel            668 movimientos, 668 histórico, 668 filas dist
 PALMALA   cuentas 0 · conceptos 0 · movimientos 0 · testigo_clientes 5
 ```
 
-OJO: 9 movimientos de la Caja tienen el año mal tipeado en el Excel original
+OJO (corregido el mismo 15/10, ver abajo): 9 movimientos de la Caja tenían el año mal tipeado en el Excel original
 (3 con 2002, filas 201 a 309; 6 con 2005, filas 618 a 623; por las filas
 vecinas son de 2022 y 2025). No cambian el saldo; en el listado, que va por
 fecha, quedan al fondo. Se corrigen desde la pantalla, con motivo.
+
+### 15/10 — las 9 fechas mal tipeadas de la Caja, corregidas por SQL
+
+Lionel corrigió por SQL en Frutamax las 9 fechas de la Caja Lionel con el año
+mal tipeado (filas 201, 219 y 309 → 2022; 618 a 623 → 2025), cada una con su
+registro en `cuentas_correcciones` (campo `fecha`, motivo "Año mal tipeado
+en el Excel histórico"). Verificado por mí por el conector "Supabase
+Lectura" el 15/10:
+
+```
+FRUTAMAX  antes de 2020: 0 · correcciones 9 (campo fecha) · filas 201:2022-05-27, 219:2022-06-13,
+          309:2022-08-16, 618 a 623:2025-07-04 · saldo Caja Lionel $147.910.250,00 (sin cambios) · testigo_movimientos 924
+```
