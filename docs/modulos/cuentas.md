@@ -116,8 +116,36 @@ En "Cargar" de cada cuenta, además de a mano (como Palmala Cruces):
   (una subida por foto, no por renglón), y deja en la página los que
   tienen problema. NADA se guarda sin pasar por la revisión.
 
-## Lo que falta (pedido del 15/10)
+## Conciliación (15/10): solo en una cuenta de banco
 
-- Conciliación de extractos dentro de cada banco.
+Botón "Conciliar con el extracto" en la pantalla de un banco
+(`/gerencia/cuentas/{id}/conciliar`; en una caja o una inversión, 404).
+- **Subir extractos**: uno o varios de una vez (PDF, foto, Excel o CSV; por
+  ejemplo 6 meses). La IA lee cada renglón con fecha, descripción, importe
+  CON SIGNO (crédito positivo, débito negativo) y saldo, más el período y el
+  saldo final (`core/lector_cuentas.py`, `PROMPT_EXTRACTO`). Un renglón sin
+  fecha o sin importe no entra y se cuenta. Si dos extractos se pisan, el
+  renglón repetido (misma fecha, importe, descripción y saldo) no entra dos
+  veces (lo frena la base: `cuentas_renglon_una_vez`).
+- **El cruce** (`core/conciliacion.py`, `cruzar`): por IMPORTE con su signo,
+  al centavo, con ±5 días HÁBILES (lunes a viernes; los feriados no se
+  descuentan), uno a uno. La descripción no tiene que coincidir. Si hay más
+  de un candidato del mismo importe en el margen, gana la fecha más cercana
+  y el par queda "para revisar" ("Está bien" o "No es este"). Lo conciliado
+  queda marcado con el extracto y la fecha (`cuentas_conciliaciones`) y no se
+  vuelve a cruzar.
+- **El saldo inicial manda**: lo del extracto ANTERIOR a la fecha del
+  movimiento "Saldo inicial" de la cuenta (Banco Credicoop: 15/10/2026) ya
+  está adentro de ese saldo; no se cruza ni se carga, y se cuenta aparte. El
+  movimiento de saldo inicial no se cruza nunca.
+- **El resultado**: la diferencia de saldo al cierre de cada extracto (el
+  saldo final del banco contra el del sistema a esa fecha), lo que está solo
+  en el extracto (se carga de un toque con un concepto sugerido por la
+  descripción —comisiones e impuestos, transferencias, si no "Otros
+  ingresos/egresos"— y queda conciliado), lo que está solo en el sistema en
+  esas fechas (en rojo, para revisar) y los conciliados, plegados.
+- Anular un movimiento conciliado (o borrar la salida de un cheque
+  depositado) suelta su renglón: una conciliación sin movimiento vivo se
+  borra sola al abrir la pantalla.
 
 Tests: `tests/test_cuentas.py`.

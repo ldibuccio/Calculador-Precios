@@ -303,8 +303,9 @@ def siembra():
     -- CUENTAS (15/10, las dos bases): una caja y un banco, un movimiento con
     -- etiqueta, foto y una corrección, y una transferencia entre los dos, así
     -- la lista, las fichas, los totales y el historial pasan por sus joins.
-    insert into cuentas (nombre, tipo, numero) values ('EJEMPLO Caja', 'caja', null),
-                                                      ('EJEMPLO Banco', 'banco', 'CC$ 000-111-222/3');
+    -- El BANCO primero: la cuenta 1 del humo es la que abre la conciliación.
+    insert into cuentas (nombre, tipo, numero) values ('EJEMPLO Banco', 'banco', 'CC$ 000-111-222/3'),
+                                                      ('EJEMPLO Caja', 'caja', null);
     insert into cuentas_conceptos (cuenta_id, nombre, tipo)
       select id, 'EJEMPLO Cobro', 'ingreso' from cuentas where nombre = 'EJEMPLO Caja';
     insert into cuentas_etiquetas (nombre) values ('EJEMPLO Persona');
@@ -318,6 +319,17 @@ def siembra():
                                         como_se_cargo, sector)
       select current_date - 2, o.id, d.id, 400, 'cuentas/EJEMPLO-t.jpg', 'a_mano', 'gerencia'
         from cuentas o, cuentas d where o.nombre = 'EJEMPLO Caja' and d.nombre = 'EJEMPLO Banco';
+    -- Un extracto del banco con un renglón conciliado con la transferencia y
+    -- uno suelto, así la conciliación pasa por sus joins.
+    insert into cuentas_extractos (cuenta_id, archivo, desde, hasta, saldo_final, sector)
+      select id, 'EJEMPLO.pdf', current_date - 5, current_date, 400, 'gerencia' from cuentas where nombre = 'EJEMPLO Banco';
+    insert into cuentas_extracto_renglones (extracto_id, cuenta_id, fecha, descripcion, importe)
+      select e.id, e.cuenta_id, current_date - 2, 'DEP EFECTIVO', 400 from cuentas_extractos e
+      union all
+      select e.id, e.cuenta_id, current_date - 1, 'COMISION', -15 from cuentas_extractos e;
+    insert into cuentas_conciliaciones (renglon_id, cuenta_id, origen, origen_id, sector)
+      select r.id, r.cuenta_id, 'transferencia', t.id, 'gerencia'
+        from cuentas_extracto_renglones r, cuentas_transferencias t where r.importe = 400;
     -- UN REMITO RECIBIDO (dueño, 01/10), con su renglón, su foto y un rechazo
     -- distinto del de Depósito: así Facturación, el detalle, el cotejo y la
     -- lista de fotos pasan por sus joins.

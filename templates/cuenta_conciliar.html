@@ -1,0 +1,119 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Conciliar {{ cuenta.nombre }}</title>
+<style>
+{% include "_cheques_estilos.html" %}
+  .renglon { padding: 0.5rem 0; border-top: 1px solid #eee; }
+  .renglon:first-of-type { border-top: 0; }
+  .renglon-cabeza { display: flex; justify-content: space-between; gap: 0.6rem; }
+  .renglon-cabeza .dia { white-space: nowrap; font-weight: 600; }
+  .descripcion { color: #444; font-size: 0.9rem; }
+  .verde-claro { border-left: 4px solid #15803d; }
+  .rojo-claro { border-left: 4px solid #dc2626; }
+  .revisar { color: #b45309; font-weight: 700; font-size: 0.85rem; }
+  .extracto { display: flex; flex-wrap: wrap; justify-content: space-between; gap: 0.2rem 0.8rem; padding: 0.45rem 0; border-top: 1px solid #eee; font-size: 0.9rem; }
+  .extracto:first-of-type { border-top: 0; }
+  .extracto .nombre { flex: 1 1 12rem; font-weight: 600; }
+  .renglon form { margin: 0; }
+  .renglon .acciones { margin-top: 0.4rem; }
+</style>
+</head>
+<body>
+  {% set barra_sector = "gerencia" %}
+  {% set barra_titulo = "Conciliar " ~ cuenta.nombre %}
+  {% set barra_atras = "/gerencia/cuentas/" ~ cuenta.id %}
+  {% include "_barra_navegacion.html" %}
+  {% from "_info.html" import info %}
+
+  {% if aviso %}<div class="aviso" data-aviso>{{ aviso }}</div>{% endif %}
+  {% if error %}<div class="error" data-error>{{ error }}</div>{% endif %}
+
+  <form class="tarjeta" method="post" action="/gerencia/cuentas/{{ cuenta.id }}/conciliar/extractos" enctype="multipart/form-data" data-subir>
+    <h2>Subir extractos {% call info("Cómo se cruza") %}Cada renglón del extracto se empareja con un movimiento del sistema del MISMO importe (una entrada con un ingreso, una salida con un egreso), con hasta 5 días hábiles de diferencia. La descripción no tiene que coincidir. Si hay dos del mismo importe cerca, se toma la fecha más cercana y queda para revisar. Lo conciliado no se vuelve a cruzar.{% endcall %}</h2>
+    <div class="campos"><label class="ancho">Los extractos (PDF, Excel o CSV; podés elegir varios, por ejemplo 6 meses)<input type="file" name="extractos" accept=".pdf,.xlsx,.xls,.csv,image/*" multiple required></label></div>
+    <div class="acciones"><button type="submit">Subir y cruzar</button></div>
+    {% if corte %}<p class="nota" data-corte>Lo del extracto anterior al {{ corte.strftime('%d/%m/%Y') }} (el saldo inicial) no se carga: ya está adentro del saldo inicial.</p>{% endif %}
+  </form>
+
+  {% if extractos %}
+  <div class="tarjeta" data-extractos>
+    <h2>Saldo al cierre de cada extracto</h2>
+    {% for e in extractos %}
+    <div class="extracto" data-extracto="{{ e.id }}">
+      <span class="nombre">{{ e.archivo }}{% if e.desde and e.hasta %} · {{ e.desde.strftime('%d/%m') }} al {{ e.hasta.strftime('%d/%m/%Y') }}{% endif %}</span>
+      {% if e.diferencia is none %}<span class="nota">sin saldo final</span>
+      {% elif e.diferencia == 0 %}<span class="verde" data-diferencia>Da igual: {{ saldo_en(e.saldo_final, cuenta.moneda) }}</span>
+      {% else %}<span class="rojo" data-diferencia>Banco {{ saldo_en(e.saldo_final, cuenta.moneda) }} · sistema {{ saldo_en(e.saldo_sistema, cuenta.moneda) }} · diferencia {{ saldo_en(e.diferencia, cuenta.moneda) }}</span>{% endif %}
+    </div>
+    {% endfor %}
+    <form method="post" action="/gerencia/cuentas/{{ cuenta.id }}/conciliar/cruzar">
+      <div class="acciones"><button type="submit" class="secundario">Volver a cruzar lo suelto</button></div>
+    </form>
+  </div>
+  {% endif %}
+
+  <div class="tarjeta" data-solo-extracto>
+    <h2>Solo en el extracto: faltan cargar ({{ solo_extracto|length }})</h2>
+    <datalist id="etiquetas">{% for e in etiquetas %}<option value="{{ e.nombre }}">{% endfor %}</datalist>
+    {% for r in solo_extracto %}
+    <div class="renglon" data-renglon="{{ r.id }}">
+      <div class="renglon-cabeza"><span class="dia">{{ r.fecha.strftime('%d/%m/%Y') }}</span>
+        <span class="importe {{ 'verde' if r.importe > 0 else 'rojo' }}">{{ '+' if r.importe > 0 else '−' }}{{ importe_en(r.importe, cuenta.moneda) }}</span></div>
+      <div class="descripcion">{{ r.descripcion }}</div>
+      <form method="post" action="/gerencia/cuentas/{{ cuenta.id }}/conciliar/{{ r.id }}/cargar">
+        <div class="campos">
+          <label>Concepto<select name="concepto_id">{% for c in conceptos if c.activo and (not c.tipo or c.tipo == ('ingreso' if r.importe > 0 else 'egreso')) %}<option value="{{ c.id }}" {% if c.id == r.concepto_id %}selected{% endif %}>{{ c.nombre }}</option>{% endfor %}</select></label>
+          <label>¿De quién o para quién?<input type="text" name="etiqueta" list="etiquetas"></label>
+        </div>
+        <div class="acciones"><button type="submit">Cargar</button></div>
+      </form>
+    </div>
+    {% else %}
+    <p class="vacio">Nada: todo lo del extracto está en el sistema.</p>
+    {% endfor %}
+  </div>
+
+  <div class="tarjeta" data-solo-sistema>
+    <h2>Solo en el sistema: para revisar ({{ solo_sistema|length }})</h2>
+    {% for m in solo_sistema %}
+    {% set url = {'movimiento': '/gerencia/cuentas/movimientos/', 'transferencia': '/gerencia/cuentas/transferencias/'}.get(m.origen, '/gerencia/cheques/') ~ m.origen_id %}
+    <div class="renglon rojo-claro" data-sistema="{{ m.origen }}-{{ m.origen_id }}">
+      <a class="abrir" href="{{ url }}{{ q_volver(aqui(request)) }}" style="display:block;color:inherit;text-decoration:none;min-height:44px;padding-left:0.5rem">
+        <div class="renglon-cabeza"><span class="dia">{{ m.fecha.strftime('%d/%m/%Y') }}</span>
+          <span class="importe {{ 'verde' if m.tipo == 'ingreso' else 'rojo' }}">{{ '+' if m.tipo == 'ingreso' else '−' }}{{ importe_en(m.importe, cuenta.moneda) }}</span></div>
+        <div class="descripcion">{{ m.concepto }}{% if m.etiqueta %} · {{ m.etiqueta }}{% endif %}</div>
+      </a>
+    </div>
+    {% else %}
+    <p class="vacio">Nada: todo lo del sistema en esas fechas está en el extracto.</p>
+    {% endfor %}
+  </div>
+
+  <div class="tarjeta" data-conciliados>
+    <details {% if a_revisar %}open{% endif %}>
+      <summary>Conciliados ({{ conciliados|length }}){% if a_revisar %} · <span class="revisar">{{ a_revisar|length }} para revisar</span>{% endif %}</summary>
+      {% for r in conciliados %}
+      <div class="renglon verde-claro" data-conciliado="{{ r.id }}" style="padding-left:0.5rem">
+        <div class="renglon-cabeza"><span class="dia">{{ r.fecha.strftime('%d/%m/%Y') }}</span>
+          <span class="importe verde">{{ '+' if r.importe > 0 else '−' }}{{ importe_en(r.importe, cuenta.moneda) }}</span></div>
+        <div class="descripcion">{{ r.descripcion }} ↔ {{ r.concepto_sistema }}{% if r.etiqueta_sistema %} · {{ r.etiqueta_sistema }}{% endif %}{% if r.fecha_sistema %} ({{ r.fecha_sistema.strftime('%d/%m') }}){% endif %}</div>
+        <div class="nota">{{ r.archivo }} · conciliado el {{ r.conciliado_el.strftime('%d/%m/%Y') }}</div>
+        {% if r.a_revisar %}<p class="revisar" data-a-revisar>Había otro del mismo importe cerca: revisá que sea este.</p>{% endif %}
+        <div class="acciones">
+          {% if r.a_revisar %}<form method="post" action="/gerencia/cuentas/{{ cuenta.id }}/conciliar/{{ r.id }}/confirmar"><button type="submit" class="secundario">Está bien</button></form>{% endif %}
+          <form method="post" action="/gerencia/cuentas/{{ cuenta.id }}/conciliar/{{ r.id }}/desconciliar"><button type="submit" class="peligro">No es este</button></form>
+        </div>
+      </div>
+      {% else %}
+      <p class="vacio">Todavía nada.</p>
+      {% endfor %}
+    </details>
+  </div>
+
+  {% if antes %}<p class="nota" data-antes>{{ antes|length }} renglón{{ '' if antes|length == 1 else 'es' }} del extracto anterior{{ '' if antes|length == 1 else 'es' }} al saldo inicial: no se cargan.</p>{% endif %}
+{% include "_pie_version.html" %}
+</body>
+</html>

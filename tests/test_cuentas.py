@@ -542,3 +542,165 @@ def test_las_FOTOS_un_renglon_por_movimiento_con_SU_foto_y_la_que_no_se_lee_avis
     assert final.status_code == 303 and subida.call_count == 2           # una subida por FOTO, no por renglón
     fotos = {float(x["importe"]): x["foto_ruta"] for x in d.movimientos_de_la_cuenta(caja)}
     assert fotos == {2500.0: "cuentas/f0.jpg", 100.0: "cuentas/f0.jpg", 70.0: "cuentas/f2.jpg"}
+
+
+# --- CONCILIACIÓN (dueño, 15/10) -------------------------------------------------
+
+def test_los_DIAS_HABILES_y_el_CRUCE_uno_a_uno_por_importe_con_signo():
+    from core.conciliacion import cruzar, dias_habiles_entre
+    assert dias_habiles_entre(date(2025, 5, 9), date(2025, 5, 12)) == 1      # viernes → lunes
+    assert dias_habiles_entre(date(2025, 5, 12), date(2025, 5, 19)) == 5
+    assert dias_habiles_entre(date(2025, 5, 19), date(2025, 5, 12)) == 5
+    renglones = [{"id": 1, "fecha": date(2025, 5, 12), "importe": 500.0},
+                 {"id": 2, "fecha": date(2025, 5, 14), "importe": 500.0},
+                 {"id": 3, "fecha": date(2025, 5, 12), "importe": -100.0},
+                 {"id": 4, "fecha": date(2025, 5, 12), "importe": 70.0}]
+    sistema = [{"origen": "movimiento", "origen_id": 10, "fecha": date(2025, 5, 13), "tipo": "ingreso", "importe": 500},
+               {"origen": "deposito", "origen_id": 7, "fecha": date(2025, 5, 14), "tipo": "ingreso", "importe": 500},
+               # El RIVAL del -100: un INGRESO de 100 no es un débito de 100.
+               {"origen": "movimiento", "origen_id": 11, "fecha": date(2025, 5, 12), "tipo": "ingreso", "importe": 100},
+               # A 6 días hábiles: fuera del margen.
+               {"origen": "movimiento", "origen_id": 12, "fecha": date(2025, 5, 20), "tipo": "ingreso", "importe": 70}]
+    assert cruzar(renglones, sistema) == [
+        {"renglon_id": 1, "origen": "movimiento", "origen_id": 10, "a_revisar": True},
+        {"renglon_id": 2, "origen": "deposito", "origen_id": 7, "a_revisar": True}]
+    # UNO A UNO: dos renglones de 500 y un solo movimiento de 500 hacen un par, no dos.
+    assert [p["renglon_id"] for p in cruzar(renglones[:2], sistema[:1])] == [1]
+    # Solo, sin otro candidato, no queda para revisar.
+    assert cruzar(renglones[:1], sistema[:1]) == [{"renglon_id": 1, "origen": "movimiento", "origen_id": 10,
+                                                   "a_revisar": False}]
+
+
+def test_el_CONCEPTO_SUGERIDO_sale_de_la_descripcion_del_banco():
+    from core.conciliacion import concepto_sugerido
+    conceptos = [{"id": 1, "nombre": "Impuestos y comisiones", "activo": True},
+                 {"id": 2, "nombre": "Transferencia recibida", "activo": True},
+                 {"id": 3, "nombre": "Transferencia enviada", "activo": True},
+                 {"id": 4, "nombre": "Otros ingresos", "activo": True}, {"id": 5, "nombre": "Otros egresos", "activo": True}]
+    assert concepto_sugerido("COMISION MANT. CUENTA", -1500, conceptos) == 1
+    assert concepto_sugerido("IMP.LEY 25413 DEB", -30, conceptos) == 1
+    assert concepto_sugerido("TRANSF. RECIBIDA CBU 0191", 900, conceptos) == 2
+    assert concepto_sugerido("TRANSFERENCIA A TERCEROS", -900, conceptos) == 3
+    assert concepto_sugerido("DEP CHEQ 30-7XXXX", 5000, conceptos) == 4
+    assert concepto_sugerido("ALGO RARO", -5, conceptos) == 5
+
+
+EXTRACTO_MAYO = {"desde": "2025-05-01", "hasta": "2025-05-31", "saldo_final": 9198.25, "renglones": [
+    {"fecha": "2025-05-02", "descripcion": "TRANSF RECIBIDA", "importe": 500, "saldo": None},       # antes del corte
+    {"fecha": "2025-05-09", "descripcion": "PAGO PROV 0001", "importe": -300, "saldo": None},
+    {"fecha": "2025-05-12", "descripcion": "DEP EFECTIVO", "importe": 1000, "saldo": None},
+    {"fecha": "2025-05-12", "descripcion": "COMISION MANT. CUENTA", "importe": -1500.75, "saldo": None},
+    {"fecha": None, "descripcion": "ilegible", "importe": 12, "saldo": None}]}
+# El segundo extracto se PISA con el primero en el pago de 300: no entra dos veces.
+EXTRACTO_PISADO = {"desde": "2025-05-09", "hasta": "2025-05-09", "saldo_final": None, "renglones": [
+    {"fecha": "2025-05-09", "descripcion": "PAGO PROV 0001", "importe": -300, "saldo": None}]}
+
+
+def _banco_para_conciliar(d):
+    cuentas = _sembrar_frutamax(d)
+    banco, caja = cuentas["Banco Credicoop"], cuentas["Caja Lionel"]
+    _mov(d, banco, "2025-05-05", "ingreso", 10000, "Saldo inicial")
+    pago = _mov(d, banco, "2025-05-07", "egreso", 300, "Pago a proveedor", "EJEMPLO Puesto")
+    d.guardar_transferencia(fecha=date(2025, 5, 8), origen_id=caja, destino_id=banco, importe=1000, detalle=None,
+                            foto_ruta=None)
+    suelto = _mov(d, banco, "2025-05-12", "ingreso", 77, "Otros ingresos")
+    return banco, pago, suelto
+
+
+def _subir(m, banco, *leidos):
+    archivos = [("extractos", (f"mayo{i}.pdf", b"%PDF-1.4", "application/pdf")) for i in range(len(leidos))]
+    with patch("core.lector_cuentas.extraer_extracto_de_imagenes", side_effect=list(leidos)), \
+            patch("app.main.imagenes_desde_pdf", return_value=[b"x"]):
+        return _gerencia(m).post(f"/gerencia/cuentas/{banco}/conciliar/extractos", files=archivos)
+
+
+def _secciones(html) -> dict:
+    marcado = _sin_estilo(html)
+    return {"solo_extracto": re.findall(r'data-renglon="\d+">\s*<div class="renglon-cabeza"><span class="dia">([^<]*)</span>'
+                                        r'\s*<span class="importe[^"]*">([^<]*)</span></div>\s*<div class="descripcion">([^<]*)<',
+                                        marcado),
+            "solo_sistema": re.findall(r'data-sistema="([a-z]+-\d+)"', marcado),
+            "conciliados": re.findall(r'data-conciliado="\d+".*?<div class="descripcion">([^<]*)<', marcado, re.S),
+            "a_revisar": marcado.count("data-a-revisar>")}
+
+
+def test_CONCILIAR_sube_dos_extractos_que_se_pisan_cruza_y_deja_lo_suelto_a_la_vista(m, d):
+    banco, _, suelto = _banco_para_conciliar(d)
+    pagina = _subir(m, banco, EXTRACTO_MAYO, EXTRACTO_PISADO)
+    assert pagina.status_code == 200
+    assert "«mayo0.pdf»: 4 renglones, 1 sin fecha o sin importe · «mayo1.pdf»: 0 renglones (1 ya estaban). " \
+           "Se conciliaron 2." in pagina.text
+    s = _secciones(pagina.text)
+    assert s["conciliados"] == ["PAGO PROV 0001 ↔ Pago a proveedor · EJEMPLO Puesto (07/05)",
+                                "DEP EFECTIVO ↔ Depósito de efectivo · Caja Lionel (08/05)"]
+    assert s["solo_extracto"] == [("12/05/2025", "−$1.500,75", "COMISION MANT. CUENTA")]
+    assert s["solo_sistema"] == [f"movimiento-{suelto}"]           # ni el saldo inicial ni lo conciliado
+    assert "1 renglón del extracto anterior al saldo inicial: no se cargan." in _sin_estilo(pagina.text)
+    # La comisión trae sugerido su concepto.
+    comision = _sin_estilo(pagina.text).split("COMISION MANT. CUENTA")[1].split("</form>")[0]
+    assert re.search(r'<option value="(\d+)" selected>Impuestos y comisiones</option>', comision)
+    # Diferencia al cierre: banco 9.198,25 contra el sistema 10.000 − 300 + 1.000 + 77 = 10.777.
+    assert "Banco $9.198,25 · sistema $10.777 · diferencia −$1.578,75" in _sin_estilo(pagina.text)
+
+
+def test_CARGAR_de_un_toque_lo_del_extracto_y_SEPARAR_un_par(m, d):
+    banco, pago, _ = _banco_para_conciliar(d)
+    _subir(m, banco, EXTRACTO_MAYO)
+    cliente = _gerencia(m)
+    renglones = {r["descripcion"]: r["id"] for r in d.renglones_de_extractos(banco)}
+    cliente.post(f"/gerencia/cuentas/{banco}/conciliar/{renglones['COMISION MANT. CUENTA']}/cargar",
+                 data={"concepto_id": str(_concepto(d, banco, "Impuestos y comisiones")), "etiqueta": "EJEMPLO Credicoop"})
+    s = _secciones(cliente.get(f"/gerencia/cuentas/{banco}/conciliar").text)
+    assert s["solo_extracto"] == [] and len(s["conciliados"]) == 3
+    cargado = next(x for x in d.movimientos_de_la_cuenta(banco) if x["concepto"] == "Impuestos y comisiones")
+    assert (cargado["fecha"], cargado["tipo"], float(cargado["importe"]), cargado["etiqueta"], cargado["conciliado"]) == (
+        date(2025, 5, 12), "egreso", 1500.75, "EJEMPLO Credicoop", True)
+    cliente.post(f"/gerencia/cuentas/{banco}/conciliar/{renglones['PAGO PROV 0001']}/desconciliar")
+    s = _secciones(cliente.get(f"/gerencia/cuentas/{banco}/conciliar").text)
+    assert ("09/05/2025", "−$300", "PAGO PROV 0001") in s["solo_extracto"] and f"movimiento-{pago}" in s["solo_sistema"]
+    cliente.post(f"/gerencia/cuentas/{banco}/conciliar/cruzar")
+    assert len(_secciones(cliente.get(f"/gerencia/cuentas/{banco}/conciliar").text)["conciliados"]) == 3
+
+
+def test_ANULAR_un_movimiento_conciliado_suelta_su_renglon(m, d):
+    banco, pago, _ = _banco_para_conciliar(d)
+    _subir(m, banco, EXTRACTO_MAYO)
+    d.corregir_movimiento_de_cuenta(pago, {"anulado": True}, "no era")
+    s = _secciones(_gerencia(m).get(f"/gerencia/cuentas/{banco}/conciliar").text)
+    assert ("09/05/2025", "−$300", "PAGO PROV 0001") in s["solo_extracto"]
+    assert f"movimiento-{pago}" not in s["solo_sistema"]                    # anulado: no se revisa
+
+
+def test_dos_del_MISMO_importe_quedan_PARA_REVISAR_y_se_confirman(m, d):
+    banco, _, _ = _banco_para_conciliar(d)
+    _mov(d, banco, "2025-05-13", "egreso", 300, "Pago a proveedor", "EJEMPLO Otro Puesto")
+    pagina = _subir(m, banco, EXTRACTO_MAYO)
+    assert _secciones(pagina.text)["a_revisar"] == 1
+    renglon = next(r["id"] for r in d.renglones_de_extractos(banco) if r["a_revisar"])
+    _gerencia(m).post(f"/gerencia/cuentas/{banco}/conciliar/{renglon}/confirmar")
+    assert _secciones(_gerencia(m).get(f"/gerencia/cuentas/{banco}/conciliar").text)["a_revisar"] == 0
+
+
+def test_solo_un_BANCO_se_concilia(m, d):
+    caja = _sembrar_frutamax(d)["Caja Lionel"]
+    assert _gerencia(m).get(f"/gerencia/cuentas/{caja}/conciliar").status_code == 404
+    assert "/conciliar" not in _gerencia(m).get(f"/gerencia/cuentas/{caja}").text
+
+
+def test_lo_ANTERIOR_al_saldo_inicial_no_se_cruza_ni_se_carga(m, d):
+    banco, _, _ = _banco_para_conciliar(d)
+    # El RIVAL: un ingreso de 500 a 2 días hábiles del renglón del 02/05, que es anterior al saldo inicial.
+    rival = _mov(d, banco, "2025-05-06", "ingreso", 500, "Otros ingresos")
+    s = _secciones(_subir(m, banco, EXTRACTO_MAYO).text)
+    assert f"movimiento-{rival}" in s["solo_sistema"]
+    assert ("02/05/2025", "+$500", "TRANSF RECIBIDA") not in s["solo_extracto"]
+
+
+def test_lo_YA_CONCILIADO_no_se_vuelve_a_cruzar_con_un_extracto_nuevo(m, d):
+    banco, _, _ = _banco_para_conciliar(d)
+    _subir(m, banco, EXTRACTO_MAYO)
+    otro = {"desde": "2025-05-13", "hasta": "2025-05-13", "saldo_final": None, "renglones": [
+        {"fecha": "2025-05-13", "descripcion": "DEP EFECTIVO 2", "importe": 1000, "saldo": None}]}
+    pagina = _subir(m, banco, otro)
+    assert pagina.status_code == 200 and "Se conciliaron 0." in pagina.text
+    assert ("13/05/2025", "+$1.000", "DEP EFECTIVO 2") in _secciones(pagina.text)["solo_extracto"]
