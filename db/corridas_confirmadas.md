@@ -573,3 +573,16 @@ sin movimientos. `fila_historico`: 5 a 432 SIN la 220 (427 filas), más la
 434": las filas 220, 433 y 434 del Excel original están VACÍAS (revisado por
 el dueño en el archivo, 14/10): no falta ningún movimiento, el histórico está
 completo. 195 movimientos con concepto de cheque, 186 con número.
+
+## 15/10 — `clientes_cuit_3`: se borra la columna vieja `clientes.cuit`
+
+Bloque `db/clientes_cuit_3.sql` (frena si queda un CUIT sin pasar a
+`clientes_cuits`). Corrido por Lionel en Frutamax y Palmala con el pie en
+v1159 (el código que ya no la usa, v1157, estaba publicado). Verificado por
+mí por el conector "Supabase Lectura" el 15/10
+(`db/clientes_cuit_3_verificacion.sql`):
+
+```
+FRUTAMAX  clientes_cuit_3 · columna 0 · check 0 · cuits_propios 1 · testigo_clientes 5
+PALMALA   clientes_cuit_3 · columna 0 · check 0 · cuits_propios 0 · testigo_clientes 5
+```
