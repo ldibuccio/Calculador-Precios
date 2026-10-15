@@ -22984,6 +22984,8 @@ FRENOS_DE_CUENTAS = {
     "cuentas_transferencia_misma_moneda": "Las dos cuentas tienen que ser de la misma moneda.",
     "cuentas_cheque_depositado": "Ese cheque no salió depositado.",
     "cuentas_cheque_en_banco": "Un cheque se deposita en una cuenta de banco.",
+    "cuentas_conciliaciones_renglon_id_key": "Ese renglón del extracto ya está conciliado.",
+    "cuentas_conciliado_una_vez": "Ese movimiento ya está conciliado con otro renglón del extracto.",
 }
 
 
@@ -23270,3 +23272,113 @@ def cambiar_cuenta_del_deposito(cheque_id: int, cuenta_id: int | None) -> None:
             cursor.execute("INSERT INTO cuentas_cheques_depositados (cheque_id, cuenta_id) VALUES (%s, %s) "
                            "ON CONFLICT (cheque_id) DO UPDATE SET cuenta_id = EXCLUDED.cuenta_id",
                            (cheque_id, cuenta_id))
+
+
+# --- CONCILIACIÓN (dueño, 15/10): los extractos del banco contra el sistema --
+
+def _limpiar_conciliaciones_huerfanas(cursor, cuenta_id: int) -> None:
+    """Una conciliación cuyo movimiento ya no cuenta (se anuló, o se borró la
+    salida del cheque) se borra: su renglón vuelve a estar "solo en el
+    extracto". Una sola regla, en vez de acordarse en cada lugar que anula."""
+    cursor.execute(
+        "DELETE FROM cuentas_conciliaciones cc WHERE cc.cuenta_id = %s AND NOT EXISTS ("
+        " SELECT 1 FROM cuentas_todos_los_movimientos v WHERE v.cuenta_id = cc.cuenta_id"
+        " AND v.origen = cc.origen AND v.origen_id = cc.origen_id AND NOT v.anulado)", (cuenta_id,))
+
+
+def guardar_extracto(cuenta_id: int, *, archivo: str, desde, hasta, saldo_final, renglones: list[dict]) -> dict:
+    """El extracto y sus renglones, en UNA transacción. Un renglón que ya está
+    (de otro extracto que se pisa: misma fecha, importe, descripción y saldo)
+    no entra dos veces. {"extracto_id", "nuevos", "repetidos"}."""
+    with _escribir_cuentas() as cursor:
+        cursor.execute("INSERT INTO cuentas_extractos (cuenta_id, archivo, desde, hasta, saldo_final, sector) "
+                       "VALUES (%s, %s, %s, %s, %s, 'gerencia') RETURNING id",
+                       (cuenta_id, archivo, desde, hasta, saldo_final))
+        extracto_id = cursor.fetchone()[0]
+        nuevos = 0
+        for r in renglones:
+            cursor.execute(
+                "INSERT INTO cuentas_extracto_renglones (extracto_id, cuenta_id, fecha, descripcion, importe, saldo) "
+                "VALUES (%s, %s, %s, %s, %s, %s) ON CONFLICT ON CONSTRAINT cuentas_renglon_una_vez DO NOTHING "
+                "RETURNING id", (extracto_id, cuenta_id, r["fecha"], r["descripcion"], r["importe"], r.get("saldo")))
+            nuevos += cursor.fetchone() is not None
+        return {"extracto_id": extracto_id, "nuevos": nuevos, "repetidos": len(renglones) - nuevos}
+
+
+def extractos_de_la_cuenta(cuenta_id: int) -> list[dict]:
+    return _leer_cuentas(
+        "SELECT e.id, e.archivo, e.desde, e.hasta, e.saldo_final, e.creado_en, "
+        "(SELECT count(*) FROM cuentas_extracto_renglones r WHERE r.extracto_id = e.id) AS renglones "
+        "FROM cuentas_extractos e WHERE e.cuenta_id = %s ORDER BY e.hasta DESC NULLS LAST, e.id DESC", (cuenta_id,))
+
+
+def renglones_de_extractos(cuenta_id: int) -> list[dict]:
+    """Todos los renglones de los extractos de la cuenta, con su conciliación
+    (si la tienen): con qué se emparejó, si es para revisar, de qué extracto y
+    cuándo se concilió."""
+    conexion = obtener_conexion()
+    try:
+        with conexion.cursor() as cursor:
+            _limpiar_conciliaciones_huerfanas(cursor, cuenta_id)
+            conexion.commit()
+            cursor.execute(
+                "SELECT r.id, r.extracto_id, e.archivo, r.fecha, r.descripcion, r.importe, r.saldo, "
+                "cc.origen, cc.origen_id, cc.a_revisar, cc.creado_en AS conciliado_el, "
+                "v.fecha AS fecha_sistema, v.concepto AS concepto_sistema, v.etiqueta AS etiqueta_sistema "
+                "FROM cuentas_extracto_renglones r JOIN cuentas_extractos e ON e.id = r.extracto_id "
+                "LEFT JOIN cuentas_conciliaciones cc ON cc.renglon_id = r.id "
+                "LEFT JOIN cuentas_todos_los_movimientos v ON v.cuenta_id = cc.cuenta_id AND v.origen = cc.origen "
+                "AND v.origen_id = cc.origen_id "
+                "WHERE r.cuenta_id = %s ORDER BY r.fecha, r.id", (cuenta_id,))
+            return _filas_como_dict(cursor)
+    finally:
+        conexion.close()
+
+
+def guardar_conciliaciones(cuenta_id: int, pares: list[dict]) -> int:
+    """Los pares del cruce ({"renglon_id", "origen", "origen_id",
+    "a_revisar"}). Un renglón o un movimiento que ya se concilió no entra dos
+    veces: lo frenan los índices únicos de la base."""
+    with _escribir_cuentas() as cursor:
+        for p in pares:
+            cursor.execute("INSERT INTO cuentas_conciliaciones (renglon_id, cuenta_id, origen, origen_id, a_revisar, "
+                           "sector) VALUES (%s, %s, %s, %s, %s, 'gerencia')",
+                           (p["renglon_id"], cuenta_id, p["origen"], p["origen_id"], p["a_revisar"]))
+        return len(pares)
+
+
+def desconciliar(cuenta_id: int, renglon_id: int) -> None:
+    """"No es este": el renglón y su movimiento vuelven a estar sueltos."""
+    with _escribir_cuentas() as cursor:
+        cursor.execute("DELETE FROM cuentas_conciliaciones WHERE cuenta_id = %s AND renglon_id = %s",
+                       (cuenta_id, renglon_id))
+
+
+def confirmar_conciliacion(cuenta_id: int, renglon_id: int) -> None:
+    """"Está bien": deja de estar para revisar."""
+    with _escribir_cuentas() as cursor:
+        cursor.execute("UPDATE cuentas_conciliaciones SET a_revisar = false WHERE cuenta_id = %s AND renglon_id = %s",
+                       (cuenta_id, renglon_id))
+
+
+def cargar_desde_el_extracto(cuenta_id: int, renglon_id: int, *, concepto_id: int, etiqueta: str | None,
+                             detalle: str | None) -> int:
+    """Lo que está SOLO en el extracto, cargado de un toque: el movimiento
+    (fecha e importe del extracto, ingreso si el importe es positivo) y su
+    conciliación, en UNA transacción."""
+    with _escribir_cuentas() as cursor:
+        cursor.execute("SELECT fecha, importe, descripcion FROM cuentas_extracto_renglones "
+                       "WHERE id = %s AND cuenta_id = %s", (renglon_id, cuenta_id))
+        fila = cursor.fetchone()
+        if fila is None:
+            raise CuentaNoSePuede("Ese renglón del extracto no es de esta cuenta.")
+        fecha, importe, descripcion = fila
+        cursor.execute(
+            "INSERT INTO cuentas_movimientos (cuenta_id, fecha, tipo, importe, concepto_id, etiqueta_id, detalle, "
+            "como_se_cargo, sector) VALUES (%s, %s, %s, %s, %s, %s, %s, 'extracto', 'gerencia') RETURNING id",
+            (cuenta_id, fecha, "ingreso" if importe > 0 else "egreso", abs(importe), concepto_id,
+             _etiqueta_por_nombre(cursor, etiqueta), (detalle or "").strip() or descripcion))
+        movimiento_id = cursor.fetchone()[0]
+        cursor.execute("INSERT INTO cuentas_conciliaciones (renglon_id, cuenta_id, origen, origen_id, sector) "
+                       "VALUES (%s, %s, 'movimiento', %s, 'gerencia')", (renglon_id, cuenta_id, movimiento_id))
+        return movimiento_id

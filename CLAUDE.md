@@ -296,7 +296,8 @@ Módulos (se lee el que se va a tocar):
   saldos, cargar a mano, por fotos y por Excel, anular y el histórico.
 - `docs/modulos/cuentas.md`: Caja, Banco e Inversiones con un solo motor (las
   dos apps): cuentas y botones de Gerencia, conceptos por tipo,
-  transferencias de una fila con dos patas, cheques depositados por cuenta.
+  transferencias de una fila con dos patas, cheques depositados por cuenta,
+  carga por foto y Excel con revisión, y la conciliación de extractos.
 - `docs/modulos/fletes.md`: Fletes (Administración → Pedidos), el armado más
   barato, el reparto por pallets, corregir y la línea Flete de Rentabilidad
   Real.

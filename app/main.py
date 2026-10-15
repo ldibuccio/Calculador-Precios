@@ -29461,6 +29461,13 @@ def ver_foto_de_palmala(request: Request, movimiento_id: int):
 from app.db import (  # noqa: E402
     CuentaNoSePuede,
     cambiar_cuenta_del_deposito,
+    cargar_desde_el_extracto,
+    confirmar_conciliacion,
+    desconciliar,
+    extractos_de_la_cuenta,
+    guardar_conciliaciones,
+    guardar_extracto,
+    renglones_de_extractos,
     cuentas_de_banco_activas,
     activar_concepto_de_cuenta,
     activar_cuenta,
@@ -29926,6 +29933,194 @@ async def revisar_movimientos_de_cuenta(request: Request, cuenta_id: int):
         request, cuenta, quedan, origen=origen, fotos=fotos,
         aviso=(f"Se guardaron {len(buenos)}. " if buenos else "") + f"Quedan {len(quedan)} con problemas: "
               "corregilos o sacalos.")
+
+
+# --- CONCILIACIÓN (dueño, 15/10): solo en una cuenta de banco ---------------
+
+def _banco_o_404(cuenta_id: int) -> dict:
+    cuenta = _cuenta_o_404(cuenta_id)
+    if cuenta["tipo"] != "banco":
+        raise HTTPException(status_code=404, detail="Solo una cuenta de banco se concilia con su extracto.")
+    return cuenta
+
+
+def _corte_del_saldo_inicial(movimientos: list[dict]):
+    """La fecha del saldo inicial de la cuenta (el último, sin anular): lo del
+    extracto ANTERIOR a ese día ya está adentro del saldo inicial y no se
+    carga (dueño, 15/10)."""
+    fechas = [m["fecha"] for m in movimientos if m["concepto"] == "Saldo inicial" and not m["anulado"]]
+    return max(fechas) if fechas else None
+
+
+def _cruzar_la_cuenta(cuenta_id: int) -> int:
+    """Cruza lo suelto del extracto (desde el saldo inicial) con lo suelto del
+    sistema y guarda los pares. Devuelve cuántos concilió."""
+    from core.conciliacion import cruzar
+    movimientos = movimientos_de_la_cuenta(cuenta_id)
+    corte = _corte_del_saldo_inicial(movimientos)
+    renglones = [r for r in renglones_de_extractos(cuenta_id)
+                 if r["origen"] is None and (corte is None or r["fecha"] >= corte)]
+    sistema = [m for m in movimientos if not m["conciliado"] and not m["anulado"] and m["concepto"] != "Saldo inicial"]
+    pares = cruzar(renglones, sistema)
+    return guardar_conciliaciones(cuenta_id, pares) if pares else 0
+
+
+@app.get("/gerencia/cuentas/{cuenta_id}/conciliar")
+def ver_conciliacion(request: Request, cuenta_id: int, aviso: str | None = None, error: str | None = None):
+    """Conciliados (plegados), solo en el extracto (para cargar de un toque),
+    solo en el sistema (para revisar) y la diferencia de saldo al cierre de
+    cada extracto."""
+    from core.conciliacion import concepto_sugerido, saldo_al
+    puerta = _sin_clave_de_cheques(request)
+    if puerta is not None:
+        return puerta
+    cuenta = _banco_o_404(cuenta_id)
+    renglones = renglones_de_extractos(cuenta_id)
+    movimientos = movimientos_de_la_cuenta(cuenta_id)
+    corte = _corte_del_saldo_inicial(movimientos)
+    conceptos = conceptos_de_la_cuenta(cuenta_id)
+    sueltos = [r for r in renglones if r["origen"] is None]
+    antes = [r for r in sueltos if corte is not None and r["fecha"] < corte]
+    solo_extracto = [dict(r, concepto_id=concepto_sugerido(r["descripcion"], r["importe"], conceptos))
+                     for r in sueltos if corte is None or r["fecha"] >= corte]
+    fechas = [r["fecha"] for r in renglones]
+    solo_sistema = [m for m in movimientos if fechas and not m["conciliado"] and not m["anulado"]
+                    and m["concepto"] != "Saldo inicial" and min(fechas) <= m["fecha"] <= max(fechas)]
+    extractos = [dict(e, saldo_sistema=saldo_al(movimientos, e["hasta"]) if e["hasta"] else None)
+                 for e in extractos_de_la_cuenta(cuenta_id)]
+    for e in extractos:
+        e["diferencia"] = (round(float(e["saldo_final"]) - e["saldo_sistema"], 2)
+                           if e["saldo_final"] is not None and e["saldo_sistema"] is not None else None)
+    conciliados = [r for r in renglones if r["origen"] is not None]
+    return templates.TemplateResponse(request, "cuenta_conciliar.html", {
+        "cuenta": cuenta, "extractos": extractos, "conciliados": conciliados,
+        "a_revisar": [r for r in conciliados if r["a_revisar"]], "solo_extracto": solo_extracto,
+        "solo_sistema": solo_sistema, "antes": antes, "corte": corte, "conceptos": conceptos,
+        "etiquetas": etiquetas_de_cuentas(), "importe_en": importe_en, "saldo_en": saldo_en,
+        "aviso": aviso, "error": error,
+    })
+
+
+def _extracto_leido(leido: dict) -> tuple[dict, int]:
+    """Lo que devolvió la IA, limpio: (extracto, renglones que no se pudieron
+    leer). Un renglón sin fecha o sin importe no entra."""
+    from core.listado_cheques import fecha_de_la_celda, importe_de_la_celda
+    renglones, malos = [], 0
+    for r in leido.get("renglones") or []:
+        fecha, importe = fecha_de_la_celda(r.get("fecha")), importe_de_la_celda(r.get("importe"))
+        if not fecha or not importe or float(importe) == 0:
+            malos += 1
+            continue
+        saldo = importe_de_la_celda(r.get("saldo"))
+        renglones.append({"fecha": date.fromisoformat(fecha), "importe": round(float(importe), 2),
+                          "descripcion": " ".join(str(r.get("descripcion") or "").split()) or "(sin descripción)",
+                          "saldo": round(float(saldo), 2) if saldo else None})
+    desde, hasta = fecha_de_la_celda(leido.get("desde")), fecha_de_la_celda(leido.get("hasta"))
+    saldo_final = importe_de_la_celda(leido.get("saldo_final"))
+    fechas = [r["fecha"] for r in renglones]
+    return {"desde": date.fromisoformat(desde) if desde else (min(fechas) if fechas else None),
+            "hasta": date.fromisoformat(hasta) if hasta else (max(fechas) if fechas else None),
+            "saldo_final": round(float(saldo_final), 2) if saldo_final else None, "renglones": renglones}, malos
+
+
+@app.post("/gerencia/cuentas/{cuenta_id}/conciliar/extractos")
+async def subir_extractos(request: Request, cuenta_id: int):
+    """Uno o varios extractos de una vez (PDF, foto, Excel o CSV): la IA lee
+    cada uno, se guardan sus renglones (sin repetir los que ya estaban) y se
+    cruzan con el sistema."""
+    from core.lector_cuentas import extraer_extracto_de_imagenes, extraer_extracto_de_texto
+    from core.listado_cheques import texto_de_la_planilla
+    puerta = _puerta_de_gerencia_para_escribir(request)
+    if puerta is not None:
+        return puerta
+    _banco_o_404(cuenta_id)
+    formulario = await request.form()
+    archivos = [a for a in formulario.getlist("extractos") if getattr(a, "filename", "")]
+    if not archivos:
+        return RedirectResponse(f"/gerencia/cuentas/{cuenta_id}/conciliar?" + urlencode(
+            {"error": "Elegí los extractos."}), status_code=303)
+    partes, problemas = [], []
+    for archivo in archivos:
+        nombre = archivo.filename or "extracto"
+        extension = nombre.lower().rsplit(".", 1)[-1]
+        contenido = await archivo.read()
+        try:
+            if extension in ("xlsx", "xls", "csv"):
+                leido = extraer_extracto_de_texto(texto_de_la_planilla(filas_de_la_planilla(contenido, extension)))
+            elif extension == "pdf":
+                leido = extraer_extracto_de_imagenes(imagenes_desde_pdf(contenido))
+            else:
+                leido = extraer_extracto_de_imagenes([contenido])
+        except Exception:
+            logger.exception("No se pudo leer el extracto %s de la cuenta %s", nombre, cuenta_id)
+            problemas.append(f"«{nombre}» no se pudo leer")
+            continue
+        extracto, malos = _extracto_leido(leido)
+        if not extracto["renglones"]:
+            problemas.append(f"«{nombre}» no trae movimientos")
+            continue
+        resultado = guardar_extracto(cuenta_id, archivo=nombre, **extracto)
+        partes.append(f"«{nombre}»: {resultado['nuevos']} renglones"
+                      + (f" ({resultado['repetidos']} ya estaban)" if resultado["repetidos"] else "")
+                      + (f", {malos} sin fecha o sin importe" if malos else ""))
+    cruzados = _cruzar_la_cuenta(cuenta_id)
+    aviso = " · ".join(partes + problemas) + f". Se conciliaron {cruzados}."
+    return RedirectResponse(f"/gerencia/cuentas/{cuenta_id}/conciliar?" + urlencode({"aviso": aviso}), status_code=303)
+
+
+@app.post("/gerencia/cuentas/{cuenta_id}/conciliar/cruzar")
+async def volver_a_cruzar(request: Request, cuenta_id: int):
+    """Cruza de nuevo lo que quedó suelto (después de cargar algo a mano)."""
+    puerta = _puerta_de_gerencia_para_escribir(request)
+    if puerta is not None:
+        return puerta
+    _banco_o_404(cuenta_id)
+    cruzados = _cruzar_la_cuenta(cuenta_id)
+    return RedirectResponse(f"/gerencia/cuentas/{cuenta_id}/conciliar?" + urlencode(
+        {"aviso": f"Se conciliaron {cruzados}."}), status_code=303)
+
+
+@app.post("/gerencia/cuentas/{cuenta_id}/conciliar/{renglon_id}/cargar")
+async def cargar_desde_el_extracto_ruta(request: Request, cuenta_id: int, renglon_id: int):
+    """Lo que está solo en el extracto, de un toque: se carga y queda conciliado."""
+    puerta = _puerta_de_gerencia_para_escribir(request)
+    if puerta is not None:
+        return puerta
+    _banco_o_404(cuenta_id)
+    formulario = await request.form()
+    concepto_id = _id_opcional_desde_query(str(formulario.get("concepto_id") or ""))
+    url = f"/gerencia/cuentas/{cuenta_id}/conciliar"
+    if concepto_id is None:
+        return RedirectResponse(url + "?" + urlencode({"error": "Elegí el concepto."}), status_code=303)
+    try:
+        cargar_desde_el_extracto(cuenta_id, renglon_id, concepto_id=concepto_id,
+                                 etiqueta=str(formulario.get("etiqueta") or ""),
+                                 detalle=str(formulario.get("detalle") or ""))
+    except CuentaNoSePuede as motivo:
+        return RedirectResponse(url + "?" + urlencode({"error": str(motivo)}), status_code=303)
+    return RedirectResponse(url + "?" + urlencode({"aviso": "Cargado y conciliado."}), status_code=303)
+
+
+@app.post("/gerencia/cuentas/{cuenta_id}/conciliar/{renglon_id}/desconciliar")
+async def desconciliar_ruta(request: Request, cuenta_id: int, renglon_id: int):
+    puerta = _puerta_de_gerencia_para_escribir(request)
+    if puerta is not None:
+        return puerta
+    _banco_o_404(cuenta_id)
+    desconciliar(cuenta_id, renglon_id)
+    return RedirectResponse(f"/gerencia/cuentas/{cuenta_id}/conciliar?" + urlencode(
+        {"aviso": "Separados: el renglón y el movimiento quedaron sueltos."}), status_code=303)
+
+
+@app.post("/gerencia/cuentas/{cuenta_id}/conciliar/{renglon_id}/confirmar")
+async def confirmar_conciliacion_ruta(request: Request, cuenta_id: int, renglon_id: int):
+    puerta = _puerta_de_gerencia_para_escribir(request)
+    if puerta is not None:
+        return puerta
+    _banco_o_404(cuenta_id)
+    confirmar_conciliacion(cuenta_id, renglon_id)
+    return RedirectResponse(f"/gerencia/cuentas/{cuenta_id}/conciliar?" + urlencode({"aviso": "Confirmado."}),
+                            status_code=303)
 
 
 # --- TRANSFERENCIAS: se cargan una vez y aparecen en las dos cuentas --------

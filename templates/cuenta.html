@@ -38,6 +38,7 @@
     <div class="acciones">
       <a href="/gerencia/cuentas/{{ cuenta.id }}/cargar">Cargar movimiento</a>
       <a href="/gerencia/cuentas/{{ cuenta.id }}/transferir">Transferir a otra cuenta</a>
+      {% if cuenta.tipo == 'banco' %}<a href="/gerencia/cuentas/{{ cuenta.id }}/conciliar">Conciliar con el extracto</a>{% endif %}
     </div>
   </div>
 
