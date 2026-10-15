@@ -206,3 +206,125 @@ def saldo_de_la_cuenta(movimientos: list[dict], hoy: date) -> dict:
         else:
             saldo += valor
     return {"saldo": round(saldo, 2), "a_futuro": round(a_futuro, 2)}
+
+
+# --- CARGA POR FOTO O POR EXCEL (dueño, 15/10): la pantalla de revisión -----
+# Como Palmala Cruces: lo leído se muestra para corregir y NADA se guarda solo.
+
+SINONIMOS = {
+    "fecha": ("fecha", "dia", "fecha movimiento", "fecha operacion"),
+    "importe": ("importe", "monto", "valor", "total"),
+    "ingreso": ("ingreso", "ingresos", "entrada", "entradas", "credito", "creditos"),
+    "egreso": ("egreso", "egresos", "salida", "salidas", "debito", "debitos", "gasto", "gastos"),
+    "tipo": ("tipo", "movimiento", "ingreso o egreso", "sentido"),
+    "concepto": ("concepto", "rubro", "categoria"),
+    "etiqueta": ("etiqueta", "de quien", "para quien", "persona", "empresa", "quien", "beneficiario", "origen"),
+    "detalle": ("detalle", "descripcion", "observacion", "observaciones", "comentario", "nota", "referencia"),
+}
+
+
+def reconocer_columnas(titulos: list) -> dict:
+    """{campo: índice} de los títulos que se reconocen, exactos (sin acentos
+    ni mayúsculas)."""
+    reconocidas: dict = {}
+    normales = [_normalizar(t) for t in titulos]
+    for campo, nombres in SINONIMOS.items():
+        buscados = {_normalizar(n) for n in nombres}
+        for indice, titulo in enumerate(normales):
+            if titulo and titulo in buscados and indice not in reconocidas.values():
+                reconocidas.setdefault(campo, indice)
+    return reconocidas
+
+
+def crudos_de_la_planilla(filas: list[list]) -> list[dict] | None:
+    """Los movimientos de la planilla, o None si no se reconoce la fila de
+    títulos (una Fecha y, o el Importe, o las columnas Ingreso y Egreso). Las
+    filas vacías y las de totales o saldos no son movimientos."""
+    for indice, fila in enumerate(filas[:15]):
+        columnas = reconocer_columnas(list(fila))
+        if "fecha" not in columnas or not ({"importe", "ingreso", "egreso"} & set(columnas)):
+            continue
+        crudos = []
+        for datos in filas[indice + 1:]:
+            if all(v is None or str(v).strip() == "" for v in datos):
+                continue
+            if any(_normalizar(celda).startswith(("total", "subtotal", "saldo")) for celda in datos if celda):
+                continue
+            crudos.append({campo: (datos[col] if col < len(datos) else None) for campo, col in columnas.items()})
+        return crudos
+    return None
+
+
+def tipo_de_la_celda(valor) -> str:
+    texto = _normalizar(valor)
+    if texto.startswith(("ingres", "entrad", "credit", "cobr")):
+        return "ingreso"
+    if texto.startswith(("egres", "salid", "debit", "pag", "gast")):
+        return "egreso"
+    return ""
+
+
+def renglones_para_revisar(crudos: list[dict], conceptos: list[dict], *, hoy: date,
+                           foto_de_cada: list[int] | None = None) -> list[dict]:
+    """Lo leído como renglones del formulario, textos que se corrigen a mano.
+    Con columnas Ingreso y Egreso, el tipo sale de cuál tiene el importe; un
+    importe negativo es un egreso. El concepto se busca por nombre entre los
+    de ESTA cuenta; si no está, queda vacío y se elige (nunca se adivina)."""
+    from core.listado_cheques import fecha_de_la_celda, importe_de_la_celda
+    renglones = []
+    for n, crudo in enumerate(crudos):
+        tipo = crudo.get("tipo_fijo") or tipo_de_la_celda(crudo.get("tipo"))
+        importe = importe_de_la_celda(crudo.get("importe"))
+        if not importe:
+            ingreso, egreso = importe_de_la_celda(crudo.get("ingreso")), importe_de_la_celda(crudo.get("egreso"))
+            if ingreso and not egreso:
+                importe, tipo = ingreso, "ingreso"
+            elif egreso and not ingreso:
+                importe, tipo = egreso, "egreso"
+        if importe.startswith("-"):
+            importe, tipo = importe[1:], tipo or "egreso"
+        concepto = str(crudo.get("concepto") or "").strip()
+        renglones.append({
+            "fecha": fecha_de_la_celda(crudo.get("fecha")) or hoy.isoformat(),
+            "tipo": tipo, "importe": importe,
+            "concepto_id": concepto_por_nombre(concepto, conceptos), "concepto_leido": concepto,
+            "etiqueta": " ".join(str(crudo.get("etiqueta") or "").split()),
+            "detalle": str(crudo.get("detalle") or "").strip(),
+            "foto": (foto_de_cada[n] if foto_de_cada else -1), "sacar": False, "tildado": False,
+        })
+    return renglones
+
+
+def renglones_de_comprobantes_leidos(leidas: list[dict], conceptos: list[dict], *, hoy: date
+                                     ) -> tuple[list[dict], list[str]]:
+    """Las fotos o PDF de comprobantes (una lectura por archivo, cada una con
+    sus "movimientos"): un renglón por movimiento, con de qué foto salió."""
+    crudos, fotos, avisos = [], [], []
+    for foto, leida in enumerate(leidas):
+        if leida.get("error"):
+            avisos.append(f"La foto {foto + 1} no se pudo leer: {leida['error']}")
+            continue
+        for movimiento in leida.get("movimientos") or []:
+            crudos.append({"fecha": movimiento.get("fecha"), "importe": movimiento.get("importe"),
+                           "tipo_fijo": movimiento.get("tipo") if movimiento.get("tipo") in NOMBRE_DE_SENTIDO else "",
+                           "concepto": movimiento.get("concepto"), "etiqueta": movimiento.get("quien"),
+                           "detalle": movimiento.get("detalle")})
+            fotos.append(foto)
+    if not crudos and not avisos:
+        avisos.append("No se encontró ningún movimiento en las fotos.")
+    return renglones_para_revisar(crudos, conceptos, hoy=hoy, foto_de_cada=fotos), avisos
+
+
+def poner_a_todos(renglones: list[dict], cambios: dict) -> int:
+    """Pone los `cambios` que vienen con valor (tipo, concepto, etiqueta,
+    fecha) en los TILDADOS, o en todos los que no se sacaron si no hay
+    ninguno tildado. Devuelve a cuántos."""
+    tildados = [r for r in renglones if r.get("tildado") and not r.get("sacar")]
+    destino = tildados or [r for r in renglones if not r.get("sacar")]
+    for r in destino:
+        if cambios.get("tipo") in NOMBRE_DE_SENTIDO:
+            r["tipo"] = cambios["tipo"]
+        for campo in ("concepto_id", "etiqueta", "fecha"):
+            if cambios.get(campo):
+                r[campo] = cambios[campo]
+    return len(destino)

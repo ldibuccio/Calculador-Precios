@@ -29760,6 +29760,174 @@ async def activar_concepto_de_cuenta_ruta(request: Request, cuenta_id: int, conc
     return RedirectResponse(f"/gerencia/cuentas/{cuenta_id}/cargar", status_code=303)
 
 
+# --- VARIAS FOTOS O UN EXCEL: la pantalla de revisión (dueño, 15/10) --------
+
+def _renderizar_revision_de_cuenta(request: Request, cuenta: dict, renglones: list[dict], *, origen: str,
+                                   fotos: list[str], aviso: str | None = None, error: str | None = None,
+                                   status_code: int = 200):
+    from core.cuentas import problemas_del_movimiento as problemas_de
+    conceptos = conceptos_de_la_cuenta(cuenta["id"])
+    problemas = [problemas_de(r, conceptos) for r in renglones]
+    vivos = [(r, p) for r, p in zip(renglones, problemas) if not r.get("sacar")]
+    orden = sorted(range(len(renglones)), key=lambda i: (not problemas[i] or bool(renglones[i].get("sacar")), i))
+    neto = sum((_importe_de_cheque(r["importe"]) or 0) * (1 if r["tipo"] == "ingreso" else -1)
+               for r, _ in vivos if r["tipo"] in NOMBRE_DE_SENTIDO_DE_CUENTA)
+    return templates.TemplateResponse(request, "cuenta_revisar.html", {
+        "cuenta": cuenta, "renglones": [(i, renglones[i], problemas[i]) for i in orden], "cantidad": len(renglones),
+        "origen": origen, "fotos": fotos, "cuantos": len(vivos), "bien": sum(1 for _, p in vivos if not p),
+        "con_problema": sum(1 for _, p in vivos if p), "neto": round(neto, 2),
+        "conceptos": conceptos, "nombre_de_concepto": {c["id"]: c["nombre"] for c in conceptos},
+        "etiquetas": etiquetas_de_cuentas(), "sentidos": SENTIDOS_DE_CUENTA,
+        "nombre_de_sentido": NOMBRE_DE_SENTIDO_DE_CUENTA, "importe_en": importe_en, "saldo_en": saldo_en,
+        "aviso": aviso, "error": error,
+    }, status_code=status_code)
+
+
+@app.post("/gerencia/cuentas/{cuenta_id}/cargar/fotos")
+async def leer_fotos_de_cuenta(request: Request, cuenta_id: int):
+    """Varias fotos o PDF de comprobantes: la IA lee cada uno y se abre la
+    revisión, un renglón por movimiento. TODAVÍA NO GUARDA."""
+    from core.cuentas import renglones_de_comprobantes_leidos
+    from core.lector_cuentas import extraer_movimientos_de_imagenes
+    puerta = _puerta_de_gerencia_para_escribir(request)
+    if puerta is not None:
+        return puerta
+    cuenta = _cuenta_o_404(cuenta_id)
+    formulario = await request.form()
+    archivos = [a for a in formulario.getlist("fotos") if getattr(a, "filename", "")]
+    if not archivos:
+        return _renderizar_carga_de_cuenta(request, cuenta, error="Elegí las fotos o los PDF.", status_code=400)
+    conceptos = conceptos_de_la_cuenta(cuenta_id)
+    activos = [c["nombre"] for c in conceptos if c["activo"]]
+    leidas, fotos = [], []
+    for archivo in archivos:
+        contenido = await archivo.read()
+        es_pdf = (archivo.filename or "").lower().endswith(".pdf")
+        fotos.append("" if es_pdf else _generar_preview_foto(contenido))
+        try:
+            leidas.append(extraer_movimientos_de_imagenes(
+                imagenes_desde_pdf(contenido) if es_pdf else [contenido], cuenta=cuenta["nombre"],
+                tipo=NOMBRE_DE_TIPO_DE_CUENTA[cuenta["tipo"]], conceptos=activos))
+        except Exception:
+            logger.exception("No se pudo leer el comprobante %s de la cuenta %s", archivo.filename, cuenta_id)
+            leidas.append({"error": f"«{archivo.filename}» no se entiende como un comprobante"})
+    renglones, avisos = renglones_de_comprobantes_leidos(leidas, conceptos, hoy=_hoy_argentina())
+    return _renderizar_revision_de_cuenta(request, cuenta, renglones, origen="foto", fotos=fotos,
+                                          aviso=" ".join(avisos) or f"Se leyeron {len(renglones)} movimientos. "
+                                                                    "Revisalos antes de guardar.")
+
+
+@app.post("/gerencia/cuentas/{cuenta_id}/cargar/excel")
+async def leer_excel_de_cuenta(request: Request, cuenta_id: int, archivo: UploadFile = File(...)):
+    """Un Excel o CSV con muchos movimientos: las columnas se reconocen por su
+    título (Fecha, Importe o Ingreso y Egreso, Concepto, Etiqueta, Detalle)."""
+    from core.cuentas import crudos_de_la_planilla as crudos_de_cuenta, renglones_para_revisar as renglones_de_cuenta
+    puerta = _puerta_de_gerencia_para_escribir(request)
+    if puerta is not None:
+        return puerta
+    cuenta = _cuenta_o_404(cuenta_id)
+    nombre = (archivo.filename or "").lower()
+    tipo = "xlsx" if nombre.endswith(".xlsx") else "xls" if nombre.endswith(".xls") else \
+        "csv" if nombre.endswith(".csv") else None
+    if tipo is None:
+        return _renderizar_carga_de_cuenta(request, cuenta, error="Subí un Excel (.xlsx o .xls) o un CSV.",
+                                           status_code=400)
+    import zipfile
+
+    import xlrd
+    from openpyxl.utils.exceptions import InvalidFileException
+    try:
+        crudos = crudos_de_cuenta(filas_de_la_planilla(await archivo.read(), tipo))
+    except (ValueError, KeyError, IndexError, UnicodeDecodeError, zipfile.BadZipFile, xlrd.XLRDError,
+            InvalidFileException):
+        logger.exception("No se pudo leer el Excel de la cuenta %s", cuenta_id)
+        crudos = None
+    if not crudos:
+        return _renderizar_carga_de_cuenta(
+            request, cuenta, error="No se reconocieron los movimientos: la planilla tiene que tener una columna "
+                                   "Fecha y otra Importe (o Ingreso y Egreso).", status_code=400)
+    renglones = renglones_de_cuenta(crudos, conceptos_de_la_cuenta(cuenta_id), hoy=_hoy_argentina())
+    return _renderizar_revision_de_cuenta(request, cuenta, renglones, origen="excel", fotos=[],
+                                          aviso=f"Se leyeron {len(renglones)} movimientos. Revisalos antes de guardar.")
+
+
+def _renglones_de_cuenta_del_formulario(formulario) -> list[dict]:
+    renglones = []
+    for i in range(_cantidad_de_renglones(formulario)):
+        r = _movimiento_de_cuenta_del_formulario(formulario, f"_{i}")
+        try:
+            foto = int(str(formulario.get(f"foto_{i}") or "-1"))
+        except ValueError:
+            foto = -1
+        r.update(concepto_leido=str(formulario.get(f"concepto_leido_{i}") or ""), foto=foto,
+                 sacar=formulario.get(f"sacar_{i}") == "1", tildado=formulario.get(f"tildado_{i}") == "1")
+        renglones.append(r)
+    return renglones
+
+
+@app.post("/gerencia/cuentas/{cuenta_id}/revisar")
+async def revisar_movimientos_de_cuenta(request: Request, cuenta_id: int):
+    """"Revisar", "Para todos", "Sacar los tildados" y "Guardar todos" (los
+    que están bien, juntos, cada uno con su foto)."""
+    from core.cuentas import poner_a_todos as poner_a_todos_en_cuenta, problemas_del_movimiento as problemas_de
+    puerta = _puerta_de_gerencia_para_escribir(request)
+    if puerta is not None:
+        return puerta
+    cuenta = _cuenta_o_404(cuenta_id)
+    formulario = await _formulario_de_un_listado(request)
+    renglones = _renglones_de_cuenta_del_formulario(formulario)
+    origen = "foto" if formulario.get("origen") == "foto" else "excel"
+    fotos = [str(f) for f in formulario.getlist("foto_leida")]
+    pintar = lambda **kw: _renderizar_revision_de_cuenta(request, cuenta, renglones, origen=origen, fotos=fotos, **kw)  # noqa: E731
+    accion = str(formulario.get("accion") or "revisar")
+    if accion == "a_todos":
+        cuantos = poner_a_todos_en_cuenta(renglones, {
+            "tipo": str(formulario.get("tipo_todos") or ""),
+            "concepto_id": _id_opcional_desde_query(str(formulario.get("concepto_todos") or "")),
+            "etiqueta": " ".join(str(formulario.get("etiqueta_todos") or "").split()),
+            "fecha": str(_fecha_de_cheque(formulario.get("fecha_todos")) or "") or None})
+        for r in renglones:
+            r["tildado"] = False
+        return pintar(aviso="Se cambió 1 movimiento." if cuantos == 1 else f"Se cambiaron {cuantos} movimientos.")
+    if accion == "sacar_tildados":
+        for r in renglones:
+            if r["tildado"]:
+                r["sacar"], r["tildado"] = True, False
+        return pintar()
+    if accion != "guardar":
+        return pintar()
+    conceptos = conceptos_de_la_cuenta(cuenta_id)
+    problemas = [problemas_de(r, conceptos) for r in renglones]
+    buenos = [r for r, p in zip(renglones, problemas) if not p and not r["sacar"]]
+    quedan = [r for r, p in zip(renglones, problemas) if p and not r["sacar"]]
+    subidas: dict = {}
+    try:
+        for r in buenos:
+            if r["foto"] not in subidas and 0 <= r["foto"] < len(fotos):
+                contenido = _bytes_desde_data_uri(fotos[r["foto"]])
+                subidas[r["foto"]] = subir_foto_comanda(contenido, "comprobante", prefijo=PREFIJO_CUENTAS) \
+                    if contenido else None
+        if buenos:
+            guardar_movimientos_de_cuenta(cuenta_id, [_movimiento_de_cuenta_para_guardar(r, subidas.get(r["foto"]))
+                                                      for r in buenos], como_se_cargo=origen)
+    except CuentaNoSePuede as motivo:
+        for ruta in subidas.values():
+            if ruta:
+                borrar_foto_comanda(ruta)
+        return pintar(error=str(motivo), status_code=400)
+    except Exception:
+        for ruta in subidas.values():
+            if ruta:
+                borrar_foto_comanda(ruta)
+        raise
+    if not quedan:
+        return _a_la_cuenta(cuenta_id, aviso=f"{len(buenos)} movimientos cargados")
+    return _renderizar_revision_de_cuenta(
+        request, cuenta, quedan, origen=origen, fotos=fotos,
+        aviso=(f"Se guardaron {len(buenos)}. " if buenos else "") + f"Quedan {len(quedan)} con problemas: "
+              "corregilos o sacalos.")
+
+
 # --- TRANSFERENCIAS: se cargan una vez y aparecen en las dos cuentas --------
 
 def _otras_cuentas(cuenta: dict) -> list[dict]:

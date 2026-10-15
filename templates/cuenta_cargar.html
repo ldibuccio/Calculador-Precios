@@ -44,6 +44,20 @@
     <div class="acciones"><button type="submit">Guardar</button></div>
   </form>
 
+  <form class="tarjeta" method="post" action="/gerencia/cuentas/{{ cuenta.id }}/cargar/fotos" enctype="multipart/form-data" data-fotos>
+    <h2>¿Tenés fotos o PDF de comprobantes?</h2>
+    <div class="campos"><label class="ancho">Las fotos o los PDF (podés elegir muchos)<input type="file" name="fotos" accept="image/*,.pdf" multiple required></label></div>
+    <div class="acciones"><button type="submit" class="secundario">Leer las fotos</button></div>
+    <p class="nota">Se arma un renglón por movimiento para revisar antes de guardar. Ej.: recibos, transferencias, una hoja de la caja.</p>
+  </form>
+
+  <form class="tarjeta" method="post" action="/gerencia/cuentas/{{ cuenta.id }}/cargar/excel" enctype="multipart/form-data" data-excel>
+    <h2>¿Tenés muchos en un Excel?</h2>
+    <div class="campos"><label class="ancho">El Excel o CSV<input type="file" name="archivo" accept=".xlsx,.xls,.csv" required></label></div>
+    <div class="acciones"><button type="submit" class="secundario">Leer el Excel</button></div>
+    <p class="nota">Tiene que tener una columna Fecha y otra Importe (o Ingreso y Egreso). Si tiene Concepto, Etiqueta y Detalle, se leen también.</p>
+  </form>
+
   <div class="tarjeta" data-conceptos>
     <h2>Los conceptos de {{ cuenta.nombre }}</h2>
     {% for c in conceptos %}
