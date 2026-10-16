@@ -96,7 +96,7 @@
     <div class="acciones"><button type="submit">Reclamo resuelto</button></div>
   </form>
   {% elif cheque.estado != 'reclamo_resuelto' %}
-  <details class="tarjeta">
+  <details class="tarjeta" id="rechazar">
     <summary>Marcar como rechazado</summary>
     <form method="post" action="/gerencia/cheques/{{ cheque.id }}/rechazar{{ q_volver(volver) }}">
       <div class="campos">
@@ -143,6 +143,12 @@
       {% if cheque.resuelto_el %}<li>{{ cheque.resuelto_el.strftime('%d/%m/%Y') }} · Gerencia · reclamo resuelto: {{ cheque.resolucion }}</li>{% endif %}
     </ul>
   </div>
+<script>
+  // Desde "Conciliar con el banco" se llega con #rechazar: abre el bloque (16/10).
+  if (location.hash === "#rechazar" && document.getElementById("rechazar")) {
+    document.getElementById("rechazar").open = true;
+  }
+</script>
 {% include "_pie_version.html" %}
 </body>
 </html>

@@ -169,6 +169,26 @@ las plantillas `cheques*.html` y `cheque.html`. Tests:
     los que tienen problema. El proveedor se guarda solo en un pago y la
     cuenta solo en un depósito (`cheques_salidas.cuenta_deposito` guarda la
     cuenta leída, migración `cheques_2`). Tests: `tests/test_cheques_aplicar.py`.
+- **Conciliar con el banco** (dueño, 16/10; botón en la Cartera,
+  `/gerencia/cheques/conciliar`, `core/conciliar_cartera.py`). Se suben uno o
+  varios archivos del banco (el listado de ECHEQ en cartera o en custodia:
+  Excel, PDF o capturas) y se leen como en "Cargar cheques" (la planilla celda
+  por celda, la foto o el PDF con la IA). El mismo cheque (número, banco,
+  monto y fecha) que ya vino en un archivo anterior se toma una vez y se
+  avisa. Se cruza contra los cheques EN CARTERA: por número (sin ceros
+  adelante) y banco (`clave_de_banco`); si lo leído no trae banco, por número
+  y monto. Después se controlan el monto y la fecha de pago. Cuatro grupos,
+  con cantidad y total: 1) coinciden (verde, plegado); 2) en el banco y no en
+  el sistema, con "Cargarlos", que los abre en "Revisar cheques" (cliente por
+  CUIT propio, "Para todos"); 3) en el sistema y no en el banco (rojo), cada
+  uno con "Aplicar" y "Rechazado" (abre la ficha con el rechazo desplegado);
+  4) con diferencia, banco y sistema lado a lado. "Solo ECHEQ" (tildado por
+  defecto): los físicos no están en el banco, no se comparan y van aparte.
+  Arriba: "Banco: X cheques $Y · Sistema: Z cheques $W · Diferencia $V". PDF y
+  Excel con el mismo cruce que la pantalla (el encabezado dice si fue solo
+  ECHEQ). Nada se guarda: lo leído viaja en el formulario para volver a
+  cruzar, exportar y cargar. Sin migración. Tests:
+  `tests/test_cheques_conciliar.py`.
 - **Ficha**: datos, fotos, historial, y aplicar, rechazar, resolver el
   reclamo, corregir y agregar fotos.
 - **Panel**: cuadro 13 "Cheques" (`docs/modulos/panel_control.md`).

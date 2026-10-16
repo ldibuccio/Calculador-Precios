@@ -1,0 +1,136 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Conciliar con el banco</title>
+<style>
+{% include "_cheques_estilos.html" %}
+  .grupo h2 { display: flex; flex-wrap: wrap; justify-content: space-between; gap: 0.3rem; }
+  .grupo.verde { border-left: 4px solid #15803d; }
+  .grupo.rojo-borde { border-left: 4px solid #dc2626; }
+  .grupo.ambar { border-left: 4px solid #b45309; }
+  .lado-a-lado { display: flex; flex-wrap: wrap; gap: 0.5rem; margin-top: 0.3rem; }
+  .lado-a-lado > div { flex: 1 1 8rem; min-width: 0; background: #f9fafb; border-radius: 8px; padding: 0.4rem 0.6rem; }
+  .lado-a-lado .difiere { color: #b45309; font-weight: 700; }
+  .tilde { display: flex; align-items: center; gap: 0.5rem; min-height: 44px; }
+  .tilde input { width: 1.3rem; height: 1.3rem; flex: none; }
+  .fila .acciones { margin-top: 0.3rem; }
+  .fila .acciones a { flex: 0 1 auto; min-height: 44px; padding: 0.6rem 0.9rem; }
+  details.grupo > summary { color: inherit; }
+</style>
+</head>
+<body>
+  {% set barra_sector = "gerencia" %}
+  {% set barra_titulo = "Conciliar con el banco" %}
+  {% set barra_atras = "/gerencia/cheques" %}
+  {% include "_barra_navegacion.html" %}
+
+  {% for aviso in avisos %}<div class="aviso" data-aviso>{{ aviso }}</div>{% endfor %}
+  {% if error %}<div class="error" data-error>{{ error }}</div>{% endif %}
+
+  {# CONCILIAR CON EL BANCO (dueño, 16/10): el listado de ECHEQ del banco
+     contra la cartera. Nada se guarda: es una foto de cómo están. #}
+  {% macro subir() %}
+  <form class="tarjeta" method="post" action="/gerencia/cheques/conciliar" enctype="multipart/form-data" data-subir>
+    <h2>{{ "Subir otro listado" if resultado else "¿Qué dice el banco?" }}</h2>
+    <div class="campos">
+      <label class="ancho">El listado de ECHEQ en cartera o en custodia: Excel, PDF o capturas del home banking (podés elegir varios)
+        <input type="file" name="archivos" accept="image/*,.pdf,.xlsx,.xls,.csv" multiple></label>
+    </div>
+    <label class="tilde"><input type="checkbox" name="solo_echeq" value="1" {% if solo_echeq %}checked{% endif %}>Solo ECHEQ (los físicos no están en el banco)</label>
+    <div class="acciones"><button type="submit">Cruzar con la cartera</button></div>
+  </form>
+  {% endmacro %}
+  {# Sin resultado, el formulario arriba; con resultado, arriba va el resumen y el formulario al final. #}
+  {% if not resultado %}{{ subir() }}{% endif %}
+
+  {% if resultado %}{% set r = resultado %}{% set t = r.totales %}
+  <div class="tarjeta">
+    <p class="total-dato" data-resumen>Banco: {{ r.banco.cuantos }} cheques {{ r.banco.total|moneda }} · Sistema: {{ r.sistema.cuantos }} cheques {{ r.sistema.total|moneda }} · Diferencia <span class="{{ 'rojo' if r.diferencia }}">{{ r.diferencia|moneda }}</span></p>
+    <p class="nota">{{ "Se comparan solo los ECHEQ en cartera; los físicos van aparte." if r.solo_echeq else "Se comparan los ECHEQ y los físicos en cartera." }}</p>
+    <form method="post" action="/gerencia/cheques/conciliar/cruzar">
+      <input type="hidden" name="leidos" value="{{ leidos_json }}">
+      <label class="tilde"><input type="checkbox" name="solo_echeq" value="1" {% if r.solo_echeq %}checked{% endif %}>Solo ECHEQ</label>
+      <div class="acciones"><button type="submit" class="secundario">Volver a cruzar</button></div>
+    </form>
+    {# El PDF y el Excel salen con lo MISMO que se ve: el filtro va fijo. #}
+    <form method="post" action="/gerencia/cheques/conciliar/pdf" data-exportar>
+      <input type="hidden" name="leidos" value="{{ leidos_json }}">
+      {% if r.solo_echeq %}<input type="hidden" name="solo_echeq" value="1">{% endif %}
+      <div class="acciones">
+        <button type="submit" class="secundario">PDF</button>
+        <button type="submit" formaction="/gerencia/cheques/conciliar/excel" class="secundario">Excel</button>
+      </div>
+    </form>
+  </div>
+
+  <details class="tarjeta grupo verde" data-grupo="coinciden">
+    <summary><span>1. Coinciden: <strong data-cuantos>{{ r.coinciden|length }}</strong> · <span data-total>{{ t.coinciden|moneda }}</span></span></summary>
+    {% for p in r.coinciden %}{% set c = p.sistema %}
+    <div class="fila" data-numero="{{ c.numero }}"><span class="fila-que">Nº {{ c.numero }}</span> · {{ c.banco }} · {{ c.de_quien }}<br>
+      <span class="fila-dato">se cobra el {{ c.fecha_pago.strftime('%d/%m/%Y') }} · <span class="importe">{{ c.importe|moneda }}</span></span></div>
+    {% else %}<p class="vacio">Ninguno.</p>{% endfor %}
+  </details>
+
+  <div class="tarjeta grupo ambar" data-grupo="solo_banco">
+    <h2><span>2. En el banco y NO en el sistema: <span data-cuantos>{{ r.solo_banco|length }}</span></span><span data-total>{{ t.solo_banco|moneda }}</span></h2>
+    <p class="nota">Faltan cargar.</p>
+    {% for l in r.solo_banco %}
+    <div class="fila" data-numero="{{ l.numero }}"><span class="fila-que">Nº {{ l.numero }}</span> · {{ l.banco or "sin banco" }} · {{ l.librador or "sin librador" }}<br>
+      <span class="fila-dato">{% if l.fecha_pago %}se cobra el {{ l.fecha_pago.strftime('%d/%m/%Y') }} · {% endif %}<span class="importe">{{ l.importe|moneda if l.importe is not none else "sin monto" }}</span></span></div>
+    {% else %}<p class="vacio">Ninguno.</p>{% endfor %}
+    {% if r.solo_banco %}
+    <form method="post" action="/gerencia/cheques/conciliar/cargar">
+      <input type="hidden" name="leidos" value="{{ leidos_json }}">
+      {% if r.solo_echeq %}<input type="hidden" name="solo_echeq" value="1">{% endif %}
+      <div class="acciones"><button type="submit" data-cargar>Cargarlos</button></div>
+    </form>
+    {% endif %}
+  </div>
+
+  <div class="tarjeta grupo rojo-borde" data-grupo="solo_sistema">
+    <h2><span class="rojo">3. En el sistema y NO en el banco: <span data-cuantos>{{ r.solo_sistema|length }}</span></span><span class="rojo" data-total>{{ t.solo_sistema|moneda }}</span></h2>
+    <p class="nota">Probablemente salieron y no se registró.</p>
+    {% for c in r.solo_sistema %}
+    <div class="fila" data-numero="{{ c.numero }}"><span class="fila-que">Nº {{ c.numero }}</span> · {{ c.banco }} · {{ c.de_quien }}<br>
+      <span class="fila-dato">se cobra el {{ c.fecha_pago.strftime('%d/%m/%Y') }} · <span class="importe">{{ c.importe|moneda }}</span></span>
+      <div class="acciones">
+        <a href="/gerencia/cheques/aplicar?cheque_id={{ c.id }}" data-aplicar>Aplicar</a>
+        <a href="/gerencia/cheques/{{ c.id }}#rechazar" data-rechazado>Rechazado</a>
+      </div>
+    </div>
+    {% else %}<p class="vacio">Ninguno.</p>{% endfor %}
+  </div>
+
+  <div class="tarjeta grupo ambar" data-grupo="con_diferencia">
+    <h2><span>4. Con diferencia: <span data-cuantos>{{ r.con_diferencia|length }}</span></span><span data-total>banco {{ t.con_diferencia_banco|moneda }} · sistema {{ t.con_diferencia_sistema|moneda }}</span></h2>
+    {% for p in r.con_diferencia %}{% set l = p.banco %}{% set c = p.sistema %}
+    <div class="fila" data-numero="{{ c.numero }}"><span class="fila-que">Nº {{ c.numero }}</span> · {{ c.banco }} · difiere {{ p.diferencias|join(" y ") }}
+      <div class="lado-a-lado">
+        <div data-version="banco"><strong>Banco</strong><br>
+          <span class="{{ 'difiere' if 'monto' in p.diferencias }}">{{ l.importe|moneda if l.importe is not none else "sin monto" }}</span><br>
+          <span class="{{ 'difiere' if 'fecha de pago' in p.diferencias }}">{{ l.fecha_pago.strftime('%d/%m/%Y') if l.fecha_pago else "sin fecha" }}</span></div>
+        <div data-version="sistema"><strong>Sistema</strong><br>
+          <span class="{{ 'difiere' if 'monto' in p.diferencias }}">{{ c.importe|moneda }}</span><br>
+          <span class="{{ 'difiere' if 'fecha de pago' in p.diferencias }}">{{ c.fecha_pago.strftime('%d/%m/%Y') }}</span></div>
+      </div>
+      <div class="acciones"><a href="/gerencia/cheques/{{ c.id }}">Ver la ficha</a></div>
+    </div>
+    {% else %}<p class="vacio">Ninguno.</p>{% endfor %}
+  </div>
+
+  {% if r.solo_echeq %}
+  <details class="tarjeta grupo" data-grupo="fisicos">
+    <summary><span>Físicos en cartera, aparte: <strong data-cuantos>{{ r.fisicos|length }}</strong> · <span data-total>{{ t.fisicos|moneda }}</span></span></summary>
+    <p class="nota">No figuran en el banco: no se marcan como faltantes.</p>
+    {% for c in r.fisicos %}
+    <div class="fila" data-numero="{{ c.numero }}"><span class="fila-que">Nº {{ c.numero }}</span> · {{ c.banco }} · {{ c.de_quien }} · <span class="importe">{{ c.importe|moneda }}</span></div>
+    {% else %}<p class="vacio">Ninguno.</p>{% endfor %}
+  </details>
+  {% endif %}
+  {{ subir() }}
+  {% endif %}
+{% include "_pie_version.html" %}
+</body>
+</html>

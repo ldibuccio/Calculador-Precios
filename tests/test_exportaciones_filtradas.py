@@ -131,6 +131,10 @@ EXPORTACIONES = {
     "/administracion/rendimientos/excel": "tests/test_rendimientos.py",
     "/compras/rendimientos/pdf": "tests/test_rendimientos.py",
     "/compras/rendimientos/excel": "tests/test_rendimientos.py",
+    # Conciliar con el banco (16/10): lo leído y "Solo ECHEQ" viajan fijos en el
+    # formulario del resultado; lo cuida tests/test_cheques_conciliar.py.
+    "/gerencia/cheques/conciliar/pdf": "tests/test_cheques_conciliar.py",
+    "/gerencia/cheques/conciliar/excel": "tests/test_cheques_conciliar.py",
 }
 
 # Rutas que devuelven una imagen o un archivo subido, no una exportación.
