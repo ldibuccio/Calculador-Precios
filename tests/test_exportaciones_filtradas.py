@@ -126,6 +126,11 @@ EXPORTACIONES = {
     # pantalla y el encabezado los dice; lo cuida tests/test_rendimientos.py.
     "/comercial/rendimientos/pdf": "tests/test_rendimientos.py",
     "/comercial/rendimientos/excel": "tests/test_rendimientos.py",
+    # Y las mismas desde Administración y Compras (16/10).
+    "/administracion/rendimientos/pdf": "tests/test_rendimientos.py",
+    "/administracion/rendimientos/excel": "tests/test_rendimientos.py",
+    "/compras/rendimientos/pdf": "tests/test_rendimientos.py",
+    "/compras/rendimientos/excel": "tests/test_rendimientos.py",
 }
 
 # Rutas que devuelven una imagen o un archivo subido, no una exportación.

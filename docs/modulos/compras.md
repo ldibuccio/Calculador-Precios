@@ -618,7 +618,7 @@ más apoyados en `[-1]`** — ninguno de ellos sobre `crear_compra`, verificado 
 costumbre no se hereda por estar escrita en un lugar; se hereda cuando algo la
 exige.
 
-## El hub de Compras: 7 botones en tres grupos (04/10, dueño)
+## El hub de Compras: 8 botones en tres grupos (04/10 y 16/10, dueño)
 
 Eran 14. Lo que era la misma cosa vista de otro lado quedó adentro, como
 opción o como pestaña (`templates/_pestanas_compras.html`); cada pantalla
@@ -628,8 +628,9 @@ sigue con su dirección, y ningún botón desapareció del sistema:
   con una foto, con varias fotos o con un listado.
 - **Operaciones** → *Buscar compras* (pestañas Todas · Sin precio), *Qué
   comprar hoy* (pestañas 1. Lo que pide cada cliente · 2. Qué comprar hoy),
-  *Analizar artículo* (pestañas Qué pasa si · Objetivo de compra) y
-  *Disponibles*.
+  *Analizar artículo* (pestañas Qué pasa si · Objetivo de compra),
+  *Disponibles* y *Rendimientos* (16/10: la misma pantalla de Comercial, ver
+  `docs/modulos/fichas_y_precios.md`).
 - **Catálogo** → *Artículos* y *Proveedores*.
 
 **Cajas se fue a Administración** (ver `docs/modulos/cajas.md`). Arriba, la

@@ -42,14 +42,15 @@
 </style>
 </head>
 <body>
-  {% set barra_sector = "comercial" %}
+  {# Comercial, Administración o Compras: el sector viene del prefijo (16/10). #}
+  {% set barra_sector = sector %}
   {% set barra_titulo = "Rendimientos" %}
-  {% set barra_atras = "/comercial" %}
+  {% set barra_atras = "/" ~ sector %}
   {% include "_barra_navegacion.html" %}
   {% from "_info.html" import info %}
 
   <div class="tarjeta">
-    <form method="get" action="/comercial/rendimientos">
+    <form method="get" action="/{{ sector }}/rendimientos">
       <div class="fechas">
         <div><label for="fecha_desde">Desde</label>
           <input type="date" id="fecha_desde" name="fecha_desde" value="{{ desde.isoformat() }}"></div>
@@ -65,8 +66,17 @@
       </select>
       <div class="botones">
         <button type="submit" class="boton principal">Ver</button>
+        {# Escritos tal cual, uno por sector, para el barrido de pantallas sin link. #}
+        {% if sector == "administracion" %}
+        <a class="boton" href="/administracion/rendimientos/pdf?{{ consulta }}">PDF</a>
+        <a class="boton" href="/administracion/rendimientos/excel?{{ consulta }}">Excel</a>
+        {% elif sector == "compras" %}
+        <a class="boton" href="/compras/rendimientos/pdf?{{ consulta }}">PDF</a>
+        <a class="boton" href="/compras/rendimientos/excel?{{ consulta }}">Excel</a>
+        {% else %}
         <a class="boton" href="/comercial/rendimientos/pdf?{{ consulta }}">PDF</a>
         <a class="boton" href="/comercial/rendimientos/excel?{{ consulta }}">Excel</a>
+        {% endif %}
       </div>
     </form>
   </div>

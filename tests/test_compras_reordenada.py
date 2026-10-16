@@ -27,7 +27,9 @@ from tests.test_segunda_negativa import base_real, galpon  # noqa: E402,F401
 GRUPOS_DECIDIDOS = {
     "Cargar": [("1", "/compras/cargar-compra", "Cargar compra")],
     "Operaciones": [("2", "/compras/buscar", "Buscar compras"), ("2", "/compras/que-comprar", "Qué comprar hoy"),
-                    ("2", "/compras/analizar", "Analizar artículo"), ("2", "/compras/disponibles", "Disponibles")],
+                    ("2", "/compras/analizar", "Analizar artículo"), ("2", "/compras/disponibles", "Disponibles"),
+                    # Rendimientos (dueño, 16/10): la misma pantalla de Comercial.
+                    ("2", "/compras/rendimientos", "Rendimientos")],
     "Catálogo": [("3", "/compras/articulos", "Artículos"), ("3", "/compras/proveedores", "Proveedores")],
 }
 
@@ -60,12 +62,12 @@ PESTANAS = {
 }
 
 
-def test_el_hub_de_COMPRAS_tiene_SIETE_botones_en_tres_grupos_con_su_color():
+def test_el_hub_de_COMPRAS_tiene_OCHO_botones_en_tres_grupos_con_su_color():
     import app.main as m
     with patch.dict(os.environ, CLAVES):
         marcado = _cliente(m, "compras").get("/compras").text.split("</style>")[-1]
     assert {t: [tuple(b) for b in botones] for t, botones in _grupos_con_color(marcado).items()} == GRUPOS_DECIDIDOS
-    assert marcado.count('<a class="boton ') == 7
+    assert marcado.count('<a class="boton ') == 8
     assert 'href="/compras/cajas"' not in marcado
 
 

@@ -183,6 +183,40 @@ def test_COMERCIAL_tiene_el_boton(base):
     assert hub.count('href="/comercial/rendimientos"') == 1
 
 
+@pytest.mark.parametrize("sector", ["comercial", "administracion", "compras"])
+def test_ADMINISTRACION_y_COMPRAS_tienen_el_boton_y_la_pantalla_se_QUEDA_en_su_sector(base, sector):
+    """Dueño, 16/10. Las cuatro mitades del camino (corolario 63): la barra,
+    "Atrás", el formulario y las descargas, con el sector del prefijo."""
+    import app.main as m
+    from tests.test_administracion_reordenada import _cliente
+    cliente = _cliente(m, *([] if sector == "comercial" else [sector]))     # Comercial no tiene clave
+    hub = cliente.get(f"/{sector}").text
+    assert hub.count(f'href="/{sector}/rendimientos"') == 1
+    pagina = cliente.get(f"/{sector}/rendimientos", params={**PERIODO, "articulo_id": "2"})
+    assert pagina.status_code == 200
+    marcado = pagina.text.split("</style>")[-1]
+    destinos = re.findall(r'(?:href|action)="(/[a-z]+)/rendimientos', marcado)
+    assert destinos == [f"/{sector}"] * 3                       # el formulario, el PDF y el Excel
+    # La barra (el sector y "Atrás") no lleva a ningún otro sector.
+    # (la barra trae su propio <style>: se mira la página entera)
+    assert set(re.findall(r'<a [^>]*href="/(comercial|administracion|compras)"', pagina.text)) == {sector}
+    assert f'<a class="barra-boton" href="/{sector}" aria-label="Volver atrás">' in pagina.text
+    consulta = "fecha_desde=2026-10-06&amp;fecha_hasta=2026-10-12&amp;articulo_id=2"
+    assert f'href="/{sector}/rendimientos/pdf?{consulta}"' in marcado
+    for formato, empieza in (("pdf", b"%PDF"), ("excel", b"PK")):
+        archivo = cliente.get(f"/{sector}/rendimientos/{formato}", params=PERIODO)
+        assert archivo.status_code == 200 and archivo.content.startswith(empieza), (sector, formato)
+
+
+@pytest.mark.parametrize("sector", ["administracion", "compras"])
+def test_desde_ADMINISTRACION_y_COMPRAS_pide_la_CLAVE_de_su_sector(base, sector):
+    for ruta in (f"/{sector}/rendimientos", f"/{sector}/rendimientos/pdf", f"/{sector}/rendimientos/excel"):
+        respuesta = base.get(ruta, params=PERIODO, follow_redirects=False)
+        assert respuesta.status_code != 200 or 'name="clave"' in respuesta.text, ruta
+    # Y en Comercial sigue abierta, sin clave.
+    assert base.get("/comercial/rendimientos", params=PERIODO).status_code == 200
+
+
 # ---------------------------------------------------------------- resumen
 
 from core.rendimientos import resumen_de_rendimientos  # noqa: E402
