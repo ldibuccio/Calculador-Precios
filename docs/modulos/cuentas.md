@@ -97,11 +97,13 @@ Ya está cargado por SQL en Frutamax (`db/corridas_confirmadas.md`): Caja
 Lionel 668 movimientos (saldo $147.910.250), Inversiones Credicoop 255 (saldo
 $87.000.000,11: los FCI con signo como "Movimiento anterior", utilidades e
 intereses como "Rendimiento", etiquetas FCI Ahorro/Renta/Variable, sin tocar
-el banco) y Banco Credicoop solo el saldo inicial $8.035.818,38 al
-14/10/2026 (el saldo ANTES de los movimientos del 15/10, dueño 16/10; se
-cargó con fecha 15/10 y se corrigió con su registro en
-`cuentas_correcciones`), que se completa con la conciliación. No se vuelve a
-cargar.
+el banco) y Banco Credicoop 544 (16/10, de la solapa "Sem Credicoop"): el
+saldo inicial $3.706.788,02 al 28/12/2025 (fila 1; antes era $8.035.818,38 al
+14/10/2026, corregido con su registro en `cuentas_correcciones`), 542
+movimientos del 29/12/2025 al 16/10/2026 con el concepto "Movimiento anterior"
+(inactivo, solo del histórico; filas 2 a 543) y un "Ajuste" de $0,02 por
+redondeo (fila 544). Saldo $8.035.818,38; al 14/10, $3.195.973,96. No se
+vuelve a cargar.
 
 ## Carga por foto y por Excel (15/10)
 
@@ -142,12 +144,13 @@ Botón "Conciliar con el extracto" en la pantalla de un banco
   queda marcado con el extracto y la fecha (`cuentas_conciliaciones`) y no se
   vuelve a cruzar.
 - **El saldo inicial manda**: lo del extracto ANTERIOR a la fecha del
-  movimiento "Saldo inicial" de la cuenta (Banco Credicoop: 14/10/2026) ya
+  movimiento "Saldo inicial" de la cuenta (Banco Credicoop: 28/12/2025, desde el 16/10) ya
   está adentro de ese saldo; no se cruza ni se carga, y se cuenta aparte. Lo
   del MISMO día del saldo inicial sí se cruza: el saldo es al cierre del día
   anterior a sus movimientos, así que su fecha es la del último día que ya
-  incluye (Banco Credicoop: el saldo es "al 14/10", y lo del 15/10 entra;
-  dueño, 16/10). El movimiento de saldo inicial no se cruza nunca.
+  incluye (Banco Credicoop: el saldo es "al 28/12/2025", y desde el
+  29/12/2025 entra todo; dueño, 16/10). El movimiento de saldo inicial no se
+  cruza nunca.
 - **El resultado**: la diferencia de saldo al cierre de cada extracto (el
   saldo final del banco contra el del sistema a esa fecha), lo que está solo
   en el extracto (se carga de un toque con un concepto sugerido por la
