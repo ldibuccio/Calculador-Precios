@@ -660,3 +660,27 @@ Una lectura mía anterior el mismo 16/10 todavía devolvía fecha 15/10 y 0
 correcciones; la segunda, ya con los dos cambios, es la de arriba. La
 conciliación no cambia: lo del extracto anterior a la fecha del saldo inicial
 no se cruza, y lo del 15/10 en adelante sí.
+
+### 16/10 — el histórico del Banco Credicoop desde el 29/12/2025
+
+Lionel cargó por SQL en Frutamax el histórico del Banco Credicoop de la solapa
+"Sem Credicoop": el saldo inicial (fila_historico 1) pasó a $3.706.788,02 al
+28/12/2025 con su corrección en `cuentas_correcciones`; 542 movimientos del
+29/12/2025 al 16/10/2026 con el concepto nuevo "Movimiento anterior" (inactivo,
+solo del histórico; filas 2 a 543), y un "Ajuste" de $0,02 por redondeo (fila
+544). Verificado por mí por el conector "Supabase Lectura" el 16/10:
+
+```
+FRUTAMAX  Banco Credicoop (cuenta 2) · 544 movimientos, todos 'historico', 0 anulados · filas 1 a 544, 544 distintas
+          fila 1: ingreso $3.706.788,02 "Saldo inicial" 2025-12-28 · fila 544: egreso $0,02 "Ajuste" 2026-10-16
+          filas 2 a 543: 542 "Movimiento anterior", del 2025-12-29 al 2026-10-16 · concepto inactivo: 1
+          saldo de la cuenta (vista cuentas_con_saldo, solo movimientos) $8.035.818,38 · al 14/10 $3.195.973,96
+          4 movimientos después del 14/10 · correcciones de la fila 1: 2 (fecha 15/10 → 14/10; importe
+          "8035818.38 al 14/10/2026" → "3706788.02 al 28/12/2025", motivo "Se carga el histórico del banco
+          desde el 29/12/2025") · extractos 0 · conciliaciones 0 · testigo_movimientos 1467 · cheques 200
+```
+
+La conciliación no cambia de código: corta en la fecha del último saldo
+inicial (`_corte_del_saldo_inicial`), así que desde ahora cruza desde el
+28/12/2025, y todo lo del 29/12/2025 en adelante entra.
+
