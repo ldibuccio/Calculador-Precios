@@ -1,0 +1,8 @@
+<script>
+  // La franja de arriba queda pegada JUSTO debajo de la barra, mida lo que mida.
+  (function () {
+    var barra = document.querySelector(".barra-navegacion");
+    var arriba = document.querySelector("[data-arriba]");
+    if (barra && arriba) { arriba.style.top = barra.offsetHeight + "px"; }
+  })();
+</script>

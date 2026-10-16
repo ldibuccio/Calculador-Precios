@@ -39,18 +39,34 @@ suma las de esta cuenta solo si la tabla existe (`_SQL_FOTOS_SOLO_EN_FRUTAMAX`).
   (lo calcula la vista `palmala_movimientos_con_saldo` sobre todos) y, si hay
   filtro, "Lo filtrado". Filtros: fechas, cuenta, sentido, concepto. PDF y
   Excel con los mismos filtros, el encabezado que los dice y los tres saldos.
-- **Cargar** (`/cargar`): un movimiento a mano (con foto si se quiere; el
-  banco que no está se agrega), varias fotos de cheques de una vez (la IA lee
-  cada una, `extraer_cheques_de_imagenes`: un renglón por cheque como "Palmala
-  pagó" en Pesos, "Pago con echeq" si es ECHEQ), o un Excel/CSV (columnas por
-  su título: Fecha, Importe o Debe y Pagó, Concepto, Cuenta, Detalle, Cheque,
-  Banco, Fecha de pago; el renglón "Total" no entra; una cuenta que no se
-  entiende se elige, nunca se adivina).
-- **Revisar** (`/revisar`): la misma mecánica que el listado de cheques: lista
-  compacta con los que tienen problema primero y abiertos, "Para todos"
-  (sentido, cuenta, concepto, fecha) a los tildados o a todos, "Sacar los
-  tildados", el banco que falta una vez arriba con "Agregarlo", y el
-  formulario sin el tope de 1000 campos (`_formulario_de_un_listado`).
+- **Cargar** (dueño, 16/10): UN SOLO FLUJO de dos pasos, igual que "Aplicar
+  cheques" y que Caja, Banco e Inversiones (`core/carga_en_dos_pasos.py`,
+  `templates/carga_elegir.html` y `carga_revisar.html`). Las pantallas viejas
+  (a mano, fotos, Excel) se sacaron.
+  - **Paso 1** (`/cargar`): arriba "Subí fotos o archivos" (fotos de cheques
+    o ECHEQ, comprobantes, Excel/CSV, PDF, varios de una vez) y abajo
+    "Cargar a mano" (cuántas filas vacías); se pueden usar juntos. "Seguir"
+    fijo arriba (`/cargar/seguir`). Debajo, los conceptos (agregar, dar de baja).
+  - Una foto o un PDF lo lee la IA (`core/lector_palmala.py`): un renglón por
+    movimiento en Pesos; un cheque es "Palmala pagó" y, si la IA no eligió el
+    concepto, "Pago con echeq" o "Pago con cheque" según el tipo. Un Excel se
+    lee por sus columnas (Fecha, Importe o Debe y Pagó, Concepto, Cuenta,
+    Detalle, Cheque, Banco, Fecha de pago; el "Total" no entra; una cuenta que
+    no se entiende se elige, nunca se adivina).
+  - **Paso 2** (`/revisar`): un renglón por movimiento, todo editable (fecha,
+    importe, sentido, cuenta, concepto, detalle, y número, banco y fecha de
+    pago cuando el concepto lleva cheque), agrupado por archivo (los a mano al
+    final) con un encabezado que cambia todo el grupo. "Para todos" (fecha,
+    sentido, cuenta, concepto) va a los tildados; sin ninguno, pregunta antes
+    de ponerlo en todos. La cuenta de "Para todos" viene en Pesos. Arriba, fijo:
+    "X movimientos · $Y · Z bien · W con problema" (pesos y dólares por
+    separado) y "Confirmar todos", que guarda los que están bien, cada uno con
+    la foto de su archivo y su origen (`foto`, `excel` o `a_mano`).
+  - En rojo: lo que falta, el cheque incompleto y el REPETIDO (el mismo
+    cheque por número y banco, o la misma fecha, cuenta, sentido e importe; ya
+    cargado o más arriba en la misma carga). "No es repetido" lo deja pasar:
+    dos pagos iguales el mismo día pueden existir. El banco que falta, una vez
+    arriba con "Agregarlo"; el formulario sin el tope de 1000 campos.
 - **Ficha** (`/{id}`): los datos, la foto, Corregir (con motivo), Anular o
   Volver a contarlo, y el historial.
 

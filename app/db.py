@@ -22883,8 +22883,9 @@ def obtener_movimiento_de_palmala(movimiento_id: int) -> dict | None:
 def guardar_movimientos_de_palmala(movimientos: list[dict], *, como_se_cargo: str) -> list[int]:
     """Uno o varios movimientos en UNA transacción: o entran todos o ninguno.
     Cada uno {fecha, cuenta, sentido, importe, concepto_id, detalle,
-    cheque_numero, cheque_banco (nombre), cheque_fecha_pago, foto_ruta}. El
-    banco se busca por su clave y, si no está, se agrega (como en la carga
+    cheque_numero, cheque_banco (nombre), cheque_fecha_pago, foto_ruta} y,
+    si viene, su propio como_se_cargo (una carga mezcla fotos, Excel y a
+    mano). El banco se busca por su clave y, si no está, se agrega (como en la carga
     de un cheque)."""
     ids = []
     with _escribir_palmala() as cursor:
@@ -22901,7 +22902,8 @@ def guardar_movimientos_de_palmala(movimientos: list[dict], *, como_se_cargo: st
                 "VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, 'gerencia') RETURNING id",
                 (m["fecha"], m["cuenta"], m["sentido"], m["importe"], m["concepto_id"],
                  (m.get("detalle") or "").strip() or None, (m.get("cheque_numero") or "").strip() or None,
-                 banco_id, m.get("cheque_fecha_pago") or None, m.get("foto_ruta"), como_se_cargo))
+                 banco_id, m.get("cheque_fecha_pago") or None, m.get("foto_ruta"),
+                 m.get("como_se_cargo") or como_se_cargo))
             ids.append(cursor.fetchone()[0])
     return ids
 
@@ -23149,7 +23151,8 @@ def nombres_usados_en_la_cuenta(cuenta_id: int) -> dict:
 def guardar_movimientos_de_cuenta(cuenta_id: int, movimientos: list[dict], *, como_se_cargo: str) -> list[int]:
     """Uno o varios movimientos en UNA transacción: o entran todos o ninguno.
     Cada uno {fecha, tipo, importe, concepto_id, etiqueta (nombre), detalle,
-    foto_ruta}. La etiqueta que no está se agrega."""
+    foto_ruta} y, si viene, su propio como_se_cargo (una carga mezcla fotos,
+    Excel y a mano). La etiqueta que no está se agrega."""
     ids = []
     with _escribir_cuentas() as cursor:
         for m in movimientos:
@@ -23159,7 +23162,7 @@ def guardar_movimientos_de_cuenta(cuenta_id: int, movimientos: list[dict], *, co
                 "RETURNING id",
                 (cuenta_id, m["fecha"], m["tipo"], m["importe"], m["concepto_id"],
                  _etiqueta_por_nombre(cursor, m.get("etiqueta")), (m.get("detalle") or "").strip() or None,
-                 m.get("foto_ruta"), como_se_cargo))
+                 m.get("foto_ruta"), m.get("como_se_cargo") or como_se_cargo))
             ids.append(cursor.fetchone()[0])
     return ids
 

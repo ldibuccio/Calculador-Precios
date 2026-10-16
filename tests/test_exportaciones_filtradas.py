@@ -139,11 +139,7 @@ EXPORTACIONES = {
 
 # Rutas que devuelven una imagen o un archivo subido, no una exportación.
 NO_SON_EXPORTACIONES = {"/compras/{compra_id}/fotos", "/deposito/pedido/{pedido_id}/fotos",
-                        "/administracion/guias-mercaderia/{compra_id}/fotos",
-                        # Sube un Excel para cargar (14/10), no exporta.
-                        "/gerencia/palmala-cruces/cargar/excel",
-                        # Idem en Cuentas (15/10): sube un Excel para cargar.
-                        "/gerencia/cuentas/{cuenta_id}/cargar/excel"}
+                        "/administracion/guias-mercaderia/{compra_id}/fotos"}
 
 
 def _rutas_que_exportan():

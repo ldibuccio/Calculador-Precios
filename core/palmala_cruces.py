@@ -138,13 +138,12 @@ def crudos_de_la_planilla(filas: list[list]) -> list[dict] | None:
     return None
 
 
-def renglones_para_revisar(crudos: list[dict], conceptos: list[dict], *, hoy: date,
-                           foto_de_cada: list[int] | None = None) -> list[dict]:
+def renglones_para_revisar(crudos: list[dict], conceptos: list[dict], *, hoy: date) -> list[dict]:
     """Lo leído (planilla o fotos de cheques) como renglones del formulario,
     textos que se corrigen a mano. Con columnas Debe y Pagó, el sentido sale
     de cuál tiene el importe."""
     renglones = []
-    for n, crudo in enumerate(crudos):
+    for crudo in crudos:
         sentido = sentido_de_la_celda(crudo.get("sentido"))
         importe = importe_de_la_celda(crudo.get("importe"))
         if not importe:
@@ -168,35 +167,61 @@ def renglones_para_revisar(crudos: list[dict], conceptos: list[dict], *, hoy: da
             "cheque_numero": numero_de_la_celda(crudo.get("cheque_numero")),
             "cheque_banco": str(crudo.get("cheque_banco") or "").strip(),
             "cheque_fecha_pago": fecha_de_la_celda(crudo.get("cheque_fecha_pago")),
-            "foto": (foto_de_cada[n] if foto_de_cada else -1),
             "sacar": False, "tildado": False,
         })
     return renglones
 
 
-def renglones_de_cheques_leidos(leidas: list[dict], conceptos: list[dict], *, hoy: date
-                                ) -> tuple[list[dict], list[str]]:
-    """Las fotos de CHEQUES con que Palmala paga (una lectura por foto): un
-    renglón por cheque, "Palmala pagó" en Pesos, con "Pago con echeq" o
-    "Pago con cheque" según el tipo, y de qué foto salió."""
-    crudos, fotos, avisos = [], [], []
+def renglones_de_comprobantes_leidos(leida: dict, conceptos: list[dict], *, hoy: date) -> list[dict]:
+    """Lo que la IA leyó de UN archivo (`core/lector_palmala.py`): un renglón
+    por movimiento, en Pesos. Un cheque es "Palmala pagó" y, si la IA no
+    eligió el concepto, "Pago con echeq" o "Pago con cheque" según el tipo."""
     con_cheque = concepto_por_nombre("Pago con cheque", conceptos)
     con_echeq = concepto_por_nombre("Pago con echeq", conceptos)
-    for foto, leida in enumerate(leidas):
-        if leida.get("error"):
-            avisos.append(f"La foto {foto + 1} no se pudo leer: {leida['error']}")
-            continue
-        for cheque in leida.get("cheques") or []:
+    crudos = []
+    for movimiento in leida.get("movimientos") or []:
+        cheque = movimiento.get("cheque") or {}
+        sentido = movimiento.get("sentido") if movimiento.get("sentido") in NOMBRE_DE_SENTIDO else ""
+        concepto_id = concepto_por_nombre(movimiento.get("concepto"), conceptos)
+        if cheque.get("numero"):
+            sentido = sentido or "pago"
             es_echeq = str(cheque.get("tipo") or "").lower() == "echeq"
-            crudos.append({"fecha": hoy, "cuenta": "pesos", "sentido_fijo": "pago", "importe": cheque.get("importe"),
-                           "concepto_id": con_echeq if es_echeq else con_cheque,
-                           "detalle": str(cheque.get("librador") or "").strip(),
-                           "cheque_numero": cheque.get("numero"), "cheque_banco": cheque.get("banco"),
-                           "cheque_fecha_pago": cheque.get("fecha_pago")})
-            fotos.append(foto)
-    if not crudos and not avisos:
-        avisos.append("No se encontró ningún cheque en las fotos.")
-    return renglones_para_revisar(crudos, conceptos, hoy=hoy, foto_de_cada=fotos), avisos
+            concepto_id = concepto_id or (con_echeq if es_echeq else con_cheque)
+        crudos.append({"fecha": movimiento.get("fecha") or hoy, "cuenta": "pesos", "sentido_fijo": sentido,
+                       "importe": movimiento.get("importe"), "concepto": movimiento.get("concepto"),
+                       "concepto_id": concepto_id, "detalle": movimiento.get("detalle"),
+                       "cheque_numero": cheque.get("numero"), "cheque_banco": cheque.get("banco"),
+                       "cheque_fecha_pago": cheque.get("fecha_pago")})
+    return renglones_para_revisar(crudos, conceptos, hoy=hoy)
+
+
+def clave_para_repetidos(r: dict) -> tuple | None:
+    """Lo que identifica un movimiento para avisar que ya está: un cheque, su
+    número y su banco; si no, la fecha, la cuenta, el sentido y el importe.
+    Sirve igual para un renglón de la carga y para uno de la base."""
+    from core.cheques import clave_de_banco, numero_normalizado
+    numero = numero_normalizado(r.get("cheque_numero") or "")
+    if numero:
+        return ("cheque", numero, clave_de_banco(r.get("cheque_banco") or ""))
+    importe = _importe(r.get("importe"))
+    fecha = str(r.get("fecha") or "")[:10]
+    if importe is None or not fecha or not r.get("cuenta") or not r.get("sentido"):
+        return None
+    return ("movimiento", fecha, r["cuenta"], r["sentido"], round(importe, 2))
+
+
+def total_por_cuenta(renglones: list[dict]) -> str:
+    """Cuánto suman, por cuenta: "$1.500 · US$200 socios" (los pesos y los
+    dólares no se suman entre sí)."""
+    sumas: dict = {}
+    for r in renglones:
+        importe = _importe(r.get("importe"))
+        if importe is not None:
+            cuenta = r.get("cuenta") if r.get("cuenta") in NOMBRE_DE_CUENTA else "pesos"
+            sumas[cuenta] = sumas.get(cuenta, 0) + importe
+    partes = [importe_con_signo(sumas[c], c) + ("" if c == "pesos" else " " + n.split()[-1])
+              for c, n, _ in CUENTAS if c in sumas]
+    return " · ".join(partes) or "$0"
 
 
 def _importe(texto) -> float | None:
@@ -247,24 +272,6 @@ def problemas_de_los_renglones(renglones: list[dict], conceptos: list[dict], cla
             mal.append(f"el concepto {concepto['nombre']} no lleva cheque")
         problemas.append(mal)
     return problemas
-
-
-def poner_a_todos(renglones: list[dict], cambios: dict) -> int:
-    """Pone los `cambios` que vienen con valor (cuenta, sentido, concepto,
-    fecha) en los TILDADOS, o en todos los que no se sacaron si no hay
-    ninguno tildado. Devuelve a cuántos."""
-    tildados = [r for r in renglones if r.get("tildado") and not r.get("sacar")]
-    destino = tildados or [r for r in renglones if not r.get("sacar")]
-    for r in destino:
-        if cambios.get("cuenta") in NOMBRE_DE_CUENTA:
-            r["cuenta"] = cambios["cuenta"]
-        if cambios.get("sentido") in NOMBRE_DE_SENTIDO:
-            r["sentido"] = cambios["sentido"]
-        if cambios.get("concepto_id"):
-            r["concepto_id"] = cambios["concepto_id"]
-        if cambios.get("fecha"):
-            r["fecha"] = cambios["fecha"]
-    return len(destino)
 
 
 # --- FILTROS ----------------------------------------------------------------

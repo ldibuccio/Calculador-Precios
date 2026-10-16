@@ -143,23 +143,28 @@ def test_sin_la_CLAVE_de_Gerencia_no_se_ve_nada(m, d):
     assert 'name="clave"' in pagina.text and "Caja Lionel" not in _sin_estilo(pagina.text)
 
 
+def _a_mano(cliente, cuenta_id, **campos):
+    """Una fila a mano por el flujo de dos pasos (dueño, 16/10), confirmada."""
+    pagina = cliente.post(f"/gerencia/cuentas/{cuenta_id}/cargar/seguir", data={"a_mano": "1"})
+    datos = dict(_formulario_de_revision(pagina.text, cuenta_id), accion="confirmar",
+                 **{f"{k}_0": v for k, v in campos.items()})
+    return cliente.post(f"/gerencia/cuentas/{cuenta_id}/revisar", data=datos, follow_redirects=False)
+
+
 def test_CARGAR_a_mano_el_saldo_acumulado_y_la_ETIQUETA_que_se_arma_sola(m, d):
     caja = _sembrar_frutamax(d)["Caja Lionel"]
     cliente = _gerencia(m)
     concepto = _concepto(d, caja, "Cobro Mecafront")
-    uno = cliente.post(f"/gerencia/cuentas/{caja}/cargar", data={
-        "fecha": "2025-05-01", "tipo": "ingreso", "importe": "1000,50", "concepto_id": str(concepto),
-        "etiqueta": "  EJEMPLO   Mecafront ", "detalle": "factura 1"}, follow_redirects=False)
+    uno = _a_mano(cliente, caja, fecha="2025-05-01", tipo="ingreso", importe="1000,50", concepto_id=str(concepto),
+                  etiqueta="  EJEMPLO   Mecafront ", detalle="factura 1")
     assert uno.status_code == 303
     # La misma etiqueta escrita distinto es la MISMA: no se duplica.
-    cliente.post(f"/gerencia/cuentas/{caja}/cargar", data={
-        "fecha": "2025-05-03", "tipo": "egreso", "importe": "200", "concepto_id": str(_concepto(d, caja, "BP")),
-        "etiqueta": "ejemplo mecafront"})
+    _a_mano(cliente, caja, fecha="2025-05-03", tipo="egreso", importe="200", concepto_id=str(_concepto(d, caja, "BP")),
+            etiqueta="ejemplo mecafront")
     assert [e["nombre"] for e in d.etiquetas_de_cuentas()] == ["EJEMPLO Mecafront"]
     # Un cobro cargado como egreso rebota antes de tocar la base.
-    mal = cliente.post(f"/gerencia/cuentas/{caja}/cargar", data={
-        "fecha": "2025-05-04", "tipo": "egreso", "importe": "5", "concepto_id": str(concepto)})
-    assert mal.status_code == 400 and "Cobro Mecafront es un ingreso" in mal.text
+    mal = _a_mano(cliente, caja, fecha="2025-05-04", tipo="egreso", importe="5", concepto_id=str(concepto))
+    assert mal.status_code == 200 and _problemas(mal.text) == ["Cobro Mecafront es un ingreso"]
     pagina = cliente.get(f"/gerencia/cuentas/{caja}")
     assert _saldo(pagina.text) == "$800,50"
     assert [(f, i, c, s) for _, f, i, c, s in _filas(pagina.text)] == [
@@ -449,7 +454,7 @@ def _formulario_de_revision(html: str, cuenta_id: int) -> dict:
 
 
 def _problemas(html) -> list[str]:
-    return re.findall(r"data-problemas>([^<]*)</span>", _sin_estilo(html))
+    return re.findall(r"data-problemas>([^<]*)<", _sin_estilo(html))
 
 
 def test_la_PLANILLA_reconoce_ingreso_y_egreso_y_saltea_los_TOTALES():
@@ -478,21 +483,22 @@ def test_un_EXCEL_se_revisa_PARA_TODOS_y_se_guardan_los_que_estan_BIEN(m, d):
                       ["02/05/2025", 300, "Egreso", "BP", "", ""],
                       ["03/05/2025", 50, "Egreso", "Algo que no existe", "", ""],
                       ["Total", 1350, None, None, None, None]])
-    pagina = cliente.post(f"/gerencia/cuentas/{caja}/cargar/excel",
-                          files={"archivo": ("caja.xlsx", planilla, "application/octet-stream")})
+    pagina = cliente.post(f"/gerencia/cuentas/{caja}/cargar/seguir", data={"a_mano": "0"},
+                          files={"archivos": ("caja.xlsx", planilla, "application/octet-stream")})
     assert pagina.status_code == 200
-    assert re.search(r"data-conteo>3 movimientos · <span data-bien>2 bien</span> · <span class=\"rojo\" "
-                     r"data-con-problema>1 con problema", _sin_estilo(pagina.text))
+    assert re.search(r"3 movimientos · \$1.350 · <span class=\"verde\">2 bien</span> · <span class=\"rojo\">"
+                     r"1 con problema", _sin_estilo(pagina.text))
     assert _problemas(pagina.text) == ["elegí el concepto («Algo que no existe» no está en la lista)"]
     datos = _formulario_de_revision(pagina.text, caja)
     # "Para todos" con el renglón con problema TILDADO: solo ése cambia.
     malo = next(k.split("_")[-1] for k, v in datos.items() if k.startswith("concepto_leido_") and v == "Algo que no existe")
     otro = _concepto(d, caja, "Retiro Lionel")
     pagina = cliente.post(f"/gerencia/cuentas/{caja}/revisar", data=dict(
-        datos, accion="a_todos", concepto_todos=str(otro), etiqueta_todos="EJEMPLO Lionel", **{f"tildado_{malo}": "1"}))
-    assert "Se cambió 1 movimiento." in pagina.text and _problemas(pagina.text) == []
+        datos, accion="a_todos", todos_concepto_id=str(otro), todos_etiqueta="EJEMPLO Lionel",
+        **{f"tildado_{malo}": "1"}))
+    assert "Se cambió en 1 movimiento." in pagina.text and _problemas(pagina.text) == []
     final = cliente.post(f"/gerencia/cuentas/{caja}/revisar", data=dict(_formulario_de_revision(pagina.text, caja),
-                                                                          accion="guardar"), follow_redirects=False)
+                                                                          accion="confirmar"), follow_redirects=False)
     assert final.status_code == 303 and "3+movimientos+cargados" in final.headers["location"]
     filas = [(f, i, c) for _, f, i, c, _ in _filas(cliente.get(f"/gerencia/cuentas/{caja}").text)]
     assert filas == [("03/05/2025", "−$50", "Retiro Lionel · EJEMPLO Lionel"), ("02/05/2025", "−$300", "BP"),
@@ -507,10 +513,10 @@ def test_GUARDAR_deja_en_la_pagina_los_que_tienen_PROBLEMA(m, d):
     planilla = _xlsx([["Fecha", "Importe", "Tipo", "Concepto"],
                       ["01/05/2025", 1000, "Ingreso", "Cobro Mecafront"],
                       ["02/05/2025", 300, "Ingreso", "BP"]])          # BP es un egreso: no entra
-    pagina = cliente.post(f"/gerencia/cuentas/{caja}/cargar/excel",
-                          files={"archivo": ("caja.xlsx", planilla, "application/octet-stream")})
+    pagina = cliente.post(f"/gerencia/cuentas/{caja}/cargar/seguir", data={"a_mano": "0"},
+                          files={"archivos": ("caja.xlsx", planilla, "application/octet-stream")})
     final = cliente.post(f"/gerencia/cuentas/{caja}/revisar",
-                         data=dict(_formulario_de_revision(pagina.text, caja), accion="guardar"))
+                         data=dict(_formulario_de_revision(pagina.text, caja), accion="confirmar"))
     assert "Se guardaron 1. Quedan 1 con problemas" in final.text and _problemas(final.text) == ["BP es un egreso"]
     assert len(d.movimientos_de_la_cuenta(caja)) == 1
 
@@ -524,19 +530,19 @@ def test_las_FOTOS_un_renglon_por_movimiento_con_SU_foto_y_la_que_no_se_lee_avis
               RuntimeError("no se entiende"),
               {"movimientos": [{"fecha": "2025-05-02", "tipo": "egreso", "importe": 70, "quien": "EJEMPLO Lionel",
                                 "concepto": "Retiro Lionel", "detalle": None}]}]
-    archivos = [("fotos", (f"f{i}.jpg", _foto(), "image/jpeg")) for i in range(3)]
+    archivos = [("archivos", (f"f{i}.jpg", _foto(), "image/jpeg")) for i in range(3)]
     with patch("core.lector_cuentas.extraer_movimientos_de_imagenes", side_effect=leidas) as lector:
-        pagina = _gerencia(m).post(f"/gerencia/cuentas/{caja}/cargar/fotos", files=archivos)
+        pagina = _gerencia(m).post(f"/gerencia/cuentas/{caja}/cargar/seguir", data={"a_mano": "0"}, files=archivos)
     assert lector.call_count == 3
     # A la IA se le pasan los conceptos ACTIVOS de esta cuenta, no los de solo histórico.
     assert "Cruce banco" not in lector.call_args.kwargs["conceptos"]
     assert "Cobro Mecafront" in lector.call_args.kwargs["conceptos"]
-    assert "La foto 2 no se pudo leer: «f1.jpg» no se entiende como un comprobante" in pagina.text
+    assert "«f1.jpg» no se pudo leer" in pagina.text
     datos = _formulario_de_revision(pagina.text, caja)
-    assert sorted((datos[f"foto_{i}"], datos[f"importe_{i}"]) for i in range(3)) == [
+    assert sorted((datos[f"archivo_{i}"], datos[f"importe_{i}"]) for i in range(3)) == [
         ("0", "100"), ("0", "2500"), ("2", "70")]
     with patch("app.main.subir_foto_comanda", side_effect=["cuentas/f0.jpg", "cuentas/f2.jpg"]) as subida:
-        final = _gerencia(m).post(f"/gerencia/cuentas/{caja}/revisar", data=dict(datos, accion="guardar"),
+        final = _gerencia(m).post(f"/gerencia/cuentas/{caja}/revisar", data=dict(datos, accion="confirmar"),
                                   follow_redirects=False)
     assert final.status_code == 303 and subida.call_count == 2           # una subida por FOTO, no por renglón
     fotos = {float(x["importe"]): x["foto_ruta"] for x in d.movimientos_de_la_cuenta(caja)}
