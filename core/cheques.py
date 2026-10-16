@@ -115,7 +115,8 @@ def cheques_leidos(datos: dict, bancos: list[dict]) -> list[dict]:
             "fecha_pago": str(cheque.get("fecha_pago") or ""),
             "importe": "" if importe in (None, "") else str(importe),
             "cuit_librador": cuit if len(cuit) == 11 else "",
-            "tipo": "echeq" if cheque.get("tipo") == "echeq" else "fisico",
+            # ECHEQ salvo que la lectura diga que es físico (dueño, 16/10).
+            "tipo": "fisico" if cheque.get("tipo") == "fisico" else "echeq",
             "librador": str(cheque.get("librador") or "").strip(),
         })
     return filas

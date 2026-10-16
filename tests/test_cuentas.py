@@ -127,7 +127,7 @@ def test_los_BOTONES_de_Gerencia_salen_de_las_cuentas_ACTIVAS(m, d):
     cuentas = _sembrar_frutamax(d)
     hub = _sin_estilo(_gerencia(m).get("/gerencia").text)
     assert re.findall(r'href="/gerencia/cuentas/(\d+)"><svg[^>]*>.*?</svg><span>([^<]*)</span>', hub, re.S) == [
-        (str(cuentas[n]), n) for n in ("Caja Lionel", "Banco Credicoop", "Inversiones Credicoop")]
+        (str(cuentas[n]), n) for n in ("Banco Credicoop", "Inversiones Credicoop", "Caja Lionel")]
     assert hub.count('href="/gerencia/cuentas"') == 1
     baja = _gerencia(m).post(f"/gerencia/cuentas/{cuentas['Caja Lionel']}/activa", data={"activa": ""},
                              follow_redirects=False)
@@ -704,3 +704,37 @@ def test_lo_YA_CONCILIADO_no_se_vuelve_a_cruzar_con_un_extracto_nuevo(m, d):
     pagina = _subir(m, banco, otro)
     assert pagina.status_code == 200 and "Se conciliaron 0." in pagina.text
     assert ("13/05/2025", "+$1.000", "DEP EFECTIVO 2") in _secciones(pagina.text)["solo_extracto"]
+
+
+# --- EL HUB DE GERENCIA: "Bancos y cajas" (dueño, 16/10) ---------------------------
+
+def _bancos_y_cajas(html) -> list[tuple]:
+    from tests.test_administracion_reordenada import _grupos_con_color
+    return [(c, t) for c, _h, t in _grupos_con_color(_sin_estilo(html))["Bancos y cajas"]]
+
+
+def test_BANCOS_Y_CAJAS_en_FRUTAMAX_va_en_el_orden_del_dueno(m, d):
+    _sembrar_frutamax(d)
+    with patch.dict(m.templates.env.globals, {"ES_FRUTAMAX": True}):
+        hub = _gerencia(m).get("/gerencia").text
+    assert _bancos_y_cajas(hub) == [("5", "Banco Credicoop"), ("5", "Inversiones Credicoop"),
+                                    ("5", "Cartera de cheques"), ("5", "Caja Lionel"),
+                                    ("5", "Palmala Cruces"), ("5", "Cuentas")]
+    # Ninguno queda repetido en otro recuadro.
+    marcado = _sin_estilo(hub)
+    for href in ("/gerencia/cheques", "/gerencia/palmala-cruces", "/gerencia/cuentas", "/gerencia/panel"):
+        assert marcado.count(f'href="{href}"') == 1, href
+
+
+def test_BANCOS_Y_CAJAS_en_PALMALA_con_sus_cuentas_y_sin_Palmala_Cruces(m, d):
+    cliente = _gerencia(m)
+    for nombre, tipo in (("EJEMPLO Caja Palmala", "caja"), ("EJEMPLO Banco Palmala", "banco")):
+        cliente.post("/gerencia/cuentas", data={"nombre": nombre, "tipo": tipo, "moneda": "pesos"})
+    banco = next(c["id"] for c in d.listar_cuentas() if c["tipo"] == "banco")
+    cliente.post("/gerencia/cuentas", data={"nombre": "EJEMPLO Plazo fijo", "tipo": "inversion", "moneda": "pesos",
+                                            "madre_id": str(banco)})
+    with patch.dict(m.templates.env.globals, {"ES_FRUTAMAX": False}):
+        hub = cliente.get("/gerencia").text
+    # El banco con su inversión adentro, aunque la caja se haya creado antes.
+    assert _bancos_y_cajas(hub) == [("5", "EJEMPLO Banco Palmala"), ("5", "EJEMPLO Plazo fijo"),
+                                    ("5", "Cartera de cheques"), ("5", "EJEMPLO Caja Palmala"), ("5", "Cuentas")]

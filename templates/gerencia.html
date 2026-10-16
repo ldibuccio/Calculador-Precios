@@ -32,6 +32,9 @@
   {{ franja_hub.estilos() }}
   {{ botones_hub.estilos() }}
   .nota { font-size: 0.85rem; color: #b91c1c; margin: 0.4rem 0; }
+  {# Los dos colores propios del hub de Gerencia (dueño, 16/10). #}
+  .boton.color-4 { background: #7c3aed; }
+  .boton.color-5 { background: #b45309; }
 </style>
 </head>
 <body>
@@ -46,33 +49,47 @@
     <a class="franja-ver" href="/gerencia/alertas">Ver el detalle de las alertas</a>
   {% endcall %}
 
-  {# BOTONES EN TRES GRUPOS (dueño, 04/10; eran 13, más Stock inicial
-     que vino de Administración; el 08/10 se sumó el Panel de control, el
-     13/10 la Cartera de cheques, el 14/10 Palmala Cruces, solo en Frutamax, y el
-     15/10 un botón por cada cuenta activa y "Cuentas" en Mantenimiento). Lo que mira lo mismo desde dos o tres
-     lados quedó en un botón con pestañas (_pestanas_gerencia.html):
-     Rentabilidad (De pedidos · Real), Pérdidas (Mercadería · Cajas) y
-     Facturación y cobranzas (Remitos y facturas · Vales · Segunda). #}
+  {# DE ARRIBA HACIA ABAJO (dueño, 16/10): el Panel de control solo, con su
+     color; el recuadro "Bancos y cajas", con el suyo; y los tres grupos de
+     siempre (Mirar, Corregir, Mantenimiento, del 04/10) sin lo que pasó a
+     esos dos. Lo que mira lo mismo desde dos o tres lados quedó en un botón
+     con pestañas (_pestanas_gerencia.html): Rentabilidad (De pedidos ·
+     Real), Pérdidas (Mercadería · Cajas) y Facturación y cobranzas (Remitos
+     y facturas · Vales · Segunda). #}
+  {# EL PANEL DE CONTROL, SOLO Y CON SU COLOR (dueño, 16/10): el resumen de todo. #}
+  <div class="tarjeta">
+    <a class="boton color-4" href="/gerencia/panel">{{ ICONOS_HUBS['panel']|safe }}<span>Panel de control</span></a>
+  </div>
+
+  {# BANCOS Y CAJAS (dueño, 16/10), con su color: cada banco y sus
+     inversiones, la Cartera de cheques, las cajas, Palmala Cruces (solo en
+     Frutamax) y al final "Cuentas" para crear otra. Una cuenta nueva aparece
+     acá sola, en su lugar (core.cuentas.cuentas_del_hub). #}
+  <div class="tarjeta">
+    <h2>Bancos y cajas</h2>
+    {% if cuentas is none %}<p class="nota" data-cuentas-sin-leer>No se pudieron leer las cuentas: sus botones no están.</p>{% endif %}
+    {% for c in cuentas_antes %}<a class="boton color-5" href="/gerencia/cuentas/{{ c.id }}">{{ ICONOS_HUBS['cuenta_' ~ c.tipo]|safe }}<span>{{ c.nombre }}</span></a>
+    {% endfor %}
+    {# Solo Gerencia carga y aplica (dueño, 13/10). #}
+    <a class="boton color-5" href="/gerencia/cheques">{{ ICONOS_HUBS['cheques']|safe }}<span>Cartera de cheques</span></a>
+    {% for c in cuentas_despues %}<a class="boton color-5" href="/gerencia/cuentas/{{ c.id }}">{{ ICONOS_HUBS['cuenta_' ~ c.tipo]|safe }}<span>{{ c.nombre }}</span></a>
+    {% endfor %}
+    {# La cuenta corriente con Palmala (dueño, 14/10): SOLO en Frutamax. #}
+    {% if ES_FRUTAMAX %}<a class="boton color-5" href="/gerencia/palmala-cruces">{{ ICONOS_HUBS['palmala']|safe }}<span>Palmala Cruces</span></a>{% endif %}
+    {# Crear una cuenta y darla de baja (dueño, 15/10). #}
+    <a class="boton color-5" href="/gerencia/cuentas">{{ ICONOS_HUBS['cuentas']|safe }}<span>Cuentas</span></a>
+  </div>
+
   <div class="tarjeta">
     <h2>Mirar</h2>
     {# El manejo del dinero, con su clave. La Auditoría vive en su propio
        sector (/auditoria), sin clave: es control operativo, no plata. #}
-    {# El tablero de un pantallazo (dueño, 08/10): primero, porque es el resumen de todo. #}
-    <a class="boton color-1" href="/gerencia/panel">{{ ICONOS_HUBS['panel']|safe }}<span>Panel de control</span></a>
     <a class="boton color-1" href="/gerencia/rentabilidad">{{ ICONOS_HUBS['rentabilidad']|safe }}<span>Rentabilidad</span></a>
     <a class="boton color-1" href="/gerencia/perdidas">{{ ICONOS_HUBS['perdidas']|safe }}<span>Pérdidas</span></a>
     <a class="boton color-1" href="/gerencia/costos-fijos">{{ ICONOS_HUBS['costos_fijos']|safe }}<span>Costos fijos</span></a>
     {# Las MISMAS pantallas que Administración: acá se corrigen el vale y el
        número del remito (dueño). #}
     <a class="boton color-1" href="/gerencia/facturacion">{{ ICONOS_HUBS['facturas']|safe }}<span>Facturación y cobranzas</span></a>
-    {# Solo Gerencia carga y aplica (dueño, 13/10). #}
-    <a class="boton color-1" href="/gerencia/cheques">{{ ICONOS_HUBS['cheques']|safe }}<span>Cartera de cheques</span></a>
-    {# La cuenta corriente con Palmala (dueño, 14/10): SOLO en Frutamax. #}
-    {% if ES_FRUTAMAX %}<a class="boton color-1" href="/gerencia/palmala-cruces">{{ ICONOS_HUBS['palmala']|safe }}<span>Palmala Cruces</span></a>{% endif %}
-    {# CUENTAS (dueño, 15/10): un botón por cada cuenta activa de ESTA base. #}
-    {% if cuentas is none %}<p class="nota" data-cuentas-sin-leer>No se pudieron leer las cuentas: sus botones no están.</p>{% endif %}
-    {% for c in cuentas or [] %}<a class="boton color-1" href="/gerencia/cuentas/{{ c.id }}">{{ ICONOS_HUBS['cuenta_' ~ c.tipo]|safe }}<span>{{ c.nombre }}</span></a>
-    {% endfor %}
   </div>
 
   {# APARTE de las de mirar: éstas ESCRIBEN, y escriben en el pasado o no se
@@ -97,8 +114,6 @@
     <a class="boton color-3" href="/gerencia/backups">{{ ICONOS_HUBS['backups']|safe }}<span>Backups</span></a>
     {# Borra archivos y no se deshace (dueño, 30/09). #}
     <a class="boton color-3" href="/gerencia/fotos">{{ ICONOS_HUBS['fotos']|safe }}<span>Fotos y espacio</span></a>
-    {# Crear una cuenta y darla de baja (dueño, 15/10). #}
-    <a class="boton color-3" href="/gerencia/cuentas">{{ ICONOS_HUBS['cuentas']|safe }}<span>Cuentas</span></a>
   </div>
 
   <a class="volver" href="/inicio">Volver a Inicio</a>

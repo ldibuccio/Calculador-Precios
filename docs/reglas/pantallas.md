@@ -271,10 +271,11 @@ El dueño eligió "un color por recuadro" y no "un color por lo que hace".
   (`templates/_pestanas.html` y un parcial por grupo, con los links escritos
   tal cual para el barrido de pantallas sin link). Administración: Stock del
   Depósito. Compras: Buscar compras, Qué comprar hoy, Analizar artículo.
-  Gerencia (Mirar · Corregir · Mantenimiento, 14 botones desde el 14/10 con
-  Cartera de cheques y Palmala Cruces al final de Mirar — Palmala Cruces solo
-  en Frutamax, `docs/modulos/palmala_cruces.md` —, `docs/modulos/cheques.md`, y el
-  Panel de control primero en Mirar, `docs/modulos/panel_control.md`): Rentabilidad,
+  Gerencia (desde el 16/10, de arriba hacia abajo: el Panel de control SOLO,
+  con su color, `docs/modulos/panel_control.md`; "Bancos y cajas", con el
+  suyo: las cuentas, la Cartera de cheques, Palmala Cruces —solo en
+  Frutamax, `docs/modulos/palmala_cruces.md`— y "Cuentas",
+  `docs/modulos/cuentas.md`; después Mirar · Corregir · Mantenimiento): Rentabilidad,
   Pérdidas y Facturación y cobranzas, cuyas pestañas salen solo entrando por
   Gerencia. Sistema desapareció (`docs/modulos/pedidos.md`).
 - **Comercial** tiene cinco botones (Alertas, Precios, Clientes, Fichas

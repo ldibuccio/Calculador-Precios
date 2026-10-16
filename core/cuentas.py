@@ -328,3 +328,18 @@ def poner_a_todos(renglones: list[dict], cambios: dict) -> int:
             if cambios.get(campo):
                 r[campo] = cambios[campo]
     return len(destino)
+
+
+def cuentas_del_hub(cuentas: list[dict]) -> tuple[list[dict], list[dict]]:
+    """El orden del recuadro "Bancos y cajas" de Gerencia (dueño, 16/10): cada
+    banco seguido de las inversiones que están dentro de él (después las
+    inversiones sueltas), y aparte las cajas. (antes, después) de la Cartera
+    de cheques, que va entre los dos. Una cuenta nueva cae en su lugar sola."""
+    bancos = [c for c in cuentas if c["tipo"] == "banco"]
+    ids_de_bancos = {b["id"] for b in bancos}
+    antes = []
+    for banco in bancos:
+        antes.append(banco)
+        antes.extend(c for c in cuentas if c["tipo"] == "inversion" and c.get("madre_id") == banco["id"])
+    antes.extend(c for c in cuentas if c["tipo"] == "inversion" and c.get("madre_id") not in ids_de_bancos)
+    return antes, [c for c in cuentas if c["tipo"] == "caja"]
