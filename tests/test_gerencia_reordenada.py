@@ -87,6 +87,10 @@ def test_el_hub_de_GERENCIA_el_PANEL_solo_BANCOS_Y_CAJAS_y_los_tres_grupos_con_s
     # El Panel de control va SOLO, arriba de todo, con un color que no tiene nadie más (dueño, 16/10).
     botones = re.findall(r'<a class="boton color-(\d)" href="([^"]*)"', marcado)
     assert botones[0] == ("4", "/gerencia/panel") and [c for c, _ in botones].count("4") == 1
+    # "Bancos y cajas" en celeste, no en naranja (dueño, 16/10).
+    with patch.dict(os.environ, CLAVES):
+        estilos = _cliente(m, "gerencia").get("/gerencia").text.split("</style>")[0]
+    assert re.findall(r"\.boton\.color-5 \{ background: (#[0-9a-f]{6}); \}", estilos) == ["#0284c7"]
     # Los recuadros en este orden: Panel, Bancos y cajas, Mirar, Corregir, Mantenimiento.
     assert re.findall(r"<h2>([^<]*)</h2>", marcado.split('href="/gerencia/panel"')[1]) == [
         "Bancos y cajas", "Mirar", "Corregir", "Mantenimiento"]
