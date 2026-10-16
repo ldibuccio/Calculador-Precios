@@ -34,6 +34,9 @@ Devolvé ÚNICAMENTE un JSON con este formato exacto:
   diferido si es diferido, si no la de emisión).
 - "importe" en pesos, con punto decimal y sin separador de miles.
 - "cuit_librador" son los 11 números del CUIT de quien firma, sin guiones.
+- "tipo" es "fisico" SOLO si se ve claramente un cheque de PAPEL (la foto de
+  un cheque impreso, con su talón o su firma en tinta). Si no se puede saber,
+  o es una captura, un PDF de home banking o un listado, va "echeq".
 - Si un dato no se lee, va null. No inventes.
 """
 

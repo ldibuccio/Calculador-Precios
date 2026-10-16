@@ -221,12 +221,13 @@ def test_LO_LEIDO_el_banco_es_el_de_la_lista_solo_si_es_IGUAL_y_el_CUIT_solo_si_
         {"numero": "43", "banco": "BANCO DE GALICIA Y BS AS", "cuit_librador": "2011", "tipo": "echeq"},
         {"numero": "44", "banco": "Banco Inventado", "importe": None},
         # Igual sin "Banco": "Galicia", y no "Galicia Más", que lo contiene.
-        {"numero": "45", "banco": "Banco Galicia"},
+        {"numero": "45", "banco": "Banco Galicia", "tipo": "fisico"},
     ]}, bancos)
+    # ECHEQ salvo que la lectura diga que es FÍSICO (dueño, 16/10).
     assert [(c["numero"], c["banco"], c["cuit_librador"], c["importe"], c["tipo"]) for c in leidos] == [
-        ("0042", "EJEMPLO Otro Banco", "20111111111", "10.5", "fisico"),
+        ("0042", "EJEMPLO Otro Banco", "20111111111", "10.5", "echeq"),
         ("43", "BANCO DE GALICIA Y BS AS", "", "", "echeq"),           # no es igual: queda como se leyó
-        ("44", "Banco Inventado", "", "", "fisico"),
+        ("44", "Banco Inventado", "", "", "echeq"),
         ("45", "Galicia", "", "", "fisico")]
 
 

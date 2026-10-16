@@ -18453,18 +18453,23 @@ def ver_gerencia(request: Request):
         return _pantalla_clave_gerencia(request)
     return templates.TemplateResponse(request, "gerencia.html", {"banner": _banner_alertas("gerencia"),
                                                                  "tareas_hub": _recuadro_de_tareas("gerencia"),
-                                                                 "cuentas": _cuentas_del_hub()})
+                                                                 **_cuentas_del_hub()})
 
 
-def _cuentas_del_hub() -> list[dict] | None:
-    """Un botón por cuenta activa (dueño, 15/10). Si la base no contesta, el
-    hub abre igual (como la franja de tareas) y dice que no se pudieron leer:
-    None, no una lista vacía, que diría que no hay cuentas."""
+def _cuentas_del_hub() -> dict:
+    """Un botón por cuenta activa, en el recuadro "Bancos y cajas" (dueño, 15
+    y 16/10): las de antes y las de después de la Cartera de cheques. Si la
+    base no contesta, el hub abre igual (como la franja de tareas) y dice que
+    no se pudieron leer: `cuentas` None, no una lista vacía, que diría que no
+    hay cuentas."""
+    from core.cuentas import cuentas_del_hub
     try:
-        return listar_cuentas(solo_activas=True)
+        cuentas = listar_cuentas(solo_activas=True)
     except (psycopg2.Error, RuntimeError):
         logger.exception("No se pudieron leer las cuentas para el hub de Gerencia")
-        return None
+        return {"cuentas": None, "cuentas_antes": [], "cuentas_despues": []}
+    antes, despues = cuentas_del_hub(cuentas)
+    return {"cuentas": cuentas, "cuentas_antes": antes, "cuentas_despues": despues}
 
 
 @app.post("/gerencia/clave")
@@ -28183,7 +28188,8 @@ def exportar_cheques_excel(request: Request):
 # --- CARGAR ----------------------------------------------------------------
 
 def _cheque_vacio() -> dict:
-    return {"numero": "", "banco": "", "fecha_pago": "", "importe": "", "cuit_librador": "", "tipo": "fisico",
+    # ECHEQ por defecto (dueño, 16/10).
+    return {"numero": "", "banco": "", "fecha_pago": "", "importe": "", "cuit_librador": "", "tipo": "echeq",
             "librador": ""}
 
 
@@ -28274,8 +28280,7 @@ async def leer_cheques_para_cargar(request: Request, archivo: UploadFile = File(
         filas = cheques_leidos(datos, listar_bancos()) or [_cheque_vacio()]
         return _renderizar_carga_de_cheques(request, filas=filas, comunes=_comunes_vacios(), foto_leida=foto,
                                             aviso="Se leyó el cheque. Revisá cada dato antes de guardar.")
-    renglones = renglones_para_revisar(datos.get("cheques") or [], cuits_propios(), listar_bancos(),
-                                       de_un_listado_de_echeq=(tipo == "pdf"))
+    renglones = renglones_para_revisar(datos.get("cheques") or [], cuits_propios(), listar_bancos())
     if not renglones:
         return _renderizar_carga_de_cheques(request, filas=[_cheque_vacio()], comunes=_comunes_vacios(),
                                             error="No se encontró ningún cheque en el archivo.", status_code=400)
@@ -28339,7 +28344,7 @@ def _renglones_del_listado_de_cheques(formulario) -> list[dict]:
         renglones.append({
             "numero": dato("numero"), "banco": " ".join(dato("banco").split()), "fecha_pago": dato("fecha_pago"),
             "importe": dato("importe"), "cuit_librador": "".join(ch for ch in dato("cuit_librador") if ch.isdigit()),
-            "tipo": "echeq" if dato("tipo") == "echeq" else "fisico", "origen": dato("origen"),
+            "tipo": "fisico" if dato("tipo") == "fisico" else "echeq", "origen": dato("origen"),
             "cliente_id": _id_opcional_desde_query(dato("cliente_id")), "nombre_a_mano": dato("nombre_a_mano"),
             "sacar": dato("sacar") == "1", "tildado": dato("tildado") == "1",
         })
@@ -28540,7 +28545,7 @@ async def cargar_cheques_ruta(request: Request):
                 subidas.append(ruta)
                 fotos.append((lado, ruta))
             cheques.append({"numero": fila["numero"], "banco": fila["banco"],
-                            "tipo": "echeq" if fila["tipo"] == "echeq" else "fisico",
+                            "tipo": "fisico" if fila["tipo"] == "fisico" else "echeq",
                             "fecha_pago": _fecha_de_cheque(fila["fecha_pago"]),
                             "importe": _importe_de_cheque(fila["importe"]),
                             "cuit_librador": fila["cuit_librador"], "fotos": fotos})

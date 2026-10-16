@@ -14,14 +14,18 @@ verificación `db/cuentas_12`), corrida en las dos bases el 15/10
 - **Frutamax** nace con Caja Lionel, Banco Credicoop (CC$ 191-220-000247/7)
   e Inversiones Credicoop y sus 31 conceptos (sembrados por la migración).
   **Palmala** nace sin cuentas (Lionel borró las sembradas después de
-  correrla): se crean en Gerencia → Cuentas (Mantenimiento).
+  correrla): se crean en Gerencia → Cuentas (al final de "Bancos y cajas").
 - Una cuenta nueva arranca con los conceptos por defecto de su tipo
   (`CONCEPTOS_POR_TIPO` en `core/cuentas.py`): los mismos que la Caja o el
   Banco de Frutamax, sin los que son solo del histórico. Una inversión,
   Saldo inicial, Rendimiento y Ajuste.
 - **Los botones de Gerencia** salen de las cuentas ACTIVAS de cada base, en
-  el orden en que se crearon, en el grupo "Mirar". Dar de baja una cuenta le
-  saca el botón y no recibe cheques; lo cargado queda.
+  el recuadro "Bancos y cajas" (dueño, 16/10), con su color propio y en este
+  orden (`cuentas_del_hub`): cada banco seguido de las inversiones que están
+  dentro de él, las inversiones sueltas, la Cartera de cheques, las cajas,
+  Palmala Cruces (solo en Frutamax) y al final "Cuentas". Una cuenta nueva
+  cae sola en su lugar. Dar de baja una cuenta le saca el botón y no recibe
+  cheques; lo cargado queda.
 - El número se compara solo por los dígitos (`cuenta_por_numero`, índice
   único `cuentas_numero` en la base): "CC$ 191-220-000247/7" y
   "191 220 000247 7" son la misma cuenta.

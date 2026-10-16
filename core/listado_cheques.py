@@ -217,13 +217,15 @@ def cuit_de_la_celda(valor) -> str:
     return "".join(ch for ch in str(valor or "") if ch.isdigit())
 
 
-def tipo_de_la_celda(valor, de_un_listado_de_echeq: bool = False) -> str:
+def tipo_de_la_celda(valor) -> str:
+    """ECHEQ salvo que la celda diga CLARAMENTE que es físico (dueño, 16/10):
+    "Físico", "Papel". Vacío o lo que no se entiende, ECHEQ."""
     texto = _normalizar(valor)
     if "echeq" in texto or "electron" in texto:
         return "echeq"
-    if texto:
+    if "fisic" in texto or "papel" in texto:
         return "fisico"
-    return "echeq" if de_un_listado_de_echeq else "fisico"
+    return "echeq"
 
 
 def cuit_valido(cuit: str) -> bool:
@@ -236,8 +238,7 @@ def cuit_valido(cuit: str) -> bool:
     return verificador != 10 and verificador == int(cuit[10])
 
 
-def renglones_para_revisar(crudos: list[dict], propios: dict, bancos: list[dict],
-                           de_un_listado_de_echeq: bool = False) -> list[dict]:
+def renglones_para_revisar(crudos: list[dict], propios: dict, bancos: list[dict]) -> list[dict]:
     """Lo leído (de la planilla o de la IA) como renglones del formulario:
     textos que se corrigen a mano. De quién es: el cliente de quien el CUIT
     del librador es PROPIO (`propios`: {CUIT: cliente_id}); si no, el nombre
@@ -253,7 +254,7 @@ def renglones_para_revisar(crudos: list[dict], propios: dict, bancos: list[dict]
             "fecha_pago": fecha_de_la_celda(crudo.get("fecha_pago")),
             "importe": importe_de_la_celda(crudo.get("importe")),
             "cuit_librador": cuit,
-            "tipo": tipo_de_la_celda(crudo.get("tipo"), de_un_listado_de_echeq),
+            "tipo": tipo_de_la_celda(crudo.get("tipo")),
             "origen": "cliente" if cliente_id else ("a_mano" if librador else ""),
             "cliente_id": cliente_id,
             "nombre_a_mano": "" if cliente_id else librador,

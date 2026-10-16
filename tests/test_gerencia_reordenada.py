@@ -27,15 +27,16 @@ from tests.test_administracion_reordenada import CLAVES, _cliente, _grupos_con_c
 from tests.test_segunda_negativa import base_real, galpon  # noqa: E402,F401
 
 GRUPOS_DECIDIDOS = {
-    "Mirar": [("1", "/gerencia/panel", "Panel de control"),
-              ("1", "/gerencia/rentabilidad", "Rentabilidad"), ("1", "/gerencia/perdidas", "Pérdidas"),
+    # BANCOS Y CAJAS (dueño, 16/10), con su color propio: los botones de cada
+    # cuenta salen de la base (acá no hay base: los cuida tests/test_cuentas.py),
+    # la Cartera de cheques, Palmala Cruces (solo en Frutamax: en Palmala no está,
+    # tests/test_palmala_cruces.py) y "Cuentas" al final.
+    "Bancos y cajas": [("5", "/gerencia/cheques", "Cartera de cheques"),
+                       ("5", "/gerencia/palmala-cruces", "Palmala Cruces"),
+                       ("5", "/gerencia/cuentas", "Cuentas")],
+    "Mirar": [("1", "/gerencia/rentabilidad", "Rentabilidad"), ("1", "/gerencia/perdidas", "Pérdidas"),
               ("1", "/gerencia/costos-fijos", "Costos fijos"),
-              ("1", "/gerencia/facturacion", "Facturación y cobranzas"),
-              # Cartera de cheques (dueño, 13/10): solo Gerencia.
-              ("1", "/gerencia/cheques", "Cartera de cheques"),
-              # Palmala Cruces (dueño, 14/10): solo en Frutamax (en Palmala no está:
-              # tests/test_palmala_cruces.py).
-              ("1", "/gerencia/palmala-cruces", "Palmala Cruces")],
+              ("1", "/gerencia/facturacion", "Facturación y cobranzas")],
     "Corregir": [("2", "/gerencia/compras/ingreso-retroactivo", "Ingreso con fecha anterior"),
                  # La contraseña especial de "Con fecha anterior" de
                  # Administración (dueño, 05/10): la fija Gerencia.
@@ -43,10 +44,7 @@ GRUPOS_DECIDIDOS = {
                  ("2", "/gerencia/proveedores/juntar", "Juntar dos proveedores"),
                  ("2", "/gerencia/stock/inicial", "Stock inicial del corte")],
     "Mantenimiento": [("3", "/gerencia/tareas", "Tareas"), ("3", "/gerencia/backups", "Backups"),
-                      ("3", "/gerencia/fotos", "Fotos y espacio"),
-                      # Crear cuentas (dueño, 15/10). Los botones de CADA cuenta salen
-                      # de la base: los cuida tests/test_cuentas.py.
-                      ("3", "/gerencia/cuentas", "Cuentas")],
+                      ("3", "/gerencia/fotos", "Fotos y espacio")],
 }
 
 # LOS BOTONES QUE TENÍA EL HUB hasta el 04/10 (sin Alertas, que está en la
@@ -80,12 +78,18 @@ PESTANAS = {
 ALERTAS_DE_LA_CASILLA = ("mails_sin_confirmar", "mails_leidos_con_ia", "casilla_sin_revisar")
 
 
-def test_el_hub_de_GERENCIA_tiene_DIEZ_botones_en_tres_grupos_con_su_color():
+def test_el_hub_de_GERENCIA_el_PANEL_solo_BANCOS_Y_CAJAS_y_los_tres_grupos_con_su_color():
     import app.main as m
     with patch.dict(os.environ, CLAVES):
         marcado = _cliente(m, "gerencia").get("/gerencia").text.split("</style>")[-1]
     assert {t: [tuple(b) for b in botones] for t, botones in _grupos_con_color(marcado).items()} == GRUPOS_DECIDIDOS
     assert marcado.count('<a class="boton ') == 15
+    # El Panel de control va SOLO, arriba de todo, con un color que no tiene nadie más (dueño, 16/10).
+    botones = re.findall(r'<a class="boton color-(\d)" href="([^"]*)"', marcado)
+    assert botones[0] == ("4", "/gerencia/panel") and [c for c, _ in botones].count("4") == 1
+    # Los recuadros en este orden: Panel, Bancos y cajas, Mirar, Corregir, Mantenimiento.
+    assert re.findall(r"<h2>([^<]*)</h2>", marcado.split('href="/gerencia/panel"')[1]) == [
+        "Bancos y cajas", "Mirar", "Corregir", "Mantenimiento"]
 
 
 def test_NINGUN_boton_viejo_de_Gerencia_desaparece_y_cada_pantalla_VIEJA_abre(galpon):

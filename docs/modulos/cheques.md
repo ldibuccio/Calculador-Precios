@@ -6,6 +6,14 @@ Gerencia → **Cartera de cheques** (`/gerencia/cheques`). La usa SOLO Gerencia,
 con su clave: carga y aplica Lionel, y Administración no la ve. El sistema no
 tiene usuarios, así que "quién" en el historial es el sector y la hora.
 
+**ECHEQ por defecto (dueño, 16/10)**: en la carga a mano, en "Revisar
+cheques" (Excel, foto o PDF) y entre las opciones de "Para todos", ECHEQ va
+primero y es lo que viene puesto. Queda Físico solo si la lectura lo dice
+claramente: la IA solo dice "fisico" si ve un cheque de PAPEL, y en una
+planilla la columna tiene que decir "Físico" o "Papel"
+(`tipo_de_la_celda`). En "Para todos" sigue viniendo "No cambiar": si viniera
+ECHEQ, cambiar otro dato a todos pisaría los que se leyeron como físicos.
+
 Migración `db/cheques_1..5` (verificada en Frutamax y Palmala el 13/10, ver
 `db/corridas_confirmadas.md`). Tablas: `bancos`, `cheques`,
 `cheques_conceptos`, `cheques_salidas`, `cheques_rechazos`, `cheques_fotos`,

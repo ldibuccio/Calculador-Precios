@@ -2,7 +2,7 @@
 
 ## El tablero y la regla de oro (dueño, 08/10)
 
-Gerencia → **Panel de control** (primero en "Mirar"): un tablero de trece cuadros
+Gerencia → **Panel de control** (solo, arriba de todo, con su color propio; dueño, 16/10): un tablero de trece cuadros
 grandes, cada uno con UN número que se lee de un pantallazo (390px), y al
 tocarlo su detalle (`/gerencia/panel/<cuadro>`, una dirección escrita por
 cuadro para que el humo las abra todas). Rutas en `app/main.py`

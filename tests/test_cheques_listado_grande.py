@@ -251,16 +251,18 @@ def test_las_MIGRACIONES_2_y_3_pasan_el_CUIT_a_la_tabla_y_borran_la_columna_dos_
 def test_PARA_TODOS_cambia_los_TILDADOS_o_todos_si_no_hay_ninguno(m, d):
     filas = [TITULOS] + [[str(i), "EJEMPLO Banco", "15/11/2026", 100 + i, CUIT_A, "EJEMPLO SRL"] for i in range(4)]
     datos = _formulario(_leer(m, "c.xlsx", _xlsx(filas)).text)
-    # Tildados el 1 y el 3: solo esos pasan a ECHEQ, de canje y del otro banco.
-    tildados = _formulario(_postear(m, datos, tildado_1="1", tildado_3="1", accion="a_todos", tipo_todos="echeq",
+    # La planilla no dice el tipo: entran como ECHEQ (dueño, 16/10).
+    assert [datos[f"tipo_{i}"] for i in range(4)] == ["echeq"] * 4
+    # Tildados el 1 y el 3: solo esos pasan a FÍSICO, de canje y del otro banco.
+    tildados = _formulario(_postear(m, datos, tildado_1="1", tildado_3="1", accion="a_todos", tipo_todos="fisico",
                                     origen_todos="canje", banco_todos="EJEMPLO Otro Banco").text)
     assert [(tildados[f"tipo_{i}"], tildados[f"origen_{i}"], tildados[f"banco_{i}"]) for i in range(4)] == [
-        ("fisico", "a_mano", "EJEMPLO Banco"), ("echeq", "canje", "EJEMPLO Otro Banco"),
-        ("fisico", "a_mano", "EJEMPLO Banco"), ("echeq", "canje", "EJEMPLO Otro Banco")]
+        ("echeq", "a_mano", "EJEMPLO Banco"), ("fisico", "canje", "EJEMPLO Otro Banco"),
+        ("echeq", "a_mano", "EJEMPLO Banco"), ("fisico", "canje", "EJEMPLO Otro Banco")]
     # Sin tildar: a todos; "No cambiar" deja el banco y el origen como estaban.
-    todos = _formulario(_postear(m, tildados, accion="a_todos", tipo_todos="fisico").text)
+    todos = _formulario(_postear(m, tildados, accion="a_todos", tipo_todos="echeq").text)
     assert [(todos[f"tipo_{i}"], todos[f"origen_{i}"]) for i in range(4)] == [
-        ("fisico", "a_mano"), ("fisico", "canje"), ("fisico", "a_mano"), ("fisico", "canje")]
+        ("echeq", "a_mano"), ("echeq", "canje"), ("echeq", "a_mano"), ("echeq", "canje")]
     # Sacar los tildados: el 0 y el 2 quedan afuera y no cuentan.
     sacados = _postear(m, todos, tildado_0="1", tildado_2="1", accion="sacar_tildados")
     assert _conteo(sacados.text) == "2 cheques · $204 · 2 bien"
@@ -306,3 +308,17 @@ def test_CONFIRMAR_ENDOSOS_con_mas_de_1000_campos_tambien_entra(m, d):
     final = _cliente(m, "gerencia").post("/gerencia/cheques/aplicar/endosos/confirmar", data=datos,
                                          follow_redirects=False)
     assert final.status_code == 303 and "0+cheques+aplicados" in final.headers["location"]
+
+
+
+def test_el_TIPO_es_ECHEQ_salvo_que_diga_claramente_FISICO():
+    from core.listado_cheques import tipo_de_la_celda
+    assert [tipo_de_la_celda(v) for v in (None, "", "ECHEQ", "Cheque electrónico", "Físico", "papel", "CH", "x")] == [
+        "echeq", "echeq", "echeq", "echeq", "fisico", "fisico", "echeq", "echeq"]
+
+
+def test_la_CARGA_A_MANO_arranca_en_ECHEQ(m):
+    from tests.test_administracion_reordenada import _cliente
+    pagina = _cliente(m, "gerencia").get("/gerencia/cheques/cargar").text
+    assert re.search(r'<select name="tipo_0"><option value="echeq" selected>ECHEQ</option>'
+                     r'<option value="fisico" >Físico</option></select>', pagina)

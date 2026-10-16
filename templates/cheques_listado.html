@@ -76,7 +76,7 @@
         <label>¿De quién es?<select name="origen_todos"><option value="">No cambiar</option>{% for valor, texto in origenes %}<option value="{{ valor }}">{{ texto }}</option>{% endfor %}</select></label>
         <label>Cliente<select name="cliente_todos"><option value="">—</option>{% for c in clientes %}<option value="{{ c.id }}">{{ c.nombre }}</option>{% endfor %}</select></label>
         <label>Nombre (si es otro)<input type="text" name="nombre_todos" placeholder="Ej. Juan Pérez"></label>
-        <label>¿Físico o ECHEQ?<select name="tipo_todos"><option value="">No cambiar</option><option value="fisico">Físico</option><option value="echeq">ECHEQ</option></select></label>
+        <label>¿Físico o ECHEQ?<select name="tipo_todos"><option value="">No cambiar</option><option value="echeq">ECHEQ</option><option value="fisico">Físico</option></select></label>
         <label>Banco<input type="text" name="banco_todos" list="bancos" placeholder="No cambiar"></label>
       </div>
       <label class="tilde"><input type="checkbox" data-seleccionar-todos>Seleccionar todos</label>
@@ -111,7 +111,7 @@
             <label>¿Qué día se cobra?<input type="date" name="fecha_pago_{{ i }}" value="{{ r.fecha_pago }}"></label>
             <label>Importe<input type="number" name="importe_{{ i }}" step="0.01" min="0.01" inputmode="decimal" value="{{ r.importe }}"></label>
             <label>CUIT de quien lo firma<input type="text" name="cuit_librador_{{ i }}" inputmode="numeric" value="{{ r.cuit_librador }}"></label>
-            <label>¿Físico o ECHEQ?<select name="tipo_{{ i }}"><option value="fisico" {% if r.tipo != 'echeq' %}selected{% endif %}>Físico</option><option value="echeq" {% if r.tipo == 'echeq' %}selected{% endif %}>ECHEQ</option></select></label>
+            <label>¿Físico o ECHEQ?<select name="tipo_{{ i }}"><option value="echeq" {% if r.tipo != 'fisico' %}selected{% endif %}>ECHEQ</option><option value="fisico" {% if r.tipo == 'fisico' %}selected{% endif %}>Físico</option></select></label>
             <label>¿De quién es?<select name="origen_{{ i }}"><option value="">Elegí</option>{% for valor, texto in origenes %}<option value="{{ valor }}" {% if r.origen == valor %}selected{% endif %}>{{ texto }}</option>{% endfor %}</select></label>
             <label>Cliente<select name="cliente_id_{{ i }}"><option value="">—</option>{% for c in clientes %}<option value="{{ c.id }}" {% if r.cliente_id == c.id %}selected{% endif %}>{{ c.nombre }}</option>{% endfor %}</select></label>
             <label>Nombre (si es otro)<input type="text" name="nombre_a_mano_{{ i }}" value="{{ r.nombre_a_mano }}"></label>

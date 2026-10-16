@@ -52,7 +52,7 @@
         <div class="campos">
           <label>Número<input type="text" name="numero_{{ i }}" inputmode="numeric" value="{{ f.numero }}" required></label>
           <label>Banco<input type="text" name="banco_{{ i }}" list="bancos" placeholder="Ej. Galicia" value="{{ f.banco }}" required></label>
-          <label>¿Físico o ECHEQ?<select name="tipo_{{ i }}"><option value="fisico" {% if f.tipo != 'echeq' %}selected{% endif %}>Físico</option><option value="echeq" {% if f.tipo == 'echeq' %}selected{% endif %}>ECHEQ</option></select></label>
+          <label>¿Físico o ECHEQ?<select name="tipo_{{ i }}"><option value="echeq" {% if f.tipo != 'fisico' %}selected{% endif %}>ECHEQ</option><option value="fisico" {% if f.tipo == 'fisico' %}selected{% endif %}>Físico</option></select></label>
           <label>¿Qué día se cobra?<input type="date" name="fecha_pago_{{ i }}" value="{{ f.fecha_pago }}" required></label>
           <label>Importe<input type="number" name="importe_{{ i }}" step="0.01" min="0.01" inputmode="decimal" value="{{ f.importe }}" required></label>
           <label>CUIT de quien lo firma<input type="text" name="cuit_librador_{{ i }}" inputmode="numeric" placeholder="Ej. 20123456789" value="{{ f.cuit_librador }}" required></label>
