@@ -3049,6 +3049,20 @@ from cuentas_todos_los_movimientos v
 left join cuentas_conciliaciones cc
   on cc.cuenta_id = v.cuenta_id and cc.origen = v.origen and cc.origen_id = v.origen_id;
 
+-- EXCEPCIONES DE ALERTAS (dueño, 16/10), migración alertas_excepciones_1
+-- (db/alertas_excepciones_1..4). Lo que una alerta no cuenta, cargado por SQL.
+create table alertas_excepciones (
+  id         bigint generated always as identity primary key,
+  alerta     text not null check (btrim(alerta) <> ''),
+  apunta_a   bigint not null,
+  motivo     text not null check (btrim(motivo) <> ''),
+  fecha      date not null default ((now() at time zone 'America/Argentina/Buenos_Aires')::date),
+  creado_en  timestamptz not null default now(),
+  constraint alertas_excepciones_una_vez unique (alerta, apunta_a)
+);
+comment on table alertas_excepciones is 'Lo que una alerta no cuenta (dueño, 16/10): alerta es su código (remitos_rechazo_distinto), apunta_a el id de lo que no cuenta (remitos.id). Se carga por SQL, sin pantalla.';
+alter table alertas_excepciones enable row level security;
+
 -- CANDADOS (RLS) EN TODAS LAS TABLAS DE public (dueño, 09/10). db/rls_1_*.sql.
 -- Sin políticas para anon: por la API de Supabase con la clave pública no se
 -- lee nada. El sistema entra como postgres (dueño y con bypassrls): no lo

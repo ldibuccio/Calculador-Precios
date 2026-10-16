@@ -86,7 +86,14 @@ facturación y la cobranza no se hacen acá. La regla pura vive en
 - `remitos_sin_factura`: recibido hace **más de 10 días corridos**
   (`DIAS_REMITO_SIN_FACTURA`). Se factura una vez por semana, más fin de semana
   y feriados.
-- `remitos_rechazo_distinto`: el papel y Depósito no dicen lo mismo.
+- `remitos_rechazo_distinto`: el papel y Depósito no dicen lo mismo. Mira
+  TODOS los remitos recibidos, sin plazo. **No cuenta los que están en
+  `alertas_excepciones`** (dueño, 16/10): una fila por alerta y por lo que no
+  cuenta (`apunta_a` = `remitos.id`), con motivo y fecha, cargada por SQL y sin
+  pantalla. El remito sigue mostrando el aviso amarillo, con el motivo de la
+  excepción en vez de "revisá el reingreso". La tabla sirve para las demás
+  alertas: cada una lee las suyas por su código. El primero, el remito 20344
+  de Día % ("Arrastre ya corregido", migración `alertas_excepciones_1`).
 - `pedidos_sin_remito`: órdenes de compra armadas sin remito, **solo desde
   `REMITOS_DESDE`** (01/10/2026, el día del merge, `core/remitos.py`). Es lo único
   para lo que sirve esa fecha, además del provisorio de la Rentabilidad. Lo

@@ -20326,6 +20326,9 @@ def remito_por_id(remito_id: int) -> dict | None:
                            "WHERE remito_id = %s ORDER BY creado_en, id", (remito_id,))
             remito["fotos"] = [{"id": f[0], "ruta": f[1], "creado_en": f[2], "cargada_por": f[3]}
                                for f in cursor.fetchall()]
+            # Si la alerta de rechazos no lo cuenta, el remito dice por qué.
+            remito["excepcion_rechazo"] = _excepciones_de_alerta(
+                cursor, ALERTA_REMITOS_RECHAZO_DISTINTO).get(remito_id)
             return remito
     finally:
         conexion.close()
@@ -20495,17 +20498,32 @@ def contar_remitos_sin_factura(hoy: date) -> dict:
     return {"casos": len(vencidos), "mas_viejo": min((r["recibido_el"] for r in vencidos), default=None)}
 
 
+# EXCEPCIONES DE ALERTAS (dueño, 16/10): lo que una alerta NO cuenta, con su
+# motivo, en `alertas_excepciones` (se carga por SQL, sin pantalla). `apunta_a`
+# es el id de lo que no cuenta; qué tabla es lo dice la alerta.
+ALERTA_REMITOS_RECHAZO_DISTINTO = "remitos_rechazo_distinto"
+
+
+def _excepciones_de_alerta(cursor, alerta: str) -> dict:
+    """{apunta_a: {"motivo", "fecha"}} de esa alerta."""
+    cursor.execute("SELECT apunta_a, motivo, fecha FROM alertas_excepciones WHERE alerta = %s", (alerta,))
+    return {f[0]: {"motivo": f[1], "fecha": f[2]} for f in cursor.fetchall()}
+
+
 def remitos_con_rechazo_distinto() -> list[dict]:
     """Los remitos YA RECIBIDOS con algún renglón cuyo rechazo no
     coincide con lo que cargó Depósito. Se recalcula en cada lectura: el día
-    que Depósito carga el reingreso que faltaba, el remito sale solo."""
+    que Depósito carga el reingreso que faltaba, el remito sale solo. Los que
+    tienen una excepción cargada (`alertas_excepciones`) no cuentan."""
     conexion = obtener_conexion()
     try:
         with conexion.cursor() as cursor:
             remitos = _remitos_con_renglones(cursor, "re.recibido_el IS NOT NULL", {})
+            excepciones = _excepciones_de_alerta(cursor, ALERTA_REMITOS_RECHAZO_DISTINTO)
     finally:
         conexion.close()
-    return [r for r in remitos if any(rechazo_no_coincide(x) for x in r["renglones"])]
+    return [r for r in remitos
+            if r["id"] not in excepciones and any(rechazo_no_coincide(x) for x in r["renglones"])]
 
 
 def contar_remitos_con_rechazo_distinto() -> dict:

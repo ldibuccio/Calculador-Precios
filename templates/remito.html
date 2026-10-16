@@ -104,7 +104,10 @@
   <div class="tarjeta">
     <h2>Renglones</h2>
     {% if remito.rechazos_distintos %}
-      <div class="ojo">Los rechazos del remito no coinciden con los que cargó Depósito en {{ remito.rechazos_distintos }} renglón{{ "es" if remito.rechazos_distintos != 1 }}. Revisá el reingreso en Depósito: el remito no mueve stock.</div>
+      <div class="ojo">Los rechazos del remito no coinciden con los que cargó Depósito en {{ remito.rechazos_distintos }} renglón{{ "es" if remito.rechazos_distintos != 1 }}.
+        {# EXCEPCIÓN (dueño, 16/10): no cuenta en Alertas y el aviso dice por qué. #}
+        {% if remito.excepcion_rechazo %}<span data-excepcion>No cuenta en Alertas: {{ remito.excepcion_rechazo.motivo }} (desde el {{ remito.excepcion_rechazo.fecha.strftime('%d/%m/%Y') }}).</span>
+        {% else %}Revisá el reingreso en Depósito: el remito no mueve stock.{% endif %}</div>
     {% endif %}
     {% for r in remito.renglones %}
       <div class="renglon">
