@@ -12284,7 +12284,14 @@ def _datos_de_rendimientos(fecha_desde, fecha_hasta, articulo_id) -> dict:
             "consulta": urlencode(filtros)}
 
 
+# La misma pantalla en Comercial, Administración y Compras (dueño, 16/10). El
+# sector sale del PREFIJO (corolario 63): la barra, "Atrás", el formulario y
+# las descargas se quedan en el sector por el que se entró, y la clave de
+# Administración y de Compras la pone el middleware. No protege nada nuevo: en
+# Comercial se sigue viendo sin clave.
 @app.get("/comercial/rendimientos")
+@app.get("/administracion/rendimientos")
+@app.get("/compras/rendimientos")
 def ver_rendimientos(request: Request, fecha_desde: str | None = None, fecha_hasta: str | None = None,
                      articulo_id: str | None = None):
     """Cuánto rinde lo que se compra, por artículo (dueño, 13/10): los que pasan
@@ -12294,11 +12301,14 @@ def ver_rendimientos(request: Request, fecha_desde: str | None = None, fecha_has
     from core.rendimientos import texto_de_la_perdida
     contexto = _datos_de_rendimientos(fecha_desde, fecha_hasta, articulo_id)
     return templates.TemplateResponse(request, "comercial_rendimientos.html",
-                                      {**contexto, "texto_de_la_perdida": texto_de_la_perdida},
+                                      {**contexto, "texto_de_la_perdida": texto_de_la_perdida,
+                                       "sector": request.url.path.split("/")[1]},
                                       status_code=400 if contexto["error"] else 200)
 
 
 @app.get("/comercial/rendimientos/excel")
+@app.get("/administracion/rendimientos/excel")
+@app.get("/compras/rendimientos/excel")
 def exportar_rendimientos_excel(fecha_desde: str | None = None, fecha_hasta: str | None = None,
                                 articulo_id: str | None = None):
     from core.exportar_rendimientos import generar_excel_rendimientos
@@ -12314,6 +12324,8 @@ def exportar_rendimientos_excel(fecha_desde: str | None = None, fecha_hasta: str
 
 
 @app.get("/comercial/rendimientos/pdf")
+@app.get("/administracion/rendimientos/pdf")
+@app.get("/compras/rendimientos/pdf")
 def exportar_rendimientos_pdf(fecha_desde: str | None = None, fecha_hasta: str | None = None,
                               articulo_id: str | None = None):
     from core.exportar_rendimientos import generar_pdf_rendimientos

@@ -42,6 +42,8 @@ GRUPOS_DECIDIDOS = {
         # CON FECHA ANTERIOR (dueño, 05/10): ingreso, devolución, merma y pase
         # con un día pasado, con la contraseña especial.
         ("/administracion/retroactivo", "Con fecha anterior"),
+        # Rendimientos (dueño, 16/10): la misma pantalla de Comercial.
+        ("/administracion/rendimientos", "Rendimientos"),
     ],
     "Pedidos": [
         ("/deposito/pedido/cargar", "Cargar pedido"),

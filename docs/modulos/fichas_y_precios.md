@@ -280,6 +280,13 @@ se compra, por artículo, con filtro de período (desde-hasta, 7 días por
 defecto como Rentabilidad) y artículo. PDF y Excel con los mismos filtros y
 un encabezado que los dice (`core/exportar_rendimientos.py`).
 
+**También en Administración (grupo Stock) y en Compras (grupo Operaciones)**
+(dueño, 16/10): la MISMA pantalla en `/administracion/rendimientos` y
+`/compras/rendimientos`, con la clave de cada sector (el middleware, por el
+prefijo). El sector sale del prefijo (corolario 63): la barra, "Atrás", el
+formulario y el PDF y el Excel se quedan en el sector por el que se entró.
+La clave no protege nada nuevo: en Comercial se sigue viendo sin clave.
+
 - **Pasan por guía R**: la cuenta del cuadro "Rinde de guías R" del panel
   (`core.kilos_guia_r.rinde_por_articulo`, por guía: cajones tomados × kg
   pesados; la primera con los kilos que se mandaron al armar, o la ficha si
