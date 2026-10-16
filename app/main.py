@@ -28899,6 +28899,141 @@ async def revisar_aplicar_cheques(request: Request):
                 "corregilos o sacalos."])
 
 
+# --- CONCILIAR CON EL BANCO (dueño, 16/10) -----------------------------------
+# El listado del banco (ECHEQ en cartera o en custodia) contra los cheques EN
+# CARTERA del sistema. Nada se guarda: lo leído viaja en el formulario (JSON)
+# para volver a cruzar con o sin "Solo ECHEQ", exportar y cargar los que faltan.
+
+def _renderizar_conciliacion_de_cartera(request: Request, *, leidos: list[dict] | None = None,
+                                        solo_echeq: bool = True, avisos: list[str] = (),
+                                        error: str | None = None, status_code: int = 200):
+    from core.conciliar_cartera import como_texto, cruzar_con_la_cartera
+    resultado = None if leidos is None else cruzar_con_la_cartera(leidos, buscar_cheques({}, solo_en_cartera=True),
+                                                                  solo_echeq=solo_echeq)
+    return templates.TemplateResponse(request, "cheques_conciliar.html", {
+        "resultado": resultado, "solo_echeq": solo_echeq, "avisos": list(avisos), "error": error,
+        "leidos_json": json.dumps(como_texto(leidos or []), ensure_ascii=False),
+    }, status_code=status_code)
+
+
+@app.get("/gerencia/cheques/conciliar")
+def ver_conciliar_cartera(request: Request):
+    sin_clave = _sin_clave_de_cheques(request)
+    if sin_clave is not None:
+        return sin_clave
+    return _renderizar_conciliacion_de_cartera(request)
+
+
+@app.post("/gerencia/cheques/conciliar")
+async def conciliar_cartera_con_el_banco(request: Request):
+    """Lee cada archivo (Excel o CSV celda por celda; foto o PDF con la IA) y
+    cruza lo leído contra la cartera."""
+    from core.conciliar_cartera import juntar_lo_leido
+    puerta = _puerta_de_gerencia_para_escribir(request)
+    if puerta is not None:
+        return puerta
+    formulario = await request.form()
+    archivos = [a for a in formulario.getlist("archivos") if getattr(a, "filename", "")]
+    solo_echeq = formulario.get("solo_echeq") == "1"
+    if not archivos:
+        return _renderizar_conciliacion_de_cartera(request, solo_echeq=solo_echeq, status_code=400,
+                                                   error="Subí el listado del banco: un Excel, un PDF o capturas.")
+    por_archivo, avisos = [], []
+    for numero, archivo in enumerate(archivos, start=1):
+        tipo = _tipo_del_archivo_de_cheques(archivo.filename)
+        contenido = await archivo.read()
+        try:
+            if tipo is None:
+                raise ValueError("no es un Excel, un CSV, un PDF ni una foto")
+            por_archivo.append(_leer_archivo_de_cheques(contenido, tipo).get("cheques") or [])
+        except (ValueError, RuntimeError):
+            logger.exception("No se pudo leer el listado del banco %s", archivo.filename)
+            avisos.append(f"El archivo {numero} («{archivo.filename}») no se pudo leer.")
+            por_archivo.append([])
+    leidos, repetidos = juntar_lo_leido(por_archivo)
+    if repetidos:
+        avisos.append(f"{repetidos} cheque{'s' if repetidos != 1 else ''} repetido{'s' if repetidos != 1 else ''} "
+                      "entre archivos: se tomó una sola vez.")
+    return _renderizar_conciliacion_de_cartera(request, leidos=leidos, solo_echeq=solo_echeq, avisos=avisos)
+
+
+async def _lo_leido_del_formulario(request: Request) -> tuple[list[dict], bool]:
+    """(lo leído, solo ECHEQ) que la pantalla del resultado manda de vuelta."""
+    from core.conciliar_cartera import desde_texto
+    formulario = await request.form()
+    try:
+        leidos = desde_texto(json.loads(str(formulario.get("leidos") or "[]")))
+    except ValueError as error:
+        raise HTTPException(status_code=400, detail=f"Lo leído del banco llegó roto: {error}") from error
+    return leidos, formulario.get("solo_echeq") == "1"
+
+
+@app.post("/gerencia/cheques/conciliar/cruzar")
+async def volver_a_cruzar_la_cartera(request: Request):
+    """Vuelve a cruzar lo mismo (con o sin "Solo ECHEQ"), contra la cartera de ahora."""
+    puerta = _puerta_de_gerencia_para_escribir(request)
+    if puerta is not None:
+        return puerta
+    leidos, solo_echeq = await _lo_leido_del_formulario(request)
+    return _renderizar_conciliacion_de_cartera(request, leidos=leidos, solo_echeq=solo_echeq)
+
+
+@app.post("/gerencia/cheques/conciliar/cargar")
+async def cargar_los_que_faltan_en_la_cartera(request: Request):
+    """Los que están en el banco y no en el sistema, a "Revisar cheques": el
+    mismo flujo del listado (cliente por CUIT propio, "Para todos")."""
+    from core.conciliar_cartera import cruzar_con_la_cartera, para_cargar
+    puerta = _puerta_de_gerencia_para_escribir(request)
+    if puerta is not None:
+        return puerta
+    leidos, solo_echeq = await _lo_leido_del_formulario(request)
+    faltan = cruzar_con_la_cartera(leidos, buscar_cheques({}, solo_en_cartera=True), solo_echeq=solo_echeq)["solo_banco"]
+    if not faltan:
+        return _renderizar_conciliacion_de_cartera(request, leidos=leidos, solo_echeq=solo_echeq,
+                                                   avisos=["No falta cargar ninguno."])
+    renglones = renglones_para_revisar(para_cargar(faltan), cuits_propios(), listar_bancos())
+    return _renderizar_listado_de_cheques(request, renglones, fecha_carga=_hoy_argentina().isoformat(),
+                                          aviso=f"{len(renglones)} cheques del banco que no estaban en el sistema. "
+                                                "Revisalos antes de guardar.")
+
+
+def _texto_del_cruce(solo_echeq: bool, cuantos_leidos: int) -> str:
+    return (f"{cuantos_leidos} cheques leídos del banco contra los "
+            + ("ECHEQ en cartera (los físicos, aparte)" if solo_echeq else "ECHEQ y físicos en cartera"))
+
+
+@app.post("/gerencia/cheques/conciliar/excel")
+async def exportar_conciliacion_de_cartera_excel(request: Request):
+    from core.conciliar_cartera import cruzar_con_la_cartera
+    from core.exportar_cheques import generar_excel_conciliacion
+    puerta = _puerta_de_gerencia_para_escribir(request)
+    if puerta is not None:
+        return puerta
+    leidos, solo_echeq = await _lo_leido_del_formulario(request)
+    hoy = _hoy_argentina()
+    resultado = cruzar_con_la_cartera(leidos, buscar_cheques({}, solo_en_cartera=True), solo_echeq=solo_echeq)
+    return Response(
+        content=generar_excel_conciliacion(resultado, _texto_del_cruce(solo_echeq, len(leidos)), hoy),
+        media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        headers={"Content-Disposition": f'attachment; filename="Conciliacion_cheques_{hoy.isoformat()}.xlsx"'})
+
+
+@app.post("/gerencia/cheques/conciliar/pdf")
+async def exportar_conciliacion_de_cartera_pdf(request: Request):
+    from core.conciliar_cartera import cruzar_con_la_cartera
+    from core.exportar_cheques import generar_pdf_conciliacion
+    puerta = _puerta_de_gerencia_para_escribir(request)
+    if puerta is not None:
+        return puerta
+    leidos, solo_echeq = await _lo_leido_del_formulario(request)
+    hoy = _hoy_argentina()
+    resultado = cruzar_con_la_cartera(leidos, buscar_cheques({}, solo_en_cartera=True), solo_echeq=solo_echeq)
+    return Response(
+        content=generar_pdf_conciliacion(resultado, _texto_del_cruce(solo_echeq, len(leidos)), hoy),
+        media_type="application/pdf",
+        headers={"Content-Disposition": f'attachment; filename="Conciliacion_cheques_{hoy.isoformat()}.pdf"'})
+
+
 # --- LA FICHA --------------------------------------------------------------
 
 def _renderizar_ficha_de_cheque(request: Request, cheque_id: int, *, aviso: str | None = None,
