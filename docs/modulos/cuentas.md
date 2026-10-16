@@ -93,8 +93,11 @@ Ya está cargado por SQL en Frutamax (`db/corridas_confirmadas.md`): Caja
 Lionel 668 movimientos (saldo $147.910.250), Inversiones Credicoop 255 (saldo
 $87.000.000,11: los FCI con signo como "Movimiento anterior", utilidades e
 intereses como "Rendimiento", etiquetas FCI Ahorro/Renta/Variable, sin tocar
-el banco) y Banco Credicoop solo el saldo inicial $8.035.818,38 del
-15/10/2026, que se completa con la conciliación. No se vuelve a cargar.
+el banco) y Banco Credicoop solo el saldo inicial $8.035.818,38 al
+14/10/2026 (el saldo ANTES de los movimientos del 15/10, dueño 16/10; se
+cargó con fecha 15/10 y se corrigió con su registro en
+`cuentas_correcciones`), que se completa con la conciliación. No se vuelve a
+cargar.
 
 ## Carga por foto y por Excel (15/10)
 
@@ -135,9 +138,12 @@ Botón "Conciliar con el extracto" en la pantalla de un banco
   queda marcado con el extracto y la fecha (`cuentas_conciliaciones`) y no se
   vuelve a cruzar.
 - **El saldo inicial manda**: lo del extracto ANTERIOR a la fecha del
-  movimiento "Saldo inicial" de la cuenta (Banco Credicoop: 15/10/2026) ya
-  está adentro de ese saldo; no se cruza ni se carga, y se cuenta aparte. El
-  movimiento de saldo inicial no se cruza nunca.
+  movimiento "Saldo inicial" de la cuenta (Banco Credicoop: 14/10/2026) ya
+  está adentro de ese saldo; no se cruza ni se carga, y se cuenta aparte. Lo
+  del MISMO día del saldo inicial sí se cruza: el saldo es al cierre del día
+  anterior a sus movimientos, así que su fecha es la del último día que ya
+  incluye (Banco Credicoop: el saldo es "al 14/10", y lo del 15/10 entra;
+  dueño, 16/10). El movimiento de saldo inicial no se cruza nunca.
 - **El resultado**: la diferencia de saldo al cierre de cada extracto (el
   saldo final del banco contra el del sistema a esa fecha), lo que está solo
   en el extracto (se carga de un toque con un concepto sugerido por la

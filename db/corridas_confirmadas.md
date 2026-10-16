@@ -641,3 +641,22 @@ Lectura" el 15/10:
 FRUTAMAX  antes de 2020: 0 · correcciones 9 (campo fecha) · filas 201:2022-05-27, 219:2022-06-13,
           309:2022-08-16, 618 a 623:2025-07-04 · saldo Caja Lionel $147.910.250,00 (sin cambios) · testigo_movimientos 924
 ```
+
+### 16/10 — el saldo inicial del Banco Credicoop pasa al 14/10
+
+El saldo inicial del Banco Credicoop ($8.035.818,38) es el saldo al 14/10,
+antes de los movimientos del 15/10 (dueño, 16/10). Lionel le cambió la fecha
+por SQL en Frutamax, de 15/10 a 14/10, y agregó la corrección en
+`cuentas_correcciones` (campo `fecha`, motivo "El saldo inicial es al 14/10,
+antes de los movimientos del 15/10"; registrada el 16/10 a las 00:55 UTC).
+Verificado por mí por el conector "Supabase Lectura" el 16/10:
+
+```
+FRUTAMAX  movimiento 924 (Saldo inicial, Banco Credicoop) · fecha 2026-10-14 · $8.035.818,38 · 1 corrección (fecha 2026-10-15 → 2026-10-14)
+          saldo del banco $8.035.818,38 · testigo_movimientos 924
+```
+
+Una lectura mía anterior el mismo 16/10 todavía devolvía fecha 15/10 y 0
+correcciones; la segunda, ya con los dos cambios, es la de arriba. La
+conciliación no cambia: lo del extracto anterior a la fecha del saldo inicial
+no se cruza, y lo del 15/10 en adelante sí.
