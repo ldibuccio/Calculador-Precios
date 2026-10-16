@@ -174,40 +174,6 @@ def test_CARGAR_la_foto_leida_queda_como_FRENTE(m, d):
         [("frente", "cheques/2026-10-13/frente.jpg")]
 
 
-def test_APLICAR_varios_juntos_y_por_FOTO_tilda_los_que_encuentra(m, d):
-    uno, dos, tres = _cargar(d, "11"), _cargar(d, "12", cuit=CUIT_B), _cargar(d, "13")
-    leido = {"fecha": "2026-10-12", "cheques": [{"numero": "0011", "cuit_librador": None},
-                                                 {"numero": "12"}, {"numero": "99"}]}
-    cliente = _cliente(m, "gerencia")
-    with patch("app.main.extraer_cheques_de_imagenes", return_value=leido):
-        pagina = cliente.post("/gerencia/cheques/aplicar/leer",
-                              files={"archivo": ("boleta.jpg", _foto(), "image/jpeg")}).text
-    tildados = re.findall(r'name="cheque_id" value="(\d+)" checked', pagina)
-    assert sorted(map(int, tildados)) == [uno, dos]
-    assert "No están en cartera: 99." in pagina
-    assert 'name="fecha" value="2026-10-12"' in pagina
-    respuesta = cliente.post("/gerencia/cheques/aplicar", data={"cheque_id": [str(uno), str(dos)],
-                             "fecha": _hoy(d).isoformat(), "concepto_id": "3"}, follow_redirects=False)
-    assert respuesta.status_code == 303, _error(respuesta)
-    estados = {c["id"]: c["estado"] for c in d.buscar_cheques({})}
-    assert estados == {uno: "depositado", dos: "depositado", tres: "en_cartera"}
-
-
-def test_APLICAR_un_pago_sin_proveedor_rebota_y_un_concepto_nuevo_se_crea(m, d):
-    cheque = _cargar(d, "21")
-    cliente = _cliente(m, "gerencia")
-    sin = cliente.post("/gerencia/cheques/aplicar", data={"cheque_id": str(cheque), "fecha": _hoy(d).isoformat(),
-                                                          "concepto_id": "1"}, follow_redirects=False)
-    assert sin.status_code == 400 and "Un pago a proveedor tiene que decir a qué proveedor." in sin.text
-    nuevo = cliente.post("/gerencia/cheques/aplicar", data={
-        "cheque_id": str(cheque), "fecha": _hoy(d).isoformat(), "concepto_nuevo": "EJEMPLO Pago de flete",
-        "destino_nuevo": "entregado", "proveedor_id": "1"}, follow_redirects=False)
-    assert nuevo.status_code == 303, nuevo.text[:300]
-    ficha = d.obtener_cheque(cheque)
-    assert (ficha["estado"], ficha["concepto"], ficha["proveedor"]) == ("entregado", "EJEMPLO Pago de flete",
-                                                                         "EJEMPLO Puesto")
-
-
 def test_la_FICHA_rechazar_resolver_y_el_historial(m, d):
     cheque = _cargar(d, "41")
     cliente = _cliente(m, "gerencia")

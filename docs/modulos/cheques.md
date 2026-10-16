@@ -83,7 +83,7 @@ las plantillas `cheques*.html` y `cheque.html`. Tests:
   `tests/test_cheques_listado.py`.
 - **Listados grandes** (dueño, 14/10, tras un Excel de 130 cheques que no se
   pudo guardar: Starlette corta un formulario en 1000 campos y cada cheque
-  manda 9 o más). El listado y la confirmación de endosos leen el formulario
+  manda 9 o más). El listado y la revisión de Aplicar leen el formulario
   con `MAX_CAMPOS_DE_UN_LISTADO` (alcanza para `MAX_RENGLONES_DE_UN_LISTADO`
   = 2000 cheques). Arriba: "130 cheques · $X · 128 bien · 2 con problema".
   Cada cheque es un renglón compacto (número, fecha, de quién, importe) que
@@ -122,35 +122,53 @@ las plantillas `cheques*.html` y `cheque.html`. Tests:
   duplica (`_banco_por_nombre` compara por la misma clave).
 - **El CUIT** se controla con el dígito verificador también en la carga a
   mano.
-- **Aplicar**: se tildan uno o varios cheques en cartera; leyendo una
-  boleta o una foto quedan tildados los que se encuentran por número (y CUIT
-  si se leyó). Comprobante opcional.
-- **Endosos de ECHEQ con varias capturas** (dueño, 13/10): en Aplicar se
-  suben muchas capturas de "Operación pendiente de firma" del home banking
-  juntas; la IA lee cada una (`extraer_endoso`: proveedor por CUIT y razón
-  social, y cada cheque con número, fecha de pago, monto y emisor). Página de
-  confirmación con un renglón por cheque (`core/endosos_cheques.py`), todo
-  editable: el cheque de la cartera se busca por número (sin ceros adelante)
-  Y monto entre los que están en cartera; si no está, si ya salió o si el
-  monto no coincide, el renglón va en rojo y no se guarda, aunque se elija a
-  mano. El proveedor se busca por `proveedores.cuit` (si lo tiene UNO solo);
-  si no, se elige, y al guardar el elegido se queda con el CUIT leído si no
-  tenía uno (no se pisa uno distinto). El mismo cheque (número y monto) en
-  dos fotos se toma una vez y se avisa. "Confirmar todos" guarda los que
-  están bien en una transacción, cada salida con su foto (una subida por
-  foto). Sin migración: `proveedores.cuit` ya existía (0 cargados el 13/10).
-  Tests: `tests/test_cheques_endosos.py`.
-- **Capturas de DEPÓSITO en la misma tanda** (dueño, 13/10): la captura que
-  dice "Cuenta de Depósito: CC$ 191-220-000247/7" en vez del proveedor es un
-  depósito (`es_un_deposito`: la IA leyó una cuenta o dijo "deposito"). Cada
-  cheque se clasifica por SU foto y se ve en el renglón (etiqueta "Depósito"
-  o "Pago a proveedor"): los de depósito arrancan con "Depósito en cuenta",
-  sin proveedor (un CUIT que venga en esa foto se ignora) y con la cuenta, que
-  se guarda en `cheques_salidas.cuenta_deposito` y se ve en la ficha. Lo que
-  pide proveedor o cuenta es el CONCEPTO elegido en el renglón: si se cambia,
-  se pide lo del nuevo, y lo del otro tipo no se guarda. Migración
-  `cheques_2` (`db/cheques_7_cuenta_deposito.sql`, verificación en
-  `db/cheques_8_verificacion_cuenta.sql`).
+- **Aplicar: UN SOLO FLUJO de dos pasos** (dueño, 16/10). Reemplaza los tres
+  bloques de antes (capturas de ECHEQ, una foto o archivo, y la carga a mano
+  con un solo motivo para todos).
+  - **Paso 1, elegir**: arriba "Subí capturas, fotos o archivos" (uno o
+    muchos, foto o PDF: endosos y depósitos del home banking, boletas de
+    depósito, recibos de entrega); abajo la cartera con buscador, para
+    tildar a mano. Se pueden usar las dos juntas. "Seguir" no guarda nada.
+    "Aplicar este cheque" de la ficha llega con ese cheque tildado.
+  - La IA lee cada archivo entero (un PDF con todas sus páginas; se muestra
+    y se guarda la primera) con `extraer_salida_de_cheques`: si es un
+    endoso, un depósito o no lo dice, la cuenta, el proveedor que RECIBE
+    (CUIT y razón social) y cada cheque con número, fecha de pago, monto y
+    emisor. El archivo que no se lee se avisa y no frena los demás.
+  - **Paso 2, revisar** (`core/salidas_de_cheques.py`): un renglón por cheque
+    AGRUPADO POR ARCHIVO ("Foto 1 · proveedor o cuenta · N cheques ·
+    $total"); los tildados a mano van en "Elegidos a mano". Arriba: "X
+    cheques · $Y · Z bien · W con problema". Cada renglón es compacto
+    (número, de quién, monto, fecha de pago) y se abre al tocarlo; los que
+    tienen problema van en rojo, primero y abiertos, y los grupos con
+    problema van primero.
+  - Lo leído viene puesto y TODO se cambia: el día de salida (hoy), el motivo
+    (un endoso, "Pago a proveedor"; un depósito, "Depósito en cuenta"; el
+    archivo que no dice a dónde va deja el motivo vacío), el proveedor (por
+    su CUIT si lo tiene UNO solo; el elegido a mano se queda con el CUIT
+    leído si no tenía, y no se pisa uno distinto) y la cuenta (por el número
+    leído, `cuenta_por_numero`; con un solo banco, ese). Se cambia por
+    renglón, por grupo (el encabezado cambia el motivo, el proveedor o la
+    cuenta de todo el grupo) o con "Para todos", que va a los TILDADOS y, si
+    no hay ninguno tildado, pregunta antes de ponerlo en todos. También
+    "Seleccionar todos", "Sacar los tildados" y "Otro motivo" (nombre y cómo
+    deja el cheque).
+  - El cheque de la cartera se busca por número (sin ceros adelante) Y monto
+    entre los que están en cartera. En rojo: no está en la cartera, ya salió,
+    el monto no coincide (aunque se elija a mano: se corrige el monto), está
+    en otro renglón, o falta el motivo, el proveedor (un pago) o la cuenta
+    (un depósito, si la base tiene bancos). El mismo cheque (número y monto)
+    en dos archivos, o tildado a mano y también en un archivo, se toma una
+    vez y se avisa. Solo un problema DEL CHEQUE (no lo que falta del
+    destino) abre el número, el monto y el cheque de la cartera para
+    corregir; corregido el número o el monto, el renglón vuelve a buscar su
+    cheque solo (`buscar_otra_vez_en_la_cartera`).
+  - "Confirmar todos" guarda los que están bien en UNA transacción
+    (`aplicar_salidas_de_cheques`), cada salida con la foto de su archivo
+    (una subida por archivo; los de a mano, sin foto), y deja en la página
+    los que tienen problema. El proveedor se guarda solo en un pago y la
+    cuenta solo en un depósito (`cheques_salidas.cuenta_deposito` guarda la
+    cuenta leída, migración `cheques_2`). Tests: `tests/test_cheques_aplicar.py`.
 - **Ficha**: datos, fotos, historial, y aplicar, rechazar, resolver el
   reclamo, corregir y agregar fotos.
 - **Panel**: cuadro 13 "Cheques" (`docs/modulos/panel_control.md`).

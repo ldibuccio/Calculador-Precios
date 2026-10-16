@@ -27997,8 +27997,19 @@ from core.cheques import (  # noqa: E402
     total_del_listado as total_de_cheques,
 )
 from core.exportar_cheques import generar_excel_cheques, generar_pdf_cheques, texto_del_filtro as texto_del_filtro_de_cheques  # noqa: E402
-from core.lector_cheques import extraer_cheques_de_imagenes, extraer_cheques_de_texto, extraer_endoso  # noqa: E402
-from core.endosos_cheques import problemas_de_los_endosos, renglones_de_los_endosos  # noqa: E402
+from core.lector_cheques import extraer_cheques_de_imagenes, extraer_cheques_de_texto, extraer_salida_de_cheques  # noqa: E402
+from core.salidas_de_cheques import (  # noqa: E402
+    A_MANO as A_MANO_EN_APLICAR,
+    buscar_otra_vez_en_la_cartera,
+    completar_la_cuenta_unica,
+    es_del_cheque,
+    grupos_de_las_salidas,
+    poner_a_los_tildados,
+    poner_en_el_grupo,
+    problemas_de_las_salidas,
+    renglones_de_lo_leido,
+    renglones_elegidos_a_mano,
+)
 from core.listado_cheques import (  # noqa: E402
     bancos_que_faltan,
     cuit_de_la_celda,
@@ -28021,8 +28032,8 @@ from app.db import (  # noqa: E402
     ChequeNoSePuede,
     agregar_banco,
     agregar_foto_de_cheque,
-    aplicar_cheques,
     aplicar_salidas_de_cheques,
+    crear_concepto_de_cheques,
     buscar_cheques,
     cargar_cheques,
     claves_de_los_cheques_cargados,
@@ -28578,39 +28589,17 @@ async def cargar_cheques_ruta(request: Request):
     return RedirectResponse(f"/gerencia/cheques?en_cartera=1&aviso={len(ids)}+cheques+cargados", status_code=303)
 
 
-# --- APLICAR ---------------------------------------------------------------
+# --- APLICAR: UN SOLO FLUJO DE DOS PASOS (dueño, 16/10) ---------------------
+# Paso 1, elegir: archivos (capturas, fotos, PDF) y/o cheques tildados de la
+# cartera. Paso 2, revisar: un renglón por cheque, agrupado por archivo, y
+# "Confirmar todos". Lo que no toca la base está en `core/salidas_de_cheques.py`.
 
-def _renderizar_aplicar_cheques(request: Request, *, elegidos: set[int], datos: dict, no_encontrados: list[str] = (),
-                                foto_leida: str = "", error: str | None = None, aviso: str | None = None,
-                                status_code: int = 200):
-    listas = _listas_de_cheques()
-    en_cartera = buscar_cheques({}, solo_en_cartera=True)
+def _renderizar_paso_1_de_aplicar(request: Request, *, elegidos: set[int], error: str | None = None,
+                                  status_code: int = 200):
     return templates.TemplateResponse(request, "cheques_aplicar.html", {
-        "en_cartera": en_cartera, "elegidos": elegidos, "datos": datos, "no_encontrados": list(no_encontrados),
-        "foto_leida": foto_leida, "conceptos": listas["conceptos"], "proveedores": listas["proveedores"],
-        "destinos": DESTINOS_DE_CONCEPTO, "en_rojo": cheque_en_rojo, "error": error, "aviso": aviso,
-        "volver": vuelta(request, "/gerencia/cheques"), "bancos": cuentas_de_banco_activas(),
+        "en_cartera": buscar_cheques({}, solo_en_cartera=True), "elegidos": elegidos, "en_rojo": cheque_en_rojo,
+        "error": error, "volver": vuelta(request, "/gerencia/cheques"),
     }, status_code=status_code)
-
-
-def _datos_de_aplicar_vacios() -> dict:
-    bancos = cuentas_de_banco_activas()
-    return {"fecha": _hoy_argentina().isoformat(), "concepto_id": None, "concepto_nuevo": "", "destino_nuevo": "",
-            "proveedor_id": None, "cuenta_id": bancos[0]["id"] if len(bancos) == 1 else None}
-
-
-def _cuenta_del_deposito(destino: str | None, cuenta_id: int | None) -> tuple[int | None, str | None]:
-    """(cuenta, error) de una salida: un DEPÓSITO va a una cuenta de banco
-    activa de esta base (dueño, 15/10). Si la base no tiene ninguna, sale sin
-    cuenta. Lo que no es un depósito no lleva cuenta aunque se haya elegido."""
-    if destino != "depositado":
-        return None, None
-    bancos = {b["id"] for b in cuentas_de_banco_activas()}
-    if not bancos:
-        return None, None
-    if cuenta_id not in bancos:
-        return None, "Elegí en qué cuenta se depositó."
-    return cuenta_id, None
 
 
 @app.get("/gerencia/cheques/aplicar")
@@ -28619,101 +28608,11 @@ def ver_aplicar_cheques(request: Request, cheque_id: str = ""):
     if sin_clave is not None:
         return sin_clave
     elegido = _id_opcional_desde_query(cheque_id)
-    return _renderizar_aplicar_cheques(request, elegidos={elegido} if elegido else set(),
-                                       datos=_datos_de_aplicar_vacios())
+    return _renderizar_paso_1_de_aplicar(request, elegidos={elegido} if elegido else set())
 
-
-@app.post("/gerencia/cheques/aplicar/leer")
-async def leer_cheques_para_aplicar(request: Request, archivo: UploadFile = File(...)):
-    """Lee el comprobante (la boleta del depósito, la foto de lo que se
-    entregó) y deja tildados los cheques en cartera que encontró, por número.
-    TODAVÍA NO GUARDA NADA."""
-    puerta = _puerta_de_gerencia_para_escribir(request)
-    if puerta is not None:
-        return puerta
-    datos_leidos, foto, _tipo, error = await _lo_leido_del_archivo(archivo)
-    datos = _datos_de_aplicar_vacios()
-    if error:
-        return _renderizar_aplicar_cheques(request, elegidos=set(), datos=datos, error=error, status_code=400)
-    if _fecha_de_cheque(datos_leidos.get("fecha")):
-        datos["fecha"] = str(datos_leidos.get("fecha"))
-    en_cartera = buscar_cheques({}, solo_en_cartera=True)
-    elegidos, no_encontrados = set(), []
-    for leido in cheques_leidos(datos_leidos, listar_bancos()):
-        numero = numero_de_cheque_normalizado(leido["numero"])
-        coinciden = [c for c in en_cartera if numero and numero_de_cheque_normalizado(c["numero"]) == numero
-                     and (not leido["cuit_librador"] or c["cuit_librador"] == leido["cuit_librador"])]
-        if coinciden:
-            elegidos.update(c["id"] for c in coinciden)
-        else:
-            no_encontrados.append(leido["numero"] or "sin número")
-    return _renderizar_aplicar_cheques(request, elegidos=elegidos, datos=datos, no_encontrados=no_encontrados,
-                                       foto_leida=foto, aviso="Revisá los cheques tildados antes de guardar.")
-
-
-@app.post("/gerencia/cheques/aplicar")
-async def aplicar_cheques_ruta(request: Request):
-    puerta = _puerta_de_gerencia_para_escribir(request)
-    if puerta is not None:
-        return puerta
-    formulario = await request.form()
-    elegidos = {int(v) for v in formulario.getlist("cheque_id") if str(v).isdigit()}
-    datos = {"fecha": str(formulario.get("fecha") or ""),
-             "concepto_id": _id_opcional_desde_query(str(formulario.get("concepto_id") or "")),
-             "concepto_nuevo": str(formulario.get("concepto_nuevo") or "").strip(),
-             "destino_nuevo": str(formulario.get("destino_nuevo") or ""),
-             "proveedor_id": _id_opcional_desde_query(str(formulario.get("proveedor_id") or "")),
-             "cuenta_id": _id_opcional_desde_query(str(formulario.get("cuenta_id") or ""))}
-    foto_leida = str(formulario.get("foto_leida") or "")
-    fecha = _fecha_de_cheque(datos["fecha"])
-    destino = datos["destino_nuevo"] if datos["concepto_nuevo"] else \
-        _destinos_de_los_conceptos(listar_conceptos_de_cheques()).get(datos["concepto_id"])
-    cuenta_id, error_de_cuenta = _cuenta_del_deposito(destino, datos["cuenta_id"])
-    errores = [error_de_cuenta] if error_de_cuenta else []
-    if not elegidos:
-        errores.append("Tildá al menos un cheque.")
-    if fecha is None:
-        errores.append("Falta la fecha.")
-    if datos["concepto_nuevo"] and datos["destino_nuevo"] not in dict(DESTINOS_DE_CONCEPTO):
-        errores.append("Decí cómo queda el cheque con el concepto nuevo.")
-    if not datos["concepto_nuevo"] and datos["concepto_id"] is None:
-        errores.append("Elegí el concepto.")
-    if errores:
-        return _renderizar_aplicar_cheques(request, elegidos=elegidos, datos=datos, foto_leida=foto_leida,
-                                           error=" ".join(errores), status_code=400)
-    ruta = None
-    try:
-        archivo = formulario.get("foto")
-        if archivo is not None and getattr(archivo, "filename", ""):
-            ruta = _subir_foto_de_cheque(await archivo.read(), "cheque-salida")
-            if ruta is None:
-                raise ChequeNoSePuede(f"«{archivo.filename}» no es una foto.")
-        elif foto_leida:
-            contenido = _bytes_desde_data_uri(foto_leida)
-            if contenido:
-                ruta = subir_foto_comanda(contenido, "cheque-salida", prefijo=PREFIJO_CHEQUE)
-        aplicar_cheques(sorted(elegidos), fecha=fecha, concepto_id=datos["concepto_id"],
-                        concepto_nuevo=datos["concepto_nuevo"] or None,
-                        destino_nuevo=datos["destino_nuevo"] or None,
-                        proveedor_id=datos["proveedor_id"], foto_ruta=ruta, cuenta_id=cuenta_id)
-    except ChequeNoSePuede as motivo:
-        if ruta:
-            borrar_foto_comanda(ruta)
-        return _renderizar_aplicar_cheques(request, elegidos=elegidos, datos=datos, foto_leida=foto_leida,
-                                           error=str(motivo), status_code=400)
-    except Exception:
-        if ruta:
-            borrar_foto_comanda(ruta)
-        raise
-    if len(elegidos) == 1:
-        return RedirectResponse(f"/gerencia/cheques/{next(iter(elegidos))}?aviso=Cheque+aplicado", status_code=303)
-    return RedirectResponse(f"/gerencia/cheques?aviso={len(elegidos)}+cheques+aplicados", status_code=303)
-
-
-# --- ENDOSOS DE ECHEQ: VARIAS CAPTURAS DE UNA VEZ (dueño, 13/10) -------------
 
 def _concepto_pago_a_proveedor(conceptos: list[dict]) -> int | None:
-    """El concepto con que sale un endoso: "Pago a proveedor" (el primero que
+    """El motivo con que sale un endoso: "Pago a proveedor" (el primero que
     deja el cheque entregado, si lo renombraron)."""
     for concepto in conceptos:
         if concepto["nombre"] == "Pago a proveedor":
@@ -28722,9 +28621,8 @@ def _concepto_pago_a_proveedor(conceptos: list[dict]) -> int | None:
 
 
 def _concepto_deposito_en_cuenta(conceptos: list[dict]) -> int | None:
-    """El concepto con que sale un cheque de una captura de DEPÓSITO:
-    "Depósito en cuenta" (el primero que lo deja depositado, si lo
-    renombraron)."""
+    """El motivo con que sale un cheque de un DEPÓSITO: "Depósito en cuenta"
+    (el primero que lo deja depositado, si lo renombraron)."""
     for concepto in conceptos:
         if concepto["nombre"] == "Depósito en cuenta":
             return concepto["id"]
@@ -28735,108 +28633,179 @@ def _destinos_de_los_conceptos(conceptos: list[dict]) -> dict:
     return {c["id"]: c["destino"] for c in conceptos}
 
 
-def _renderizar_endosos(request: Request, renglones: list[dict], fotos: list[str], *, avisos: list[str] = (),
-                        error: str | None = None, status_code: int = 200):
+def _leer_un_comprobante_de_salida(contenido: bytes, nombre: str) -> tuple[dict, str]:
+    """(lo leído, la foto para la pantalla) de UN archivo. Un PDF se lee con
+    todas sus páginas y se muestra (y se guarda) la primera. ValueError o
+    RuntimeError si no se puede leer."""
+    tipo = _tipo_del_archivo_de_cheques(nombre)
+    if tipo not in ("foto", "pdf"):
+        raise ValueError(f"«{nombre}» no es una foto ni un PDF")
+    imagenes = imagenes_desde_pdf(contenido) if tipo == "pdf" else [contenido]
+    if not imagenes:
+        raise ValueError(f"«{nombre}» no tiene páginas")
+    return extraer_salida_de_cheques(imagenes), _generar_preview_foto(imagenes[0])
+
+
+@app.post("/gerencia/cheques/aplicar/seguir")
+async def seguir_aplicar_cheques(request: Request):
+    """Del paso 1 al 2: lee cada archivo con la IA y arma un renglón por
+    cheque, más los tildados a mano. TODAVÍA NO GUARDA NADA."""
+    puerta = _puerta_de_gerencia_para_escribir(request)
+    if puerta is not None:
+        return puerta
+    formulario = await _formulario_de_un_listado(request)
+    archivos = [a for a in formulario.getlist("archivos") if getattr(a, "filename", "")]
+    elegidos = [int(v) for v in formulario.getlist("cheque_id") if str(v).isdigit()]
+    if not archivos and not elegidos:
+        return _renderizar_paso_1_de_aplicar(request, elegidos=set(), status_code=400,
+                                             error="Subí un archivo o tildá al menos un cheque de la cartera.")
+    leidas, fotos = [], []
+    for archivo in archivos:
+        contenido = await archivo.read()
+        try:
+            leida, foto = _leer_un_comprobante_de_salida(contenido, archivo.filename)
+        except (ValueError, RuntimeError):
+            logger.exception("No se pudo leer el comprobante de cheques %s", archivo.filename)
+            leida, foto = {"error": f"«{archivo.filename}» no se entiende como un comprobante de cheques"}, ""
+        leidas.append(leida)
+        fotos.append(foto)
+    cheques = buscar_cheques({})
+    conceptos = listar_conceptos_de_cheques()
+    hoy = _hoy_argentina()
+    renglones, avisos = renglones_de_lo_leido(
+        leidas, cheques=cheques, proveedores=proveedores_con_cuit(), bancos=cuentas_de_banco_activas(),
+        concepto_pago=_concepto_pago_a_proveedor(conceptos), concepto_deposito=_concepto_deposito_en_cuenta(conceptos),
+        hoy=hoy)
+    a_mano, avisos_a_mano = renglones_elegidos_a_mano(elegidos, cheques=cheques, ya=renglones, hoy=hoy)
+    return _renderizar_paso_2_de_aplicar(request, renglones + a_mano, fotos, avisos=avisos + avisos_a_mano)
+
+
+CAMPOS_DE_PARA_TODOS = ("fecha", "concepto_id", "proveedor_id", "cuenta_id")
+
+
+def _renderizar_paso_2_de_aplicar(request: Request, renglones: list[dict], fotos: list[str], *,
+                                  avisos: list[str] = (), error: str | None = None, todos: dict | None = None,
+                                  preguntar_a_todos: bool = False, status_code: int = 200):
     cheques = buscar_cheques({})
     conceptos = listar_conceptos_de_cheques()
     destinos = _destinos_de_los_conceptos(conceptos)
     bancos = cuentas_de_banco_activas()
-    problemas = _problemas_de_los_endosos_con_cuenta(renglones, cheques, destinos, bancos)
+    proveedores = proveedores_con_cuit()
+    buscar_otra_vez_en_la_cartera(renglones, cheques)
+    completar_la_cuenta_unica(renglones, destinos=destinos, bancos=bancos)
+    problemas = problemas_de_las_salidas(renglones, cheques, destinos=destinos, bancos=bancos)
     vivos = [(r, p) for r, p in zip(renglones, problemas) if not r.get("sacar")]
-    return templates.TemplateResponse(request, "cheques_endosos.html", {
-        "renglones": list(zip(renglones, problemas)), "fotos": fotos, "avisos": list(avisos), "error": error,
-        "en_cartera": [c for c in cheques if c["estado"] in ("en_cartera", "vencido")], "bancos": bancos,
-        "proveedores": proveedores_con_cuit(), "conceptos": conceptos, "destinos": destinos,
-        "total": round(sum(_importe_de_cheque(r["importe"]) or 0 for r, _ in vivos), 2),
+    return templates.TemplateResponse(request, "cheques_aplicar_revisar.html", {
+        "renglones": renglones, "problemas": problemas, "fotos": fotos,
+        "del_cheque": [es_del_cheque(p) for p in problemas], "avisos": list(avisos), "error": error,
+        "grupos": grupos_de_las_salidas(
+            renglones, problemas, nombre_de_proveedor={p["id"]: p["nombre"] for p in proveedores},
+            nombre_de_cuenta={b["id"]: b["nombre"] for b in bancos},
+            nombre_de_concepto={c["id"]: c["nombre"] for c in conceptos}),
+        "montos": [_importe_de_cheque(r.get("importe")) for r in renglones],
+        "en_cartera": [c for c in cheques if c["estado"] in ("en_cartera", "vencido")],
+        "proveedores": proveedores, "bancos": bancos, "conceptos": conceptos, "destinos": destinos,
+        "destinos_nuevos": DESTINOS_DE_CONCEPTO,
+        "todos": todos or dict.fromkeys(CAMPOS_DE_PARA_TODOS, ""), "preguntar_a_todos": preguntar_a_todos,
         "cuantos": len(vivos), "con_problema": sum(1 for _, p in vivos if p),
+        "total": round(sum(_importe_de_cheque(r.get("importe")) or 0 for r, _ in vivos), 2),
     }, status_code=status_code)
 
 
-def _problemas_de_los_endosos_con_cuenta(renglones: list[dict], cheques: list[dict], destinos: dict,
-                                         bancos: list[dict]) -> list[list[str]]:
-    """Los problemas de siempre y, en un depósito, la cuenta del sistema: la
-    que tiene el número leído (CC$ 191-220-000247/7 es Banco Credicoop) o la
-    que se elija. Una base sin cuentas de banco deposita sin cuenta."""
-    from core.cuentas import cuenta_por_numero
-    problemas = problemas_de_los_endosos(renglones, cheques, destinos=destinos)
-    ids = {b["id"] for b in bancos}
-    for r, mal in zip(renglones, problemas):
-        if destinos.get(r.get("concepto_id")) != "depositado" or not bancos or r.get("sacar"):
-            continue
-        if r.get("cuenta_id") is None:
-            leida = cuenta_por_numero(r.get("cuenta_deposito"), bancos)
-            r["cuenta_id"] = leida["id"] if leida else (bancos[0]["id"] if len(bancos) == 1 else None)
-        if r.get("cuenta_id") not in ids:
-            mal.append("elegí a qué cuenta del sistema va el depósito")
-    return problemas
-
-
-@app.post("/gerencia/cheques/aplicar/endosos")
-async def leer_endosos_de_cheques(request: Request):
-    """Lee con la IA todas las capturas de endosos juntas y abre la página de
-    confirmación, un renglón por cheque. TODAVÍA NO GUARDA NADA."""
-    puerta = _puerta_de_gerencia_para_escribir(request)
-    if puerta is not None:
-        return puerta
-    formulario = await request.form()
-    archivos = [a for a in formulario.getlist("fotos") if getattr(a, "filename", "")]
-    if not archivos:
-        return _renderizar_aplicar_cheques(request, elegidos=set(), datos=_datos_de_aplicar_vacios(),
-                                           error="Elegí las capturas de los endosos.", status_code=400)
-    leidas, fotos = [], []
-    for archivo in archivos:
-        contenido = await archivo.read()
-        fotos.append(_generar_preview_foto(contenido))
-        try:
-            leidas.append(extraer_endoso(contenido))
-        except Exception:
-            logger.exception("No se pudo leer la captura del endoso %s", archivo.filename)
-            leidas.append({"error": f"«{archivo.filename}» no se entiende como una captura del banco"})
-    conceptos = listar_conceptos_de_cheques()
-    renglones, avisos = renglones_de_los_endosos(
-        leidas, cheques=buscar_cheques({}), proveedores=proveedores_con_cuit(),
-        concepto_id=_concepto_pago_a_proveedor(conceptos),
-        concepto_deposito_id=_concepto_deposito_en_cuenta(conceptos), hoy=_hoy_argentina())
-    return _renderizar_endosos(request, renglones, fotos, avisos=avisos)
-
-
-def _renglones_de_los_endosos_del_formulario(formulario) -> list[dict]:
+def _salidas_del_formulario(formulario) -> list[dict]:
     renglones = []
     for i in range(_cantidad_de_renglones(formulario)):
         dato = lambda campo: str(formulario.get(f"{campo}_{i}") or "").strip()  # noqa: E731
         try:
             foto = int(dato("foto"))
         except ValueError:
-            foto = -1
+            foto = A_MANO_EN_APLICAR
         renglones.append({
             "foto": foto, "numero": dato("numero"), "fecha_pago": dato("fecha_pago"), "importe": dato("importe"),
             "emisor": dato("emisor"), "cheque_id": _id_opcional_desde_query(dato("cheque_id")),
             "proveedor_cuit": dato("proveedor_cuit"), "proveedor_nombre": dato("proveedor_nombre"),
             "proveedor_id": _id_opcional_desde_query(dato("proveedor_id")),
-            "cuenta_deposito": dato("cuenta_deposito"), "deposito": dato("deposito") == "1",
-            "cuenta_id": _id_opcional_desde_query(dato("cuenta_id")),
+            "cuenta_deposito": dato("cuenta_deposito"), "cuenta_id": _id_opcional_desde_query(dato("cuenta_id")),
             "concepto_id": _id_opcional_desde_query(dato("concepto_id")), "fecha": dato("fecha"),
-            "sacar": dato("sacar") == "1",
+            "deposito": dato("deposito") == "1", "sacar": dato("sacar") == "1", "tildado": dato("tildado") == "1",
         })
     return renglones
 
 
-@app.post("/gerencia/cheques/aplicar/endosos/confirmar")
-async def confirmar_endosos_de_cheques(request: Request):
-    """"Revisar" vuelve a marcar los problemas; "Confirmar todos" guarda los
-    que están bien (juntos, en una transacción), cada salida con su foto, y
-    deja en la página los que tienen problema."""
+def _cambios_elegidos(formulario, prefijo: str) -> dict:
+    """Lo elegido en "Para todos" o en el encabezado de un grupo; lo que quedó
+    en "No cambiar" no viene."""
+    cambios = {campo: _id_opcional_desde_query(str(formulario.get(f"{prefijo}{campo}") or ""))
+               for campo in ("concepto_id", "proveedor_id", "cuenta_id")}
+    fecha = _fecha_de_cheque(str(formulario.get(f"{prefijo}fecha") or ""))
+    cambios["fecha"] = fecha.isoformat() if fecha else None
+    return cambios
+
+
+@app.post("/gerencia/cheques/aplicar/revisar")
+async def revisar_aplicar_cheques(request: Request):
+    """El paso 2. "Revisar" vuelve a marcar los problemas; el encabezado de un
+    grupo cambia el motivo, el proveedor o la cuenta de todo el grupo; "Para
+    todos" a los tildados (si no hay ninguno, pregunta antes de ponerlo en
+    todos); "Confirmar todos" guarda los que están bien, juntos, cada salida
+    con la foto de su archivo, y deja en la página los que tienen problema."""
     puerta = _puerta_de_gerencia_para_escribir(request)
     if puerta is not None:
         return puerta
     formulario = await _formulario_de_un_listado(request)
-    renglones = _renglones_de_los_endosos_del_formulario(formulario)
+    renglones = _salidas_del_formulario(formulario)
     fotos = [str(f) for f in formulario.getlist("foto_leida")]
-    if str(formulario.get("accion") or "") != "confirmar":
-        return _renderizar_endosos(request, renglones, fotos)
+    accion = str(formulario.get("accion") or "revisar")
+    todos = {campo: str(formulario.get(f"todos_{campo}") or "") for campo in CAMPOS_DE_PARA_TODOS}
+    if accion in ("a_todos", "a_todos_si"):
+        cambios = _cambios_elegidos(formulario, "todos_")
+        if not any(cambios.values()):
+            return _renderizar_paso_2_de_aplicar(request, renglones, fotos, todos=todos,
+                                                 error="Elegí qué poner en \"Para todos\".")
+        cuantos = poner_a_los_tildados(renglones, cambios, sin_tildar_tambien=accion == "a_todos_si")
+        if cuantos is None:
+            return _renderizar_paso_2_de_aplicar(request, renglones, fotos, todos=todos, preguntar_a_todos=True)
+        return _renderizar_paso_2_de_aplicar(request, renglones, fotos, todos=todos,
+                                             avisos=[f"Se cambió en {cuantos} cheque{'' if cuantos == 1 else 's'}."])
+    if accion.startswith("grupo_") and accion.removeprefix("grupo_").lstrip("-").isdigit():
+        # El grupo es el número del archivo (desde 0); "Elegidos a mano", -1.
+        foto = int(accion.removeprefix("grupo_"))
+        cambios = _cambios_elegidos(formulario, f"grupo_{foto}_")
+        if not any(cambios.values()):
+            return _renderizar_paso_2_de_aplicar(request, renglones, fotos, todos=todos,
+                                                 error="Elegí qué cambiar en el grupo.")
+        poner_en_el_grupo(renglones, foto, cambios)
+        return _renderizar_paso_2_de_aplicar(request, renglones, fotos, todos=todos)
+    if accion == "seleccionar_todos":
+        for r in renglones:
+            r["tildado"] = not r["sacar"]
+        return _renderizar_paso_2_de_aplicar(request, renglones, fotos, todos=todos)
+    if accion == "sacar_tildados":
+        for r in renglones:
+            if r["tildado"]:
+                r["sacar"], r["tildado"] = True, False
+        return _renderizar_paso_2_de_aplicar(request, renglones, fotos, todos=todos)
+    if accion == "agregar_motivo":
+        nombre = str(formulario.get("motivo_nuevo") or "").strip()
+        destino = str(formulario.get("destino_nuevo") or "")
+        existentes = {c["nombre"].strip().lower() for c in listar_conceptos_de_cheques()}
+        if not nombre or destino not in dict(DESTINOS_DE_CONCEPTO):
+            error = "Escribí el motivo nuevo y decí cómo queda el cheque."
+        elif nombre.lower() in existentes:
+            error = f"«{nombre}» ya está en la lista."
+        else:
+            crear_concepto_de_cheques(nombre, destino)
+            return _renderizar_paso_2_de_aplicar(request, renglones, fotos, todos=todos,
+                                                 avisos=[f"Se agregó el motivo «{nombre}»."])
+        return _renderizar_paso_2_de_aplicar(request, renglones, fotos, todos=todos, error=error, status_code=400)
+    if accion != "confirmar":
+        return _renderizar_paso_2_de_aplicar(request, renglones, fotos, todos=todos)
     destinos = _destinos_de_los_conceptos(listar_conceptos_de_cheques())
-    problemas = _problemas_de_los_endosos_con_cuenta(renglones, buscar_cheques({}), destinos,
-                                                     cuentas_de_banco_activas())
+    bancos = cuentas_de_banco_activas()
+    cheques = buscar_cheques({})
+    buscar_otra_vez_en_la_cartera(renglones, cheques)
+    completar_la_cuenta_unica(renglones, destinos=destinos, bancos=bancos)
+    problemas = problemas_de_las_salidas(renglones, cheques, destinos=destinos, bancos=bancos)
     buenos = [r for r, p in zip(renglones, problemas) if not p and not r["sacar"]]
     quedan = [r for r, p in zip(renglones, problemas) if p and not r["sacar"]]
     subidas: dict = {}
@@ -28844,24 +28813,25 @@ async def confirmar_endosos_de_cheques(request: Request):
         for r in buenos:
             if r["foto"] not in subidas and 0 <= r["foto"] < len(fotos):
                 contenido = _bytes_desde_data_uri(fotos[r["foto"]])
-                subidas[r["foto"]] = (subir_foto_comanda(contenido, "endoso", prefijo=PREFIJO_CHEQUE)
+                subidas[r["foto"]] = (subir_foto_comanda(contenido, "cheque-salida", prefijo=PREFIJO_CHEQUE)
                                       if contenido else None)
         if buenos:
             # El proveedor va solo en un pago a proveedor y la cuenta solo en un
-            # depósito: lo que quedó del otro tipo si se cambió el concepto no se guarda.
+            # depósito: lo que quedó del otro tipo si se cambió el motivo no se guarda.
             aplicar_salidas_de_cheques([{
                 "cheque_id": r["cheque_id"], "fecha": date.fromisoformat(r["fecha"]), "concepto_id": r["concepto_id"],
                 "proveedor_id": r["proveedor_id"] if destinos.get(r["concepto_id"]) == "entregado" else None,
                 "cuenta_deposito": (r["cuenta_deposito"] or None
                                     if destinos.get(r["concepto_id"]) == "depositado" else None),
-                "cuenta_id": r.get("cuenta_id") if destinos.get(r["concepto_id"]) == "depositado" else None,
+                "cuenta_id": r["cuenta_id"] if destinos.get(r["concepto_id"]) == "depositado" else None,
                 "foto_ruta": subidas.get(r["foto"]),
                 "cuit_leido": "".join(ch for ch in r["proveedor_cuit"] if ch.isdigit())} for r in buenos])
     except ChequeNoSePuede as motivo:
         for ruta in subidas.values():
             if ruta:
                 borrar_foto_comanda(ruta)
-        return _renderizar_endosos(request, renglones, fotos, error=str(motivo), status_code=400)
+        return _renderizar_paso_2_de_aplicar(request, renglones, fotos, todos=todos, error=str(motivo),
+                                             status_code=400)
     except Exception:
         for ruta in subidas.values():
             if ruta:
@@ -28870,8 +28840,10 @@ async def confirmar_endosos_de_cheques(request: Request):
     if not quedan:
         return RedirectResponse("/gerencia/cheques?" + urlencode({"aviso": f"{len(buenos)} cheques aplicados"}),
                                 status_code=303)
-    return _renderizar_endosos(
-        request, quedan, fotos,
+    for r in quedan:
+        r["tildado"] = False
+    return _renderizar_paso_2_de_aplicar(
+        request, quedan, fotos, todos=todos,
         avisos=[(f"Se aplicaron {len(buenos)}. " if buenos else "") + f"Quedan {len(quedan)} con problemas: "
                 "corregilos o sacalos."])
 

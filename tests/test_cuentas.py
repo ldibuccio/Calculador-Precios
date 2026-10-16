@@ -278,20 +278,20 @@ def test_un_DEPOSITO_desde_la_Cartera_va_al_banco_con_la_fecha_de_ACREDITACION_y
     hoy = _hoy(d)
     cheque = _cargar(d, "777", importe=5000.0, pago=hoy - timedelta(days=5))
     rival = _cargar(d, "778", importe=9000.0, pago=hoy - timedelta(days=5))      # sale como pago: no va al banco
+    from tests.test_cheques_aplicar import _formulario, _revisar, _seguir
     cliente = _gerencia(m)
-    formulario = _sin_estilo(cliente.get("/gerencia/cheques/aplicar").text)
-    # Con un solo banco, ya viene elegido.
-    assert re.search(rf'<option value="{banco}" selected>Banco Credicoop</option>', formulario)
-    sin_cuenta = cliente.post("/gerencia/cheques/aplicar", data={
-        "cheque_id": str(cheque), "fecha": (hoy - timedelta(days=3)).isoformat(), "concepto_id": "3", "cuenta_id": ""})
-    assert sin_cuenta.status_code == 400 and "Elegí en qué cuenta se depositó." in sin_cuenta.text
-    hecho = cliente.post("/gerencia/cheques/aplicar", data={
-        "cheque_id": str(cheque), "fecha": (hoy - timedelta(days=3)).isoformat(), "concepto_id": "3",
-        "cuenta_id": str(banco)}, follow_redirects=False)
+    salio = (hoy - timedelta(days=3)).isoformat()
+    # Tildado a mano y pasado a depósito: con un solo banco, ya viene elegido.
+    datos = _formulario(_seguir(m, elegidos=[cheque]).text)
+    revisada = _revisar(m, dict(datos, concepto_id_0="3", fecha_0=salio), "revisar")
+    assert re.search(rf'<select name="cuenta_id_0"><option value="">Elegí</option>\s*<option value="{banco}" selected>',
+                     _sin_estilo(revisada.text))
+    hecho = _revisar(m, _formulario(revisada.text), "confirmar")
     assert hecho.status_code == 303
-    cliente.post("/gerencia/cheques/aplicar", data={
-        "cheque_id": str(rival), "fecha": (hoy - timedelta(days=3)).isoformat(), "concepto_id": "1",
-        "proveedor_id": "1", "cuenta_id": str(banco)})
+    # El RIVAL sale como pago: aunque traiga la cuenta, no va al banco.
+    datos = _formulario(_seguir(m, elegidos=[rival]).text)
+    assert _revisar(m, dict(datos, concepto_id_0="1", proveedor_id_0="1", cuenta_id_0=str(banco), fecha_0=salio),
+                    "confirmar").status_code == 303
     acreditado = hoy - timedelta(days=2)
     filas = _filas(cliente.get(f"/gerencia/cuentas/{banco}").text)
     assert filas == [(f"deposito-{cheque}", acreditado.strftime("%d/%m/%Y"), "+$5.000",
@@ -330,33 +330,32 @@ def test_un_cheque_no_se_deposita_en_una_CAJA(d):
 
 
 def test_la_CAPTURA_de_un_deposito_reconoce_la_cuenta_por_el_NUMERO(m, d):
-    from tests.test_cheques_endosos import DEPOSITO_REAL, _formulario, _galpon, _leer, _los_reales
+    from tests.test_cheques_aplicar import DEPOSITO_REAL, _formulario, _galpon, _los_reales, _revisar, _seguir
     cuentas = _sembrar_frutamax(d)
     # El RIVAL: otro banco activo, para que no gane por ser el único.
     d.crear_cuenta(nombre="EJEMPLO Otro Banco", tipo="banco", moneda="pesos", numero="CC$ 999-000-111/2",
                    madre_id=None, conceptos=[])
     _galpon(d)
     reales = _los_reales(d)
-    pagina = _leer(m, [DEPOSITO_REAL])
+    pagina = _seguir(m, [DEPOSITO_REAL])
     datos = _formulario(pagina.text)
     assert [datos[f"cuenta_id_{i}"] for i in range(2)] == [str(cuentas["Banco Credicoop"])] * 2
     with patch("app.main.subir_foto_comanda", return_value="cheques/deposito.jpg"):
-        final = _gerencia(m).post("/gerencia/cheques/aplicar/endosos/confirmar", data=dict(datos, accion="confirmar"),
-                                  follow_redirects=False)
+        final = _revisar(m, datos, "confirmar")
     assert final.status_code == 303
     assert {c["id"]: c["cuenta"] for c in d.buscar_cheques({}) if c["id"] in reales.values()} == {
         reales["00932970"]: "Banco Credicoop", reales["00020758"]: "Banco Credicoop"}
 
 
 def test_un_numero_que_NO_es_de_ninguna_cuenta_pide_elegirla(m, d):
-    from tests.test_cheques_endosos import DEPOSITO_REAL, _galpon, _leer, _los_reales
+    from tests.test_cheques_aplicar import DEPOSITO_REAL, _galpon, _los_reales, _seguir
     _sembrar_frutamax(d)
     d.crear_cuenta(nombre="EJEMPLO Otro Banco", tipo="banco", moneda="pesos", numero=None, madre_id=None,
                    conceptos=[])
     _galpon(d)
     _los_reales(d)
-    pagina = _leer(m, [dict(DEPOSITO_REAL, cuenta_deposito="CC$ 555-555-555/5")])
-    assert _sin_estilo(pagina.text).count("elegí a qué cuenta del sistema va el depósito") == 2
+    pagina = _seguir(m, [dict(DEPOSITO_REAL, cuenta_deposito="CC$ 555-555-555/5")])
+    assert re.findall(r"data-problemas>([^<]*)</p>", _sin_estilo(pagina.text)) == ["elegí la cuenta"] * 2
 
 
 # --- FILTROS, TOTALES Y EXPORTACIONES -----------------------------------------------
