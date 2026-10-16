@@ -103,7 +103,7 @@
       {{ retroactivo.campos("¿Qué día se devolvió?", precarga, ayer) }}
       {% endif %}
     </div>
-    {{ fotos_para_subir.tarjeta("Fotos (opcional)", "＋ Agregar foto") }}
+    {{ fotos_para_subir.tarjeta("Fotos (opcional)", "＋ Agregar foto", ayuda="Sacala cerca, que se lea el número del visor.") }}
     <div class="tarjeta">
       <button type="submit" id="boton-devolver">Guardar la devolución</button>
       <a class="boton boton-secundario" href="{{ camino.base }}">{{ camino.volver }}</a>

@@ -87,7 +87,9 @@ def test_la_LISTA_de_Administracion_busca_y_lleva_al_detalle_sin_nada_que_escrib
     assert respuesta.status_code == 200
     html = _cuerpo(respuesta)
     assert _formularios(html) == [("get", BASE)]                      # solo el de los filtros
-    assert f'href="{BASE}/1/detalle?' in html and f'href="{BASE}/1/foto"' in html
+    assert f'href="{BASE}/1/detalle?' in html
+    # La comanda se abre en el visor, bajo el mismo prefijo (dueño, 16/10).
+    assert f'href="{BASE}/1/visor/comanda?volver=' in html
     assert f'href="{BASE}/exportar-pdf?' in html and f'href="{BASE}/exportar-excel?' in html
     assert [l for l in _links(html) if l.startswith(("/compras", "/gerencia"))] == []
     assert 'class="check-fila"' not in html and "Vino armada" not in html and ">Eliminar<" not in html
@@ -120,6 +122,8 @@ RUTAS_DECIDIDAS = {
     ("GET", BASE), ("GET", f"{BASE}/exportar-pdf"), ("GET", f"{BASE}/exportar-excel"),
     ("GET", BASE + "/{compra_id}/detalle"), ("GET", BASE + "/{compra_id}/foto"),
     ("GET", BASE + "/{compra_id}/fotos/{foto_id}/ver"),
+    # El visor de la comanda y del pesaje (dueño, 16/10): solo mira.
+    ("GET", BASE + "/{compra_id}/visor/{que}"),
     ("POST", BASE + "/{compra_id}/fotos"), ("POST", BASE + "/{compra_id}/fotos-balanza"),
 }
 

@@ -57,6 +57,21 @@ si alguna plantilla vuelve a tener su propia copia de la tabla.
 - Los filtros de la búsqueda viajan Buscar → Detalle → Editar, y Guardar
   vuelve al Detalle; su Volver vuelve a la misma búsqueda.
 
+## Buscar compras: los botoncitos abren la FOTO (16/10, dueño)
+
+- Los botoncitos **"Comanda"** y **"Pesaje"** de cada compra (y "Ver
+  comanda" y "Ver pesaje" del menú) abren DIRECTO el visor
+  (`/compras/{id}/visor/comanda|pesaje`, y bajo
+  `/administracion/guias-mercaderia` en Guías mercadería): la foto a pantalla
+  completa, con "Acercar" (o tocando la foto) y, si hay varias, se pasa con
+  las flechas o deslizando. El pesaje arranca en la ÚLTIMA (si se sacó otra
+  es porque la primera no servía). Una comanda en PDF se abre aparte. "✕"
+  vuelve a la lista con sus filtros. "Sin comanda" y "Sin pesaje" no se
+  tocan.
+- **El Detalle se abre SOLO desde el menú de acciones**: ni la fila ni el
+  nombre llevan ahí (antes la fila entera llevaba, y tocar el botoncito
+  abría el detalle).
+
 ## Guías mercadería: Buscar compras desde Administración (09/10, dueño)
 
 - Botón **"Guías mercadería"** en Administración → Stock, debajo de Guías R:
@@ -215,6 +230,26 @@ botón aparece solo donde la escritura acepta. Todo en una transacción.
   las FK a `proveedores` ENCONTRADAS contra `TABLAS_QUE_APUNTAN_A_PROVEEDORES`.
   Una tabla nueva con FK a proveedores lo rompe hasta que alguien decida cómo se
   junta. Si igual se escapa, el DELETE del final rebota y no se escribe nada.
+
+## Las fotos de la balanza se guardan en ALTA (16/10, dueño)
+
+Achicadas a 1000 px (calidad 60) no se leía el número del visor. Desde el
+16/10 **solo las fotos de la PESADA** (recepción, "Agregar foto de pesada"
+del detalle, ingreso directo y devolución de Depósito, todas con el prefijo
+`pesaje`) se guardan con el lado mayor hasta 3000 px y calidad 90
+(`_comprimir_foto_de_balanza`; la original si es más chica, nunca se
+agranda). El resto de las fotos sigue igual. Las viejas quedan como están.
+Al lado de cada lugar donde se carga dice "Sacala cerca, que se lea el
+número del visor."
+
+Medido en Frutamax el 16/10 (conector de lectura, `storage.objects`, bucket
+`comandas`): 599 fotos de pesaje del 09/09 al 16/10, **56,6 KB de promedio**,
+33,1 MB en total (testigo: 1085 compras). En alta, una foto de celular pesa
+del orden de 1 a 2 MB (estimado, no medido: se mide con las primeras de
+verdad); a ~16 por día son unos 20-30 MB por día, del orden de 9 GB por año.
+El plan de Supabase tiene 100 GB (`docs/modulos/fotos.md`). El backup copia
+las fotos sin rotarlas nunca, así que eso mismo se suma cada año en OneDrive
+y en Google Drive (`docs/modulos/backup.md`, revisión anual).
 
 ## El pesaje: la foto no documenta el pesaje, lo DISPARA
 

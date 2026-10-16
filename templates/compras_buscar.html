@@ -358,7 +358,8 @@
   /* LOS INDICADORES: chicos y al lado de la fecha, para escanear. El que
      falta en gris, el que está en verde — la diferencia tiene que verse sin
      leer, que es lo que "escanear" quiere decir. */
-  .indicadores { display: inline-flex; flex-wrap: wrap; gap: 0.35rem; }
+  /* Centrados: el botoncito mide 44px y la pastilla de al lado no se estira con él. */
+  .indicadores { display: inline-flex; flex-wrap: wrap; align-items: center; gap: 0.35rem; }
   .indicadores span {
     font-size: 0.72rem;
     font-weight: 700;
@@ -366,22 +367,11 @@
     border-radius: 999px;
     white-space: nowrap;
   }
-  .indicadores .hay { background: #dcfce7; color: #166534; }
+  /* EL BOTONCITO ABRE LA FOTO (dueño, 16/10): el link ocupa 44px de alto
+     para el dedo y adentro va la misma pastilla de siempre. */
+  .indicadores a.hay { display: inline-flex; align-items: center; min-height: 44px; text-decoration: none; }
+  .indicadores .hay span { background: #dcfce7; color: #166534; border: 1px solid #86efac; }
   .indicadores .no-hay { background: #f3f4f6; color: #9ca3af; }
-  /* La fila entera lleva al Detalle: que se note que se puede tocar. */
-  tbody tr[data-detalle] { cursor: pointer; }
-  /* SE TIENE QUE VER QUE ES UN LINK. Con `text-decoration: none` el nombre
-     era indistinguible del texto de al lado —medido: el mismo rgb(34,34,34)
-     y sin subrayar— así que el camino al Detalle existía y no lo veía nadie.
-     Hereda el color para no teñir la tabla, y el subrayado gris lo delata
-     sin gritar. */
-  .link-detalle {
-    color: inherit;
-    text-decoration: underline;
-    text-decoration-color: #9ca3af;
-    text-underline-offset: 2px;
-  }
-  .link-detalle:hover, .link-detalle:focus { text-decoration-color: currentColor; }
   {{ pestanas_compras.estilos() }}
 </style>
 </head>
@@ -521,16 +511,14 @@
         </thead>
         <tbody>
           {% for c in compras %}
-          <tr data-detalle="{{ camino.base }}/{{ c.id }}/detalle?fecha_desde={{ fecha_desde }}&fecha_hasta={{ fecha_hasta }}&proveedor_id={{ proveedor_id if proveedor_id is not none else '' }}&articulo_id={{ articulo_id if articulo_id is not none else '' }}">
+          <tr>
             <td>{% if camino.escribe %}<input type="checkbox" name="compra_id" value="{{ c.id }}" class="check-fila" form="form-borrado-multiple">{% endif %}</td>
             <td>{{ c.fecha_operacion.strftime("%d/%m/%Y") }}</td>
             <td>{{ c.proveedor_nombre }} ({{ c.codigo_llegada }})</td>
-            {# EL NOMBRE ES UN LINK DE VERDAD, además del click en la fila. La
-               fila entera la mueve el JS de abajo y eso alcanza para el dedo,
-               pero un renglón que navega sin ser un link no se alcanza con el
-               teclado y no dice que se pueda tocar. El link lo hace visible y
-               lo hace funcionar sin JS. #}
-            <td><a class="link-detalle" href="{{ camino.base }}/{{ c.id }}/detalle?fecha_desde={{ fecha_desde }}&fecha_hasta={{ fecha_hasta }}&proveedor_id={{ proveedor_id if proveedor_id is not none else '' }}&articulo_id={{ articulo_id if articulo_id is not none else '' }}">{{ c.articulo_nombre }}</a></td>
+            {# EL DETALLE SE ABRE SOLO DESDE EL MENÚ (dueño, 16/10): ni la fila
+               ni el nombre llevan ahí, así tocar el botoncito de una foto
+               abre la foto y no el detalle. #}
+            <td>{{ c.articulo_nombre }}</td>
             <td>{{ c.cantidad_cajones|numero }} cajones × {{ magnitudes_del_cajon(c) }}</td>
             <td>{% if c.importe is not none %}{{ c.importe|moneda }}{% else %}<span class="sin-precio">SIN PRECIO</span>{% endif %}</td>
             {# LA SEÑA, vacía si no dejó. En celular no hay cabecera, así que
@@ -541,14 +529,10 @@
                  lista: es lo que más se usa, así que va arriba de todo y
                  Eliminar queda al final.
 
-                 ESTUVO AFUERA Y SIN BOTÓN, con el argumento de que la tarjeta
-                 entera lleva ahí. El click de la fila anda —medido, también
-                 en escritorio— pero NADIE LO VE: el nombre es un link con el
-                 color del texto y sin subrayar, así que en la tabla de
-                 escritorio no hay nada que diga que se puede entrar. Un
-                 camino que funciona y no se ve es un camino que no existe, y
-                 se llevó puesta la única puerta a Corregir Recepción, que
-                 vive adentro del Detalle.
+                 ES LA ÚNICA PUERTA AL DETALLE (dueño, 16/10): la fila y el
+                 nombre ya no llevan ahí —tocar el botoncito de una foto abría
+                 el detalle—. Y el Detalle es la única puerta a Corregir
+                 Recepción, así que este botón no puede faltar.
 
                  MEDIDO ANTES DE ESCRIBIRLO: el menú gana 1,1 filas por
                  pantalla (4,5 a 5,6), que es poco — los botones son el 35%
@@ -568,8 +552,9 @@
                  pesaje" y "nunca hubo pesaje" se veían igual, y ésta es la
                  pantalla desde donde se audita. #}
               <span class="indicadores">
-                <span class="{{ 'hay' if c.tiene_comanda else 'no-hay' }}">{{ "Comanda" if c.tiene_comanda else "Sin comanda" }}</span>
-                <span class="{{ 'hay' if c.tiene_pesaje else 'no-hay' }}">{{ "Pesaje" if c.tiene_pesaje else "Sin pesaje" }}</span>
+                {# El que está ABRE LA FOTO en el visor (dueño, 16/10); el que falta no se toca. #}
+                {% if c.tiene_comanda %}<a class="hay" href="{{ camino.base }}/{{ c.id }}/visor/comanda{{ q_volver(aqui(request)) }}"><span>Comanda</span></a>{% else %}<span class="no-hay">Sin comanda</span>{% endif %}
+                {% if c.tiene_pesaje %}<a class="hay" href="{{ camino.base }}/{{ c.id }}/visor/pesaje{{ q_volver(aqui(request)) }}"><span>Pesaje</span></a>{% else %}<span class="no-hay">Sin pesaje</span>{% endif %}
               </span>
               <details class="menu-acciones">
                 <summary>Acciones ▾</summary>
@@ -579,10 +564,10 @@
                      la URL para que Volver y Guardar vuelvan a ESTA búsqueda. #}
                   <a class="boton boton-detalle" href="{{ camino.base }}/{{ c.id }}/detalle?fecha_desde={{ fecha_desde }}&fecha_hasta={{ fecha_hasta }}&proveedor_id={{ proveedor_id if proveedor_id is not none else '' }}&articulo_id={{ articulo_id if articulo_id is not none else '' }}">Detalle</a>
                   {% if c.tiene_comanda %}
-                  <a class="boton boton-ver-foto" href="{{ camino.base }}/{{ c.id }}/foto" target="_blank" rel="noopener">Ver comanda</a>
+                  <a class="boton boton-ver-foto" href="{{ camino.base }}/{{ c.id }}/visor/comanda{{ q_volver(aqui(request)) }}">Ver comanda</a>
                   {% endif %}
                   {% if c.tiene_pesaje %}
-                  <a class="boton boton-ver-foto" href="/deposito/recepcion/{{ c.id }}/foto-balanza/ver" target="_blank" rel="noopener">Ver pesaje</a>
+                  <a class="boton boton-ver-foto" href="{{ camino.base }}/{{ c.id }}/visor/pesaje{{ q_volver(aqui(request)) }}">Ver pesaje</a>
                   {% endif %}
                   {# LA SALIDA para la compra que se recepcionó SIN la marca de
                      "viene armada". El camino normal es marcarla al cargarla y
@@ -638,17 +623,6 @@
   </div>
 
   <script>
-    // LA TARJETA ENTERA LLEVA AL DETALLE: es lo que se quiere el 80% de las
-    // veces y no necesita botón. Se ignora todo lo que ya hace algo —el
-    // check, el menú, los links, el form de borrar—: sin eso, abrir el menú
-    // navegaría en vez de abrirlo.
-    document.querySelectorAll("tbody tr[data-detalle]").forEach(function (fila) {
-      fila.addEventListener("click", function (evento) {
-        if (evento.target.closest("a, button, input, label, details, summary, form")) { return; }
-        window.location.href = fila.dataset.detalle;
-      });
-    });
-
     const checkTodas = document.getElementById("check-todas");
     const checksFila = Array.from(document.querySelectorAll(".check-fila"));
     const botonBorrarSeleccionadas = document.getElementById("boton-borrar-seleccionadas");

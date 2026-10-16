@@ -212,6 +212,9 @@ def siembra():
       from proveedores pr, articulos a limit 1;
     insert into fichas_logistica (articulo_id, cliente_id, unidad_venta, contenido_caja)
       select a.id, c.id, 'kilo', 10 from articulos a, clientes c limit 1;
+    -- Una foto de la pesada de la compra 1: el visor de Buscar compras (16/10).
+    insert into fotos_recepcion (compra_id, foto_ruta)
+      select id, 'pesaje/EJEMPLO-balanza.jpg' from compras order by id limit 1;
     -- UN PEDIDO DE AYER, con su ficha: el promedio recorta con `< ancla`,
     -- ESTRICTO, así que con el de hoy solo la carga automática propone una
     -- lista vacía y el camino nuevo queda sin mirar. Y el renglón lleva
@@ -395,6 +398,8 @@ def _valor_para(nombre):
         return "EJ"         # la sucursal que siembra la siembra
     if nombre == "tipo_retiro":
         return "Clark"      # el default de la columna en el esquema real
+    if nombre == "que":
+        return "pesaje"     # el visor de fotos de la compra (16/10): la siembra deja una
     if "desde" in nombre:
         return (hoy - datetime.timedelta(days=30)).isoformat()
     if "hasta" in nombre or nombre in ("fecha", "dia"):

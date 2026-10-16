@@ -1,0 +1,109 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>{{ titulo }}</title>
+<style>
+  {# EL VISOR (dueño, 16/10): la foto a pantalla completa, con zoom, y si hay
+     varias se pasa de una a otra. Fondo negro: la foto es lo único que hay. #}
+  html, body { margin: 0; height: 100%; background: #000; color: #fff;
+    font-family: -apple-system, system-ui, sans-serif; overflow: hidden; }
+  .barra { position: fixed; top: 0; left: 0; right: 0; z-index: 2; display: flex; flex-wrap: wrap;
+    align-items: center; gap: 0.4rem; padding: 0.4rem 0.5rem; background: rgba(0, 0, 0, 0.75); box-sizing: border-box; }
+  .barra .titulo { flex: 1 1 8rem; min-width: 0; font-weight: 700; font-size: 0.95rem; }
+  .barra .cuenta { font-size: 0.9rem; white-space: nowrap; }
+  .boton { display: inline-flex; align-items: center; justify-content: center; min-width: 44px; min-height: 44px;
+    padding: 0 0.8rem; border-radius: 8px; border: 1px solid rgba(255, 255, 255, 0.5); background: rgba(0, 0, 0, 0.5);
+    color: #fff; font-size: 1rem; font-weight: 600; text-decoration: none; box-sizing: border-box; cursor: pointer; }
+  .marco { position: fixed; inset: 0; overflow: auto; display: flex; align-items: center; justify-content: center;
+    -webkit-overflow-scrolling: touch; }
+  .marco img { max-width: 100%; max-height: 100%; object-fit: contain; cursor: zoom-in; }
+  /* Acercada: la foto al 250% y el marco se recorre con el dedo. */
+  .marco.acercada { display: block; }
+  .marco.acercada img { max-width: none; max-height: none; width: 250%; cursor: zoom-out; }
+  .pasar { position: fixed; bottom: 0; left: 0; right: 0; z-index: 2; display: flex; justify-content: space-between;
+    gap: 0.5rem; padding: 0.5rem; box-sizing: border-box; pointer-events: none; }
+  .pasar .boton { pointer-events: auto; min-width: 64px; font-size: 1.4rem; }
+  .pie-visor { position: fixed; bottom: 0.4rem; left: 50%; transform: translateX(-50%); z-index: 1; opacity: 0.6; }
+  [hidden] { display: none !important; }
+</style>
+</head>
+<body>
+  <div class="barra">
+    <a class="boton" href="{{ volver }}" data-cerrar aria-label="Cerrar">✕</a>
+    <span class="titulo">{{ titulo }}</span>
+    {% if fotos|length > 1 %}<span class="cuenta" data-cuenta>{{ inicio + 1 }} de {{ fotos|length }}</span>{% endif %}
+    <button type="button" class="boton" data-zoom>Acercar</button>
+  </div>
+
+  {% for foto in fotos %}
+  <div class="marco" data-foto="{{ loop.index0 }}"{% if loop.index0 != inicio %} hidden{% endif %}>
+    {% if foto.pdf %}
+    {# Una comanda en PDF no se dibuja como foto: se abre aparte. #}
+    <a class="boton" href="{{ foto.url }}" target="_blank" rel="noopener" data-pdf>Abrir la comanda en PDF</a>
+    {% else %}
+    <img src="{{ foto.url }}" alt="{{ titulo }}, foto {{ loop.index }}">
+    {% endif %}
+  </div>
+  {% endfor %}
+
+  {% if fotos|length > 1 %}
+  <div class="pasar">
+    <button type="button" class="boton" data-pasar="-1" aria-label="Foto anterior">‹</button>
+    <button type="button" class="boton" data-pasar="1" aria-label="Foto siguiente">›</button>
+  </div>
+  {% endif %}
+<script>
+  (function () {
+    var marcos = Array.prototype.slice.call(document.querySelectorAll(".marco"));
+    var actual = {{ inicio }};
+    var cuenta = document.querySelector("[data-cuenta]");
+    var zoom = document.querySelector("[data-zoom]");
+
+    function acercar(si) {
+      marcos[actual].classList.toggle("acercada", si);
+      zoom.textContent = si ? "Alejar" : "Acercar";
+    }
+    function mostrar(n) {
+      acercar(false);
+      actual = (n + marcos.length) % marcos.length;
+      marcos.forEach(function (m, i) { m.hidden = i !== actual; });
+      if (cuenta) { cuenta.textContent = (actual + 1) + " de " + marcos.length; }
+    }
+    zoom.addEventListener("click", function () { acercar(!marcos[actual].classList.contains("acercada")); });
+    marcos.forEach(function (m) {
+      var img = m.querySelector("img");
+      if (img) { img.addEventListener("click", function () { acercar(!m.classList.contains("acercada")); }); }
+    });
+    document.querySelectorAll("[data-pasar]").forEach(function (b) {
+      b.addEventListener("click", function () { mostrar(actual + Number(b.dataset.pasar)); });
+    });
+    // Con el dedo: deslizar para el costado pasa de foto (si no está acercada).
+    var desde = null;
+    document.addEventListener("touchstart", function (e) {
+      desde = e.touches.length === 1 ? e.touches[0].clientX : null;
+    }, { passive: true });
+    document.addEventListener("touchend", function (e) {
+      if (desde === null || marcos.length < 2 || marcos[actual].classList.contains("acercada")) { return; }
+      var corrido = e.changedTouches[0].clientX - desde;
+      if (Math.abs(corrido) > 60) { mostrar(actual + (corrido < 0 ? 1 : -1)); }
+    });
+    document.addEventListener("keydown", function (e) {
+      if (e.key === "ArrowRight") { mostrar(actual + 1); }
+      if (e.key === "ArrowLeft") { mostrar(actual - 1); }
+      if (e.key === "Escape") { document.querySelector("[data-cerrar]").click(); }
+    });
+    // Cerrar vuelve a la lista tal como estaba (con su scroll) si se vino de ahí.
+    document.querySelector("[data-cerrar]").addEventListener("click", function (e) {
+      if (document.referrer.indexOf(location.origin) === 0 && history.length > 1) {
+        e.preventDefault();
+        history.back();
+      }
+    });
+  })();
+</script>
+{# El marcador de versión va en todas las pantallas; acá, abajo y entre las flechas. #}
+<div class="pie-visor">{% include "_pie_version.html" %}</div>
+</body>
+</html>
