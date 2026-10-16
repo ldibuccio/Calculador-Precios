@@ -29186,14 +29186,15 @@ from core.palmala_cruces import (  # noqa: E402
     crudos_de_la_planilla as crudos_de_la_planilla_de_palmala,
     importe_con_signo,
     partes_del_filtro as partes_del_filtro_de_palmala,
-    poner_a_todos as poner_a_todos_en_palmala,
     problemas_de_los_renglones as problemas_de_palmala,
-    renglones_de_cheques_leidos as renglones_de_cheques_de_palmala,
+    clave_para_repetidos as clave_de_palmala,
+    renglones_de_comprobantes_leidos as renglones_de_comprobantes_de_palmala,
     renglones_para_revisar as renglones_de_palmala,
     saldos_por_cuenta,
     suma_de_lo_filtrado,
     texto_del_filtro as texto_del_filtro_de_palmala,
     texto_del_saldo,
+    total_por_cuenta,
 )
 from core.exportar_palmala import generar_excel_palmala, generar_pdf_palmala  # noqa: E402
 from core.cheques import clave_de_banco  # noqa: E402
@@ -29283,31 +29284,274 @@ def exportar_palmala_excel(request: Request):
                     headers={"Content-Disposition": f'attachment; filename="palmala_cruces_{hoy.isoformat()}.xlsx"'})
 
 
-# --- CARGAR A MANO, Y LOS CONCEPTOS -----------------------------------------
+from collections.abc import Callable  # noqa: E402
+
+from core.carga_en_dos_pasos import (  # noqa: E402
+    A_MANO,
+    MAX_FILAS_A_MANO,
+    como_se_cargo,
+    cuantas_a_mano,
+    grupos,
+    poner_a_los_tildados as poner_a_los_tildados_de_la_carga,
+    poner_en_el_grupo as poner_en_el_grupo_de_la_carga,
+    repetidos,
+    resumen,
+    tipo_de_archivo,
+    vivos,
+)
+from core.lector_palmala import extraer_movimientos_de_palmala  # noqa: E402
+
+
+# --- LA CARGA EN DOS PASOS (dueño, 16/10): Palmala Cruces y las cuentas -------
+# Paso 1, elegir: archivos (fotos, PDF, Excel) y/o filas a mano. Paso 2,
+# revisar: un renglón por movimiento, agrupado por archivo, y "Confirmar
+# todos". Lo que comparten está acá y en `core/carga_en_dos_pasos.py`; lo de
+# cada una (sus campos, qué le falta, cómo se guarda) en su `_ModoDeCarga`.
+
+@dataclass
+class _ModoDeCarga:
+    modo: str                       # "palmala" o "cuenta"
+    base: str                       # la URL de la cuenta
+    titulo: str
+    cuenta: dict | None
+    conceptos: list
+    para_todos: tuple               # los campos de "Para todos" y del encabezado del grupo
+    vacio: Callable                 # () -> un renglón a mano, vacío
+    del_formulario: Callable        # (formulario, sufijo) -> renglón
+    leer_foto: Callable             # (imagenes) -> lo leído por la IA
+    renglones_de_la_foto: Callable  # (lo leído, hoy) -> renglones
+    renglones_del_excel: Callable   # (filas, hoy) -> renglones, o None si no se reconoce
+    problemas: Callable             # (renglones) -> lo que tiene mal cada uno
+    clave: Callable                 # renglón -> lo que lo identifica (para los repetidos)
+    ya_cargados: Callable           # () -> {clave: cómo se nombra}
+    guardar: Callable               # (movimientos) -> ids
+    no_se_puede: type
+    monto: Callable                 # renglón -> el importe como texto
+    total: Callable                 # renglones -> el total como texto
+    prefijo_foto: str
+    que_archivos: str
+    columnas_excel: str
+    extra: Callable                 # (renglones) -> lo propio de la pantalla
+    volver: Callable                # (aviso) -> RedirectResponse a la cuenta
+
+
+def _renderizar_paso_1_de_carga(request: Request, modo: _ModoDeCarga, *, aviso: str | None = None,
+                                error: str | None = None, a_mano: int = 1, status_code: int = 200):
+    return templates.TemplateResponse(request, "carga_elegir.html", {
+        "modo": modo.modo, "base": modo.base, "titulo": modo.titulo, "cuenta": modo.cuenta,
+        "conceptos": modo.conceptos, "que_archivos": modo.que_archivos, "columnas_excel": modo.columnas_excel,
+        "a_mano": a_mano, "max_a_mano": MAX_FILAS_A_MANO, "aviso": aviso, "error": error, **modo.extra([]),
+    }, status_code=status_code)
+
+
+def _problemas_de_la_carga(modo: _ModoDeCarga, renglones: list[dict]) -> tuple[list[list[str]], list[bool]]:
+    """Lo que tiene mal cada renglón, con el repetido (contra la base o
+    dentro de la carga) al final; y cuáles son repetidos."""
+    problemas = modo.problemas(renglones)
+    motivos = repetidos(renglones, modo.clave, modo.ya_cargados())
+    return [p + ([m] if m else []) for p, m in zip(problemas, motivos)], [bool(m) for m in motivos]
+
+
+def _renderizar_paso_2_de_carga(request: Request, modo: _ModoDeCarga, renglones: list[dict], archivos: dict, *,
+                                avisos: list[str] = (), error: str | None = None, todos: dict | None = None,
+                                preguntar_a_todos: bool = False, status_code: int = 200):
+    problemas, son_repetidos = _problemas_de_la_carga(modo, renglones)
+    return templates.TemplateResponse(request, "carga_revisar.html", {
+        "modo": modo.modo, "base": modo.base, "titulo": modo.titulo, "cuenta": modo.cuenta,
+        "renglones": renglones, "problemas": problemas, "repetidos": son_repetidos,
+        "montos": [modo.monto(r) for r in renglones],
+        "grupos": grupos(renglones, problemas, archivos["nombres"], modo.total),
+        "resumen": resumen(renglones, problemas), "total_texto": modo.total(vivos(renglones)),
+        "nombres": archivos["nombres"], "tipos": archivos["tipos"], "fotos": archivos["fotos"],
+        "conceptos": modo.conceptos, "nombre_de_concepto": {c["id"]: c["nombre"] for c in modo.conceptos},
+        "todos": todos or _para_todos_por_defecto(modo), "preguntar_a_todos": preguntar_a_todos,
+        "avisos": list(avisos), "error": error, **modo.extra(renglones),
+    }, status_code=status_code)
+
+
+def _para_todos_por_defecto(modo: _ModoDeCarga) -> dict:
+    """"Para todos" arranca vacío ("No cambiar"), salvo la cuenta de Palmala,
+    que viene en Pesos (dueño, 16/10)."""
+    return {campo: ("pesos" if campo == "cuenta" else "") for campo in modo.para_todos}
+
+
+def _filas_a_mano(modo: _ModoDeCarga, cuantas: int) -> list[dict]:
+    return [dict(modo.vacio(), archivo=A_MANO, concepto_leido="", sacar=False, tildado=False, no_es_repetido=False)
+            for _ in range(cuantas)]
+
+
+def _leer_un_archivo_de_carga(modo: _ModoDeCarga, contenido: bytes, nombre: str, hoy: date
+                              ) -> tuple[str, str, list[dict]]:
+    """(tipo, foto para la pantalla, renglones) de UN archivo: un Excel se lee
+    por sus columnas, una foto o un PDF con la IA (el PDF con todas sus
+    páginas; se muestra y se guarda la primera). ValueError o RuntimeError si
+    no se puede leer."""
+    import zipfile
+
+    import xlrd
+    from openpyxl.utils.exceptions import InvalidFileException
+    tipo = tipo_de_archivo(nombre)
+    if tipo == "excel":
+        extension = nombre.lower().rsplit(".", 1)[-1]
+        try:
+            renglones = modo.renglones_del_excel(filas_de_la_planilla(contenido, extension), hoy)
+        except (KeyError, IndexError, UnicodeDecodeError, zipfile.BadZipFile, xlrd.XLRDError,
+                InvalidFileException) as motivo:
+            raise ValueError(f"«{nombre}» no se puede abrir como planilla") from motivo
+        if renglones is None:
+            raise ValueError(f"«{nombre}»: no se reconocieron las columnas (hace falta Fecha e Importe)")
+        return tipo, "", renglones
+    if tipo != "foto":
+        raise ValueError(f"«{nombre}» no es una foto, un PDF ni un Excel")
+    imagenes = imagenes_desde_pdf(contenido) if nombre.lower().endswith(".pdf") else [contenido]
+    if not imagenes:
+        raise ValueError(f"«{nombre}» no tiene páginas")
+    return tipo, _generar_preview_foto(imagenes[0]), modo.renglones_de_la_foto(modo.leer_foto(imagenes), hoy)
+
+
+async def _seguir_la_carga(request: Request, modo: _ModoDeCarga):
+    """Del paso 1 al 2: lee cada archivo y suma las filas a mano. TODAVÍA NO
+    GUARDA NADA."""
+    formulario = await _formulario_de_un_listado(request)
+    subidos = [a for a in formulario.getlist("archivos") if getattr(a, "filename", "")]
+    a_mano = cuantas_a_mano(formulario.get("a_mano"))
+    if not subidos and not a_mano:
+        return _renderizar_paso_1_de_carga(request, modo, a_mano=0, status_code=400,
+                                           error="Subí un archivo o decí cuántos vas a cargar a mano.")
+    hoy = _hoy_argentina()
+    renglones, avisos = [], []
+    archivos = {"nombres": [], "tipos": [], "fotos": []}
+    for numero, subido in enumerate(subidos):
+        contenido = await subido.read()
+        try:
+            tipo, foto, leidos = _leer_un_archivo_de_carga(modo, contenido, subido.filename, hoy)
+        except (ValueError, RuntimeError) as motivo:
+            logger.exception("No se pudo leer %s en la carga de %s", subido.filename, modo.titulo)
+            tipo, foto, leidos = "", "", []
+            avisos.append(str(motivo) if isinstance(motivo, ValueError) else f"«{subido.filename}» no se pudo leer")
+        else:
+            if not leidos:
+                avisos.append(f"«{subido.filename}»: no se encontró ningún movimiento")
+        archivos["nombres"].append(subido.filename)
+        archivos["tipos"].append(tipo)
+        archivos["fotos"].append(foto)
+        for r in leidos:
+            r.update(archivo=numero, no_es_repetido=False)
+        renglones += leidos
+    renglones += _filas_a_mano(modo, a_mano)
+    return _renderizar_paso_2_de_carga(request, modo, renglones, archivos, avisos=avisos)
+
+
+def _renglones_de_la_carga(modo: _ModoDeCarga, formulario) -> list[dict]:
+    renglones = []
+    for i in range(_cantidad_de_renglones(formulario)):
+        r = modo.del_formulario(formulario, f"_{i}")
+        try:
+            archivo = int(str(formulario.get(f"archivo_{i}") or A_MANO))
+        except ValueError:
+            archivo = A_MANO
+        r.update(archivo=archivo, concepto_leido=str(formulario.get(f"concepto_leido_{i}") or ""),
+                 sacar=formulario.get(f"sacar_{i}") == "1", tildado=formulario.get(f"tildado_{i}") == "1",
+                 no_es_repetido=formulario.get(f"no_es_repetido_{i}") == "1")
+        renglones.append(r)
+    return renglones
+
+
+def _cambios_de_la_carga(modo: _ModoDeCarga, formulario, prefijo: str) -> dict:
+    """Lo elegido en "Para todos" o en el encabezado de un grupo, con los
+    mismos nombres que el renglón; lo que quedó en "No cambiar" va vacío."""
+    elegido = modo.del_formulario(formulario, "", prefijo=prefijo)
+    return {campo: elegido.get(campo) for campo in modo.para_todos}
+
+
+async def _revisar_la_carga(request: Request, modo: _ModoDeCarga):
+    """El paso 2. "Revisar" vuelve a marcar los problemas; el encabezado de un
+    grupo cambia todo el grupo; "Para todos" va a los tildados (sin ninguno,
+    pregunta antes de ponerlo en todos); "Confirmar todos" guarda los que
+    están bien, juntos, cada uno con la foto de su archivo, y deja en la
+    página los que tienen problema."""
+    formulario = await _formulario_de_un_listado(request)
+    renglones = _renglones_de_la_carga(modo, formulario)
+    archivos = {clave: [str(v) for v in formulario.getlist(f"archivo_{clave[:-1]}")]
+                for clave in ("nombres", "tipos", "fotos")}
+    todos = {campo: str(formulario.get(f"todos_{campo}") or "") for campo in modo.para_todos}
+    pintar = lambda **kw: _renderizar_paso_2_de_carga(request, modo, renglones, archivos, todos=todos, **kw)  # noqa: E731
+    accion = str(formulario.get("accion") or "revisar")
+    banco = " ".join(str(formulario.get("agregar_banco") or "").split())
+    if banco and modo.modo == "palmala":
+        agregar_banco(banco)
+        return pintar(avisos=[f"Se agregó {banco} a la lista de bancos."])
+    if accion in ("a_todos", "a_todos_si"):
+        cambios = _cambios_de_la_carga(modo, formulario, "todos_")
+        if not any(cambios.values()):
+            return pintar(error="Elegí qué poner en \"Para todos\".")
+        cuantos = poner_a_los_tildados_de_la_carga(renglones, cambios, sin_tildar_tambien=accion == "a_todos_si")
+        if cuantos is None:
+            return pintar(preguntar_a_todos=True)
+        return pintar(avisos=[f"Se cambió en {cuantos} movimiento{'' if cuantos == 1 else 's'}."])
+    if accion.startswith("grupo_") and accion.removeprefix("grupo_").lstrip("-").isdigit():
+        archivo = int(accion.removeprefix("grupo_"))
+        cambios = _cambios_de_la_carga(modo, formulario, f"grupo_{archivo}_")
+        if not any(cambios.values()):
+            return pintar(error="Elegí qué cambiar en el grupo.")
+        poner_en_el_grupo_de_la_carga(renglones, archivo, cambios)
+        return pintar()
+    if accion == "seleccionar_todos":
+        for r in renglones:
+            r["tildado"] = not r["sacar"]
+        return pintar()
+    if accion == "sacar_tildados":
+        for r in renglones:
+            if r["tildado"]:
+                r["sacar"], r["tildado"] = True, False
+        return pintar()
+    if accion == "otra_a_mano":
+        renglones += _filas_a_mano(modo, 1)
+        return pintar()
+    if accion != "confirmar":
+        return pintar()
+    problemas, _ = _problemas_de_la_carga(modo, renglones)
+    buenos = [r for r, p in zip(renglones, problemas) if not p and not r["sacar"]]
+    quedan = [r for r, p in zip(renglones, problemas) if p and not r["sacar"]]
+    subidas: dict = {}
+    try:
+        for r in buenos:
+            a = r["archivo"]
+            if a not in subidas and 0 <= a < len(archivos["fotos"]):
+                contenido = _bytes_desde_data_uri(archivos["fotos"][a])
+                subidas[a] = subir_foto_comanda(contenido, "comprobante", prefijo=modo.prefijo_foto) if contenido else None
+        if buenos:
+            modo.guardar([dict(r, foto_ruta=subidas.get(r["archivo"]), como_se_cargo=como_se_cargo(r, archivos["tipos"]))
+                          for r in buenos])
+    except modo.no_se_puede as motivo:
+        for ruta in subidas.values():
+            if ruta:
+                borrar_foto_comanda(ruta)
+        return pintar(error=str(motivo), status_code=400)
+    except Exception:
+        for ruta in subidas.values():
+            if ruta:
+                borrar_foto_comanda(ruta)
+        raise
+    if not quedan:
+        return modo.volver(f"{len(buenos)} movimiento{'' if len(buenos) == 1 else 's'} cargado{'' if len(buenos) == 1 else 's'}")
+    for r in quedan:
+        r["tildado"] = False
+    return _renderizar_paso_2_de_carga(
+        request, modo, quedan, archivos, todos=todos,
+        avisos=[(f"Se guardaron {len(buenos)}. " if buenos else "") + f"Quedan {len(quedan)} con problemas: "
+                "corregilos o sacalos."])
+
+
+# --- CARGAR (dueño, 16/10): un solo flujo de dos pasos ------------------------
 
 def _movimiento_vacio() -> dict:
     return {"fecha": _hoy_argentina().isoformat(), "cuenta": "pesos", "sentido": "", "importe": "", "concepto_id": None,
             "detalle": "", "cheque_numero": "", "cheque_banco": "", "cheque_fecha_pago": ""}
 
 
-def _renderizar_carga_de_palmala(request: Request, *, movimiento: dict | None = None, error: str | None = None,
-                                 aviso: str | None = None, status_code: int = 200):
-    return templates.TemplateResponse(request, "palmala_cargar.html", {
-        "m": movimiento or _movimiento_vacio(), "conceptos": conceptos_de_palmala(), "bancos": listar_bancos(),
-        "cuentas": CUENTAS_DE_PALMALA, "sentidos": SENTIDOS_DE_PALMALA, "error": error, "aviso": aviso,
-    }, status_code=status_code)
-
-
-@app.get("/gerencia/palmala-cruces/cargar")
-def ver_carga_de_palmala(request: Request, aviso: str | None = None):
-    puerta = _puerta_de_palmala(request)
-    if puerta is not None:
-        return puerta
-    return _renderizar_carga_de_palmala(request, aviso=aviso)
-
-
-def _movimiento_del_formulario(formulario, sufijo: str = "") -> dict:
-    dato = lambda campo: str(formulario.get(f"{campo}{sufijo}") or "").strip()  # noqa: E731
+def _movimiento_del_formulario(formulario, sufijo: str = "", *, prefijo: str = "") -> dict:
+    dato = lambda campo: str(formulario.get(f"{prefijo}{campo}{sufijo}") or "").strip()  # noqa: E731
     return {"fecha": dato("fecha"), "cuenta": dato("cuenta"), "sentido": dato("sentido"),
             "importe": str(_importe_de_cheque(dato("importe")) or "") if dato("importe") else "",
             "concepto_id": _id_opcional_desde_query(dato("concepto_id")), "detalle": dato("detalle"),
@@ -29315,47 +29559,83 @@ def _movimiento_del_formulario(formulario, sufijo: str = "") -> dict:
             "cheque_fecha_pago": dato("cheque_fecha_pago")}
 
 
-def _claves_de_bancos() -> set:
-    return {clave_de_banco(b["nombre"]) for b in listar_bancos()}
-
-
-def _para_guardar(r: dict, foto_ruta: str | None = None) -> dict:
+def _para_guardar(r: dict) -> dict:
     return {"fecha": date.fromisoformat(r["fecha"]), "cuenta": r["cuenta"], "sentido": r["sentido"],
             "importe": _importe_de_cheque(r["importe"]), "concepto_id": r["concepto_id"], "detalle": r["detalle"],
             "cheque_numero": r["cheque_numero"], "cheque_banco": r["cheque_banco"],
             "cheque_fecha_pago": date.fromisoformat(r["cheque_fecha_pago"]) if r["cheque_fecha_pago"] else None,
-            "foto_ruta": foto_ruta}
+            "foto_ruta": r.get("foto_ruta"), "como_se_cargo": r.get("como_se_cargo")}
 
 
-@app.post("/gerencia/palmala-cruces/cargar")
-async def cargar_movimiento_de_palmala(request: Request):
-    """Un movimiento a mano, con su foto si la tiene. El banco que no está se
-    agrega (como en la carga de un cheque)."""
+def _modo_de_palmala() -> _ModoDeCarga:
+    conceptos = conceptos_de_palmala()
+
+    # Los bancos se leen cada vez: "Agregarlo" suma uno en el medio.
+    def problemas(renglones):
+        bancos = listar_bancos()
+        claves = {clave_de_banco(b["nombre"]) for b in bancos}
+        for r in renglones:
+            r["cheque_banco"] = _banco_de_la_lista(r["cheque_banco"], bancos) if r.get("cheque_banco") else ""
+        return problemas_de_palmala(renglones, conceptos, claves, clave_de_banco)
+
+    def ya_cargados():
+        return {clave_de_palmala(m): f"el {m['fecha'].strftime('%d/%m/%Y')}, {m['concepto']}"
+                for m in buscar_movimientos_de_palmala({}) if not m["anulado"]}
+
+    def extra(renglones):
+        bancos = listar_bancos()
+        return {"bancos": bancos, "cuentas": [(c, n) for c, n, _ in CUENTAS_DE_PALMALA],
+                "sentidos": SENTIDOS_DE_PALMALA, "nombre_de_cuenta": NOMBRE_DE_CUENTA_DE_PALMALA,
+                "nombre_de_sentido": NOMBRE_DE_SENTIDO_DE_PALMALA,
+                "pide_cheque": {c["id"]: c["pide_cheque"] for c in conceptos},
+                "faltan_bancos": bancos_que_faltan([{"banco": r["cheque_banco"], "sacar": r.get("sacar")}
+                                                    for r in renglones], bancos)}
+
+    return _ModoDeCarga(
+        modo="palmala", base="/gerencia/palmala-cruces", titulo="Cargar en Palmala Cruces", cuenta=None,
+        conceptos=conceptos, para_todos=("fecha", "sentido", "cuenta", "concepto_id"), vacio=_movimiento_vacio,
+        del_formulario=_movimiento_del_formulario,
+        leer_foto=lambda imagenes: extraer_movimientos_de_palmala(
+            imagenes, conceptos=[c["nombre"] for c in conceptos if c["activo"]]),
+        renglones_de_la_foto=lambda leida, hoy: renglones_de_comprobantes_de_palmala(leida, conceptos, hoy=hoy),
+        renglones_del_excel=lambda filas, hoy: (
+            None if (crudos := crudos_de_la_planilla_de_palmala(filas)) is None
+            else renglones_de_palmala(crudos, conceptos, hoy=hoy)),
+        problemas=problemas, clave=clave_de_palmala, ya_cargados=ya_cargados,
+        guardar=lambda movimientos: guardar_movimientos_de_palmala([_para_guardar(r) for r in movimientos],
+                                                                   como_se_cargo="a_mano"),
+        no_se_puede=PalmalaNoSePuede,
+        monto=lambda r: importe_con_signo(r["importe"], r["cuenta"]) if _importe_de_cheque(r["importe"]) else "",
+        total=total_por_cuenta, prefijo_foto=PREFIJO_PALMALA,
+        que_archivos="Fotos de cheques o ECHEQ, comprobantes, Excel o PDF",
+        columnas_excel="o Debe y Pagó; si tiene Concepto, Cuenta y Detalle, se leen también",
+        extra=extra,
+        volver=lambda aviso: RedirectResponse("/gerencia/palmala-cruces?" + urlencode({"aviso": aviso}),
+                                              status_code=303))
+
+
+@app.get("/gerencia/palmala-cruces/cargar")
+def ver_carga_de_palmala(request: Request, aviso: str | None = None):
+    puerta = _puerta_de_palmala(request)
+    if puerta is not None:
+        return puerta
+    return _renderizar_paso_1_de_carga(request, _modo_de_palmala(), aviso=aviso)
+
+
+@app.post("/gerencia/palmala-cruces/cargar/seguir")
+async def seguir_la_carga_de_palmala(request: Request):
     puerta = _puerta_de_palmala(request, escribir=True)
     if puerta is not None:
         return puerta
-    formulario = await request.form()
-    movimiento = _movimiento_del_formulario(formulario)
-    conceptos = conceptos_de_palmala()
-    # El banco a mano se agrega solo: para el control, cuenta como que está.
-    claves = _claves_de_bancos() | ({clave_de_banco(movimiento["cheque_banco"])} if movimiento["cheque_banco"] else set())
-    problemas = problemas_de_palmala([movimiento], conceptos, claves, clave_de_banco)[0]
-    if problemas:
-        return _renderizar_carga_de_palmala(request, movimiento=movimiento, error="Falta: " + "; ".join(problemas),
-                                            status_code=400)
-    archivo = formulario.get("foto")
-    foto_ruta = None
-    if getattr(archivo, "filename", ""):
-        contenido = await archivo.read()
-        if contenido:
-            foto_ruta = subir_foto_comanda(contenido, archivo.filename, prefijo=PREFIJO_PALMALA)
-    try:
-        guardar_movimientos_de_palmala([_para_guardar(movimiento, foto_ruta)], como_se_cargo="a_mano")
-    except PalmalaNoSePuede as motivo:
-        if foto_ruta:
-            borrar_foto_comanda(foto_ruta)
-        return _renderizar_carga_de_palmala(request, movimiento=movimiento, error=str(motivo), status_code=400)
-    return RedirectResponse("/gerencia/palmala-cruces?" + urlencode({"aviso": "Movimiento cargado"}), status_code=303)
+    return await _seguir_la_carga(request, _modo_de_palmala())
+
+
+@app.post("/gerencia/palmala-cruces/revisar")
+async def revisar_la_carga_de_palmala(request: Request):
+    puerta = _puerta_de_palmala(request, escribir=True)
+    if puerta is not None:
+        return puerta
+    return await _revisar_la_carga(request, _modo_de_palmala())
 
 
 @app.post("/gerencia/palmala-cruces/conceptos")
@@ -29366,11 +29646,12 @@ async def crear_concepto_de_palmala_ruta(request: Request):
     formulario = await request.form()
     nombre = " ".join(str(formulario.get("nombre") or "").split())
     if not nombre:
-        return _renderizar_carga_de_palmala(request, error="Escribí el nombre del concepto.", status_code=400)
+        return _renderizar_paso_1_de_carga(request, _modo_de_palmala(), error="Escribí el nombre del concepto.",
+                                           status_code=400)
     try:
         crear_concepto_de_palmala(nombre, formulario.get("pide_cheque") == "1")
     except PalmalaNoSePuede as motivo:
-        return _renderizar_carga_de_palmala(request, error=str(motivo), status_code=400)
+        return _renderizar_paso_1_de_carga(request, _modo_de_palmala(), error=str(motivo), status_code=400)
     return RedirectResponse("/gerencia/palmala-cruces/cargar?" + urlencode({"aviso": f"Concepto {nombre} agregado"}),
                             status_code=303)
 
@@ -29385,169 +29666,8 @@ async def activar_concepto_de_palmala_ruta(request: Request, concepto_id: int):
     return RedirectResponse("/gerencia/palmala-cruces/cargar", status_code=303)
 
 
-# --- VARIAS FOTOS DE CHEQUES, O UN EXCEL: la pantalla de revisión ----------
-
-def _renderizar_revision_de_palmala(request: Request, renglones: list[dict], *, origen: str, fotos: list[str],
-                                    aviso: str | None = None, error: str | None = None, status_code: int = 200):
-    conceptos = conceptos_de_palmala()
-    bancos = listar_bancos()
-    for r in renglones:
-        r["cheque_banco"] = _banco_de_la_lista(r["cheque_banco"], bancos) if r.get("cheque_banco") else ""
-    problemas = problemas_de_palmala(renglones, conceptos, {clave_de_banco(b["nombre"]) for b in bancos},
-                                     clave_de_banco)
-    vivos = [(r, p) for r, p in zip(renglones, problemas) if not r.get("sacar")]
-    orden = sorted(range(len(renglones)), key=lambda i: (not problemas[i] or bool(renglones[i].get("sacar")), i))
-    faltan = bancos_que_faltan([{"banco": r["cheque_banco"], "sacar": r.get("sacar")} for r in renglones], bancos)
-    sumas = suma_de_lo_filtrado([{"cuenta": r["cuenta"], "con_signo": (_importe_de_cheque(r["importe"]) or 0)
-                                  * (1 if r["sentido"] == "debe" else -1)} for r, _ in vivos
-                                 if r["cuenta"] in NOMBRE_DE_CUENTA_DE_PALMALA and r["sentido"]])
-    return templates.TemplateResponse(request, "palmala_revisar.html", {
-        "renglones": [(i, renglones[i], problemas[i]) for i in orden], "cantidad": len(renglones),
-        "origen": origen, "fotos": fotos, "cuantos": len(vivos), "bien": sum(1 for _, p in vivos if not p),
-        "con_problema": sum(1 for _, p in vivos if p), "faltan_bancos": faltan,
-        # Lo que mueve la tanda en cada cuenta, en neto.
-        "efecto": [(NOMBRE_DE_CUENTA_DE_PALMALA[c], "Palmala debe" if v > 0 else "Palmala pagó",
-                    importe_con_signo(v, c)) for c, v in sumas.items() if v],
-        "conceptos": conceptos, "nombre_de_concepto": {c["id"]: c["nombre"] for c in conceptos}, "bancos": bancos,
-        "cuentas": CUENTAS_DE_PALMALA, "sentidos": SENTIDOS_DE_PALMALA,
-        "nombre_de_cuenta": NOMBRE_DE_CUENTA_DE_PALMALA, "nombre_de_sentido": NOMBRE_DE_SENTIDO_DE_PALMALA,
-        "importe_con_signo": importe_con_signo, "aviso": aviso, "error": error,
-    }, status_code=status_code)
-
-
-@app.post("/gerencia/palmala-cruces/cargar/fotos")
-async def leer_fotos_de_palmala(request: Request):
-    """Varias fotos (o PDF) de cheques con que Palmala paga: la IA lee cada
-    una y se abre la revisión, un renglón por cheque. TODAVÍA NO GUARDA."""
-    puerta = _puerta_de_palmala(request, escribir=True)
-    if puerta is not None:
-        return puerta
-    formulario = await request.form()
-    archivos = [a for a in formulario.getlist("fotos") if getattr(a, "filename", "")]
-    if not archivos:
-        return _renderizar_carga_de_palmala(request, error="Elegí las fotos de los cheques.", status_code=400)
-    leidas, fotos = [], []
-    for archivo in archivos:
-        contenido = await archivo.read()
-        es_pdf = (archivo.filename or "").lower().endswith(".pdf")
-        fotos.append("" if es_pdf else _generar_preview_foto(contenido))
-        try:
-            leidas.append(extraer_cheques_de_imagenes(imagenes_desde_pdf(contenido) if es_pdf else [contenido]))
-        except Exception:
-            logger.exception("No se pudo leer la foto de Palmala %s", archivo.filename)
-            leidas.append({"error": f"«{archivo.filename}» no se entiende como un cheque"})
-    renglones, avisos = renglones_de_cheques_de_palmala(leidas, conceptos_de_palmala(), hoy=_hoy_argentina())
-    return _renderizar_revision_de_palmala(request, renglones, origen="foto", fotos=fotos,
-                                           aviso=" ".join(avisos) or f"Se leyeron {len(renglones)} cheques. "
-                                                                     "Revisalos antes de guardar.")
-
-
-@app.post("/gerencia/palmala-cruces/cargar/excel")
-async def leer_excel_de_palmala(request: Request, archivo: UploadFile = File(...)):
-    """Un Excel o CSV con muchos movimientos: las columnas se reconocen por su
-    título (Fecha, Importe o Debe y Pagó, Concepto, Cuenta, Detalle...)."""
-    puerta = _puerta_de_palmala(request, escribir=True)
-    if puerta is not None:
-        return puerta
-    nombre = (archivo.filename or "").lower()
-    tipo = "xlsx" if nombre.endswith(".xlsx") else "xls" if nombre.endswith(".xls") else \
-        "csv" if nombre.endswith(".csv") else None
-    if tipo is None:
-        return _renderizar_carga_de_palmala(request, error="Subí un Excel (.xlsx o .xls) o un CSV.", status_code=400)
-    try:
-        crudos = crudos_de_la_planilla_de_palmala(filas_de_la_planilla(await archivo.read(), tipo))
-    except Exception:
-        logger.exception("No se pudo leer el Excel de Palmala")
-        crudos = None
-    if not crudos:
-        return _renderizar_carga_de_palmala(
-            request, error="No se reconocieron los movimientos: la planilla tiene que tener una columna Fecha y "
-                           "otra Importe (o Debe y Pagó).", status_code=400)
-    renglones = renglones_de_palmala(crudos, conceptos_de_palmala(), hoy=_hoy_argentina())
-    return _renderizar_revision_de_palmala(request, renglones, origen="excel", fotos=[],
-                                           aviso=f"Se leyeron {len(renglones)} movimientos. Revisalos antes de guardar.")
-
-
-def _renglones_de_palmala_del_formulario(formulario) -> list[dict]:
-    renglones = []
-    for i in range(_cantidad_de_renglones(formulario)):
-        r = _movimiento_del_formulario(formulario, f"_{i}")
-        try:
-            foto = int(str(formulario.get(f"foto_{i}") or "-1"))
-        except ValueError:
-            foto = -1
-        r.update(concepto_leido=str(formulario.get(f"concepto_leido_{i}") or ""), foto=foto,
-                 sacar=formulario.get(f"sacar_{i}") == "1", tildado=formulario.get(f"tildado_{i}") == "1")
-        renglones.append(r)
-    return renglones
-
-
-@app.post("/gerencia/palmala-cruces/revisar")
-async def revisar_movimientos_de_palmala(request: Request):
-    """La revisión de las fotos o del Excel: "Revisar", "Para todos",
-    "Sacar los tildados", "Agregarlo" (un banco) y "Guardar todos" (los que
-    están bien, juntos, cada uno con su foto)."""
-    puerta = _puerta_de_palmala(request, escribir=True)
-    if puerta is not None:
-        return puerta
-    formulario = await _formulario_de_un_listado(request)
-    renglones = _renglones_de_palmala_del_formulario(formulario)
-    origen = "foto" if formulario.get("origen") == "foto" else "excel"
-    fotos = [str(f) for f in formulario.getlist("foto_leida")]
-    pintar = lambda **kw: _renderizar_revision_de_palmala(request, renglones, origen=origen, fotos=fotos, **kw)  # noqa: E731
-    banco = " ".join(str(formulario.get("agregar_banco") or "").split())
-    if banco:
-        agregar_banco(banco)
-        return pintar(aviso=f"Se agregó {banco} a la lista de bancos.")
-    accion = str(formulario.get("accion") or "revisar")
-    if accion == "a_todos":
-        cuantos = poner_a_todos_en_palmala(renglones, {
-            "cuenta": str(formulario.get("cuenta_todos") or ""), "sentido": str(formulario.get("sentido_todos") or ""),
-            "concepto_id": _id_opcional_desde_query(str(formulario.get("concepto_todos") or "")),
-            "fecha": str(_fecha_de_cheque(formulario.get("fecha_todos")) or "") or None})
-        for r in renglones:
-            r["tildado"] = False
-        return pintar(aviso="Se cambió 1 movimiento." if cuantos == 1 else f"Se cambiaron {cuantos} movimientos.")
-    if accion == "sacar_tildados":
-        for r in renglones:
-            if r["tildado"]:
-                r["sacar"], r["tildado"] = True, False
-        return pintar()
-    if accion != "guardar":
-        return pintar()
-    bancos = listar_bancos()
-    for r in renglones:
-        r["cheque_banco"] = _banco_de_la_lista(r["cheque_banco"], bancos) if r["cheque_banco"] else ""
-    problemas = problemas_de_palmala(renglones, conceptos_de_palmala(),
-                                     {clave_de_banco(b["nombre"]) for b in bancos}, clave_de_banco)
-    buenos = [r for r, p in zip(renglones, problemas) if not p and not r["sacar"]]
-    quedan = [r for r, p in zip(renglones, problemas) if p and not r["sacar"]]
-    subidas: dict = {}
-    try:
-        for r in buenos:
-            if r["foto"] not in subidas and 0 <= r["foto"] < len(fotos):
-                contenido = _bytes_desde_data_uri(fotos[r["foto"]])
-                subidas[r["foto"]] = subir_foto_comanda(contenido, "cheque", prefijo=PREFIJO_PALMALA) if contenido else None
-        if buenos:
-            guardar_movimientos_de_palmala([_para_guardar(r, subidas.get(r["foto"])) for r in buenos],
-                                           como_se_cargo=origen)
-    except PalmalaNoSePuede as motivo:
-        for ruta in subidas.values():
-            if ruta:
-                borrar_foto_comanda(ruta)
-        return pintar(error=str(motivo), status_code=400)
-    except Exception:
-        for ruta in subidas.values():
-            if ruta:
-                borrar_foto_comanda(ruta)
-        raise
-    if not quedan:
-        return RedirectResponse("/gerencia/palmala-cruces?" + urlencode({"aviso": f"{len(buenos)} movimientos cargados"}),
-                                status_code=303)
-    return _renderizar_revision_de_palmala(
-        request, quedan, origen=origen, fotos=fotos,
-        aviso=(f"Se guardaron {len(buenos)}. " if buenos else "") + f"Quedan {len(quedan)} con problemas: "
-              "corregilos o sacalos.")
+def _claves_de_bancos() -> set:
+    return {clave_de_banco(b["nombre"]) for b in listar_bancos()}
 
 
 # --- LA FICHA: corregir y anular, con historial -----------------------------
@@ -29586,6 +29706,7 @@ async def corregir_movimiento_de_palmala_ruta(request: Request, movimiento_id: i
                                            request.query_params.get("volver")), status_code=303)
     cambios = _para_guardar(nuevo)
     cambios.pop("foto_ruta")
+    cambios.pop("como_se_cargo")
     try:
         cuantos = corregir_movimiento_de_palmala(movimiento_id, cambios, str(formulario.get("motivo") or ""))
     except PalmalaNoSePuede as motivo:
@@ -29838,21 +29959,65 @@ def exportar_cuenta_excel(request: Request, cuenta_id: int):
                     headers={"Content-Disposition": _nombre_de_archivo_de_cuenta(datos["cuenta"], datos["hoy"], "xlsx")})
 
 
-# --- CARGAR A MANO, Y LOS CONCEPTOS -----------------------------------------
+# --- CARGAR (dueño, 16/10): un solo flujo de dos pasos, como Palmala Cruces ---
 
 def _movimiento_de_cuenta_vacio() -> dict:
     return {"fecha": _hoy_argentina().isoformat(), "tipo": "", "importe": "", "concepto_id": None, "etiqueta": "",
             "detalle": ""}
 
 
-def _renderizar_carga_de_cuenta(request: Request, cuenta: dict, *, movimiento: dict | None = None,
-                                error: str | None = None, aviso: str | None = None, status_code: int = 200):
-    return templates.TemplateResponse(request, "cuenta_cargar.html", {
-        "cuenta": cuenta, "m": movimiento or _movimiento_de_cuenta_vacio(),
-        "conceptos": conceptos_de_la_cuenta(cuenta["id"]), "etiquetas": etiquetas_de_cuentas(),
-        "sentidos": SENTIDOS_DE_CUENTA, "nombre_de_sentido": NOMBRE_DE_SENTIDO_DE_CUENTA,
-        "error": error, "aviso": aviso,
-    }, status_code=status_code)
+def _movimiento_de_cuenta_del_formulario(formulario, sufijo: str = "", *, prefijo: str = "") -> dict:
+    dato = lambda campo: str(formulario.get(f"{prefijo}{campo}{sufijo}") or "").strip()  # noqa: E731
+    return {"fecha": dato("fecha"), "tipo": dato("tipo"),
+            "importe": str(_importe_de_cheque(dato("importe")) or "") if dato("importe") else "",
+            "concepto_id": _id_opcional_desde_query(dato("concepto_id")),
+            "etiqueta": " ".join(dato("etiqueta").split()), "detalle": dato("detalle")}
+
+
+def _movimiento_de_cuenta_para_guardar(r: dict) -> dict:
+    return {"fecha": date.fromisoformat(r["fecha"]), "tipo": r["tipo"], "importe": _importe_de_cheque(r["importe"]),
+            "concepto_id": r["concepto_id"], "etiqueta": r["etiqueta"], "detalle": r["detalle"],
+            "foto_ruta": r.get("foto_ruta"), "como_se_cargo": r.get("como_se_cargo")}
+
+
+def _modo_de_la_cuenta(cuenta: dict) -> _ModoDeCarga:
+    from core.cuentas import (
+        clave_para_repetidos,
+        crudos_de_la_planilla as crudos_de_cuenta,
+        renglones_de_comprobantes_leidos,
+        renglones_para_revisar as renglones_de_cuenta,
+    )
+    from core.lector_cuentas import extraer_movimientos_de_imagenes
+    conceptos = conceptos_de_la_cuenta(cuenta["id"])
+    moneda = cuenta["moneda"]
+
+    def ya_cargados():
+        return {clave_para_repetidos(m): f"el {m['fecha'].strftime('%d/%m/%Y')}, {m['concepto']}"
+                for m in movimientos_de_la_cuenta(cuenta["id"]) if not m["anulado"]}
+
+    return _ModoDeCarga(
+        modo="cuenta", base=f"/gerencia/cuentas/{cuenta['id']}", titulo=f"Cargar en {cuenta['nombre']}",
+        cuenta=cuenta, conceptos=conceptos, para_todos=("fecha", "tipo", "concepto_id", "etiqueta"),
+        vacio=_movimiento_de_cuenta_vacio, del_formulario=_movimiento_de_cuenta_del_formulario,
+        leer_foto=lambda imagenes: extraer_movimientos_de_imagenes(
+            imagenes, cuenta=cuenta["nombre"], tipo=NOMBRE_DE_TIPO_DE_CUENTA[cuenta["tipo"]],
+            conceptos=[c["nombre"] for c in conceptos if c["activo"]]),
+        renglones_de_la_foto=lambda leida, hoy: renglones_de_comprobantes_leidos(leida, conceptos, hoy=hoy),
+        renglones_del_excel=lambda filas, hoy: (
+            None if (crudos := crudos_de_cuenta(filas)) is None else renglones_de_cuenta(crudos, conceptos, hoy=hoy)),
+        problemas=lambda renglones: [problemas_del_movimiento(r, conceptos) for r in renglones],
+        clave=clave_para_repetidos, ya_cargados=ya_cargados,
+        guardar=lambda movimientos: guardar_movimientos_de_cuenta(
+            cuenta["id"], [_movimiento_de_cuenta_para_guardar(r) for r in movimientos], como_se_cargo="a_mano"),
+        no_se_puede=CuentaNoSePuede,
+        monto=lambda r: importe_en(r["importe"], moneda) if _importe_de_cheque(r["importe"]) else "",
+        total=lambda renglones: importe_en(sum(_importe_de_cheque(r["importe"]) or 0 for r in renglones), moneda),
+        prefijo_foto=PREFIJO_CUENTAS,
+        que_archivos="Recibos, transferencias, tickets, una hoja de la caja, Excel o PDF",
+        columnas_excel="o Ingreso y Egreso; si tiene Concepto, Etiqueta y Detalle, se leen también",
+        extra=lambda renglones: {"etiquetas": etiquetas_de_cuentas(), "sentidos": SENTIDOS_DE_CUENTA,
+                                 "nombre_de_sentido": NOMBRE_DE_SENTIDO_DE_CUENTA},
+        volver=lambda aviso: _a_la_cuenta(cuenta["id"], aviso=aviso))
 
 
 @app.get("/gerencia/cuentas/{cuenta_id}/cargar")
@@ -29860,56 +30025,23 @@ def ver_carga_de_cuenta(request: Request, cuenta_id: int, aviso: str | None = No
     puerta = _sin_clave_de_cheques(request)
     if puerta is not None:
         return puerta
-    return _renderizar_carga_de_cuenta(request, _cuenta_o_404(cuenta_id), aviso=aviso)
+    return _renderizar_paso_1_de_carga(request, _modo_de_la_cuenta(_cuenta_o_404(cuenta_id)), aviso=aviso)
 
 
-def _movimiento_de_cuenta_del_formulario(formulario, sufijo: str = "") -> dict:
-    dato = lambda campo: str(formulario.get(f"{campo}{sufijo}") or "").strip()  # noqa: E731
-    return {"fecha": dato("fecha"), "tipo": dato("tipo"),
-            "importe": str(_importe_de_cheque(dato("importe")) or "") if dato("importe") else "",
-            "concepto_id": _id_opcional_desde_query(dato("concepto_id")),
-            "etiqueta": " ".join(dato("etiqueta").split()), "detalle": dato("detalle")}
-
-
-def _movimiento_de_cuenta_para_guardar(r: dict, foto_ruta: str | None = None) -> dict:
-    return {"fecha": date.fromisoformat(r["fecha"]), "tipo": r["tipo"], "importe": _importe_de_cheque(r["importe"]),
-            "concepto_id": r["concepto_id"], "etiqueta": r["etiqueta"], "detalle": r["detalle"],
-            "foto_ruta": foto_ruta}
-
-
-async def _foto_del_formulario(formulario) -> str | None:
-    archivo = formulario.get("foto")
-    if getattr(archivo, "filename", ""):
-        contenido = await archivo.read()
-        if contenido:
-            return subir_foto_comanda(contenido, archivo.filename, prefijo=PREFIJO_CUENTAS)
-    return None
-
-
-@app.post("/gerencia/cuentas/{cuenta_id}/cargar")
-async def cargar_movimiento_de_cuenta(request: Request, cuenta_id: int):
-    """Un movimiento a mano, con su foto si la tiene. La etiqueta que no está
-    se agrega a la lista."""
+@app.post("/gerencia/cuentas/{cuenta_id}/cargar/seguir")
+async def seguir_la_carga_de_cuenta(request: Request, cuenta_id: int):
     puerta = _puerta_de_gerencia_para_escribir(request)
     if puerta is not None:
         return puerta
-    cuenta = _cuenta_o_404(cuenta_id)
-    formulario = await request.form()
-    movimiento = _movimiento_de_cuenta_del_formulario(formulario)
-    problemas = problemas_del_movimiento(movimiento, conceptos_de_la_cuenta(cuenta_id))
-    if problemas:
-        return _renderizar_carga_de_cuenta(request, cuenta, movimiento=movimiento,
-                                           error="Falta: " + "; ".join(problemas), status_code=400)
-    foto_ruta = await _foto_del_formulario(formulario)
-    try:
-        guardar_movimientos_de_cuenta(cuenta_id, [_movimiento_de_cuenta_para_guardar(movimiento, foto_ruta)],
-                                      como_se_cargo="a_mano")
-    except CuentaNoSePuede as motivo:
-        if foto_ruta:
-            borrar_foto_comanda(foto_ruta)
-        return _renderizar_carga_de_cuenta(request, cuenta, movimiento=movimiento, error=str(motivo),
-                                           status_code=400)
-    return _a_la_cuenta(cuenta_id, aviso="Movimiento cargado")
+    return await _seguir_la_carga(request, _modo_de_la_cuenta(_cuenta_o_404(cuenta_id)))
+
+
+@app.post("/gerencia/cuentas/{cuenta_id}/revisar")
+async def revisar_la_carga_de_cuenta(request: Request, cuenta_id: int):
+    puerta = _puerta_de_gerencia_para_escribir(request)
+    if puerta is not None:
+        return puerta
+    return await _revisar_la_carga(request, _modo_de_la_cuenta(_cuenta_o_404(cuenta_id)))
 
 
 @app.post("/gerencia/cuentas/{cuenta_id}/conceptos")
@@ -29922,11 +30054,12 @@ async def crear_concepto_de_cuenta_ruta(request: Request, cuenta_id: int):
     nombre = " ".join(str(formulario.get("nombre") or "").split())
     tipo = str(formulario.get("tipo") or "")
     if not nombre:
-        return _renderizar_carga_de_cuenta(request, cuenta, error="Escribí el nombre del concepto.", status_code=400)
+        return _renderizar_paso_1_de_carga(request, _modo_de_la_cuenta(cuenta), error="Escribí el nombre del concepto.",
+                                           status_code=400)
     try:
         crear_concepto_de_cuenta(cuenta_id, nombre, tipo if tipo in NOMBRE_DE_SENTIDO_DE_CUENTA else None)
     except CuentaNoSePuede as motivo:
-        return _renderizar_carga_de_cuenta(request, cuenta, error=str(motivo), status_code=400)
+        return _renderizar_paso_1_de_carga(request, _modo_de_la_cuenta(cuenta), error=str(motivo), status_code=400)
     return RedirectResponse(f"/gerencia/cuentas/{cuenta_id}/cargar?" + urlencode({"aviso": f"Concepto {nombre} agregado"}),
                             status_code=303)
 
@@ -29942,172 +30075,13 @@ async def activar_concepto_de_cuenta_ruta(request: Request, cuenta_id: int, conc
     return RedirectResponse(f"/gerencia/cuentas/{cuenta_id}/cargar", status_code=303)
 
 
-# --- VARIAS FOTOS O UN EXCEL: la pantalla de revisión (dueño, 15/10) --------
-
-def _renderizar_revision_de_cuenta(request: Request, cuenta: dict, renglones: list[dict], *, origen: str,
-                                   fotos: list[str], aviso: str | None = None, error: str | None = None,
-                                   status_code: int = 200):
-    from core.cuentas import problemas_del_movimiento as problemas_de
-    conceptos = conceptos_de_la_cuenta(cuenta["id"])
-    problemas = [problemas_de(r, conceptos) for r in renglones]
-    vivos = [(r, p) for r, p in zip(renglones, problemas) if not r.get("sacar")]
-    orden = sorted(range(len(renglones)), key=lambda i: (not problemas[i] or bool(renglones[i].get("sacar")), i))
-    neto = sum((_importe_de_cheque(r["importe"]) or 0) * (1 if r["tipo"] == "ingreso" else -1)
-               for r, _ in vivos if r["tipo"] in NOMBRE_DE_SENTIDO_DE_CUENTA)
-    return templates.TemplateResponse(request, "cuenta_revisar.html", {
-        "cuenta": cuenta, "renglones": [(i, renglones[i], problemas[i]) for i in orden], "cantidad": len(renglones),
-        "origen": origen, "fotos": fotos, "cuantos": len(vivos), "bien": sum(1 for _, p in vivos if not p),
-        "con_problema": sum(1 for _, p in vivos if p), "neto": round(neto, 2),
-        "conceptos": conceptos, "nombre_de_concepto": {c["id"]: c["nombre"] for c in conceptos},
-        "etiquetas": etiquetas_de_cuentas(), "sentidos": SENTIDOS_DE_CUENTA,
-        "nombre_de_sentido": NOMBRE_DE_SENTIDO_DE_CUENTA, "importe_en": importe_en, "saldo_en": saldo_en,
-        "aviso": aviso, "error": error,
-    }, status_code=status_code)
-
-
-@app.post("/gerencia/cuentas/{cuenta_id}/cargar/fotos")
-async def leer_fotos_de_cuenta(request: Request, cuenta_id: int):
-    """Varias fotos o PDF de comprobantes: la IA lee cada uno y se abre la
-    revisión, un renglón por movimiento. TODAVÍA NO GUARDA."""
-    from core.cuentas import renglones_de_comprobantes_leidos
-    from core.lector_cuentas import extraer_movimientos_de_imagenes
-    puerta = _puerta_de_gerencia_para_escribir(request)
-    if puerta is not None:
-        return puerta
-    cuenta = _cuenta_o_404(cuenta_id)
-    formulario = await request.form()
-    archivos = [a for a in formulario.getlist("fotos") if getattr(a, "filename", "")]
-    if not archivos:
-        return _renderizar_carga_de_cuenta(request, cuenta, error="Elegí las fotos o los PDF.", status_code=400)
-    conceptos = conceptos_de_la_cuenta(cuenta_id)
-    activos = [c["nombre"] for c in conceptos if c["activo"]]
-    leidas, fotos = [], []
-    for archivo in archivos:
+async def _foto_del_formulario(formulario) -> str | None:
+    archivo = formulario.get("foto")
+    if getattr(archivo, "filename", ""):
         contenido = await archivo.read()
-        es_pdf = (archivo.filename or "").lower().endswith(".pdf")
-        fotos.append("" if es_pdf else _generar_preview_foto(contenido))
-        try:
-            leidas.append(extraer_movimientos_de_imagenes(
-                imagenes_desde_pdf(contenido) if es_pdf else [contenido], cuenta=cuenta["nombre"],
-                tipo=NOMBRE_DE_TIPO_DE_CUENTA[cuenta["tipo"]], conceptos=activos))
-        except Exception:
-            logger.exception("No se pudo leer el comprobante %s de la cuenta %s", archivo.filename, cuenta_id)
-            leidas.append({"error": f"«{archivo.filename}» no se entiende como un comprobante"})
-    renglones, avisos = renglones_de_comprobantes_leidos(leidas, conceptos, hoy=_hoy_argentina())
-    return _renderizar_revision_de_cuenta(request, cuenta, renglones, origen="foto", fotos=fotos,
-                                          aviso=" ".join(avisos) or f"Se leyeron {len(renglones)} movimientos. "
-                                                                    "Revisalos antes de guardar.")
-
-
-@app.post("/gerencia/cuentas/{cuenta_id}/cargar/excel")
-async def leer_excel_de_cuenta(request: Request, cuenta_id: int, archivo: UploadFile = File(...)):
-    """Un Excel o CSV con muchos movimientos: las columnas se reconocen por su
-    título (Fecha, Importe o Ingreso y Egreso, Concepto, Etiqueta, Detalle)."""
-    from core.cuentas import crudos_de_la_planilla as crudos_de_cuenta, renglones_para_revisar as renglones_de_cuenta
-    puerta = _puerta_de_gerencia_para_escribir(request)
-    if puerta is not None:
-        return puerta
-    cuenta = _cuenta_o_404(cuenta_id)
-    nombre = (archivo.filename or "").lower()
-    tipo = "xlsx" if nombre.endswith(".xlsx") else "xls" if nombre.endswith(".xls") else \
-        "csv" if nombre.endswith(".csv") else None
-    if tipo is None:
-        return _renderizar_carga_de_cuenta(request, cuenta, error="Subí un Excel (.xlsx o .xls) o un CSV.",
-                                           status_code=400)
-    import zipfile
-
-    import xlrd
-    from openpyxl.utils.exceptions import InvalidFileException
-    try:
-        crudos = crudos_de_cuenta(filas_de_la_planilla(await archivo.read(), tipo))
-    except (ValueError, KeyError, IndexError, UnicodeDecodeError, zipfile.BadZipFile, xlrd.XLRDError,
-            InvalidFileException):
-        logger.exception("No se pudo leer el Excel de la cuenta %s", cuenta_id)
-        crudos = None
-    if not crudos:
-        return _renderizar_carga_de_cuenta(
-            request, cuenta, error="No se reconocieron los movimientos: la planilla tiene que tener una columna "
-                                   "Fecha y otra Importe (o Ingreso y Egreso).", status_code=400)
-    renglones = renglones_de_cuenta(crudos, conceptos_de_la_cuenta(cuenta_id), hoy=_hoy_argentina())
-    return _renderizar_revision_de_cuenta(request, cuenta, renglones, origen="excel", fotos=[],
-                                          aviso=f"Se leyeron {len(renglones)} movimientos. Revisalos antes de guardar.")
-
-
-def _renglones_de_cuenta_del_formulario(formulario) -> list[dict]:
-    renglones = []
-    for i in range(_cantidad_de_renglones(formulario)):
-        r = _movimiento_de_cuenta_del_formulario(formulario, f"_{i}")
-        try:
-            foto = int(str(formulario.get(f"foto_{i}") or "-1"))
-        except ValueError:
-            foto = -1
-        r.update(concepto_leido=str(formulario.get(f"concepto_leido_{i}") or ""), foto=foto,
-                 sacar=formulario.get(f"sacar_{i}") == "1", tildado=formulario.get(f"tildado_{i}") == "1")
-        renglones.append(r)
-    return renglones
-
-
-@app.post("/gerencia/cuentas/{cuenta_id}/revisar")
-async def revisar_movimientos_de_cuenta(request: Request, cuenta_id: int):
-    """"Revisar", "Para todos", "Sacar los tildados" y "Guardar todos" (los
-    que están bien, juntos, cada uno con su foto)."""
-    from core.cuentas import poner_a_todos as poner_a_todos_en_cuenta, problemas_del_movimiento as problemas_de
-    puerta = _puerta_de_gerencia_para_escribir(request)
-    if puerta is not None:
-        return puerta
-    cuenta = _cuenta_o_404(cuenta_id)
-    formulario = await _formulario_de_un_listado(request)
-    renglones = _renglones_de_cuenta_del_formulario(formulario)
-    origen = "foto" if formulario.get("origen") == "foto" else "excel"
-    fotos = [str(f) for f in formulario.getlist("foto_leida")]
-    pintar = lambda **kw: _renderizar_revision_de_cuenta(request, cuenta, renglones, origen=origen, fotos=fotos, **kw)  # noqa: E731
-    accion = str(formulario.get("accion") or "revisar")
-    if accion == "a_todos":
-        cuantos = poner_a_todos_en_cuenta(renglones, {
-            "tipo": str(formulario.get("tipo_todos") or ""),
-            "concepto_id": _id_opcional_desde_query(str(formulario.get("concepto_todos") or "")),
-            "etiqueta": " ".join(str(formulario.get("etiqueta_todos") or "").split()),
-            "fecha": str(_fecha_de_cheque(formulario.get("fecha_todos")) or "") or None})
-        for r in renglones:
-            r["tildado"] = False
-        return pintar(aviso="Se cambió 1 movimiento." if cuantos == 1 else f"Se cambiaron {cuantos} movimientos.")
-    if accion == "sacar_tildados":
-        for r in renglones:
-            if r["tildado"]:
-                r["sacar"], r["tildado"] = True, False
-        return pintar()
-    if accion != "guardar":
-        return pintar()
-    conceptos = conceptos_de_la_cuenta(cuenta_id)
-    problemas = [problemas_de(r, conceptos) for r in renglones]
-    buenos = [r for r, p in zip(renglones, problemas) if not p and not r["sacar"]]
-    quedan = [r for r, p in zip(renglones, problemas) if p and not r["sacar"]]
-    subidas: dict = {}
-    try:
-        for r in buenos:
-            if r["foto"] not in subidas and 0 <= r["foto"] < len(fotos):
-                contenido = _bytes_desde_data_uri(fotos[r["foto"]])
-                subidas[r["foto"]] = subir_foto_comanda(contenido, "comprobante", prefijo=PREFIJO_CUENTAS) \
-                    if contenido else None
-        if buenos:
-            guardar_movimientos_de_cuenta(cuenta_id, [_movimiento_de_cuenta_para_guardar(r, subidas.get(r["foto"]))
-                                                      for r in buenos], como_se_cargo=origen)
-    except CuentaNoSePuede as motivo:
-        for ruta in subidas.values():
-            if ruta:
-                borrar_foto_comanda(ruta)
-        return pintar(error=str(motivo), status_code=400)
-    except Exception:
-        for ruta in subidas.values():
-            if ruta:
-                borrar_foto_comanda(ruta)
-        raise
-    if not quedan:
-        return _a_la_cuenta(cuenta_id, aviso=f"{len(buenos)} movimientos cargados")
-    return _renderizar_revision_de_cuenta(
-        request, cuenta, quedan, origen=origen, fotos=fotos,
-        aviso=(f"Se guardaron {len(buenos)}. " if buenos else "") + f"Quedan {len(quedan)} con problemas: "
-              "corregilos o sacalos.")
+        if contenido:
+            return subir_foto_comanda(contenido, archivo.filename, prefijo=PREFIJO_CUENTAS)
+    return None
 
 
 # --- CONCILIACIÓN (dueño, 15/10): solo en una cuenta de banco ---------------
@@ -30400,6 +30374,7 @@ async def corregir_movimiento_de_cuenta_ruta(request: Request, movimiento_id: in
         return _volver_a(request, url, error="Falta: " + "; ".join(problemas))
     cambios = _movimiento_de_cuenta_para_guardar(nuevo)
     cambios.pop("foto_ruta")
+    cambios.pop("como_se_cargo")
     try:
         cuantos = corregir_movimiento_de_cuenta(movimiento_id, cambios, str(formulario.get("motivo") or ""))
     except CuentaNoSePuede as motivo:

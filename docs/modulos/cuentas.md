@@ -105,25 +105,32 @@ movimientos del 29/12/2025 al 16/10/2026 con el concepto "Movimiento anterior"
 redondeo (fila 544). Saldo $8.035.818,38; al 14/10, $3.195.973,96. No se
 vuelve a cargar.
 
-## Carga por foto y por Excel (15/10)
+## Cargar: un solo flujo de dos pasos (16/10)
 
-En "Cargar" de cada cuenta, además de a mano (como Palmala Cruces):
-- **Fotos o PDF de comprobantes** (varios de una vez): la IA lee cada uno
-  (`core/lector_cuentas.py`) y arma un renglón por movimiento, con de qué
-  foto salió. Se le pasan los conceptos ACTIVOS de esa cuenta; el que
-  sugiere tiene que ser uno de ellos, si no queda vacío y se elige. La foto
-  que no se lee se avisa y no frena las demás.
+Igual que Palmala Cruces y "Aplicar cheques", con la misma pantalla
+(`core/carga_en_dos_pasos.py`, `templates/carga_elegir.html` y
+`carga_revisar.html`). Las pantallas viejas (a mano, fotos, Excel) se sacaron.
+- **Paso 1** (`/cargar`): "Subí fotos o archivos" (recibos, transferencias,
+  tickets, una hoja de la caja, Excel/CSV, PDF) y/o "Cargar a mano" (cuántas
+  filas vacías). "Seguir" fijo arriba. Debajo, los conceptos de la cuenta.
+- **Fotos o PDF**: la IA lee cada uno (`core/lector_cuentas.py`) y arma un
+  renglón por movimiento. Se le pasan los conceptos ACTIVOS de esa cuenta; el
+  que sugiere tiene que ser uno de ellos, si no queda vacío y se elige. El
+  archivo que no se lee se avisa y no frena los demás.
 - **Excel o CSV**: las columnas se reconocen por su título
   (`reconocer_columnas`): Fecha, e Importe o Ingreso y Egreso (o Crédito y
   Débito); Tipo, Concepto, Etiqueta (o De quién, Persona, Empresa) y Detalle
   si están. Un importe negativo es un egreso. Las filas de Total, Subtotal o
   Saldo no son movimientos.
-- **La revisión**: los que tienen problema van primero, abiertos y en rojo;
-  "Para todos" cambia el tipo, el concepto, la etiqueta o la fecha de los
-  tildados (o de todos si no hay ninguno tildado); "Sacar los tildados";
-  "Guardar todos" guarda los que están bien, juntos, cada uno con su foto
-  (una subida por foto, no por renglón), y deja en la página los que
-  tienen problema. NADA se guarda sin pasar por la revisión.
+- **Paso 2** (`/revisar`): cada renglón con sus campos (fecha, importe,
+  ingreso/egreso, concepto, etiqueta, detalle), agrupado por archivo con un
+  encabezado que cambia todo el grupo; "Para todos" (fecha, tipo, concepto,
+  etiqueta) a los tildados, y sin ninguno pregunta antes de ir a todos.
+  En rojo lo que falta y el REPETIDO (misma fecha, tipo e importe, ya en la
+  cuenta o más arriba en la carga; "No es repetido" lo deja pasar).
+  "Confirmar todos" (fijo arriba, con "X movimientos · $Y · Z bien · W con
+  problema") guarda los que están bien, cada uno con la foto de su archivo
+  (una subida por archivo) y su origen. NADA se guarda sin pasar por acá.
 
 ## Conciliación (15/10): solo en una cuenta de banco
 

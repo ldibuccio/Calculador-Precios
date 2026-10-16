@@ -1,0 +1,97 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>{{ titulo }}</title>
+<style>
+{% include "_cheques_estilos.html" %}
+{% include "_carga_estilos.html" %}
+  .cuantas { display: flex; align-items: center; gap: 0.5rem; flex-wrap: wrap; }
+  .cuantas button { flex: 0 0 auto; width: 48px; min-height: 48px; padding: 0; font-size: 1.3rem; font-weight: 700;
+    background: #fff; color: #2563eb; border: 1px solid #2563eb; border-radius: 8px; cursor: pointer; }
+  .cuantas input { width: 5rem; min-height: 44px; font-size: 1.1rem; text-align: center; border: 1px solid #ccc; border-radius: 8px; }
+  .concepto { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 0.4rem 0.8rem; padding: 0.3rem 0; border-top: 1px solid #eee; }
+  .concepto:first-of-type { border-top: 0; }
+  .concepto.de-baja span { color: #888; text-decoration: line-through; }
+  .concepto .acciones { margin: 0; flex: 0 0 auto; }
+  .concepto .acciones button { flex: 0 0 auto; padding: 0 1rem; }
+  .tilde { display: flex; align-items: center; gap: 0.5rem; min-height: 44px; font-size: 0.92rem; }
+  .tilde input { width: 1.3rem; height: 1.3rem; flex: none; }
+</style>
+</head>
+<body>
+  {% set barra_sector = "gerencia" %}
+  {% set barra_titulo = titulo %}
+  {% set barra_atras = base %}
+  {% include "_barra_navegacion.html" %}
+
+  {% if aviso %}<div class="aviso" data-aviso>{{ aviso }}</div>{% endif %}
+  {% if error %}<div class="error" data-error>{{ error }}</div>{% endif %}
+
+  {# UN SOLO FLUJO (dueño, 16/10), como "Aplicar cheques": paso 1 elegir,
+     paso 2 revisar. Los archivos y las filas a mano se pueden usar juntos. #}
+  <form method="post" action="{{ base }}/cargar/seguir" enctype="multipart/form-data" data-paso-1>
+    <div class="arriba" data-arriba>
+      <p class="paso">Paso 1 de 2</p>
+      <div class="acciones"><button type="submit" data-seguir>Seguir</button></div>
+    </div>
+
+    <div class="tarjeta" data-archivos>
+      <h2>Subí fotos o archivos</h2>
+      <div class="campos"><label class="ancho">{{ que_archivos }} (podés elegir muchos)<input type="file" name="archivos" accept="image/*,.pdf,.xlsx,.xls,.csv" multiple></label></div>
+      <p class="nota">Cada archivo es un grupo en el paso 2, con lo que se lea. Un Excel tiene que tener una columna Fecha y otra Importe ({{ columnas_excel }}).</p>
+    </div>
+
+    <div class="tarjeta" data-a-mano>
+      <h2>Cargar a mano</h2>
+      <label for="a_mano" class="nota">¿Cuántos movimientos vas a escribir? Ej.: 3 pagos en efectivo</label>
+      <div class="cuantas">
+        <button type="button" class="secundario" data-menos aria-label="Uno menos">−</button>
+        <input type="number" id="a_mano" name="a_mano" min="0" max="{{ max_a_mano }}" inputmode="numeric" value="{{ a_mano }}">
+        <button type="button" class="secundario" data-mas aria-label="Uno más">+</button>
+      </div>
+      <p class="nota">Aparecen vacíos en el paso 2, junto con lo leído de los archivos.</p>
+    </div>
+    <p class="nota">Todavía no se guarda nada: en el paso 2 se revisa cada movimiento.</p>
+  </form>
+
+  {# Se abre poco: plegado, para que el paso 1 quede corto. #}
+  <details class="tarjeta" data-conceptos>
+    <summary>Los conceptos{% if cuenta %} de {{ cuenta.nombre }}{% endif %} (agregar o dar de baja)</summary>
+    {% for c in conceptos %}
+    <form class="concepto{% if not c.activo %} de-baja{% endif %}" method="post" action="{{ base }}/conceptos/{{ c.id }}/activo">
+      <span>{{ c.nombre }}{% if c.pide_cheque %} (lleva cheque){% endif %}{% if c.tipo %} ({{ nombre_de_sentido[c.tipo]|lower }}){% endif %}</span>
+      <input type="hidden" name="activo" value="{{ '' if c.activo else '1' }}">
+      <span class="acciones"><button type="submit" class="secundario">{{ 'Dar de baja' if c.activo else 'Volver a usar' }}</button></span>
+    </form>
+    {% endfor %}
+    <form method="post" action="{{ base }}/conceptos">
+      <div class="campos">
+        <label class="ancho">Concepto nuevo<input type="text" name="nombre" placeholder="{{ 'Ej. Flete Palmala' if modo == 'palmala' else 'Ej. Pago de luz' }}" required></label>
+        {% if modo == "cuenta" %}
+        <label>¿Es solo de ingreso o de egreso?
+          <select name="tipo"><option value="">Puede ser los dos</option>
+            {% for valor, texto in sentidos %}<option value="{{ valor }}">Solo {{ texto|lower }}</option>{% endfor %}
+          </select></label>
+        {% endif %}
+      </div>
+      {% if modo == "palmala" %}<label class="tilde"><input type="checkbox" name="pide_cheque" value="1">Lleva número de cheque, banco y fecha de pago</label>{% endif %}
+      <div class="acciones"><button type="submit" class="secundario">Agregar concepto</button></div>
+    </form>
+  </details>
+<script>
+  (function () {
+    var campo = document.getElementById("a_mano");
+    function sumar(n) {
+      var valor = Math.max(0, Math.min({{ max_a_mano }}, (parseInt(campo.value, 10) || 0) + n));
+      campo.value = valor;
+    }
+    document.querySelector("[data-menos]").addEventListener("click", function () { sumar(-1); });
+    document.querySelector("[data-mas]").addEventListener("click", function () { sumar(1); });
+  })();
+</script>
+{% include "_carga_arriba.html" %}
+{% include "_pie_version.html" %}
+</body>
+</html>

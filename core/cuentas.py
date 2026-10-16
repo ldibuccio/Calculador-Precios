@@ -264,15 +264,14 @@ def tipo_de_la_celda(valor) -> str:
     return ""
 
 
-def renglones_para_revisar(crudos: list[dict], conceptos: list[dict], *, hoy: date,
-                           foto_de_cada: list[int] | None = None) -> list[dict]:
+def renglones_para_revisar(crudos: list[dict], conceptos: list[dict], *, hoy: date) -> list[dict]:
     """Lo leído como renglones del formulario, textos que se corrigen a mano.
     Con columnas Ingreso y Egreso, el tipo sale de cuál tiene el importe; un
     importe negativo es un egreso. El concepto se busca por nombre entre los
     de ESTA cuenta; si no está, queda vacío y se elige (nunca se adivina)."""
     from core.listado_cheques import fecha_de_la_celda, importe_de_la_celda
     renglones = []
-    for n, crudo in enumerate(crudos):
+    for crudo in crudos:
         tipo = crudo.get("tipo_fijo") or tipo_de_la_celda(crudo.get("tipo"))
         importe = importe_de_la_celda(crudo.get("importe"))
         if not importe:
@@ -290,44 +289,30 @@ def renglones_para_revisar(crudos: list[dict], conceptos: list[dict], *, hoy: da
             "concepto_id": concepto_por_nombre(concepto, conceptos), "concepto_leido": concepto,
             "etiqueta": " ".join(str(crudo.get("etiqueta") or "").split()),
             "detalle": str(crudo.get("detalle") or "").strip(),
-            "foto": (foto_de_cada[n] if foto_de_cada else -1), "sacar": False, "tildado": False,
+            "sacar": False, "tildado": False,
         })
     return renglones
 
 
-def renglones_de_comprobantes_leidos(leidas: list[dict], conceptos: list[dict], *, hoy: date
-                                     ) -> tuple[list[dict], list[str]]:
-    """Las fotos o PDF de comprobantes (una lectura por archivo, cada una con
-    sus "movimientos"): un renglón por movimiento, con de qué foto salió."""
-    crudos, fotos, avisos = [], [], []
-    for foto, leida in enumerate(leidas):
-        if leida.get("error"):
-            avisos.append(f"La foto {foto + 1} no se pudo leer: {leida['error']}")
-            continue
-        for movimiento in leida.get("movimientos") or []:
-            crudos.append({"fecha": movimiento.get("fecha"), "importe": movimiento.get("importe"),
-                           "tipo_fijo": movimiento.get("tipo") if movimiento.get("tipo") in NOMBRE_DE_SENTIDO else "",
-                           "concepto": movimiento.get("concepto"), "etiqueta": movimiento.get("quien"),
-                           "detalle": movimiento.get("detalle")})
-            fotos.append(foto)
-    if not crudos and not avisos:
-        avisos.append("No se encontró ningún movimiento en las fotos.")
-    return renglones_para_revisar(crudos, conceptos, hoy=hoy, foto_de_cada=fotos), avisos
+def renglones_de_comprobantes_leidos(leida: dict, conceptos: list[dict], *, hoy: date) -> list[dict]:
+    """Lo que la IA leyó de UN archivo (sus "movimientos"): un renglón por
+    movimiento."""
+    crudos = [{"fecha": movimiento.get("fecha"), "importe": movimiento.get("importe"),
+               "tipo_fijo": movimiento.get("tipo") if movimiento.get("tipo") in NOMBRE_DE_SENTIDO else "",
+               "concepto": movimiento.get("concepto"), "etiqueta": movimiento.get("quien"),
+               "detalle": movimiento.get("detalle")} for movimiento in leida.get("movimientos") or []]
+    return renglones_para_revisar(crudos, conceptos, hoy=hoy)
 
 
-def poner_a_todos(renglones: list[dict], cambios: dict) -> int:
-    """Pone los `cambios` que vienen con valor (tipo, concepto, etiqueta,
-    fecha) en los TILDADOS, o en todos los que no se sacaron si no hay
-    ninguno tildado. Devuelve a cuántos."""
-    tildados = [r for r in renglones if r.get("tildado") and not r.get("sacar")]
-    destino = tildados or [r for r in renglones if not r.get("sacar")]
-    for r in destino:
-        if cambios.get("tipo") in NOMBRE_DE_SENTIDO:
-            r["tipo"] = cambios["tipo"]
-        for campo in ("concepto_id", "etiqueta", "fecha"):
-            if cambios.get(campo):
-                r[campo] = cambios[campo]
-    return len(destino)
+def clave_para_repetidos(r: dict) -> tuple | None:
+    """Lo que identifica un movimiento para avisar que ya está en la cuenta:
+    la fecha, si entra o sale, y el importe. Sirve igual para un renglón de
+    la carga y para uno de la base."""
+    importe = _importe(r.get("importe"))
+    fecha = str(r.get("fecha") or "")[:10]
+    if importe is None or not fecha or r.get("tipo") not in NOMBRE_DE_SENTIDO:
+        return None
+    return (fecha, r["tipo"], round(importe, 2))
 
 
 def cuentas_del_hub(cuentas: list[dict]) -> tuple[list[dict], list[dict]]:
