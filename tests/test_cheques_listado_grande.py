@@ -296,8 +296,8 @@ def test_el_MISMO_banco_con_otro_nombre_no_se_duplica_al_guardar(d):
         "EJEMPLO Banco", "EJEMPLO Otro Banco", "Galicia", "Galicia Más"]
 
 
-def test_CONFIRMAR_ENDOSOS_con_mas_de_1000_campos_tambien_entra(m, d):
-    """La otra pantalla de muchos renglones: 100 cheques de endosos son 1300 campos."""
+def test_APLICAR_con_mas_de_1000_campos_tambien_entra(m, d):
+    """La otra pantalla de muchos renglones: 100 cheques en Aplicar son 1300 campos."""
     datos = {"cantidad": "100", "accion": "confirmar"}
     for i in range(100):
         datos.update({f"{campo}_{i}": "" for campo in ("foto", "numero", "fecha_pago", "importe", "emisor",
@@ -305,7 +305,7 @@ def test_CONFIRMAR_ENDOSOS_con_mas_de_1000_campos_tambien_entra(m, d):
                                                         "proveedor_id", "cuenta_deposito", "concepto_id", "fecha")})
         datos[f"sacar_{i}"] = "1"
     assert len(datos) > 1000
-    final = _cliente(m, "gerencia").post("/gerencia/cheques/aplicar/endosos/confirmar", data=datos,
+    final = _cliente(m, "gerencia").post("/gerencia/cheques/aplicar/revisar", data=datos,
                                          follow_redirects=False)
     assert final.status_code == 303 and "0+cheques+aplicados" in final.headers["location"]
 

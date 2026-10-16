@@ -55,33 +55,39 @@ def extraer_cheques_de_texto(texto: str) -> dict:
 
 # ENDOSOS DE ECHEQ (dueño, 13/10): la captura de "Operación pendiente de
 # firma" del home banking, con el proveedor a quien se endosa y sus cheques.
-PROMPT_ENDOSO = """
-Estás leyendo la captura de pantalla de un HOME BANKING argentino con una
-operación de ECHEQ ("Operación pendiente de firma" o parecida). Puede ser un
-ENDOSO (a quién se le endosan los cheques y cuáles) o un DEPÓSITO (en qué
-cuenta propia se depositan: dice "Cuenta de Depósito").
+PROMPT_SALIDA = """
+Estás leyendo un comprobante de cheques que SALIERON de una cartera. Puede
+ser: la captura de un HOME BANKING argentino con una operación de ECHEQ
+("Operación pendiente de firma" o parecida: un ENDOSO o un DEPÓSITO), una
+BOLETA DE DEPÓSITO del banco, o un RECIBO de entrega de cheques. Puede tener
+una o varias páginas: es UN solo comprobante.
 
 Devolvé ÚNICAMENTE un JSON con este formato exacto:
-{"tipo": "endoso" o "deposito", "cuenta_deposito": "texto o null",
+{"tipo": "endoso", "deposito" o null, "cuenta_deposito": "texto o null",
  "proveedor_cuit": "11 dígitos o null", "proveedor_nombre": "texto o null",
  "cheques": [{"numero": "texto", "fecha_pago": "AAAA-MM-DD o null",
               "importe": número o null, "emisor": "texto o null"}]}
 
-- Si la captura dice "Cuenta de Depósito", es un DEPÓSITO: "tipo" va
-  "deposito", "cuenta_deposito" la cuenta tal como aparece (por ejemplo
+- Es un DEPÓSITO si dice en qué cuenta propia se depositan ("Cuenta de
+  Depósito", una boleta de depósito): "tipo" va "deposito",
+  "cuenta_deposito" la cuenta tal como aparece si se lee (por ejemplo
   "CC$ 191-220-000247/7") y el proveedor va null.
-- Si es un endoso, "cuenta_deposito" va null y "proveedor_cuit" y
-  "proveedor_nombre" son los del BENEFICIARIO del endoso (a quien se le
-  entregan los cheques), no los del que firma la operación.
-- Un objeto por cheque endosado. "numero" tal como aparece (el número o el ID
-  del ECHEQ), sin espacios. "emisor" es quien libró el cheque (razón social).
+- Es un ENDOSO si los cheques se le dan a otro (un endoso, un recibo de
+  entrega): "tipo" va "endoso", "cuenta_deposito" null, y "proveedor_cuit"
+  y "proveedor_nombre" son los de QUIEN RECIBE los cheques (el beneficiario
+  del endoso, el que firma el recibo), no los del que firma la operación.
+- Si el comprobante no dice a dónde van los cheques, "tipo",
+  "cuenta_deposito" y el proveedor van null.
+- Un objeto por cheque. "numero" tal como aparece (el número o el ID del
+  ECHEQ), sin espacios. "emisor" es quien libró el cheque (razón social).
 - "importe" en pesos, con punto decimal y sin separador de miles.
 - Si un dato no se lee, va null. No inventes.
 """
 
 
-def extraer_endoso(imagen: bytes) -> dict:
+def extraer_salida_de_cheques(imagenes: list[bytes]) -> dict:
     """{"tipo", "cuenta_deposito", "proveedor_cuit", "proveedor_nombre",
-    "cheques": [...]} de UNA captura (endoso o depósito)."""
-    respuesta = _llamar_api_claude_multi_imagen([imagen], prompt=PROMPT_ENDOSO, max_tokens=MAX_TOKENS_CHEQUES)
+    "cheques": [...]} de UN comprobante (sus páginas): endoso, depósito,
+    boleta o recibo. "tipo" None si no dice a dónde van."""
+    respuesta = _llamar_api_claude_multi_imagen(imagenes, prompt=PROMPT_SALIDA, max_tokens=MAX_TOKENS_CHEQUES)
     return _parsear_json_de_la_respuesta(respuesta)

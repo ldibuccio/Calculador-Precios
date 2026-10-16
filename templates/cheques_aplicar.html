@@ -9,7 +9,7 @@
   .elegir { display: flex; gap: 0.6rem; align-items: flex-start; padding: 0.5rem 0; border-top: 1px solid #eee; min-height: 44px; }
   .elegir input { width: 1.4rem; height: 1.4rem; margin-top: 0.15rem; flex: none; }
   .elegir span { flex: 1; min-width: 0; }
-  .leido { max-width: 100%; border-radius: 8px; margin-top: 0.5rem; }
+  .paso { color: #666; font-size: 0.85rem; font-weight: 700; margin: 0 0 0.2rem; text-transform: uppercase; }
 </style>
 </head>
 <body>
@@ -18,68 +18,34 @@
   {% set barra_atras = volver %}
   {% include "_barra_navegacion.html" %}
 
-  {% if aviso %}<div class="aviso">{{ aviso }}</div>{% endif %}
   {% if error %}<div class="error" data-error>{{ error }}</div>{% endif %}
-  {% if no_encontrados %}<div class="error" data-no-encontrados>No están en cartera: {{ no_encontrados|join(", ") }}.</div>{% endif %}
 
-  {# ENDOSOS Y DEPÓSITOS DE ECHEQ (dueño, 13/10): muchas capturas del banco de una vez. #}
-  <form class="tarjeta" method="post" action="/gerencia/cheques/aplicar/endosos" enctype="multipart/form-data">
-    <h2>¿Endosaste o depositaste ECHEQ desde el banco?</h2>
-    <div class="campos"><label class="ancho">Las capturas de "Operación pendiente de firma" (podés elegir muchas)<input type="file" name="fotos" accept="image/*" multiple required></label></div>
-    <div class="acciones"><button type="submit" class="secundario">Leer las capturas</button></div>
-    <p class="nota">Podés mezclar fotos de endosos y de depósitos. Se arma un renglón por cheque, con su proveedor o su cuenta, para confirmar antes de guardar.</p>
-  </form>
-
-  <form class="tarjeta" method="post" action="/gerencia/cheques/aplicar/leer{{ q_volver(volver) }}" enctype="multipart/form-data">
-    <h2>¿Lo leo de una foto o un archivo?</h2>
-    <div class="campos"><label class="ancho">Boleta del depósito o foto de lo que entregaste<input type="file" name="archivo" accept="image/*,.pdf,.xlsx" required></label></div>
-    <div class="acciones"><button type="submit" class="secundario">Leer</button></div>
-    <p class="nota">Quedan tildados los cheques en cartera que se encuentren. Revisalos antes de guardar.</p>
-  </form>
-
-  <form class="tarjeta" method="post" action="/gerencia/cheques/aplicar{{ q_volver(volver) }}" enctype="multipart/form-data">
-    <input type="hidden" name="foto_leida" value="{{ foto_leida }}">
-    <div class="campos">
-      <label>¿Qué día salió?<input type="date" name="fecha" value="{{ datos.fecha }}" required></label>
-      <label>¿Por qué sale?
-        <select name="concepto_id"><option value="">Elegí</option>
-          {% for c in conceptos %}<option value="{{ c.id }}" {% if datos.concepto_id == c.id %}selected{% endif %}>{{ c.nombre }}</option>{% endfor %}
-        </select></label>
-      <label>¿A qué proveedor? (si es un pago)
-        <select name="proveedor_id"><option value="">Ninguno</option>
-          {% for p in proveedores %}<option value="{{ p.id }}" {% if datos.proveedor_id == p.id %}selected{% endif %}>{{ p.nombre }}</option>{% endfor %}
-        </select></label>
-      {# Un depósito va a una cuenta de banco de ESTA base (dueño, 15/10). #}
-      <label>¿En qué cuenta? (si es un depósito)
-        <select name="cuenta_id" data-cuenta-deposito><option value="">{{ 'Elegí' if bancos else 'No hay cuentas de banco' }}</option>
-          {% for b in bancos %}<option value="{{ b.id }}" {% if datos.cuenta_id == b.id %}selected{% endif %}>{{ b.nombre }}</option>{% endfor %}
-        </select></label>
-      <label>Comprobante (opcional)<input type="file" name="foto" accept="image/*"></label>
+  {# UN SOLO FLUJO (dueño, 16/10): paso 1 elegir, paso 2 revisar. Las dos
+     formas de elegir se pueden usar juntas. #}
+  <form method="post" action="/gerencia/cheques/aplicar/seguir" enctype="multipart/form-data">
+    <div class="tarjeta" data-archivos>
+      <p class="paso">Paso 1 de 2</p>
+      <h2>Subí capturas, fotos o archivos</h2>
+      <div class="campos"><label class="ancho">Endosos y depósitos del home banking, boletas de depósito, recibos de entrega (podés elegir muchos)<input type="file" name="archivos" accept="image/*,.pdf" multiple></label></div>
+      <p class="nota">Cada archivo es un grupo en el paso 2, con lo que se lea: el proveedor por su CUIT, la cuenta por su número.</p>
     </div>
-    <details {% if datos.concepto_nuevo %}open{% endif %}>
-      <summary>Otro concepto</summary>
-      <div class="campos">
-        <label>Nombre<input type="text" name="concepto_nuevo" placeholder="Ej. Pago de flete" value="{{ datos.concepto_nuevo }}"></label>
-        <label>¿Cómo queda el cheque?
-          <select name="destino_nuevo"><option value="">Elegí</option>
-            {% for valor, texto in destinos %}<option value="{{ valor }}" {% if datos.destino_nuevo == valor %}selected{% endif %}>{{ texto }}</option>{% endfor %}
-          </select></label>
-      </div>
-    </details>
-    {% if foto_leida %}<img class="leido" src="{{ foto_leida }}" alt="El comprobante leído">{% endif %}
 
-    <h3>¿Qué cheques salen? ({{ en_cartera|length }} en cartera)</h3>
-    <div class="campos"><label class="ancho">Buscar en la lista<input type="search" id="buscar" placeholder="Número, banco o de quién"></label></div>
-    {% for c in en_cartera %}
-    <label class="elegir" data-texto="{{ (c.numero ~ ' ' ~ c.banco ~ ' ' ~ c.de_quien)|lower }}">
-      <input type="checkbox" name="cheque_id" value="{{ c.id }}" {% if c.id in elegidos %}checked{% endif %}>
-      <span><strong>{{ c.importe|moneda }}</strong> · {{ c.de_quien }}<br>
-        <span class="fila-dato">{{ c.banco }} · Nº {{ c.numero }} · se cobra el {{ c.fecha_pago.strftime('%d/%m/%Y') }}{% if en_rojo(c) %} · <span class="rojo">{{ 'vencido' if c.estado == 'vencido' else 'por vencer' }}</span>{% endif %}</span></span>
-    </label>
-    {% else %}
-    <p class="vacio">No hay cheques en cartera.</p>
-    {% endfor %}
-    <div class="acciones"><button type="submit">Aplicar</button></div>
+    <div class="tarjeta" data-cartera>
+      <h2>Y/o tildá cheques de la cartera ({{ en_cartera|length }} en cartera)</h2>
+      <div class="campos"><label class="ancho">Buscar en la lista<input type="search" id="buscar" placeholder="Número, banco o de quién"></label></div>
+      {% for c in en_cartera %}
+      <label class="elegir" data-texto="{{ (c.numero ~ ' ' ~ c.banco ~ ' ' ~ c.de_quien)|lower }}">
+        <input type="checkbox" name="cheque_id" value="{{ c.id }}" {% if c.id in elegidos %}checked{% endif %}>
+        <span><strong>{{ c.importe|moneda }}</strong> · {{ c.de_quien }}<br>
+          <span class="fila-dato">{{ c.banco }} · Nº {{ c.numero }} · se cobra el {{ c.fecha_pago.strftime('%d/%m/%Y') }}{% if en_rojo(c) %} · <span class="rojo">{{ 'vencido' if c.estado == 'vencido' else 'por vencer' }}</span>{% endif %}</span></span>
+      </label>
+      {% else %}
+      <p class="vacio">No hay cheques en cartera.</p>
+      {% endfor %}
+    </div>
+
+    <div class="acciones"><button type="submit">Seguir</button></div>
+    <p class="nota">Todavía no se guarda nada: en el paso 2 se revisa cada cheque.</p>
   </form>
 <script>
   document.getElementById("buscar").addEventListener("input", function () {

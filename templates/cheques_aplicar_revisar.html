@@ -1,0 +1,196 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Aplicar cheques: revisar</title>
+<style>
+{% include "_cheques_estilos.html" %}
+  .paso { color: #666; font-size: 0.85rem; font-weight: 700; margin: 0 0 0.2rem; text-transform: uppercase; }
+  .grupo-cabeza { border-bottom: 1px solid #e5e7eb; padding-bottom: 0.6rem; margin-bottom: 0.4rem; }
+  .grupo.con-problema { border-left: 4px solid #dc2626; }
+  .renglon { display: flex; align-items: flex-start; gap: 0.4rem; border-top: 1px solid #eee; padding: 0.2rem 0; }
+  .renglon.con-problema { background: #fef2f2; border: 2px solid #dc2626; border-radius: 8px; padding: 0.2rem 0.4rem; margin: 0.3rem 0; }
+  .renglon.sacado { opacity: 0.55; }
+  .renglon > details { flex: 1; min-width: 0; }
+  .renglon > details > summary { color: #222; font-weight: 400; flex-wrap: wrap; gap: 0 0.4rem; }
+  .tilde { display: flex; align-items: center; justify-content: center; min-width: 44px; min-height: 44px; flex: none; }
+  .tilde input, .sacar input { width: 1.3rem; height: 1.3rem; flex: none; }
+  .sacar { display: flex; align-items: center; gap: 0.5rem; min-height: 44px; font-size: 0.92rem; }
+  .problemas { color: #dc2626; font-weight: 700; font-size: 0.9rem; margin: 0 0 0.4rem; }
+  .leido { font-size: 0.85rem; color: #555; margin: 0 0 0.4rem; }
+  .foto-del-grupo img { max-width: 100%; border-radius: 8px; border: 1px solid #ddd; }
+</style>
+</head>
+<body>
+  {% set barra_sector = "gerencia" %}
+  {% set barra_titulo = "Aplicar cheques" %}
+  {% set barra_atras = "/gerencia/cheques/aplicar" %}
+  {% include "_barra_navegacion.html" %}
+
+  {% for aviso in avisos %}<div class="aviso" data-aviso>{{ aviso }}</div>{% endfor %}
+  {% if error %}<div class="error" data-error>{{ error }}</div>{% endif %}
+
+  <form method="post" action="/gerencia/cheques/aplicar/revisar">
+    <input type="hidden" name="cantidad" value="{{ renglones|length }}">
+    {% for foto in fotos %}<input type="hidden" name="foto_leida" value="{{ foto }}">{% endfor %}
+
+    <div class="tarjeta">
+      <p class="paso">Paso 2 de 2: revisar</p>
+      <p class="total" data-total>{{ total|moneda }}</p>
+      <p class="total-dato" data-resumen>{{ cuantos }} cheque{{ '' if cuantos == 1 else 's' }} · {{ total|moneda }} · <span class="verde">{{ cuantos - con_problema }} bien</span> · <span class="{{ 'rojo' if con_problema else '' }}">{{ con_problema }} con problema</span></p>
+      <p class="nota">"Confirmar todos" aplica los que están bien, cada uno con la foto de su archivo. Los que están en rojo quedan acá hasta corregirlos o sacarlos.</p>
+      <div class="acciones">
+        <button type="submit" name="accion" value="revisar" class="secundario">Revisar</button>
+        <button type="submit" name="accion" value="confirmar">Confirmar todos</button>
+      </div>
+    </div>
+
+    {% if preguntar_a_todos %}
+    <div class="error" data-pregunta-a-todos>No tildaste ningún cheque. ¿Lo pongo en TODOS ({{ cuantos }}, de todos los grupos)?
+      <div class="acciones">
+        <button type="submit" name="accion" value="a_todos_si">Sí, a todos</button>
+        <button type="submit" name="accion" value="revisar" class="secundario">No</button>
+      </div>
+    </div>
+    {% endif %}
+
+    <div class="tarjeta" data-para-todos>
+      <h2>Para todos</h2>
+      <p class="nota">Va a los tildados. Lo que queda en "No cambiar" no se toca.</p>
+      <div class="campos">
+        <label>¿Qué día salió?<input type="date" name="todos_fecha" value="{{ todos.fecha }}"></label>
+        <label>¿Por qué sale?
+          <select name="todos_concepto_id"><option value="">No cambiar</option>
+            {% for c in conceptos %}<option value="{{ c.id }}" {% if todos.concepto_id == c.id|string %}selected{% endif %}>{{ c.nombre }}</option>{% endfor %}
+          </select></label>
+        <label>¿A qué proveedor?
+          <select name="todos_proveedor_id"><option value="">No cambiar</option>
+            {% for p in proveedores %}<option value="{{ p.id }}" {% if todos.proveedor_id == p.id|string %}selected{% endif %}>{{ p.nombre }}</option>{% endfor %}
+          </select></label>
+        {% if bancos %}
+        <label>¿En qué cuenta?
+          <select name="todos_cuenta_id"><option value="">No cambiar</option>
+            {% for b in bancos %}<option value="{{ b.id }}" {% if todos.cuenta_id == b.id|string %}selected{% endif %}>{{ b.nombre }}</option>{% endfor %}
+          </select></label>
+        {% endif %}
+      </div>
+      <div class="acciones">
+        <button type="submit" name="accion" value="a_todos">Poner a los tildados</button>
+        <button type="submit" name="accion" value="seleccionar_todos" class="secundario">Seleccionar todos</button>
+        <button type="submit" name="accion" value="sacar_tildados" class="secundario">Sacar los tildados</button>
+      </div>
+      <details>
+        <summary>Otro motivo</summary>
+        <div class="campos">
+          <label>Nombre<input type="text" name="motivo_nuevo" placeholder="Ej. Pago de flete"></label>
+          <label>¿Cómo queda el cheque?
+            <select name="destino_nuevo"><option value="">Elegí</option>
+              {% for valor, texto in destinos_nuevos %}<option value="{{ valor }}">{{ texto }}</option>{% endfor %}
+            </select></label>
+        </div>
+        <div class="acciones"><button type="submit" name="accion" value="agregar_motivo" class="secundario">Agregar el motivo</button></div>
+      </details>
+    </div>
+
+    {% for g in grupos %}
+    <section class="tarjeta grupo{% if g.con_problema %} con-problema{% endif %}" data-grupo="{{ g.foto }}">
+      <div class="grupo-cabeza">
+        <h2 data-titulo-del-grupo>{{ g.titulo }} · {{ g.destino or "a elegir" }} · {{ g.cuantos }} cheque{{ '' if g.cuantos == 1 else 's' }} · {{ g.total|moneda }}</h2>
+        {% if g.con_problema %}<p class="rojo" data-problemas-del-grupo>{{ g.con_problema }} con problema</p>{% endif %}
+        <div class="campos">
+          <label>Motivo de todo el grupo
+            <select name="grupo_{{ g.foto }}_concepto_id"><option value="">{{ 'Elegí' if g.concepto_id is none else 'No cambiar' }}</option>
+              {% for c in conceptos %}<option value="{{ c.id }}" {% if g.concepto_id == c.id %}selected{% endif %}>{{ c.nombre }}</option>{% endfor %}
+            </select></label>
+          <label>Proveedor de todo el grupo
+            <select name="grupo_{{ g.foto }}_proveedor_id"><option value="">{{ 'Elegí' if g.proveedor_id is none else 'No cambiar' }}</option>
+              {% for p in proveedores %}<option value="{{ p.id }}" {% if g.proveedor_id == p.id %}selected{% endif %}>{{ p.nombre }}</option>{% endfor %}
+            </select></label>
+          {% if bancos %}
+          <label>Cuenta de todo el grupo
+            <select name="grupo_{{ g.foto }}_cuenta_id"><option value="">{{ 'Elegí' if g.cuenta_id is none else 'No cambiar' }}</option>
+              {% for b in bancos %}<option value="{{ b.id }}" {% if g.cuenta_id == b.id %}selected{% endif %}>{{ b.nombre }}</option>{% endfor %}
+            </select></label>
+          {% endif %}
+        </div>
+        <div class="acciones"><button type="submit" name="accion" value="grupo_{{ g.foto }}" class="secundario">Cambiar en este grupo</button></div>
+        {% if g.foto >= 0 and g.foto < fotos|length and fotos[g.foto] %}
+        <details class="foto-del-grupo"><summary>Ver la foto</summary><img src="{{ fotos[g.foto] }}" alt="{{ g.titulo }}"></details>
+        {% endif %}
+      </div>
+
+      {% for i in g.indices %}{% set r = renglones[i] %}{% set mal = problemas[i] and not r.sacar %}{% set destino = destinos.get(r.concepto_id) %}
+      <div class="renglon{% if mal %} con-problema{% endif %}{% if r.sacar %} sacado{% endif %}" data-renglon="{{ i }}">
+        <label class="tilde" aria-label="Tildar"><input type="checkbox" name="tildado_{{ i }}" value="1" {% if r.tildado %}checked{% endif %}></label>
+        <details{% if mal %} open{% endif %}>
+          <summary><strong>Nº {{ r.numero or "sin número" }}</strong> · {{ r.emisor or "sin emisor" }} · <span class="importe">{{ montos[i]|moneda if montos[i] is not none else "sin monto" }}</span>{% if r.fecha_pago|length == 10 %} · se cobra {{ r.fecha_pago[8:10] }}/{{ r.fecha_pago[5:7] }}/{{ r.fecha_pago[:4] }}{% endif %}</summary>
+          {% if mal %}<p class="problemas" data-problemas>{{ problemas[i]|join(" · ") }}</p>{% endif %}
+          {% if r.deposito %}<p class="leido" data-leido="deposito">Se leyó un depósito en <strong>{{ r.cuenta_deposito or "una cuenta sin número" }}</strong></p>
+          {% elif r.proveedor_nombre or r.proveedor_cuit %}<p class="leido" data-leido="endoso">Se leyó que va a <strong>{{ r.proveedor_nombre or "sin nombre" }}</strong>{% if r.proveedor_cuit %} · CUIT {{ r.proveedor_cuit }}{% endif %}</p>{% endif %}
+          <input type="hidden" name="foto_{{ i }}" value="{{ r.foto }}">
+          <input type="hidden" name="emisor_{{ i }}" value="{{ r.emisor }}">
+          <input type="hidden" name="fecha_pago_{{ i }}" value="{{ r.fecha_pago }}">
+          <input type="hidden" name="proveedor_cuit_{{ i }}" value="{{ r.proveedor_cuit }}">
+          <input type="hidden" name="proveedor_nombre_{{ i }}" value="{{ r.proveedor_nombre }}">
+          <input type="hidden" name="cuenta_deposito_{{ i }}" value="{{ r.cuenta_deposito }}">
+          <input type="hidden" name="deposito_{{ i }}" value="{{ '1' if r.deposito else '' }}">
+          <div class="campos">
+            {# Con un problema DEL CHEQUE se corrige lo leído y se elige el de la cartera. #}
+            {% if del_cheque[i] %}
+            <label>Número<input type="text" name="numero_{{ i }}" value="{{ r.numero }}"></label>
+            <label>Monto<input type="text" name="importe_{{ i }}" inputmode="decimal" value="{{ r.importe }}"></label>
+            <label class="ancho">El cheque de la cartera
+              <select name="cheque_id_{{ i }}"><option value="">Ninguno</option>
+                {% for c in en_cartera %}<option value="{{ c.id }}" {% if r.cheque_id == c.id %}selected{% endif %}>Nº {{ c.numero }} · {{ c.importe|moneda }} · {{ c.de_quien }}</option>{% endfor %}
+              </select></label>
+            {% else %}
+            <input type="hidden" name="numero_{{ i }}" value="{{ r.numero }}">
+            <input type="hidden" name="importe_{{ i }}" value="{{ r.importe }}">
+            <input type="hidden" name="cheque_id_{{ i }}" value="{{ r.cheque_id or '' }}">
+            {% endif %}
+            <label>¿Qué día salió?<input type="date" name="fecha_{{ i }}" value="{{ r.fecha }}"></label>
+            <label>¿Por qué sale?
+              <select name="concepto_id_{{ i }}" data-motivo><option value="">Elegí</option>
+                {% for c in conceptos %}<option value="{{ c.id }}" {% if r.concepto_id == c.id %}selected{% endif %}>{{ c.nombre }}</option>{% endfor %}
+              </select></label>
+            {# El proveedor lo pide el pago; la cuenta, el depósito. Lo del otro
+               tipo viaja escondido por si se vuelve a cambiar el motivo. #}
+            {% if destino == "entregado" %}
+            <label>¿A qué proveedor?
+              <select name="proveedor_id_{{ i }}"><option value="">Elegí</option>
+                {% for p in proveedores %}<option value="{{ p.id }}" {% if r.proveedor_id == p.id %}selected{% endif %}>{{ p.nombre }}</option>{% endfor %}
+              </select></label>
+            {% else %}<input type="hidden" name="proveedor_id_{{ i }}" value="{{ r.proveedor_id or '' }}">{% endif %}
+            {% if destino == "depositado" and bancos %}
+            <label>¿En qué cuenta?
+              <select name="cuenta_id_{{ i }}"><option value="">Elegí</option>
+                {% for b in bancos %}<option value="{{ b.id }}" {% if r.cuenta_id == b.id %}selected{% endif %}>{{ b.nombre }}</option>{% endfor %}
+              </select></label>
+            {% else %}<input type="hidden" name="cuenta_id_{{ i }}" value="{{ r.cuenta_id or '' }}">{% endif %}
+          </div>
+          <label class="sacar"><input type="checkbox" name="sacar_{{ i }}" value="1" {% if r.sacar %}checked{% endif %}>Sacar este cheque</label>
+        </details>
+      </div>
+      {% endfor %}
+    </section>
+    {% else %}
+    <div class="tarjeta"><p class="vacio">No quedó ningún cheque para aplicar.</p></div>
+    {% endfor %}
+
+    <div class="acciones">
+      <button type="submit" name="accion" value="revisar" class="secundario">Revisar</button>
+      <button type="submit" name="accion" value="confirmar">Confirmar todos</button>
+    </div>
+  </form>
+<script>
+  // Al cambiar el motivo se vuelve a armar la página: pide el proveedor o la cuenta que corresponda.
+  document.querySelectorAll("select[data-motivo]").forEach(function (motivo) {
+    motivo.addEventListener("change", function () {
+      document.querySelector('button[name="accion"][value="revisar"]').click();
+    });
+  });
+</script>
+{% include "_pie_version.html" %}
+</body>
+</html>
