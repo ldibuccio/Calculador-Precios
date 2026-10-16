@@ -2780,20 +2780,10 @@ def test_EXPORTAR_queda_AFUERA_del_plegado():
     assert 'id="boton-exportar"' in despues
 
 
-def test_la_tarjeta_entera_lleva_al_DETALLE_y_no_depende_solo_del_JS():
-    """Los TRES caminos al Detalle, y hacen falta los tres.
-
-    LAS DOS MITADES DEL CLICK: el `data-detalle` lo usa el click de la fila
-    —que es lo que hace que la tarjeta entera sirva en el celular— y el link
-    en el nombre es lo que hace que ande sin JS y se alcance con el teclado.
-
-    Y EL BOTÓN DEL MENÚ, que es el tercero y el que faltaba. El argumento
-    viejo era que la tarjeta entera alcanza y el botón sobra. El click anda
-    —también en escritorio, medido— pero eso NO ES LO MISMO que que se vea:
-    el nombre tenía el color del texto y no estaba subrayado, así que en la
-    tabla no había nada que dijera que se podía entrar. Un camino que
-    funciona y no se ve es un camino que no existe — y como el Detalle es la
-    ÚNICA puerta a Corregir Recepción, se llevó puesta una operación entera.
+def test_el_DETALLE_se_abre_SOLO_desde_el_MENU():
+    """Dueño, 16/10: tocar el botoncito de una foto abría el detalle, porque la
+    fila entera llevaba ahí. Ahora ni la fila ni el nombre llevan al Detalle:
+    se abre SOLO desde el menú, que es la única puerta a Corregir Recepción.
     """
     with (
         patch("app.main._hoy_argentina", return_value=HOY_DE_PRUEBA),
@@ -2804,16 +2794,10 @@ def test_la_tarjeta_entera_lleva_al_DETALLE_y_no_depende_solo_del_JS():
         texto = cliente.get("/compras/buscar").text
 
     marcado = texto.split("</style>")[-1]
-    # Los tres llevan los filtros de la búsqueda (02/10): el Volver del
-    # Detalle vuelve a ELLA.
-    assert re.search(r'<tr data-detalle="/compras/1/detalle\?fecha_desde=[^"]*">', marcado)
-    assert re.search(r'<a class="link-detalle" href="/compras/1/detalle\?fecha_desde=[^"]*">', marcado)
-    # Y el click NO se lleva puesto lo que ya hace algo: sin esta lista, abrir
-    # el menú navegaría al Detalle en vez de abrirlo.
-    assert 'closest("a, button, input, label, details, summary, form")' in texto
-    # El tercero: el botón del menú. Ancla en el elemento entero y no en la
-    # palabra "Detalle", que aparece en los comentarios de la plantilla
-    # explicando justamente esto (corolario 38).
+    assert "data-detalle" not in texto and 'class="link-detalle"' not in marcado
+    # El ÚNICO camino al Detalle de la compra 1 es el botón del menú, con los
+    # filtros de la búsqueda (el Volver del Detalle vuelve a ELLA).
+    assert len(re.findall(r'href="/compras/1/detalle\?', marcado)) == 1
     cuerpo = marcado.split('<div class="menu-cuerpo">')[1].split("</details>")[0]
     assert re.search(r'<a class="boton boton-detalle" href="/compras/1/detalle\?fecha_desde=[^"]*">Detalle</a>', cuerpo)
 
@@ -2842,36 +2826,6 @@ def test_el_menu_pone_DETALLE_PRIMERO_y_ELIMINAR_ULTIMO():
     encontrado = re.findall(r">([A-ZÁÉÍÓÚÑ][^<>]*?)</(?:a|button)>", cuerpo)
     # "Editar" salió de la lista el 02/10 (dueño): vive adentro del Detalle.
     assert encontrado == ["Detalle", "Vino armada", "Eliminar"], encontrado
-
-
-def test_el_link_del_nombre_SE_VE_como_link():
-    """Lo que este test PUEDE y lo que NO, dicho antes de que alguien le crea.
-
-    PUEDE: que la regla del subrayado siga escrita. NO PUEDE: que el operario
-    la vea — eso lo decide el CSS aplicado, que ningún assert sobre texto
-    corre (corolario 32: el atributo es la intención, no el efecto). El
-    canario lo confirmó: apagarle el subrayado a la regla hace caer CERO
-    tests de marcado.
-
-    Lo que sí vio la diferencia fue el navegador, y por eso el número queda
-    acá: antes `text-decoration-line` daba `none` y el link tenía el MISMO
-    rgb(34,34,34) que el texto de al lado, en 1200px y en 390px. Ahora da
-    `underline` en los dos. Un camino que funciona y no se ve es un camino
-    que no existe.
-
-    Ancla en el CSS (`[0]`, no `[-1]`), que es donde vive lo que afirma.
-    """
-    with (
-        patch("app.main._hoy_argentina", return_value=HOY_DE_PRUEBA),
-        patch("app.main.listar_todos_los_proveedores", return_value=PROVEEDORES_DE_PRUEBA),
-        patch("app.main.listar_articulos", return_value=ARTICULOS_CON_UNIDAD_COMPRA),
-        patch("app.main.buscar_compras", return_value=COMPRAS_BUSQUEDA_DE_PRUEBA),
-    ):
-        hoja = cliente.get("/compras/buscar").text.split("</style>")[0]
-
-    regla = hoja.split(".link-detalle {")[1].split("}")[0]
-    assert "text-decoration: underline" in regla
-    assert "text-decoration: none" not in regla
 
 
 def test_las_acciones_viven_ADENTRO_del_menu_y_los_indicadores_AFUERA():
@@ -2922,12 +2876,14 @@ def test_buscar_compras_muestra_LAS_DOS_FOTOS_y_dice_cual_falta():
     # La comanda cuelga de la GUÍA; el pesaje, de la COMPRA. Dos rutas
     # distintas, y por eso el assert pide la URL entera y no el texto: con
     # el texto solo, las dos etiquetas apuntando a la misma ruta pasarían.
-    assert 'href="/compras/1/foto" target="_blank" rel="noopener">Ver comanda<' in texto
-    assert 'href="/deposito/recepcion/1/foto-balanza/ver" target="_blank" rel="noopener">Ver pesaje<' in texto
-    assert 'href="/compras/2/foto"' in texto
-    assert 'href="/deposito/recepcion/3/foto-balanza/ver"' in texto
-    assert 'href="/compras/4/foto"' not in texto
-    assert 'href="/deposito/recepcion/4/foto-balanza/ver"' not in texto
+    # Desde el 16/10 (dueño) las dos abren el VISOR, el botoncito y el menú.
+    assert re.search(r'href="/compras/1/visor/comanda\?volver=[^"]*">Ver comanda<', texto)
+    assert re.search(r'href="/compras/1/visor/pesaje\?volver=[^"]*">Ver pesaje<', texto)
+    assert re.search(r'<a class="hay" href="/compras/1/visor/comanda\?volver=[^"]*"><span>Comanda</span></a>', texto)
+    assert re.search(r'<a class="hay" href="/compras/1/visor/pesaje\?volver=[^"]*"><span>Pesaje</span></a>', texto)
+    assert texto.count('href="/compras/2/visor/comanda') == 2 and texto.count('href="/compras/2/visor/pesaje') == 0
+    assert texto.count('href="/compras/3/visor/pesaje') == 2 and texto.count('href="/compras/3/visor/comanda') == 0
+    assert 'href="/compras/4/visor/' not in texto
 
     # EL INDICADOR ES OTRA COSA QUE LA ACCIÓN, y esa separación es el
     # contrato del 12/09: la acción de abrir la foto vive adentro del menú
@@ -2935,9 +2891,9 @@ def test_buscar_compras_muestra_LAS_DOS_FOTOS_y_dice_cual_falta():
     # mira escaneando. Las cuatro compras dicen las dos cosas: la que no
     # tiene no se queda muda.
     marcado = texto.split("</style>")[-1]
-    assert marcado.count('class="hay">Comanda<') == 2
+    assert marcado.count('<span>Comanda</span></a>') == 2
     assert marcado.count('class="no-hay">Sin comanda<') == 2
-    assert marcado.count('class="hay">Pesaje<') == 2
+    assert marcado.count('<span>Pesaje</span></a>') == 2
     assert marcado.count('class="no-hay">Sin pesaje<') == 2
     # Y los indicadores están AFUERA del menú: adentro habría que abrirlo
     # para saber si falta el pesaje, que es justo lo que no se quiere.
@@ -6536,7 +6492,8 @@ def test_subir_la_foto_de_balanza_comprime_y_la_cuelga_de_LA_COMPRA():
     # Sin argumento de tamaño: la foto de balanza usa el MISMO pipeline que
     # todo lo demás. Lo que hay que ver es que la mercadería estaba sobre
     # la balanza, no leer el display — el operario redondea igual.
-    mock_comprimir.assert_called_once_with(b"bytes-de-la-foto")
+    # En ALTA (dueño, 16/10): 3000 px y calidad 90, para que se lea el visor.
+    mock_comprimir.assert_called_once_with(b"bytes-de-la-foto", lado_maximo=3000, calidad=90)
     assert mock_subir.call_args.args[0] == b"jpeg-chico"
     mock_guardar.assert_called_once_with(7, "2026-09-08/balanza-7-x.jpg")
 

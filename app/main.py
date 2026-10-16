@@ -6162,6 +6162,11 @@ def _contenido_referencia_de(articulo_id: int | None, articulos_existentes: list
 
 LADO_MAXIMO_PREVIEW_FOTO = 1000
 CALIDAD_PREVIEW_FOTO = 60
+# LAS FOTOS DE LA BALANZA, en alta (dueño, 16/10): achicadas a 1000 px no se
+# leía el número del visor. Lado mayor hasta 3000 px (la original si es más
+# chica: nunca se agranda) y calidad 90. El resto de las fotos, como siempre.
+LADO_MAXIMO_FOTO_BALANZA = 3000
+CALIDAD_FOTO_BALANZA = 90
 
 
 def _generar_preview_foto(imagen: bytes) -> str:
@@ -6187,23 +6192,31 @@ def _generar_preview_foto(imagen: bytes) -> str:
     return f"data:image/jpeg;base64,{base64.standard_b64encode(comprimida).decode('ascii')}"
 
 
-def _comprimir_foto_jpeg(imagen: bytes) -> bytes | None:
+def _comprimir_foto_jpeg(imagen: bytes, *, lado_maximo: int = LADO_MAXIMO_PREVIEW_FOTO,
+                         calidad: int = CALIDAD_PREVIEW_FOTO) -> bytes | None:
     """El pipeline de compresión de fotos del sistema: EXIF aplicado, máx 1000px, JPEG calidad 60.
 
     Lo usan el preview de comandas y la subida de fotos a la guía — todo
     lo que termina en Storage pasa por acá, nunca originales de varios MB.
-    None si los bytes no son una imagen legible.
+    Las de la balanza van con otro lado y otra calidad
+    (`_comprimir_foto_de_balanza`). None si los bytes no son una imagen legible.
     """
     try:
         imagen_pil = Image.open(io.BytesIO(imagen))
         imagen_pil = ImageOps.exif_transpose(imagen_pil)
         imagen_pil = imagen_pil.convert("RGB")
-        imagen_pil.thumbnail((LADO_MAXIMO_PREVIEW_FOTO, LADO_MAXIMO_PREVIEW_FOTO))
+        imagen_pil.thumbnail((lado_maximo, lado_maximo))
         buffer = io.BytesIO()
-        imagen_pil.save(buffer, format="JPEG", quality=CALIDAD_PREVIEW_FOTO)
+        imagen_pil.save(buffer, format="JPEG", quality=calidad)
         return buffer.getvalue()
     except Exception:
         return None
+
+
+def _comprimir_foto_de_balanza(imagen: bytes) -> bytes | None:
+    """Una foto de la PESADA (recepción, agregada después, ingreso directo y
+    devolución): en alta, para que se lea el visor (dueño, 16/10)."""
+    return _comprimir_foto_jpeg(imagen, lado_maximo=LADO_MAXIMO_FOTO_BALANZA, calidad=CALIDAD_FOTO_BALANZA)
 
 
 def _bytes_desde_data_uri(data_uri: str) -> bytes | None:
@@ -8729,6 +8742,44 @@ def ver_foto_de_guia(compra_id: int, foto_id: int):
     return _ir_a_la_foto(foto["foto_ruta"])
 
 
+# EL VISOR DE FOTOS (dueño, 16/10): los botoncitos "Comanda" y "Pesaje" de
+# Buscar compras (y de Guías mercadería, la misma lista desde Administración)
+# abren DIRECTO las fotos a pantalla completa, con zoom, pasando de una a
+# otra. El detalle se abre solo desde el menú. El sector sale del prefijo.
+QUE_FOTOS_DEL_VISOR = ("comanda", "pesaje")
+
+
+@app.get("/compras/{compra_id}/visor/{que}")
+@app.get("/administracion/guias-mercaderia/{compra_id}/visor/{que}")
+def ver_visor_de_fotos(request: Request, compra_id: int, que: str):
+    if que not in QUE_FOTOS_DEL_VISOR:
+        raise HTTPException(status_code=404, detail="El visor muestra la comanda o el pesaje")
+    base = "/" + "/".join(request.url.path.split("/")[1:-3])
+    try:
+        compra = obtener_compra(compra_id)
+        balanza = listar_fotos_de_recepcion(compra_id) if compra is not None and que == "pesaje" else []
+    except Exception as error_db:
+        raise HTTPException(status_code=500, detail=f"Error al conectar con la base de datos: {error_db}") from error_db
+    if compra is None:
+        raise HTTPException(status_code=404, detail="Compra no encontrada")
+    if que == "comanda":
+        # Una comanda en PDF no se ve como foto: va su link aparte.
+        fotos = [{"url": f"{base}/{compra_id}/fotos/{f['id']}/ver", "pdf": f["foto_ruta"].lower().endswith(".pdf")}
+                 for f in _fotos_de_la_guia_de(compra)]
+        inicio = 0
+    else:
+        fotos = [{"url": f"/deposito/recepcion/{compra_id}/foto-balanza/{f['id']}/ver", "pdf": False} for f in balanza]
+        # Arranca en la ÚLTIMA: si se sacó otra es porque la primera no servía.
+        inicio = len(fotos) - 1
+    if not fotos:
+        raise HTTPException(status_code=404, detail="Esta compra no tiene esa foto")
+    titulo = f"{'Comanda' if que == 'comanda' else 'Pesaje'} · {compra.get('articulo_nombre') or ''}".rstrip(" ·")
+    return templates.TemplateResponse(request, "compra_visor_fotos.html", {
+        "fotos": fotos, "inicio": inicio, "titulo": titulo,
+        "volver": vuelta(request, f"{base}/buscar" if base == "/compras" else base),
+    })
+
+
 @app.post("/compras/{compra_id}/fotos")
 @app.post("/administracion/guias-mercaderia/{compra_id}/fotos")
 async def subir_foto_a_guia(
@@ -8945,7 +8996,7 @@ def _volver_al_detalle(compra_id: int, request: Request, **parametros) -> Redire
 async def agregar_fotos_de_pesada(request: Request, compra_id: int, fotos: list[UploadFile] = File(...)):
     """Fotos de la pesada cargadas DESPUÉS de recibir (dueño, 29/09): la que no
     se sacó en el momento, o una más. Van a `fotos_recepcion`, igual que las de
-    la recepción, y con el mismo pipeline (1000 px, calidad 60).
+    la recepción, y en alta como ellas (`_comprimir_foto_de_balanza`).
 
     Anda con la compra en cualquier estado y no toca ningún número de la
     compra: son solo fotos. Se validan TODAS antes de subir la primera, así un
@@ -8961,7 +9012,7 @@ async def agregar_fotos_de_pesada(request: Request, compra_id: int, fotos: list[
     comprimidas = []
     for foto in fotos:
         crudo = await foto.read()
-        comprimida = _comprimir_foto_jpeg(crudo) if crudo else None
+        comprimida = _comprimir_foto_de_balanza(crudo) if crudo else None
         if comprimida is None:
             return _volver_al_detalle(
                 compra_id, request, error=f"«{foto.filename or 'Un archivo'}» no es una foto. No se subió ninguna.")
@@ -13065,7 +13116,7 @@ async def _fotos_de_pesada_comprimidas(fotos: list[UploadFile]) -> tuple[str | N
         crudo = await foto.read()
         if not crudo:
             continue
-        comprimida = _comprimir_foto_jpeg(crudo)
+        comprimida = _comprimir_foto_de_balanza(crudo)
         if comprimida is None:
             return f"«{foto.filename or 'Un archivo'}» no es una foto. No se guardó nada.", []
         comprimidas.append(comprimida)
@@ -13750,7 +13801,7 @@ async def subir_foto_de_balanza(request: Request, compra_id: int, archivo: Uploa
     if not bytes_archivo:
         return _renderizar_pantalla_recepcion(request, error="La foto llegó vacía, probá de nuevo.", status_code=400)
 
-    comprimida = _comprimir_foto_jpeg(bytes_archivo)
+    comprimida = _comprimir_foto_de_balanza(bytes_archivo)
     if comprimida is None:
         return _renderizar_pantalla_recepcion(
             request, error="Eso no es una foto: sacá una imagen de la mercadería sobre la balanza.", status_code=400

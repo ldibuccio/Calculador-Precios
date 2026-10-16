@@ -176,6 +176,7 @@
      y lo que hace falta acá es un boton grande. */
   .foto-balanza { display: flex; flex-wrap: wrap; gap: 0.5rem; margin-bottom: 0.6rem; }
   .foto-balanza input[type="file"] { display: none; }
+  .ayuda-balanza { margin: 0.3rem 0 0; font-size: 0.85rem; color: #555; }
   .foto-balanza form { flex: 1 1 100%; margin: 0; }
   .foto-balanza form.con-foto { flex: 1 1 45%; }
   /* Azul SÓLIDO: probado en el galpón, punteado sobre blanco no se ve.
@@ -467,6 +468,8 @@
             <input type="file" id="foto-balanza-{{ c.id }}" name="archivo" accept="image/*"
                    capture="environment" onchange="this.form.submit()">
           </form>
+          {# Se guarda en alta (dueño, 16/10): que se lea el visor. #}
+          <p class="ayuda-balanza" data-ayuda-balanza>Sacala cerca, que se lea el número del visor.</p>
         </div>
 
         <div class="acciones-compra" id="acciones-{{ c.id }}">
