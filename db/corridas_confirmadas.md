@@ -684,3 +684,19 @@ La conciliación no cambia de código: corta en la fecha del último saldo
 inicial (`_corte_del_saldo_inicial`), así que desde ahora cruza desde el
 28/12/2025, y todo lo del 29/12/2025 en adelante entra.
 
+### 16/10 — alertas_excepciones_1 (tabla) y la excepción del remito 20344
+
+Lionel corrió el bloque 1 (`db/alertas_excepciones_1_tabla.sql`) en Frutamax y
+en Palmala, y el bloque 3 (`db/alertas_excepciones_3_remito_20344.sql`) solo
+en Frutamax. Verificado por mí por el conector "Supabase Lectura" el 16/10:
+
+```
+FRUTAMAX  tabla 1 · columnas 6 · candado 1 · políticas 0 · una_vez 1 · excepciones 1:
+          remitos_rechazo_distinto → remito 5 (20344, Día %), "Arrastre ya corregido", 2026-10-16 · testigo_remitos 114
+PALMALA   tabla 1 · columnas 6 · candado 1 · políticas 0 · una_vez 1 · excepciones 0 · testigo_remitos 1
+```
+
+Antes de la excepción, la alerta `remitos_rechazo_distinto` marcaba 1 caso en
+Frutamax (alertas_estado, 16/10 11:58 UTC). Mira todos los remitos recibidos,
+sin plazo, así que el 20344 no iba a salir solo.
+
