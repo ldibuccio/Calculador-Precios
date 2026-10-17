@@ -725,3 +725,22 @@ Las excluidas: `claves_especiales`, `casillas_pedidos`, `backups_corridas`,
 tabla nueva no se lee sola: se vuelve a correr el bloque 3. La contraseña del
 usuario la pone Lionel en Supabase y en Railway; no pasa por el chat.
 
+
+## 17/10 — `consultas_ia_2`: Consultas por Telegram (bloques `db/consultas_ia_telegram_1..3`), en las DOS bases
+
+Corrida por Lionel en Frutamax y en Palmala: las columnas `canal` y
+`telegram_id` de `consultas_ia_preguntas` (con sus dos CHECK) y las cuatro
+tablas de Telegram (`telegram_autorizados`, `telegram_intentos`,
+`telegram_conversaciones`, `telegram_updates`), con candado y sin políticas.
+Verificado por mí por el conector "Supabase Lectura" el 17/10 a las 15:18 UTC:
+
+```
+FRUTAMAX  consultas_ia_2 · columnas 2 · checks 2 · no_web 0 · tablas con candado 4 · políticas 0
+          consultas_ia las lee 0 · testigo_preguntas 2
+PALMALA   consultas_ia_2 · columnas 2 · checks 2 · no_web 0 · tablas con candado 4 · políticas 0
+          consultas_ia las lee 0 · testigo_preguntas 0
+```
+
+Las cuatro tablas nuevas quedaron en la lista de afuera del bloque 3 de
+`consultas_ia_1` (`db/consultas_ia_3_permisos.sql`): si se vuelve a correr, no
+las abre.

@@ -46,6 +46,12 @@ BASE_DE_HUMO = "humo_calculador"
 # de existir y la excepción queda protegiendo algo que ya no pasa.
 NO_SE_ABREN = {
     "/salud/db": "es el healthcheck: contesta sobre la base, no es pantalla",
+    # Consultas (17/10): el Excel corre su consulta con el usuario de solo
+    # lectura consultas_ia, que el humo no tiene (lo cubre
+    # tests/test_consultas_telegram.py contra Postgres); la foto suelta sale
+    # del Storage.
+    "/gerencia/consultas/pregunta/{pregunta_id}/excel/{paso_id}": "corre con el usuario consultas_ia, que acá no hay",
+    "/gerencia/consultas/pregunta/{pregunta_id}/fotos/{paso_id}/{foto_id}": "sirve la foto desde el Storage",
     # Las que SIRVEN UN ARCHIVO del Storage de Supabase. No hay bucket local,
     # así que acá dan 404 hagamos lo que hagamos — y un 404 sembrado a la
     # fuerza sería peor: mediría que el 404 funciona.
@@ -311,9 +317,12 @@ def siembra():
                                                       ('EJEMPLO Caja', 'caja', null);
     -- Una pregunta de Consultas ya contestada: la pantalla pregunta por su
     -- estado en /gerencia/consultas/pregunta/{id} (17/10).
-    insert into consultas_ia_preguntas (sector, quien, conversacion, pregunta, respuesta, modelo, costo_usd)
+    -- Su paso 1 son las fotos del pesaje de la compra 1: el visor de Consultas (17/10).
+    insert into consultas_ia_preguntas (sector, quien, conversacion, pregunta, respuesta, modelo, costo_usd, consultas)
       values ('gerencia', 'Gerencia', '00000000-0000-0000-0000-000000000001', 'EJEMPLO ¿cuántos?', 'EJEMPLO 2',
-              'claude-sonnet-5-5', 0.01);
+              'claude-sonnet-5-5', 0.01,
+              '[{"para_que": "EJEMPLO", "sql": "select 1", "columnas": ["n"], "filas": [[1]]},
+                {"tipo": "fotos", "compra_id": 1, "que": "pesaje", "cantidad": 1, "para_que": "Fotos"}]');
     insert into cuentas_conceptos (cuenta_id, nombre, tipo)
       select id, 'EJEMPLO Cobro', 'ingreso' from cuentas where nombre = 'EJEMPLO Caja';
     insert into cuentas_etiquetas (nombre) values ('EJEMPLO Persona');

@@ -523,8 +523,10 @@ def test_el_corte_del_29_de_febrero():
 
 def test_TODA_pantalla_que_muestra_una_foto_pasa_por_ir_a_la_foto():
     """obtener_url_foto se llama UNA vez en app/main.py: adentro de
-    _ir_a_la_foto. Un "Ver foto" que la llamara directo mostraría una imagen
-    rota para una foto borrada, sin decir por qué."""
+    _url_o_aviso_de_la_foto, que antes pregunta si se borró (la usan
+    _ir_a_la_foto y Consultas por Telegram, 17/10). Un "Ver foto" que la
+    llamara directo mostraría una imagen rota para una foto borrada, sin
+    decir por qué."""
     arbol = ast.parse(io.open(os.path.join(RAIZ, "app/main.py"), encoding="utf-8").read())
     llamadores = set()
     for funcion in ast.walk(arbol):
@@ -533,7 +535,7 @@ def test_TODA_pantalla_que_muestra_una_foto_pasa_por_ir_a_la_foto():
                 if (isinstance(nodo, ast.Call) and isinstance(nodo.func, ast.Name)
                         and nodo.func.id == "obtener_url_foto"):
                     llamadores.add(funcion.name)
-    assert llamadores == {"_ir_a_la_foto"}, llamadores
+    assert llamadores == {"_url_o_aviso_de_la_foto"}, llamadores
 
 
 # --- 6. el espacio (dueño, 01/10) ----------------------------------------------

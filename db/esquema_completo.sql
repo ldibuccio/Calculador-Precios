@@ -3081,7 +3081,13 @@ create table consultas_ia_preguntas (
   tokens_cache   integer not null default 0 check (tokens_cache >= 0),
   costo_usd      numeric(10,4) not null default 0 check (costo_usd >= 0),
   error          text,
-  creado_en      timestamptz not null default now()
+  creado_en      timestamptz not null default now(),
+  -- Por dónde preguntó (17/10, consultas_ia_2): la web o Telegram, con el ID
+  -- de Telegram del autorizado. Las dos van juntas (el CHECK lo exige).
+  canal          text not null default 'web',
+  telegram_id    bigint,
+  constraint consultas_ia_preguntas_canal check (canal in ('web', 'telegram')),
+  constraint consultas_ia_preguntas_telegram_coherente check ((canal = 'telegram') = (telegram_id is not null))
 );
 create index consultas_ia_preguntas_por_fecha on consultas_ia_preguntas (creado_en);
 alter table consultas_ia_preguntas enable row level security;
@@ -3092,6 +3098,40 @@ create table consultas_ia_config (
 );
 alter table consultas_ia_config enable row level security;
 insert into consultas_ia_config (id) values (1);
+
+-- CONSULTAS POR TELEGRAM (dueño, 17/10, consultas_ia_2): quién puede
+-- preguntar (lo decide Gerencia; desde Telegram no se autoriza a nadie), lo
+-- que escribió quien no, la conversación de cada uno hasta /nueva y los
+-- mensajes que Telegram ya mandó. consultas_ia no las lee.
+create table telegram_autorizados (
+  telegram_id    bigint primary key,
+  nombre         text not null check (btrim(nombre) <> ''),
+  activo         boolean not null default true,
+  autorizado_el  timestamptz not null default now(),
+  actualizado_el timestamptz not null default now()
+);
+alter table telegram_autorizados enable row level security;
+create table telegram_intentos (
+  id          bigint generated always as identity primary key,
+  telegram_id bigint not null,
+  nombre      text,
+  usuario     text,
+  texto       text,
+  creado_en   timestamptz not null default now()
+);
+create index telegram_intentos_por_fecha on telegram_intentos (creado_en);
+alter table telegram_intentos enable row level security;
+create table telegram_conversaciones (
+  telegram_id    bigint primary key,
+  conversacion   uuid not null,
+  empezada_el    timestamptz not null default now()
+);
+alter table telegram_conversaciones enable row level security;
+create table telegram_updates (
+  update_id   bigint primary key,
+  recibido_el timestamptz not null default now()
+);
+alter table telegram_updates enable row level security;
 
 -- CANDADOS (RLS) EN TODAS LAS TABLAS DE public (dueño, 09/10). db/rls_1_*.sql.
 -- Sin políticas para anon: por la API de Supabase con la clave pública no se

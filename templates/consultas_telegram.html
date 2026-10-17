@@ -1,0 +1,86 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Consultas por Telegram</title>
+<style>
+{% include "_cheques_estilos.html" %}
+  .bien { color: #166534; font-weight: 600; }
+  .formulario { display: flex; flex-wrap: wrap; gap: 0.5rem; align-items: flex-end; margin: 0.4rem 0 0; }
+  .formulario label { font-size: 0.85rem; color: #444; flex: 1 1 9rem; }
+  .formulario input { display: block; width: 100%; box-sizing: border-box; min-height: 44px; padding: 0.5rem; border: 1px solid #ccc; border-radius: 8px; font-size: 1rem; margin-top: 0.2rem; }
+  .formulario button, .chico { min-height: 44px; padding: 0 1rem; border-radius: 8px; border: 1px solid #2563eb; background: #fff; color: #2563eb; font-weight: 600; font-size: 0.95rem; }
+  .apagado { color: #888; }
+  .fila-que { overflow-wrap: anywhere; }
+  .texto-intento { font-size: 0.85rem; color: #444; overflow-wrap: anywhere; margin: 0.2rem 0; }
+</style>
+</head>
+<body>
+  {% set barra_sector = "gerencia" %}
+  {% set barra_titulo = "Consultas por Telegram" %}
+  {% set barra_atras = "/gerencia/consultas" %}
+  {% include "_barra_navegacion.html" %}
+
+  {% if aviso %}<div class="aviso" data-aviso>{{ aviso }}</div>{% endif %}
+  {% if error %}<div class="error" data-error>{{ error }}</div>{% endif %}
+
+  {# CONSULTAS POR TELEGRAM (dueño, 17/10): el mismo motor que la web, solo
+     para los autorizados de acá. Desde Telegram no se autoriza a nadie. #}
+  <div class="tarjeta" data-estado>
+    <h2>El bot</h2>
+    {% if not estado.configurado %}
+    <p class="rojo">Faltan TELEGRAM_BOT_TOKEN y TELEGRAM_WEBHOOK_SECRET en Railway.</p>
+    {% else %}
+    {% if estado.bot %}<p>@{{ estado.bot }}</p>{% endif %}
+    {% if estado.conectado %}<p class="bien" data-conectado>✓ Conectado: recibe mensajes.</p>
+    {% else %}<p class="rojo">Todavía no recibe mensajes: apretá Conectar.</p>{% endif %}
+    {% if estado.falla %}<p class="rojo">Telegram dice: {{ estado.falla }}</p>{% endif %}
+    <form method="post" action="/gerencia/consultas/telegram/conectar" class="formulario">
+      <button type="submit">{{ "Volver a conectar" if estado.conectado else "Conectar el bot" }}</button>
+    </form>
+    {% endif %}
+  </div>
+
+  <div class="tarjeta" data-autorizados>
+    <h2>Quién puede preguntar</h2>
+    {% for a in autorizados %}
+    <div class="fila" data-autorizado="{{ a.telegram_id }}">
+      <div class="fila-cabeza"><span class="fila-que{% if not a.activo %} apagado{% endif %}">{{ a.nombre }}</span><span class="fila-dato">{{ "Puede" if a.activo else "No puede" }}</span></div>
+      <div class="fila-dato">ID {{ a.telegram_id }}</div>
+      <form method="post" action="/gerencia/consultas/telegram/autorizar" class="formulario">
+        <input type="hidden" name="telegram_id" value="{{ a.telegram_id }}">
+        <label>Nombre<input name="nombre" value="{{ a.nombre }}" maxlength="80" required></label>
+        <button type="submit">Cambiar nombre</button>
+      </form>
+      <form method="post" action="/gerencia/consultas/telegram/{{ a.telegram_id }}/activo" class="formulario">
+        <input type="hidden" name="activo" value="{{ 'no' if a.activo else 'si' }}">
+        <button type="submit" class="chico">{{ "Que no pueda preguntar" if a.activo else "Que vuelva a poder" }}</button>
+      </form>
+    </div>
+    {% else %}
+    <p class="vacio">Todavía no hay nadie. Pedile que le escriba al bot: aparece abajo, en Intentos.</p>
+    {% endfor %}
+  </div>
+
+  <div class="tarjeta" data-intentos>
+    <h2>Intentos de quien no puede</h2>
+    <p class="nota">Le escribieron al bot sin estar autorizados. Para dejarlo preguntar, ponele el nombre y autorizalo.</p>
+    {% for i in intentos %}
+    <div class="fila" data-intento="{{ i.telegram_id }}">
+      <div class="fila-que">{{ i.nombre or "(sin nombre)" }}{% if i.usuario %} · @{{ i.usuario }}{% endif %}</div>
+      <div class="fila-dato">ID {{ i.telegram_id }} · {{ i.creado_en|fecha_hora if i.creado_en else "" }}</div>
+      {% if i.texto %}<p class="texto-intento">"{{ i.texto }}"</p>{% endif %}
+      <form method="post" action="/gerencia/consultas/telegram/autorizar" class="formulario">
+        <input type="hidden" name="telegram_id" value="{{ i.telegram_id }}">
+        <label>Nombre<input name="nombre" value="{{ i.nombre or '' }}" maxlength="80" required></label>
+        <button type="submit" data-autorizar>Autorizar</button>
+      </form>
+    </div>
+    {% else %}
+    <p class="vacio">Nadie sin autorizar le escribió al bot.</p>
+    {% endfor %}
+  </div>
+{% include "_pie_version.html" %}
+</body>
+</html>

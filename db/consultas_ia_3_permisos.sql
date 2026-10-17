@@ -1,13 +1,15 @@
 -- CONSULTAS (dueño, 16/10), migración consultas_ia_1, bloque 3 de 3. En Frutamax Y en Palmala.
 -- consultas_ia lee TODAS las tablas y vistas de public MENOS las de la lista:
 -- claves, la casilla de mail (credenciales), backups, las fotos del panel, el
--- respaldo del corte y las de la propia Consultas. Una tabla nueva NO entra
--- sola: se vuelve a correr este bloque.
+-- respaldo del corte y las de la propia Consultas (también las de Telegram,
+-- 17/10: quién puede preguntar y lo que escribió quien no). Una tabla nueva
+-- NO entra sola: se vuelve a correr este bloque.
 do $$
 declare
   t text;
   afuera text[] := array['claves_especiales', 'casillas_pedidos', 'backups_corridas', 'panel_fotos',
-                         'corte_respaldo_fichas_reprocesos', 'consultas_ia_preguntas', 'consultas_ia_config'];
+                         'corte_respaldo_fichas_reprocesos', 'consultas_ia_preguntas', 'consultas_ia_config',
+                         'telegram_autorizados', 'telegram_intentos', 'telegram_conversaciones', 'telegram_updates'];
 begin
   for t in select c.relname from pg_class c join pg_namespace n on n.oid = c.relnamespace
             where n.nspname = 'public' and c.relkind in ('r', 'p', 'v') and c.relname <> all (afuera)

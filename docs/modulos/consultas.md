@@ -58,16 +58,18 @@ consulta (los fija el rol), hasta 3 conexiones, sin `bypassrls`: cada tabla
 permitida tiene la política `consultas_ia_lee` (solo leer, solo este
 usuario). **Afuera**: `claves_especiales`, `casillas_pedidos` (las
 credenciales del mail), `backups_corridas`, `panel_fotos`,
-`corte_respaldo_fichas_reprocesos` y las dos de Consultas, y el esquema
-`memoria`. **Una tabla nueva no se lee sola**: se vuelve a correr el bloque 3.
+`corte_respaldo_fichas_reprocesos`, las dos de Consultas y las cuatro de
+Telegram (`telegram_*`, 17/10), y el esquema `memoria`. **Una tabla nueva no se lee sola**: se vuelve a correr el bloque 3.
 Su conexión va en `CONSULTAS_IA_DATABASE_URL` de Railway (la contraseña la
 puso Lionel; no pasa por el chat). Sin esa variable la pantalla abre, y
 preguntar avisa que falta (y queda anotada).
 
 ## El registro y el tope
 
-- Cada pregunta queda en `consultas_ia_preguntas`: sector, quién (por ahora
-  "Gerencia": el sistema no tiene usuarios), la conversación, la pregunta, la
+- Cada pregunta queda en `consultas_ia_preguntas`: sector, quién ("Gerencia"
+  en la web: el sistema no tiene usuarios; por Telegram, el nombre que le puso
+  Gerencia al autorizado), el canal (`web` o `telegram`, con el
+  `telegram_id`: van juntos, lo exige un CHECK), la conversación, la pregunta, la
   respuesta, las consultas corridas (SQL, para qué, las primeras 20 filas,
   cuántas eran, el tiempo o el error), el modelo, los tokens y el costo en
   US$. También la que falló. `/gerencia/consultas/registro`: las últimas 100.
@@ -78,6 +80,57 @@ preguntar avisa que falta (y queda anotada).
 - **El tope** (`consultas_ia_config`, US$100 de arranque) se cambia en la
   misma pantalla. Con lo gastado en el mes (día de Argentina) igual o arriba
   del tope, no se le pregunta a la IA hasta el 1° del mes siguiente.
+
+## Excel y fotos (dueño, 17/10, web y Telegram)
+
+- **Excel**: si piden "en Excel" o "pasame la lista", la IA usa `armar_excel`
+  con la consulta y, por columna, el nombre y el tipo (texto, número, pesos,
+  kilos, fecha). La app la corre con `consultas_ia` hasta 5.000 renglones
+  (`FILAS_MAXIMAS_DEL_EXCEL`; si se corta, lo dice el título y la respuesta) y
+  arma el .xlsx (`core/consultas_excel.py`: título, encabezados fijos, pesos
+  `$ #.##0,00`, kilos con un decimal). Por Telegram va como documento; en la
+  web, "Bajar Excel": **se arma al bajarlo**, con la misma consulta (puede
+  traer lo que se cargó en el medio). En el registro queda como un paso con
+  `tipo` `excel`, su consulta, su título y sus columnas.
+- **Fotos**: solo de compras. "Pesada" y "balanza" son la MISMA foto (la de
+  la balanza al recibir, `fotos_recepcion`: el "pesaje"); la otra es la
+  comanda (las fotos de la guía de la compra, `fotos_guia`). La IA busca la
+  compra con SQL ("la guía 953.1" es `guias_compra.id = 953` y
+  `compras.guia_punto = 1`), y si hay más de una posible pregunta cuál antes
+  de mostrar nada; después usa `mostrar_fotos` con el id. Las fotos las busca
+  la APP, nunca `consultas_ia`; hasta 10. En el registro, un paso con `tipo`
+  `fotos` (compra, comanda o pesaje, cuántas).
+- **Una foto o un Excel se sirven SOLO si están anotados en esa pregunta**
+  (`/gerencia/consultas/pregunta/<id>/excel/<n>` y `.../fotos/<n>/<k>`): no se
+  puede pedir otra compra cambiando un número en la dirección. Las fotos en la
+  web abren en el visor de siempre; por Telegram se le pasa la URL firmada
+  (`_url_o_aviso_de_la_foto`: una foto borrada por antigüedad lo dice).
+
+## Telegram (dueño, 17/10)
+
+- **Un bot por app** (Frutamax y Palmala), con `TELEGRAM_BOT_TOKEN` y
+  `TELEGRAM_WEBHOOK_SECRET` en Railway (`core/telegram.py`). Telegram manda el
+  secreto en cada mensaje (`X-Telegram-Bot-Api-Secret-Token`); si no
+  coincide, `/telegram/webhook` contesta 403 y no lee nada. Se le contesta 200
+  enseguida y el mensaje se atiende después; uno repetido (Telegram
+  reintenta) se ignora (`telegram_updates`, siete días). Solo chats privados.
+- **Gerencia → Consultas → Telegram** (`/gerencia/consultas/telegram`): el
+  estado del bot y "Conectar el bot" (registra la dirección de la app con el
+  secreto), quién puede preguntar (`telegram_autorizados`: nombre, activo) e
+  Intentos (`telegram_intentos`: el último de cada uno que no está
+  autorizado, con "Autorizar"). **Desde Telegram no se autoriza a nadie**: lo
+  único que escribe `telegram_autorizados` es ese formulario (lo cuida un
+  test).
+- **El que no está autorizado** recibe "No autorizado." y queda en Intentos
+  (también si manda voz o una foto). No se le pregunta a la IA.
+- **Un autorizado**: la misma pregunta que la web (el mismo tope y el mismo
+  registro), con la respuesta corta (las instrucciones cambian según el
+  canal) y el botón "Cómo lo calculé" (el SQL y las primeras filas de cada
+  paso; solo para quien preguntó). Voz o fotos: "Por ahora leo solo texto."
+  (no se anota).
+- **El contexto** dura hasta **/nueva** (`telegram_conversaciones`): se le
+  mandan a la IA las últimas 10 preguntas contestadas de esa conversación.
+- Migración `consultas_ia_2` (`db/consultas_ia_telegram_1..3`).
 
 ## Otros sectores
 
