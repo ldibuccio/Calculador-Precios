@@ -36,9 +36,7 @@ GRUPOS_DECIDIDOS = {
                        ("5", "/gerencia/cuentas", "Cuentas")],
     "Mirar": [("1", "/gerencia/rentabilidad", "Rentabilidad"), ("1", "/gerencia/perdidas", "Pérdidas"),
               ("1", "/gerencia/costos-fijos", "Costos fijos"),
-              ("1", "/gerencia/facturacion", "Facturación y cobranzas"),
-              # Preguntarle a la IA por los datos (dueño, 16/10).
-              ("1", "/gerencia/consultas", "Consultas")],
+              ("1", "/gerencia/facturacion", "Facturación y cobranzas")],
     "Corregir": [("2", "/gerencia/compras/ingreso-retroactivo", "Ingreso con fecha anterior"),
                  # La contraseña especial de "Con fecha anterior" de
                  # Administración (dueño, 05/10): la fija Gerencia.
@@ -86,16 +84,57 @@ def test_el_hub_de_GERENCIA_el_PANEL_solo_BANCOS_Y_CAJAS_y_los_tres_grupos_con_s
         marcado = _cliente(m, "gerencia").get("/gerencia").text.split("</style>")[-1]
     assert {t: [tuple(b) for b in botones] for t, botones in _grupos_con_color(marcado).items()} == GRUPOS_DECIDIDOS
     assert marcado.count('<a class="boton ') == 16
-    # El Panel de control va SOLO, arriba de todo, con un color que no tiene nadie más (dueño, 16/10).
+    # Arriba de todo, el Panel de control y al lado Consultas (dueño, 17/10), cada uno con un color que no
+    # tiene nadie más, y Consultas una sola vez.
     botones = re.findall(r'<a class="boton color-(\d)" href="([^"]*)"', marcado)
-    assert botones[0] == ("4", "/gerencia/panel") and [c for c, _ in botones].count("4") == 1
-    # "Bancos y cajas" en celeste, no en naranja (dueño, 16/10).
+    assert botones[:2] == [("4", "/gerencia/panel"), ("6", "/gerencia/consultas")]
+    colores = [c for c, _ in botones]
+    assert colores.count("4") == 1 and colores.count("6") == 1
+    assert [h for _, h in botones].count("/gerencia/consultas") == 1
+    # "Bancos y cajas" en celeste, no en naranja (dueño, 16/10); los tres colores de arriba, distintos.
     with patch.dict(os.environ, CLAVES):
         estilos = _cliente(m, "gerencia").get("/gerencia").text.split("</style>")[0]
-    assert re.findall(r"\.boton\.color-5 \{ background: (#[0-9a-f]{6}); \}", estilos) == ["#0284c7"]
+    propios = dict(re.findall(r"\.boton\.color-(\d) \{ background: (#[0-9a-f]{6}); \}", estilos))
+    assert propios["5"] == "#0284c7" and len({propios["4"], propios["5"], propios["6"]}) == 3
     # Los recuadros en este orden: Panel, Bancos y cajas, Mirar, Corregir, Mantenimiento.
     assert re.findall(r"<h2>([^<]*)</h2>", marcado.split('href="/gerencia/panel"')[1]) == [
         "Bancos y cajas", "Mirar", "Corregir", "Mantenimiento"]
+
+
+def test_PANEL_y_CONSULTAS_lado_a_lado_a_390_y_uno_debajo_del_otro_a_313():
+    """Lo mide el navegador (dueño, 17/10): misma fila y mismo tamaño si
+    entran; si no, el Panel arriba. Sin scroll horizontal."""
+    pytest.importorskip("playwright", reason="el lugar de cada botón lo decide el navegador")
+    from playwright.sync_api import sync_playwright
+    from scripts.medir_layout import CHROMIUM
+    import app.main as m
+    with patch.dict(os.environ, CLAVES):
+        html = _cliente(m, "gerencia").get("/gerencia").text
+    cajas = {}
+    with sync_playwright() as pw:
+        navegador = pw.chromium.launch(executable_path=CHROMIUM)
+        try:
+            for ancho in (390, 313):
+                pagina = navegador.new_page(viewport={"width": ancho, "height": 900})
+                pagina.set_content(html)
+                cajas[ancho] = pagina.evaluate("""() => {
+                  const caja = s => { const r = document.querySelector(s).getBoundingClientRect();
+                                      return [r.left, r.top, r.width, r.height]; };
+                  return {panel: caja('a[href="/gerencia/panel"]'), consultas: caja('a[href="/gerencia/consultas"]'),
+                          desborde: document.documentElement.scrollWidth - document.documentElement.clientWidth};
+                }""")
+                pagina.close()
+        finally:
+            navegador.close()
+    ancho_390 = cajas[390]
+    assert ancho_390["panel"][1] == ancho_390["consultas"][1], ancho_390                       # misma fila
+    assert ancho_390["panel"][0] < ancho_390["consultas"][0]                                  # el Panel a la izquierda
+    assert abs(ancho_390["panel"][2] - ancho_390["consultas"][2]) < 1, ancho_390              # mismo ancho
+    assert ancho_390["panel"][3] == ancho_390["consultas"][3]                                 # misma altura
+    ancho_313 = cajas[313]
+    assert ancho_313["consultas"][1] >= ancho_313["panel"][1] + ancho_313["panel"][3], ancho_313   # debajo
+    assert ancho_313["panel"][2] == ancho_313["consultas"][2]                                 # mismo ancho
+    assert ancho_390["desborde"] == 0 and ancho_313["desborde"] == 0
 
 
 def test_NINGUN_boton_viejo_de_Gerencia_desaparece_y_cada_pantalla_VIEJA_abre(galpon):
