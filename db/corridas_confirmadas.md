@@ -700,3 +700,28 @@ Antes de la excepción, la alerta `remitos_rechazo_distinto` marcaba 1 caso en
 Frutamax (alertas_estado, 16/10 11:58 UTC). Mira todos los remitos recibidos,
 sin plazo, así que el 20344 no iba a salir solo.
 
+## 17/10 — `consultas_ia_1`: el usuario de solo lectura y las tablas de Consultas (bloques `db/consultas_ia_1..4`), en las DOS bases
+
+Corrido por Lionel en Frutamax y en Palmala. El bloque 1 que mandé fallaba en
+Supabase ("only SUPERUSER may alter..."): un `alter role consultas_ia
+nosuperuser ... nobypassrls connection limit 3` lo puede hacer solo un
+superusuario. Lionel sacó esa línea y puso `connection limit 3` en el `create
+role`; `db/consultas_ia_1_usuario.sql` quedó así (un rol nuevo ya nace sin
+superusuario, sin bypassrls y sin crear roles). La verificación pasó a
+`has_table_privilege` (lo que el usuario puede, no solo lo concedido).
+Verificado por mí por el conector "Supabase Lectura" el 17/10 a las 01:13 UTC:
+
+```
+FRUTAMAX  consultas_ia_1 · usuario 1 (login, sin super, sin bypassrls, 3 conexiones) · solo lectura y 10s 1
+          escribe 0 · excluidas legibles 0 · lee 130 de 130 permitidas · tablas nuevas con candado 2
+          tope US$100 · preguntas 0 · testigo_articulos 39
+PALMALA   consultas_ia_1 · usuario 1 (login, sin super, sin bypassrls, 3 conexiones) · solo lectura y 10s 1
+          escribe 0 · excluidas legibles 0 · lee 119 de 119 permitidas · tablas nuevas con candado 2
+          tope US$100 · preguntas 0 · testigo_articulos 65
+```
+
+Las excluidas: `claves_especiales`, `casillas_pedidos`, `backups_corridas`,
+`panel_fotos`, `corte_respaldo_fichas_reprocesos` y las dos de Consultas. Una
+tabla nueva no se lee sola: se vuelve a correr el bloque 3. La contraseña del
+usuario la pone Lionel en Supabase y en Railway; no pasa por el chat.
+

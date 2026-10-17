@@ -3063,6 +3063,36 @@ create table alertas_excepciones (
 comment on table alertas_excepciones is 'Lo que una alerta no cuenta (dueño, 16/10): alerta es su código (remitos_rechazo_distinto), apunta_a el id de lo que no cuenta (remitos.id). Se carga por SQL, sin pantalla.';
 alter table alertas_excepciones enable row level security;
 
+-- CONSULTAS (dueño, 16/10), migración consultas_ia_1 (db/consultas_ia_1..4).
+-- El chat de Gerencia con IA: el registro de cada pregunta y el tope de gasto
+-- del mes. El usuario de solo lectura `consultas_ia` (bloques 1 y 3) es de la
+-- base de Supabase y no va acá: los tests no lo necesitan.
+create table consultas_ia_preguntas (
+  id             bigint generated always as identity primary key,
+  sector         text not null check (sector in ('gerencia')),
+  quien          text not null check (btrim(quien) <> ''),
+  conversacion   uuid not null,
+  pregunta       text not null check (btrim(pregunta) <> ''),
+  respuesta      text,
+  consultas      jsonb not null default '[]'::jsonb,
+  modelo         text not null check (btrim(modelo) <> ''),
+  tokens_entrada integer not null default 0 check (tokens_entrada >= 0),
+  tokens_salida  integer not null default 0 check (tokens_salida >= 0),
+  tokens_cache   integer not null default 0 check (tokens_cache >= 0),
+  costo_usd      numeric(10,4) not null default 0 check (costo_usd >= 0),
+  error          text,
+  creado_en      timestamptz not null default now()
+);
+create index consultas_ia_preguntas_por_fecha on consultas_ia_preguntas (creado_en);
+alter table consultas_ia_preguntas enable row level security;
+create table consultas_ia_config (
+  id               smallint primary key default 1 check (id = 1),
+  tope_mensual_usd numeric(10,2) not null default 100 check (tope_mensual_usd > 0),
+  actualizado_en   timestamptz not null default now()
+);
+alter table consultas_ia_config enable row level security;
+insert into consultas_ia_config (id) values (1);
+
 -- CANDADOS (RLS) EN TODAS LAS TABLAS DE public (dueño, 09/10). db/rls_1_*.sql.
 -- Sin políticas para anon: por la API de Supabase con la clave pública no se
 -- lee nada. El sistema entra como postgres (dueño y con bypassrls): no lo

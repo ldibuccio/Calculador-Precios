@@ -1,0 +1,163 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Consultas</title>
+<style>
+{% include "_cheques_estilos.html" %}
+  .charla { display: flex; flex-direction: column; gap: 0.6rem; }
+  .mensaje { border-radius: 10px; padding: 0.7rem 0.9rem; white-space: pre-wrap; overflow-wrap: anywhere; }
+  .mensaje.pregunta { background: #dbeafe; align-self: flex-end; max-width: 90%; }
+  .mensaje.respuesta { background: #fff; box-shadow: 0 1px 3px rgba(0, 0, 0, 0.1); }
+  .mensaje.fallo { background: #fee2e2; color: #991b1b; }
+  .mensaje details { margin-top: 0.5rem; white-space: normal; }
+  .mensaje details summary { font-size: 0.9rem; }
+  .consulta { border-top: 1px solid #eee; padding: 0.4rem 0; font-size: 0.85rem; }
+  .consulta pre { white-space: pre-wrap; overflow-wrap: anywhere; background: #f3f4f6; padding: 0.4rem; border-radius: 6px; font-size: 0.78rem; margin: 0.3rem 0; }
+  .consulta .tabla-chica { max-width: 100%; overflow-x: auto; }
+  .consulta table { border-collapse: collapse; font-size: 0.78rem; }
+  .consulta th, .consulta td { border: 1px solid #e5e7eb; padding: 0.15rem 0.35rem; text-align: left; white-space: nowrap; }
+  .costo { font-size: 0.75rem; color: #666; margin-top: 0.3rem; }
+  .preguntar textarea { display: block; width: 100%; box-sizing: border-box; min-height: 88px; padding: 0.6rem; border: 1px solid #ccc; border-radius: 8px; font-size: 1rem; font-family: inherit; }
+  .esperando { color: #666; font-style: italic; }
+  .gasto { display: flex; flex-wrap: wrap; gap: 0.3rem 1rem; align-items: center; }
+  .gasto form { display: flex; flex-wrap: wrap; gap: 0.5rem; align-items: flex-end; margin: 0; }
+  .gasto form label { font-size: 0.85rem; color: #444; }
+  .gasto form input { display: block; width: 7rem; min-height: 44px; padding: 0.5rem; border: 1px solid #ccc; border-radius: 8px; font-size: 1rem; margin-top: 0.2rem; }
+  .gasto form button { min-height: 44px; padding: 0 1rem; border-radius: 8px; border: 1px solid #2563eb; background: #fff; color: #2563eb; font-weight: 600; font-size: 0.95rem; }
+</style>
+</head>
+<body>
+  {% set barra_sector = "gerencia" %}
+  {% set barra_titulo = "Consultas" %}
+  {% set barra_atras = "/gerencia" %}
+  {% include "_barra_navegacion.html" %}
+
+  {% if aviso %}<div class="aviso" data-aviso>{{ aviso }}</div>{% endif %}
+  {% if error %}<div class="error" data-error>{{ error }}</div>{% endif %}
+
+  {# CONSULTAS (dueño, 16/10): se le pregunta a la IA por los datos del
+     sistema. Lee la base con un usuario que solo puede leer; cada respuesta
+     dice cómo la calculó. La charla dura mientras la pantalla está abierta. #}
+  <div class="tarjeta">
+    <p class="nota">Preguntá por los datos del sistema, como se lo preguntarías a alguien de la oficina. Ej.: "¿cuántos kilos de Tomate Perita le vendimos a Día en septiembre?"</p>
+    <div class="gasto" data-gasto>
+      <span>Este mes: <strong data-gastado>US${{ "%.2f"|format(gasto.gastado) }}</strong> de US${{ "%.2f"|format(gasto.tope) }}</span>
+      <form method="post" action="/gerencia/consultas/tope">
+        <label>Tope del mes (US$)<input type="number" name="tope" step="1" min="1" inputmode="decimal" value="{{ '%.0f'|format(gasto.tope) }}"></label>
+        <button type="submit">Cambiar</button>
+      </form>
+    </div>
+    {% if gasto.lleno %}<p class="rojo" data-tope-lleno>Se llegó al tope del mes: Consultas vuelve el 1° del mes que viene, o subí el tope.</p>{% endif %}
+  </div>
+
+  <div class="charla" data-charla aria-live="polite"></div>
+
+  <form class="tarjeta preguntar" data-preguntar>
+    <label for="pregunta" class="nota">Tu pregunta</label>
+    <textarea id="pregunta" name="pregunta" maxlength="2000" required {% if gasto.lleno %}disabled{% endif %}></textarea>
+    <div class="acciones">
+      <button type="submit" data-enviar {% if gasto.lleno %}disabled{% endif %}>Preguntar</button>
+      <button type="button" class="secundario" data-nueva>Nueva conversación</button>
+    </div>
+    <p class="nota"><a href="/gerencia/consultas/registro">Ver las preguntas anteriores y su costo</a></p>
+  </form>
+<script>
+(function () {
+  var charla = document.querySelector("[data-charla]");
+  var formulario = document.querySelector("[data-preguntar]");
+  var campo = document.getElementById("pregunta");
+  var enviar = document.querySelector("[data-enviar]");
+  var historial = [];
+  var conversacion = (window.crypto && crypto.randomUUID) ? crypto.randomUUID() : "";
+
+  function elemento(etiqueta, clase, texto) {
+    var nodo = document.createElement(etiqueta);
+    if (clase) { nodo.className = clase; }
+    if (texto !== undefined) { nodo.textContent = texto; }
+    return nodo;
+  }
+
+  // "Cómo lo calculé": cada consulta con su SQL y sus primeras filas.
+  function comoLoCalcule(consultas, documentos) {
+    var detalle = elemento("details");
+    detalle.appendChild(elemento("summary", "", "Cómo lo calculé"));
+    if (documentos && documentos.length) {
+      detalle.appendChild(elemento("p", "nota", "Leyó: " + documentos.join(", ")));
+    }
+    consultas.forEach(function (c) {
+      var caja = elemento("div", "consulta");
+      caja.appendChild(elemento("strong", "", c.para_que || "Consulta"));
+      caja.appendChild(elemento("pre", "", c.sql || ""));
+      if (c.error) {
+        caja.appendChild(elemento("p", "rojo", "Error: " + c.error));
+      } else if (c.columnas) {
+        var envoltura = elemento("div", "tabla-chica");
+        var tabla = elemento("table");
+        var cabeza = elemento("tr");
+        c.columnas.forEach(function (col) { cabeza.appendChild(elemento("th", "", col)); });
+        tabla.appendChild(cabeza);
+        (c.filas || []).forEach(function (fila) {
+          var renglon = elemento("tr");
+          fila.forEach(function (v) { renglon.appendChild(elemento("td", "", v === null ? "—" : String(v))); });
+          tabla.appendChild(renglon);
+        });
+        envoltura.appendChild(tabla);
+        caja.appendChild(envoltura);
+        var total = c.cantidad_filas + (c.cortada ? " o más" : "");
+        caja.appendChild(elemento("p", "nota", total + " fila" + (c.cantidad_filas === 1 ? "" : "s") +
+          (c.cantidad_filas > (c.filas || []).length ? " (se muestran las primeras " + c.filas.length + ")" : "")));
+      }
+      detalle.appendChild(caja);
+    });
+    if (!consultas.length) { detalle.appendChild(elemento("p", "nota", "No corrió ninguna consulta.")); }
+    return detalle;
+  }
+
+  formulario.addEventListener("submit", function (evento) {
+    evento.preventDefault();
+    var pregunta = campo.value.trim();
+    if (!pregunta) { return; }
+    charla.appendChild(elemento("div", "mensaje pregunta", pregunta));
+    var esperando = elemento("div", "mensaje respuesta esperando", "Buscando en los datos…");
+    charla.appendChild(esperando);
+    campo.value = "";
+    enviar.disabled = true;
+    fetch("/gerencia/consultas/preguntar", {
+      method: "POST", headers: {"Content-Type": "application/json"},
+      body: JSON.stringify({pregunta: pregunta, historial: historial, conversacion: conversacion})
+    }).then(function (r) { return r.json(); }).then(function (datos) {
+      esperando.remove();
+      var caja = elemento("div", "mensaje " + (datos.error && !datos.respuesta ? "fallo" : "respuesta"),
+                          datos.respuesta || datos.error || "Sin respuesta.");
+      if (datos.respuesta && datos.error) { caja.appendChild(elemento("p", "rojo", datos.error)); }
+      if (datos.consultas) { caja.appendChild(comoLoCalcule(datos.consultas, datos.documentos)); }
+      if (datos.costo_usd !== undefined) {
+        caja.appendChild(elemento("p", "costo", "Esta respuesta: US$" + datos.costo_usd.toFixed(4)));
+      }
+      charla.appendChild(caja);
+      if (datos.conversacion) { conversacion = datos.conversacion; }
+      if (datos.respuesta) { historial.push({pregunta: pregunta, respuesta: datos.respuesta}); }
+      if (datos.gasto) {
+        document.querySelector("[data-gastado]").textContent = "US$" + datos.gasto.gastado.toFixed(2);
+      }
+      enviar.disabled = !!datos.tope_lleno;
+    }).catch(function () {
+      esperando.remove();
+      charla.appendChild(elemento("div", "mensaje fallo", "No se pudo preguntar. Revisá la conexión y probá de nuevo."));
+      enviar.disabled = false;
+    });
+  });
+
+  document.querySelector("[data-nueva]").addEventListener("click", function () {
+    historial = [];
+    conversacion = (window.crypto && crypto.randomUUID) ? crypto.randomUUID() : "";
+    charla.innerHTML = "";
+    campo.focus();
+  });
+})();
+</script>
+{% include "_pie_version.html" %}
+</body>
+</html>
