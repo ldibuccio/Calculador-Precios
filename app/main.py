@@ -8518,13 +8518,8 @@ def _ir_a_la_foto(foto_ruta: str, status_code: int = 307):
     rota sin decir por qué. Lo cuida un test que exige que `obtener_url_foto`
     no se llame en ningún otro lado de app/main.py.
     """
-    try:
-        borrada = foto_borrada_por_antiguedad(foto_ruta)
-    except Exception:
-        logger.exception("No se pudo mirar si la foto %s se borró por antigüedad", foto_ruta)
-        borrada = None
-    if borrada is not None:
-        texto = texto_de_foto_borrada(*borrada)
+    url_firmada, texto = _url_o_aviso_de_la_foto(foto_ruta)
+    if texto is not None:
         # En dos renglones, cortado en " el ": entra en una miniatura angosta.
         arriba, _, abajo = texto.rpartition(" el ")
         svg = (
@@ -8536,13 +8531,26 @@ def _ir_a_la_foto(foto_ruta: str, status_code: int = 307):
             f'el {abajo}</text></svg>'
         )
         return Response(content=svg, media_type="image/svg+xml", headers={"Cache-Control": "no-store"})
+    return RedirectResponse(url=url_firmada, status_code=status_code)
+
+
+def _url_o_aviso_de_la_foto(foto_ruta: str) -> tuple[str | None, str | None]:
+    """(URL firmada, None), o (None, "Foto borrada por antigüedad el ...") si
+    el archivo ya no está. La usa _ir_a_la_foto y Consultas por Telegram, que
+    le pasa la URL a Telegram: las dos preguntan si se borró."""
     try:
-        url_firmada = obtener_url_foto(foto_ruta)
+        borrada = foto_borrada_por_antiguedad(foto_ruta)
+    except Exception:
+        logger.exception("No se pudo mirar si la foto %s se borró por antigüedad", foto_ruta)
+        borrada = None
+    if borrada is not None:
+        return None, texto_de_foto_borrada(*borrada)
+    try:
+        return obtener_url_foto(foto_ruta), None
     except Exception as error_storage:
         raise HTTPException(
             status_code=500, detail=f"No se pudo generar el link de la foto: {error_storage}"
         ) from error_storage
-    return RedirectResponse(url=url_firmada, status_code=status_code)
 
 
 def _borrar_fotos_del_storage(rutas, contexto: str) -> None:
@@ -21036,6 +21044,8 @@ def ver_detalle_del_panel(request: Request):
 # que toca la base, en app/db.py (la IA lee con el usuario `consultas_ia`).
 from core.consultas_ia import (  # noqa: E402
     FILAS_MAXIMAS as FILAS_MAXIMAS_DE_CONSULTAS,
+    FILAS_MAXIMAS_DEL_EXCEL,
+    FOTOS_MAXIMAS as FOTOS_MAXIMAS_DE_CONSULTAS,
     PENSANDO_COMO_MAXIMO,
     SEGUNDOS_POR_LLAMADA_A_LA_IA,
     ConsultaNoPermitida,
@@ -21055,7 +21065,16 @@ from app.db import (  # noqa: E402
     CONSULTAS_IA_DATABASE_URL_ENV_VAR,
     ConsultaIaNoConecta,
     ConsultaIaNoSePuede,
+    anotar_intento_de_telegram,
+    autorizado_de_telegram,
+    autorizados_de_telegram,
+    cambiar_activo_de_telegram,
     cambiar_tope_de_consultas,
+    conversacion_de_telegram,
+    es_update_nuevo_de_telegram,
+    guardar_autorizado_de_telegram,
+    historial_de_la_conversacion,
+    intentos_de_telegram,
     correr_consulta_de_solo_lectura,
     gasto_de_consultas_desde,
     guardar_pregunta_de_consultas,
@@ -21134,10 +21153,64 @@ def _falla_de_la_api_en_criollo(error) -> str | None:
 
 
 def _consulta_para_el_registro(consulta: dict) -> dict:
-    return {"para_que": consulta.get("para_que"), "sql": consulta.get("sql"), "error": consulta.get("error"),
-            "columnas": consulta.get("columnas"), "filas": (consulta.get("filas") or [])[:FILAS_DEL_REGISTRO],
-            "cantidad_filas": len(consulta.get("filas") or []), "cortada": consulta.get("cortada"),
-            "ms": consulta.get("ms")}
+    """Lo que queda en el registro de cada paso: las primeras filas alcanzan
+    para ver de dónde salió el número. Un Excel guarda su consulta, su título
+    y sus columnas (se vuelve a armar al bajarlo); unas fotos, de qué compra."""
+    anotada = {"para_que": consulta.get("para_que"), "sql": consulta.get("sql"), "error": consulta.get("error"),
+               "columnas": consulta.get("columnas"),
+               "filas": [[valor_para_mostrar(v) for v in fila] for fila in (consulta.get("filas") or [])
+                         [:FILAS_DEL_REGISTRO]],
+               "cantidad_filas": len(consulta.get("filas") or []), "cortada": consulta.get("cortada"),
+               "ms": consulta.get("ms")}
+    if consulta.get("tipo") == "excel":
+        anotada.update(tipo="excel", titulo=consulta.get("titulo"), columnas_excel=consulta.get("columnas_excel"))
+    elif consulta.get("tipo") == "fotos":
+        anotada.update(tipo="fotos", compra_id=consulta.get("compra_id"), que=consulta.get("que"),
+                       cantidad=consulta.get("cantidad", 0), descripcion=consulta.get("descripcion"))
+    return anotada
+
+
+def _armar_excel_de_la_ia(sql: str) -> dict:
+    """La consulta de un Excel: la misma puerta que correr_sql, hasta
+    FILAS_MAXIMAS_DEL_EXCEL renglones y con los valores como vienen de la
+    base (Excel necesita números y fechas, no texto)."""
+    try:
+        texto = consulta_de_lectura(sql)
+    except ConsultaNoPermitida as motivo:
+        raise ValueError(str(motivo)) from motivo
+    try:
+        return correr_consulta_de_solo_lectura(texto, FILAS_MAXIMAS_DEL_EXCEL)
+    except ConsultaIaNoConecta as motivo:
+        raise CortarLaPregunta(f"{falla_de_conexion_en_criollo(str(motivo))} Detalle: {motivo}") from motivo
+    except ConsultaIaNoSePuede as motivo:
+        raise ValueError(f"la base no la corrió: {motivo}") from motivo
+
+
+def _fotos_de_la_compra(compra: dict, que: str) -> list[dict]:
+    """[{ruta, pdf}] de una compra: la comanda (las fotos de su guía) o el
+    pesaje (la foto de la balanza al recibir: "pesada" y "balanza" son la
+    misma, dueño 17/10). Solo fotos de compras, las últimas FOTOS_MAXIMAS."""
+    if que == "comanda":
+        fotos = listar_fotos_de_guia(compra["guia_id"]) if compra.get("guia_id") is not None else []
+    else:
+        fotos = listar_fotos_de_recepcion(compra["id"])
+    return [{"ruta": f["foto_ruta"], "pdf": f["foto_ruta"].lower().endswith(".pdf")}
+            for f in fotos[-FOTOS_MAXIMAS_DE_CONSULTAS:]]
+
+
+def _descripcion_de_la_compra(compra: dict) -> str:
+    guia = f"{compra['guia_id']}.{compra['guia_punto']}" if compra.get("guia_punto") else str(compra.get("guia_id") or "")
+    fecha = compra["fecha_operacion"].strftime("%d/%m/%Y") if compra.get("fecha_operacion") else ""
+    return " · ".join(x for x in (fecha, compra.get("proveedor_nombre"), compra.get("articulo_nombre"),
+                                  f"guía {guia}" if guia else "") if x)
+
+
+def _mostrar_fotos_de_la_ia(compra_id: int, que: str) -> dict:
+    """Las fotos que pide la IA las busca la APP (no el usuario de consultas)."""
+    compra = obtener_compra(compra_id)
+    if compra is None:
+        raise ValueError(f"no existe la compra {compra_id}")
+    return {"cantidad": len(_fotos_de_la_compra(compra, que)), "descripcion": _descripcion_de_la_compra(compra)}
 
 
 # Los documentos que leyó cada pregunta, para "Cómo lo calculé" (no van al
@@ -21145,10 +21218,25 @@ def _consulta_para_el_registro(consulta: dict) -> dict:
 _DOCUMENTOS_DE_LA_PREGUNTA: dict[int, list[str]] = {}
 
 
-def _pensar_la_pregunta(id_pregunta: int, pregunta: str, historial: list[dict], hoy) -> None:
+def _por_que_no_va(gasto: dict) -> str | None:
+    """Lo que frena una pregunta ANTES de llamar a la IA (web y Telegram)."""
+    from core.lector_comandas import ANTHROPIC_API_KEY_ENV_VAR
+    if gasto["lleno"]:
+        return (f"Se llegó al tope del mes (US${gasto['tope']:.2f}). Consultas vuelve el 1° del mes que viene, "
+                "o subí el tope.")
+    if not os.environ.get(CONSULTAS_IA_DATABASE_URL_ENV_VAR):
+        return f"Falta la conexión del usuario de consultas: poné {CONSULTAS_IA_DATABASE_URL_ENV_VAR} en Railway."
+    if not os.environ.get(ANTHROPIC_API_KEY_ENV_VAR):
+        return f"Falta la clave de la IA: poné {ANTHROPIC_API_KEY_ENV_VAR} en Railway."
+    return None
+
+
+def _pensar_la_pregunta(id_pregunta: int, pregunta: str, historial: list[dict], hoy, canal: str = "web"):
     """Corre DESPUÉS de contestar el pedido (la pantalla pregunta cada pocos
-    segundos si terminó). Lo que pase, termina en la fila de la pregunta: la
-    respuesta o el motivo de la falla."""
+    segundos si terminó; Telegram recibe la respuesta cuando está). Lo que
+    pase, termina en la fila de la pregunta: la respuesta o el motivo de la
+    falla. Devuelve la Respuesta (con los renglones de cada Excel, que no van
+    al registro) o None si se rompió."""
     import anthropic
 
     from core.lector_comandas import _obtener_api_key
@@ -21158,22 +21246,24 @@ def _pensar_la_pregunta(id_pregunta: int, pregunta: str, historial: list[dict], 
                                       max_retries=1)
         sistema = instrucciones_de_consultas(NOMBRE_EMPRESA, esquema_resumido(
             open(os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "db",
-                              "esquema_completo.sql"), encoding="utf-8").read()), indice_de_documentos(), hoy)
+                              "esquema_completo.sql"), encoding="utf-8").read()), indice_de_documentos(), hoy, canal)
         respuesta = preguntar_a_la_ia(
             cliente, pregunta, historial, sistema=sistema, correr_sql=_correr_sql_de_la_ia, leer_doc=leer_documento,
-            nombre_del_modelo=nombre_del_modelo, explicar_falla_de_la_api=_falla_de_la_api_en_criollo)
+            nombre_del_modelo=nombre_del_modelo, explicar_falla_de_la_api=_falla_de_la_api_en_criollo,
+            armar_excel=_armar_excel_de_la_ia, mostrar_fotos=_mostrar_fotos_de_la_ia)
     except Exception as error:  # noqa: BLE001 (toda pregunta queda anotada, también la que rompe)
         logger.exception("Consultas: la pregunta %s se rompió", id_pregunta)
         terminar_pregunta_de_consultas(id_pregunta, {
             "modelo": nombre_del_modelo,
             "error": f"Falló el sistema ({type(error).__name__}: {error}). Avisale a quien lo programa."})
-        return
+        return None
     _DOCUMENTOS_DE_LA_PREGUNTA[id_pregunta] = respuesta.documentos
     terminar_pregunta_de_consultas(id_pregunta, {
         "respuesta": respuesta.texto, "consultas": [_consulta_para_el_registro(c) for c in respuesta.consultas],
         "modelo": respuesta.modelo, "tokens_entrada": respuesta.tokens_entrada,
         "tokens_salida": respuesta.tokens_salida, "tokens_cache": respuesta.tokens_cache,
         "costo_usd": respuesta.costo_usd, "error": respuesta.error})
+    return respuesta
 
 
 def _estado_de_la_pregunta(fila: dict, hoy) -> dict:
@@ -21200,8 +21290,6 @@ async def preguntar_en_consultas(request: Request, tareas: BackgroundTasks):
     falla antes de llamar a la IA (el tope, una variable que falta) vuelve ya
     terminado, también anotado."""
     import uuid
-
-    from core.lector_comandas import ANTHROPIC_API_KEY_ENV_VAR
     if _sin_clave_de_cheques(request) is not None:
         return JSONResponse({"error": "Se cerró la clave de Gerencia: volvé a entrar."}, status_code=401)
     try:
@@ -21220,18 +21308,10 @@ async def preguntar_en_consultas(request: Request, tareas: BackgroundTasks):
         conversacion = str(uuid.uuid4())
     hoy = _hoy_argentina()
     gasto = _gasto_y_tope_de_consultas(hoy)
-    if gasto["lleno"]:
-        no_va = (f"Se llegó al tope del mes (US${gasto['tope']:.2f}). Consultas vuelve el 1° del mes que viene, "
-                 "o subí el tope.")
-    elif not os.environ.get(CONSULTAS_IA_DATABASE_URL_ENV_VAR):
-        no_va = f"Falta la conexión del usuario de consultas: poné {CONSULTAS_IA_DATABASE_URL_ENV_VAR} en Railway."
-    elif not os.environ.get(ANTHROPIC_API_KEY_ENV_VAR):
-        no_va = f"Falta la clave de la IA: poné {ANTHROPIC_API_KEY_ENV_VAR} en Railway."
-    else:
-        no_va = None
+    no_va = _por_que_no_va(gasto)
     id_pregunta = guardar_pregunta_de_consultas({
         "sector": "gerencia", "quien": "Gerencia", "conversacion": conversacion, "pregunta": pregunta,
-        "modelo": modelo_de_consultas(), "error": no_va})
+        "modelo": modelo_de_consultas(), "error": no_va, "canal": "web"})
     if no_va is not None:
         estado = _estado_de_la_pregunta(pregunta_de_consultas(id_pregunta), hoy)
         return JSONResponse({**estado, "tope_lleno": gasto["lleno"]})
@@ -21247,6 +21327,329 @@ def estado_de_una_pregunta(request: Request, pregunta_id: int):
     if fila is None:
         return JSONResponse({"error": "No existe esa pregunta."}, status_code=404)
     return JSONResponse(_estado_de_la_pregunta(fila, _hoy_argentina()))
+
+
+def _paso_de_la_pregunta(pregunta_id: int, n: int, tipo: str) -> tuple[dict, dict]:
+    """(la pregunta, su paso n) si ese paso es de ese tipo y salió bien; si
+    no, 404. Un Excel o una foto se sirven SOLO si están anotados en el
+    registro de esa pregunta: no se puede pedir cualquier compra cambiando
+    un número en la dirección."""
+    fila = pregunta_de_consultas(pregunta_id)
+    pasos = (fila or {}).get("consultas") or []
+    if fila is None or not 0 <= n < len(pasos) or pasos[n].get("tipo") != tipo or pasos[n].get("error"):
+        raise HTTPException(status_code=404, detail="Esa pregunta no tiene eso")
+    return fila, pasos[n]
+
+
+@app.get("/gerencia/consultas/pregunta/{pregunta_id}/excel/{paso_id}")
+def bajar_excel_de_consultas(request: Request, pregunta_id: int, paso_id: int):
+    """El Excel de una respuesta. Se arma al bajarlo, con la misma consulta."""
+    from core.consultas_excel import armar_xlsx, nombre_del_archivo
+    puerta = _sin_clave_de_cheques(request)
+    if puerta is not None:
+        return puerta
+    _fila, paso = _paso_de_la_pregunta(pregunta_id, paso_id, "excel")
+    try:
+        datos = _armar_excel_de_la_ia(paso["sql"])
+    except (ValueError, CortarLaPregunta) as motivo:
+        raise HTTPException(status_code=502, detail=f"No se pudo armar el Excel: {motivo}") from motivo
+    contenido = armar_xlsx(paso.get("titulo") or "Consulta", paso.get("columnas_excel") or [], datos["filas"],
+                           datos["cortada"])
+    return Response(content=contenido,
+                    media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                    headers={"Content-Disposition": f'attachment; filename="{nombre_del_archivo(paso.get("titulo"))}"'})
+
+
+@app.get("/gerencia/consultas/pregunta/{pregunta_id}/fotos/{paso_id}")
+def ver_fotos_de_consultas(request: Request, pregunta_id: int, paso_id: int):
+    """Las fotos de una respuesta, en el visor de siempre."""
+    puerta = _sin_clave_de_cheques(request)
+    if puerta is not None:
+        return puerta
+    _fila, paso = _paso_de_la_pregunta(pregunta_id, paso_id, "fotos")
+    compra = obtener_compra(paso["compra_id"])
+    fotos = _fotos_de_la_compra(compra, paso["que"]) if compra is not None else []
+    if not fotos:
+        raise HTTPException(status_code=404, detail="Esa compra no tiene esas fotos")
+    return templates.TemplateResponse(request, "compra_visor_fotos.html", {
+        "fotos": [{"url": f"/gerencia/consultas/pregunta/{pregunta_id}/fotos/{paso_id}/{k}", "pdf": f["pdf"]}
+                  for k, f in enumerate(fotos)],
+        "inicio": len(fotos) - 1 if paso["que"] == "pesaje" else 0,
+        "titulo": f"{'Comanda' if paso['que'] == 'comanda' else 'Pesaje'} · {_descripcion_de_la_compra(compra)}",
+        "volver": "/gerencia/consultas",
+    })
+
+
+@app.get("/gerencia/consultas/pregunta/{pregunta_id}/fotos/{paso_id}/{foto_id}")
+def ver_una_foto_de_consultas(request: Request, pregunta_id: int, paso_id: int, foto_id: int):
+    puerta = _sin_clave_de_cheques(request)
+    if puerta is not None:
+        return puerta
+    _fila, paso = _paso_de_la_pregunta(pregunta_id, paso_id, "fotos")
+    compra = obtener_compra(paso["compra_id"])
+    fotos = _fotos_de_la_compra(compra, paso["que"]) if compra is not None else []
+    if not 0 <= foto_id < len(fotos):
+        raise HTTPException(status_code=404, detail="No existe esa foto")
+    return _ir_a_la_foto(fotos[foto_id]["ruta"])
+
+
+# --- CONSULTAS POR TELEGRAM (dueño, 17/10) -----------------------------------------
+# El mismo motor que la web: el usuario de solo lectura, el tope del mes y el
+# registro (canal telegram, quién = el nombre que le puso Gerencia). Solo
+# contesta a los autorizados de Gerencia → Consultas → Telegram; cualquier
+# otro recibe "No autorizado" y queda anotado. Desde Telegram no se autoriza
+# a nadie. Solo chats privados.
+
+NO_AUTORIZADO = "No autorizado."
+SOLO_TEXTO = "Por ahora leo solo texto."
+BOTON_COMO_LO_CALCULE = "Cómo lo calculé"
+FILAS_EN_COMO_LO_CALCULE = 5
+
+
+def _html(texto) -> str:
+    import html
+    return html.escape(str(texto if texto is not None else ""), quote=False)
+
+
+def _como_lo_calcule_por_telegram(fila: dict) -> str:
+    """El SQL y los números base de cada paso, en HTML de Telegram."""
+    from core.telegram import LARGO_MAXIMO_DE_UN_MENSAJE
+    partes = []
+    for paso in fila.get("consultas") or []:
+        renglon = f"<b>{_html(paso.get('para_que') or 'Consulta')}</b>"
+        if paso.get("tipo") == "fotos":
+            partes.append(f"{renglon}\n{_html(paso.get('descripcion') or '')} ({paso.get('cantidad', 0)} fotos)")
+            continue
+        renglon += f"\n<pre>{_html(paso.get('sql'))}</pre>"
+        if paso.get("error"):
+            renglon += f"\nError: {_html(paso['error'])}"
+        elif paso.get("columnas"):
+            for f in (paso.get("filas") or [])[:FILAS_EN_COMO_LO_CALCULE]:
+                renglon += "\n" + _html(" · ".join(f"{c}: {v}" for c, v in zip(paso["columnas"], f)))
+            renglon += f"\n({paso.get('cantidad_filas', 0)} fila{'' if paso.get('cantidad_filas') == 1 else 's'})"
+        partes.append(renglon)
+    texto = "\n\n".join(partes) or "No corrió ninguna consulta."
+    if len(texto) > LARGO_MAXIMO_DE_UN_MENSAJE - 120:
+        texto = (texto[: LARGO_MAXIMO_DE_UN_MENSAJE - 200].rsplit("\n", 1)[0]
+                 + "\n…\nEl detalle completo, en Gerencia → Consultas → registro.")
+        # Un corte por la mitad puede dejar un <pre> o un <b> abierto: se cierra.
+        for etiqueta in ("pre", "b"):
+            if texto.count(f"<{etiqueta}>") > texto.count(f"</{etiqueta}>"):
+                texto += f"</{etiqueta}>"
+    return texto
+
+
+def _contestar_por_telegram(chat_id: int, autorizado: dict, texto: str) -> None:
+    """Una pregunta de un autorizado: se anota, se piensa y se manda la
+    respuesta (con su Excel y sus fotos). Corre después de contestarle a
+    Telegram. Lo que falle al MANDAR queda en el log: la pregunta ya está
+    anotada."""
+    from core import telegram
+    from core.consultas_excel import armar_xlsx, nombre_del_archivo
+    hoy = _hoy_argentina()
+    telegram_id = autorizado["telegram_id"]
+    pregunta = " ".join(texto.split())[:LARGO_MAXIMO_DE_UNA_PREGUNTA]
+    conversacion = conversacion_de_telegram(telegram_id)
+    historial = historial_de_la_conversacion(conversacion, TURNOS_QUE_SE_RECUERDAN)
+    no_va = _por_que_no_va(_gasto_y_tope_de_consultas(hoy))
+    id_pregunta = guardar_pregunta_de_consultas({
+        "sector": "gerencia", "quien": autorizado["nombre"], "conversacion": conversacion, "pregunta": pregunta,
+        "modelo": modelo_de_consultas(), "error": no_va, "canal": "telegram", "telegram_id": telegram_id})
+    try:
+        if no_va is not None:
+            telegram.enviar_mensaje(chat_id, no_va)
+            return
+        telegram.enviar_escribiendo(chat_id)
+        respuesta = _pensar_la_pregunta(id_pregunta, pregunta, historial, hoy, "telegram")
+        if respuesta is None:
+            telegram.enviar_mensaje(chat_id, pregunta_de_consultas(id_pregunta)["error"])
+            return
+        cuerpo = respuesta.texto or respuesta.error or "Sin respuesta."
+        if respuesta.texto and respuesta.error:
+            cuerpo += f"\n\n{respuesta.error}"
+        telegram.enviar_mensaje(chat_id, cuerpo, boton=(BOTON_COMO_LO_CALCULE, f"calc:{id_pregunta}")
+                                if respuesta.consultas else None)
+        for paso in respuesta.consultas:
+            if paso.get("error") or paso.get("tipo") not in ("excel", "fotos"):
+                continue
+            # Cada adjunto por su lado: si uno no sale, los otros sí, y se avisa.
+            try:
+                if paso["tipo"] == "excel":
+                    telegram.enviar_documento(
+                        chat_id, nombre_del_archivo(paso["titulo"]),
+                        armar_xlsx(paso["titulo"], paso["columnas_excel"], paso["filas"], paso["cortada"]),
+                        paso["titulo"] + (" (cortada: hay más renglones)" if paso["cortada"] else ""))
+                else:
+                    _mandar_fotos_por_telegram(chat_id, paso)
+            except (telegram.TelegramNoAnda, HTTPException) as motivo:
+                logger.exception("Consultas por Telegram: no salió un adjunto de la pregunta %s", id_pregunta)
+                telegram.enviar_mensaje(chat_id, f"No pude mandar {'el Excel' if paso['tipo'] == 'excel' else 'las fotos'}"
+                                                 f" ({getattr(motivo, 'detail', None) or motivo}).")
+    except telegram.TelegramNoAnda:
+        logger.exception("Consultas por Telegram: no se pudo mandar la respuesta de la pregunta %s", id_pregunta)
+
+
+def _mandar_fotos_por_telegram(chat_id: int, paso: dict) -> None:
+    from core import telegram
+    compra = obtener_compra(paso["compra_id"])
+    leyenda = f"{'Comanda' if paso['que'] == 'comanda' else 'Pesaje'} · {_descripcion_de_la_compra(compra)}"
+    fotos, borradas = [], []
+    for foto in _fotos_de_la_compra(compra, paso["que"]) if compra is not None else []:
+        url, aviso = _url_o_aviso_de_la_foto(foto["ruta"])
+        if aviso is not None:
+            borradas.append(aviso)
+        else:
+            fotos.append({"url": url, "pdf": foto["pdf"], "leyenda": leyenda if not fotos else ""})
+    if fotos:
+        telegram.enviar_fotos(chat_id, fotos)
+    if borradas or not fotos:
+        telegram.enviar_mensaje(chat_id, "\n".join(borradas) or f"{leyenda}: no tiene fotos.")
+
+
+def _boton_de_telegram(boton: dict) -> None:
+    """"Cómo lo calculé": solo para el autorizado que hizo esa pregunta."""
+    from core import telegram
+    de = (boton.get("from") or {}).get("id")
+    chat_id = ((boton.get("message") or {}).get("chat") or {}).get("id")
+    dato = str(boton.get("data") or "")
+    try:
+        fila = pregunta_de_consultas(int(dato.split(":", 1)[1])) if dato.startswith("calc:") else None
+    except ValueError:
+        fila = None
+    if fila is None or autorizado_de_telegram(de) is None or fila.get("telegram_id") != de:
+        telegram.contestar_boton(boton.get("id"), NO_AUTORIZADO)
+        return
+    telegram.contestar_boton(boton.get("id"))
+    telegram.enviar_mensaje(chat_id, _como_lo_calcule_por_telegram(fila), html=True)
+
+
+def _atender_telegram(update: dict) -> None:
+    """Un mensaje o un botón de Telegram, después de contestarle 200."""
+    from core import telegram
+    try:
+        if update.get("callback_query"):
+            _boton_de_telegram(update["callback_query"])
+            return
+        mensaje = update.get("message") or {}
+        chat = mensaje.get("chat") or {}
+        de = mensaje.get("from") or {}
+        if chat.get("type") != "private" or not de.get("id"):
+            return                                                    # grupos y canales: nada
+        texto = mensaje.get("text")
+        autorizado = autorizado_de_telegram(de["id"])
+        if autorizado is None:
+            anotar_intento_de_telegram(de["id"], " ".join(x for x in (de.get("first_name"), de.get("last_name"))
+                                                          if x) or None,
+                                       de.get("username"), texto or "(sin texto)")
+            telegram.enviar_mensaje(chat["id"], NO_AUTORIZADO)
+            return
+        if not texto:
+            telegram.enviar_mensaje(chat["id"], SOLO_TEXTO)
+            return
+        orden = texto.strip().split("@")[0].lower()
+        if orden == "/nueva":
+            conversacion_de_telegram(de["id"], nueva=True)
+            telegram.enviar_mensaje(chat["id"], "Listo, empezamos de cero.")
+        elif orden == "/start":
+            telegram.enviar_mensaje(chat["id"], f"Hola, {autorizado['nombre']}. Preguntame por los datos del "
+                                                "sistema. Con /nueva empezamos de cero.")
+        else:
+            _contestar_por_telegram(chat["id"], autorizado, texto)
+    except telegram.TelegramNoAnda:
+        logger.exception("Consultas por Telegram: no se pudo contestar el update %s", update.get("update_id"))
+
+
+@app.post("/telegram/webhook")
+async def webhook_de_telegram(request: Request, tareas: BackgroundTasks):
+    """Lo que manda Telegram. Si el secreto del encabezado no es el de esta
+    app, no se lee. Se le contesta 200 enseguida (si no, reintenta) y el
+    mensaje se atiende después; uno repetido se ignora."""
+    from core import telegram
+    if not telegram.secreto_valido(request.headers.get(telegram.ENCABEZADO_DEL_SECRETO)):
+        return JSONResponse({"ok": False}, status_code=403)
+    try:
+        update = await request.json()
+    except ValueError:
+        return JSONResponse({"ok": True})
+    if not isinstance(update, dict) or not isinstance(update.get("update_id"), int):
+        return JSONResponse({"ok": True})
+    if es_update_nuevo_de_telegram(update["update_id"]):
+        tareas.add_task(_atender_telegram, update)
+    return JSONResponse({"ok": True})
+
+
+def _direccion_del_webhook(request: Request) -> str:
+    """La dirección pública de ESTA app, siempre https (Railway atiende atrás
+    de un proxy y el pedido llega como http)."""
+    host = os.environ.get("RAILWAY_PUBLIC_DOMAIN") or request.headers.get("host") or request.url.netloc
+    return f"https://{host}/telegram/webhook"
+
+
+@app.get("/gerencia/consultas/telegram")
+def ver_telegram_de_consultas(request: Request, aviso: str | None = None, error: str | None = None):
+    from core import telegram
+    puerta = _sin_clave_de_cheques(request)
+    if puerta is not None:
+        return puerta
+    estado = {"configurado": telegram.configurado(), "conectado": False, "bot": None, "falla": None}
+    if estado["configurado"]:
+        try:
+            webhook = telegram.estado_del_webhook()
+            estado["conectado"] = webhook.get("url") == _direccion_del_webhook(request)
+            estado["falla"] = webhook.get("last_error_message")
+            estado["bot"] = telegram.datos_del_bot().get("username")
+        except telegram.TelegramNoAnda as motivo:
+            estado["falla"] = str(motivo)
+    return templates.TemplateResponse(request, "consultas_telegram.html", {
+        "estado": estado, "autorizados": autorizados_de_telegram(), "intentos": intentos_de_telegram(),
+        "aviso": aviso, "error": error,
+    })
+
+
+def _volver_a_telegram(**que) -> RedirectResponse:
+    return RedirectResponse("/gerencia/consultas/telegram?" + urlencode(que), status_code=303)
+
+
+@app.post("/gerencia/consultas/telegram/conectar")
+def conectar_telegram_de_consultas(request: Request):
+    from core import telegram
+    puerta = _puerta_de_gerencia_para_escribir(request)
+    if puerta is not None:
+        return puerta
+    try:
+        telegram.conectar_webhook(_direccion_del_webhook(request))
+    except telegram.TelegramNoAnda as motivo:
+        return _volver_a_telegram(error=f"No se pudo conectar el bot: {motivo}")
+    return _volver_a_telegram(aviso="Bot conectado: ya recibe mensajes.")
+
+
+@app.post("/gerencia/consultas/telegram/autorizar")
+async def autorizar_en_telegram(request: Request):
+    """Autoriza un ID (o le cambia el nombre). Desde Gerencia y nunca desde
+    el propio Telegram (dueño, 17/10)."""
+    puerta = _puerta_de_gerencia_para_escribir(request)
+    if puerta is not None:
+        return puerta
+    formulario = await request.form()
+    nombre = " ".join(str(formulario.get("nombre") or "").split())[:80]
+    try:
+        telegram_id = int(str(formulario.get("telegram_id") or "").strip())
+    except ValueError:
+        return _volver_a_telegram(error="El ID de Telegram es un número (sale en Intentos).")
+    if telegram_id <= 0 or not nombre:
+        return _volver_a_telegram(error="Falta el ID de Telegram o el nombre.")
+    guardar_autorizado_de_telegram(telegram_id, nombre)
+    return _volver_a_telegram(aviso=f"{nombre} ya puede preguntar por Telegram.")
+
+
+@app.post("/gerencia/consultas/telegram/{telegram_id}/activo")
+async def activar_en_telegram(request: Request, telegram_id: int):
+    puerta = _puerta_de_gerencia_para_escribir(request)
+    if puerta is not None:
+        return puerta
+    activo = str((await request.form()).get("activo") or "") == "si"
+    cambiar_activo_de_telegram(telegram_id, activo)
+    return _volver_a_telegram(aviso="Vuelve a poder preguntar." if activo else "Ya no puede preguntar.")
 
 
 @app.post("/gerencia/consultas/probar")

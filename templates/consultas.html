@@ -19,6 +19,8 @@
   .consulta table { border-collapse: collapse; font-size: 0.78rem; }
   .consulta th, .consulta td { border: 1px solid #e5e7eb; padding: 0.15rem 0.35rem; text-align: left; white-space: nowrap; }
   .costo { font-size: 0.75rem; color: #666; margin-top: 0.3rem; }
+  .adjuntos { display: flex; flex-wrap: wrap; gap: 0.5rem; margin-top: 0.6rem; white-space: normal; }
+  .adjuntos a { display: inline-flex; align-items: center; min-height: 44px; padding: 0.5rem 0.9rem; box-sizing: border-box; border-radius: 8px; border: 1px solid #2563eb; color: #2563eb; font-weight: 600; text-decoration: none; overflow-wrap: anywhere; }
   .preguntar textarea { display: block; width: 100%; box-sizing: border-box; min-height: 88px; padding: 0.6rem; border: 1px solid #ccc; border-radius: 8px; font-size: 1rem; font-family: inherit; }
   .esperando { color: #666; font-style: italic; }
   .gasto { display: flex; flex-wrap: wrap; gap: 0.3rem 1rem; align-items: center; }
@@ -69,6 +71,7 @@
       <button type="button" class="secundario" data-nueva>Nueva conversación</button>
     </div>
     <p class="nota"><a href="/gerencia/consultas/registro">Ver las preguntas anteriores y su costo</a></p>
+    <p class="nota"><a href="/gerencia/consultas/telegram" data-telegram>Preguntar por Telegram: quién puede y el bot</a></p>
   </form>
 <script>
 (function () {
@@ -87,6 +90,28 @@
   }
 
   // "Cómo lo calculé": cada consulta con su SQL y sus primeras filas.
+  // El Excel y las fotos de la respuesta, a la vista (no adentro de "Cómo lo
+  // calculé"): se piden por el número de paso, que el servidor controla.
+  function adjuntos(id, consultas) {
+    var caja = elemento("div", "adjuntos");
+    consultas.forEach(function (c, n) {
+      if (c.error) { return; }
+      if (c.tipo === "excel") {
+        var excel = elemento("a", "", "Bajar Excel: " + (c.titulo || "consulta"));
+        excel.href = "/gerencia/consultas/pregunta/" + id + "/excel/" + n;
+        excel.setAttribute("data-excel", "");
+        caja.appendChild(excel);
+      } else if (c.tipo === "fotos" && c.cantidad) {
+        var fotos = elemento("a", "", "Ver " + (c.que === "comanda" ? "la comanda" : "el pesaje") +
+                             " (" + c.cantidad + " foto" + (c.cantidad === 1 ? "" : "s") + ")");
+        fotos.href = "/gerencia/consultas/pregunta/" + id + "/fotos/" + n;
+        fotos.setAttribute("data-fotos", "");
+        caja.appendChild(fotos);
+      }
+    });
+    return caja.children.length ? caja : null;
+  }
+
   function comoLoCalcule(consultas, documentos) {
     var detalle = elemento("details");
     detalle.appendChild(elemento("summary", "", "Cómo lo calculé"));
@@ -96,6 +121,12 @@
     consultas.forEach(function (c) {
       var caja = elemento("div", "consulta");
       caja.appendChild(elemento("strong", "", c.para_que || "Consulta"));
+      if (c.tipo === "fotos") {
+        caja.appendChild(elemento("p", c.error ? "rojo" : "nota", c.error ? "Error: " + c.error :
+                                  (c.descripcion || "") + " · " + (c.cantidad || 0) + " fotos"));
+        detalle.appendChild(caja);
+        return;
+      }
       caja.appendChild(elemento("pre", "", c.sql || ""));
       if (c.error) {
         caja.appendChild(elemento("p", "rojo", "Error: " + c.error));
@@ -139,6 +170,8 @@
     var caja = elemento("div", "mensaje " + (datos.error && !datos.respuesta ? "fallo" : "respuesta"),
                         datos.respuesta || datos.error || "Sin respuesta.");
     if (datos.respuesta && datos.error) { caja.appendChild(elemento("p", "rojo", datos.error)); }
+    var extras = datos.id && datos.consultas ? adjuntos(datos.id, datos.consultas) : null;
+    if (extras) { caja.appendChild(extras); }
     if (datos.consultas && datos.consultas.length) { caja.appendChild(comoLoCalcule(datos.consultas, datos.documentos)); }
     if (datos.costo_usd !== undefined) {
       caja.appendChild(elemento("p", "costo", "Esta respuesta: US$" + datos.costo_usd.toFixed(4)));

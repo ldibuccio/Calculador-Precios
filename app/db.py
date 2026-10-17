@@ -2539,7 +2539,7 @@ def obtener_compra(compra_id: int) -> dict | None:
                 """
                 SELECT c.id, c.fecha_operacion, c.articulo_id, a.nombre AS articulo_nombre,
                        c.proveedor_id, p.nombre AS proveedor_nombre, p.codigo_puesto AS proveedor_codigo_puesto, coalesce(c.codigo_llegada, p.codigo_puesto) AS codigo_llegada,
-                       c.guia_id, c.cantidad_cajones, c.contenido_por_cajon,
+                       c.guia_id, c.guia_punto, c.cantidad_cajones, c.contenido_por_cajon,
                        c.cantidad_kilos, c.cantidad_fraccion, c.importe, c.sena, c.tipo_retiro,
                        c.estado, c.estado_retiro
                 FROM compras c
@@ -23495,12 +23495,13 @@ def guardar_pregunta_de_consultas(p: dict) -> int:
         with conexion.cursor() as cursor:
             cursor.execute(
                 "INSERT INTO consultas_ia_preguntas (sector, quien, conversacion, pregunta, respuesta, consultas, "
-                "modelo, tokens_entrada, tokens_salida, tokens_cache, costo_usd, error) "
-                "VALUES (%s, %s, %s, %s, %s, %s::jsonb, %s, %s, %s, %s, %s, %s) RETURNING id",
+                "modelo, tokens_entrada, tokens_salida, tokens_cache, costo_usd, error, canal, telegram_id) "
+                "VALUES (%s, %s, %s, %s, %s, %s::jsonb, %s, %s, %s, %s, %s, %s, %s, %s) RETURNING id",
                 (p["sector"], p["quien"], p["conversacion"], p["pregunta"], p.get("respuesta") or None,
                  json.dumps(p.get("consultas") or [], ensure_ascii=False, default=str), p["modelo"],
                  p.get("tokens_entrada", 0), p.get("tokens_salida", 0), p.get("tokens_cache", 0),
-                 round(float(p.get("costo_usd") or 0), 4), p.get("error")))
+                 round(float(p.get("costo_usd") or 0), 4), p.get("error"), p.get("canal") or "web",
+                 p.get("telegram_id")))
             nuevo = cursor.fetchone()[0]
         conexion.commit()
         return nuevo
@@ -23531,8 +23532,9 @@ def pregunta_de_consultas(id_pregunta: int) -> dict | None:
     try:
         with conexion.cursor() as cursor:
             cursor.execute(
-                "SELECT id, pregunta, respuesta, consultas, modelo, costo_usd, error, conversacion, "
-                "EXTRACT(EPOCH FROM (now() - creado_en)) AS segundos FROM consultas_ia_preguntas WHERE id = %s",
+                "SELECT id, pregunta, respuesta, consultas, modelo, costo_usd, error, conversacion, canal, "
+                "telegram_id, EXTRACT(EPOCH FROM (now() - creado_en)) AS segundos "
+                "FROM consultas_ia_preguntas WHERE id = %s",
                 (id_pregunta,))
             fila = cursor.fetchone()
             return dict(zip([d[0] for d in cursor.description], fila)) if fila else None
@@ -23583,9 +23585,153 @@ def ultimas_preguntas_de_consultas(limite: int = 100) -> list[dict]:
         with conexion.cursor() as cursor:
             cursor.execute(
                 "SELECT id, sector, quien, conversacion, pregunta, respuesta, consultas, modelo, tokens_entrada, "
-                "tokens_salida, tokens_cache, costo_usd, error, creado_en FROM consultas_ia_preguntas "
+                "tokens_salida, tokens_cache, costo_usd, error, canal, creado_en FROM consultas_ia_preguntas "
                 "ORDER BY creado_en DESC, id DESC LIMIT %s", (limite,))
             columnas = [d[0] for d in cursor.description]
             return [dict(zip(columnas, f)) for f in cursor.fetchall()]
+    finally:
+        conexion.close()
+
+
+def historial_de_la_conversacion(conversacion: str, limite: int) -> list[dict]:
+    """Las últimas preguntas CONTESTADAS de una conversación, de la más vieja
+    a la más nueva: el contexto que se le manda a la IA (Telegram, dueño,
+    17/10; la web lo lleva la pantalla)."""
+    conexion = obtener_conexion()
+    try:
+        with conexion.cursor() as cursor:
+            cursor.execute(
+                "SELECT pregunta, respuesta FROM consultas_ia_preguntas "
+                "WHERE conversacion = %s AND respuesta IS NOT NULL ORDER BY id DESC LIMIT %s",
+                (conversacion, limite))
+            return [{"pregunta": p, "respuesta": r} for p, r in reversed(cursor.fetchall())]
+    finally:
+        conexion.close()
+
+
+# --- TELEGRAM (dueño, 17/10): Consultas por un bot ---------------------------------
+# Quién puede preguntar lo decide Gerencia (telegram_autorizados); cualquier
+# otro queda en telegram_intentos. La conversación de cada uno, hasta /nueva,
+# en telegram_conversaciones; los mensajes que Telegram ya mandó, en
+# telegram_updates (si reintenta, no se contesta dos veces).
+
+DIAS_QUE_SE_GUARDAN_LOS_UPDATES = 7
+
+
+def autorizado_de_telegram(telegram_id: int) -> dict | None:
+    """El autorizado ACTIVO con ese ID, o None."""
+    conexion = obtener_conexion()
+    try:
+        with conexion.cursor() as cursor:
+            cursor.execute("SELECT telegram_id, nombre FROM telegram_autorizados WHERE telegram_id = %s AND activo",
+                           (telegram_id,))
+            fila = cursor.fetchone()
+            return {"telegram_id": fila[0], "nombre": fila[1]} if fila else None
+    finally:
+        conexion.close()
+
+
+def autorizados_de_telegram() -> list[dict]:
+    conexion = obtener_conexion()
+    try:
+        with conexion.cursor() as cursor:
+            cursor.execute("SELECT telegram_id, nombre, activo, autorizado_el FROM telegram_autorizados "
+                           "ORDER BY activo DESC, nombre")
+            return [dict(zip(("telegram_id", "nombre", "activo", "autorizado_el"), f)) for f in cursor.fetchall()]
+    finally:
+        conexion.close()
+
+
+def guardar_autorizado_de_telegram(telegram_id: int, nombre: str) -> None:
+    """Autoriza (o le cambia el nombre y lo vuelve a activar)."""
+    conexion = obtener_conexion()
+    try:
+        with conexion.cursor() as cursor:
+            cursor.execute(
+                "INSERT INTO telegram_autorizados (telegram_id, nombre) VALUES (%s, %s) "
+                "ON CONFLICT (telegram_id) DO UPDATE SET nombre = EXCLUDED.nombre, activo = true, "
+                "actualizado_el = now()", (telegram_id, nombre))
+        conexion.commit()
+    finally:
+        conexion.close()
+
+
+def cambiar_activo_de_telegram(telegram_id: int, activo: bool) -> None:
+    conexion = obtener_conexion()
+    try:
+        with conexion.cursor() as cursor:
+            cursor.execute("UPDATE telegram_autorizados SET activo = %s, actualizado_el = now() "
+                           "WHERE telegram_id = %s", (activo, telegram_id))
+        conexion.commit()
+    finally:
+        conexion.close()
+
+
+def anotar_intento_de_telegram(telegram_id: int, nombre: str | None, usuario: str | None,
+                               texto: str | None) -> None:
+    conexion = obtener_conexion()
+    try:
+        with conexion.cursor() as cursor:
+            cursor.execute("INSERT INTO telegram_intentos (telegram_id, nombre, usuario, texto) "
+                           "VALUES (%s, %s, %s, %s)", (telegram_id, nombre, usuario, (texto or "")[:500] or None))
+        conexion.commit()
+    finally:
+        conexion.close()
+
+
+def intentos_de_telegram(limite: int = 50) -> list[dict]:
+    """El último intento de cada uno que NO está autorizado (activo), los más
+    nuevos primero."""
+    conexion = obtener_conexion()
+    try:
+        with conexion.cursor() as cursor:
+            cursor.execute(
+                "SELECT * FROM (SELECT DISTINCT ON (i.telegram_id) i.id, i.telegram_id, i.nombre, i.usuario, "
+                "i.texto, i.creado_en FROM telegram_intentos i "
+                "WHERE NOT EXISTS (SELECT 1 FROM telegram_autorizados a WHERE a.telegram_id = i.telegram_id "
+                "AND a.activo) ORDER BY i.telegram_id, i.creado_en DESC, i.id DESC) ultimos "
+                "ORDER BY creado_en DESC, id DESC LIMIT %s", (limite,))
+            return [dict(zip(("id", "telegram_id", "nombre", "usuario", "texto", "creado_en"), f))
+                    for f in cursor.fetchall()]
+    finally:
+        conexion.close()
+
+
+def conversacion_de_telegram(telegram_id: int, nueva: bool = False) -> str:
+    """La conversación en curso de ese usuario; `nueva` (o si no tenía) la
+    empieza de cero (/nueva)."""
+    import uuid
+    conexion = obtener_conexion()
+    try:
+        with conexion.cursor() as cursor:
+            if not nueva:
+                cursor.execute("SELECT conversacion FROM telegram_conversaciones WHERE telegram_id = %s",
+                               (telegram_id,))
+                fila = cursor.fetchone()
+                if fila:
+                    return str(fila[0])
+            conversacion = str(uuid.uuid4())
+            cursor.execute(
+                "INSERT INTO telegram_conversaciones (telegram_id, conversacion) VALUES (%s, %s) "
+                "ON CONFLICT (telegram_id) DO UPDATE SET conversacion = EXCLUDED.conversacion, empezada_el = now()",
+                (telegram_id, conversacion))
+        conexion.commit()
+        return conversacion
+    finally:
+        conexion.close()
+
+
+def es_update_nuevo_de_telegram(update_id: int) -> bool:
+    """True la primera vez que llega ese update; False si Telegram lo reintenta."""
+    conexion = obtener_conexion()
+    try:
+        with conexion.cursor() as cursor:
+            cursor.execute("INSERT INTO telegram_updates (update_id) VALUES (%s) ON CONFLICT DO NOTHING "
+                           "RETURNING update_id", (update_id,))
+            nuevo = cursor.fetchone() is not None
+            cursor.execute("DELETE FROM telegram_updates WHERE recibido_el < now() - make_interval(days => %s)",
+                           (DIAS_QUE_SE_GUARDAN_LOS_UPDATES,))
+        conexion.commit()
+        return nuevo
     finally:
         conexion.close()

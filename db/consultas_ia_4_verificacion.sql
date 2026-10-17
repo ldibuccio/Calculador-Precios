@@ -1,7 +1,8 @@
 -- CONSULTAS (dueño, 16/10), migración consultas_ia_1, verificación. En Frutamax Y en Palmala, aparte de los bloques.
 -- Con has_table_privilege (17/10): lo que el usuario PUEDE, no solo lo que se le dio.
 with afuera as (select unnest(array['claves_especiales', 'casillas_pedidos', 'backups_corridas', 'panel_fotos',
-       'corte_respaldo_fichas_reprocesos', 'consultas_ia_preguntas', 'consultas_ia_config']) as nombre),
+       'corte_respaldo_fichas_reprocesos', 'consultas_ia_preguntas', 'consultas_ia_config',
+       'telegram_autorizados', 'telegram_intentos', 'telegram_conversaciones', 'telegram_updates']) as nombre),
 publicas as (select c.relname from pg_class c join pg_namespace n on n.oid = c.relnamespace
              where n.nspname = 'public' and c.relkind in ('r', 'p', 'v'))
 select 'consultas_ia_1' as QUE_MIGRACION,

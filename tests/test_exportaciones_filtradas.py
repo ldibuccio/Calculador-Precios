@@ -70,6 +70,10 @@ EXPORTACIONES = {
     # La planilla modelo para cargar un listado (13/10): baja vacía, no
     # exporta nada de la pantalla. La cuida tests/test_cheques_listado.py.
     "/gerencia/cheques/planilla-modelo": "sin filtros en la pantalla: es la planilla vacía para cargar",
+    # El Excel de una respuesta de Consultas (17/10): no hay filtros de
+    # pantalla; sale la consulta que armó la IA para esa pregunta, con su
+    # título. Lo cuida tests/test_consultas_telegram.py.
+    "/gerencia/consultas/pregunta/{pregunta_id}/excel/{paso_id}": "sin filtros en la pantalla: es la consulta de la pregunta",
     # Cobranzas de segunda (02/10): lo cuida tests/test_cobranzas_segunda.py,
     # siguiendo el link que dibuja la pantalla. La de Administración es la
     # misma función con otra puerta.

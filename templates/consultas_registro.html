@@ -25,14 +25,18 @@
     {% for p in preguntas %}
     <div class="fila" data-pregunta="{{ p.id }}">
       <div class="fila-cabeza"><span class="fila-que">{{ p.pregunta }}</span><span class="importe">US${{ "%.4f"|format(p.costo_usd|float) }}</span></div>
-      <div class="fila-dato">{{ p.quien }} · {{ p.creado_en|fecha_hora if p.creado_en else "" }} · {{ p.consultas|length }} consulta{{ "" if p.consultas|length == 1 else "s" }}</div>
+      <div class="fila-dato">{{ p.quien }} · {{ "Telegram" if p.canal == "telegram" else "Web" }} · {{ p.creado_en|fecha_hora if p.creado_en else "" }} · {{ p.consultas|length }} paso{{ "" if p.consultas|length == 1 else "s" }}</div>
       {% if p.error %}<p class="rojo" data-error-de-la-pregunta>{{ p.error }}</p>{% endif %}
       <details>
         <summary>Respuesta y cómo lo calculó</summary>
         <p class="respuesta">{{ p.respuesta or ("(sin respuesta)" if p.error else "(todavía pensando)") }}</p>
         {% for c in p.consultas %}
-        <p class="nota"><strong>{{ c.para_que or "Consulta" }}</strong>{% if c.error %} · <span class="rojo">{{ c.error }}</span>{% else %} · {{ c.cantidad_filas }} fila{{ "" if c.cantidad_filas == 1 else "s" }}{% endif %}</p>
+        {% if c.tipo == "fotos" %}
+        <p class="nota"><strong>{{ c.para_que }}</strong>{% if c.error %} · <span class="rojo">{{ c.error }}</span>{% else %} · {{ c.descripcion }} · {{ c.cantidad }} foto{{ "" if c.cantidad == 1 else "s" }}{% if c.cantidad %} · <a href="/gerencia/consultas/pregunta/{{ p.id }}/fotos/{{ loop.index0 }}">Ver</a>{% endif %}{% endif %}</p>
+        {% else %}
+        <p class="nota"><strong>{{ c.para_que or "Consulta" }}</strong>{% if c.error %} · <span class="rojo">{{ c.error }}</span>{% else %} · {{ c.cantidad_filas }} fila{{ "" if c.cantidad_filas == 1 else "s" }}{% if c.tipo == "excel" %} · <a href="/gerencia/consultas/pregunta/{{ p.id }}/excel/{{ loop.index0 }}">Bajar Excel</a>{% endif %}{% endif %}</p>
         <pre>{{ c.sql }}</pre>
+        {% endif %}
         {% endfor %}
       </details>
     </div>
