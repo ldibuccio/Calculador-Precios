@@ -20314,6 +20314,21 @@ def listar_remitos(estado: str, desde: date | None = None, hasta: date | None = 
         conexion.close()
 
 
+def remitos_por_fecha_de_pedido(desde: date, hasta: date) -> list[dict]:
+    """Los remitos (sin sus renglones) cuyo PEDIDO es del rango, recibidos o
+    no. Un remito se puede emitir días después de su pedido: el panel cuenta
+    por la fecha del pedido, que es la de la venta."""
+    conexion = obtener_conexion()
+    try:
+        with conexion.cursor() as cursor:
+            cursor.execute(_SQL_REMITOS + " WHERE p.fecha_operacion BETWEEN %(desde)s AND %(hasta)s ORDER BY re.id",
+                           {"desde": desde, "hasta": hasta})
+            columnas = [d[0] for d in cursor.description]
+            return [dict(zip(columnas, f)) for f in cursor.fetchall()]
+    finally:
+        conexion.close()
+
+
 def remito_por_id(remito_id: int) -> dict | None:
     conexion = obtener_conexion()
     try:

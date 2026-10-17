@@ -38,23 +38,35 @@
   {% set COLOR_DEL_ESTADO = {"bajo": "rojo", "bien": "verde", "sin_umbral": "gris", "sin_conteo": "gris"} %}
   {% set TEXTO_DEL_MOTIVO = {"de_menos": "Armado de menos", "sin_armar": "No se armó", "cruz": "No se armó (cruz)"} %}
 
-  {% if cuadro == "rentabilidad" %}
+  {% if cuadro == "rentabilidad" %}{% set rg = dato.rangos %}
+  {% set NOMBRE_DEL_RANGO = {"anterior": MESES[rg.anterior[0].month], "actual": MESES[rg.actual[0].month] ~ " a hoy", "semana": "Últimos 7 días"} %}
   <div data-ajustar-contenedor class="tarjeta">
-    <p class="nota">Ganancia sobre el costo de la mercadería, como en Rentabilidad Real. Mes y 7 días son la
-      venta contra el costo de lo vendido a cada cliente, sin mermas ni segunda (ver sus cuadros). "Ahora"
-      es el precio vigente contra el costo de hoy, como en Márgenes por Artículo.</p>
+    <p class="nota">Armado: la venta es lo que se mandó (kilos o bultos enviados × precio), contra el costo real
+      de lo armado (la caja de la guía R ya trae la merma, la segunda y lo que falta; lo que no se procesa, el
+      precio de su compra) más el cartón. Recibido: lo que firmó el súper en el remito; lo que todavía no volvió
+      va con lo enviado y la celda dice "parcial". En Recibido, lo rechazado que volvió al stock no se cuenta dos
+      veces y lo que se perdió sigue siendo costo. A los dos se les resta lo cobrado por segunda, repartido por
+      los bultos de segunda de las guías R de cada cliente. Ganancia sobre el costo de la mercadería.</p>
+    {% for clave in ("anterior", "actual", "semana") %}{% if dato.segunda_sin_repartir[clave] %}
+    <p class="nota" data-sin-repartir="{{ clave }}">{{ NOMBRE_DEL_RANGO[clave] }}: {{ dato.segunda_sin_repartir[clave]|moneda }} cobrados por segunda sin guía R de un cliente para repartir.</p>
+    {% endif %}{% endfor %}
   </div>
-  {% for f in dato %}
+  {% for f in dato.filas %}
   <div data-ajustar-contenedor class="tarjeta" data-cliente="{{ f.cliente_id }}">
     <h2>{{ f.cliente }}</h2>
-    <p class="dato">Mes (del {{ f.rangos.mes[0].strftime("%d/%m") }} a hoy):
-      <strong class="{{ 'rojo' if f.mes is not none and f.mes < 0 }}">{{ f.mes|pct if f.mes is not none else "sin ventas" }}</strong></p>
-    <p class="dato">Últimos 7 días (del {{ f.rangos.semana[0].strftime("%d/%m") }} a hoy):
-      <strong class="{{ 'rojo' if f.semana is not none and f.semana < 0 }}">{{ f.semana|pct if f.semana is not none else "sin ventas" }}</strong></p>
-    <p class="dato">Ahora: <strong class="{{ 'rojo' if f.ahora.pct is not none and f.ahora.pct < 0 }}">{{ f.ahora.pct|pct if f.ahora.pct is not none else "—" }}</strong>
-      {% if f.ahora.sin_ventas %}<span class="marca">sin ventas</span> · promedio simple de {{ f.ahora.fichas }} {{ "ficha" if f.ahora.fichas == 1 else "fichas" }}
-      {% else %}· {{ f.ahora.fichas }} {{ "ficha pesada" if f.ahora.fichas == 1 else "fichas pesadas" }} por lo facturado en 30 días{% endif %}</p>
-    <a class="ir" href="/gerencia/rentabilidad-real?cliente_id={{ f.cliente_id }}&amp;fecha_desde={{ f.rangos.mes[0].isoformat() }}&amp;fecha_hasta={{ f.rangos.mes[1].isoformat() }}">Ver el mes en Rentabilidad Real</a>
+    {% for clave in ("anterior", "actual", "semana") %}{% set a = f.armado[clave] %}{% set r = f.recibido[clave] %}
+    <div class="fila" data-rango="{{ clave }}">
+      <p class="dato"><strong>{{ NOMBRE_DEL_RANGO[clave] }}</strong> (del {{ rg[clave][0].strftime("%d/%m") }} al {{ rg[clave][1].strftime("%d/%m") }})</p>
+      <p class="dato">Armado: <strong class="{{ 'rojo' if a.pct is not none and a.pct < 0 }}">{{ a.pct|pct if a.pct is not none else "sin ventas" }}</strong>
+        · venta {{ a.venta|moneda }}</p>
+      <p class="dato">Recibido: {% if r.sin_remitos %}<strong>—</strong> sin remitos de estos pedidos{% else %}<strong class="{{ 'rojo' if r.pct is not none and r.pct < 0 }}">{{ r.pct|pct if r.pct is not none else "sin ventas" }}</strong>
+        · venta {{ r.venta|moneda }}{% if r.sin_recibir %} · <span class="marca">parcial · {{ r.sin_recibir }} {{ "remito" if r.sin_recibir == 1 else "remitos" }} sin recibir</span>{% endif %}{% endif %}</p>
+      <p class="dato">Costo de lo armado {{ a.costo|moneda }} = mercadería {{ a.mercaderia|moneda }} + cartón {{ a.carton|moneda }} − segunda cobrada {{ a.segunda|moneda }}</p>
+      {% if not r.sin_remitos %}<p class="dato" data-costo-recibido>Costo de lo recibido {{ r.costo|moneda }}: lo que volvió al stock no cuenta{% if r.rechazos %}, lo perdido en rechazos sí ({{ r.rechazos|moneda }}){% endif %}{% if r.al_proveedor %}, menos {{ r.al_proveedor|moneda }} de lo devuelto al proveedor{% endif %}</p>{% endif %}
+      {% if a.afuera_bultos %}<p class="nota">{{ a.afuera_bultos|numero }} bultos afuera de la cuenta (sin costo o sin precio: ver Rentabilidad Real).</p>{% endif %}
+    </div>
+    {% endfor %}
+    <a class="ir" href="/gerencia/rentabilidad-real?cliente_id={{ f.cliente_id }}&amp;fecha_desde={{ rg.actual[0].isoformat() }}&amp;fecha_hasta={{ rg.actual[1].isoformat() }}">Ver el mes en Rentabilidad Real</a>
   </div>
   {% else %}
   <div data-ajustar-contenedor class="tarjeta"><p class="vacio">Ningún cliente tiene fichas.</p></div>

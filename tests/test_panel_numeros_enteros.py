@@ -49,10 +49,16 @@ def _segunda(cobrado):
 def _datos(cuadro, hoy, memo):
     """Lo que cada cuadro le da a la plantilla, con números de diez cifras."""
     if cuadro == "rentabilidad":
-        return [{"cliente_id": c, "cliente": f"EJEMPLO Cliente con nombre largo {c}",
-                 "rangos": {"mes": (MESES["actual"]["desde"], HOY), "semana": (HOY, HOY)},
-                 "mes": -123456.7, "semana": 98765.4,
-                 "ahora": {"pct": -55555.5, "sin_ventas": c == 2, "fichas": 3}} for c in (1, 2)]
+        rangos = {"anterior": (MESES["anterior"]["desde"], MESES["anterior"]["hasta"]),
+                  "actual": (MESES["actual"]["desde"], HOY), "semana": (HOY, HOY)}
+        celda = {"pct": -123456.7, "venta": DIEZ_CIFRAS, "mercaderia": DIEZ_CIFRAS, "carton": DIEZ_CIFRAS,
+                 "segunda": DIEZ_CIFRAS, "costo": DIEZ_CIFRAS, "ganancia": -DIEZ_CIFRAS, "afuera_bultos": 0.0}
+        # Los remitos sin recibir son un CONTEO, no plata: 999 es más de lo que sale en un mes.
+        recibido = dict(celda, pct=98765.4, sin_remitos=False, sin_recibir=999)
+        return {"filas": [{"cliente_id": c, "cliente": f"EJEMPLO Cliente con nombre largo {c}", "rangos": rangos,
+                           "armado": dict.fromkeys(rangos, celda), "recibido": dict.fromkeys(rangos, recibido)}
+                          for c in (1, 2)],
+                "rangos": rangos, "segunda_sin_repartir": dict.fromkeys(rangos, DIEZ_CIFRAS)}
     if cuadro == "cajas":
         return estado_de_las_cajas([{"id": i, "nombre": f"EJEMPLO Caja {i}", "stock": 0,
                                      "umbral_reposicion": 10} for i in range(12)])

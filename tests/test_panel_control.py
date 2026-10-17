@@ -18,7 +18,6 @@ from core.panel_control import (
     resumen_de_mermas,
     resumen_de_rechazos,
     resumen_de_segunda,
-    utilidad_de_ahora,
 )
 
 DIA = date(2026, 9, 10)
@@ -76,24 +75,6 @@ def test_un_cliente_SIN_VENTAS_no_aparece_con_las_mermas_de_otro():
     """El RIVAL: Pedidos Ya, sin ventas, no puede salir con la merma del tomate de Día."""
     resultado = _real(3, True)
     assert resultado["grupos"] == [] and resultado["totales"]["costo_mermas"] == 0
-
-
-def _ficha(utilidad, facturado):
-    return {"utilidad_aproximada": utilidad, "facturado": facturado}
-
-
-def test_AHORA_con_ventas_es_el_PROMEDIO_PONDERADO_de_Margenes():
-    """Σ(utilidad × facturado) / Σ(facturado), solo las que facturaron y tienen utilidad."""
-    resultado = utilidad_de_ahora([_ficha(0.20, 3000), _ficha(0.40, 1000),
-                                   _ficha(0.90, None),          # no facturó: no pesa
-                                   _ficha(None, 5000)])         # sin utilidad: no pesa
-    assert resultado == {"pct": pytest.approx(25.0), "sin_ventas": False, "fichas": 2}
-
-
-def test_AHORA_sin_ventas_es_el_PROMEDIO_SIMPLE_marcado_sin_ventas():
-    assert utilidad_de_ahora([_ficha(0.20, None), _ficha(0.40, 0), _ficha(None, None)]) == {
-        "pct": pytest.approx(30.0), "sin_ventas": True, "fichas": 2}
-    assert utilidad_de_ahora([_ficha(None, None)]) == {"pct": None, "sin_ventas": True, "fichas": 0}
 
 
 def test_CAJAS_rojo_debajo_del_umbral_y_sin_umbral_no_es_rojo():

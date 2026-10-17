@@ -140,7 +140,7 @@ def test_la_perdida_va_SOLO_sobre_la_mercaderia(base):
     sql(PERDIDAS)
     morron = _listado(2, DESPUES)[3]
     assert morron["precio_sugerido"] == pytest.approx(5000 / 0.82 * 1.2 + 12)
-    # La utilidad del precio vigente también mira el costo útil (el "ahora" del panel).
+    # La utilidad del precio vigente también mira el costo útil (la de Márgenes).
     sql("insert into precios_venta_historial (articulo_id, cliente_id, ficha_id, precio, vigente_desde) "
         "values (1, 2, 3, 7329.07, '2026-10-01')")
     assert _listado(2, DESPUES)[3]["utilidad_aproximada"] == pytest.approx(0.20, abs=1e-5)

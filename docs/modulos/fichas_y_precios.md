@@ -253,8 +253,8 @@ lo que se compra?", en Editar ficha), 0 por defecto:
   mercadería.
 - Lo usan el **precio sugerido** y la **utilidad** de
   `_listado_para_negociar_precios` (Márgenes por Artículo, Cargar precios
-  manuales con su Simulación —ahora por ficha—, Precios Cotizaciones y el
-  "ahora" del panel) y el sugerido del cajón tipeado de Cotizaciones
+  manuales con su Simulación —ahora por ficha— y Precios Cotizaciones) y el
+  sugerido del cajón tipeado de Cotizaciones
   (`precio_de_la_cotizacion`). `costo_actual` sigue siendo el del kilo
   COMPRADO: lo leen las rentabilidades y el costo congelado del reingreso,
   que miden lo que pasó. **Desde el 13/10 también** el Objetivo de compra

@@ -13,22 +13,41 @@ cuadro para que el humo las abra todas). Rutas en `app/main.py`
 **Ninguna cuenta es nueva.** Cada cuadro llama a la que ya usa su pantalla, y
 el panel solo la resume. En orden:
 
-1. **Rentabilidad por cliente** (todo cliente con ficha), un renglón por
-   cliente con tres números:
-   - **Mes** (del 1 a hoy) y **7 días** (los de Rentabilidad Real por
-     defecto): la Rentabilidad Real (`_datos_rentabilidad_real`) con
-     `solo_lo_vendido=True`: venta contra el costo de lo vendido a ESE
-     cliente, **sin mermas ni pases a segunda** (mercadería y caja) **ni lo
-     que pagó el puesto** — tienen sus cuadros. Lo del cliente sigue: sus
-     rechazos y el flete. La pantalla de Rentabilidad Real no cambia.
-   - **Ahora**: Márgenes por Artículo (`calcular_listado_para_negociar_precios`)
-     con el MISMO promedio ponderado por lo facturado en 30 días que
-     `recalcularPromedioPonderado` de `_cuadro_negociacion.html` (la copia en
-     Python es `utilidad_de_ahora`; si se toca una, se toca la otra). Sin
-     ventas en 30 días, el promedio simple de sus fichas, marcado "sin ventas".
-   - El % es ganancia sobre el costo de la mercadería, igual que en
-     Rentabilidad Real; el cuadro lo dice en chico, con "sin mermas ni
-     segunda (ver sus cuadros)".
+1. **Rentabilidad por cliente** (todo cliente con ficha; rehecho el 16/10,
+   dueño). Tres columnas: **mes anterior** cerrado, **mes en curso** a hoy y
+   **últimos 7 días**. Por cliente, DOS renglones (`_panel_rentabilidad`):
+   - **Armado**: la venta es lo que se mandó (kilos o bultos enviados ×
+     precio de lista anclado, como en Rentabilidad Real).
+   - **Recibido**: la venta es lo que firmó el súper en el remito; lo que
+     todavía no volvió va con lo enviado y la celda dice "parcial · N sin
+     recibir" (remitos del cliente sin recibir con pedido en el rango). Los
+     remitos se cuentan por la FECHA DEL PEDIDO (`remitos_por_fecha_de_pedido`):
+     los de septiembre se cargaron en octubre y cuentan (dueño, 17/10). Solo
+     un rango sin NINGÚN remito del cliente dice "—" con "sin remitos".
+   - **El costo** es el real de lo armado —la caja de la guía R a su
+     `costo_por_bulto_primera` (costo_total / primera: ya trae la merma, la
+     segunda y lo que no se explica) y lo que no se procesa al precio de su
+     compra (FIFO de la Rentabilidad Real)— más el cartón (`costo_envase`),
+     MENOS lo cobrado por segunda que le toca al cliente. En Recibido entran
+     las devoluciones como en la Rentabilidad Real (dueño, 17/10): lo que
+     vuelve al stock se acredita con su caja y se cuenta una sola vez (cuando
+     sale de nuevo); lo que se pierde (a segunda o a reproceso) sigue como
+     costo, y lo devuelto al proveedor resta su diferencia. Armado va sin
+     devoluciones: es lo que se mandó.
+   - **La segunda cobrada** (`segunda_cobrada_por_cliente`): lo que pagó el
+     puesto por los lotes del rango (`lotes_de_segunda`), por artículo,
+     repartido en proporción a los bultos de segunda de las guías R vigentes
+     del rango de cada cliente (el de la ficha de la guía, o el de la guía).
+     Lo que no tiene guía R de un cliente con quién repartirse queda "sin
+     repartir" y el detalle lo dice.
+   - Afuera: el flete y las mermas y pases del depósito (tienen sus cuadros). Es el motor de la
+     Rentabilidad Real (`_armado_y_recibido`) corrido dos veces con los
+     mismos datos (`_insumos_rentabilidad_real`); la pantalla de la Real no
+     cambia.
+   - El % es ganancia sobre el costo de la MERCADERÍA, como en Rentabilidad
+     Real. Se sacó "Ahora" (Márgenes contra el costo de hoy, sin pérdidas:
+     dueño, 16/10, "no sirve"). Una foto de antes del cambio dice "Aparece en
+     la próxima actualización". Tests: `tests/test_panel_rentabilidad.py`.
 2. **Cajas**: `stock_de_envases` contra `envases.umbral_reposicion` con
    `hay_que_reponer` (la regla de la alerta). Sin umbral: "sin umbral", no
    rojo. Sin conteo inicial: "sin conteo". El número: cuántos tipos están bajos.
