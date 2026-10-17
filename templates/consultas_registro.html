@@ -29,7 +29,7 @@
       {% if p.error %}<p class="rojo" data-error-de-la-pregunta>{{ p.error }}</p>{% endif %}
       <details>
         <summary>Respuesta y cómo lo calculó</summary>
-        <p class="respuesta">{{ p.respuesta or "(sin respuesta)" }}</p>
+        <p class="respuesta">{{ p.respuesta or ("(sin respuesta)" if p.error else "(todavía pensando)") }}</p>
         {% for c in p.consultas %}
         <p class="nota"><strong>{{ c.para_que or "Consulta" }}</strong>{% if c.error %} · <span class="rojo">{{ c.error }}</span>{% else %} · {{ c.cantidad_filas }} fila{{ "" if c.cantidad_filas == 1 else "s" }}{% endif %}</p>
         <pre>{{ c.sql }}</pre>

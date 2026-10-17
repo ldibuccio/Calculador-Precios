@@ -26,7 +26,7 @@ from uuid import uuid4
 
 import httpx
 from starlette.datastructures import UploadFile as StarletteUploadFile
-from fastapi import FastAPI, File, Form, HTTPException, Query, Request, UploadFile
+from fastapi import BackgroundTasks, FastAPI, File, Form, HTTPException, Query, Request, UploadFile
 from fastapi.responses import JSONResponse, RedirectResponse, Response
 from fastapi.templating import Jinja2Templates
 from PIL import Image, ImageOps
@@ -21036,8 +21036,12 @@ def ver_detalle_del_panel(request: Request):
 # que toca la base, en app/db.py (la IA lee con el usuario `consultas_ia`).
 from core.consultas_ia import (  # noqa: E402
     FILAS_MAXIMAS as FILAS_MAXIMAS_DE_CONSULTAS,
+    PENSANDO_COMO_MAXIMO,
+    SEGUNDOS_POR_LLAMADA_A_LA_IA,
     ConsultaNoPermitida,
+    CortarLaPregunta,
     consulta_de_lectura,
+    falla_de_conexion_en_criollo,
     esquema_resumido,
     indice_de_documentos,
     instrucciones as instrucciones_de_consultas,
@@ -21049,11 +21053,14 @@ from core.consultas_ia import (  # noqa: E402
 )
 from app.db import (  # noqa: E402
     CONSULTAS_IA_DATABASE_URL_ENV_VAR,
+    ConsultaIaNoConecta,
     ConsultaIaNoSePuede,
     cambiar_tope_de_consultas,
     correr_consulta_de_solo_lectura,
     gasto_de_consultas_desde,
     guardar_pregunta_de_consultas,
+    pregunta_de_consultas,
+    terminar_pregunta_de_consultas,
     tope_de_consultas,
     ultimas_preguntas_de_consultas,
 )
@@ -21083,17 +21090,47 @@ def ver_consultas(request: Request, aviso: str | None = None, error: str | None 
 
 def _correr_sql_de_la_ia(sql: str) -> dict:
     """Lo que la IA pide correr, controlado y con valores que entran en JSON.
-    ValueError con un motivo que la IA entiende."""
+    ValueError con un motivo que la IA entiende; CortarLaPregunta si la base
+    no conecta (eso la IA no lo arregla probando otra consulta)."""
     try:
         texto = consulta_de_lectura(sql)
     except ConsultaNoPermitida as motivo:
         raise ValueError(str(motivo)) from motivo
     try:
         datos = correr_consulta_de_solo_lectura(texto, FILAS_MAXIMAS_DE_CONSULTAS)
+    except ConsultaIaNoConecta as motivo:
+        logger.warning("Consultas: no conecta el usuario de consultas: %s", motivo)
+        raise CortarLaPregunta(f"{falla_de_conexion_en_criollo(str(motivo))} Detalle: {motivo}") from motivo
     except ConsultaIaNoSePuede as motivo:
         raise ValueError(f"la base no la corrió: {motivo}") from motivo
     datos["filas"] = [[valor_para_mostrar(v) for v in fila] for fila in datos["filas"]]
     return datos
+
+
+def _falla_de_la_api_en_criollo(error) -> str | None:
+    """Por qué no contestó la IA, para el que lo tiene que arreglar. None si
+    el error no es de la API de Anthropic."""
+    import anthropic
+    if isinstance(error, anthropic.APITimeoutError):
+        return "La IA tardó demasiado en contestar. Probá de nuevo."
+    if isinstance(error, anthropic.APIConnectionError):
+        return "El servidor no llega a la IA (sin conexión con Anthropic). Probá de nuevo en un rato."
+    if isinstance(error, anthropic.AuthenticationError):
+        return "La clave de la IA no sirve (revisá ANTHROPIC_API_KEY en Railway)."
+    if isinstance(error, anthropic.PermissionDeniedError):
+        return "La clave de la IA no tiene permiso para ese modelo (revisá ANTHROPIC_API_KEY)."
+    if isinstance(error, anthropic.NotFoundError):
+        return f"No existe el modelo {modelo_de_consultas()} (revisá CONSULTAS_IA_MODELO en Railway)."
+    if isinstance(error, anthropic.RateLimitError):
+        return "La cuenta de la IA llegó a su límite por minuto. Probá en un rato."
+    if isinstance(error, anthropic.APIStatusError):
+        mensaje = str(getattr(error, "message", "") or error)
+        if "credit balance" in mensaje.lower():
+            return "La cuenta de Anthropic se quedó sin saldo: hay que cargarle crédito."
+        if error.status_code in (500, 502, 503, 529):
+            return "La IA está saturada o caída. Probá en unos minutos."
+        return f"La IA devolvió un error ({error.status_code}): {mensaje}"
+    return None
 
 
 def _consulta_para_el_registro(consulta: dict) -> dict:
@@ -21103,17 +21140,68 @@ def _consulta_para_el_registro(consulta: dict) -> dict:
             "ms": consulta.get("ms")}
 
 
-@app.post("/gerencia/consultas/preguntar")
-async def preguntar_en_consultas(request: Request):
-    """Una pregunta del chat (JSON: pregunta, historial, conversacion). Devuelve
-    la respuesta con "Cómo lo calculé" (las consultas y sus números) y lo
-    gastado en el mes. Al llegar al tope del mes no llama a la IA."""
-    import uuid
+# Los documentos que leyó cada pregunta, para "Cómo lo calculé" (no van al
+# registro). Se sacan al mostrarlos.
+_DOCUMENTOS_DE_LA_PREGUNTA: dict[int, list[str]] = {}
 
+
+def _pensar_la_pregunta(id_pregunta: int, pregunta: str, historial: list[dict], hoy) -> None:
+    """Corre DESPUÉS de contestar el pedido (la pantalla pregunta cada pocos
+    segundos si terminó). Lo que pase, termina en la fila de la pregunta: la
+    respuesta o el motivo de la falla."""
     import anthropic
-    from starlette.concurrency import run_in_threadpool
 
     from core.lector_comandas import _obtener_api_key
+    nombre_del_modelo = modelo_de_consultas()
+    try:
+        cliente = anthropic.Anthropic(api_key=_obtener_api_key(), timeout=SEGUNDOS_POR_LLAMADA_A_LA_IA,
+                                      max_retries=1)
+        sistema = instrucciones_de_consultas(NOMBRE_EMPRESA, esquema_resumido(
+            open(os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "db",
+                              "esquema_completo.sql"), encoding="utf-8").read()), indice_de_documentos(), hoy)
+        respuesta = preguntar_a_la_ia(
+            cliente, pregunta, historial, sistema=sistema, correr_sql=_correr_sql_de_la_ia, leer_doc=leer_documento,
+            nombre_del_modelo=nombre_del_modelo, explicar_falla_de_la_api=_falla_de_la_api_en_criollo)
+    except Exception as error:  # noqa: BLE001 (toda pregunta queda anotada, también la que rompe)
+        logger.exception("Consultas: la pregunta %s se rompió", id_pregunta)
+        terminar_pregunta_de_consultas(id_pregunta, {
+            "modelo": nombre_del_modelo,
+            "error": f"Falló el sistema ({type(error).__name__}: {error}). Avisale a quien lo programa."})
+        return
+    _DOCUMENTOS_DE_LA_PREGUNTA[id_pregunta] = respuesta.documentos
+    terminar_pregunta_de_consultas(id_pregunta, {
+        "respuesta": respuesta.texto, "consultas": [_consulta_para_el_registro(c) for c in respuesta.consultas],
+        "modelo": respuesta.modelo, "tokens_entrada": respuesta.tokens_entrada,
+        "tokens_salida": respuesta.tokens_salida, "tokens_cache": respuesta.tokens_cache,
+        "costo_usd": respuesta.costo_usd, "error": respuesta.error})
+
+
+def _estado_de_la_pregunta(fila: dict, hoy) -> dict:
+    """Lo que la pantalla muestra de una pregunta: PENSANDO mientras no hay
+    respuesta ni error. Una que pasó PENSANDO_COMO_MAXIMO se da por cortada
+    (el servidor se reinició mientras pensaba) y se anota así."""
+    if fila["respuesta"] is None and fila["error"] is None:
+        if float(fila["segundos"] or 0) <= PENSANDO_COMO_MAXIMO:
+            return {"id": fila["id"], "estado": "pensando"}
+        fila = {**fila, "error": "La respuesta tardó demasiado y se cortó. Probá de nuevo."}
+        terminar_pregunta_de_consultas(fila["id"], {"modelo": fila["modelo"], "error": fila["error"],
+                                                    "consultas": fila["consultas"]})
+    return {"id": fila["id"], "estado": "lista", "respuesta": fila["respuesta"], "error": fila["error"],
+            "consultas": fila["consultas"] or [], "documentos": _DOCUMENTOS_DE_LA_PREGUNTA.pop(fila["id"], []),
+            "costo_usd": round(float(fila["costo_usd"] or 0), 4), "conversacion": str(fila["conversacion"]),
+            "gasto": _gasto_y_tope_de_consultas(hoy)}
+
+
+@app.post("/gerencia/consultas/preguntar")
+async def preguntar_en_consultas(request: Request, tareas: BackgroundTasks):
+    """Una pregunta del chat (JSON: pregunta, historial, conversacion). Se
+    anota al llegar y se piensa después de contestar: la respuesta trae el id
+    y la pantalla pregunta por él (/gerencia/consultas/pregunta/<id>). Lo que
+    falla antes de llamar a la IA (el tope, una variable que falta) vuelve ya
+    terminado, también anotado."""
+    import uuid
+
+    from core.lector_comandas import ANTHROPIC_API_KEY_ENV_VAR
     if _sin_clave_de_cheques(request) is not None:
         return JSONResponse({"error": "Se cerró la clave de Gerencia: volvé a entrar."}, status_code=401)
     try:
@@ -21133,38 +21221,66 @@ async def preguntar_en_consultas(request: Request):
     hoy = _hoy_argentina()
     gasto = _gasto_y_tope_de_consultas(hoy)
     if gasto["lleno"]:
-        return JSONResponse({"error": f"Se llegó al tope del mes (US${gasto['tope']:.2f}). Consultas vuelve el 1° "
-                                      "del mes que viene, o subí el tope.", "gasto": gasto, "tope_lleno": True})
-    if not os.environ.get(CONSULTAS_IA_DATABASE_URL_ENV_VAR):
-        return JSONResponse({"error": "Falta la conexión del usuario de consultas en Railway "
-                                      f"({CONSULTAS_IA_DATABASE_URL_ENV_VAR})."}, status_code=503)
-    try:
-        cliente = anthropic.Anthropic(api_key=_obtener_api_key())
-    except RuntimeError as motivo:
-        return JSONResponse({"error": str(motivo)}, status_code=503)
-    sistema = instrucciones_de_consultas(NOMBRE_EMPRESA, esquema_resumido(
-        open(os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "db", "esquema_completo.sql"),
-             encoding="utf-8").read()), indice_de_documentos(), hoy)
-    nombre_del_modelo = modelo_de_consultas()
-    try:
-        respuesta = await run_in_threadpool(
-            preguntar_a_la_ia, cliente, pregunta, historial, sistema=sistema, correr_sql=_correr_sql_de_la_ia,
-            leer_doc=leer_documento, nombre_del_modelo=nombre_del_modelo)
-    except (anthropic.APIConnectionError, anthropic.APIStatusError) as error:
-        logger.exception("Consultas: la API de Claude falló")
-        guardar_pregunta_de_consultas({"sector": "gerencia", "quien": "Gerencia", "conversacion": conversacion,
-                                       "pregunta": pregunta, "modelo": nombre_del_modelo,
-                                       "error": f"La API de Claude falló: {error}"})
-        return JSONResponse({"error": "No se pudo hablar con la IA. Probá de nuevo en un rato."}, status_code=502)
-    consultas = [_consulta_para_el_registro(c) for c in respuesta.consultas]
-    guardar_pregunta_de_consultas({
+        no_va = (f"Se llegó al tope del mes (US${gasto['tope']:.2f}). Consultas vuelve el 1° del mes que viene, "
+                 "o subí el tope.")
+    elif not os.environ.get(CONSULTAS_IA_DATABASE_URL_ENV_VAR):
+        no_va = f"Falta la conexión del usuario de consultas: poné {CONSULTAS_IA_DATABASE_URL_ENV_VAR} en Railway."
+    elif not os.environ.get(ANTHROPIC_API_KEY_ENV_VAR):
+        no_va = f"Falta la clave de la IA: poné {ANTHROPIC_API_KEY_ENV_VAR} en Railway."
+    else:
+        no_va = None
+    id_pregunta = guardar_pregunta_de_consultas({
         "sector": "gerencia", "quien": "Gerencia", "conversacion": conversacion, "pregunta": pregunta,
-        "respuesta": respuesta.texto, "consultas": consultas, "modelo": respuesta.modelo,
-        "tokens_entrada": respuesta.tokens_entrada, "tokens_salida": respuesta.tokens_salida,
-        "tokens_cache": respuesta.tokens_cache, "costo_usd": respuesta.costo_usd, "error": respuesta.error})
-    return JSONResponse({"respuesta": respuesta.texto, "error": respuesta.error, "consultas": consultas,
-                         "documentos": respuesta.documentos, "costo_usd": round(respuesta.costo_usd, 4),
-                         "conversacion": conversacion, "gasto": _gasto_y_tope_de_consultas(hoy)})
+        "modelo": modelo_de_consultas(), "error": no_va})
+    if no_va is not None:
+        estado = _estado_de_la_pregunta(pregunta_de_consultas(id_pregunta), hoy)
+        return JSONResponse({**estado, "tope_lleno": gasto["lleno"]})
+    tareas.add_task(_pensar_la_pregunta, id_pregunta, pregunta, historial, hoy)
+    return JSONResponse({"id": id_pregunta, "estado": "pensando", "conversacion": conversacion}, status_code=202)
+
+
+@app.get("/gerencia/consultas/pregunta/{pregunta_id}")
+def estado_de_una_pregunta(request: Request, pregunta_id: int):
+    if _sin_clave_de_cheques(request) is not None:
+        return JSONResponse({"error": "Se cerró la clave de Gerencia: volvé a entrar."}, status_code=401)
+    fila = pregunta_de_consultas(pregunta_id)
+    if fila is None:
+        return JSONResponse({"error": "No existe esa pregunta."}, status_code=404)
+    return JSONResponse(_estado_de_la_pregunta(fila, _hoy_argentina()))
+
+
+@app.post("/gerencia/consultas/probar")
+def probar_la_conexion_de_consultas(request: Request):
+    """"Probar conexión": la base (con el usuario de consultas) y la IA, cada
+    una con su resultado."""
+    import anthropic
+
+    from core.lector_comandas import ANTHROPIC_API_KEY_ENV_VAR
+    if _sin_clave_de_cheques(request) is not None:
+        return JSONResponse({"error": "Se cerró la clave de Gerencia: volvé a entrar."}, status_code=401)
+    try:
+        datos = correr_consulta_de_solo_lectura("select current_user as usuario", 1)
+    except ConsultaIaNoConecta as motivo:
+        base = {"ok": False, "texto": f"{falla_de_conexion_en_criollo(str(motivo))} Detalle: {motivo}"}
+    except ConsultaIaNoSePuede as motivo:
+        base = {"ok": False, "texto": f"Conecta, pero no pudo leer: {motivo}"}
+    else:
+        usuario = datos["filas"][0][0]
+        base = ({"ok": True, "texto": "Conecta con la base como consultas_ia (solo lectura)."}
+                if usuario == "consultas_ia" else
+                {"ok": False, "texto": f"Conecta, pero como {usuario}: tiene que ser consultas_ia "
+                                       f"(revisá el usuario en {CONSULTAS_IA_DATABASE_URL_ENV_VAR})."})
+    clave = os.environ.get(ANTHROPIC_API_KEY_ENV_VAR)
+    if not clave:
+        ia = {"ok": False, "texto": f"Falta la clave de la IA: poné {ANTHROPIC_API_KEY_ENV_VAR} en Railway."}
+    else:
+        try:
+            anthropic.Anthropic(api_key=clave, timeout=20, max_retries=0).models.retrieve(modelo_de_consultas())
+        except anthropic.APIError as error:
+            ia = {"ok": False, "texto": _falla_de_la_api_en_criollo(error) or str(error)}
+        else:
+            ia = {"ok": True, "texto": f"La IA contesta (modelo {modelo_de_consultas()})."}
+    return JSONResponse({"base": base, "ia": ia})
 
 
 @app.post("/gerencia/consultas/tope")

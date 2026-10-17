@@ -309,6 +309,11 @@ def siembra():
     -- El BANCO primero: la cuenta 1 del humo es la que abre la conciliación.
     insert into cuentas (nombre, tipo, numero) values ('EJEMPLO Banco', 'banco', 'CC$ 000-111-222/3'),
                                                       ('EJEMPLO Caja', 'caja', null);
+    -- Una pregunta de Consultas ya contestada: la pantalla pregunta por su
+    -- estado en /gerencia/consultas/pregunta/{id} (17/10).
+    insert into consultas_ia_preguntas (sector, quien, conversacion, pregunta, respuesta, modelo, costo_usd)
+      values ('gerencia', 'Gerencia', '00000000-0000-0000-0000-000000000001', 'EJEMPLO ¿cuántos?', 'EJEMPLO 2',
+              'claude-sonnet-5-5', 0.01);
     insert into cuentas_conceptos (cuenta_id, nombre, tipo)
       select id, 'EJEMPLO Cobro', 'ingreso' from cuentas where nombre = 'EJEMPLO Caja';
     insert into cuentas_etiquetas (nombre) values ('EJEMPLO Persona');

@@ -21,6 +21,7 @@ corren el SQL y leen los documentos.
 import json
 import os
 import re
+import time
 from dataclasses import dataclass, field
 from datetime import date, datetime
 from decimal import Decimal
@@ -43,6 +44,12 @@ FILAS_MAXIMAS = 200
 VUELTAS_MAXIMAS = 8                    # consultas y lecturas por pregunta
 CARACTERES_MAXIMOS_DE_UN_DOCUMENTO = 60000
 MAX_TOKENS_RESPUESTA = 16000
+# Lo más que se piensa una pregunta: pasado esto no se pide otra vuelta. La
+# pantalla pregunta cada pocos segundos si terminó (no espera con el pedido
+# abierto), y da por cortada una que pasa PENSANDO_COMO_MAXIMO.
+SEGUNDOS_MAXIMOS_POR_PREGUNTA = 240
+SEGUNDOS_POR_LLAMADA_A_LA_IA = 90
+PENSANDO_COMO_MAXIMO = 360
 
 # Las tablas que el usuario de la base NO lee (db/consultas_ia_3_permisos.sql):
 # tampoco se le cuentan a la IA.
@@ -56,6 +63,33 @@ SECTORES = ("gerencia",)
 
 class ConsultaNoPermitida(ValueError):
     """Un SQL que no es una sola lectura: no se manda a la base."""
+
+
+class CortarLaPregunta(RuntimeError):
+    """Algo que la IA no puede arreglar probando de nuevo (la base no conecta,
+    la API falló): la pregunta termina con este motivo, en criollo, y se cobra
+    lo que ya se usó."""
+
+
+def falla_de_conexion_en_criollo(mensaje: str) -> str:
+    """Por qué no conecta el usuario de consultas, dicho para el que tiene
+    que arreglar la variable de Railway. El mensaje de la base va aparte."""
+    texto = (mensaje or "").lower()
+    if "password authentication failed" in texto:
+        motivo = "la contraseña no es la de consultas_ia"
+    elif "tenant or user not found" in texto or ("role" in texto and "does not exist" in texto):
+        motivo = "el usuario está mal (tiene que ser consultas_ia.<ref del proyecto>)"
+    elif "could not translate host name" in texto or "name or service not known" in texto:
+        motivo = "la dirección (host) está mal"
+    elif "timeout" in texto or "timed out" in texto:
+        motivo = "la base no contesta"
+    elif "invalid dsn" in texto or "invalid connection option" in texto or "invalid uri" in texto:
+        motivo = "la cadena de conexión está mal escrita"
+    elif "too many connections" in texto or "connection limit" in texto:
+        motivo = "hay demasiadas preguntas a la vez (hasta 3)"
+    else:
+        motivo = "la base no aceptó la conexión"
+    return f"No conecta con la base: {motivo} (revisá CONSULTAS_IA_DATABASE_URL en Railway)."
 
 
 def modelo() -> str:
@@ -257,14 +291,19 @@ def _texto(contenido) -> str:
 
 
 def preguntar(cliente, pregunta: str, historial: list[dict], *, sistema: str, correr_sql, leer_doc,
-              nombre_del_modelo: str) -> Respuesta:
+              nombre_del_modelo: str, explicar_falla_de_la_api=None,
+              segundos_maximos: float = SEGUNDOS_MAXIMOS_POR_PREGUNTA, reloj=time.monotonic) -> Respuesta:
     """Una pregunta, con lo que ya se habló en esta conversación
     (`historial`: [{pregunta, respuesta}], solo texto). `cliente` es un
     anthropic.Anthropic; `correr_sql(sql)` devuelve {columnas, filas,
-    cortada, ms} o levanta ValueError con el mensaje de la base;
-    `leer_doc(nombre)` devuelve el texto. Se cobra todo lo que se usó, aunque
+    cortada, ms} o levanta ValueError con el mensaje de la base (la IA lo
+    ve y puede corregir) o CortarLaPregunta (termina acá);
+    `leer_doc(nombre)` devuelve el texto. `explicar_falla_de_la_api(error)`
+    devuelve el motivo en criollo de un error de la API, o None si no es de
+    la API (y entonces sigue de largo). Se cobra todo lo que se usó, aunque
     la respuesta termine en error."""
     resultado = Respuesta(modelo=nombre_del_modelo)
+    arranque = reloj()
     mensajes = []
     for turno in historial:
         mensajes.append({"role": "user", "content": str(turno.get("pregunta") or "")})
@@ -272,10 +311,21 @@ def preguntar(cliente, pregunta: str, historial: list[dict], *, sistema: str, co
     mensajes.append({"role": "user", "content": pregunta})
     sistema_con_cache = [{"type": "text", "text": sistema, "cache_control": {"type": "ephemeral"}}]
     for vuelta in range(VUELTAS_MAXIMAS + 1):
-        respuesta = cliente.messages.create(
-            model=nombre_del_modelo, max_tokens=MAX_TOKENS_RESPUESTA, system=sistema_con_cache,
-            tools=HERRAMIENTAS, messages=mensajes, output_config={"effort": "medium"},
-        )
+        if vuelta and reloj() - arranque > segundos_maximos:
+            resultado.error = ("La respuesta tardó demasiado (más de "
+                               f"{int(segundos_maximos // 60)} minutos). Probá con una pregunta más acotada.")
+            return resultado
+        try:
+            respuesta = cliente.messages.create(
+                model=nombre_del_modelo, max_tokens=MAX_TOKENS_RESPUESTA, system=sistema_con_cache,
+                tools=HERRAMIENTAS, messages=mensajes, output_config={"effort": "medium"},
+            )
+        except Exception as error:  # noqa: BLE001 (la traducción decide; lo que no traduce, sigue de largo)
+            motivo = explicar_falla_de_la_api(error) if explicar_falla_de_la_api else None
+            if motivo is None:
+                raise
+            resultado.error = motivo
+            return resultado
         uso = respuesta.usage
         escrita = getattr(uso, "cache_creation_input_tokens", 0) or 0
         leida = getattr(uso, "cache_read_input_tokens", 0) or 0
@@ -306,6 +356,11 @@ def preguntar(cliente, pregunta: str, historial: list[dict], *, sistema: str, co
                 anotada = {"para_que": str(entrada.get("para_que") or ""), "sql": str(entrada.get("sql") or "")}
                 try:
                     datos = correr_sql(anotada["sql"])
+                except CortarLaPregunta as motivo:
+                    anotada["error"] = str(motivo)
+                    resultado.consultas.append(anotada)
+                    resultado.error = str(motivo)
+                    return resultado
                 except ValueError as motivo:
                     anotada["error"] = str(motivo)
                     contenido, es_error = f"Error: {motivo}", True

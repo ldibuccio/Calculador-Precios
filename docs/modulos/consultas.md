@@ -20,7 +20,32 @@ toca la base), las rutas en `app/main.py` y lo de la base al final de
     el usuario `consultas_ia`, en una transacción de solo lectura, 10
     segundos de tope y hasta 200 filas (dice si había más).
   - `leer_documento`: un módulo de `docs/modulos/` por su nombre.
-- Hasta 8 pasos (consultas o lecturas) por pregunta; si no llega, lo dice.
+- Hasta 8 pasos (consultas o lecturas) por pregunta y hasta 4 minutos
+  (`SEGUNDOS_MAXIMOS_POR_PREGUNTA`; 90 segundos por llamada a la IA); si no
+  llega, lo dice.
+- **Por partes** (dueño, 17/10): el pedido no espera a la IA. La pregunta se
+  anota al llegar, la IA piensa después de contestar el pedido, y la pantalla
+  pregunta cada 2,5 segundos por `/gerencia/consultas/pregunta/<id>`. Una que
+  sigue sin respuesta a los 6 minutos (`PENSANDO_COMO_MAXIMO`: el servidor se
+  reinició mientras pensaba) se da por cortada y se anota así. Antes, un
+  pedido largo podía cortarlo el navegador o Railway.
+- **El motivo real** (dueño, 17/10): toda falla termina en la fila de la
+  pregunta y en la pantalla dicha en criollo: no conecta con la base (y por
+  qué: contraseña, usuario, host; `falla_de_conexion_en_criollo`), falta
+  `CONSULTAS_IA_DATABASE_URL` o `ANTHROPIC_API_KEY`, la clave no sirve, sin
+  saldo en Anthropic, la IA saturada o que tardó demasiado. Si la base no
+  conecta a mitad de camino, la pregunta termina ahí (la IA no lo arregla
+  probando otra consulta) y se cobra lo usado. El mensaje de la base va
+  SIN la contraseña (`_sin_la_clave`: con una cadena mal escrita, psycopg2
+  la repite entera). Un error que no se esperaba
+  queda como "Falló el sistema (tipo: mensaje)" y en el log. La primera
+  pregunta de Frutamax (17/10, 00:45) no quedó anotada: hasta v1177 la
+  pregunta se anotaba recién al final, y una falla no atajada (como la de
+  conexión) terminaba en un 500 sin fila.
+- **Probar conexión** (dueño, 17/10): botón de la pantalla. Prueba la base
+  con el usuario de consultas (tiene que entrar como `consultas_ia`: si entra
+  con otro usuario, lo dice) y la IA (que exista el modelo, con la clave), y
+  dice cuál de las dos falla.
 - **"Cómo lo calculé"**: debajo de cada respuesta, cada consulta con para qué
   era, su SQL y sus primeras filas (o el error de la base).
 
@@ -35,8 +60,8 @@ credenciales del mail), `backups_corridas`, `panel_fotos`,
 `corte_respaldo_fichas_reprocesos` y las dos de Consultas, y el esquema
 `memoria`. **Una tabla nueva no se lee sola**: se vuelve a correr el bloque 3.
 Su conexión va en `CONSULTAS_IA_DATABASE_URL` de Railway (la contraseña la
-puso Lionel; no pasa por el chat). Sin esa variable la pantalla abre y
-preguntar avisa que falta.
+puso Lionel; no pasa por el chat). Sin esa variable la pantalla abre, y
+preguntar avisa que falta (y queda anotada).
 
 ## El registro y el tope
 
