@@ -285,8 +285,8 @@ Módulos (se lee el que se va a tocar):
   de qué guía y cómo (en su envase o en caja de Día) salió un pedido de un
   día anterior, y el control al anular una guía R.
 - `docs/modulos/panel_control.md`: el Panel de control de Gerencia (trece
-  cuadros que reusan cuentas; rentabilidad sin mermas ni segunda, que tienen
-  sus cuadros; la cruz cuenta como pedido incompleto; Rinde de guías R;
+  cuadros que reusan cuentas; rentabilidad por cliente Armado y Recibido,
+  contra el costo real de lo armado menos la segunda cobrada; la cruz cuenta como pedido incompleto; Rinde de guías R;
   Pérdida total; Cheques).
 - `docs/modulos/cheques.md`: Cartera de cheques (solo Gerencia): repetidos por
   banco + número + CUIT, de quién es, salidas, rechazo y reclamo, el estado en

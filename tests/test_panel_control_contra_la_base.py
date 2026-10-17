@@ -6,7 +6,8 @@ Lo que el panel le cambió a las consultas que ya existían, y la pantalla:
   · la cruz cuenta como incompleto, y el panel y la alerta dan lo mismo;
   · las compras pesadas sin umbral, con el mismo recorte que la alerta;
   · los bultos al lado de la facturación de Márgenes;
-  · la rentabilidad del panel es la Real sin mermas ni segunda, y Mermas y
+  · la rentabilidad del panel es la Real de lo armado, sin mermas ni pases
+    del depósito (el detalle en tests/test_panel_rentabilidad.py), y Mermas y
     Segunda son la cuenta de Pérdidas (el galpón de
     tests/test_rentabilidad_real_pase.py, que tiene merma y pase);
   · el tablero y cada detalle, con el "hoy" del panel puesto a una fecha que
@@ -201,9 +202,9 @@ def test_el_TABLERO_dice_un_numero_por_cuadro_en_el_orden_del_dueno(base):
     assert "EJEMPLO Día" in rentabilidad and "EJEMPLO Pedidos Ya" in rentabilidad
     assert "EJEMPLO Sin ficha" not in rentabilidad
     ya = rentabilidad.split("EJEMPLO Pedidos Ya")[1]
-    assert ya.count("sin ventas") == 1
+    assert ya.count('data-renglon="') == 2 and "%" not in ya.split("</table>")[0]   # sin ventas: "—"
     assert "Ganancia sobre el costo de la mercadería" in rentabilidad
-    assert "sin mermas ni segunda (ver sus cuadros)" in rentabilidad
+    assert "Sin mermas del depósito (ver su cuadro)" in rentabilidad
     assert re.search(r'cuadro-numero rojo">2</div>', cuadro("pedidos"))
     peso = cuadro("peso")
     assert "Septiembre" in peso and "Octubre (a hoy)" in peso
@@ -359,14 +360,17 @@ def test_MERMAS_y_SEGUNDA_son_la_cuenta_de_PERDIDAS_y_lo_cobrado_al_puesto(galpo
         [f for f in septiembre["detalle"] if f["destino"] == "merma"])
 
 
-def test_el_CUADRO_de_rentabilidad_usa_la_Real_SIN_mermas_y_no_la_entera(galpon_de_un_cliente):
-    """El cableado: lo que el cuadro muestra para el mes es la cuenta sin
-    mermas, y en este galpón es DISTINTA de la de la pantalla de la Real."""
+def test_el_CUADRO_de_rentabilidad_no_lleva_las_mermas_ni_los_pases_del_deposito(galpon_de_un_cliente):
+    """El cableado: el costo de la celda es el de lo armado (mercadería y
+    cartón, la del panel sin mermas) y NO el de la pantalla entera, que suma
+    las mermas y los pases a segunda del depósito."""
     m = galpon_de_un_cliente
     fin_de_mes = date(2026, 9, 30)
-    (fila,) = [f for f in m._panel_rentabilidad(fin_de_mes) if f["cliente_id"] == 1]
+    (fila,) = [f for f in m._panel_rentabilidad(fin_de_mes)["filas"] if f["cliente_id"] == 1]
     sin_mermas = m._datos_rentabilidad_real(1, date(2026, 9, 1), fin_de_mes, None, None, solo_lo_vendido=True)
     entera = m._datos_rentabilidad_real(1, date(2026, 9, 1), fin_de_mes, None, None)
+    celda = fila["armado"]["actual"]
     assert sin_mermas["totales"]["venta_neta"] > 0                              # el testigo: hubo venta
-    assert fila["mes"] == pytest.approx(sin_mermas["totales"]["utilidad_pct"])
-    assert fila["mes"] != pytest.approx(entera["totales"]["utilidad_pct"])
+    assert celda["mercaderia"] == pytest.approx(sin_mermas["totales"]["costo_mercaderia"])
+    assert celda["carton"] == pytest.approx(sin_mermas["totales"]["costo_envase"])
+    assert entera["totales"]["costo_mermas"] > 0 and celda["costo"] < entera["totales"]["costo_total"]

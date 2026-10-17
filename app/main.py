@@ -56,6 +56,7 @@ from app.costeo import (
     magnitud_del_articulo,
 )
 from core.panel_control import (
+    celda_de_rentabilidad,
     estado_de_las_cajas,
     faltantes_por_unidad,
     meses_para_comparar,
@@ -64,7 +65,7 @@ from core.panel_control import (
     resumen_de_perdida_total,
     resumen_de_rechazos,
     resumen_de_segunda,
-    utilidad_de_ahora,
+    segunda_cobrada_por_cliente,
 )
 from core.exportar_precios_cotizaciones import generar_excel_precios_cotizaciones, generar_pdf_precios_cotizaciones
 # LAS TRES FUNCIONES DEL MOTOR, importadas directo y sin envolver. El
@@ -123,6 +124,7 @@ from app.db import (
     facturar_remitos,
     kilos_recibidos_por_renglon,
     listar_remitos,
+    remitos_por_fecha_de_pedido,
     orden_para_emitir,
     ordenes_sin_remito,
     recibir_remito,
@@ -20532,6 +20534,22 @@ def _datos_rentabilidad_real(cliente_id: int, fecha_desde, fecha_hasta, articulo
     lo mismo, dan lo mismo — la diferencia que quede es la lista de cosas
     a explicar (merma, reproceso, kilajes), no ruido de cuentas distintas.
     """
+    insumos = _insumos_rentabilidad_real(cliente_id, fecha_desde, fecha_hasta, articulo_id, grupo)
+    resultado = calcular_rentabilidad_real(
+        insumos["articulos_datos"], insumos["margenes_por_fecha"], cliente_id, fecha_desde, fecha_hasta,
+        devoluciones=insumos["devoluciones"], cajas_del_deposito=insumos["cajas_del_deposito"],
+        kilos_recibidos=insumos["kilos_recibidos"], segunda=insumos["segunda"], fletes=insumos["fletes"],
+        solo_lo_vendido=solo_lo_vendido,
+    )
+    resultado["flete_no_se_resta"] = insumos["fletes"] is None
+    resultado["empresa_del_flete"] = NOMBRE_EMPRESA
+    return resultado
+
+
+def _insumos_rentabilidad_real(cliente_id: int, fecha_desde, fecha_hasta, articulo_id, grupo) -> dict:
+    """Lo que la Rentabilidad Real le pasa al motor puro, traído de la base
+    UNA vez: el panel corre el motor dos veces con lo mismo (lo enviado y lo
+    recibido) sin volver a leer."""
     articulos = articulos_con_salidas_stock(cliente_id, fecha_desde, fecha_hasta)
     if articulo_id is not None:
         articulos = [a for a in articulos if a["articulo_id"] == articulo_id]
@@ -20609,15 +20627,9 @@ def _datos_rentabilidad_real(cliente_id: int, fecha_desde, fecha_hasta, articulo
     if articulo_id is None and grupo is None:
         fletes = flete_por_dia_y_sucursal(cliente_id, fecha_desde, fecha_hasta, _EMPRESA_DEL_FLETE)
 
-    resultado = calcular_rentabilidad_real(
-        articulos_datos, margenes_por_fecha, cliente_id, fecha_desde, fecha_hasta,
-        devoluciones=devoluciones, cajas_del_deposito=cajas_del_deposito,
-        kilos_recibidos=recibidos, segunda=segunda, fletes=fletes,
-        solo_lo_vendido=solo_lo_vendido,
-    )
-    resultado["flete_no_se_resta"] = fletes is None
-    resultado["empresa_del_flete"] = NOMBRE_EMPRESA
-    return resultado
+    return {"articulos_datos": articulos_datos, "margenes_por_fecha": margenes_por_fecha,
+            "devoluciones": devoluciones, "cajas_del_deposito": cajas_del_deposito,
+            "kilos_recibidos": recibidos, "segunda": segunda, "fletes": fletes}
 
 
 # EL PANEL DE CONTROL de Gerencia (dueño, 08/10): cuadros grandes, cada uno con
@@ -20660,23 +20672,68 @@ def _real_sin_perdidas(cliente_id: int, desde, hasta, memo: dict | None) -> dict
     return memo[clave]
 
 
-def _panel_rentabilidad(hoy, memo: dict | None = None) -> list[dict]:
-    """Por cliente: el mes, los últimos 7 días (los de Rentabilidad Real por
-    defecto) y "ahora". Mes y 7 días son la Rentabilidad Real SIN mermas ni
-    segunda (dueño, 08/10: tienen sus cuadros); "ahora" es el promedio de
-    Márgenes por Artículo."""
+def _rangos_de_la_rentabilidad(hoy) -> dict:
+    """Mes anterior cerrado, mes en curso a hoy y los últimos 7 días (los de
+    Rentabilidad Real por defecto)."""
+    meses = meses_para_comparar(hoy)
+    return {"anterior": (meses["anterior"]["desde"], meses["anterior"]["hasta"]),
+            "actual": (meses["actual"]["desde"], meses["actual"]["hasta"]),
+            "semana": (hoy - timedelta(days=7), hoy)}
+
+
+def _armado_y_recibido(cliente_id: int, desde, hasta) -> tuple[dict, dict]:
+    """Los totales de la Rentabilidad Real de lo ENVIADO y de lo RECIBIDO, con
+    los mismos datos, sin flete y sin mermas ni pases a segunda del depósito
+    (tienen sus cuadros). Armado va SIN devoluciones: es lo que se mandó.
+    Recibido va CON ellas, como la Rentabilidad Real (dueño, 17/10): lo que
+    vuelve al stock se acredita y se cuenta una sola vez, lo que se pierde
+    queda como costo, y el remito que volvió ya no lo cobra."""
+    insumos = _insumos_rentabilidad_real(cliente_id, desde, hasta, None, None)
+    calcular = lambda recibidos, devoluciones: calcular_rentabilidad_real(  # noqa: E731
+        insumos["articulos_datos"], insumos["margenes_por_fecha"], cliente_id, desde, hasta,
+        devoluciones=devoluciones, cajas_del_deposito=insumos["cajas_del_deposito"], kilos_recibidos=recibidos,
+        segunda=None, fletes=None, solo_lo_vendido=True)["totales"]
+    return calcular(None, []), calcular(insumos["kilos_recibidos"], insumos["devoluciones"])
+
+
+def _segunda_repartida(desde, hasta) -> dict:
+    """Lo cobrado por segunda en el rango, repartido por cliente según los
+    bultos de segunda de SUS guías R (el cliente de la ficha de la guía; si
+    no tiene ficha, el de la guía)."""
+    guias = [{"cliente_id": g.get("ficha_cliente_id") or g.get("cliente_id"), "articulo_id": g["articulo_id"],
+              "bultos_segunda": g["bultos_segunda"]}
+             for g in listar_reprocesos_por_rango(desde, hasta) if g["anulado_el"] is None]
+    return segunda_cobrada_por_cliente(lotes_de_segunda(desde=desde, hasta=hasta), guias)
+
+
+def _panel_rentabilidad(hoy, memo: dict | None = None) -> dict:
+    """RENTABILIDAD POR CLIENTE (dueño, 16/10): mes anterior, mes en curso y 7
+    días; por cliente, "Armado" (venta = lo enviado) y "Recibido" (venta = lo
+    que firmó el súper), contra el costo real de lo armado (mercadería, que en
+    una caja de guía R ya trae merma, segunda y lo que falta, más el cartón)
+    menos la segunda cobrada que le toca. Recibido sin ningún remito del rango
+    es "—", y con remitos sin recibir es parcial."""
+    rangos = _rangos_de_la_rentabilidad(hoy)
+    segunda = {clave: _segunda_repartida(*rango) for clave, rango in rangos.items()}
+    remitos = remitos_por_fecha_de_pedido(min(d for d, _ in rangos.values()), max(h for _, h in rangos.values()))
     filas = []
     for cliente in _clientes_con_ficha():
-        rangos = {"mes": (hoy.replace(day=1), hoy), "semana": (hoy - timedelta(days=7), hoy)}
-        fila = {"cliente_id": cliente["id"], "cliente": cliente["nombre"], "rangos": rangos}
+        fila = {"cliente_id": cliente["id"], "cliente": cliente["nombre"], "rangos": rangos,
+                "armado": {}, "recibido": {}}
         for clave, (desde, hasta) in rangos.items():
-            fila[clave] = _real_sin_perdidas(cliente["id"], desde, hasta, memo)["totales"]["utilidad_pct"]
-        articulos = calcular_listado_para_negociar_precios(cliente["id"])
-        facturado = facturacion_por_ficha(cliente["id"], hoy - timedelta(days=VENTANA_INCIDENCIA_DIAS), hoy)
-        agregar_incidencia(articulos, facturado["por_ficha"])
-        fila["ahora"] = utilidad_de_ahora(articulos)
+            de_segunda = segunda[clave]["por_cliente"].get(cliente["id"], 0.0)
+            enviado, recibido = _armado_y_recibido(cliente["id"], desde, hasta)
+            fila["armado"][clave] = celda_de_rentabilidad(enviado, de_segunda)
+            celda = celda_de_rentabilidad(recibido, de_segunda)
+            # "—" solo si el cliente no tiene NINGÚN remito de pedidos del rango
+            # (dueño, 17/10: septiembre tiene los suyos, cargados en octubre).
+            del_rango = [r for r in remitos if r["cliente_id"] == cliente["id"] and desde <= r["fecha_pedido"] <= hasta]
+            celda["sin_remitos"] = not del_rango
+            celda["sin_recibir"] = sum(1 for r in del_rango if r["recibido_el"] is None)
+            fila["recibido"][clave] = celda
         filas.append(fila)
-    return filas
+    return {"filas": filas, "rangos": rangos,
+            "segunda_sin_repartir": {clave: s["sin_repartir"] for clave, s in segunda.items()}}
 
 
 def _panel_cajas() -> dict:

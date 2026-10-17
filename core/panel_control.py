@@ -3,8 +3,10 @@
 Un tablero de cuadros grandes, cada uno con UN número. NINGUNA cuenta es nueva:
 cada cuadro junta lo que ya calcula otra pantalla, y esto solo lo resume.
 
-  1. Rentabilidad por cliente: la Rentabilidad Real (mes y 7 días) sin mermas
-     ni segunda, y "ahora", el promedio de Márgenes.
+  1. Rentabilidad por cliente (dueño, 16/10): mes anterior, mes en curso y
+     7 días, en dos renglones: "Armado" (lo enviado) y "Recibido" (lo que
+     firmó el súper), contra el costo real de lo armado menos la segunda
+     cobrada que le toca al cliente.
   2. Cajas: el stock de cada caja contra su umbral (`hay_que_reponer`).
   3. Pedidos incompletos: los renglones de la alerta, más los de la cruz.
   4. Ingresos debajo del peso: cajón declarado contra cajón pesado, cada
@@ -31,31 +33,65 @@ def meses_para_comparar(hoy: date) -> dict:
     }
 
 
-def utilidad_de_ahora(articulos: list[dict]) -> dict:
-    """El "ahora" de un cliente: precio vigente contra costo de hoy, en un número.
+def segunda_cobrada_por_cliente(lotes: list[dict], guias: list[dict]) -> dict:
+    """Lo que pagó el puesto por la segunda, repartido entre los clientes
+    (dueño, 16/10): por artículo, en proporción a los bultos de segunda que
+    salieron de las guías R de cada cliente en el mismo período.
 
-    `articulos` son las filas de Márgenes (`calcular_listado_para_negociar_precios`)
-    con `facturado` ya puesto por `agregar_incidencia` (30 días).
+    `lotes`: los lotes de segunda del período (`lotes_de_segunda`); cuenta el
+    `importe` cobrado, un lote sin cobrar no reparte nada. `guias`: las guías
+    R vigentes del período, cada una {cliente_id, articulo_id, bultos_segunda}.
 
-    CON VENTAS es EL MISMO promedio de Márgenes por Artículo
-    (`recalcularPromedioPonderado`, templates/_cuadro_negociacion.html):
-    Σ(utilidad × facturado) / Σ(facturado), solo con las fichas que facturaron
-    y tienen utilidad. SIN VENTAS en la ventana (dueño, 08/10), el promedio
-    simple de las fichas con utilidad, marcado "sin ventas".
+    Lo que no se puede repartir no se inventa: un artículo con cobro y sin
+    segunda de guías R en el período, o la parte de una guía sin cliente, va
+    a "sin_repartir". Devuelve {"por_cliente": {cliente_id: pesos},
+    "sin_repartir": pesos}."""
+    cobrado: dict = {}
+    for lote in lotes:
+        if lote.get("importe") is not None:
+            cobrado[lote["articulo_id"]] = cobrado.get(lote["articulo_id"], 0.0) + float(lote["importe"])
+    por_cliente: dict = {}
+    sin_repartir = 0.0
+    for articulo_id, pesos in cobrado.items():
+        de_este = [g for g in guias if g["articulo_id"] == articulo_id and float(g["bultos_segunda"] or 0) > 0]
+        total = sum(float(g["bultos_segunda"]) for g in de_este)
+        if not total:
+            sin_repartir += pesos
+            continue
+        for guia in de_este:
+            parte = pesos * float(guia["bultos_segunda"]) / total
+            if guia.get("cliente_id") is None:
+                sin_repartir += parte
+            else:
+                por_cliente[guia["cliente_id"]] = por_cliente.get(guia["cliente_id"], 0.0) + parte
+    return {"por_cliente": {c: round(v, 2) for c, v in por_cliente.items()}, "sin_repartir": round(sin_repartir, 2)}
 
-    Devuelve {"pct", "sin_ventas", "fichas"}: pct en porcentaje (25.0) o None.
-    """
-    con_utilidad = [a for a in articulos if a.get("utilidad_aproximada") is not None]
-    facturo = [a for a in articulos if (a.get("facturado") or 0) > 0]
-    if facturo:
-        pesan = [a for a in facturo if a.get("utilidad_aproximada") is not None]
-        pesos = sum(a["facturado"] for a in pesan)
-        pct = (sum(a["utilidad_aproximada"] * a["facturado"] for a in pesan) / pesos * 100) if pesos else None
-        return {"pct": pct, "sin_ventas": False, "fichas": len(pesan)}
-    if not con_utilidad:
-        return {"pct": None, "sin_ventas": True, "fichas": 0}
-    pct = sum(a["utilidad_aproximada"] for a in con_utilidad) / len(con_utilidad) * 100
-    return {"pct": pct, "sin_ventas": True, "fichas": len(con_utilidad)}
+
+def celda_de_rentabilidad(totales: dict, segunda: float) -> dict:
+    """Una celda del cuadro, con los `totales` de la Rentabilidad Real.
+
+    La venta: lo enviado (Armado) o lo recibido (Recibido) menos lo que el
+    motor ya descuenta por un rechazo de un remito que no volvió. El costo:
+    el real de lo armado —mercadería, que en una caja de guía R ya trae la
+    merma, la segunda y lo que falta, más el cartón— más los rechazos que se
+    perdieron (a segunda o a reproceso, con su caja), menos la diferencia de
+    lo devuelto al proveedor y menos la segunda cobrada que le toca. En
+    Recibido, el rechazo que VUELVE AL STOCK ya viene acreditado por el motor
+    (dueño, 17/10: se cuenta una sola vez, como en Rentabilidad Real); en
+    Armado no hay devoluciones y esas líneas son cero. La ganancia va sobre
+    el costo de la mercadería, como en Rentabilidad Real. Sin mercadería,
+    pct None."""
+    venta = float(totales["venta_neta"]) - float(totales.get("devoluciones_venta") or 0)
+    mercaderia = float(totales["costo_mercaderia"])
+    carton = float(totales["costo_envase"])
+    rechazos = float(totales.get("rechazos_perdidos") or 0)
+    al_proveedor = float(totales.get("diferencia_devolucion_proveedor") or 0)
+    costo = mercaderia + carton + rechazos - al_proveedor - segunda
+    return {"venta": round(venta, 2), "mercaderia": round(mercaderia, 2), "carton": round(carton, 2),
+            "rechazos": round(rechazos, 2), "al_proveedor": round(al_proveedor, 2), "segunda": round(segunda, 2),
+            "costo": round(costo, 2), "ganancia": round(venta - costo, 2),
+            "pct": (venta - costo) / mercaderia * 100 if mercaderia > 0 else None,
+            "afuera_bultos": float(totales.get("afuera_bultos") or 0)}
 
 
 ESTADO_BAJO, ESTADO_BIEN, ESTADO_SIN_UMBRAL, ESTADO_SIN_CONTEO = "bajo", "bien", "sin_umbral", "sin_conteo"

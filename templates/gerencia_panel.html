@@ -35,7 +35,10 @@
   .tabla td { font-size: 1.05rem; font-weight: 800; text-align: right; padding: 0.25rem 0.2rem; border-top: 1px solid #eee;
     white-space: nowrap; }
   .tabla td:first-child { font-size: 0.9rem; font-weight: 600; white-space: normal; }
-  .marca { display: block; font-size: 0.65rem; font-weight: 600; color: #b45309; }
+  .marca { display: block; font-size: 0.65rem; font-weight: 600; color: #b45309; white-space: normal; }
+  .marca .n { white-space: nowrap; }
+  .tabla tr.cliente-fila td { font-size: 0.95rem; font-weight: 700; padding-top: 0.5rem; }
+  .tabla td.que { font-size: 0.8rem; font-weight: 600; color: #555; padding-left: 0.6rem; }
   .dos { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 0.5rem; margin-top: 0.3rem; }
   .dos .cuadro-numero { font-size: 1.9rem; }
   .mes { font-size: 0.78rem; color: #555; font-weight: 600; }
@@ -70,21 +73,36 @@
     {# 1. RENTABILIDAD POR CLIENTE #}
     <a data-ajustar-contenedor class="cuadro ancho" href="/gerencia/panel/rentabilidad" data-cuadro="rentabilidad">
       <div class="cuadro-titulo">{{ titulos.rentabilidad }}</div>
-      <table class="tabla">
-        <tr><th>Cliente</th><th>Mes</th><th>7 días</th><th>Ahora</th></tr>
-        {% for f in datos.rentabilidad %}
-        <tr>
-          <td>{{ f.cliente }}</td>
-          {% for valor in (f.mes, f.semana, f.ahora.pct) %}
-          <td data-ajustar class="{{ 'rojo' if valor is not none and valor < 0 }}">{{ valor|pct if valor is not none else "—" }}
-            {%- if loop.last and f.ahora.sin_ventas %}<span class="marca">sin ventas</span>{% endif %}</td>
+      {# DOS RENGLONES POR CLIENTE (dueño, 16/10): lo que se mandó y lo que firmó
+         el súper, contra el costo real de lo armado. Una foto de antes de este
+         cambio no los trae: se ven en la próxima actualización. #}
+      {% if datos.rentabilidad is mapping and datos.rentabilidad.filas is defined %}{% set rg = datos.rentabilidad.rangos %}
+      <table class="tabla" data-rentabilidad>
+        {# Los meses cortos: a 313px "Septiembre" en el título le come el lugar al número. #}
+        <tr><th></th><th>{{ MESES[rg.anterior[0].month][:3] }}</th><th>{{ MESES[rg.actual[0].month][:3] }}</th><th>7 días</th></tr>
+        {% for f in datos.rentabilidad.filas %}
+        <tr class="cliente-fila"><td colspan="4">{{ f.cliente }}</td></tr>
+        {% for que, texto in (("armado", "Armado"), ("recibido", "Recibido")) %}
+        <tr data-renglon="{{ que }}">
+          <td class="que">{{ texto }}</td>
+          {% for clave in ("anterior", "actual", "semana") %}{% set c = f[que][clave] %}
+          {% if que == "recibido" and c.sin_remitos %}
+          <td data-celda="{{ clave }}">—<span class="marca">sin remitos</span></td>
+          {% else %}
+          <td data-ajustar data-celda="{{ clave }}" class="{{ 'rojo' if c.pct is not none and c.pct < 0 }}">{{ c.pct|pct if c.pct is not none else "—" }}
+            {%- if que == "recibido" and c.sin_recibir %}<span class="marca">parcial · <span class="n">{{ c.sin_recibir }}</span> sin recibir</span>{% endif %}</td>
+          {% endif %}
           {% endfor %}
         </tr>
+        {% endfor %}
         {% else %}
         <tr><td colspan="4">Ningún cliente tiene fichas.</td></tr>
         {% endfor %}
       </table>
-      <div class="nota">Ganancia sobre el costo de la mercadería, como en Rentabilidad Real; sin mermas ni segunda (ver sus cuadros).</div>
+      <div class="nota">Ganancia sobre el costo de la mercadería. El costo es el real de lo armado (con la merma y la segunda de la guía R, y el cartón), menos lo cobrado por segunda; en Recibido, lo rechazado que volvió al stock no se cuenta dos veces. Sin mermas del depósito (ver su cuadro).</div>
+      {% else %}
+      <div class="cuadro-pie" data-sin-foto>Aparece en la próxima actualización.</div>
+      {% endif %}
     </a>
 
     {# 2. CAJAS #}
