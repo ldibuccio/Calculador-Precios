@@ -23434,6 +23434,27 @@ class ConsultaIaNoSePuede(ValueError):
     """La base no corrió la consulta de la IA: el mensaje es el de la base."""
 
 
+class ConsultaIaNoConecta(RuntimeError):
+    """El usuario de consultas no entró a la base (o falta su variable): el
+    mensaje es el de la base, sin la cadena de conexión."""
+
+
+def _sin_la_clave(mensaje: str, url: str) -> str:
+    """El error de conexión SIN la contraseña: con una cadena mal escrita,
+    psycopg2 la repite entera ('invalid dsn: missing "=" after "..."'), y el
+    mensaje va al registro y a la pantalla."""
+    from urllib.parse import urlsplit
+    try:
+        clave = urlsplit(url).password if "://" in url else None
+    except ValueError:
+        clave = None
+    if clave:
+        mensaje = mensaje.replace(clave, "***")
+    mensaje = re.sub(r'(after |string |parameter: )"[^"]*"', r'\1"…"', mensaje)
+    mensaje = re.sub(r"(//[^:/@\s]+:)[^@\s]+@", r"\1***@", mensaje)
+    return re.sub(r"password\s*=\s*\S+", "password=***", mensaje)
+
+
 def correr_consulta_de_solo_lectura(sql: str, filas_maximas: int) -> dict:
     """{columnas, filas, cortada, ms} de UN SELECT, con el usuario de solo
     lectura, en una transacción de solo lectura y con 10 segundos de tope
@@ -23442,13 +23463,12 @@ def correr_consulta_de_solo_lectura(sql: str, filas_maximas: int) -> dict:
     import time
     url = os.environ.get(CONSULTAS_IA_DATABASE_URL_ENV_VAR)
     if not url:
-        raise RuntimeError(f"Falta configurar la variable de entorno {CONSULTAS_IA_DATABASE_URL_ENV_VAR} "
-                           "con la conexión del usuario consultas_ia")
+        raise ConsultaIaNoConecta(f"falta la variable {CONSULTAS_IA_DATABASE_URL_ENV_VAR}")
     arranque = time.monotonic()
     try:
         conexion = psycopg2.connect(url, connect_timeout=10)
-    except psycopg2.OperationalError as error:
-        raise RuntimeError(f"No se pudo conectar con el usuario de consultas: {error}") from error
+    except (psycopg2.OperationalError, psycopg2.ProgrammingError) as error:
+        raise ConsultaIaNoConecta(_sin_la_clave(str(error).strip(), url)) from error
     try:
         conexion.set_session(readonly=True)
         with conexion.cursor() as cursor:
@@ -23484,6 +23504,38 @@ def guardar_pregunta_de_consultas(p: dict) -> int:
             nuevo = cursor.fetchone()[0]
         conexion.commit()
         return nuevo
+    finally:
+        conexion.close()
+
+
+def terminar_pregunta_de_consultas(id_pregunta: int, p: dict) -> None:
+    """La respuesta (o el error) de una pregunta que se anotó al llegar."""
+    conexion = obtener_conexion()
+    try:
+        with conexion.cursor() as cursor:
+            cursor.execute(
+                "UPDATE consultas_ia_preguntas SET respuesta = %s, consultas = %s::jsonb, modelo = %s, "
+                "tokens_entrada = %s, tokens_salida = %s, tokens_cache = %s, costo_usd = %s, error = %s "
+                "WHERE id = %s",
+                (p.get("respuesta") or None, json.dumps(p.get("consultas") or [], ensure_ascii=False, default=str),
+                 p["modelo"], p.get("tokens_entrada", 0), p.get("tokens_salida", 0), p.get("tokens_cache", 0),
+                 round(float(p.get("costo_usd") or 0), 4), p.get("error"), id_pregunta))
+        conexion.commit()
+    finally:
+        conexion.close()
+
+
+def pregunta_de_consultas(id_pregunta: int) -> dict | None:
+    """Una pregunta del registro, con los segundos desde que llegó."""
+    conexion = obtener_conexion()
+    try:
+        with conexion.cursor() as cursor:
+            cursor.execute(
+                "SELECT id, pregunta, respuesta, consultas, modelo, costo_usd, error, conversacion, "
+                "EXTRACT(EPOCH FROM (now() - creado_en)) AS segundos FROM consultas_ia_preguntas WHERE id = %s",
+                (id_pregunta,))
+            fila = cursor.fetchone()
+            return dict(zip([d[0] for d in cursor.description], fila)) if fila else None
     finally:
         conexion.close()
 

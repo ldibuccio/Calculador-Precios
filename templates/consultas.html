@@ -26,6 +26,9 @@
   .gasto form label { font-size: 0.85rem; color: #444; }
   .gasto form input { display: block; width: 7rem; min-height: 44px; padding: 0.5rem; border: 1px solid #ccc; border-radius: 8px; font-size: 1rem; margin-top: 0.2rem; }
   .gasto form button { min-height: 44px; padding: 0 1rem; border-radius: 8px; border: 1px solid #2563eb; background: #fff; color: #2563eb; font-weight: 600; font-size: 0.95rem; }
+  .probar button { min-height: 44px; padding: 0 1rem; border-radius: 8px; border: 1px solid #2563eb; background: #fff; color: #2563eb; font-weight: 600; font-size: 0.95rem; }
+  .probar p { margin: 0.4rem 0 0; font-size: 0.9rem; overflow-wrap: anywhere; }
+  .probar .bien { color: #166534; }
 </style>
 </head>
 <body>
@@ -48,6 +51,10 @@
         <label>Tope del mes (US$)<input type="number" name="tope" step="1" min="1" inputmode="decimal" value="{{ '%.0f'|format(gasto.tope) }}"></label>
         <button type="submit">Cambiar</button>
       </form>
+    </div>
+    <div class="probar" data-probar>
+      <button type="button" data-probar-boton>Probar conexión</button>
+      <div data-probar-resultado aria-live="polite"></div>
     </div>
     {% if gasto.lleno %}<p class="rojo" data-tope-lleno>Se llegó al tope del mes: Consultas vuelve el 1° del mes que viene, o subí el tope.</p>{% endif %}
   </div>
@@ -115,6 +122,61 @@
     return detalle;
   }
 
+  // Lo que contestó el servidor, como JSON. Si no es JSON (el servidor se
+  // cayó o cortó), el motivo con su código, no "revisá la conexión".
+  function leerJson(r) {
+    return r.text().then(function (texto) {
+      try { return JSON.parse(texto); } catch (e) {
+        return {error: r.status === 502 || r.status === 503 || r.status === 504
+          ? "El servidor no contestó a tiempo (código " + r.status + "). Probá de nuevo."
+          : "El servidor falló (código " + r.status + "). Mirá el registro o avisale a quien lo programa."};
+      }
+    });
+  }
+
+  function mostrar(esperando, pregunta, datos) {
+    esperando.remove();
+    var caja = elemento("div", "mensaje " + (datos.error && !datos.respuesta ? "fallo" : "respuesta"),
+                        datos.respuesta || datos.error || "Sin respuesta.");
+    if (datos.respuesta && datos.error) { caja.appendChild(elemento("p", "rojo", datos.error)); }
+    if (datos.consultas && datos.consultas.length) { caja.appendChild(comoLoCalcule(datos.consultas, datos.documentos)); }
+    if (datos.costo_usd !== undefined) {
+      caja.appendChild(elemento("p", "costo", "Esta respuesta: US$" + datos.costo_usd.toFixed(4)));
+    }
+    charla.appendChild(caja);
+    if (datos.conversacion) { conversacion = datos.conversacion; }
+    if (datos.respuesta) { historial.push({pregunta: pregunta, respuesta: datos.respuesta}); }
+    if (datos.gasto) {
+      document.querySelector("[data-gastado]").textContent = "US$" + datos.gasto.gastado.toFixed(2);
+    }
+    enviar.disabled = !!datos.tope_lleno;
+  }
+
+  // La IA piensa aparte: se pregunta cada CADA_MS si terminó, hasta HASTA_MS.
+  var CADA_MS = 2500, HASTA_MS = 7 * 60 * 1000;
+  function esperarRespuesta(id, esperando, pregunta, arranque) {
+    setTimeout(function () {
+      fetch("/gerencia/consultas/pregunta/" + id).then(leerJson).then(function (datos) {
+        if (datos.estado === "pensando") {
+          if (Date.now() - arranque > HASTA_MS) {
+            mostrar(esperando, pregunta, {error: "La respuesta tardó demasiado. Mirá el registro en un rato."});
+          } else {
+            esperarRespuesta(id, esperando, pregunta, arranque);
+          }
+        } else {
+          mostrar(esperando, pregunta, datos);
+        }
+      }).catch(function () {
+        // Un corte del celular no pierde la pregunta: se vuelve a preguntar.
+        if (Date.now() - arranque > HASTA_MS) {
+          mostrar(esperando, pregunta, {error: "Sin conexión con el servidor. La respuesta va a quedar en el registro."});
+        } else {
+          esperarRespuesta(id, esperando, pregunta, arranque);
+        }
+      });
+    }, CADA_MS);
+  }
+
   formulario.addEventListener("submit", function (evento) {
     evento.preventDefault();
     var pregunta = campo.value.trim();
@@ -127,27 +189,36 @@
     fetch("/gerencia/consultas/preguntar", {
       method: "POST", headers: {"Content-Type": "application/json"},
       body: JSON.stringify({pregunta: pregunta, historial: historial, conversacion: conversacion})
-    }).then(function (r) { return r.json(); }).then(function (datos) {
-      esperando.remove();
-      var caja = elemento("div", "mensaje " + (datos.error && !datos.respuesta ? "fallo" : "respuesta"),
-                          datos.respuesta || datos.error || "Sin respuesta.");
-      if (datos.respuesta && datos.error) { caja.appendChild(elemento("p", "rojo", datos.error)); }
-      if (datos.consultas) { caja.appendChild(comoLoCalcule(datos.consultas, datos.documentos)); }
-      if (datos.costo_usd !== undefined) {
-        caja.appendChild(elemento("p", "costo", "Esta respuesta: US$" + datos.costo_usd.toFixed(4)));
+    }).then(leerJson).then(function (datos) {
+      if (datos.estado === "pensando") {
+        if (datos.conversacion) { conversacion = datos.conversacion; }
+        esperarRespuesta(datos.id, esperando, pregunta, Date.now());
+      } else {
+        mostrar(esperando, pregunta, datos);
       }
-      charla.appendChild(caja);
-      if (datos.conversacion) { conversacion = datos.conversacion; }
-      if (datos.respuesta) { historial.push({pregunta: pregunta, respuesta: datos.respuesta}); }
-      if (datos.gasto) {
-        document.querySelector("[data-gastado]").textContent = "US$" + datos.gasto.gastado.toFixed(2);
-      }
-      enviar.disabled = !!datos.tope_lleno;
     }).catch(function () {
-      esperando.remove();
-      charla.appendChild(elemento("div", "mensaje fallo", "No se pudo preguntar. Revisá la conexión y probá de nuevo."));
+      mostrar(esperando, pregunta, {error: "El celular no llegó al servidor (sin internet). Probá de nuevo."});
       enviar.disabled = false;
     });
+  });
+
+  // "Probar conexión": la base con el usuario de consultas y la IA.
+  var probar = document.querySelector("[data-probar-boton]");
+  var resultado = document.querySelector("[data-probar-resultado]");
+  probar.addEventListener("click", function () {
+    probar.disabled = true;
+    resultado.textContent = "Probando…";
+    fetch("/gerencia/consultas/probar", {method: "POST"}).then(leerJson).then(function (datos) {
+      resultado.textContent = "";
+      if (datos.error) { resultado.appendChild(elemento("p", "rojo", datos.error)); return; }
+      [["Base", datos.base], ["IA", datos.ia]].forEach(function (par) {
+        resultado.appendChild(elemento("p", par[1].ok ? "bien" : "rojo",
+          (par[1].ok ? "✓ " : "✗ ") + par[0] + ": " + par[1].texto));
+      });
+    }).catch(function () {
+      resultado.textContent = "";
+      resultado.appendChild(elemento("p", "rojo", "El celular no llegó al servidor (sin internet)."));
+    }).then(function () { probar.disabled = false; });
   });
 
   document.querySelector("[data-nueva]").addEventListener("click", function () {
