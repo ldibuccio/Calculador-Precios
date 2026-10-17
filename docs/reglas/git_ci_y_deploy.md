@@ -105,6 +105,18 @@ De acá en adelante, después de cualquier push que se dé por desplegado:
    dos el deploy no sale— y se arreglan distinto. Por eso lo que se reporta
    es la `conclusion`, no "el CI no pasó".
 
+   **Y "Wait for CI" mira TODAS las corridas del commit, no solo el CI
+   (17/10).** El Backup corre sobre el último commit de `main` (el `schedule`
+   y el `workflow_dispatch` usan la rama por defecto), así que su corrida
+   queda colgada de ese commit. El 17/10 la parte de fotos del backup de las
+   03:47 chocó contra el límite de Google Drive (`rateLimitExceeded`): el CI
+   de `main` estaba en `success` y Railway igual salteó con "CI check suite
+   failed". Se mira la lista entera de check suites del commit
+   (`/commits/<sha>/check-suites`), no solo la corrida del CI. Las de las
+   apps `claude` y `railway-app` quedan `queued` con 0 corridas: no son la
+   falla. Se arregla re-corriendo lo que falló (si fue algo de afuera, como
+   la cuota de Drive), y Railway publica solo recién con el PRÓXIMO push.
+
    **Y EL SELLO VA ANTES DE LA SUITE, no después (20/09).** El número de
    versión se sella con `commit → sellar_version.py → commit --amend`, así
    que hasta el 20/09 el orden era *suite, commit, sello, push* — y con ése
