@@ -1,6 +1,7 @@
 # Consultas: el chat de Gerencia con IA (dueño, 16/10)
 
-Gerencia → Mirar → **Consultas** (`/gerencia/consultas`, con la clave de
+Gerencia → **Consultas**, arriba al lado del Panel de control con su color
+(dueño, 17/10) (`/gerencia/consultas`, con la clave de
 Gerencia): se le pregunta a la IA por los datos del sistema, como a alguien de
 la oficina. La charla dura mientras la pantalla está abierta ("Nueva
 conversación" la empieza de cero). Código: `core/consultas_ia.py` (lo que no

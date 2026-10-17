@@ -36,6 +36,12 @@
      cajas" pasó de naranja a celeste (dueño, 16/10). #}
   .boton.color-4 { background: #7c3aed; }
   .boton.color-5 { background: #0284c7; }
+  {# Consultas, arriba al lado del Panel, con su color (dueño, 17/10). #}
+  .boton.color-6 { background: #be185d; }
+  {# Panel y Consultas en una fila, del mismo tamaño; si no entran (313px),
+     uno debajo del otro, el Panel primero. #}
+  .fila-arriba { display: flex; flex-wrap: wrap; gap: 0.6rem; }
+  .fila-arriba .boton { flex: 1 1 9rem; margin-top: 0; }
 </style>
 </head>
 <body>
@@ -50,16 +56,19 @@
     <a class="franja-ver" href="/gerencia/alertas">Ver el detalle de las alertas</a>
   {% endcall %}
 
-  {# DE ARRIBA HACIA ABAJO (dueño, 16/10): el Panel de control solo, con su
-     color; el recuadro "Bancos y cajas", con el suyo; y los tres grupos de
-     siempre (Mirar, Corregir, Mantenimiento, del 04/10) sin lo que pasó a
-     esos dos. Lo que mira lo mismo desde dos o tres lados quedó en un botón
+  {# DE ARRIBA HACIA ABAJO (dueño, 16/10): el Panel de control y Consultas
+     (17/10), cada uno con su color; el recuadro "Bancos y cajas", con el
+     suyo; y los tres grupos de siempre (Mirar, Corregir, Mantenimiento, del
+     04/10) sin lo que pasó arriba. Lo que mira lo mismo desde dos o tres lados quedó en un botón
      con pestañas (_pestanas_gerencia.html): Rentabilidad (De pedidos ·
      Real), Pérdidas (Mercadería · Cajas) y Facturación y cobranzas (Remitos
      y facturas · Vales · Segunda). #}
-  {# EL PANEL DE CONTROL, SOLO Y CON SU COLOR (dueño, 16/10): el resumen de todo. #}
-  <div class="tarjeta">
+  {# EL PANEL DE CONTROL CON SU COLOR (dueño, 16/10): el resumen de todo. Y
+     al lado, CONSULTAS con el suyo (dueño, 17/10): preguntarle a la IA por
+     los datos del sistema. #}
+  <div class="tarjeta fila-arriba">
     <a class="boton color-4" href="/gerencia/panel">{{ ICONOS_HUBS['panel']|safe }}<span>Panel de control</span></a>
+    <a class="boton color-6" href="/gerencia/consultas">{{ ICONOS_HUBS['consultas']|safe }}<span>Consultas</span></a>
   </div>
 
   {# BANCOS Y CAJAS (dueño, 16/10), con su color: cada banco y sus
@@ -91,8 +100,6 @@
     {# Las MISMAS pantallas que Administración: acá se corrigen el vale y el
        número del remito (dueño). #}
     <a class="boton color-1" href="/gerencia/facturacion">{{ ICONOS_HUBS['facturas']|safe }}<span>Facturación y cobranzas</span></a>
-    {# Preguntarle a la IA por los datos del sistema (dueño, 16/10). #}
-    <a class="boton color-1" href="/gerencia/consultas">{{ ICONOS_HUBS['consultas']|safe }}<span>Consultas</span></a>
   </div>
 
   {# APARTE de las de mirar: éstas ESCRIBEN, y escriben en el pasado o no se
