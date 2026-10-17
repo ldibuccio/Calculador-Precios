@@ -31,8 +31,10 @@ las plantillas `cheques*.html` y `cheque.html`. Tests:
 - **De quién es**: un cliente del sistema, un nombre escrito a mano, o
   "Canje" (lo que entra a cambio en un canje). `cheques_origen_coherente`.
 - **Salida**: una por cheque (`cheques_salidas`), con un concepto que dice si
-  queda Entregado, Canjeado o Depositado. Pago a proveedor exige proveedor;
-  el canje va contra nada. Un rechazado no sale, y nada sale antes de su
+  queda Entregado, Canjeado o Depositado. Pago a proveedor exige proveedor:
+  de la lista (`proveedor_id`) o ESCRITO A MANO (`proveedor_a_mano`, alguien
+  que no está en proveedores, sin crearlo; uno u otro, nunca los dos;
+  migración `cheques_3`, dueño 16 y 17/10); el canje va contra nada. Un rechazado no sale, y nada sale antes de su
   fecha de carga (trigger `cheque_salida_valida`; desde `cheques_2` esos dos
   frenos miran solo cuando la salida nace o cambia de cheque o de fecha, para
   que juntar proveedores pueda mover la salida de un cheque ya rechazado). Un
@@ -146,12 +148,21 @@ las plantillas `cheques*.html` y `cheque.html`. Tests:
     (número, de quién, monto, fecha de pago) y se abre al tocarlo; los que
     tienen problema van en rojo, primero y abiertos, y los grupos con
     problema van primero.
-  - Lo leído viene puesto y TODO se cambia: el día de salida (hoy), el motivo
-    (un endoso, "Pago a proveedor"; un depósito, "Depósito en cuenta"; el
-    archivo que no dice a dónde va deja el motivo vacío), el proveedor (por
-    su CUIT si lo tiene UNO solo; el elegido a mano se queda con el CUIT
-    leído si no tenía, y no se pisa uno distinto) y la cuenta (por el número
-    leído, `cuenta_por_numero`; con un solo banco, ese). Se cambia por
+  - **Cada grupo dice lo que se leyó** de su archivo (dueño, 17/10): "Endoso a
+    FRIGORIFICO CINCO SALTOS SA · CUIT 30-53636746-9" o "Depósito en cuenta
+    191-220-000247/7" (`lo_leido`).
+  - Lo leído viene puesto y TODO se cambia; **nada arranca en "Elegí"**
+    (dueño, 17/10): el día de salida (hoy), el motivo ("Pago a proveedor";
+    un depósito, "Depósito en cuenta"; también lo tildado a mano y lo que no
+    dice a dónde va), el proveedor (por su CUIT si lo tiene UNO solo; si el
+    CUIT no es de ninguno, viene A MANO con la razón social leída ya escrita,
+    y "Elegir de la lista" muestra la lista y vacía lo escrito; el elegido de
+    la lista se queda con el CUIT leído si no tenía, y no se pisa uno
+    distinto) y la cuenta (por el número leído, `cuenta_por_numero`; si no,
+    el Banco Credicoop o el único banco, `cuenta_por_defecto`, en cada
+    renglón, en el grupo y en "Para todos"; un depósito que leyó un número
+    que no es de ninguna cuenta se pide elegir, salvo con un solo banco, que
+    va a ese). Se cambia por
     renglón, por grupo (el encabezado cambia el motivo, el proveedor o la
     cuenta de todo el grupo) o con "Para todos", que va a los TILDADOS y, si
     no hay ninguno tildado, pregunta antes de ponerlo en todos. También

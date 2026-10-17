@@ -20,9 +20,31 @@
   .problemas { color: #dc2626; font-weight: 700; font-size: 0.9rem; margin: 0 0 0.4rem; }
   .leido { font-size: 0.85rem; color: #555; margin: 0 0 0.4rem; }
   .foto-del-grupo img { max-width: 100%; border-radius: 8px; border: 1px solid #ddd; }
+  .leido-del-grupo { font-size: 0.95rem; color: #333; margin: 0 0 0.5rem; overflow-wrap: anywhere; }
+  .leido-del-grupo .cuit { white-space: nowrap; }
+  .proveedor { display: flex; flex-direction: column; gap: 0.3rem; flex: 1 1 100%; }
+  {# En columna, el flex: 1 1 9rem de las etiquetas de .campos sería 9rem de ALTO. #}
+  .proveedor label { flex: none; }
+  .proveedor .cambiar-forma { align-self: flex-start; min-height: 44px; padding: 0 0.8rem; border-radius: 8px;
+    border: 1px solid #2563eb; background: #fff; color: #2563eb; font-weight: 600; font-size: 0.9rem; }
 </style>
 </head>
 <body>
+  {# EL PROVEEDOR, DE LA LISTA O ESCRITO A MANO (dueño, 16 y 17/10): se ve uno
+     de los dos; el botón pasa al otro y vacía el que deja. #}
+  {% macro proveedor(prefijo, sufijo, elegido, a_mano, vacio) %}
+  {% set de_la_lista = elegido is not none and elegido != "" %}
+  <div class="proveedor" data-proveedor>
+    <label data-de-la-lista{% if not de_la_lista and a_mano %} hidden{% endif %}>¿A qué proveedor?
+      <select name="{{ prefijo }}proveedor_id{{ sufijo }}"><option value="">{{ vacio }}</option>
+        {% for p in proveedores %}<option value="{{ p.id }}" {% if elegido|string == p.id|string %}selected{% endif %}>{{ p.nombre }}</option>{% endfor %}
+      </select></label>
+    <label data-a-mano{% if de_la_lista or not a_mano %} hidden{% endif %}>¿A quién? (no está en la lista)
+      <input type="text" name="{{ prefijo }}proveedor_a_mano{{ sufijo }}" value="{{ a_mano }}" placeholder="Ej. Transporte Pérez"></label>
+    <button type="button" class="cambiar-forma" data-a-la-lista{% if de_la_lista or not a_mano %} hidden{% endif %}>Elegir de la lista</button>
+    <button type="button" class="cambiar-forma" data-a-mano-boton{% if not de_la_lista and a_mano %} hidden{% endif %}>No está en la lista: escribirlo</button>
+  </div>
+  {% endmacro %}
   {% set barra_sector = "gerencia" %}
   {% set barra_titulo = "Aplicar cheques" %}
   {% set barra_atras = "/gerencia/cheques/aplicar" %}
@@ -61,15 +83,13 @@
       <div class="campos">
         <label>¿Qué día salió?<input type="date" name="todos_fecha" value="{{ todos.fecha }}"></label>
         <label>¿Por qué sale?
-          <select name="todos_concepto_id"><option value="">No cambiar</option>
-            {% for c in conceptos %}<option value="{{ c.id }}" {% if todos.concepto_id == c.id|string %}selected{% endif %}>{{ c.nombre }}</option>{% endfor %}
+          <select name="todos_concepto_id" data-motivo-de="todos"><option value="">No cambiar</option>
+            {% for c in conceptos %}<option value="{{ c.id }}" data-destino="{{ c.destino }}" {% if todos.concepto_id == c.id|string %}selected{% endif %}>{{ c.nombre }}</option>{% endfor %}
           </select></label>
-        <label>¿A qué proveedor?
-          <select name="todos_proveedor_id"><option value="">No cambiar</option>
-            {% for p in proveedores %}<option value="{{ p.id }}" {% if todos.proveedor_id == p.id|string %}selected{% endif %}>{{ p.nombre }}</option>{% endfor %}
-          </select></label>
-        {% if bancos %}
-        <label>¿En qué cuenta?
+        {{ proveedor("todos_", "", todos.proveedor_id, todos.proveedor_a_mano, "No cambiar") }}
+        {# El banco, SOLO para un depósito y si hay más de uno (dueño, 16/10). #}
+        {% if bancos|length > 1 %}{% set es_deposito = destinos.get(todos.concepto_id|int(0)) == "depositado" %}
+        <label data-banco-de="todos"{% if not es_deposito %} hidden{% endif %}>¿En qué banco lo depositás?
           <select name="todos_cuenta_id"><option value="">No cambiar</option>
             {% for b in bancos %}<option value="{{ b.id }}" {% if todos.cuenta_id == b.id|string %}selected{% endif %}>{{ b.nombre }}</option>{% endfor %}
           </select></label>
@@ -97,18 +117,17 @@
     <section class="tarjeta grupo{% if g.con_problema %} con-problema{% endif %}" data-grupo="{{ g.foto }}">
       <div class="grupo-cabeza">
         <h2 data-titulo-del-grupo>{{ g.titulo }} · {{ g.destino or "a elegir" }} · {{ g.cuantos }} cheque{{ '' if g.cuantos == 1 else 's' }} · {{ g.total|moneda }}</h2>
+        {# Lo que se leyó del archivo, siempre (dueño, 17/10). #}
+        {% if g.leido %}{% set partes = g.leido.split(" · CUIT ") %}<p class="leido-del-grupo" data-leido-del-grupo>{{ partes[0] }}{% if partes|length > 1 %} · <span class="cuit">CUIT {{ partes[1] }}</span>{% endif %}</p>{% endif %}
         {% if g.con_problema %}<p class="rojo" data-problemas-del-grupo>{{ g.con_problema }} con problema</p>{% endif %}
         <div class="campos">
           <label>Motivo de todo el grupo
-            <select name="grupo_{{ g.foto }}_concepto_id"><option value="">{{ 'Elegí' if g.concepto_id is none else 'No cambiar' }}</option>
-              {% for c in conceptos %}<option value="{{ c.id }}" {% if g.concepto_id == c.id %}selected{% endif %}>{{ c.nombre }}</option>{% endfor %}
+            <select name="grupo_{{ g.foto }}_concepto_id" data-motivo-de="grupo-{{ g.foto }}"><option value="">{{ 'Elegí' if g.concepto_id is none else 'No cambiar' }}</option>
+              {% for c in conceptos %}<option value="{{ c.id }}" data-destino="{{ c.destino }}" {% if g.concepto_id == c.id %}selected{% endif %}>{{ c.nombre }}</option>{% endfor %}
             </select></label>
-          <label>Proveedor de todo el grupo
-            <select name="grupo_{{ g.foto }}_proveedor_id"><option value="">{{ 'Elegí' if g.proveedor_id is none else 'No cambiar' }}</option>
-              {% for p in proveedores %}<option value="{{ p.id }}" {% if g.proveedor_id == p.id %}selected{% endif %}>{{ p.nombre }}</option>{% endfor %}
-            </select></label>
-          {% if bancos %}
-          <label>Cuenta de todo el grupo
+          {{ proveedor("grupo_" ~ g.foto ~ "_", "", g.proveedor_id, g.proveedor_a_mano, "Elegí" if g.proveedor_id is none else "No cambiar") }}
+          {% if bancos|length > 1 %}
+          <label data-banco-de="grupo-{{ g.foto }}"{% if destinos.get(g.concepto_id) != "depositado" %} hidden{% endif %}>¿En qué banco lo depositás? (todo el grupo)
             <select name="grupo_{{ g.foto }}_cuenta_id"><option value="">{{ 'Elegí' if g.cuenta_id is none else 'No cambiar' }}</option>
               {% for b in bancos %}<option value="{{ b.id }}" {% if g.cuenta_id == b.id %}selected{% endif %}>{{ b.nombre }}</option>{% endfor %}
             </select></label>
@@ -126,8 +145,6 @@
         <details{% if mal %} open{% endif %}>
           <summary><strong>Nº {{ r.numero or "sin número" }}</strong> · {{ r.emisor or "sin emisor" }} · <span class="importe">{{ montos[i]|moneda if montos[i] is not none else "sin monto" }}</span>{% if r.fecha_pago|length == 10 %} · se cobra {{ r.fecha_pago[8:10] }}/{{ r.fecha_pago[5:7] }}/{{ r.fecha_pago[:4] }}{% endif %}</summary>
           {% if mal %}<p class="problemas" data-problemas>{{ problemas[i]|join(" · ") }}</p>{% endif %}
-          {% if r.deposito %}<p class="leido" data-leido="deposito">Se leyó un depósito en <strong>{{ r.cuenta_deposito or "una cuenta sin número" }}</strong></p>
-          {% elif r.proveedor_nombre or r.proveedor_cuit %}<p class="leido" data-leido="endoso">Se leyó que va a <strong>{{ r.proveedor_nombre or "sin nombre" }}</strong>{% if r.proveedor_cuit %} · CUIT {{ r.proveedor_cuit }}{% endif %}</p>{% endif %}
           <input type="hidden" name="foto_{{ i }}" value="{{ r.foto }}">
           <input type="hidden" name="emisor_{{ i }}" value="{{ r.emisor }}">
           <input type="hidden" name="fecha_pago_{{ i }}" value="{{ r.fecha_pago }}">
@@ -157,13 +174,13 @@
             {# El proveedor lo pide el pago; la cuenta, el depósito. Lo del otro
                tipo viaja escondido por si se vuelve a cambiar el motivo. #}
             {% if destino == "entregado" %}
-            <label>¿A qué proveedor?
-              <select name="proveedor_id_{{ i }}"><option value="">Elegí</option>
-                {% for p in proveedores %}<option value="{{ p.id }}" {% if r.proveedor_id == p.id %}selected{% endif %}>{{ p.nombre }}</option>{% endfor %}
-              </select></label>
-            {% else %}<input type="hidden" name="proveedor_id_{{ i }}" value="{{ r.proveedor_id or '' }}">{% endif %}
-            {% if destino == "depositado" and bancos %}
-            <label>¿En qué cuenta?
+            {# Alguien que no está en proveedores: su nombre, sin crear un proveedor (dueño, 16/10). #}
+            {{ proveedor("", "_" ~ i, r.proveedor_id, r.proveedor_a_mano, "Elegí") }}
+            {% else %}<input type="hidden" name="proveedor_id_{{ i }}" value="{{ r.proveedor_id or '' }}">
+            <input type="hidden" name="proveedor_a_mano_{{ i }}" value="{{ r.proveedor_a_mano }}">{% endif %}
+            {# El banco, SOLO en un depósito y si hay más de uno: con uno, va solo (dueño, 16/10). #}
+            {% if destino == "depositado" and bancos|length > 1 %}
+            <label>¿En qué banco lo depositás?
               <select name="cuenta_id_{{ i }}"><option value="">Elegí</option>
                 {% for b in bancos %}<option value="{{ b.id }}" {% if r.cuenta_id == b.id %}selected{% endif %}>{{ b.nombre }}</option>{% endfor %}
               </select></label>
@@ -184,6 +201,31 @@
     </div>
   </form>
 <script>
+  // De la lista o a mano: se ve uno, y el que se deja queda vacío (si no,
+  // irían los dos y el renglón queda en rojo).
+  document.querySelectorAll("[data-proveedor]").forEach(function (caja) {
+    var lista = caja.querySelector("[data-de-la-lista]"), mano = caja.querySelector("[data-a-mano]");
+    var aLista = caja.querySelector("[data-a-la-lista]"), aMano = caja.querySelector("[data-a-mano-boton]");
+    aLista.addEventListener("click", function () {
+      mano.querySelector("input").value = "";
+      mano.hidden = true; aLista.hidden = true; lista.hidden = false; aMano.hidden = false;
+      lista.querySelector("select").focus();
+    });
+    aMano.addEventListener("click", function () {
+      lista.querySelector("select").value = "";
+      lista.hidden = true; aMano.hidden = true; mano.hidden = false; aLista.hidden = false;
+      mano.querySelector("input").focus();
+    });
+  });
+  // En "Para todos" y en el encabezado de cada grupo, el banco se ve solo si el motivo es un depósito.
+  document.querySelectorAll("select[data-motivo-de]").forEach(function (motivo) {
+    var banco = document.querySelector('[data-banco-de="' + motivo.dataset.motivoDe + '"]');
+    if (!banco) { return; }
+    motivo.addEventListener("change", function () {
+      var elegido = motivo.options[motivo.selectedIndex];
+      banco.hidden = !elegido || elegido.dataset.destino !== "depositado";
+    });
+  });
   // Al cambiar el motivo se vuelve a armar la página: pide el proveedor o la cuenta que corresponda.
   document.querySelectorAll("select[data-motivo]").forEach(function (motivo) {
     motivo.addEventListener("change", function () {
