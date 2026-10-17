@@ -29384,8 +29384,12 @@ async def cargar_cheques_ruta(request: Request):
 
 def _renderizar_paso_1_de_aplicar(request: Request, *, elegidos: set[int], error: str | None = None,
                                   status_code: int = 200):
+    en_cartera = buscar_cheques({}, solo_en_cartera=True)
     return templates.TemplateResponse(request, "cheques_aplicar.html", {
-        "en_cartera": buscar_cheques({}, solo_en_cartera=True), "elegidos": elegidos, "en_rojo": cheque_en_rojo,
+        "en_cartera": en_cartera, "elegidos": elegidos, "en_rojo": cheque_en_rojo,
+        # Para el "Cargar · N cheques · $total" de arriba al entrar con uno ya
+        # tildado (desde la ficha); después lo lleva la pantalla.
+        "elegidos_en_cartera": [c for c in en_cartera if c["id"] in elegidos],
         "error": error, "volver": vuelta(request, "/gerencia/cheques"),
     }, status_code=status_code)
 
