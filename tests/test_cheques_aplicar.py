@@ -113,7 +113,7 @@ def _formulario(html: str) -> dict:
         if nombre != "foto_leida":
             datos[nombre] = valor
     for nombre, cuerpo in re.findall(r'<select name="([a-z_0-9-]+)"[^>]*>(.*?)</select>', marcado, re.S):
-        elegido = re.search(r'<option value="([^"]*)" selected', cuerpo)
+        elegido = re.search(r'<option value="([^"]*)"[^>]*? selected', cuerpo)
         datos[nombre] = elegido.group(1) if elegido else ""
     for nombre in re.findall(r'<input type="checkbox" name="([a-z_0-9]+)" value="1" checked', marcado):
         datos[nombre] = "1"
@@ -130,6 +130,10 @@ def _titulos(html: str) -> list[str]:
 
 def _problemas(html: str) -> list[str]:
     return re.findall(r"data-problemas>([^<]*)</p>", _sin_estilo(html))
+
+
+def _leidos_del_grupo(html: str) -> list[str]:
+    return [re.sub(r"<[^>]+>", "", t) for t in re.findall(r"data-leido-del-grupo>(.*?)</p>", _sin_estilo(html))]
 
 
 def _resumen(html: str) -> str:
@@ -277,8 +281,9 @@ def test_un_PDF_se_lee_con_TODAS_sus_paginas_y_un_archivo_que_no_se_lee_no_frena
 def test_SOLO_A_MANO_van_en_Elegidos_a_mano_y_el_encabezado_les_pone_el_motivo_y_el_proveedor(m, d):
     ids = _galpon(d)
     pagina = _seguir(m, elegidos=[ids["1001"], ids["1003"]])
-    assert _titulos(pagina.text) == ["Elegidos a mano · a elegir · 2 cheques · $40.000"]
-    assert _problemas(pagina.text) == ["elegí el motivo"] * 2
+    # Arrancan en "Pago a proveedor" (dueño, 16/10): falta a quién.
+    assert _titulos(pagina.text) == ["Elegidos a mano · Pago a proveedor · 2 cheques · $40.000"]
+    assert _problemas(pagina.text) == ["elegí el proveedor"] * 2
     # Falta solo a dónde va: el número, el monto y el cheque de la cartera no se abren.
     assert '<input type="text" name="numero_0"' not in _sin_estilo(pagina.text)
     assert '<input type="hidden" name="numero_0"' in _sin_estilo(pagina.text)
@@ -299,13 +304,13 @@ def test_MEZCLADO_un_archivo_y_tildados_y_el_tildado_que_ya_vino_en_el_archivo_v
     pagina = _seguir(m, [_captura(PROV_A, "X", ("1001", 10000), ("1002", 20000))], elegidos=[ids["1002"], ids["1003"]])
     assert re.findall(r'<div class="aviso" data-aviso>([^<]*)</div>', _sin_estilo(pagina.text)) == [
         "El cheque 1002 ya está en la foto 1: se toma una sola vez."]
-    assert _titulos(pagina.text) == ["Elegidos a mano · a elegir · 1 cheque · $30.000",
+    assert _titulos(pagina.text) == ["Elegidos a mano · Pago a proveedor · 1 cheque · $30.000",
                                      "Foto 1 · EJEMPLO Puesto · 2 cheques · $30.000"]
     with patch("app.main.subir_foto_comanda", return_value="cheques/foto.jpg"):
         confirmada = _revisar(m, _formulario(pagina.text), "confirmar")
     assert confirmada.status_code == 200
     assert "Se aplicaron 2. Quedan 1 con problemas" in confirmada.text
-    assert _titulos(confirmada.text) == ["Elegidos a mano · a elegir · 1 cheque · $30.000"]
+    assert _titulos(confirmada.text) == ["Elegidos a mano · Pago a proveedor · 1 cheque · $30.000"]
     assert _salidas(d) == {"1001": ("entregado", 1, "cheques/foto.jpg"), "1002": ("entregado", 1, "cheques/foto.jpg")}
 
 
@@ -347,7 +352,8 @@ def test_PARA_TODOS_va_a_los_TILDADOS_y_sin_tildados_PREGUNTA_antes(m, d):
     nuevos = _formulario(tildado.text)
     assert {nuevos[f"numero_{i}"]: nuevos[f"proveedor_id_{i}"] for i in range(3)} == {
         "1001": "1", "1002": "2", "1003": "1"}
-    assert "Elegí qué poner en" in _revisar(m, datos, "a_todos").text
+    # Sin nada elegido (el motivo arranca en Pago a proveedor: se lo saca a mano).
+    assert "Elegí qué poner en" in _revisar(m, dict(datos, todos_concepto_id=""), "a_todos").text
 
 
 def test_SELECCIONAR_TODOS_y_SACAR_LOS_TILDADOS(m, d):
@@ -415,13 +421,13 @@ def test_REPETIDO_entre_dos_archivos_NO_EN_CARTERA_y_MONTO_DISTINTO_van_en_rojo_
     assert corregido.status_code == 303 and set(_salidas(d)) == {"1001", "1002", "1003"}
 
 
-def test_una_BOLETA_que_no_dice_a_donde_va_deja_el_DESTINO_vacio(m, d):
+def test_una_BOLETA_que_no_dice_a_donde_va_arranca_en_PAGO_A_PROVEEDOR_y_pide_a_quien(m, d):
     _galpon(d)
     boleta = {"tipo": None, "cuenta_deposito": None, "proveedor_cuit": None, "proveedor_nombre": None,
               "cheques": [{"numero": "1001", "importe": 10000}]}
     pagina = _seguir(m, [boleta])
-    assert _titulos(pagina.text) == ["Foto 1 · a elegir · 1 cheque · $10.000"]
-    assert _problemas(pagina.text) == ["elegí el motivo"]
+    assert _titulos(pagina.text) == ["Foto 1 · Pago a proveedor · 1 cheque · $10.000"]
+    assert _problemas(pagina.text) == ["elegí el proveedor"]
 
 
 def test_la_CAPTURA_REAL_de_deposito_deja_los_dos_DEPOSITADOS_sin_proveedor(m, d):
@@ -429,7 +435,7 @@ def test_la_CAPTURA_REAL_de_deposito_deja_los_dos_DEPOSITADOS_sin_proveedor(m, d
     reales = _los_reales(d)
     pagina = _seguir(m, [DEPOSITO_REAL])
     assert _problemas(pagina.text) == []
-    assert re.findall(r'data-leido="([a-z]+)"', _sin_estilo(pagina.text)) == ["deposito", "deposito"]
+    assert _leidos_del_grupo(pagina.text) == [f"Depósito en cuenta {CUENTA}"]
     with patch("app.main.subir_foto_comanda", return_value="cheques/deposito.jpg"):
         final = _revisar(m, _formulario(pagina.text), "confirmar")
     assert final.status_code == 303 and "2+cheques+aplicados" in final.headers["location"]
@@ -444,14 +450,84 @@ def test_la_CAPTURA_REAL_de_deposito_deja_los_dos_DEPOSITADOS_sin_proveedor(m, d
 def test_el_PROVEEDOR_elegido_a_mano_se_queda_con_el_CUIT_leido(m, d):
     _galpon(d)
     datos = _formulario(_seguir(m, [_captura(PROV_B, "EJEMPLO OTRO PUESTO", ("1005", 50000))]).text)
-    assert datos["proveedor_id_0"] == "" and _problemas(_revisar(m, datos, "revisar").text) == ["elegí el proveedor"]
+    # El CUIT no es de ninguno: viene A MANO con la razón social leída (dueño, 17/10)...
+    assert (datos["proveedor_id_0"], datos["proveedor_a_mano_0"]) == ("", "EJEMPLO OTRO PUESTO")
+    assert _problemas(_revisar(m, datos, "revisar").text) == []
+    # ...y "Elegir de la lista" (la pantalla vacía lo escrito): es el 2 con otro nombre, que recuerda el CUIT.
     with patch("app.main.subir_foto_comanda", return_value="cheques/foto.jpg"):
-        assert _revisar(m, dict(datos, proveedor_id_0="2"), "confirmar").status_code == 303
+        assert _revisar(m, dict(datos, proveedor_id_0="2", proveedor_a_mano_0=""), "confirmar").status_code == 303
     assert {p["id"]: p["cuit"] for p in d.proveedores_con_cuit()} == {1: PROV_A, 2: PROV_B}
     # La próxima vez se encuentra solo; y el que ya salió lo dice.
     otra = _seguir(m, [_captura(PROV_B, "X", ("1001", 10000)), _captura(PROV_B, "X", ("1005", 50000))])
     assert _formulario(otra.text)["proveedor_id_0"] == "2"
     assert _problemas(otra.text) == ["ya salió: está entregado"]
+
+
+# --- LA CAPTURA REAL DE LIONEL (17/10) ------------------------------------------------------
+
+# Endoso de 12 ECHEQ de Día a FRIGORIFICO CINCO SALTOS SA, que NO está en
+# proveedores. En la cartera hay 18 del 951704 al 951721: los 6 que no van son
+# el rival, y uno de esos con otro monto, como en Frutamax.
+CINCO_SALTOS = {"tipo": "endoso", "cuenta_deposito": None, "proveedor_cuit": "30-53636746-9",
+                "proveedor_nombre": "FRIGORIFICO CINCO SALTOS SA",
+                "cheques": [{"numero": f"00{n}", "fecha_pago": "2026-11-20", "importe": "2.500.000,00",
+                             "emisor": "DIA ARGENTINA S.A."} for n in range(951704, 951716)]}
+
+
+def _cartera_de_dia(d):
+    return {f"00{n}": _cargar(d, f"00{n}", importe=1800000.0 if n == 951720 else 2500000.0, nombre="Día %",
+                              origen="a_mano") for n in range(951704, 951722)}
+
+
+def test_la_CAPTURA_REAL_queda_en_UN_grupo_PAGO_A_PROVEEDOR_a_CINCO_SALTOS_12_bien_0_con_problema(m, d):
+    from tests.test_cuentas import _sembrar_frutamax
+    banco = _sembrar_frutamax(d)["Banco Credicoop"]
+    cartera = _cartera_de_dia(d)
+    pagina = _seguir(m, [CINCO_SALTOS])
+    html = _sin_estilo(pagina.text)
+    assert _titulos(pagina.text) == ["Foto 1 · FRIGORIFICO CINCO SALTOS SA · 12 cheques · $30.000.000"]
+    assert _leidos_del_grupo(html) == [
+        "Endoso a FRIGORIFICO CINCO SALTOS SA · CUIT 30-53636746-9"]
+    assert _resumen(pagina.text) == "12 cheques · $30.000.000 · 12 bien · 0 con problema"
+    assert _problemas(pagina.text) == []
+    datos = _formulario(pagina.text)
+    pago = next(c["id"] for c in d.listar_conceptos_de_cheques() if c["nombre"] == "Pago a proveedor")
+    assert {(datos[f"concepto_id_{i}"], datos[f"proveedor_id_{i}"], datos[f"proveedor_a_mano_{i}"],
+             datos[f"cuenta_id_{i}"]) for i in range(12)} == {(str(pago), "", "FRIGORIFICO CINCO SALTOS SA", str(banco))}
+    # Nada de "Elegí" de entrada: el motivo y la cuenta ya puestos, también en Para todos y en el grupo.
+    # (Con UN banco no hay selector de banco: va solo, dueño 16/10.)
+    assert datos["todos_concepto_id"] == str(pago) and "todos_cuenta_id" not in datos
+    assert datos["grupo_0_concepto_id"] == str(pago)
+    with patch("app.main.subir_foto_comanda", return_value="cheques/cinco-saltos.jpg"):
+        final = _revisar(m, datos, "confirmar")
+    assert final.status_code == 303 and "12+cheques+aplicados" in final.headers["location"]
+    salieron = {c["numero"]: (c["estado"], c["concepto"], c["proveedor_id"], c["proveedor"])
+                for c in d.buscar_cheques({}) if c["id"] in cartera.values() and c["estado"] != "en_cartera"}
+    assert salieron == {f"00{n}": ("entregado", "Pago a proveedor", None, "FRIGORIFICO CINCO SALTOS SA")
+                        for n in range(951704, 951716)}
+    # No se creó ningún proveedor ni se le pegó el CUIT a nadie.
+    assert [p for p in d.proveedores_con_cuit() if p["cuit"] == "30536367469"] == []
+    assert len([c for c in d.buscar_cheques({}) if c["id"] in cartera.values() and c["estado"] == "en_cartera"]) == 6
+
+
+def test_la_CAPTURA_REAL_con_el_proveedor_en_la_lista_por_OTRO_NOMBRE_lo_elige_y_RECUERDA_el_CUIT(m, d):
+    _cartera_de_dia(d)
+    conexion = d.obtener_conexion()
+    with conexion.cursor() as cursor:
+        cursor.execute("INSERT INTO proveedores (id, nombre, codigo_puesto) OVERRIDING SYSTEM VALUE "
+                       "VALUES (7, 'EJEMPLO Frigorífico 5 Saltos', 'N09P09')")
+    conexion.commit()
+    conexion.close()
+    datos = _formulario(_seguir(m, [CINCO_SALTOS]).text)
+    elegido = dict(datos, grupo_0_proveedor_id="7", grupo_0_proveedor_a_mano="")
+    revisada = _revisar(m, elegido, "grupo_0")
+    assert _titulos(revisada.text) == ["Foto 1 · EJEMPLO Frigorífico 5 Saltos · 12 cheques · $30.000.000"]
+    with patch("app.main.subir_foto_comanda", return_value="cheques/cinco-saltos.jpg"):
+        assert _revisar(m, _formulario(revisada.text), "confirmar").status_code == 303
+    assert {p["id"]: p["cuit"] for p in d.proveedores_con_cuit()}[7] == "30536367469"
+    # La próxima captura del mismo CUIT ya lo encuentra sola.
+    otra = _formulario(_seguir(m, [dict(CINCO_SALTOS, cheques=[{"numero": "00951716", "importe": 2500000}])]).text)
+    assert (otra["proveedor_id_0"], otra["proveedor_a_mano_0"]) == ("7", "")
 
 
 # --- SIN BASE ----------------------------------------------------------------------------
@@ -499,12 +575,13 @@ def test_el_DEPOSITO_pide_la_cuenta_si_hay_bancos_y_la_reconoce_por_el_numero():
 
 def test_A_MANO_no_repite_lo_que_ya_vino_en_un_archivo_y_PARA_TODOS_sin_tildados_devuelve_None():
     ya, _ = _leidos([{"cheques": [{"numero": "42", "importe": 2000}]}])
-    a_mano, avisos = renglones_elegidos_a_mano([2, 1, 99], cheques=CARTERA, ya=ya, hoy=HOY)
+    a_mano, avisos = renglones_elegidos_a_mano([2, 1, 99], cheques=CARTERA, ya=ya, hoy=HOY, concepto_pago=1)
     assert avisos == ["El cheque 42 ya está en la foto 1: se toma una sola vez."]
-    assert [(r["foto"], r["cheque_id"], r["importe"], r["concepto_id"]) for r in a_mano] == [(A_MANO, 1, "1000.00", None)]
+    # Los dos arrancan en "Pago a proveedor" (dueño, 16/10): el leído y el tildado a mano.
+    assert [(r["foto"], r["cheque_id"], r["importe"], r["concepto_id"]) for r in a_mano] == [(A_MANO, 1, "1000.00", 1)]
     renglones = ya + a_mano
     assert poner_a_los_tildados(renglones, {"concepto_id": 2}, sin_tildar_tambien=False) is None
-    assert [r["concepto_id"] for r in renglones] == [None, None]
+    assert [r["concepto_id"] for r in renglones] == [1, 1]
     assert poner_a_los_tildados(renglones, {"concepto_id": 2}, sin_tildar_tambien=True) == 2
     renglones[0]["tildado"] = True
     assert poner_a_los_tildados(renglones, {"concepto_id": 3}, sin_tildar_tambien=False) == 1
@@ -523,3 +600,123 @@ def test_los_GRUPOS_con_problema_primero_y_a_mano_al_final():
     assert [(g["titulo"], g["destino"], g["cuantos"], g["con_problema"], g["total"]) for g in salida] == [
         ("Foto 2", "EJEMPLO Puesto", 1, 1, 1.0), ("Foto 1", "EJEMPLO Puesto", 1, 0, 1000.0),
         ("Elegidos a mano", "EJEMPLO Puesto", 1, 0, 2000.0)]
+
+
+def test_la_CUENTA_por_defecto_es_el_CREDICOOP_y_solo_NOMBRA_al_grupo_si_es_de_DEPOSITOS():
+    from core.salidas_de_cheques import cuenta_por_defecto
+    bancos = [{"id": 5, "nombre": "EJEMPLO Banco Nación"}, {"id": 9, "nombre": "Banco Credicoop"}]
+    assert cuenta_por_defecto(bancos) == 9
+    assert cuenta_por_defecto(bancos[:1]) == 5 and cuenta_por_defecto(bancos[:1] * 0) is None
+    assert cuenta_por_defecto([{"id": 5, "nombre": "EJEMPLO A"}, {"id": 6, "nombre": "EJEMPLO B"}]) is None
+    # Un endoso sin proveedor tiene la cuenta puesta, pero el grupo NO se llama "Banco Credicoop".
+    renglones, _ = _leidos([{"proveedor_cuit": None, "cheques": [{"numero": "0042", "importe": 1000}]}],
+                           bancos=bancos)
+    assert renglones[0]["cuenta_id"] == 9
+    problemas = problemas_de_las_salidas(renglones, CARTERA, destinos=DESTINOS, bancos=bancos)
+    (grupo,) = grupos_de_las_salidas(renglones, problemas, nombre_de_proveedor={}, destinos=DESTINOS,
+                                     nombre_de_cuenta={9: "Banco Credicoop"}, nombre_de_concepto={1: "Pago a proveedor"})
+    assert grupo["destino"] == "Pago a proveedor"
+
+
+def test_ELEGIR_DE_LA_LISTA_vacia_lo_escrito_y_a_390_y_313_no_se_sale(m, d):
+    """La razón social leída viene escrita; "Elegir de la lista" muestra la
+    lista y vacía lo escrito (si no, irían los dos y el renglón queda en rojo)."""
+    pytest.importorskip("playwright", reason="lo que se ve y lo que se manda lo decide el navegador")
+    from playwright.sync_api import sync_playwright
+    from scripts.medir_layout import CHROMIUM
+    _cartera_de_dia(d)
+    html = _seguir(m, [CINCO_SALTOS]).text
+    medidas = {}
+    with sync_playwright() as pw:
+        navegador = pw.chromium.launch(executable_path=CHROMIUM)
+        try:
+            for ancho in (390, 313):
+                pagina = navegador.new_page(viewport={"width": ancho, "height": 800})
+                pagina.set_content(html)
+                caja = pagina.locator('[data-grupo="0"] .grupo-cabeza [data-proveedor]')
+                antes = (caja.locator('input[name="grupo_0_proveedor_a_mano"]').input_value(),
+                         caja.locator("[data-de-la-lista]").is_visible())
+                caja.locator("[data-a-la-lista]").click()
+                despues = (caja.locator('input[name="grupo_0_proveedor_a_mano"]').input_value(),
+                           caja.locator("[data-de-la-lista]").is_visible(),
+                           caja.locator("[data-a-mano]").is_visible())
+                medidas[ancho] = (antes, despues, pagina.evaluate(
+                    "document.documentElement.scrollWidth - document.documentElement.clientWidth"))
+                pagina.close()
+        finally:
+            navegador.close()
+    for ancho, (antes, despues, desborde) in medidas.items():
+        assert antes == ("FRIGORIFICO CINCO SALTOS SA", False), (ancho, antes)
+        assert despues == ("", True, False), (ancho, despues)
+        assert desborde == 0, (ancho, desborde)
+
+
+# --- LOS TRES AJUSTES (dueño, 16/10) ------------------------------------------------
+
+def test_1_el_MOTIVO_arranca_en_PAGO_A_PROVEEDOR_en_cada_renglon_y_en_PARA_TODOS(m, d):
+    _galpon(d)
+    pagina = _seguir(m, [_captura(None, None, ("1001", 10000), tipo=None)])
+    datos = _formulario(pagina.text)
+    assert datos["concepto_id_0"] == "1" and datos["todos_concepto_id"] == "1"     # 1 = Pago a proveedor
+    # El depósito sigue arrancando como depósito.
+    assert _formulario(_seguir(m, [DEPOSITO_REAL]).text)["concepto_id_0"] == "3"
+
+
+def test_2_un_PROVEEDOR_ESCRITO_A_MANO_se_guarda_como_texto_y_se_BUSCA_en_la_Cartera(m, d):
+    _galpon(d)
+    proveedores_antes = len(d.proveedores_con_cuit())
+    datos = _formulario(_seguir(m, [_captura(None, None, ("1001", 10000), ("1002", 20000), tipo=None)]).text)
+    assert 'name="proveedor_a_mano_0"' in _sin_estilo(_revisar(m, datos, "revisar").text)
+    # Por renglón, el de la lista Y uno escrito: no se adivina.
+    los_dos = _revisar(m, dict(datos, proveedor_id_0="1", proveedor_a_mano_0="EJEMPLO Transporte"), "revisar")
+    assert _problemas(los_dos.text) == ["elegí el proveedor de la lista o escribilo, no los dos", "elegí el proveedor"]
+    # Por grupo, escrito a mano: pisa el de la lista.
+    grupo = _revisar(m, dict(datos, proveedor_id_1="1"), "grupo_0", grupo_0_proveedor_a_mano="  EJEMPLO   Transporte ")
+    assert _titulos(grupo.text) == ["Foto 1 · EJEMPLO Transporte · 2 cheques · $30.000"]
+    assert _problemas(grupo.text) == []
+    with patch("app.main.subir_foto_comanda", return_value="cheques/foto.jpg"):
+        assert _revisar(m, _formulario(grupo.text), "confirmar").status_code == 303
+    salidos = {c["numero"]: (c["proveedor_id"], c["proveedor_a_mano"], c["proveedor"]) for c in d.buscar_cheques({})
+               if c["estado"] == "entregado"}
+    assert salidos == {"1001": (None, "EJEMPLO Transporte", "EJEMPLO Transporte"),
+                       "1002": (None, "EJEMPLO Transporte", "EJEMPLO Transporte")}
+    assert len(d.proveedores_con_cuit()) == proveedores_antes                      # no se creó ningún proveedor
+    # La Cartera lo busca por ese nombre (y por el de un proveedor de la lista, igual).
+    cartera = _sin_estilo(_cliente(m, "gerencia").get("/gerencia/cheques", params={"entregado_a": "transporte"}).text)
+    assert sorted(re.findall(r'href="/gerencia/cheques/(\d+)', cartera)) == sorted(
+        str(c["id"]) for c in d.buscar_cheques({}) if c["estado"] == "entregado")
+    assert len(d.buscar_cheques({"entregado_a": "otra cosa"})) == 0
+
+
+def test_3_el_BANCO_se_pregunta_SOLO_en_un_deposito_y_con_UNO_solo_va_solo(m, d):
+    from tests.test_cuentas import _sembrar_frutamax
+    banco = _sembrar_frutamax(d)["Banco Credicoop"]
+    _galpon(d)
+    reales = _los_reales(d)
+    pagina = _sin_estilo(_seguir(m, [DEPOSITO_REAL, _captura(PROV_A, "X", ("1001", 10000))]).text)
+    # Con un solo banco: no hay selector, va elegido escondido; y la palabra "cuenta" no aparece.
+    assert "¿En qué banco lo depositás?" not in pagina and "¿En qué cuenta?" not in pagina
+    datos = _formulario(pagina)
+    assert {datos[f"numero_{i}"]: datos[f"cuenta_id_{i}"] for i in range(3)} == {
+        "00932970": str(banco), "00020758": str(banco), "1001": str(banco)}    # el pago también arranca ahí
+    with patch("app.main.subir_foto_comanda", return_value="cheques/foto.jpg"):
+        assert _revisar(m, datos, "confirmar").status_code == 303
+    assert {c["id"]: c["cuenta"] for c in d.buscar_cheques({}) if c["id"] in reales.values()} == {
+        reales["00932970"]: "Banco Credicoop", reales["00020758"]: "Banco Credicoop"}
+
+
+def test_3_con_DOS_bancos_el_selector_va_SOLO_en_los_depositos_y_en_Para_todos_escondido_si_no_es_deposito(m, d):
+    from tests.test_cuentas import _sembrar_frutamax
+    credicoop = _sembrar_frutamax(d)["Banco Credicoop"]
+    d.crear_cuenta(nombre="EJEMPLO Otro Banco", tipo="banco", moneda="pesos", numero=None, madre_id=None, conceptos=[])
+    _galpon(d)
+    _los_reales(d)
+    pagina = _sin_estilo(_seguir(m, [DEPOSITO_REAL, _captura(PROV_A, "X", ("1001", 10000))]).text)
+    renglones = re.findall(r'<label>¿En qué banco lo depositás\?\s*<select name="cuenta_id_(\d+)"', pagina)
+    datos = _formulario(pagina)
+    assert sorted(datos[f"numero_{i}"] for i in renglones) == ["00020758", "00932970"]     # el pago no lo pide
+    # "Para todos" arranca en Pago a proveedor: el banco está, escondido, y en el Credicoop (dueño, 17/10).
+    assert '<label data-banco-de="todos" hidden>¿En qué banco lo depositás?' in pagina
+    assert datos["todos_cuenta_id"] == str(credicoop)
+    con_deposito = _sin_estilo(_revisar(m, dict(datos, todos_concepto_id="3"), "revisar").text)
+    assert '<label data-banco-de="todos">¿En qué banco lo depositás?' in con_deposito

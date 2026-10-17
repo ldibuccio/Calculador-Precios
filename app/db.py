@@ -22338,7 +22338,8 @@ _SQL_CHEQUES = """
            e.nombre_a_mano, e.cuit_librador, e.creado_en, e.de_quien, e.vence_el, e.fecha_salida,
            e.proveedor_id, e.concepto, e.acreditado_el, e.fecha_rechazo, e.motivo_rechazo,
            e.resuelto_el, e.resolucion, e.estado, e.en_rojo_por_vencer, e.banco_id,
-           b.nombre AS banco, p.nombre AS proveedor, s.concepto_id, s.foto_ruta AS foto_salida,
+           b.nombre AS banco, coalesce(p.nombre, e.proveedor_a_mano) AS proveedor, e.proveedor_a_mano,
+           s.concepto_id, s.foto_ruta AS foto_salida,
            s.cuenta_deposito, dp.cuenta_id AS cuenta_id, cu.nombre AS cuenta
     FROM cheques_con_estado e
     JOIN bancos b ON b.id = e.banco_id
@@ -22357,6 +22358,9 @@ _FILTROS_DE_CHEQUES = {
     "cliente_id": "e.cliente_id = %s",
     "de_quien": "e.de_quien ILIKE '%%' || %s || '%%'",
     "proveedor_id": "e.proveedor_id = %s",
+    # A quién se entregó, por nombre: el proveedor de la lista o el escrito a
+    # mano en la salida (dueño, 16/10).
+    "entregado_a": "coalesce(p.nombre, e.proveedor_a_mano) ILIKE '%%' || %s || '%%'",
     "numero": "ltrim(upper(btrim(e.numero)), '0') = ltrim(upper(btrim(%s)), '0')",
     "banco_id": "e.banco_id = %s",
     "concepto_id": "s.concepto_id = %s",
@@ -22757,8 +22761,8 @@ def proveedores_con_cuit() -> list[dict]:
 
 def aplicar_salidas_de_cheques(salidas: list[dict]) -> None:
     """Varias salidas, cada una con lo suyo ({"cheque_id", "fecha",
-    "concepto_id", "proveedor_id", "cuenta_deposito", "cuenta_id", "foto_ruta",
-    "cuit_leido"}), en UNA transacción: o entran todas o ninguna. Un depósito
+    "concepto_id", "proveedor_id", "proveedor_a_mano", "cuenta_deposito",
+    "cuenta_id", "foto_ruta", "cuit_leido"}), en UNA transacción: o entran todas o ninguna. Un depósito
     con `cuenta_id` queda en esa cuenta de banco (dueño, 15/10).
 
     EL PROVEEDOR RECUERDA SU CUIT (dueño, 13/10): si se eligió a mano para un
@@ -22767,10 +22771,10 @@ def aplicar_salidas_de_cheques(salidas: list[dict]) -> None:
     with _escribir_cheques() as cursor:
         for salida in salidas:
             cursor.execute(
-                "INSERT INTO cheques_salidas (cheque_id, fecha, concepto_id, proveedor_id, cuenta_deposito, "
-                "foto_ruta, sector) VALUES (%s, %s, %s, %s, %s, %s, 'gerencia')",
+                "INSERT INTO cheques_salidas (cheque_id, fecha, concepto_id, proveedor_id, proveedor_a_mano, "
+                "cuenta_deposito, foto_ruta, sector) VALUES (%s, %s, %s, %s, %s, %s, %s, 'gerencia')",
                 (salida["cheque_id"], salida["fecha"], salida["concepto_id"], salida["proveedor_id"],
-                 salida.get("cuenta_deposito"), salida.get("foto_ruta")),
+                 salida.get("proveedor_a_mano"), salida.get("cuenta_deposito"), salida.get("foto_ruta")),
             )
             if salida.get("cuenta_id") is not None:
                 cursor.execute("INSERT INTO cuentas_cheques_depositados (cheque_id, cuenta_id) VALUES (%s, %s)",

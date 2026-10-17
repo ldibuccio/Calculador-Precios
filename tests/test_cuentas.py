@@ -289,8 +289,9 @@ def test_un_DEPOSITO_desde_la_Cartera_va_al_banco_con_la_fecha_de_ACREDITACION_y
     # Tildado a mano y pasado a depósito: con un solo banco, ya viene elegido.
     datos = _formulario(_seguir(m, elegidos=[cheque]).text)
     revisada = _revisar(m, dict(datos, concepto_id_0="3", fecha_0=salio), "revisar")
-    assert re.search(rf'<select name="cuenta_id_0"><option value="">Elegí</option>\s*<option value="{banco}" selected>',
-                     _sin_estilo(revisada.text))
+    # Con un solo banco no hay selector (dueño, 16/10): va elegido, escondido.
+    assert f'<input type="hidden" name="cuenta_id_0" value="{banco}">' in _sin_estilo(revisada.text)
+    assert 'name="cuenta_id_0"><option' not in _sin_estilo(revisada.text)
     hecho = _revisar(m, _formulario(revisada.text), "confirmar")
     assert hecho.status_code == 303
     # El RIVAL sale como pago: aunque traiga la cuenta, no va al banco.
@@ -361,6 +362,18 @@ def test_un_numero_que_NO_es_de_ninguna_cuenta_pide_elegirla(m, d):
     _los_reales(d)
     pagina = _seguir(m, [dict(DEPOSITO_REAL, cuenta_deposito="CC$ 555-555-555/5")])
     assert re.findall(r"data-problemas>([^<]*)</p>", _sin_estilo(pagina.text)) == ["elegí la cuenta"] * 2
+
+
+def test_con_UN_SOLO_banco_un_numero_que_no_es_de_ninguna_va_a_ese_y_no_queda_trabado(m, d):
+    """Con un banco no hay selector (dueño, 16/10): si se pidiera elegir, no
+    habría dónde, y el renglón quedaría en rojo para siempre."""
+    from tests.test_cheques_aplicar import DEPOSITO_REAL, _galpon, _los_reales, _seguir
+    banco = _sembrar_frutamax(d)["Banco Credicoop"]
+    _galpon(d)
+    _los_reales(d)
+    pagina = _sin_estilo(_seguir(m, [dict(DEPOSITO_REAL, cuenta_deposito="CC$ 555-555-555/5")]).text)
+    assert re.findall(r"data-problemas>([^<]*)</p>", pagina) == []
+    assert re.findall(r'name="cuenta_id_\d+" value="(\d+)"', pagina) == [str(banco)] * 2
 
 
 # --- FILTROS, TOTALES Y EXPORTACIONES -----------------------------------------------

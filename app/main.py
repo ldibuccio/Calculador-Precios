@@ -28789,7 +28789,8 @@ from core.lector_cheques import extraer_cheques_de_imagenes, extraer_cheques_de_
 from core.salidas_de_cheques import (  # noqa: E402
     A_MANO as A_MANO_EN_APLICAR,
     buscar_otra_vez_en_la_cartera,
-    completar_la_cuenta_unica,
+    completar_la_cuenta_por_defecto,
+    cuenta_por_defecto,
     es_del_cheque,
     grupos_de_las_salidas,
     poner_a_los_tildados,
@@ -28890,6 +28891,7 @@ def _filtros_de_cheques(request: Request) -> dict:
         filtros[clave] = _id_opcional_desde_query(q.get(clave))
     filtros["numero"] = (q.get("numero") or "").strip() or None
     filtros["de_quien"] = (q.get("de_quien") or "").strip() or None
+    filtros["entregado_a"] = (q.get("entregado_a") or "").strip() or None
     estado = (q.get("estado") or "").strip()
     filtros["estado"] = estado if estado in ESTADOS_DE_CHEQUE else None
     filtros["en_cartera"] = q.get("en_cartera") == "1"
@@ -28922,6 +28924,8 @@ def _partes_del_filtro_de_cheques(filtros: dict, nombres: dict) -> list[str]:
             partes.append(f"{texto} {nombres[clave].get(filtros[clave], '#' + str(filtros[clave]))}")
     if filtros["de_quien"]:
         partes.append(f"de quién: {filtros['de_quien']}")
+    if filtros["entregado_a"]:
+        partes.append(f"entregado a: {filtros['entregado_a']}")
     if filtros["numero"]:
         partes.append(f"número {filtros['numero']}")
     if filtros["estado"]:
@@ -29468,11 +29472,13 @@ async def seguir_aplicar_cheques(request: Request):
         leidas, cheques=cheques, proveedores=proveedores_con_cuit(), bancos=cuentas_de_banco_activas(),
         concepto_pago=_concepto_pago_a_proveedor(conceptos), concepto_deposito=_concepto_deposito_en_cuenta(conceptos),
         hoy=hoy)
-    a_mano, avisos_a_mano = renglones_elegidos_a_mano(elegidos, cheques=cheques, ya=renglones, hoy=hoy)
+    a_mano, avisos_a_mano = renglones_elegidos_a_mano(elegidos, cheques=cheques, ya=renglones, hoy=hoy,
+                                                      concepto_pago=_concepto_pago_a_proveedor(conceptos),
+                                                      bancos=cuentas_de_banco_activas())
     return _renderizar_paso_2_de_aplicar(request, renglones + a_mano, fotos, avisos=avisos + avisos_a_mano)
 
 
-CAMPOS_DE_PARA_TODOS = ("fecha", "concepto_id", "proveedor_id", "cuenta_id")
+CAMPOS_DE_PARA_TODOS = ("fecha", "concepto_id", "proveedor_id", "proveedor_a_mano", "cuenta_id")
 
 
 def _renderizar_paso_2_de_aplicar(request: Request, renglones: list[dict], fotos: list[str], *,
@@ -29484,7 +29490,7 @@ def _renderizar_paso_2_de_aplicar(request: Request, renglones: list[dict], fotos
     bancos = cuentas_de_banco_activas()
     proveedores = proveedores_con_cuit()
     buscar_otra_vez_en_la_cartera(renglones, cheques)
-    completar_la_cuenta_unica(renglones, destinos=destinos, bancos=bancos)
+    completar_la_cuenta_por_defecto(renglones, bancos=bancos)
     problemas = problemas_de_las_salidas(renglones, cheques, destinos=destinos, bancos=bancos)
     vivos = [(r, p) for r, p in zip(renglones, problemas) if not r.get("sacar")]
     return templates.TemplateResponse(request, "cheques_aplicar_revisar.html", {
@@ -29493,12 +29499,16 @@ def _renderizar_paso_2_de_aplicar(request: Request, renglones: list[dict], fotos
         "grupos": grupos_de_las_salidas(
             renglones, problemas, nombre_de_proveedor={p["id"]: p["nombre"] for p in proveedores},
             nombre_de_cuenta={b["id"]: b["nombre"] for b in bancos},
-            nombre_de_concepto={c["id"]: c["nombre"] for c in conceptos}),
+            nombre_de_concepto={c["id"]: c["nombre"] for c in conceptos}, destinos=destinos),
         "montos": [_importe_de_cheque(r.get("importe")) for r in renglones],
         "en_cartera": [c for c in cheques if c["estado"] in ("en_cartera", "vencido")],
         "proveedores": proveedores, "bancos": bancos, "conceptos": conceptos, "destinos": destinos,
         "destinos_nuevos": DESTINOS_DE_CONCEPTO,
-        "todos": todos or dict.fromkeys(CAMPOS_DE_PARA_TODOS, ""), "preguntar_a_todos": preguntar_a_todos,
+        # "Para todos" arranca en "Pago a proveedor" y en el Credicoop (dueño, 16/10 y 17/10).
+        "todos": todos or dict(dict.fromkeys(CAMPOS_DE_PARA_TODOS, ""),
+                               concepto_id=str(_concepto_pago_a_proveedor(conceptos) or ""),
+                               cuenta_id=str(cuenta_por_defecto(bancos) or "")),
+        "preguntar_a_todos": preguntar_a_todos,
         "cuantos": len(vivos), "con_problema": sum(1 for _, p in vivos if p),
         "total": round(sum(_importe_de_cheque(r.get("importe")) or 0 for r, _ in vivos), 2),
     }, status_code=status_code)
@@ -29517,6 +29527,7 @@ def _salidas_del_formulario(formulario) -> list[dict]:
             "emisor": dato("emisor"), "cheque_id": _id_opcional_desde_query(dato("cheque_id")),
             "proveedor_cuit": dato("proveedor_cuit"), "proveedor_nombre": dato("proveedor_nombre"),
             "proveedor_id": _id_opcional_desde_query(dato("proveedor_id")),
+            "proveedor_a_mano": " ".join(dato("proveedor_a_mano").split()),
             "cuenta_deposito": dato("cuenta_deposito"), "cuenta_id": _id_opcional_desde_query(dato("cuenta_id")),
             "concepto_id": _id_opcional_desde_query(dato("concepto_id")), "fecha": dato("fecha"),
             "deposito": dato("deposito") == "1", "sacar": dato("sacar") == "1", "tildado": dato("tildado") == "1",
@@ -29529,6 +29540,7 @@ def _cambios_elegidos(formulario, prefijo: str) -> dict:
     en "No cambiar" no viene."""
     cambios = {campo: _id_opcional_desde_query(str(formulario.get(f"{prefijo}{campo}") or ""))
                for campo in ("concepto_id", "proveedor_id", "cuenta_id")}
+    cambios["proveedor_a_mano"] = " ".join(str(formulario.get(f"{prefijo}proveedor_a_mano") or "").split()) or None
     fecha = _fecha_de_cheque(str(formulario.get(f"{prefijo}fecha") or ""))
     cambios["fecha"] = fecha.isoformat() if fecha else None
     return cambios
@@ -29596,7 +29608,7 @@ async def revisar_aplicar_cheques(request: Request):
     bancos = cuentas_de_banco_activas()
     cheques = buscar_cheques({})
     buscar_otra_vez_en_la_cartera(renglones, cheques)
-    completar_la_cuenta_unica(renglones, destinos=destinos, bancos=bancos)
+    completar_la_cuenta_por_defecto(renglones, bancos=bancos)
     problemas = problemas_de_las_salidas(renglones, cheques, destinos=destinos, bancos=bancos)
     buenos = [r for r, p in zip(renglones, problemas) if not p and not r["sacar"]]
     quedan = [r for r, p in zip(renglones, problemas) if p and not r["sacar"]]
@@ -29613,6 +29625,9 @@ async def revisar_aplicar_cheques(request: Request):
             aplicar_salidas_de_cheques([{
                 "cheque_id": r["cheque_id"], "fecha": date.fromisoformat(r["fecha"]), "concepto_id": r["concepto_id"],
                 "proveedor_id": r["proveedor_id"] if destinos.get(r["concepto_id"]) == "entregado" else None,
+                "proveedor_a_mano": ((r["proveedor_a_mano"] or None)
+                                     if destinos.get(r["concepto_id"]) == "entregado" and not r["proveedor_id"]
+                                     else None),
                 "cuenta_deposito": (r["cuenta_deposito"] or None
                                     if destinos.get(r["concepto_id"]) == "depositado" else None),
                 "cuenta_id": r["cuenta_id"] if destinos.get(r["concepto_id"]) == "depositado" else None,

@@ -2567,7 +2567,12 @@ create table cheques_salidas (
   cuenta_deposito text constraint cheques_salidas_cuenta_no_vacia
     check (cuenta_deposito is null or btrim(cuenta_deposito) <> ''),
   sector       text not null check (sector = 'gerencia'),
-  creado_en    timestamptz not null default now()
+  creado_en    timestamptz not null default now(),
+  -- A quién se le dio, si no está en proveedores (la lista del Mercado
+  -- Central): escrito a mano (cheques_3, dueño 16/10). Uno u otro.
+  proveedor_a_mano text constraint cheques_salidas_proveedor_a_mano_no_vacio
+    check (proveedor_a_mano is null or btrim(proveedor_a_mano) <> ''),
+  constraint cheques_salidas_un_proveedor check (proveedor_id is null or proveedor_a_mano is null)
 );
 create index cheques_salidas_por_proveedor on cheques_salidas (proveedor_id);
 alter table cheques_salidas enable row level security;
@@ -2731,7 +2736,7 @@ declare
 begin
   select * into ch from cheques where id = new.cheque_id;
   select c.destino into destino from cheques_conceptos c where c.id = new.concepto_id;
-  if destino = 'entregado' and new.proveedor_id is null then
+  if destino = 'entregado' and new.proveedor_id is null and new.proveedor_a_mano is null then
     raise exception 'un pago a proveedor tiene que decir a qué proveedor'
       using errcode = 'check_violation', constraint = 'cheque_entregado_con_proveedor';
   end if;
@@ -2788,7 +2793,8 @@ select ch.*, coalesce(cl.nombre, ch.nombre_a_mano, 'Canje') as de_quien,
          else co.destino
        end as estado,
        (s.cheque_id is null and r.cheque_id is null
-        and hoy.dia >= ch.fecha_pago + 23) as en_rojo_por_vencer
+        and hoy.dia >= ch.fecha_pago + 23) as en_rojo_por_vencer,
+       s.proveedor_a_mano
 from cheques ch
 cross join hoy
 left join clientes cl on cl.id = ch.cliente_id
