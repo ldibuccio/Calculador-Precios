@@ -21031,6 +21031,167 @@ def ver_detalle_del_panel(request: Request):
     })
 
 
+# --- CONSULTAS (dueño, 16/10): el chat de Gerencia con IA ---------------------
+# La cuenta, el SQL permitido y la vuelta con la IA, en core/consultas_ia.py; lo
+# que toca la base, en app/db.py (la IA lee con el usuario `consultas_ia`).
+from core.consultas_ia import (  # noqa: E402
+    FILAS_MAXIMAS as FILAS_MAXIMAS_DE_CONSULTAS,
+    ConsultaNoPermitida,
+    consulta_de_lectura,
+    esquema_resumido,
+    indice_de_documentos,
+    instrucciones as instrucciones_de_consultas,
+    leer_documento,
+    llego_al_tope,
+    modelo as modelo_de_consultas,
+    preguntar as preguntar_a_la_ia,
+    valor_para_mostrar,
+)
+from app.db import (  # noqa: E402
+    CONSULTAS_IA_DATABASE_URL_ENV_VAR,
+    ConsultaIaNoSePuede,
+    cambiar_tope_de_consultas,
+    correr_consulta_de_solo_lectura,
+    gasto_de_consultas_desde,
+    guardar_pregunta_de_consultas,
+    tope_de_consultas,
+    ultimas_preguntas_de_consultas,
+)
+
+# Lo que se guarda de cada consulta en el registro: las primeras filas alcanzan
+# para ver de dónde salió el número.
+FILAS_DEL_REGISTRO = 20
+TURNOS_QUE_SE_RECUERDAN = 10
+LARGO_MAXIMO_DE_UNA_PREGUNTA = 2000
+
+
+def _gasto_y_tope_de_consultas(hoy) -> dict:
+    gastado, tope = gasto_de_consultas_desde(hoy.replace(day=1)), tope_de_consultas()
+    return {"gastado": gastado, "tope": tope, "lleno": llego_al_tope(gastado, tope)}
+
+
+@app.get("/gerencia/consultas")
+def ver_consultas(request: Request, aviso: str | None = None, error: str | None = None):
+    puerta = _sin_clave_de_cheques(request)
+    if puerta is not None:
+        return puerta
+    return templates.TemplateResponse(request, "consultas.html", {
+        "gasto": _gasto_y_tope_de_consultas(_hoy_argentina()), "modelo": modelo_de_consultas(),
+        "aviso": aviso, "error": error,
+    })
+
+
+def _correr_sql_de_la_ia(sql: str) -> dict:
+    """Lo que la IA pide correr, controlado y con valores que entran en JSON.
+    ValueError con un motivo que la IA entiende."""
+    try:
+        texto = consulta_de_lectura(sql)
+    except ConsultaNoPermitida as motivo:
+        raise ValueError(str(motivo)) from motivo
+    try:
+        datos = correr_consulta_de_solo_lectura(texto, FILAS_MAXIMAS_DE_CONSULTAS)
+    except ConsultaIaNoSePuede as motivo:
+        raise ValueError(f"la base no la corrió: {motivo}") from motivo
+    datos["filas"] = [[valor_para_mostrar(v) for v in fila] for fila in datos["filas"]]
+    return datos
+
+
+def _consulta_para_el_registro(consulta: dict) -> dict:
+    return {"para_que": consulta.get("para_que"), "sql": consulta.get("sql"), "error": consulta.get("error"),
+            "columnas": consulta.get("columnas"), "filas": (consulta.get("filas") or [])[:FILAS_DEL_REGISTRO],
+            "cantidad_filas": len(consulta.get("filas") or []), "cortada": consulta.get("cortada"),
+            "ms": consulta.get("ms")}
+
+
+@app.post("/gerencia/consultas/preguntar")
+async def preguntar_en_consultas(request: Request):
+    """Una pregunta del chat (JSON: pregunta, historial, conversacion). Devuelve
+    la respuesta con "Cómo lo calculé" (las consultas y sus números) y lo
+    gastado en el mes. Al llegar al tope del mes no llama a la IA."""
+    import uuid
+
+    import anthropic
+    from starlette.concurrency import run_in_threadpool
+
+    from core.lector_comandas import _obtener_api_key
+    if _sin_clave_de_cheques(request) is not None:
+        return JSONResponse({"error": "Se cerró la clave de Gerencia: volvé a entrar."}, status_code=401)
+    try:
+        datos = await request.json()
+    except ValueError:
+        return JSONResponse({"error": "No se entendió la pregunta."}, status_code=400)
+    datos = datos if isinstance(datos, dict) else {}
+    pregunta = " ".join(str(datos.get("pregunta") or "").split())[:LARGO_MAXIMO_DE_UNA_PREGUNTA]
+    if not pregunta:
+        return JSONResponse({"error": "Escribí la pregunta."}, status_code=400)
+    historial = [{"pregunta": str(t.get("pregunta") or ""), "respuesta": str(t.get("respuesta") or "")}
+                 for t in (datos.get("historial") or []) if isinstance(t, dict)][-TURNOS_QUE_SE_RECUERDAN:]
+    try:
+        conversacion = str(uuid.UUID(str(datos.get("conversacion") or "")))
+    except ValueError:
+        conversacion = str(uuid.uuid4())
+    hoy = _hoy_argentina()
+    gasto = _gasto_y_tope_de_consultas(hoy)
+    if gasto["lleno"]:
+        return JSONResponse({"error": f"Se llegó al tope del mes (US${gasto['tope']:.2f}). Consultas vuelve el 1° "
+                                      "del mes que viene, o subí el tope.", "gasto": gasto, "tope_lleno": True})
+    if not os.environ.get(CONSULTAS_IA_DATABASE_URL_ENV_VAR):
+        return JSONResponse({"error": "Falta la conexión del usuario de consultas en Railway "
+                                      f"({CONSULTAS_IA_DATABASE_URL_ENV_VAR})."}, status_code=503)
+    try:
+        cliente = anthropic.Anthropic(api_key=_obtener_api_key())
+    except RuntimeError as motivo:
+        return JSONResponse({"error": str(motivo)}, status_code=503)
+    sistema = instrucciones_de_consultas(NOMBRE_EMPRESA, esquema_resumido(
+        open(os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "db", "esquema_completo.sql"),
+             encoding="utf-8").read()), indice_de_documentos(), hoy)
+    nombre_del_modelo = modelo_de_consultas()
+    try:
+        respuesta = await run_in_threadpool(
+            preguntar_a_la_ia, cliente, pregunta, historial, sistema=sistema, correr_sql=_correr_sql_de_la_ia,
+            leer_doc=leer_documento, nombre_del_modelo=nombre_del_modelo)
+    except (anthropic.APIConnectionError, anthropic.APIStatusError) as error:
+        logger.exception("Consultas: la API de Claude falló")
+        guardar_pregunta_de_consultas({"sector": "gerencia", "quien": "Gerencia", "conversacion": conversacion,
+                                       "pregunta": pregunta, "modelo": nombre_del_modelo,
+                                       "error": f"La API de Claude falló: {error}"})
+        return JSONResponse({"error": "No se pudo hablar con la IA. Probá de nuevo en un rato."}, status_code=502)
+    consultas = [_consulta_para_el_registro(c) for c in respuesta.consultas]
+    guardar_pregunta_de_consultas({
+        "sector": "gerencia", "quien": "Gerencia", "conversacion": conversacion, "pregunta": pregunta,
+        "respuesta": respuesta.texto, "consultas": consultas, "modelo": respuesta.modelo,
+        "tokens_entrada": respuesta.tokens_entrada, "tokens_salida": respuesta.tokens_salida,
+        "tokens_cache": respuesta.tokens_cache, "costo_usd": respuesta.costo_usd, "error": respuesta.error})
+    return JSONResponse({"respuesta": respuesta.texto, "error": respuesta.error, "consultas": consultas,
+                         "documentos": respuesta.documentos, "costo_usd": round(respuesta.costo_usd, 4),
+                         "conversacion": conversacion, "gasto": _gasto_y_tope_de_consultas(hoy)})
+
+
+@app.post("/gerencia/consultas/tope")
+async def cambiar_tope_de_consultas_ruta(request: Request):
+    puerta = _puerta_de_gerencia_para_escribir(request)
+    if puerta is not None:
+        return puerta
+    formulario = await request.form()
+    tope = round(_importe_de_cheque(str(formulario.get("tope") or "")) or 0, 2)
+    if tope <= 0:
+        return RedirectResponse("/gerencia/consultas?" + urlencode({"error": "El tope tiene que ser más que cero."}),
+                                status_code=303)
+    cambiar_tope_de_consultas(tope)
+    return RedirectResponse("/gerencia/consultas?" + urlencode({"aviso": f"Tope del mes: US${tope:.2f}"}),
+                            status_code=303)
+
+
+@app.get("/gerencia/consultas/registro")
+def ver_registro_de_consultas(request: Request):
+    puerta = _sin_clave_de_cheques(request)
+    if puerta is not None:
+        return puerta
+    return templates.TemplateResponse(request, "consultas_registro.html", {
+        "preguntas": ultimas_preguntas_de_consultas(), "gasto": _gasto_y_tope_de_consultas(_hoy_argentina()),
+    })
+
+
 @app.get("/gerencia/cajas-perdidas")
 def ver_cajas_perdidas(
     request: Request,

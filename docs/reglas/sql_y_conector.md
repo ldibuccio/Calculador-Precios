@@ -186,6 +186,10 @@ pública (`anon`). El 09/10 Frutamax tenía 50 de 106 sin candado, Palmala 50 de
 - **`backup_estado`** inserta en `backups_corridas` con su política
   (`backup_estado_inserta`), que no se toca. **`backup_lectura`** (Ganadería)
   tiene `bypassrls`.
+- **`consultas_ia`** (el chat de Gerencia, 17/10) tampoco tiene `bypassrls`:
+  cada tabla que lee tiene su política `consultas_ia_lee`, y una tabla nueva
+  no la ve hasta volver a correr `db/consultas_ia_3_permisos.sql`
+  (`docs/modulos/consultas.md`).
 - **La vista `vales_papel_revision`** corría con los permisos del dueño, y
   `anon` la podía leer en Frutamax: pasa a `security_invoker = true`.
 - **De acá en adelante**: toda tabla nueva lleva su `enable row level

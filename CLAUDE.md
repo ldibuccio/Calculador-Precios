@@ -300,6 +300,9 @@ Módulos (se lee el que se va a tocar):
   transferencias de una fila con dos patas, cheques depositados por cuenta,
   la carga en dos pasos (la misma de Palmala Cruces), y la conciliación de
   extractos.
+- `docs/modulos/consultas.md`: Consultas, el chat de Gerencia con IA: el
+  usuario `consultas_ia` de solo lectura (y las tablas que no lee), "Cómo lo
+  calculé", el registro con su costo y el tope del mes.
 - `docs/modulos/fletes.md`: Fletes (Administración → Pedidos), el armado más
   barato, el reparto por pallets, corregir y la línea Flete de Rentabilidad
   Real.

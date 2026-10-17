@@ -36,7 +36,9 @@ GRUPOS_DECIDIDOS = {
                        ("5", "/gerencia/cuentas", "Cuentas")],
     "Mirar": [("1", "/gerencia/rentabilidad", "Rentabilidad"), ("1", "/gerencia/perdidas", "Pérdidas"),
               ("1", "/gerencia/costos-fijos", "Costos fijos"),
-              ("1", "/gerencia/facturacion", "Facturación y cobranzas")],
+              ("1", "/gerencia/facturacion", "Facturación y cobranzas"),
+              # Preguntarle a la IA por los datos (dueño, 16/10).
+              ("1", "/gerencia/consultas", "Consultas")],
     "Corregir": [("2", "/gerencia/compras/ingreso-retroactivo", "Ingreso con fecha anterior"),
                  # La contraseña especial de "Con fecha anterior" de
                  # Administración (dueño, 05/10): la fija Gerencia.
@@ -83,7 +85,7 @@ def test_el_hub_de_GERENCIA_el_PANEL_solo_BANCOS_Y_CAJAS_y_los_tres_grupos_con_s
     with patch.dict(os.environ, CLAVES):
         marcado = _cliente(m, "gerencia").get("/gerencia").text.split("</style>")[-1]
     assert {t: [tuple(b) for b in botones] for t, botones in _grupos_con_color(marcado).items()} == GRUPOS_DECIDIDOS
-    assert marcado.count('<a class="boton ') == 15
+    assert marcado.count('<a class="boton ') == 16
     # El Panel de control va SOLO, arriba de todo, con un color que no tiene nadie más (dueño, 16/10).
     botones = re.findall(r'<a class="boton color-(\d)" href="([^"]*)"', marcado)
     assert botones[0] == ("4", "/gerencia/panel") and [c for c, _ in botones].count("4") == 1
@@ -217,6 +219,6 @@ def test_a_313px_el_hub_de_GERENCIA_y_las_pestanas_de_COBRANZAS_no_se_salen(galp
                 pagina.close()
         finally:
             navegador.close()
-    assert medidas["hub"]["desborde"] == 0 and medidas["hub"]["botones"] == 15, medidas["hub"]
+    assert medidas["hub"]["desborde"] == 0 and medidas["hub"]["botones"] == 16, medidas["hub"]
     assert medidas["vales"]["desborde"] == 0 and len(medidas["vales"]["pestanas"]) == 3
     assert all(p["alto"] == 44 and not p["desborda"] for p in medidas["vales"]["pestanas"]), medidas["vales"]

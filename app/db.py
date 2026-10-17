@@ -23418,3 +23418,122 @@ def cargar_desde_el_extracto(cuenta_id: int, renglon_id: int, *, concepto_id: in
         cursor.execute("INSERT INTO cuentas_conciliaciones (renglon_id, cuenta_id, origen, origen_id, sector) "
                        "VALUES (%s, %s, 'movimiento', %s, 'gerencia')", (renglon_id, cuenta_id, movimiento_id))
         return movimiento_id
+
+
+# --- CONSULTAS (dueño, 16/10): el chat de Gerencia con IA --------------------
+# Lo que la IA corre va por OTRA conexión: el usuario `consultas_ia` de la base
+# (db/consultas_ia_1..3), que solo lee y solo las tablas que el dueño dejó. Su
+# cadena de conexión, con la contraseña que Lionel le puso, va en la variable
+# CONSULTAS_IA_DATABASE_URL de Railway. El registro y el tope se escriben con la
+# conexión de siempre.
+
+CONSULTAS_IA_DATABASE_URL_ENV_VAR = "CONSULTAS_IA_DATABASE_URL"
+
+
+class ConsultaIaNoSePuede(ValueError):
+    """La base no corrió la consulta de la IA: el mensaje es el de la base."""
+
+
+def correr_consulta_de_solo_lectura(sql: str, filas_maximas: int) -> dict:
+    """{columnas, filas, cortada, ms} de UN SELECT, con el usuario de solo
+    lectura, en una transacción de solo lectura y con 10 segundos de tope
+    (aunque el usuario ya los tenga). Trae hasta `filas_maximas` filas y dice
+    si había más. ConsultaIaNoSePuede con el error de la base."""
+    import time
+    url = os.environ.get(CONSULTAS_IA_DATABASE_URL_ENV_VAR)
+    if not url:
+        raise RuntimeError(f"Falta configurar la variable de entorno {CONSULTAS_IA_DATABASE_URL_ENV_VAR} "
+                           "con la conexión del usuario consultas_ia")
+    arranque = time.monotonic()
+    try:
+        conexion = psycopg2.connect(url, connect_timeout=10)
+    except psycopg2.OperationalError as error:
+        raise RuntimeError(f"No se pudo conectar con el usuario de consultas: {error}") from error
+    try:
+        conexion.set_session(readonly=True)
+        with conexion.cursor() as cursor:
+            cursor.execute("SET LOCAL statement_timeout = '10s'")
+            try:
+                cursor.execute(sql)
+            except psycopg2.Error as error:
+                raise ConsultaIaNoSePuede(str(error).strip()) from error
+            if cursor.description is None:
+                raise ConsultaIaNoSePuede("la consulta no devolvió filas")
+            columnas = [d[0] for d in cursor.description]
+            filas = cursor.fetchmany(filas_maximas + 1)
+        return {"columnas": columnas, "filas": [list(f) for f in filas[:filas_maximas]],
+                "cortada": len(filas) > filas_maximas, "ms": int((time.monotonic() - arranque) * 1000)}
+    finally:
+        conexion.rollback()
+        conexion.close()
+
+
+def guardar_pregunta_de_consultas(p: dict) -> int:
+    """Una pregunta con su respuesta, las consultas corridas y el costo."""
+    conexion = obtener_conexion()
+    try:
+        with conexion.cursor() as cursor:
+            cursor.execute(
+                "INSERT INTO consultas_ia_preguntas (sector, quien, conversacion, pregunta, respuesta, consultas, "
+                "modelo, tokens_entrada, tokens_salida, tokens_cache, costo_usd, error) "
+                "VALUES (%s, %s, %s, %s, %s, %s::jsonb, %s, %s, %s, %s, %s, %s) RETURNING id",
+                (p["sector"], p["quien"], p["conversacion"], p["pregunta"], p.get("respuesta") or None,
+                 json.dumps(p.get("consultas") or [], ensure_ascii=False, default=str), p["modelo"],
+                 p.get("tokens_entrada", 0), p.get("tokens_salida", 0), p.get("tokens_cache", 0),
+                 round(float(p.get("costo_usd") or 0), 4), p.get("error")))
+            nuevo = cursor.fetchone()[0]
+        conexion.commit()
+        return nuevo
+    finally:
+        conexion.close()
+
+
+def gasto_de_consultas_desde(desde: date) -> float:
+    """Lo gastado en Consultas desde ese día (de Argentina) inclusive."""
+    conexion = obtener_conexion()
+    try:
+        with conexion.cursor() as cursor:
+            cursor.execute(
+                "SELECT COALESCE(SUM(costo_usd), 0) FROM consultas_ia_preguntas "
+                "WHERE (creado_en AT TIME ZONE 'America/Argentina/Buenos_Aires')::date >= %s", (desde,))
+            return float(cursor.fetchone()[0])
+    finally:
+        conexion.close()
+
+
+def tope_de_consultas() -> float:
+    conexion = obtener_conexion()
+    try:
+        with conexion.cursor() as cursor:
+            cursor.execute("SELECT tope_mensual_usd FROM consultas_ia_config WHERE id = 1")
+            fila = cursor.fetchone()
+            if fila is None:
+                raise RuntimeError("Falta el renglón del tope de Consultas (consultas_ia_config)")
+            return float(fila[0])
+    finally:
+        conexion.close()
+
+
+def cambiar_tope_de_consultas(tope: float) -> None:
+    conexion = obtener_conexion()
+    try:
+        with conexion.cursor() as cursor:
+            cursor.execute("UPDATE consultas_ia_config SET tope_mensual_usd = %s, actualizado_en = now() WHERE id = 1",
+                           (tope,))
+        conexion.commit()
+    finally:
+        conexion.close()
+
+
+def ultimas_preguntas_de_consultas(limite: int = 100) -> list[dict]:
+    conexion = obtener_conexion()
+    try:
+        with conexion.cursor() as cursor:
+            cursor.execute(
+                "SELECT id, sector, quien, conversacion, pregunta, respuesta, consultas, modelo, tokens_entrada, "
+                "tokens_salida, tokens_cache, costo_usd, error, creado_en FROM consultas_ia_preguntas "
+                "ORDER BY creado_en DESC, id DESC LIMIT %s", (limite,))
+            columnas = [d[0] for d in cursor.description]
+            return [dict(zip(columnas, f)) for f in cursor.fetchall()]
+    finally:
+        conexion.close()

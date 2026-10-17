@@ -1,0 +1,45 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Consultas: registro</title>
+<style>
+{% include "_cheques_estilos.html" %}
+  .respuesta { white-space: pre-wrap; overflow-wrap: anywhere; font-size: 0.9rem; margin: 0.3rem 0; }
+  pre { white-space: pre-wrap; overflow-wrap: anywhere; background: #f3f4f6; padding: 0.4rem; border-radius: 6px; font-size: 0.78rem; }
+</style>
+</head>
+<body>
+  {% set barra_sector = "gerencia" %}
+  {% set barra_titulo = "Consultas: registro" %}
+  {% set barra_atras = "/gerencia/consultas" %}
+  {% include "_barra_navegacion.html" %}
+
+  {# EL REGISTRO (dueño, 16/10): cada pregunta con quién, cuándo, la
+     respuesta, las consultas que corrió y lo que costó. Las últimas 100. #}
+  <div class="tarjeta">
+    <p class="total-dato" data-gasto>Este mes: <strong>US${{ "%.2f"|format(gasto.gastado) }}</strong> de US${{ "%.2f"|format(gasto.tope) }}</p>
+  </div>
+  <div class="tarjeta">
+    {% for p in preguntas %}
+    <div class="fila" data-pregunta="{{ p.id }}">
+      <div class="fila-cabeza"><span class="fila-que">{{ p.pregunta }}</span><span class="importe">US${{ "%.4f"|format(p.costo_usd|float) }}</span></div>
+      <div class="fila-dato">{{ p.quien }} · {{ p.creado_en|fecha_hora if p.creado_en else "" }} · {{ p.consultas|length }} consulta{{ "" if p.consultas|length == 1 else "s" }}</div>
+      {% if p.error %}<p class="rojo" data-error-de-la-pregunta>{{ p.error }}</p>{% endif %}
+      <details>
+        <summary>Respuesta y cómo lo calculó</summary>
+        <p class="respuesta">{{ p.respuesta or "(sin respuesta)" }}</p>
+        {% for c in p.consultas %}
+        <p class="nota"><strong>{{ c.para_que or "Consulta" }}</strong>{% if c.error %} · <span class="rojo">{{ c.error }}</span>{% else %} · {{ c.cantidad_filas }} fila{{ "" if c.cantidad_filas == 1 else "s" }}{% endif %}</p>
+        <pre>{{ c.sql }}</pre>
+        {% endfor %}
+      </details>
+    </div>
+    {% else %}
+    <p class="vacio">Todavía no se hizo ninguna pregunta.</p>
+    {% endfor %}
+  </div>
+{% include "_pie_version.html" %}
+</body>
+</html>
