@@ -10,6 +10,13 @@
   .elegir input { width: 1.4rem; height: 1.4rem; margin-top: 0.15rem; flex: none; }
   .elegir span { flex: 1; min-width: 0; }
   .paso { color: #666; font-size: 0.85rem; font-weight: 700; margin: 0 0 0.2rem; text-transform: uppercase; }
+  {# "CARGAR" FIJO ARRIBA (dueño, 17/10): queda debajo de la barra de
+     navegación mientras se baja por la cartera, con cuántos cheques hay
+     elegidos y el total. #}
+  .cargar-fijo { position: sticky; top: var(--alto-de-la-barra, 66px); z-index: 50; margin: 0 -1rem 0.8rem;
+    padding: 0.5rem 1rem; background: #f8fafc; box-shadow: 0 2px 4px rgba(0, 0, 0, 0.08); }
+  .cargar-fijo button { width: 100%; min-height: 48px; padding: 0.5rem 0.8rem; border: none; border-radius: 8px;
+    background: #2563eb; color: #fff; font-size: 1.05rem; font-weight: 600; overflow-wrap: anywhere; }
 </style>
 </head>
 <body>
@@ -23,6 +30,9 @@
   {# UN SOLO FLUJO (dueño, 16/10): paso 1 elegir, paso 2 revisar. Las dos
      formas de elegir se pueden usar juntas. #}
   <form method="post" action="/gerencia/cheques/aplicar/seguir" enctype="multipart/form-data">
+    <div class="cargar-fijo" data-cargar>
+      <button type="submit" data-boton-cargar>Cargar<span data-cuenta>{% if elegidos_en_cartera %} · {{ elegidos_en_cartera|length }} cheque{{ "" if elegidos_en_cartera|length == 1 else "s" }} · {{ elegidos_en_cartera|sum(attribute="importe")|moneda }}{% endif %}</span></button>
+    </div>
     <div class="tarjeta" data-archivos>
       <p class="paso">Paso 1 de 2</p>
       <h2>Subí capturas, fotos o archivos</h2>
@@ -35,7 +45,7 @@
       <div class="campos"><label class="ancho">Buscar en la lista<input type="search" id="buscar" placeholder="Número, banco o de quién"></label></div>
       {% for c in en_cartera %}
       <label class="elegir" data-texto="{{ (c.numero ~ ' ' ~ c.banco ~ ' ' ~ c.de_quien)|lower }}">
-        <input type="checkbox" name="cheque_id" value="{{ c.id }}" {% if c.id in elegidos %}checked{% endif %}>
+        <input type="checkbox" name="cheque_id" value="{{ c.id }}" data-importe="{{ c.importe }}" {% if c.id in elegidos %}checked{% endif %}>
         <span><strong>{{ c.importe|moneda }}</strong> · {{ c.de_quien }}<br>
           <span class="fila-dato">{{ c.banco }} · Nº {{ c.numero }} · se cobra el {{ c.fecha_pago.strftime('%d/%m/%Y') }}{% if en_rojo(c) %} · <span class="rojo">{{ 'vencido' if c.estado == 'vencido' else 'por vencer' }}</span>{% endif %}</span></span>
       </label>
@@ -44,10 +54,30 @@
       {% endfor %}
     </div>
 
-    <div class="acciones"><button type="submit">Seguir</button></div>
-    <p class="nota">Todavía no se guarda nada: en el paso 2 se revisa cada cheque.</p>
+    <p class="nota">Todavía no se guarda nada: con "Cargar" se pasa al paso 2, donde se revisa cada cheque.</p>
   </form>
 <script>
+  // "Cargar · N cheques · $total", al tildar y destildar. El formato es el
+  // de la pantalla: $ y punto de miles, sin centavos.
+  (function () {
+    var cuenta = document.querySelector("[data-cuenta]");
+    function pesos(n) { return "$" + Math.round(n).toString().replace(/\B(?=(\d{3})+(?!\d))/g, "."); }
+    function actualizar() {
+      var tildados = document.querySelectorAll('input[name="cheque_id"]:checked');
+      var total = 0;
+      tildados.forEach(function (c) { total += parseFloat(c.dataset.importe) || 0; });
+      cuenta.textContent = tildados.length ? " · " + tildados.length + " cheque" + (tildados.length === 1 ? "" : "s") +
+        " · " + pesos(total) : "";
+    }
+    document.querySelectorAll('input[name="cheque_id"]').forEach(function (c) {
+      c.addEventListener("change", actualizar);
+    });
+    // Que quede justo debajo de la barra de navegación, mida lo que mida.
+    var barra = document.querySelector(".barra-navegacion");
+    if (barra) {
+      document.documentElement.style.setProperty("--alto-de-la-barra", barra.offsetHeight + "px");
+    }
+  })();
   document.getElementById("buscar").addEventListener("input", function () {
     var buscado = this.value.trim().toLowerCase();
     document.querySelectorAll(".elegir").forEach(function (fila) {

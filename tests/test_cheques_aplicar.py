@@ -150,15 +150,64 @@ def test_el_PASO_1_tiene_los_archivos_ARRIBA_y_la_cartera_ABAJO_en_UN_solo_formu
     assert formularios == ["/gerencia/cheques/aplicar/seguir"] and pagina.count("<form") == 1
     assert '<input type="file" name="archivos" accept="image/*,.pdf" multiple>' in pagina
     assert pagina.index("data-archivos") < pagina.index("data-cartera")
-    assert re.findall(r'name="cheque_id" value="(\d+)" checked', pagina) == [str(ids["1002"])]
+    assert re.findall(r'name="cheque_id" value="(\d+)" data-importe="[^"]*" checked', pagina) == [str(ids["1002"])]
     assert len(re.findall(r'<input type="checkbox" name="cheque_id"', pagina)) == 4
-    assert '<button type="submit">Seguir</button>' in pagina
+    # "Cargar" arriba de todo (dueño, 17/10), con lo elegido al entrar desde la ficha; "Seguir" ya no está.
+    (boton,) = re.findall(r'<button type="submit" data-boton-cargar>(.*?)</button>', pagina)
+    assert re.sub(r"<[^>]+>", "", boton) == "Cargar · 1 cheque · $20.000"
+    assert pagina.index("data-cargar") < pagina.index("data-archivos") < pagina.index("data-cartera")
+    assert pagina.count('<button type="submit"') == 1 and ">Seguir</button>" not in pagina
     # Nada de los caminos viejos.
     for viejo in ("/aplicar/leer", "/aplicar/endosos", "Operación pendiente de firma"):
         assert viejo not in pagina
     sin_nada = _cliente(m, "gerencia").post("/gerencia/cheques/aplicar/seguir", data={})
     assert sin_nada.status_code == 400
     assert "Subí un archivo o tildá al menos un cheque de la cartera." in sin_nada.text
+
+
+def test_CARGAR_queda_FIJO_arriba_al_bajar_y_cuenta_los_tildados_a_390_y_313(m, d):
+    """Lo mide el navegador (dueño, 17/10): con la cartera larga, al bajar
+    hasta el último cheque el botón sigue a la vista, debajo de la barra, y
+    dice cuántos hay tildados y el total. Sin tildar nada también se aprieta
+    (puede haber subido solo archivos)."""
+    pytest.importorskip("playwright", reason="lo fijo lo decide el navegador")
+    from playwright.sync_api import sync_playwright
+    from scripts.medir_layout import CHROMIUM
+    ids = _galpon(d)
+    for n in range(40):                                                   # una cartera larga
+        _cargar(d, f"2{n:03d}", importe=1000.0)
+    html = _cliente(m, "gerencia").get(f"/gerencia/cheques/aplicar?cheque_id={ids['1002']}").text
+    medidas = {}
+    with sync_playwright() as pw:
+        navegador = pw.chromium.launch(executable_path=CHROMIUM)
+        try:
+            for ancho in (390, 313):
+                pagina = navegador.new_page(viewport={"width": ancho, "height": 700})
+                pagina.set_content(html)
+                pagina.check(f'input[name="cheque_id"][value="{ids["1003"]}"]')
+                pagina.locator('input[name="cheque_id"]').last.scroll_into_view_if_needed()
+                medidas[ancho] = pagina.evaluate("""() => {
+                  const boton = document.querySelector('[data-boton-cargar]').getBoundingClientRect();
+                  const barra = document.querySelector('.barra-navegacion').getBoundingClientRect();
+                  return {texto: document.querySelector('[data-boton-cargar]').textContent.trim(),
+                          arriba: boton.top, debajo_de_la_barra: boton.top >= barra.bottom - 1,
+                          bajo: window.scrollY, deshabilitado: document.querySelector('[data-boton-cargar]').disabled,
+                          desborde: document.documentElement.scrollWidth - document.documentElement.clientWidth};
+                }""")
+                pagina.uncheck(f'input[name="cheque_id"][value="{ids["1002"]}"]')
+                pagina.uncheck(f'input[name="cheque_id"][value="{ids["1003"]}"]')
+                medidas[ancho]["sin_tildar"] = pagina.text_content("[data-boton-cargar]").strip()
+                medidas[ancho]["sin_tildar_deshabilitado"] = pagina.is_disabled("[data-boton-cargar]")
+                pagina.close()
+        finally:
+            navegador.close()
+    for ancho, medida in medidas.items():
+        assert medida["bajo"] > 1000, (ancho, medida)                            # se bajó por la lista
+        assert medida["debajo_de_la_barra"] and medida["arriba"] < 140, (ancho, medida)   # y sigue arriba
+        assert medida["texto"] == "Cargar · 2 cheques · $50.000", (ancho, medida)
+        assert medida["sin_tildar"] == "Cargar" and medida["deshabilitado"] is False
+        assert medida["sin_tildar_deshabilitado"] is False                       # solo archivos: igual se aprieta
+        assert medida["desborde"] == 0, (ancho, medida)
 
 
 def test_los_caminos_VIEJOS_ya_no_estan(m):

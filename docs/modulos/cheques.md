@@ -128,7 +128,11 @@ las plantillas `cheques*.html` y `cheque.html`. Tests:
   - **Paso 1, elegir**: arriba "Subí capturas, fotos o archivos" (uno o
     muchos, foto o PDF: endosos y depósitos del home banking, boletas de
     depósito, recibos de entrega); abajo la cartera con buscador, para
-    tildar a mano. Se pueden usar las dos juntas. "Seguir" no guarda nada.
+    tildar a mano. Se pueden usar las dos juntas. **"Cargar"** (antes
+    "Seguir"; dueño, 17/10) va FIJO arriba, debajo de la barra, mientras se
+    baja por la cartera, con cuántos cheques hay tildados y el total
+    ("Cargar · 4 cheques · $10.000.000"); sin tildar nada igual se aprieta
+    (pudo subir solo archivos). No guarda nada.
     "Aplicar este cheque" de la ficha llega con ese cheque tildado.
   - La IA lee cada archivo entero (un PDF con todas sus páginas; se muestra
     y se guarda la primera) con `extraer_salida_de_cheques`: si es un
